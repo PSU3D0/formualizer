@@ -1,0 +1,4081 @@
+<directory_structure>
+crates/
+  formualizer-core/
+    src/
+      hasher.rs
+      lib.rs
+      parser.rs
+      pretty.rs
+      tokenizer.rs
+      types.rs
+    Cargo.toml
+  formualizer-eval/
+    src/
+      builtins/
+        logical.rs
+        mod.rs
+      macros/
+        arg.rs
+        mod.rs
+        registry_macro.rs
+      error.rs
+      function_registry.rs
+      interpreter.rs
+      lib.rs
+      test_workbook.rs
+      traits.rs
+    Cargo.toml
+  formualizer-macros/
+    src/
+      lib.rs
+    Cargo.toml
+Cargo.toml
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="crates/formualizer-eval/src/builtins/logical.rs">
+// crates/formualizer-eval/src/builtin_logical.rs
+// --------------------------------------------------
+// First batch of very simple logical functions implemented with the
+// `#[excel_fn]` attribute.
+
+use crate::error::{ExcelError, ExcelErrorKind};
+use crate::traits::{ArgumentHandle, EvaluationContext};
+use formualizer_core::types::LiteralValue;
+use formualizer_macros::excel_fn;
+
+/* ─────────────────────────── TRUE() ─────────────────────────────── */
+
+#[excel_fn(name = "TRUE", min = 0)]
+pub fn true_fn(
+    _args: &[ArgumentHandle],
+    _ctx: &dyn EvaluationContext,
+) -> Result<LiteralValue, ExcelError> {
+    Ok(LiteralValue::Boolean(true))
+}
+
+/* ─────────────────────────── FALSE() ────────────────────────────── */
+
+#[excel_fn(name = "FALSE", min = 0)]
+pub fn false_fn(
+    _args: &[ArgumentHandle],
+    _ctx: &dyn EvaluationContext,
+) -> Result<LiteralValue, ExcelError> {
+    Ok(LiteralValue::Boolean(false))
+}
+
+/* ─────────────────────────── AND() ──────────────────────────────── */
+
+#[excel_fn(name = "AND", min = 1, variadic, arg_types = "any")]
+pub fn and_fn(
+    args: &[ArgumentHandle],
+    _ctx: &dyn EvaluationContext,
+) -> Result<LiteralValue, ExcelError> {
+    for h in args {
+        let v = h.value()?;
+        match v.as_ref() {
+            // Blank treated as FALSE (Excel behaviour)
+            LiteralValue::Empty => return Ok(LiteralValue::Boolean(false)),
+            // Error propagates immediately
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            // Boolean – use as–is
+            LiteralValue::Boolean(b) => {
+                if !b {
+                    return Ok(LiteralValue::Boolean(false));
+                }
+            }
+            // Numbers – zero = FALSE, non‑zero = TRUE
+            LiteralValue::Number(n) if *n == 0.0 => return Ok(LiteralValue::Boolean(false)),
+            LiteralValue::Number(_) => {}
+            LiteralValue::Int(i) if *i == 0 => return Ok(LiteralValue::Boolean(false)),
+            LiteralValue::Int(_) => {}
+            // Anything else → #VALUE!
+            _ => return Ok(LiteralValue::Error("#VALUE!".to_string())),
+        }
+    }
+    Ok(LiteralValue::Boolean(true))
+}
+
+/* ─────────────────────────── OR() ───────────────────────────────── */
+
+#[excel_fn(name = "OR", min = 1, variadic, arg_types = "any")]
+pub fn or_fn(
+    args: &[ArgumentHandle],
+    _ctx: &dyn EvaluationContext,
+) -> Result<LiteralValue, ExcelError> {
+    let mut found_true = false;
+
+    for h in args {
+        let v = h.value()?;
+        match v.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            LiteralValue::Boolean(b) => {
+                if *b {
+                    found_true = true
+                }
+            }
+            LiteralValue::Number(n) => {
+                if *n != 0.0 {
+                    found_true = true
+                }
+            }
+            LiteralValue::Int(i) => {
+                if *i != 0 {
+                    found_true = true
+                }
+            }
+            LiteralValue::Empty => {} // ignored
+            _ => return Ok(LiteralValue::Error("#VALUE!".to_string())),
+        }
+    }
+
+    Ok(LiteralValue::Boolean(found_true))
+}
+
+/* ─────────────────────────── tests ─────────────────────────────── */
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use formualizer_core::LiteralValue;
+
+    use crate::traits::ArgumentHandle;
+    use crate::with_fns;
+    use crate::{interpreter::Interpreter, test_workbook::TestWorkbook};
+
+    use crate::builtins::logical::{__FnAND, __FnFALSE, __FnOR, __FnTRUE};
+
+    fn interp() -> Interpreter {
+        let wb = TestWorkbook::new().with_fns(with_fns![__FnTRUE, __FnFALSE, __FnAND, __FnOR,]);
+        let interp = wb.interpreter();
+        interp
+    }
+
+    #[test]
+    fn test_true_false() {
+        let ctx = interp();
+        let t = ctx.context.get_function("", "TRUE").unwrap();
+        assert_eq!(
+            t.eval(&[], ctx.context.as_ref()).unwrap(),
+            LiteralValue::Boolean(true)
+        );
+
+        let f = ctx.context.get_function("", "FALSE").unwrap();
+        assert_eq!(
+            f.eval(&[], ctx.context.as_ref()).unwrap(),
+            LiteralValue::Boolean(false)
+        );
+    }
+
+    #[test]
+    fn test_and_or() {
+        let ctx = interp();
+
+        let and = ctx.context.get_function("", "AND").unwrap();
+        let or = ctx.context.get_function("", "OR").unwrap();
+        // Build ArgumentHandles manually: TRUE, 1, FALSE
+        let dummy_ast = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Boolean(true)),
+            None,
+        );
+        let dummy_ast_false = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Boolean(false)),
+            None,
+        );
+        let dummy_ast_one = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Int(1)),
+            None,
+        );
+        let hs = vec![
+            ArgumentHandle::new(&dummy_ast, &ctx),
+            ArgumentHandle::new(&dummy_ast_one, &ctx),
+        ];
+        assert_eq!(
+            and.eval(&hs, ctx.context.as_ref()).unwrap(),
+            LiteralValue::Boolean(true)
+        );
+
+        let hs2 = vec![
+            ArgumentHandle::new(&dummy_ast_false, &ctx),
+            ArgumentHandle::new(&dummy_ast_one, &ctx),
+        ];
+        assert_eq!(
+            and.eval(&hs2, ctx.context.as_ref()).unwrap(),
+            LiteralValue::Boolean(false)
+        );
+        assert_eq!(
+            or.eval(&hs2, ctx.context.as_ref()).unwrap(),
+            LiteralValue::Boolean(true)
+        );
+    }
+}
+</file>
+
+<file path="crates/formualizer-eval/src/builtins/mod.rs">
+pub mod logical;
+</file>
+
+<file path="crates/formualizer-eval/src/macros/arg.rs">
+#[macro_export]
+macro_rules! arg {
+    // ----- boolean -----
+    ($h:expr => bool) => {{
+        use formualizer_core::types::LiteralValue as V;
+        let v = $h.value()?;
+        match v.as_ref() {
+            V::Boolean(b) => Ok(*b),
+            V::Number(n) => Ok(*n != 0.0),
+            V::Int(i) => Ok(*i != 0),
+            V::Empty => Ok(false),
+            V::Error(e) => Err(crate::error::ExcelError::from(e.clone())),
+            _ => Err(crate::error::ExcelError::new(
+                crate::error::ExcelErrorKind::Value,
+            )),
+        }
+    }};
+    // ----- number -----
+    ($h:expr => f64) => {{
+        use formualizer_core::types::LiteralValue as V;
+        let v = $h.value()?;
+        match v.as_ref() {
+            V::Number(n) => Ok(*n),
+            V::Int(i) => Ok(*i as f64),
+            V::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
+            V::Empty => Ok(0.0),
+            V::Error(e) => Err(crate::error::ExcelError::from(e.clone())),
+            _ => Err(crate::error::ExcelError::new(
+                crate::error::ExcelErrorKind::Value,
+            )),
+        }
+    }}; // more coercions (text, date, range) as you need…
+}
+</file>
+
+<file path="crates/formualizer-eval/src/macros/mod.rs">
+mod arg;
+mod registry_macro;
+</file>
+
+<file path="crates/formualizer-eval/src/macros/registry_macro.rs">
+#[macro_export]
+macro_rules! register_functions {
+    ( $($fn:path),+ $(,)? ) => {{
+        use std::sync::Arc;
+        $(
+            $crate::function_registry::register(Arc::new($fn));
+        )+
+    }};
+}
+</file>
+
+<file path="crates/formualizer-eval/src/error.rs">
+//! Excel-style error representation that is both ergonomic **now**
+//! *and* flexible enough to grow new, data-rich variants later.
+//!
+//! - **`ExcelErrorKind`** : the canonical set of Excel error codes  
+//! - **`ErrorContext`**   : lightweight, sheet-agnostic location info  
+//! - **`ExcelErrorExtra`**: per-kind “extension slot” (e.g. `Spill`)  
+//! - **`ExcelError`**     : one struct that glues the three together
+//!
+//! When a future error needs its own payload, just add another variant
+//! to `ExcelErrorExtra`; existing code does not break.
+
+use std::{borrow::Cow, error::Error, fmt};
+
+/// All recognised Excel error codes.
+///
+/// **Note:** names are CamelCase (idiomatic Rust) while `Display`
+/// renders them exactly as Excel shows them (`#DIV/0!`, …).
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum ExcelErrorKind {
+    Null,
+    Ref,
+    Name,
+    Value,
+    Div,
+    Na,
+    Num,
+    Error,
+    NImpl,
+    Spill,
+    Calc,
+    Circ,
+}
+
+impl fmt::Display for ExcelErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Null => "#NULL!",
+            Self::Ref => "#REF!",
+            Self::Name => "#NAME?",
+            Self::Value => "#VALUE!",
+            Self::Div => "#DIV/0!",
+            Self::Na => "#N/A",
+            Self::Num => "#NUM!",
+            Self::Error => "#ERROR!",
+            Self::NImpl => "#N/IMPL!",
+            Self::Spill => "#SPILL!",
+            Self::Calc => "#CALC!",
+            Self::Circ => "#CIRC!",
+        })
+    }
+}
+
+/// Generic, lightweight metadata that *any* error may carry.
+///
+/// Keep this minimal—anything only one error kind needs belongs in
+/// `ExcelErrorExtra`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErrorContext {
+    pub row: Option<u32>,
+    pub col: Option<u32>,
+    // Add more sheet-wide coordinates here if ever required (sheet name, etc.)
+}
+
+impl Default for ErrorContext {
+    fn default() -> Self {
+        Self {
+            row: None,
+            col: None,
+        }
+    }
+}
+
+/// Kind-specific payloads (“extension slot”).
+///
+/// Only variants that need extra data get it—rest stay at `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExcelErrorExtra {
+    /// No additional payload (the vast majority of errors).
+    None,
+
+    /// `#SPILL!` – information about the intended spill size.
+    Spill {
+        expected_rows: u32,
+        expected_cols: u32,
+    },
+    // --- Add future custom payloads below -------------------------------
+    // AnotherKind { … },
+}
+
+impl Default for ExcelErrorExtra {
+    fn default() -> Self {
+        ExcelErrorExtra::None
+    }
+}
+
+/// The single struct your API passes around.
+///
+/// It combines:
+/// * **kind**   – the mandatory Excel error code
+/// * **message**– optional human explanation
+/// * **context**– generic location†
+/// * **extra**  – optional, kind-specific data
+///
+/// † If you *never* need row/col you can build the value with
+///   `ExcelError::from(kind)`, which sets `context = None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExcelError {
+    pub kind: ExcelErrorKind,
+    pub message: Option<Cow<'static, str>>,
+    pub context: Option<ErrorContext>,
+    pub extra: ExcelErrorExtra,
+}
+
+/* ───────────────────── Constructors & helpers ─────────────────────── */
+
+impl From<ExcelErrorKind> for ExcelError {
+    fn from(kind: ExcelErrorKind) -> Self {
+        Self {
+            kind,
+            message: None,
+            context: None,
+            extra: ExcelErrorExtra::None,
+        }
+    }
+}
+
+impl ExcelError {
+    /// Basic constructor (no message, no location, no extra).
+    pub fn new(kind: ExcelErrorKind) -> Self {
+        kind.into()
+    }
+
+    /// Attach a human-readable explanation.
+    pub fn with_message<S: Into<Cow<'static, str>>>(mut self, msg: S) -> Self {
+        self.message = Some(msg.into());
+        self
+    }
+
+    /// Attach generic row/column coordinates.
+    pub fn with_location(mut self, row: u32, col: u32) -> Self {
+        self.context = Some(ErrorContext {
+            row: Some(row),
+            col: Some(col),
+        });
+        self
+    }
+
+    /// Attach kind-specific extra data.
+    pub fn with_extra(mut self, extra: ExcelErrorExtra) -> Self {
+        self.extra = extra;
+        self
+    }
+}
+
+/* ───────────────────────── Display / Error ────────────────────────── */
+
+impl fmt::Display for ExcelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Start with the canonical code:
+        write!(f, "{}", self.kind)?;
+
+        // Optional human message.
+        if let Some(ref msg) = self.message {
+            write!(f, ": {}", msg)?;
+        }
+
+        // Optional row/col context.
+        if let Some(ErrorContext {
+            row: Some(r),
+            col: Some(c),
+        }) = self.context
+        {
+            write!(f, " (row {}, col {})", r, c)?;
+        }
+
+        // Optional kind-specific payload - keep it terse for logs.
+        match &self.extra {
+            ExcelErrorExtra::None => {}
+            ExcelErrorExtra::Spill {
+                expected_rows,
+                expected_cols,
+            } => {
+                write!(f, " [spill {}×{}]", expected_rows, expected_cols)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Error for ExcelError {}
+</file>
+
+<file path="crates/formualizer-eval/src/function_registry.rs">
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
+use crate::traits::Function;
+
+/// 2-tuple key: (namespace, name)
+pub type FnKey = (&'static str, &'static str);
+
+static REG: Lazy<RwLock<HashMap<FnKey, Arc<dyn Function>>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+pub fn register(f: Arc<dyn Function>) {
+    REG.write().unwrap().insert((f.namespace(), f.name()), f);
+}
+
+/// Lookup helper used by the interpreter.
+pub fn get(namespace: &str, name: &str) -> Option<Arc<dyn Function>> {
+    REG.read().ok()?.get(&(namespace, name)).cloned()
+}
+</file>
+
+<file path="crates/formualizer-eval/src/interpreter.rs">
+use crate::error::{ExcelError, ExcelErrorKind};
+use crate::traits::{ArgumentHandle, EvaluationContext};
+use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_core::types::LiteralValue;
+
+pub struct Interpreter {
+    pub context: Box<dyn EvaluationContext>,
+}
+
+impl Interpreter {
+    pub fn new(context: Box<dyn EvaluationContext>) -> Self {
+        Self { context }
+    }
+
+    /* ===================  public  =================== */
+    pub fn evaluate_ast(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
+        match &node.node_type {
+            ASTNodeType::Literal(v) => Ok(v.clone()),
+            ASTNodeType::Reference { reference, .. } => self.eval_reference(reference),
+            ASTNodeType::UnaryOp { op, expr } => self.eval_unary(op, expr),
+            ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(op, left, right),
+            ASTNodeType::Function { name, args } => self.eval_function(name, args),
+            ASTNodeType::Array(rows) => self.eval_array_literal(rows),
+        }
+    }
+
+    /* ===================  reference  =================== */
+    fn eval_reference(&self, reference: &ReferenceType) -> Result<LiteralValue, ExcelError> {
+        match self.context.resolve_range_like(reference) {
+            Ok(range) => {
+                let (rows, cols) = range.dimensions();
+                let data = range.materialise().into_owned();
+                if rows == 1 && cols == 1 {
+                    Ok(data[0][0].clone())
+                } else {
+                    Ok(LiteralValue::Array(data))
+                }
+            }
+            Err(e) => Ok(LiteralValue::Error(e.kind.to_string())),
+        }
+    }
+
+    /* ===================  unary ops  =================== */
+    fn eval_unary(&self, op: &str, expr: &ASTNode) -> Result<LiteralValue, ExcelError> {
+        let v = self.evaluate_ast(expr)?;
+        match v {
+            LiteralValue::Array(arr) => {
+                self.map_array(arr, |cell| self.eval_unary_scalar(op, cell))
+            }
+            other => self.eval_unary_scalar(op, other),
+        }
+    }
+
+    fn eval_unary_scalar(&self, op: &str, v: LiteralValue) -> Result<LiteralValue, ExcelError> {
+        match op {
+            "+" => self.apply_number_unary(v, |n| n),
+            "-" => self.apply_number_unary(v, |n| -n),
+            "%" => self.apply_number_unary(v, |n| n / 100.0),
+            _ => {
+                Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message(format!("Unary op '{}'", op)))
+            }
+        }
+    }
+
+    fn apply_number_unary<F>(&self, v: LiteralValue, f: F) -> Result<LiteralValue, ExcelError>
+    where
+        F: Fn(f64) -> f64,
+    {
+        match self.coerce_number(&v) {
+            Ok(n) => Ok(LiteralValue::Number(f(n))),
+            Err(e) => Ok(LiteralValue::Error(e.kind.to_string())),
+        }
+    }
+
+    /* ===================  binary ops  =================== */
+    fn eval_binary(
+        &self,
+        op: &str,
+        left: &ASTNode,
+        right: &ASTNode,
+    ) -> Result<LiteralValue, ExcelError> {
+        // Comparisons use dedicated path.
+        if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
+            let l = self.evaluate_ast(left)?;
+            let r = self.evaluate_ast(right)?;
+            return self.compare(op, l, r);
+        }
+
+        let l_val = self.evaluate_ast(left)?;
+        let r_val = self.evaluate_ast(right)?;
+
+        match op {
+            "+" => self.numeric_binary(l_val, r_val, |a, b| a + b),
+            "-" => self.numeric_binary(l_val, r_val, |a, b| a - b),
+            "*" => self.numeric_binary(l_val, r_val, |a, b| a * b),
+            "/" => self.divide(l_val, r_val),
+            "^" => self.power(l_val, r_val),
+            "&" => Ok(LiteralValue::Text(format!(
+                "{}{}",
+                self.coerce_text(&l_val),
+                self.coerce_text(&r_val)
+            ))),
+            ":" => Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("Range operator ':' inside value context")),
+            _ => {
+                Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message(format!("Binary op '{}'", op)))
+            }
+        }
+    }
+
+    /* ===================  function calls  =================== */
+    fn eval_function(&self, name: &str, args: &[ASTNode]) -> Result<LiteralValue, ExcelError> {
+        if let Some(fun) = self.context.get_function("", name) {
+            let handles: Vec<ArgumentHandle> =
+                args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
+            fun.eval(&handles, self.context.as_ref())
+        } else {
+            Ok(LiteralValue::Error("#NAME?".into()))
+        }
+    }
+
+    /* ===================  array literal  =================== */
+    fn eval_array_literal(&self, rows: &[Vec<ASTNode>]) -> Result<LiteralValue, ExcelError> {
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut r = Vec::with_capacity(row.len());
+            for cell in row {
+                r.push(self.evaluate_ast(cell)?);
+            }
+            out.push(r);
+        }
+        Ok(LiteralValue::Array(out))
+    }
+
+    /* ===================  helpers  =================== */
+    fn numeric_binary<F>(
+        &self,
+        left: LiteralValue,
+        right: LiteralValue,
+        f: F,
+    ) -> Result<LiteralValue, ExcelError>
+    where
+        F: Fn(f64, f64) -> f64 + Copy,
+    {
+        use LiteralValue::*;
+        match (left, right) {
+            (Array(l), Array(r)) => self.combine_arrays(l, r, |a, b| self.numeric_binary(a, b, f)),
+            (Array(arr), v) => self.map_array(arr, |x| self.numeric_binary(x, v.clone(), f)),
+            (v, Array(arr)) => self.map_array(arr, |x| self.numeric_binary(v.clone(), x, f)),
+            (l, r) => {
+                let a = self.coerce_number(&l);
+                let b = self.coerce_number(&r);
+                match (a, b) {
+                    (Ok(a), Ok(b)) => Ok(Number(f(a, b))),
+                    (Err(e), _) | (_, Err(e)) => Ok(LiteralValue::Error(e.kind.to_string())),
+                }
+            }
+        }
+    }
+
+    fn divide(&self, left: LiteralValue, right: LiteralValue) -> Result<LiteralValue, ExcelError> {
+        let denom_num = |v: &LiteralValue| self.coerce_number(v);
+        use LiteralValue::*;
+        match (left, right) {
+            (Array(l), Array(r)) => self.combine_arrays(l, r, |a, b| self.divide(a, b)),
+            (Array(arr), v) => self.map_array(arr, |x| self.divide(x, v.clone())),
+            (v, Array(arr)) => self.map_array(arr, |x| self.divide(v.clone(), x)),
+            (l, r) => {
+                let d = denom_num(&r);
+                if matches!(d, Ok(n) if n == 0.0) {
+                    return Ok(LiteralValue::Error("#DIV/0!".into()));
+                }
+                let (ln, rn) = match (self.coerce_number(&l), d) {
+                    (Ok(a), Ok(b)) => (a, b),
+                    (Err(e), _) | (_, Err(e)) => {
+                        return Ok(LiteralValue::Error(e.kind.to_string()));
+                    }
+                };
+                Ok(LiteralValue::Number(ln / rn))
+            }
+        }
+    }
+
+    fn power(&self, left: LiteralValue, right: LiteralValue) -> Result<LiteralValue, ExcelError> {
+        let try_pow = |a: f64, b: f64| {
+            if a < 0.0 && b.fract() != 0.0 {
+                None
+            } else {
+                Some(a.powf(b))
+            }
+        };
+        self.numeric_binary(left, right, |a, b| try_pow(a, b).unwrap_or(f64::NAN))
+            .map(|v| {
+                if let LiteralValue::Number(n) = &v {
+                    if n.is_nan() || n.is_infinite() {
+                        return LiteralValue::Error("#NUM!".into());
+                    }
+                }
+                v
+            })
+    }
+
+    fn map_array<F>(&self, arr: Vec<Vec<LiteralValue>>, f: F) -> Result<LiteralValue, ExcelError>
+    where
+        F: Fn(LiteralValue) -> Result<LiteralValue, ExcelError> + Copy,
+    {
+        let mut out = Vec::with_capacity(arr.len());
+        for row in arr {
+            let mut new_row = Vec::with_capacity(row.len());
+            for cell in row {
+                new_row.push(match f(cell) {
+                    Ok(v) => v,
+                    Err(e) => LiteralValue::Error(e.kind.to_string()),
+                });
+            }
+            out.push(new_row);
+        }
+        Ok(LiteralValue::Array(out))
+    }
+
+    fn combine_arrays<F>(
+        &self,
+        l: Vec<Vec<LiteralValue>>,
+        r: Vec<Vec<LiteralValue>>,
+        f: F,
+    ) -> Result<LiteralValue, ExcelError>
+    where
+        F: Fn(LiteralValue, LiteralValue) -> Result<LiteralValue, ExcelError> + Copy,
+    {
+        let rows = l.len().max(r.len());
+        let cols = l
+            .iter()
+            .map(|r| r.len())
+            .max()
+            .unwrap_or(0)
+            .max(r.iter().map(|r| r.len()).max().unwrap_or(0));
+        let mut out = Vec::with_capacity(rows);
+        for i in 0..rows {
+            let mut row = Vec::with_capacity(cols);
+            for j in 0..cols {
+                let lv = l
+                    .get(i)
+                    .and_then(|r| r.get(j))
+                    .cloned()
+                    .unwrap_or(LiteralValue::Empty);
+                let rv = r
+                    .get(i)
+                    .and_then(|r| r.get(j))
+                    .cloned()
+                    .unwrap_or(LiteralValue::Empty);
+                row.push(match f(lv, rv) {
+                    Ok(v) => v,
+                    Err(e) => LiteralValue::Error(e.kind.to_string()),
+                });
+            }
+            out.push(row);
+        }
+        Ok(LiteralValue::Array(out))
+    }
+
+    /* ---------- coercion helpers ---------- */
+    fn coerce_number(&self, v: &LiteralValue) -> Result<f64, ExcelError> {
+        use LiteralValue::*;
+        match v {
+            Number(n) => Ok(*n),
+            Int(i) => Ok(*i as f64),
+            Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
+            Text(s) => s.trim().parse::<f64>().map_err(|_| {
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message(format!("Cannot convert '{}' to number", s))
+            }),
+            Empty => Ok(0.0),
+            _ if v.as_serial_number().is_some() => Ok(v.as_serial_number().unwrap()),
+            Error(_) => Err(ExcelError::new(ExcelErrorKind::Value)),
+            _ => Err(ExcelError::new(ExcelErrorKind::Value)),
+        }
+    }
+
+    fn coerce_text(&self, v: &LiteralValue) -> String {
+        use LiteralValue::*;
+        match v {
+            Text(s) => s.clone(),
+            Number(n) => n.to_string(),
+            Int(i) => i.to_string(),
+            Boolean(b) => if *b { "TRUE" } else { "FALSE" }.into(),
+            Error(e) => e.clone(),
+            Empty => "".into(),
+            _ => format!("{:?}", v),
+        }
+    }
+
+    /* ---------- comparison ---------- */
+    fn compare(
+        &self,
+        op: &str,
+        left: LiteralValue,
+        right: LiteralValue,
+    ) -> Result<LiteralValue, ExcelError> {
+        use LiteralValue::*;
+        if matches!(left, Error(_)) {
+            return Ok(left);
+        }
+        if matches!(right, Error(_)) {
+            return Ok(right);
+        }
+
+        // arrays: element‑wise
+        match (left, right) {
+            (Array(l), Array(r)) => self.combine_arrays(l, r, |a, b| self.compare(op, a, b)),
+            (Array(arr), v) => self.map_array(arr, |x| self.compare(op, x, v.clone())),
+            (v, Array(arr)) => self.map_array(arr, |x| self.compare(op, v.clone(), x)),
+            (l, r) => {
+                let res = match (l, r) {
+                    (Number(a), Number(b)) => self.cmp_f64(a, b, op),
+                    (Int(a), Number(b)) => self.cmp_f64(a as f64, b, op),
+                    (Number(a), Int(b)) => self.cmp_f64(a, b as f64, op),
+                    (Boolean(a), Boolean(b)) => {
+                        self.cmp_f64(if a { 1.0 } else { 0.0 }, if b { 1.0 } else { 0.0 }, op)
+                    }
+                    (Text(a), Text(b)) => self.cmp_text(&a, &b, op),
+                    (a, b) => {
+                        // fallback to numeric coercion or text compare
+                        let an = self.coerce_number(&a).ok();
+                        let bn = self.coerce_number(&b).ok();
+                        if let (Some(a), Some(b)) = (an, bn) {
+                            self.cmp_f64(a, b, op)
+                        } else {
+                            self.cmp_text(&self.coerce_text(&a), &self.coerce_text(&b), op)
+                        }
+                    }
+                };
+                Ok(LiteralValue::Boolean(res))
+            }
+        }
+    }
+
+    fn cmp_f64(&self, a: f64, b: f64, op: &str) -> bool {
+        match op {
+            "=" => a == b,
+            "<>" => a != b,
+            ">" => a > b,
+            "<" => a < b,
+            ">=" => a >= b,
+            "<=" => a <= b,
+            _ => unreachable!(),
+        }
+    }
+    fn cmp_text(&self, a: &str, b: &str, op: &str) -> bool {
+        let (a, b) = (a.to_ascii_lowercase(), b.to_ascii_lowercase());
+        self.cmp_f64(
+            a.cmp(&b) as i32 as f64,
+            0.0,
+            match op {
+                "=" => "=",
+                "<>" => "<>",
+                ">" => ">",
+                "<" => "<",
+                ">=" => ">=",
+                "<=" => "<=",
+                _ => unreachable!(),
+            },
+        )
+    }
+}
+</file>
+
+<file path="crates/formualizer-eval/src/lib.rs">
+pub mod error;
+pub mod function_registry;
+pub mod interpreter;
+pub mod traits;
+
+pub mod builtins;
+
+mod macros;
+pub mod test_workbook;
+
+mod tests;
+</file>
+
+<file path="crates/formualizer-eval/src/test_workbook.rs">
+//! crates/formualizer-eval/src/test_workbook.rs
+//! --------------------------------------------
+//! Lightweight in-memory workbook for unit/prop tests.
+//!
+//! # Example
+//! ```
+//! use formualizer_eval::test_workbook::TestWorkbook;
+//! use formualizer_core::types::LiteralValue as V;
+//! use formualizer_eval::with_fns;
+//!
+//! use formualizer_eval::builtins::logical::{__FnTRUE, __FnAND};
+//!
+//! let wb = TestWorkbook::new()
+//!            .with_cell_a1("Sheet1", "A1", V::Number(42.0))
+//!            .with_named_range("Answer", vec![vec![V::Number(42.0)]])
+//!            .with_fns(with_fns![__FnTRUE, __FnAND]);
+//!
+//! let interp = wb.interpreter();
+//! let ast = formualizer_core::parser::Parser::from("=AND(TRUE(),A1=42)").unwrap().parse().unwrap();
+//! let result = interp.evaluate_ast(&ast).unwrap();
+//! assert_eq!(result, V::Boolean(true));
+//! ```
+//!
+//! (Add `pub mod test_workbook;` in `lib.rs` to re-export.)
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::error::{ExcelError, ExcelErrorKind};
+use crate::traits::*;
+use formualizer_core::parser::TableReference;
+use formualizer_core::types::LiteralValue;
+
+type V = LiteralValue;
+type CellKey = (u32, u32); // 1-based (row, col)
+
+#[derive(Default, Clone)]
+struct Sheet {
+    cells: HashMap<CellKey, V>,
+}
+
+#[derive(Default)]
+pub struct TestWorkbook {
+    sheets: HashMap<String, Sheet>,
+    named: HashMap<String, Vec<Vec<V>>>,
+    tables: HashMap<String, Box<dyn Table>>,
+    fns: HashMap<(&'static str, &'static str), Arc<dyn Function>>,
+}
+
+impl TestWorkbook {
+    /* ─────────────── constructors ─────────────── */
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /* ─────────────── cell helpers ─────────────── */
+    pub fn with_cell<S: Into<String>>(mut self, sheet: S, row: u32, col: u32, v: V) -> Self {
+        let sh = self.sheets.entry(sheet.into()).or_default();
+        sh.cells.insert((row, col), v);
+        self
+    }
+
+    /// `"A1"` style convenience (upper/lower insensitive, absolute `$` ignored)
+    pub fn with_cell_a1<S: Into<String>, A: AsRef<str>>(self, sheet: S, a1: A, v: V) -> Self {
+        let (col, row) = parse_a1(a1.as_ref()).expect("bad A1 ref in with_cell_a1");
+        self.with_cell(sheet, row, col, v)
+    }
+
+    /// Bulk insert rectangular data starting at top-left (row, col)
+    pub fn with_range<S: Into<String>>(
+        mut self,
+        sheet: S,
+        row: u32,
+        col: u32,
+        data: Vec<Vec<V>>,
+    ) -> Self {
+        let sh = self.sheets.entry(sheet.into()).or_default();
+        for (r_off, r) in data.into_iter().enumerate() {
+            for (c_off, v) in r.into_iter().enumerate() {
+                sh.cells.insert((row + r_off as u32, col + c_off as u32), v);
+            }
+        }
+        self
+    }
+
+    /* ─────────────── named ranges ─────────────── */
+    pub fn with_named_range<S: Into<String>>(mut self, name: S, data: Vec<Vec<V>>) -> Self {
+        self.named.insert(name.into(), data);
+        self
+    }
+
+    /* ─────────────── tables (placeholder) ─────── */
+    pub fn with_table<T: Table + 'static, S: Into<String>>(mut self, name: S, table: T) -> Self {
+        self.tables.insert(name.into(), Box::new(table));
+        self
+    }
+
+    /* ─────────────── function helpers ─────────── */
+    pub fn with_fn<F: Function + 'static>(mut self, f: F) -> Self {
+        self.fns.insert((f.namespace(), f.name()), Arc::new(f));
+        self
+    }
+    pub fn with_fn_arc(mut self, f: Arc<dyn Function>) -> Self {
+        self.fns.insert((f.namespace(), f.name()), f);
+        self
+    }
+    pub fn with_fns(mut self, iter: impl IntoIterator<Item = Arc<dyn Function>>) -> Self {
+        for f in iter {
+            self = self.with_fn_arc(f);
+        }
+        self
+    }
+
+    /* ─────────────── interpreter shortcut ─────── */
+    pub fn interpreter(self) -> crate::interpreter::Interpreter {
+        crate::interpreter::Interpreter::new(Box::new(self))
+    }
+}
+
+/* ─────────────────────── trait impls ─────────────────────── */
+impl ReferenceResolver for TestWorkbook {
+    fn resolve_cell_reference(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+    ) -> Result<V, ExcelError> {
+        let sheet_name = sheet.unwrap_or("Sheet1");
+        self.sheets
+            .get(sheet_name)
+            .and_then(|sh| sh.cells.get(&(row, col)).cloned())
+            .ok_or_else(|| ExcelError::from(ExcelErrorKind::Ref))
+    }
+}
+
+impl RangeResolver for TestWorkbook {
+    fn resolve_range_reference(
+        &self,
+        sheet: Option<&str>,
+        sr: Option<u32>,
+        sc: Option<u32>,
+        er: Option<u32>,
+        ec: Option<u32>,
+    ) -> Result<Box<dyn Range>, ExcelError> {
+        // naive rectangular materialisation (no full-row/col handling)
+        let (sr, sc, er, ec) = match (sr, sc, er, ec) {
+            (Some(sr), Some(sc), Some(er), Some(ec)) => (sr, sc, er, ec),
+            _ => return Err(ExcelError::from(ExcelErrorKind::NImpl)),
+        };
+        let sheet_name = sheet.unwrap_or("Sheet1");
+        let sh = self
+            .sheets
+            .get(sheet_name)
+            .ok_or_else(|| ExcelError::from(ExcelErrorKind::Ref))?;
+        let mut data = Vec::with_capacity((er - sr + 1) as usize);
+        for r in sr..=er {
+            let mut row_vec = Vec::with_capacity((ec - sc + 1) as usize);
+            for c in sc..=ec {
+                row_vec.push(sh.cells.get(&(r, c)).cloned().unwrap_or(V::Empty));
+            }
+            data.push(row_vec);
+        }
+        Ok(Box::new(crate::traits::InMemoryRange::new(data)))
+    }
+}
+
+impl NamedRangeResolver for TestWorkbook {
+    fn resolve_named_range_reference(&self, name: &str) -> Result<Vec<Vec<V>>, ExcelError> {
+        self.named
+            .get(name)
+            .cloned()
+            .ok_or_else(|| ExcelError::from(ExcelErrorKind::Ref))
+    }
+}
+
+impl TableResolver for TestWorkbook {
+    fn resolve_table_reference(&self, tref: &TableReference) -> Result<Box<dyn Table>, ExcelError> {
+        self.tables
+            .get(&tref.name)
+            .map(|table_box| table_box.as_ref().clone_box())
+            .ok_or_else(|| ExcelError::from(ExcelErrorKind::NImpl))
+    }
+}
+
+impl FunctionProvider for TestWorkbook {
+    fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
+        self.fns.get(&(ns, name)).cloned()
+    }
+}
+
+/* blanket */
+impl Resolver for TestWorkbook {}
+
+/* ─────────────────────── util macros ─────────────────────── */
+/// Handy inside `with_fns!(__FnSUM, __FnAVERAGE, …)`
+#[macro_export]
+macro_rules! with_fns {
+    ($($wrapper:path),+ $(,)?) => {
+        [$(
+            std::sync::Arc::new($wrapper) as std::sync::Arc<dyn $crate::traits::Function>
+        ),+]
+    };
+}
+
+/* ─────────────────────── A1 parser ───────────────────────── */
+fn parse_a1(a1: &str) -> Option<(u32, u32)> {
+    // strip $ and uppercase
+    let s = a1.replace('$', "").to_uppercase();
+    let mut col = 0u32;
+    let mut row_str = String::new();
+    for ch in s.chars() {
+        if ch.is_ascii_alphabetic() {
+            col = col * 26 + (ch as u32 - 'A' as u32 + 1);
+        } else if ch.is_ascii_digit() {
+            row_str.push(ch);
+        } else {
+            return None;
+        }
+    }
+    if col == 0 || row_str.is_empty() {
+        return None;
+    }
+    let row = row_str.parse::<u32>().ok()?;
+    Some((col, row))
+}
+</file>
+
+<file path="crates/formualizer-eval/src/traits.rs">
+//! formualizer-eval – core traits (object-safe)
+//!
+//! Save/replace as `src/traits.rs`
+
+use std::any::Any;
+use std::borrow::Cow;
+use std::fmt::Debug;
+use std::sync::Arc;
+
+use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType, TableSpecifier};
+use formualizer_core::types::LiteralValue;
+
+use crate::error::{ExcelError, ExcelErrorKind};
+use crate::interpreter::Interpreter;
+
+/* ───────────────────────────── Range ───────────────────────────── */
+
+pub trait Range: Debug + Send + Sync {
+    fn get(&self, row: usize, col: usize) -> Result<LiteralValue, ExcelError>;
+    fn dimensions(&self) -> (usize, usize);
+
+    fn is_sparse(&self) -> bool {
+        false
+    }
+    fn materialise(&self) -> Cow<'_, [Vec<LiteralValue>]> {
+        Cow::Owned(
+            (0..self.dimensions().0)
+                .map(|r| {
+                    (0..self.dimensions().1)
+                        .map(|c| self.get(r, c).unwrap_or(LiteralValue::Empty))
+                        .collect()
+                })
+                .collect(),
+        )
+    }
+
+    fn iter_cells<'a>(&'a self) -> Box<dyn Iterator<Item = LiteralValue> + 'a> {
+        let (rows, cols) = self.dimensions();
+        Box::new((0..rows).flat_map(move |r| (0..cols).map(move |c| self.get(r, c).unwrap())))
+    }
+    fn iter_rows<'a>(&'a self) -> Box<dyn Iterator<Item = Vec<LiteralValue>> + 'a> {
+        let (rows, cols) = self.dimensions();
+        Box::new((0..rows).map(move |r| (0..cols).map(|c| self.get(r, c).unwrap()).collect()))
+    }
+
+    /* down-cast hook for SIMD back-ends */
+    fn as_any(&self) -> &dyn Any;
+}
+
+/* blanket dyn passthrough */
+impl Range for Box<dyn Range> {
+    fn get(&self, r: usize, c: usize) -> Result<LiteralValue, ExcelError> {
+        (**self).get(r, c)
+    }
+    fn dimensions(&self) -> (usize, usize) {
+        (**self).dimensions()
+    }
+    fn is_sparse(&self) -> bool {
+        (**self).is_sparse()
+    }
+    fn materialise(&self) -> Cow<'_, [Vec<LiteralValue>]> {
+        (**self).materialise()
+    }
+    fn iter_cells<'a>(&'a self) -> Box<dyn Iterator<Item = LiteralValue> + 'a> {
+        (**self).iter_cells()
+    }
+    fn iter_rows<'a>(&'a self) -> Box<dyn Iterator<Item = Vec<LiteralValue>> + 'a> {
+        (**self).iter_rows()
+    }
+    fn as_any(&self) -> &dyn Any {
+        (**self).as_any()
+    }
+}
+
+/* ────────────────────── ArgumentHandle helpers ───────────────────── */
+
+pub type CowValue<'a> = Cow<'a, LiteralValue>;
+
+pub enum EvaluatedArg<'a> {
+    LiteralValue(CowValue<'a>),
+    Range(Box<dyn Range>),
+}
+
+pub struct ArgumentHandle<'a> {
+    node: &'a ASTNode,
+    interp: &'a Interpreter,
+}
+
+impl<'a> ArgumentHandle<'a> {
+    pub(crate) fn new(node: &'a ASTNode, interp: &'a Interpreter) -> Self {
+        Self { node, interp }
+    }
+
+    pub fn value(&self) -> Result<CowValue<'_>, ExcelError> {
+        if let ASTNodeType::Literal(ref v) = self.node.node_type {
+            return Ok(Cow::Borrowed(v));
+        }
+        self.interp.evaluate_ast(self.node).map(Cow::Owned)
+    }
+
+    pub fn range(&self) -> Result<Box<dyn Range>, ExcelError> {
+        match &self.node.node_type {
+            ASTNodeType::Reference { reference, .. } => {
+                self.interp.context.resolve_range_like(reference)
+            }
+            ASTNodeType::Array(rows) => {
+                let mut materialized = Vec::new();
+                for row in rows {
+                    let mut materialized_row = Vec::new();
+                    for cell in row {
+                        materialized_row.push(self.interp.evaluate_ast(cell)?);
+                    }
+                    materialized.push(materialized_row);
+                }
+                Ok(Box::new(InMemoryRange::new(materialized)))
+            }
+            _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message(format!("Expected a range, got {:?}", self.node.node_type))),
+        }
+    }
+
+    pub fn value_or_range(&self) -> Result<EvaluatedArg<'_>, ExcelError> {
+        self.range()
+            .map(EvaluatedArg::Range)
+            .or_else(|_| self.value().map(EvaluatedArg::LiteralValue))
+    }
+
+    pub fn ast(&self) -> &'a ASTNode {
+        self.node
+    }
+
+    /* tiny validator helper for macro */
+    pub fn matches_kind(&self, k: ArgKind) -> Result<bool, ExcelError> {
+        use ArgKind::*;
+        Ok(match k {
+            Any => true,
+            Range => self.range().is_ok(),
+            Number => matches!(
+                self.value()?.as_ref(),
+                LiteralValue::Number(_) | LiteralValue::Int(_)
+            ),
+            Text => matches!(self.value()?.as_ref(), LiteralValue::Text(_)),
+            Logical => matches!(self.value()?.as_ref(), LiteralValue::Boolean(_)),
+        })
+    }
+}
+
+/* simple Vec-backed range */
+#[derive(Debug, Clone)]
+pub struct InMemoryRange {
+    data: Vec<Vec<LiteralValue>>,
+}
+impl InMemoryRange {
+    pub fn new(d: Vec<Vec<LiteralValue>>) -> Self {
+        Self { data: d }
+    }
+}
+impl Range for InMemoryRange {
+    fn get(&self, r: usize, c: usize) -> Result<LiteralValue, ExcelError> {
+        Ok(self
+            .data
+            .get(r)
+            .and_then(|row| row.get(c))
+            .cloned()
+            .unwrap_or(LiteralValue::Empty))
+    }
+    fn dimensions(&self) -> (usize, usize) {
+        (self.data.len(), self.data.first().map_or(0, |r| r.len()))
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/* ───────────────────────── Table abstraction ───────────────────────── */
+
+pub trait Table: Debug + Send + Sync {
+    fn get_cell(&self, row: usize, column: &str) -> Result<LiteralValue, ExcelError>;
+    fn get_column(&self, column: &str) -> Result<Box<dyn Range>, ExcelError>;
+    fn clone_box(&self) -> Box<dyn Table>;
+}
+impl Table for Box<dyn Table> {
+    fn get_cell(&self, r: usize, c: &str) -> Result<LiteralValue, ExcelError> {
+        (**self).get_cell(r, c)
+    }
+    fn get_column(&self, c: &str) -> Result<Box<dyn Range>, ExcelError> {
+        (**self).get_column(c)
+    }
+    fn clone_box(&self) -> Box<dyn Table> {
+        (**self).clone_box()
+    }
+}
+
+/* ─────────────────────── Resolver super-trait ─────────────────────── */
+
+pub trait ReferenceResolver {
+    fn resolve_cell_reference(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+    ) -> Result<LiteralValue, ExcelError>;
+}
+pub trait RangeResolver {
+    fn resolve_range_reference(
+        &self,
+        sheet: Option<&str>,
+        sr: Option<u32>,
+        sc: Option<u32>,
+        er: Option<u32>,
+        ec: Option<u32>,
+    ) -> Result<Box<dyn Range>, ExcelError>;
+}
+pub trait NamedRangeResolver {
+    fn resolve_named_range_reference(
+        &self,
+        name: &str,
+    ) -> Result<Vec<Vec<LiteralValue>>, ExcelError>;
+}
+pub trait TableResolver {
+    fn resolve_table_reference(
+        &self,
+        tref: &formualizer_core::parser::TableReference,
+    ) -> Result<Box<dyn Table>, ExcelError>;
+}
+pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + TableResolver {
+    fn resolve_range_like(&self, r: &ReferenceType) -> Result<Box<dyn Range>, ExcelError> {
+        match r {
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => self.resolve_range_reference(
+                sheet.as_deref(),
+                *start_row,
+                *start_col,
+                *end_row,
+                *end_col,
+            ),
+            ReferenceType::Table(tref) => {
+                let t = self.resolve_table_reference(tref)?;
+                if let Some(TableSpecifier::Column(c)) = &tref.specifier {
+                    t.get_column(c)
+                } else {
+                    Err(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                        "Table specifier {:?} not supported",
+                        tref.specifier
+                    )))
+                }
+            }
+            ReferenceType::NamedRange(n) => {
+                let v = self.resolve_named_range_reference(n)?;
+                Ok(Box::new(InMemoryRange::new(v)))
+            }
+            ReferenceType::Cell { sheet, row, col } => {
+                let v = self.resolve_cell_reference(sheet.as_deref(), *row, *col)?;
+                Ok(Box::new(InMemoryRange::new(vec![vec![v]])))
+            }
+        }
+    }
+}
+
+/* ───────────────────── EvaluationContext = Resolver+Fns ───────────── */
+
+pub trait FunctionProvider {
+    fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>>;
+}
+pub trait EvaluationContext: Resolver + FunctionProvider {}
+impl<T> EvaluationContext for T where T: Resolver + FunctionProvider {}
+
+/* ─────────────────── Function metadata (object-safe) ───────────────── */
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ArgKind {
+    Number,
+    Text,
+    Logical,
+    Range,
+    Any,
+}
+#[derive(Copy, Clone, Debug)]
+pub struct ArgSpec {
+    pub kind: ArgKind,
+    pub required: bool,
+}
+impl ArgSpec {
+    pub const fn new(kind: ArgKind) -> Self {
+        Self {
+            kind,
+            required: true,
+        }
+    }
+}
+
+/// Excel-style callable – **object-safe** (no associated consts)
+pub trait Function: Send + Sync + 'static {
+    /* metadata getters */
+    fn name(&self) -> &'static str;
+    fn namespace(&self) -> &'static str {
+        ""
+    }
+    fn volatile(&self) -> bool {
+        false
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn variadic(&self) -> bool {
+        false
+    }
+    fn arg_schema(&self) -> &'static [ArgSpec] {
+        &[]
+    }
+
+    /* core work */
+    fn eval(
+        &self,
+        args: &[ArgumentHandle],
+        ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError>;
+}
+</file>
+
+<file path="crates/formualizer-eval/Cargo.toml">
+[package]
+name = "formualizer-eval"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+formualizer-core = { path = "../formualizer-core" }
+formualizer-macros  = { path = "../formualizer-macros" }
+once_cell = "1.21.3"
+</file>
+
+<file path="crates/formualizer-macros/src/lib.rs">
+//! crates/formualizer-macros/src/lib.rs
+//! ------------------------------------
+//! `#[excel_fn]` – wrap a plain Rust function so it implements
+//! `crate::traits::Function`.
+//!
+//!   * **No eager argument validation.**
+//!   * **No automatic registration.**
+//!
+//! The caller registers the wrapper manually, e.g.:
+//!
+//! ```rust
+//! use std::sync::Arc;
+//! use formualizer_eval::function_registry;
+//!
+//! mod logical;           // contains TRUE/FALSE/etc
+//!
+//! pub fn init_functions() {
+//!     function_registry::register(Arc::new(logical::__FnTRUE));
+//!     function_registry::register(Arc::new(logical::__FnFALSE));
+//! }
+//! ```
+//!
+//! (Every wrapper is a zero-field unit struct, so `__FnTRUE` is a value.)
+//!
+use proc_macro::TokenStream;
+use quote::{format_ident, quote};
+use syn::{AttributeArgs, ItemFn, Lit, Meta, NestedMeta, parse_macro_input};
+
+/* ───────────────────────── local ArgKind proxy ────────────────────── */
+#[derive(Copy, Clone)]
+enum LocalArgKind {
+    Number,
+    Text,
+    Logical,
+    Range,
+    Any,
+}
+impl LocalArgKind {
+    fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "number" => Self::Number,
+            "text" => Self::Text,
+            "logical" => Self::Logical,
+            "range" => Self::Range,
+            "" | "_" | "any" => Self::Any,
+            other => panic!("Unknown arg kind '{}'", other),
+        }
+    }
+}
+
+/* ────────────────────────── the attribute macro ───────────────────── */
+#[proc_macro_attribute]
+pub fn excel_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
+    /* -------- 1 · parse inputs -------- */
+    let args = parse_macro_input!(attr as AttributeArgs);
+    let func_item = parse_macro_input!(item as ItemFn);
+
+    /* -------- 2 · defaults -------- */
+    let mut attr_name = func_item.sig.ident.to_string();
+    let mut namespace = String::new();
+    let mut min_args = 0usize;
+    let mut variadic = false;
+    let mut volatile = false;
+    let mut arg_kinds = Vec::<LocalArgKind>::new();
+
+    /* -------- 3 · examine #[excel_fn(...)] -------- */
+    for meta in args {
+        match meta {
+            NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("name") => {
+                if let Lit::Str(s) = &nv.lit {
+                    attr_name = s.value();
+                }
+            }
+            NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("namespace") => {
+                if let Lit::Str(s) = &nv.lit {
+                    namespace = s.value();
+                }
+            }
+            NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("min") => {
+                if let Lit::Int(i) = &nv.lit {
+                    min_args = i.base10_parse::<usize>().unwrap();
+                }
+            }
+            NestedMeta::Meta(Meta::Path(p)) if p.is_ident("variadic") => variadic = true,
+            NestedMeta::Meta(Meta::Path(p)) if p.is_ident("volatile") => volatile = true,
+            NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("arg_types") => {
+                if let Lit::Str(list) = nv.lit {
+                    arg_kinds = list.value().split(',').map(LocalArgKind::parse).collect();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /* -------- 4 · build ArgSpec slice -------- */
+    let arg_spec_tokens = arg_kinds.iter().map(|k| {
+        let variant = match k {
+            LocalArgKind::Number => quote! { Number  },
+            LocalArgKind::Text => quote! { Text    },
+            LocalArgKind::Logical => quote! { Logical },
+            LocalArgKind::Range => quote! { Range   },
+            LocalArgKind::Any => quote! { Any     },
+        };
+        quote! { crate::traits::ArgSpec::new(crate::traits::ArgKind::#variant) }
+    });
+
+    /* -------- 5 · names for generated items -------- */
+    let vis = &func_item.vis;
+    let user_fn_ident = &func_item.sig.ident;
+    let wrapper_ident = format_ident!("__Fn{}", attr_name.to_uppercase());
+
+    /* -------- 6 · assemble expanded code -------- */
+    let expanded = quote! {
+        #func_item                            /* original user fn */
+
+        #vis struct #wrapper_ident;
+
+        impl crate::traits::Function for #wrapper_ident {
+            fn name(&self)      -> &'static str { #attr_name }
+            fn namespace(&self) -> &'static str { #namespace }
+            fn volatile(&self)  -> bool         { #volatile }
+            fn min_args(&self)  -> usize        { #min_args }
+            fn variadic(&self)  -> bool         { #variadic }
+            fn arg_schema(&self)-> &'static [crate::traits::ArgSpec] {
+                const SCHEMA: &[crate::traits::ArgSpec] = &[ #(#arg_spec_tokens),* ];
+                SCHEMA
+            }
+
+            fn eval(
+                &self,
+                args: &[crate::traits::ArgumentHandle],
+                ctx : &dyn crate::traits::EvaluationContext
+            ) -> Result<formualizer_core::types::LiteralValue, crate::error::ExcelError>
+            {
+                // zero eager evaluation – user code decides what to touch
+                #user_fn_ident(args, ctx)
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+</file>
+
+<file path="crates/formualizer-macros/Cargo.toml">
+[package]
+name = "formualizer-macros"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn   = { version = "1.0", features = ["full"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+</file>
+
+<file path="crates/formualizer-core/src/hasher.rs">
+use std::hash::Hasher;
+/// FNV-1a 64-bit hasher implementation
+/// This is a dependency-free implementation of the FNV-1a hash algorithm
+pub struct FnvHasher {
+    hash: u64,
+}
+
+const FNV_PRIME: u64 = 1099511628211;
+const FNV_OFFSET_BASIS: u64 = 14695981039346656037;
+
+impl FnvHasher {
+    pub fn new() -> Self {
+        FnvHasher {
+            hash: FNV_OFFSET_BASIS,
+        }
+    }
+}
+
+impl Hasher for FnvHasher {
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.hash ^= byte as u64;
+            self.hash = self.hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+}
+
+pub type FormulaHasher = FnvHasher;
+</file>
+
+<file path="crates/formualizer-core/src/lib.rs">
+mod hasher;
+pub mod parser;
+pub mod pretty;
+mod tests;
+pub mod tokenizer;
+pub mod types;
+
+pub use parser::{ASTNode, ASTNodeType};
+pub use pretty::{pretty_parse_render, pretty_print};
+pub use tokenizer::{Token, TokenSubType, TokenType, Tokenizer, TokenizerError};
+pub use types::{LiteralValue, ParsingError, ValueError};
+</file>
+
+<file path="crates/formualizer-core/src/parser.rs">
+use crate::tokenizer::{Associativity, Token, TokenSubType, TokenType, TokenizerError};
+use crate::types::{LiteralValue, ParsingError};
+
+use crate::hasher::FormulaHasher;
+use once_cell::sync::Lazy;
+use regex::Regex;
+use std::error::Error;
+use std::fmt::{self, Display};
+use std::hash::Hasher;
+
+/// A custom error type for the parser.
+#[derive(Debug)]
+pub struct ParserError {
+    pub message: String,
+    pub position: Option<usize>,
+}
+
+impl Display for ParserError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(pos) = self.position {
+            write!(f, "ParserError at position {}: {}", pos, self.message)
+        } else {
+            write!(f, "ParserError: {}", self.message)
+        }
+    }
+}
+
+impl Error for ParserError {}
+
+static CELL_REF_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\$?([A-Za-z]+)\$?(\d+)$").unwrap());
+static COLUMN_REF_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\$?([A-Za-z]+)$").unwrap());
+static ROW_REF_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\$?(\d+)$").unwrap());
+static SHEET_REF_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^'?([^!']+)'?!(.+)$").unwrap());
+
+/// A structured table reference specifier for accessing specific parts of a table
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum TableSpecifier {
+    /// The entire table
+    All,
+    /// The data area of the table (no headers or totals)
+    Data,
+    /// The headers row
+    Headers,
+    /// The totals row
+    Totals,
+    /// A specific row
+    Row(TableRowSpecifier),
+    /// A specific column
+    Column(String),
+    /// A range of columns
+    ColumnRange(String, String),
+    /// Special items like #Headers, #Data, #Totals, etc.
+    SpecialItem(SpecialItem),
+    /// A combination of specifiers, for complex references
+    Combination(Vec<TableSpecifier>),
+}
+
+/// Specifies which row(s) to use in a table reference
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum TableRowSpecifier {
+    /// The current row (context dependent)
+    Current,
+    /// All rows
+    All,
+    /// Data rows only
+    Data,
+    /// Headers row
+    Headers,
+    /// Totals row
+    Totals,
+    /// Specific row by index (1-based)
+    Index(u32),
+}
+
+/// Special items in structured references
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum SpecialItem {
+    /// The #Headers item
+    Headers,
+    /// The #Data item
+    Data,
+    /// The #Totals item
+    Totals,
+    /// The #All item (the whole table)
+    All,
+    /// The @ item (current row)
+    ThisRow,
+}
+
+/// A reference to a table including specifiers
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct TableReference {
+    /// The name of the table
+    pub name: String,
+    /// Optional specifier for which part of the table to use
+    pub specifier: Option<TableSpecifier>,
+}
+
+/// A reference to something outside the cell.
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum ReferenceType {
+    Cell {
+        sheet: Option<String>,
+        row: u32,
+        col: u32,
+    },
+    Range {
+        sheet: Option<String>,
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+    },
+    Table(TableReference),
+    NamedRange(String),
+}
+
+impl Display for TableSpecifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TableSpecifier::All => write!(f, "#All"),
+            TableSpecifier::Data => write!(f, "#Data"),
+            TableSpecifier::Headers => write!(f, "#Headers"),
+            TableSpecifier::Totals => write!(f, "#Totals"),
+            TableSpecifier::Row(row_spec) => write!(f, "{}", row_spec),
+            TableSpecifier::Column(column) => write!(f, "{}", column),
+            TableSpecifier::ColumnRange(start, end) => write!(f, "{}:{}", start, end),
+            TableSpecifier::SpecialItem(item) => write!(f, "{}", item),
+            TableSpecifier::Combination(specs) => {
+                write!(f, "[")?;
+                for (i, spec) in specs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ",")?;
+                    }
+                    write!(f, "[{}]", spec)?;
+                }
+                write!(f, "]")
+            }
+        }
+    }
+}
+
+impl Display for TableRowSpecifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TableRowSpecifier::Current => write!(f, "@"),
+            TableRowSpecifier::All => write!(f, "#All"),
+            TableRowSpecifier::Data => write!(f, "#Data"),
+            TableRowSpecifier::Headers => write!(f, "#Headers"),
+            TableRowSpecifier::Totals => write!(f, "#Totals"),
+            TableRowSpecifier::Index(idx) => write!(f, "{}", idx),
+        }
+    }
+}
+
+impl Display for SpecialItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SpecialItem::Headers => write!(f, "#Headers"),
+            SpecialItem::Data => write!(f, "#Data"),
+            SpecialItem::Totals => write!(f, "#Totals"),
+            SpecialItem::All => write!(f, "#All"),
+            SpecialItem::ThisRow => write!(f, "@"),
+        }
+    }
+}
+
+impl Display for TableReference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(specifier) = &self.specifier {
+            write!(f, "{}[{}]", self.name, specifier)
+        } else {
+            write!(f, "{}", self.name)
+        }
+    }
+}
+
+impl Display for ReferenceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReferenceType::Cell { sheet, row, col } => write!(
+                f,
+                "Cell({}:{}:{})",
+                sheet.clone().unwrap_or_default(),
+                row,
+                col
+            ),
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => {
+                let start_row_str = start_row.map_or("*".to_string(), |r| r.to_string());
+                let start_col_str = start_col.map_or("*".to_string(), |c| c.to_string());
+                let end_row_str = end_row.map_or("*".to_string(), |r| r.to_string());
+                let end_col_str = end_col.map_or("*".to_string(), |c| c.to_string());
+
+                write!(
+                    f,
+                    "Range({}:{}:{}:{} sheet={})",
+                    start_row_str,
+                    start_col_str,
+                    end_row_str,
+                    end_col_str,
+                    sheet.clone().unwrap_or_default()
+                )
+            }
+            ReferenceType::Table(table_ref) => write!(f, "Table({})", table_ref),
+            ReferenceType::NamedRange(named_range) => write!(f, "NamedRange({})", named_range),
+        }
+    }
+}
+
+/// A helper function to normalize a reference string by parsing it and then
+/// returning the canonical form.
+pub fn normalise_reference(input: &str) -> Result<String, ParsingError> {
+    let reference = ReferenceType::parse(input)?;
+    Ok(reference.normalise())
+}
+
+impl ReferenceType {
+    /// Parse a reference string into a ReferenceType.
+    pub fn parse(reference: &str) -> Result<Self, ParsingError> {
+        // Check if this is a table reference
+        if reference.contains('[') && reference.contains(']') {
+            return Self::parse_table_reference(reference);
+        }
+
+        // Extract sheet name if present
+        let (sheet, ref_without_sheet) = Self::extract_sheet_name(reference);
+
+        // Check if this is a range reference (contains a colon)
+        if ref_without_sheet.contains(':') {
+            return Self::parse_range_reference(&ref_without_sheet, sheet);
+        }
+
+        // Try to parse as a cell reference
+        if let Ok((col, row)) = Self::parse_cell_reference(&ref_without_sheet) {
+            return Ok(ReferenceType::Cell { sheet, row, col });
+        }
+
+        // If we can't parse it as a cell, assume it's a named range
+        Ok(ReferenceType::NamedRange(reference.to_string()))
+    }
+
+    /// Return a canonical A1 / structured ref string. Uses uppercase
+    /// column letters, no dollar signs, sheet names quoted only when
+    /// containing specials, and preserves range/table semantics.
+    pub fn normalise(&self) -> String {
+        match self {
+            ReferenceType::Cell { sheet, row, col } => {
+                let col_str = Self::number_to_column(*col); // Already returns uppercase
+                let row_str = row.to_string();
+
+                if let Some(sheet_name) = sheet {
+                    // Only quote sheet name if it contains spaces or special characters
+                    if sheet_name.contains(' ')
+                        || sheet_name.contains('!')
+                        || sheet_name.contains('\'')
+                        || sheet_name.contains('\"')
+                    {
+                        format!("'{}'!{}{}", sheet_name, col_str, row_str)
+                    } else {
+                        format!("{}!{}{}", sheet_name, col_str, row_str)
+                    }
+                } else {
+                    format!("{}{}", col_str, row_str)
+                }
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => {
+                // Format start reference
+                let start_ref = match (start_col, start_row) {
+                    (Some(col), Some(row)) => format!("{}{}", Self::number_to_column(*col), row),
+                    (Some(col), None) => Self::number_to_column(*col),
+                    (None, Some(row)) => row.to_string(),
+                    (None, None) => "".to_string(), // Should not happen in normal usage
+                };
+
+                // Format end reference
+                let end_ref = match (end_col, end_row) {
+                    (Some(col), Some(row)) => format!("{}{}", Self::number_to_column(*col), row),
+                    (Some(col), None) => Self::number_to_column(*col),
+                    (None, Some(row)) => row.to_string(),
+                    (None, None) => "".to_string(), // Should not happen in normal usage
+                };
+
+                let range_part = format!("{}:{}", start_ref, end_ref);
+
+                if let Some(sheet_name) = sheet {
+                    // Only quote sheet name if it contains spaces or special characters
+                    if sheet_name.contains(' ')
+                        || sheet_name.contains('!')
+                        || sheet_name.contains('\'')
+                        || sheet_name.contains('\"')
+                    {
+                        format!("'{}'!{}", sheet_name, range_part)
+                    } else {
+                        format!("{}!{}", sheet_name, range_part)
+                    }
+                } else {
+                    range_part
+                }
+            }
+            ReferenceType::Table(table_ref) => {
+                if let Some(specifier) = &table_ref.specifier {
+                    // For table references, we need to handle column specifiers specially
+                    // to remove leading/trailing whitespace
+                    match specifier {
+                        TableSpecifier::Column(column) => {
+                            format!("{}[{}]", table_ref.name, column.trim())
+                        }
+                        TableSpecifier::ColumnRange(start, end) => {
+                            format!("{}[{}:{}]", table_ref.name, start.trim(), end.trim())
+                        }
+                        _ => {
+                            // For other specifiers, use the standard formatting
+                            format!("{}[{}]", table_ref.name, specifier)
+                        }
+                    }
+                } else {
+                    table_ref.name.clone()
+                }
+            }
+            ReferenceType::NamedRange(name) => name.clone(),
+        }
+    }
+
+    /// Extract a sheet name from a reference.
+    fn extract_sheet_name(reference: &str) -> (Option<String>, String) {
+        if let Some(captures) = SHEET_REF_REGEX.captures(reference) {
+            let sheet = captures.get(1).unwrap().as_str();
+            let reference = captures.get(2).unwrap().as_str();
+            (Some(sheet.to_string()), reference.to_string())
+        } else {
+            (None, reference.to_string())
+        }
+    }
+
+    /// Parse a table reference like "Table1[Column1]" or more complex ones like "Table1[[#All],[Column1]:[Column2]]".
+    fn parse_table_reference(reference: &str) -> Result<Self, ParsingError> {
+        // Check if there's at least a table name followed by a bracket
+        let parts: Vec<&str> = reference.split('[').collect();
+        if parts.len() < 2 {
+            return Err(ParsingError::InvalidReference(reference.to_string()));
+        }
+
+        // We need to identify the table name, which is the part before the first '['
+        let table_name = parts[0].trim();
+        if table_name.is_empty() {
+            return Err(ParsingError::InvalidReference(reference.to_string()));
+        }
+
+        // Extract the specifier content by finding the closing bracket
+        let specifier_str = &reference[table_name.len()..];
+
+        // Parse the table specifier
+        let specifier = Self::parse_table_specifier(specifier_str)?;
+
+        Ok(ReferenceType::Table(TableReference {
+            name: table_name.to_string(),
+            specifier,
+        }))
+    }
+
+    /// Parse a table specifier like "[Column1]" or "[[#All],[Column1]:[Column2]]"
+    fn parse_table_specifier(specifier_str: &str) -> Result<Option<TableSpecifier>, ParsingError> {
+        if specifier_str.is_empty() || !specifier_str.starts_with('[') {
+            return Ok(None);
+        }
+
+        // Find balanced closing bracket
+        let mut depth = 0;
+        let mut end_pos = 0;
+
+        for (i, c) in specifier_str.chars().enumerate() {
+            if c == '[' {
+                depth += 1;
+            } else if c == ']' {
+                depth -= 1;
+                if depth == 0 {
+                    end_pos = i;
+                    break;
+                }
+            }
+        }
+
+        if depth != 0 || end_pos == 0 {
+            return Err(ParsingError::InvalidReference(format!(
+                "Unbalanced brackets in table specifier: {}",
+                specifier_str
+            )));
+        }
+
+        // Extract content between outermost brackets
+        let content = &specifier_str[1..end_pos];
+
+        // Handle different types of specifiers
+        if content.is_empty() {
+            // Empty brackets means the whole table
+            return Ok(Some(TableSpecifier::All));
+        }
+
+        // Handle special items
+        if content.starts_with("#") {
+            return Self::parse_special_item(content);
+        }
+
+        // Handle column references
+        if !content.contains('[') && !content.contains('#') {
+            if content.contains(':') {
+                // Handle column range
+                let parts: Vec<&str> = content.split(':').collect();
+                if parts.len() == 2 {
+                    return Ok(Some(TableSpecifier::ColumnRange(
+                        parts[0].trim().to_string(),
+                        parts[1].trim().to_string(),
+                    )));
+                }
+            } else {
+                // Single column
+                return Ok(Some(TableSpecifier::Column(content.trim().to_string())));
+            }
+        }
+
+        // Handle complex structured references with nested brackets
+        if content.contains('[') {
+            return Self::parse_complex_table_specifier(content);
+        }
+
+        // If we can't determine the type, just use the raw specifier
+        Ok(Some(TableSpecifier::Column(content.trim().to_string())))
+    }
+
+    /// Parse a special item specifier like "#Headers", "#Data", etc.
+    fn parse_special_item(content: &str) -> Result<Option<TableSpecifier>, ParsingError> {
+        match content {
+            "#All" => Ok(Some(TableSpecifier::SpecialItem(SpecialItem::All))),
+            "#Headers" => Ok(Some(TableSpecifier::SpecialItem(SpecialItem::Headers))),
+            "#Data" => Ok(Some(TableSpecifier::SpecialItem(SpecialItem::Data))),
+            "#Totals" => Ok(Some(TableSpecifier::SpecialItem(SpecialItem::Totals))),
+            "@" => Ok(Some(TableSpecifier::Row(TableRowSpecifier::Current))),
+            _ => Err(ParsingError::InvalidReference(format!(
+                "Unknown special item: {}",
+                content
+            ))),
+        }
+    }
+
+    /// Parse complex table specifiers with nested brackets
+    fn parse_complex_table_specifier(
+        content: &str,
+    ) -> Result<Option<TableSpecifier>, ParsingError> {
+        // This is a more complex case like [[#Headers],[Column1]:[Column2]]
+        // For now, we'll just store the raw specifier and enhance this in the future
+
+        // Try to identify common patterns
+        if content.contains("[#Headers]")
+            || content.contains("[#All]")
+            || content.contains("[#Data]")
+            || content.contains("[#Totals]")
+        {
+            // This is likely a combination of special items and columns
+            // For now, return as a raw specifier
+            return Ok(Some(TableSpecifier::Column(content.to_string())));
+        }
+
+        // Default fallback
+        Ok(Some(TableSpecifier::Column(content.to_string())))
+    }
+
+    /// Parse a range reference like "A1:B2", "A:A", "1:1", "A1:A", etc.
+    fn parse_range_reference(reference: &str, sheet: Option<String>) -> Result<Self, ParsingError> {
+        let parts: Vec<&str> = reference.split(':').collect();
+        if parts.len() != 2 {
+            return Err(ParsingError::InvalidReference(reference.to_string()));
+        }
+
+        let start_part = parts[0];
+        let end_part = parts[1];
+
+        // Parse start reference
+        let (start_col, start_row) = Self::parse_range_part(start_part)?;
+
+        // Parse end reference
+        let (end_col, end_row) = Self::parse_range_part(end_part)?;
+
+        Ok(ReferenceType::Range {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+        })
+    }
+
+    /// Parse a part of a range reference (either start or end).
+    /// Returns (column, row) where either can be None for infinite ranges.
+    fn parse_range_part(part: &str) -> Result<(Option<u32>, Option<u32>), ParsingError> {
+        // Try to parse as a normal cell reference (A1, B2, etc.)
+        if let Ok((col, row)) = Self::parse_cell_reference(part) {
+            return Ok((Some(col), Some(row)));
+        }
+
+        // Try to parse as a column-only reference (A, B, etc.)
+        if let Some(captures) = COLUMN_REF_REGEX.captures(part) {
+            let col_str = captures.get(1).unwrap().as_str();
+            let col = Self::column_to_number(col_str)?;
+            return Ok((Some(col), None));
+        }
+
+        // Try to parse as a row-only reference (1, 2, etc.)
+        if let Some(captures) = ROW_REF_REGEX.captures(part) {
+            let row_str = captures.get(1).unwrap().as_str();
+            let row = row_str
+                .parse::<u32>()
+                .map_err(|_| ParsingError::InvalidReference(format!("Invalid row: {}", row_str)))?;
+            return Ok((None, Some(row)));
+        }
+
+        // If we can't parse it as any known format, return an error
+        Err(ParsingError::InvalidReference(format!(
+            "Invalid range part: {}",
+            part
+        )))
+    }
+
+    /// Parse a cell reference like "A1" into (column, row).
+    fn parse_cell_reference(reference: &str) -> Result<(u32, u32), ParsingError> {
+        if let Some(captures) = CELL_REF_REGEX.captures(reference) {
+            let col_str = captures.get(1).unwrap().as_str();
+            let row_str = captures.get(2).unwrap().as_str();
+
+            let col = Self::column_to_number(col_str)?;
+            let row = row_str
+                .parse::<u32>()
+                .map_err(|_| ParsingError::InvalidReference(format!("Invalid row: {}", row_str)))?;
+
+            Ok((col, row))
+        } else {
+            Err(ParsingError::InvalidReference(format!(
+                "Invalid cell reference: {}",
+                reference
+            )))
+        }
+    }
+
+    /// Convert a column letter (e.g., "A", "BC") to a column number (1-based).
+    pub(crate) fn column_to_number(column: &str) -> Result<u32, ParsingError> {
+        let mut result = 0u32;
+        for c in column.chars() {
+            if !c.is_ascii_alphabetic() {
+                return Err(ParsingError::InvalidReference(format!(
+                    "Invalid column: {}",
+                    column
+                )));
+            }
+            result = result * 26 + (c.to_ascii_uppercase() as u32 - 'A' as u32 + 1);
+        }
+        Ok(result)
+    }
+
+    /// Convert a column number to a column letter.
+    pub(crate) fn number_to_column(mut num: u32) -> String {
+        let mut result = String::new();
+        while num > 0 {
+            num -= 1;
+            result.insert(0, ((num % 26) as u8 + b'A') as char);
+            num /= 26;
+        }
+        result
+    }
+
+    /// Get the Excel-style string representation of this reference
+    pub fn to_excel_string(&self) -> String {
+        match self {
+            ReferenceType::Cell { sheet, row, col } => {
+                if let Some(s) = sheet {
+                    format!("{}!{}{}", s, Self::number_to_column(*col), row)
+                } else {
+                    format!("{}{}", Self::number_to_column(*col), row)
+                }
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => {
+                // Format start reference
+                let start_ref = match (start_col, start_row) {
+                    (Some(col), Some(row)) => format!("{}{}", Self::number_to_column(*col), row),
+                    (Some(col), None) => Self::number_to_column(*col),
+                    (None, Some(row)) => row.to_string(),
+                    (None, None) => "".to_string(), // Should not happen in normal usage
+                };
+
+                // Format end reference
+                let end_ref = match (end_col, end_row) {
+                    (Some(col), Some(row)) => format!("{}{}", Self::number_to_column(*col), row),
+                    (Some(col), None) => Self::number_to_column(*col),
+                    (None, Some(row)) => row.to_string(),
+                    (None, None) => "".to_string(), // Should not happen in normal usage
+                };
+
+                let range_part = format!("{}:{}", start_ref, end_ref);
+
+                if let Some(s) = sheet {
+                    if s.contains(' ') {
+                        format!("'{}'!{}", s, range_part)
+                    } else {
+                        format!("{}!{}", s, range_part)
+                    }
+                } else {
+                    range_part
+                }
+            }
+            ReferenceType::Table(table_ref) => {
+                if let Some(specifier) = &table_ref.specifier {
+                    format!("{}[{}]", table_ref.name, specifier)
+                } else {
+                    table_ref.name.clone()
+                }
+            }
+            ReferenceType::NamedRange(name) => name.clone(),
+        }
+    }
+}
+
+/// The different types of AST nodes.
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum ASTNodeType {
+    Literal(LiteralValue),
+    Reference {
+        original: String, // Original reference string (preserved for display/debugging)
+        reference: ReferenceType, // Parsed reference
+    },
+    UnaryOp {
+        op: String,
+        expr: Box<ASTNode>,
+    },
+    BinaryOp {
+        op: String,
+        left: Box<ASTNode>,
+        right: Box<ASTNode>,
+    },
+    Function {
+        name: String,
+        args: Vec<ASTNode>,
+    },
+    Array(Vec<Vec<ASTNode>>),
+}
+
+impl Display for ASTNodeType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ASTNodeType::Literal(value) => write!(f, "{:?}", value),
+            ASTNodeType::Reference { original, .. } => write!(f, "Reference({})", original),
+            ASTNodeType::UnaryOp { op, expr } => write!(f, "UnaryOp({}, {:?})", op, expr),
+            ASTNodeType::BinaryOp { op, left, right } => {
+                write!(f, "BinaryOp({}, {:?}, {:?})", op, left, right)
+            }
+            ASTNodeType::Function { name, args } => write!(f, "Function({}, {:?})", name, args),
+            ASTNodeType::Array(rows) => write!(f, "Array({:?})", rows),
+        }
+    }
+}
+
+/// A node in the abstract syntax tree.
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct ASTNode {
+    pub node_type: ASTNodeType,
+    pub source_token: Option<Token>,
+}
+
+impl Display for ASTNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ASTNode(node_type={:?}, source_token={:?})",
+            self.node_type, self.source_token
+        )
+    }
+}
+
+impl Eq for ASTNode {}
+
+impl ASTNode {
+    /// Create a new AST node.
+    pub fn new(node_type: ASTNodeType, source_token: Option<Token>) -> Self {
+        ASTNode {
+            node_type,
+            source_token,
+        }
+    }
+
+    /// Hash of structure and literal values; ignores whitespace,
+    /// source_token field, and reference *casing* (use .normalise()).
+    /// This produces a deterministic fingerprint that can be used for caching.
+    pub fn fingerprint(&self) -> u64 {
+        let mut hasher = FormulaHasher::new();
+
+        self.hash_structure(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Helper method to hash the AST structure recursively
+    fn hash_structure(&self, hasher: &mut FormulaHasher) {
+        // Hash the node type discriminant to distinguish between different node types
+        // We create a single byte to represent the variant
+        match &self.node_type {
+            ASTNodeType::Literal(value) => {
+                hasher.write(&[1]); // Discriminant for Literal
+                match value {
+                    LiteralValue::Int(i) => {
+                        hasher.write(&[1]); // Int subtype
+                        hasher.write(&i.to_le_bytes());
+                    }
+                    LiteralValue::Number(n) => {
+                        hasher.write(&[2]); // Number subtype
+                        hasher.write(&n.to_bits().to_le_bytes());
+                    }
+                    LiteralValue::Text(s) => {
+                        hasher.write(&[3]); // Text subtype
+                        hasher.write(s.as_bytes());
+                    }
+                    LiteralValue::Boolean(b) => {
+                        hasher.write(&[4]); // Boolean subtype
+                        hasher.write(&[*b as u8]);
+                    }
+                    LiteralValue::Error(e) => {
+                        hasher.write(&[5]); // Error subtype
+                        hasher.write(e.as_bytes());
+                    }
+                    LiteralValue::Date(d) => {
+                        hasher.write(&[6]); // Date subtype
+                        hasher.write(&d.to_string().as_bytes());
+                    }
+                    LiteralValue::Time(t) => {
+                        hasher.write(&[7]); // Time subtype
+                        hasher.write(&t.to_string().as_bytes());
+                    }
+                    LiteralValue::DateTime(dt) => {
+                        hasher.write(&[8]); // DateTime subtype
+                        hasher.write(&dt.to_string().as_bytes());
+                    }
+                    LiteralValue::Duration(dur) => {
+                        hasher.write(&[9]); // Duration subtype
+                        hasher.write(&dur.to_string().as_bytes());
+                    }
+                    LiteralValue::Array(a) => {
+                        hasher.write(&[10]); // Array subtype
+                        // Hash array dimensions
+                        hasher.write(&(a.len() as u64).to_le_bytes());
+                        for row in a {
+                            hasher.write(&(row.len() as u64).to_le_bytes());
+                            for cell in row {
+                                // Recursively hash each value in the array
+                                match cell {
+                                    LiteralValue::Int(i) => {
+                                        hasher.write(&[1]);
+                                        hasher.write(&i.to_le_bytes());
+                                    }
+                                    LiteralValue::Number(n) => {
+                                        hasher.write(&[2]);
+                                        hasher.write(&n.to_bits().to_le_bytes());
+                                    }
+                                    LiteralValue::Text(s) => {
+                                        hasher.write(&[3]);
+                                        hasher.write(s.as_bytes());
+                                    }
+                                    LiteralValue::Boolean(b) => {
+                                        hasher.write(&[4]);
+                                        hasher.write(&[*b as u8]);
+                                    }
+                                    LiteralValue::Error(e) => {
+                                        hasher.write(&[5]);
+                                        hasher.write(e.as_bytes());
+                                    }
+                                    LiteralValue::Date(d) => {
+                                        hasher.write(&[6]); // Date subtype
+                                        hasher.write(&d.to_string().as_bytes());
+                                    }
+                                    LiteralValue::Time(t) => {
+                                        hasher.write(&[7]); // Time subtype
+                                        hasher.write(&t.to_string().as_bytes());
+                                    }
+                                    LiteralValue::DateTime(dt) => {
+                                        hasher.write(&[8]); // DateTime subtype
+                                        hasher.write(&dt.to_string().as_bytes());
+                                    }
+                                    LiteralValue::Duration(dur) => {
+                                        hasher.write(&[9]); // Duration subtype
+                                        hasher.write(&dur.to_string().as_bytes());
+                                    }
+                                    LiteralValue::Array(_) => {
+                                        // For simplicity, we don't support nested arrays
+                                        hasher.write(&[10]);
+                                    }
+                                    LiteralValue::Empty => {
+                                        hasher.write(&[11]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    LiteralValue::Empty => {
+                        hasher.write(&[11]); // Empty subtype
+                    }
+                }
+            }
+            ASTNodeType::Reference { reference, .. } => {
+                hasher.write(&[2]); // Discriminant for Reference
+
+                // Use the normalized form to ignore case differences
+                let normalized = reference.normalise();
+                hasher.write(normalized.as_bytes());
+            }
+            ASTNodeType::UnaryOp { op, expr } => {
+                hasher.write(&[3]); // Discriminant for UnaryOp
+                hasher.write(op.as_bytes());
+                expr.hash_structure(hasher);
+            }
+            ASTNodeType::BinaryOp { op, left, right } => {
+                hasher.write(&[4]); // Discriminant for BinaryOp
+                hasher.write(op.as_bytes());
+                left.hash_structure(hasher);
+                right.hash_structure(hasher);
+            }
+            ASTNodeType::Function { name, args } => {
+                hasher.write(&[5]); // Discriminant for Function
+
+                // Use lowercase function name to be case-insensitive
+                let name_lower = name.to_lowercase();
+                hasher.write(name_lower.as_bytes());
+
+                // Hash the number of arguments
+                hasher.write(&(args.len() as u64).to_le_bytes());
+
+                // Hash each argument in order
+                for arg in args {
+                    arg.hash_structure(hasher);
+                }
+            }
+            ASTNodeType::Array(rows) => {
+                hasher.write(&[6]); // Discriminant for Array
+
+                // Hash array dimensions
+                hasher.write(&(rows.len() as u64).to_le_bytes());
+
+                // Hash each row in row-major order
+                for row in rows {
+                    hasher.write(&(row.len() as u64).to_le_bytes());
+                    for cell in row {
+                        cell.hash_structure(hasher);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Create a new reference node, parsing the reference string immediately.
+    pub fn new_reference(
+        reference_str: String,
+        source_token: Option<Token>,
+    ) -> Result<Self, ParserError> {
+        // Parse the reference string right away
+        let reference = ReferenceType::parse(&reference_str).map_err(|e| ParserError {
+            message: format!("Failed to parse reference '{}': {}", reference_str, e),
+            position: None,
+        })?;
+
+        Ok(ASTNode {
+            node_type: ASTNodeType::Reference {
+                original: reference_str,
+                reference,
+            },
+            source_token,
+        })
+    }
+
+    /// Get the reference type directly from a Reference node
+    pub fn get_reference_type(&self) -> Option<&ReferenceType> {
+        match &self.node_type {
+            ASTNodeType::Reference { reference, .. } => Some(reference),
+            _ => None,
+        }
+    }
+
+    /// Get all reference dependencies of this AST node.
+    pub fn get_dependencies(&self) -> Vec<&ReferenceType> {
+        let mut dependencies = Vec::new();
+        self.collect_dependencies(&mut dependencies);
+        dependencies
+    }
+
+    /// Get string representations of all dependencies in this AST node.
+    pub fn get_dependency_strings(&self) -> Vec<String> {
+        self.get_dependencies()
+            .into_iter()
+            .map(|r| r.to_excel_string())
+            .collect()
+    }
+
+    fn collect_dependencies<'a>(&'a self, dependencies: &mut Vec<&'a ReferenceType>) {
+        match &self.node_type {
+            ASTNodeType::Reference { reference, .. } => {
+                dependencies.push(reference);
+            }
+            ASTNodeType::UnaryOp { expr, .. } => {
+                expr.collect_dependencies(dependencies);
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                left.collect_dependencies(dependencies);
+                right.collect_dependencies(dependencies);
+            }
+            ASTNodeType::Function { args, .. } => {
+                for arg in args {
+                    arg.collect_dependencies(dependencies);
+                }
+            }
+            ASTNodeType::Array(rows) => {
+                for row in rows {
+                    for cell in row {
+                        cell.collect_dependencies(dependencies);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+/// A parser for Excel formulas.
+pub struct Parser {
+    tokens: Vec<Token>,
+    current: usize,
+    include_whitespace: bool,
+}
+
+impl Parser {
+    /// Create a new parser from a formula string.
+    pub fn from(formula: &str) -> Result<Self, TokenizerError> {
+        let tokenizer = crate::Tokenizer::new(formula)?;
+        Ok(Parser::new(tokenizer.items, false))
+    }
+
+    /// Create a new parser.
+    pub fn new(tokens: Vec<Token>, include_whitespace: bool) -> Self {
+        Parser {
+            tokens,
+            current: 0,
+            include_whitespace,
+        }
+    }
+
+    /// Parse the formula into an AST.
+    pub fn parse(&mut self) -> Result<ASTNode, ParserError> {
+        // Handle literal formulas (non-formulas)
+        if !self.tokens.is_empty() && self.tokens[0].token_type == TokenType::Literal {
+            return Ok(ASTNode::new(
+                ASTNodeType::Literal(LiteralValue::Text(self.tokens[0].value.clone())),
+                Some(self.tokens[0].clone()),
+            ));
+        }
+
+        // Skip whitespace if we're not including it
+        if !self.include_whitespace {
+            self.skip_whitespace();
+        }
+
+        let result = self.expression(0)?; // Start with lowest precedence
+
+        // Make sure we consumed all tokens
+        if self.current < self.tokens.len() {
+            if self.tokens[self.current].token_type == TokenType::Whitespace
+                && !self.include_whitespace
+            {
+                self.skip_whitespace();
+            }
+
+            if self.current < self.tokens.len() {
+                return Err(ParserError {
+                    message: format!("Unexpected token: {}", self.tokens[self.current]),
+                    position: Some(self.current),
+                });
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Skip whitespace tokens.
+    fn skip_whitespace(&mut self) {
+        while self.current < self.tokens.len()
+            && self.tokens[self.current].token_type == TokenType::Whitespace
+        {
+            self.current += 1;
+        }
+    }
+
+    /// Parse an expression with a minimum precedence level.
+    fn expression(&mut self, min_precedence: u8) -> Result<ASTNode, ParserError> {
+        if !self.include_whitespace {
+            self.skip_whitespace();
+        }
+
+        // Parse prefix operators or primary expression
+        let mut expr = if self.check_token(TokenType::OpPrefix) {
+            let op_token = self.tokens[self.current].clone();
+            self.current += 1;
+
+            if !self.include_whitespace {
+                self.skip_whitespace();
+            }
+
+            let right = self.expression(7)?; // Prefix has high precedence
+
+            ASTNode::new(
+                ASTNodeType::UnaryOp {
+                    op: op_token.value.clone(),
+                    expr: Box::new(right),
+                },
+                Some(op_token),
+            )
+        } else {
+            self.primary()?
+        };
+
+        // Parse postfix operators
+        if self.check_token(TokenType::OpPostfix) {
+            let op_token = self.tokens[self.current].clone();
+            self.current += 1;
+
+            expr = ASTNode::new(
+                ASTNodeType::UnaryOp {
+                    op: op_token.value.clone(),
+                    expr: Box::new(expr),
+                },
+                Some(op_token),
+            );
+        }
+
+        // Parse infix operators with precedence climbing
+        while self.current < self.tokens.len() {
+            if !self.include_whitespace {
+                self.skip_whitespace();
+            }
+
+            if self.current >= self.tokens.len() {
+                break;
+            }
+
+            let token = &self.tokens[self.current];
+
+            if token.token_type != TokenType::OpInfix {
+                break;
+            }
+
+            let (precedence, associativity) = match token.get_precedence() {
+                Some(p) => p,
+                None => break,
+            };
+
+            if precedence < min_precedence {
+                break;
+            }
+
+            let op_token = token.clone();
+            self.current += 1;
+
+            if !self.include_whitespace {
+                self.skip_whitespace();
+            }
+
+            // For right-associative operators, use same precedence
+            // For left-associative operators, use precedence + 1
+            let next_min_precedence = match associativity {
+                Associativity::Left => precedence + 1,
+                Associativity::Right => precedence,
+            };
+
+            let right = self.expression(next_min_precedence)?;
+
+            expr = ASTNode::new(
+                ASTNodeType::BinaryOp {
+                    op: op_token.value.clone(),
+                    left: Box::new(expr),
+                    right: Box::new(right),
+                },
+                Some(op_token),
+            );
+        }
+
+        Ok(expr)
+    }
+
+    /// Parse a primary expression (literal, reference, function call, etc.).
+    fn primary(&mut self) -> Result<ASTNode, ParserError> {
+        if self.current >= self.tokens.len() {
+            return Err(ParserError {
+                message: "Unexpected end of formula".to_string(),
+                position: Some(self.current),
+            });
+        }
+
+        if !self.include_whitespace {
+            self.skip_whitespace();
+        }
+
+        let token = &self.tokens[self.current];
+
+        match token.token_type {
+            TokenType::Operand => {
+                self.current += 1;
+
+                match token.subtype {
+                    TokenSubType::Number => {
+                        let value = token.value.parse::<f64>().map_err(|_| ParserError {
+                            message: format!("Failed to parse number: {}", token.value),
+                            position: Some(self.current - 1),
+                        })?;
+
+                        Ok(ASTNode::new(
+                            ASTNodeType::Literal(LiteralValue::Number(value)),
+                            Some(token.clone()),
+                        ))
+                    }
+                    TokenSubType::Text => {
+                        // Handle text literals, possibly stripping quotes
+                        let text = if token.value.starts_with('"')
+                            && token.value.ends_with('"')
+                            && token.value.len() >= 2
+                        {
+                            // Process Excel's double-quote escaping (where "" represents a single " inside a string)
+                            token.value[1..token.value.len() - 1].replace("\"\"", "\"")
+                        } else {
+                            token.value.clone()
+                        };
+
+                        Ok(ASTNode::new(
+                            ASTNodeType::Literal(LiteralValue::Text(text)),
+                            Some(token.clone()),
+                        ))
+                    }
+                    TokenSubType::Logical => {
+                        let value = token.value == "TRUE";
+
+                        Ok(ASTNode::new(
+                            ASTNodeType::Literal(LiteralValue::Boolean(value)),
+                            Some(token.clone()),
+                        ))
+                    }
+                    TokenSubType::Error => Ok(ASTNode::new(
+                        ASTNodeType::Literal(LiteralValue::Error(token.value.clone())),
+                        Some(token.clone()),
+                    )),
+                    TokenSubType::Range => {
+                        ASTNode::new_reference(token.value.clone(), Some(token.clone()))
+                    }
+                    _ => Err(ParserError {
+                        message: format!("Unexpected operand subtype: {}", token.subtype),
+                        position: Some(self.current - 1),
+                    }),
+                }
+            }
+            TokenType::Paren => {
+                if token.subtype == TokenSubType::Open {
+                    self.current += 1;
+
+                    if !self.include_whitespace {
+                        self.skip_whitespace();
+                    }
+
+                    let expr = self.expression(0)?;
+
+                    // Expect closing parenthesis
+                    if !self.include_whitespace {
+                        self.skip_whitespace();
+                    }
+
+                    if !self.check_token_with_subtype(TokenType::Paren, TokenSubType::Close) {
+                        return Err(ParserError {
+                            message: "Expected closing parenthesis".to_string(),
+                            position: Some(self.current),
+                        });
+                    }
+
+                    self.current += 1;
+                    Ok(expr)
+                } else {
+                    Err(ParserError {
+                        message: "Unexpected closing parenthesis".to_string(),
+                        position: Some(self.current),
+                    })
+                }
+            }
+            TokenType::Func => self.parse_function_call(),
+            TokenType::Array => self.parse_array_literal(),
+            _ => Err(ParserError {
+                message: format!("Unexpected token: {}", token),
+                position: Some(self.current),
+            }),
+        }
+    }
+
+    /// Parse a function call.
+    fn parse_function_call(&mut self) -> Result<ASTNode, ParserError> {
+        let func_token = self.tokens[self.current].clone();
+        self.current += 1;
+
+        // Extract function name (remove trailing '(')
+        let name = func_token.value[..func_token.value.len() - 1].to_string();
+
+        let args = self.parse_function_arguments()?;
+
+        Ok(ASTNode::new(
+            ASTNodeType::Function { name, args },
+            Some(func_token),
+        ))
+    }
+
+    /// Parse function arguments.
+    fn parse_function_arguments(&mut self) -> Result<Vec<ASTNode>, ParserError> {
+        let mut args = Vec::new();
+
+        // Check for empty argument list
+        if !self.include_whitespace {
+            self.skip_whitespace();
+        }
+
+        if self.check_token_with_subtype(TokenType::Func, TokenSubType::Close) {
+            self.current += 1;
+            return Ok(args);
+        }
+
+        // Flag to track if we're at the beginning of an argument list or after a comma
+        let mut expect_arg = true;
+
+        loop {
+            if !self.include_whitespace {
+                self.skip_whitespace();
+            }
+
+            // Check if we're at the end of the argument list
+            if self.check_token_with_subtype(TokenType::Func, TokenSubType::Close) {
+                // End of function arguments
+                self.current += 1;
+
+                // If we were expecting an argument but found closing parenthesis,
+                // it means there's a trailing comma, which implies an empty last argument
+                if expect_arg {
+                    // Add an empty argument (represented as an empty string)
+                    args.push(ASTNode::new(
+                        ASTNodeType::Literal(LiteralValue::Text("".to_string())),
+                        None,
+                    ));
+                }
+
+                break;
+            }
+
+            // Check for consecutive commas (empty argument)
+            if expect_arg && self.check_token_with_subtype(TokenType::Sep, TokenSubType::Arg) {
+                // Found an empty argument
+                args.push(ASTNode::new(
+                    ASTNodeType::Literal(LiteralValue::Text("".to_string())),
+                    None,
+                ));
+
+                // Skip the comma and continue
+                self.current += 1;
+                expect_arg = true;
+                continue;
+            }
+
+            if expect_arg {
+                // Parse one argument
+                let arg = self.expression(0)?;
+                args.push(arg);
+            }
+
+            if !self.include_whitespace {
+                self.skip_whitespace();
+            }
+
+            if self.current >= self.tokens.len() {
+                return Err(ParserError {
+                    message: "Unexpected end of formula in function arguments".to_string(),
+                    position: Some(self.current),
+                });
+            }
+
+            if self.check_token_with_subtype(TokenType::Sep, TokenSubType::Arg) {
+                // Argument separator - continue to next argument
+                self.current += 1;
+                expect_arg = true;
+            } else if self.check_token_with_subtype(TokenType::Func, TokenSubType::Close) {
+                // End of function arguments
+                self.current += 1;
+                break;
+            } else {
+                return Err(ParserError {
+                    message: format!(
+                        "Expected argument separator or closing parenthesis, got: {}",
+                        self.tokens[self.current]
+                    ),
+                    position: Some(self.current),
+                });
+            }
+        }
+
+        Ok(args)
+    }
+
+    /// Parse an array literal.
+    fn parse_array_literal(&mut self) -> Result<ASTNode, ParserError> {
+        let array_token = self.tokens[self.current].clone();
+        self.current += 1;
+
+        let mut array = Vec::new();
+        let mut current_row = Vec::new();
+
+        loop {
+            if !self.include_whitespace {
+                self.skip_whitespace();
+            }
+
+            if self.current >= self.tokens.len() {
+                return Err(ParserError {
+                    message: "Unexpected end of formula in array".to_string(),
+                    position: Some(self.current),
+                });
+            }
+
+            if self.check_token_with_subtype(TokenType::Array, TokenSubType::Close) {
+                // End of array
+                self.current += 1;
+
+                if !current_row.is_empty() {
+                    array.push(current_row);
+                }
+
+                return Ok(ASTNode::new(ASTNodeType::Array(array), Some(array_token)));
+            } else if self.check_token(TokenType::Sep) {
+                self.current += 1;
+
+                if self.tokens[self.current - 1].subtype == TokenSubType::Row {
+                    // End of row
+                    array.push(current_row);
+                    current_row = Vec::new();
+                }
+                // Else it's an argument separator within the current row
+            } else {
+                let element = self.expression(0)?;
+                current_row.push(element);
+            }
+        }
+    }
+
+    /// Check if the current token matches the expected type.
+    fn check_token(&self, expected_type: TokenType) -> bool {
+        self.current < self.tokens.len() && self.tokens[self.current].token_type == expected_type
+    }
+
+    /// Check if the current token matches the expected type and subtype.
+    fn check_token_with_subtype(
+        &self,
+        expected_type: TokenType,
+        expected_subtype: TokenSubType,
+    ) -> bool {
+        self.current < self.tokens.len()
+            && self.tokens[self.current].token_type == expected_type
+            && self.tokens[self.current].subtype == expected_subtype
+    }
+}
+</file>
+
+<file path="crates/formualizer-core/src/pretty.rs">
+use crate::parser::{ASTNode, ASTNodeType, Parser, ParserError};
+use crate::tokenizer::Tokenizer;
+
+/// Pretty-prints an AST node according to canonical formatting rules.
+///
+/// Rules:
+/// - All functions upper-case, no spaces before '('
+/// - Commas followed by single space; no space before ','
+/// - Binary operators surrounded by single spaces
+/// - No superfluous parentheses (keeps semantics)
+/// - References printed via .normalise()
+/// - Array literals: {1, 2; 3, 4}
+pub fn pretty_print(ast: &ASTNode) -> String {
+    match &ast.node_type {
+        ASTNodeType::Literal(value) => {
+            format!("{}", value)
+        }
+        ASTNodeType::Reference { reference, .. } => reference.normalise(),
+        ASTNodeType::UnaryOp { op, expr } => {
+            format!("{}{}", op, pretty_print(expr))
+        }
+        ASTNodeType::BinaryOp { op, left, right } => {
+            // Special handling for range operator ':'
+            if op == ":" {
+                format!("{}:{}", pretty_print(left), pretty_print(right))
+            } else {
+                format!("{} {} {}", pretty_print(left), op, pretty_print(right))
+            }
+        }
+        ASTNodeType::Function { name, args } => {
+            let args_str = args
+                .iter()
+                .map(pretty_print)
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            format!("{}({})", name.to_uppercase(), args_str)
+        }
+        ASTNodeType::Array(rows) => {
+            let rows_str = rows
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(pretty_print)
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                })
+                .collect::<Vec<String>>()
+                .join("; ");
+
+            format!("{{{}}}", rows_str)
+        }
+    }
+}
+
+/// Tokenizes and parses a formula, then pretty-prints it.
+///
+/// Returns a Result with the pretty-printed formula or a parser error.
+pub fn pretty_parse_render(formula: &str) -> Result<String, ParserError> {
+    // Handle empty formula case
+    if formula.is_empty() {
+        return Ok(String::new());
+    }
+
+    // If formula doesn't start with '=', add it before parsing and remove it after
+    let needs_equals = !formula.starts_with('=');
+    let formula_to_parse = if needs_equals {
+        format!("={}", formula)
+    } else {
+        formula.to_string()
+    };
+
+    // Tokenize, parse, and pretty-print
+    let tokenizer = match Tokenizer::new(&formula_to_parse) {
+        Ok(t) => t,
+        Err(e) => {
+            return Err(ParserError {
+                message: format!("Tokenizer error: {}", e.message),
+                position: None,
+            });
+        }
+    };
+
+    let mut parser = Parser::new(tokenizer.items, false);
+    let ast = parser.parse()?;
+
+    // Format the result with '=' prefix
+    let pretty_printed = pretty_print(&ast);
+
+    // Return the result with appropriate '=' prefix
+    if needs_equals {
+        Ok(pretty_printed)
+    } else {
+        Ok(format!("={}", pretty_printed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pretty_print_validation() {
+        let original = "= sum(  a1 ,2 ) ";
+        let pretty = pretty_parse_render(original).unwrap();
+        assert_eq!(pretty, "=SUM(A1, 2)");
+
+        let round = pretty_parse_render(&pretty).unwrap();
+        assert_eq!(pretty, round); // idempotent
+    }
+
+    #[test]
+    fn test_ast_canonicalization() {
+        // Test that our pretty printer produces canonical form
+        let formula = "=sum(  a1, b2  )";
+        let pretty = pretty_parse_render(formula).unwrap();
+
+        // Check that the pretty printed version is canonicalized
+        assert_eq!(pretty, "=SUM(A1, B2)");
+
+        // Test round-trip consistency
+        let repretty = pretty_parse_render(&pretty).unwrap();
+        assert_eq!(pretty, repretty);
+    }
+
+    #[test]
+    fn test_pretty_print_operators() {
+        let formula = "=a1+b2*3";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "=A1 + B2 * 3");
+
+        let formula = "=a1 + b2 *     3";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "=A1 + B2 * 3");
+    }
+
+    #[test]
+    fn test_pretty_print_function_nesting() {
+        let formula = "=if(a1>0, sum(b1:b10), average(c1:c10))";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "=IF(A1 > 0, SUM(B1:B10), AVERAGE(C1:C10))");
+    }
+
+    #[test]
+    fn test_pretty_print_arrays() {
+        let formula = "={1,2;3,4}";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "={1, 2; 3, 4}");
+
+        let formula = "={1, 2; 3, 4}";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "={1, 2; 3, 4}");
+    }
+
+    #[test]
+    fn test_pretty_print_references() {
+        let formula = "=Sheet1!$a$1:$b$2";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "=Sheet1!A1:B2");
+
+        let formula = "='My Sheet'!a1";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "='My Sheet'!A1");
+    }
+}
+</file>
+
+<file path="crates/formualizer-core/src/tokenizer.rs">
+use std::error::Error;
+use std::fmt::{self, Display};
+
+const TOKEN_ENDERS: &str = ",;}) +-*/^&=><%";
+
+const fn build_token_enders() -> [bool; 256] {
+    let mut tbl = [false; 256];
+    let bytes = TOKEN_ENDERS.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        tbl[bytes[i] as usize] = true;
+        i += 1;
+    }
+    tbl
+}
+static TOKEN_ENDERS_TABLE: [bool; 256] = build_token_enders();
+
+#[inline(always)]
+fn is_token_ender(c: char) -> bool {
+    c.is_ascii() && TOKEN_ENDERS_TABLE[c as usize]
+}
+
+static ERROR_CODES: &[&str] = &[
+    "#NULL!",
+    "#DIV/0!",
+    "#VALUE!",
+    "#REF!",
+    "#NAME?",
+    "#NUM!",
+    "#N/A",
+    "#GETTING_DATA",
+];
+
+/// Represents operator associativity.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Associativity {
+    Left,
+    Right,
+}
+
+/// A custom error type for the tokenizer.
+#[derive(Debug)]
+pub struct TokenizerError {
+    pub message: String,
+}
+
+impl fmt::Display for TokenizerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TokenizerError: {}", self.message)
+    }
+}
+
+impl Error for TokenizerError {}
+
+/// The type of a token.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TokenType {
+    Literal,
+    Operand,
+    Func,
+    Array,
+    Paren,
+    Sep,
+    OpPrefix,
+    OpInfix,
+    OpPostfix,
+    Whitespace,
+}
+
+impl Display for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+/// The subtype of a token.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TokenSubType {
+    None,
+    Text,
+    Number,
+    Logical,
+    Error,
+    Range,
+    Open,
+    Close,
+    Arg,
+    Row,
+}
+
+impl Display for TokenSubType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+/// A token in an Excel formula.
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct Token {
+    pub value: String,
+    pub token_type: TokenType,
+    pub subtype: TokenSubType,
+}
+
+impl Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "<{} subtype: {:?} value: {}>",
+            self.token_type, self.subtype, self.value
+        )
+    }
+}
+
+impl Token {
+    pub fn new(value: String, token_type: TokenType, subtype: TokenSubType) -> Self {
+        Token {
+            value,
+            token_type,
+            subtype,
+        }
+    }
+
+    pub fn is_operator(&self) -> bool {
+        matches!(
+            self.token_type,
+            TokenType::OpPrefix | TokenType::OpInfix | TokenType::OpPostfix
+        )
+    }
+
+    pub fn get_precedence(&self) -> Option<(u8, Associativity)> {
+        // For a prefix operator, use the 'u' key.
+        let op = if self.token_type == TokenType::OpPrefix {
+            "u"
+        } else {
+            self.value.as_str()
+        };
+
+        match op {
+            ":" | " " | "," => Some((8, Associativity::Left)),
+            "u" => Some((7, Associativity::Right)),
+            "%" => Some((6, Associativity::Left)),
+            "^" => Some((5, Associativity::Left)),
+            "*" | "/" => Some((4, Associativity::Left)),
+            "+" | "-" => Some((3, Associativity::Left)),
+            "&" => Some((2, Associativity::Left)),
+            "=" | "<" | ">" | "<=" | ">=" | "<>" => Some((1, Associativity::Left)),
+            _ => None,
+        }
+    }
+
+    /// Create an operand token based on the value.
+    pub fn make_operand(value: String) -> Self {
+        let subtype = if value.starts_with('"') {
+            TokenSubType::Text
+        } else if value.starts_with('#') {
+            TokenSubType::Error
+        } else if value == "TRUE" || value == "FALSE" {
+            TokenSubType::Logical
+        } else if value.parse::<f64>().is_ok() {
+            TokenSubType::Number
+        } else {
+            TokenSubType::Range
+        };
+        Token::new(value, TokenType::Operand, subtype)
+    }
+
+    /// Create a subexpression token.
+    ///
+    /// `value` must end with one of '{', '}', '(' or ')'. If `func` is true,
+    /// the token’s type is forced to be Func.
+    pub fn make_subexp(value: &str, func: bool) -> Self {
+        let last_char = value.chars().last().expect("Empty token value");
+        assert!(matches!(last_char, '{' | '}' | '(' | ')'));
+        let token_type = if func {
+            TokenType::Func
+        } else if "{}".contains(last_char) {
+            TokenType::Array
+        } else if "()".contains(last_char) {
+            TokenType::Paren
+        } else {
+            TokenType::Func
+        };
+        let subtype = if ")}".contains(last_char) {
+            TokenSubType::Close
+        } else {
+            TokenSubType::Open
+        };
+        Token::new(value.to_string(), token_type, subtype)
+    }
+
+    /// Given an opener token, return its corresponding closer token.
+    pub fn get_closer(&self) -> Result<Token, TokenizerError> {
+        if self.subtype != TokenSubType::Open {
+            return Err(TokenizerError {
+                message: "Token is not an opener".to_string(),
+            });
+        }
+        let closer_value = if self.token_type == TokenType::Array {
+            "}"
+        } else {
+            ")"
+        };
+        Ok(Token::make_subexp(
+            closer_value,
+            self.token_type == TokenType::Func,
+        ))
+    }
+
+    /// Create a separator token.
+    pub fn make_separator(value: &str) -> Self {
+        assert!(value == "," || value == ";");
+        let subtype = if value == "," {
+            TokenSubType::Arg
+        } else {
+            TokenSubType::Row
+        };
+        Token::new(value.to_string(), TokenType::Sep, subtype)
+    }
+}
+
+/// A tokenizer for Excel worksheet formulas.
+pub struct Tokenizer {
+    formula: Vec<char>, // The formula as a vector of characters.
+    pub items: Vec<Token>,
+    token_stack: Vec<Token>,
+    offset: usize,
+    token: Vec<char>, // Accumulator for the current token.
+}
+
+impl Tokenizer {
+    /// Create a new tokenizer and immediately parse the formula.
+    pub fn new(formula: &str) -> Result<Self, TokenizerError> {
+        let mut tokenizer = Tokenizer {
+            formula: formula.chars().collect(),
+            items: Vec::with_capacity(formula.len() * 6), // Very safe estimate of 6 characters per token
+            token_stack: Vec::with_capacity(64),
+            offset: 0,
+            token: Vec::with_capacity(64),
+        };
+        tokenizer.parse()?;
+        Ok(tokenizer)
+    }
+
+    /// Parse the formula into tokens.
+    fn parse(&mut self) -> Result<(), TokenizerError> {
+        if self.offset != 0 {
+            return Ok(());
+        }
+        if self.formula.is_empty() {
+            return Ok(());
+        } else if self.formula[0] == '=' {
+            self.offset += 1;
+        } else {
+            let formula_str: String = self.formula.iter().collect();
+            self.items.push(Token::new(
+                formula_str,
+                TokenType::Literal,
+                TokenSubType::None,
+            ));
+            return Ok(());
+        }
+
+        while self.offset < self.formula.len() {
+            if self.check_scientific_notation()? {
+                continue;
+            }
+            let curr_char = self.formula[self.offset];
+            if is_token_ender(curr_char) {
+                self.save_token();
+            }
+            // Dispatch based on the current character.
+            let consumed = match curr_char {
+                '"' | '\'' => self.parse_string()?,
+                '[' => self.parse_brackets()?,
+                '#' => self.parse_error()?,
+                ' ' | '\n' => self.parse_whitespace()?,
+                // operator characters
+                '+' | '-' | '*' | '/' | '^' | '&' | '=' | '>' | '<' | '%' => {
+                    self.parse_operator()?
+                }
+                '{' | '(' => self.parse_opener()?,
+                ')' | '}' => self.parse_closer()?,
+                ';' | ',' => self.parse_separator()?,
+                _ => {
+                    self.token.push(curr_char);
+                    1
+                }
+            };
+            self.offset += consumed;
+        }
+        self.save_token();
+        Ok(())
+    }
+
+    /// If the current token looks like a number in scientific notation,
+    /// consume the '+' or '-' as part of the number.
+    fn check_scientific_notation(&mut self) -> Result<bool, TokenizerError> {
+        let curr_char = self.formula[self.offset];
+        if (curr_char == '+' || curr_char == '-')
+            && !self.token.is_empty()
+            && self.is_scientific_notation_base()
+        {
+            self.token.push(curr_char);
+            self.offset += 1;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Helper: Determine if the current accumulated token is the base of a
+    /// scientific notation number (e.g., "1.23E" or "9e").
+    fn is_scientific_notation_base(&self) -> bool {
+        let token = &self.token;
+        if token.len() < 2 {
+            return false;
+        }
+        let last = token[token.len() - 1];
+        if !(last == 'E' || last == 'e') {
+            return false;
+        }
+        let first = token[0];
+        if !('1'..='9').contains(&first) {
+            return false;
+        }
+        let mut dot_seen = false;
+        // Iterate over everything except the first and last characters.
+        for &ch in &token[1..token.len() - 1] {
+            match ch {
+                '0'..='9' => {}
+                '.' if !dot_seen => dot_seen = true,
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Ensure that there is no unconsumed token (or that it ends in an allowed character).
+    fn assert_empty_token(&self, can_follow: Option<&[char]>) -> Result<(), TokenizerError> {
+        if !self.token.is_empty() {
+            if let Some(allowed) = can_follow {
+                let last_char = *self.token.last().unwrap();
+                if !allowed.contains(&last_char) {
+                    return Err(TokenizerError {
+                        message: format!(
+                            "Unexpected character at position {} in '{}'",
+                            self.offset,
+                            self.formula.iter().collect::<String>()
+                        ),
+                    });
+                }
+            } else {
+                return Err(TokenizerError {
+                    message: format!(
+                        "Unexpected character at position {} in '{}'",
+                        self.offset,
+                        self.formula.iter().collect::<String>()
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// If there is an accumulated token, convert it to an operand token and add it to the list.
+    fn save_token(&mut self) {
+        if !self.token.is_empty() {
+            let token_str: String = self.token.iter().collect();
+            self.items.push(Token::make_operand(token_str));
+            self.token.clear();
+        }
+    }
+
+    /// Parse a string (or link) literal.
+    fn parse_string(&mut self) -> Result<usize, TokenizerError> {
+        let delim = self.formula[self.offset];
+        assert!(delim == '"' || delim == '\'');
+
+        // If we're parsing a single-quoted string and the token is just a $,
+        // don't save it as a separate token - it's part of the cell reference
+        let is_dollar_ref =
+            delim == '\'' && !self.token.is_empty() && self.token.iter().collect::<String>() == "$";
+
+        if !is_dollar_ref {
+            self.assert_empty_token(Some(&[':']))?;
+            self.save_token();
+        }
+
+        // Manual parsing of quoted strings
+        let mut i = self.offset;
+        let formula_len = self.formula.len();
+
+        // Collect the characters of the string, including the delimiters
+        let mut string_chars = Vec::with_capacity(64);
+        string_chars.push(delim);
+
+        i += 1; // Skip the opening delimiter
+
+        let mut found_end = false;
+
+        while i < formula_len {
+            let ch = self.formula[i];
+            string_chars.push(ch);
+            i += 1;
+
+            if ch == delim {
+                // Check if this is an escaped quote or the end
+                if i < formula_len && self.formula[i] == delim {
+                    // This is an escaped quote (doubled quotes) - include it
+                    string_chars.push(self.formula[i]);
+                    i += 1;
+                } else {
+                    // This is the end of the string
+                    found_end = true;
+                    break;
+                }
+            }
+        }
+
+        // Check if we found the closing delimiter
+        if found_end {
+            let matched_str: String = string_chars.iter().collect();
+            let matched_len = string_chars.len();
+
+            if delim == '"' {
+                self.items.push(Token::make_operand(matched_str));
+            } else {
+                // For a single-quote delimited string (sheet name reference)
+                if is_dollar_ref {
+                    // Combine the $ with the matched string
+                    let dollar_str = format!("{}{}", "$", matched_str);
+                    self.token.clear();
+                    self.token.extend(dollar_str.chars());
+                } else {
+                    // Regular behavior
+                    self.token.extend(matched_str.chars());
+                }
+            }
+
+            Ok(matched_len)
+        } else {
+            // Error handling remains the same
+            let subtype = if delim == '"' { "string" } else { "link" };
+            Err(TokenizerError {
+                message: format!(
+                    "Reached end of formula while parsing {} in '{}'",
+                    subtype,
+                    self.formula.iter().collect::<String>()
+                ),
+            })
+        }
+    }
+
+    /// Parse the text between matching square brackets.
+    fn parse_brackets(&mut self) -> Result<usize, TokenizerError> {
+        assert_eq!(self.formula[self.offset], '[');
+        let start = self.offset;
+        let mut open_count = 0;
+        for i in self.offset..self.formula.len() {
+            if self.formula[i] == '[' {
+                open_count += 1;
+            } else if self.formula[i] == ']' {
+                open_count -= 1;
+            }
+            if open_count == 0 {
+                let outer_right = i - start + 1;
+                let s: String = self.formula[self.offset..self.offset + outer_right]
+                    .iter()
+                    .collect();
+                self.token.extend(s.chars());
+                return Ok(outer_right);
+            }
+        }
+        Err(TokenizerError {
+            message: format!(
+                "Encountered unmatched '[' in '{}'",
+                self.formula.iter().collect::<String>()
+            ),
+        })
+    }
+
+    /// Parse an error literal that starts with '#'.
+    fn parse_error(&mut self) -> Result<usize, TokenizerError> {
+        self.assert_empty_token(Some(&['!']))?;
+        assert_eq!(self.formula[self.offset], '#');
+        let remaining: String = self.formula[self.offset..].iter().collect();
+        for &err in ERROR_CODES.iter() {
+            if remaining.starts_with(err) {
+                let token_str: String = self.token.iter().collect();
+                let combined = format!("{}{}", token_str, err);
+                self.items.push(Token::make_operand(combined));
+                self.token.clear();
+                return Ok(err.len());
+            }
+        }
+        Err(TokenizerError {
+            message: format!(
+                "Invalid error code at position {} in '{}'",
+                self.offset,
+                self.formula.iter().collect::<String>()
+            ),
+        })
+    }
+
+    /// Parse a sequence of whitespace characters.
+    fn parse_whitespace(&mut self) -> Result<usize, TokenizerError> {
+        let start = self.offset;
+        let mut i = start;
+        while i < self.formula.len() {
+            let ch = self.formula[i];
+            if ch == ' ' || ch == '\n' {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        let matched_len = i - start;
+        let matched_str: String = self.formula[start..i].iter().collect();
+        self.items.push(Token::new(
+            matched_str,
+            TokenType::Whitespace,
+            TokenSubType::None,
+        ));
+        Ok(matched_len)
+    }
+
+    /// Parse an operator token.
+    fn parse_operator(&mut self) -> Result<usize, TokenizerError> {
+        self.save_token();
+        if self.offset + 1 < self.formula.len() {
+            let op2: String = self.formula[self.offset..self.offset + 2].iter().collect();
+            if op2 == ">=" || op2 == "<=" || op2 == "<>" {
+                self.items
+                    .push(Token::new(op2, TokenType::OpInfix, TokenSubType::None));
+                return Ok(2);
+            }
+        }
+        let curr_char = self.formula[self.offset];
+        assert!(matches!(
+            curr_char,
+            '%' | '*' | '/' | '^' | '&' | '=' | '>' | '<' | '+' | '-'
+        ));
+        let token = if curr_char == '%' {
+            Token::new("%".to_string(), TokenType::OpPostfix, TokenSubType::None)
+        } else if "* /^&=><".contains(curr_char) {
+            Token::new(
+                curr_char.to_string(),
+                TokenType::OpInfix,
+                TokenSubType::None,
+            )
+        } else if curr_char == '+' || curr_char == '-' {
+            if self.items.is_empty() {
+                Token::new(
+                    curr_char.to_string(),
+                    TokenType::OpPrefix,
+                    TokenSubType::None,
+                )
+            } else {
+                let prev = self
+                    .items
+                    .iter()
+                    .rev()
+                    .find(|t| t.token_type != TokenType::Whitespace);
+                let is_infix = prev.is_some_and(|p| {
+                    p.subtype == TokenSubType::Close
+                        || p.token_type == TokenType::OpPostfix
+                        || p.token_type == TokenType::Operand
+                });
+                if is_infix {
+                    Token::new(
+                        curr_char.to_string(),
+                        TokenType::OpInfix,
+                        TokenSubType::None,
+                    )
+                } else {
+                    Token::new(
+                        curr_char.to_string(),
+                        TokenType::OpPrefix,
+                        TokenSubType::None,
+                    )
+                }
+            }
+        } else {
+            Token::new(
+                curr_char.to_string(),
+                TokenType::OpInfix,
+                TokenSubType::None,
+            )
+        };
+        self.items.push(token);
+        Ok(1)
+    }
+
+    /// Parse an opener token – either '(' or '{'.
+    fn parse_opener(&mut self) -> Result<usize, TokenizerError> {
+        let curr_char = self.formula[self.offset];
+        assert!(curr_char == '(' || curr_char == '{');
+        let token = if curr_char == '{' {
+            self.assert_empty_token(None)?;
+            Token::make_subexp("{", false)
+        } else if !self.token.is_empty() {
+            let token_value: String = self.token.iter().collect::<String>() + "(";
+            self.token.clear();
+            Token::make_subexp(&token_value, true)
+        } else {
+            Token::make_subexp("(", false)
+        };
+        self.items.push(token.clone());
+        self.token_stack.push(token);
+        Ok(1)
+    }
+
+    /// Parse a closer token – either ')' or '}'.
+    fn parse_closer(&mut self) -> Result<usize, TokenizerError> {
+        let curr_char = self.formula[self.offset];
+        assert!(curr_char == ')' || curr_char == '}');
+        if let Some(open_token) = self.token_stack.pop() {
+            let closer = open_token.get_closer()?;
+            if closer.value.chars().next().unwrap() != curr_char {
+                return Err(TokenizerError {
+                    message: format!(
+                        "Mismatched ( and {{ pair in '{}'",
+                        self.formula.iter().collect::<String>()
+                    ),
+                });
+            }
+            self.items.push(closer);
+            Ok(1)
+        } else {
+            Err(TokenizerError {
+                message: format!(
+                    "No matching opener for closer at position {} in '{}'",
+                    self.offset,
+                    self.formula.iter().collect::<String>()
+                ),
+            })
+        }
+    }
+
+    /// Parse a separator token – either ',' or ';'.
+    fn parse_separator(&mut self) -> Result<usize, TokenizerError> {
+        let curr_char = self.formula[self.offset];
+        assert!(curr_char == ';' || curr_char == ',');
+        let token = if curr_char == ';' {
+            Token::make_separator(";")
+        } else if let Some(top) = self.token_stack.last() {
+            if top.token_type == TokenType::Paren {
+                Token::new(",".to_string(), TokenType::OpInfix, TokenSubType::None)
+            } else if top.token_type == TokenType::Func || top.token_type == TokenType::Array {
+                Token::make_separator(",")
+            } else {
+                Token::new(",".to_string(), TokenType::OpInfix, TokenSubType::None)
+            }
+        } else {
+            Token::new(",".to_string(), TokenType::OpInfix, TokenSubType::None)
+        };
+        self.items.push(token);
+        Ok(1)
+    }
+
+    /// Reconstruct the formula from the parsed tokens.
+    pub fn render(&self) -> String {
+        if self.items.is_empty() {
+            "".to_string()
+        } else if self.items[0].token_type == TokenType::Literal {
+            self.items[0].value.clone()
+        } else {
+            let concatenated: String = self.items.iter().map(|t| t.value.clone()).collect();
+            format!("={}", concatenated)
+        }
+    }
+}
+</file>
+
+<file path="crates/formualizer-core/src/types.rs">
+use chrono::{Duration as ChronoDur, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use std::fmt::{self, Display};
+use std::hash::{Hash, Hasher};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParsingError {
+    InvalidReference(String),
+}
+
+impl Display for ParsingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+/* ───────────────────── Excel date-serial utilities ───────────────────
+Serial 0  = 1899-12-30  (Excel’s epoch; includes bogus 1900-02-29)
+Serial 60 = 1900-02-29  (non-existent – keep to preserve offsets)
+Serial 1  = 1899-12-31
+Serial 2  = 1900-01-01         …and so on.
+Time is stored as fractional days (no timezone).
+------------------------------------------------------------------- */
+
+pub fn datetime_to_serial(dt: &NaiveDateTime) -> f64 {
+    // Adjust for the fake 1900-02-29 gap
+    let mut days = (dt.date() - EXCEL_EPOCH).num_days();
+    if days >= 60 {
+        days += 1;
+    }
+
+    let secs_in_day = dt.time().num_seconds_from_midnight() as f64;
+    days as f64 + secs_in_day / 86_400.0
+}
+
+pub fn serial_to_datetime(serial: f64) -> NaiveDateTime {
+    // split at day boundary
+    let days = serial.trunc() as i64;
+    let frac_secs = (serial.fract() * 86_400.0).round() as i64; // 1 day = 86 400 s
+
+    // Serial 60 is bogus 1900-02-29; map it to 1900-03-01 for chrono,
+    // but preserve the exact day count for round-trip.
+    let base_date = if days < 60 {
+        EXCEL_EPOCH
+    } else {
+        EXCEL_EPOCH + ChronoDur::days(1)
+    };
+
+    let date = base_date + ChronoDur::days(days);
+    let time =
+        NaiveTime::from_num_seconds_from_midnight_opt((frac_secs.rem_euclid(86_400)) as u32, 0)
+            .unwrap();
+    date.and_time(time)
+}
+
+const EXCEL_EPOCH: NaiveDate = NaiveDate::from_ymd_opt(1899, 12, 30).unwrap();
+
+/// An **interpeter** LiteralValue. This is distinct
+/// from the possible types that can be stored in a cell.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LiteralValue {
+    Int(i64),
+    Number(f64),
+    Text(String),
+    Boolean(bool),
+    Error(String),
+    Array(Vec<Vec<LiteralValue>>),   // For array results
+    Date(chrono::NaiveDate),         // For date values
+    DateTime(chrono::NaiveDateTime), // For date/time values
+    Time(chrono::NaiveTime),         // For time values
+    Duration(chrono::Duration),      // For durations
+    Empty,                           // For empty cells/optional arguments
+}
+
+impl Hash for LiteralValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            LiteralValue::Int(i) => i.hash(state),
+            LiteralValue::Number(n) => n.to_bits().hash(state),
+            LiteralValue::Text(s) => s.hash(state),
+            LiteralValue::Boolean(b) => b.hash(state),
+            LiteralValue::Error(e) => e.hash(state),
+            LiteralValue::Array(a) => a.hash(state),
+            LiteralValue::Date(d) => d.hash(state),
+            LiteralValue::DateTime(dt) => dt.hash(state),
+            LiteralValue::Time(t) => t.hash(state),
+            LiteralValue::Duration(d) => d.hash(state),
+            LiteralValue::Empty => state.write_u8(0),
+        }
+    }
+}
+
+impl Eq for LiteralValue {}
+
+impl Display for LiteralValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LiteralValue::Int(i) => write!(f, "{}", i),
+            LiteralValue::Number(n) => write!(f, "{}", n),
+            LiteralValue::Text(s) => write!(f, "{}", s),
+            LiteralValue::Boolean(b) => write!(f, "{}", b),
+            LiteralValue::Error(e) => write!(f, "{}", e),
+            LiteralValue::Array(a) => write!(f, "{:?}", a),
+            LiteralValue::Date(d) => write!(f, "{}", d),
+            LiteralValue::DateTime(dt) => write!(f, "{}", dt),
+            LiteralValue::Time(t) => write!(f, "{}", t),
+            LiteralValue::Duration(d) => write!(f, "{}", d),
+            LiteralValue::Empty => write!(f, ""),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueError {
+    ImplicitIntersection(String),
+}
+
+impl LiteralValue {
+    /// Coerce
+    pub fn coerce_to_single_value(&self) -> Result<LiteralValue, ValueError> {
+        match self {
+            LiteralValue::Array(arr) => {
+                // Excel's implicit intersection or single LiteralValue coercion logic here
+                // Simplest: take top-left or return #LiteralValue! if not 1x1
+                if arr.len() == 1 && arr[0].len() == 1 {
+                    Ok(arr[0][0].clone())
+                } else if arr.is_empty() || arr[0].is_empty() {
+                    Ok(LiteralValue::Empty) // Or maybe error?
+                } else {
+                    Err(ValueError::ImplicitIntersection(
+                        "#LiteralValue! Implicit intersection failed".to_string(),
+                    ))
+                }
+            }
+            _ => Ok(self.clone()),
+        }
+    }
+
+    pub fn as_serial_number(&self) -> Option<f64> {
+        match self {
+            LiteralValue::Date(d) => {
+                let dt = d.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+                Some(datetime_to_serial(&dt))
+            }
+            LiteralValue::DateTime(dt) => Some(datetime_to_serial(dt)),
+            LiteralValue::Time(t) => Some(t.num_seconds_from_midnight() as f64 / 86_400.0),
+            LiteralValue::Duration(d) => Some(d.num_seconds() as f64 / 86_400.0),
+            LiteralValue::Int(i) => Some(*i as f64),
+            LiteralValue::Number(n) => Some(*n),
+            LiteralValue::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
+            _ => None,
+        }
+    }
+
+    /// Build the appropriate `LiteralValue` from an Excel serial number.
+    /// (Useful when a function returns a date/time).
+    pub fn from_serial_number(serial: f64) -> Self {
+        let dt = serial_to_datetime(serial);
+        if dt.time() == NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+            LiteralValue::Date(dt.date())
+        } else {
+            LiteralValue::DateTime(dt)
+        }
+    }
+
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            LiteralValue::Boolean(b) => *b,
+            LiteralValue::Int(i) => *i != 0,
+            LiteralValue::Number(n) => *n != 0.0,
+            LiteralValue::Text(s) => !s.is_empty(),
+            LiteralValue::Array(arr) => !arr.is_empty(),
+            LiteralValue::Date(_) => true,
+            LiteralValue::DateTime(_) => true,
+            LiteralValue::Time(_) => true,
+            LiteralValue::Duration(_) => true,
+            LiteralValue::Error(_) => false,
+            LiteralValue::Empty => false,
+        }
+    }
+}
+</file>
+
+<file path="crates/formualizer-core/Cargo.toml">
+[package]
+name = "formualizer-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.41"
+once_cell = "1.21.3"
+regex = "1.11.1"
+</file>
+
+<file path="Cargo.toml">
+[workspace]
+resolver = "2"
+
+members = [
+  "crates/formualizer-core", "crates/formualizer-eval", "crates/formualizer-macros",
+]
+</file>
+
+</files>

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::LiteralValue;
     use crate::tokenizer::Tokenizer;
+    use formualizer_common::{ExcelError, LiteralValue};
 
     use crate::parser::{ASTNode, ASTNodeType, Parser, ParserError, ReferenceType};
 
@@ -687,7 +687,7 @@ mod tests {
         let ast = parse_formula("=#DIV/0!").unwrap();
 
         if let ASTNodeType::Literal(LiteralValue::Error(error)) = ast.node_type {
-            assert_eq!(error, "#DIV/0!");
+            assert_eq!(error, ExcelError::from_error_string("#DIV/0!"));
         } else {
             panic!("Expected Error literal");
         }
@@ -708,7 +708,8 @@ mod tests {
 
 #[cfg(test)]
 mod fingerprint_tests {
-    use crate::LiteralValue;
+    use formualizer_common::LiteralValue;
+
     use crate::tokenizer::*;
 
     use crate::parser::{ASTNode, ASTNodeType, Parser};

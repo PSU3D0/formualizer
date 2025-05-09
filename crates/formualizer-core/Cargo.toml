@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 once_cell = "1.21.3"
 regex = "1.11.1"
+formualizer-common = { path = "../formualizer-common" }

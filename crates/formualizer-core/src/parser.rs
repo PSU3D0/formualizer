@@ -1,5 +1,6 @@
+use crate::ParsingError;
 use crate::tokenizer::{Associativity, Token, TokenSubType, TokenType, TokenizerError};
-use crate::types::{LiteralValue, ParsingError};
+use crate::{ExcelError, LiteralValue};
 
 use crate::hasher::FormulaHasher;
 use once_cell::sync::Lazy;
@@ -738,10 +739,26 @@ impl ASTNode {
                     }
                     LiteralValue::Error(e) => {
                         hasher.write(&[5]); // Error subtype
-                        hasher.write(e.as_bytes());
+                        hasher.write(e.to_string().as_bytes());
+                    }
+                    LiteralValue::Date(d) => {
+                        hasher.write(&[6]); // Date subtype
+                        hasher.write(&d.to_string().as_bytes());
+                    }
+                    LiteralValue::Time(t) => {
+                        hasher.write(&[7]); // Time subtype
+                        hasher.write(&t.to_string().as_bytes());
+                    }
+                    LiteralValue::DateTime(dt) => {
+                        hasher.write(&[8]); // DateTime subtype
+                        hasher.write(&dt.to_string().as_bytes());
+                    }
+                    LiteralValue::Duration(dur) => {
+                        hasher.write(&[9]); // Duration subtype
+                        hasher.write(&dur.to_string().as_bytes());
                     }
                     LiteralValue::Array(a) => {
-                        hasher.write(&[6]); // Array subtype
+                        hasher.write(&[10]); // Array subtype
                         // Hash array dimensions
                         hasher.write(&(a.len() as u64).to_le_bytes());
                         for row in a {
@@ -767,21 +784,37 @@ impl ASTNode {
                                     }
                                     LiteralValue::Error(e) => {
                                         hasher.write(&[5]);
-                                        hasher.write(e.as_bytes());
+                                        hasher.write(e.to_string().as_bytes());
+                                    }
+                                    LiteralValue::Date(d) => {
+                                        hasher.write(&[6]); // Date subtype
+                                        hasher.write(&d.to_string().as_bytes());
+                                    }
+                                    LiteralValue::Time(t) => {
+                                        hasher.write(&[7]); // Time subtype
+                                        hasher.write(&t.to_string().as_bytes());
+                                    }
+                                    LiteralValue::DateTime(dt) => {
+                                        hasher.write(&[8]); // DateTime subtype
+                                        hasher.write(&dt.to_string().as_bytes());
+                                    }
+                                    LiteralValue::Duration(dur) => {
+                                        hasher.write(&[9]); // Duration subtype
+                                        hasher.write(&dur.to_string().as_bytes());
                                     }
                                     LiteralValue::Array(_) => {
                                         // For simplicity, we don't support nested arrays
-                                        hasher.write(&[6]);
+                                        hasher.write(&[10]);
                                     }
                                     LiteralValue::Empty => {
-                                        hasher.write(&[7]);
+                                        hasher.write(&[11]);
                                     }
                                 }
                             }
                         }
                     }
                     LiteralValue::Empty => {
-                        hasher.write(&[7]); // Empty subtype
+                        hasher.write(&[11]); // Empty subtype
                     }
                 }
             }
@@ -1127,7 +1160,9 @@ impl Parser {
                         ))
                     }
                     TokenSubType::Error => Ok(ASTNode::new(
-                        ASTNodeType::Literal(LiteralValue::Error(token.value.clone())),
+                        ASTNodeType::Literal(LiteralValue::Error(ExcelError::from_error_string(
+                            &token.value,
+                        ))),
                         Some(token.clone()),
                     )),
                     TokenSubType::Range => {
