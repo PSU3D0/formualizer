@@ -42,6 +42,7 @@ pub enum Associativity {
 #[derive(Debug)]
 pub struct TokenizerError {
     pub message: String,
+    pub pos: usize,
 }
 
 impl fmt::Display for TokenizerError {
@@ -100,6 +101,8 @@ pub struct Token {
     pub value: String,
     pub token_type: TokenType,
     pub subtype: TokenSubType,
+    pub start: usize,
+    pub end: usize,
 }
 
 impl Display for Token {
@@ -118,6 +121,24 @@ impl Token {
             value,
             token_type,
             subtype,
+            start: 0,
+            end: 0,
+        }
+    }
+
+    pub fn new_with_span(
+        value: String,
+        token_type: TokenType,
+        subtype: TokenSubType,
+        start: usize,
+        end: usize,
+    ) -> Self {
+        Token {
+            value,
+            token_type,
+            subtype,
+            start,
+            end,
         }
     }
 
@@ -165,6 +186,22 @@ impl Token {
         Token::new(value, TokenType::Operand, subtype)
     }
 
+    /// Create an operand token with byte position span.
+    pub fn make_operand_with_span(value: String, start: usize, end: usize) -> Self {
+        let subtype = if value.starts_with('"') {
+            TokenSubType::Text
+        } else if value.starts_with('#') {
+            TokenSubType::Error
+        } else if value == "TRUE" || value == "FALSE" {
+            TokenSubType::Logical
+        } else if value.parse::<f64>().is_ok() {
+            TokenSubType::Number
+        } else {
+            TokenSubType::Range
+        };
+        Token::new_with_span(value, TokenType::Operand, subtype, start, end)
+    }
+
     /// Create a subexpression token.
     ///
     /// `value` must end with one of '{', '}', '(' or ')'. If `func` is true,
@@ -189,11 +226,33 @@ impl Token {
         Token::new(value.to_string(), token_type, subtype)
     }
 
+    /// Create a subexpression token with byte position span.
+    pub fn make_subexp_with_span(value: &str, func: bool, start: usize, end: usize) -> Self {
+        let last_char = value.chars().last().expect("Empty token value");
+        assert!(matches!(last_char, '{' | '}' | '(' | ')'));
+        let token_type = if func {
+            TokenType::Func
+        } else if "{}".contains(last_char) {
+            TokenType::Array
+        } else if "()".contains(last_char) {
+            TokenType::Paren
+        } else {
+            TokenType::Func
+        };
+        let subtype = if ")}".contains(last_char) {
+            TokenSubType::Close
+        } else {
+            TokenSubType::Open
+        };
+        Token::new_with_span(value.to_string(), token_type, subtype, start, end)
+    }
+
     /// Given an opener token, return its corresponding closer token.
     pub fn get_closer(&self) -> Result<Token, TokenizerError> {
         if self.subtype != TokenSubType::Open {
             return Err(TokenizerError {
                 message: "Token is not an opener".to_string(),
+                pos: 0,
             });
         }
         let closer_value = if self.token_type == TokenType::Array {
@@ -217,15 +276,29 @@ impl Token {
         };
         Token::new(value.to_string(), TokenType::Sep, subtype)
     }
+
+    /// Create a separator token with byte position span.
+    pub fn make_separator_with_span(value: &str, start: usize, end: usize) -> Self {
+        assert!(value == "," || value == ";");
+        let subtype = if value == "," {
+            TokenSubType::Arg
+        } else {
+            TokenSubType::Row
+        };
+        Token::new_with_span(value.to_string(), TokenType::Sep, subtype, start, end)
+    }
 }
 
 /// A tokenizer for Excel worksheet formulas.
 pub struct Tokenizer {
-    formula: Vec<char>, // The formula as a vector of characters.
+    formula: Vec<char>,  // The formula as a vector of characters.
+    formula_str: String, // Original formula string for byte position tracking.
     pub items: Vec<Token>,
     token_stack: Vec<Token>,
     offset: usize,
-    token: Vec<char>, // Accumulator for the current token.
+    byte_pos: usize,         // Current byte position in the original string.
+    token: Vec<char>,        // Accumulator for the current token.
+    token_start_byte: usize, // Byte position where current token started.
 }
 
 impl Tokenizer {
@@ -233,13 +306,35 @@ impl Tokenizer {
     pub fn new(formula: &str) -> Result<Self, TokenizerError> {
         let mut tokenizer = Tokenizer {
             formula: formula.chars().collect(),
+            formula_str: formula.to_string(),
             items: Vec::with_capacity(formula.len() * 6), // Very safe estimate of 6 characters per token
             token_stack: Vec::with_capacity(64),
             offset: 0,
+            byte_pos: 0,
             token: Vec::with_capacity(64),
+            token_start_byte: 0,
         };
         tokenizer.parse()?;
         Ok(tokenizer)
+    }
+
+    /// Advance byte position by the given number of characters.
+    fn advance_byte_pos(&mut self, char_count: usize) {
+        for i in 0..char_count {
+            if self.offset + i < self.formula.len() {
+                self.byte_pos += self.formula[self.offset + i].len_utf8();
+            }
+        }
+    }
+
+    /// Start tracking a new token at the current byte position.
+    fn start_token(&mut self) {
+        self.token_start_byte = self.byte_pos;
+    }
+
+    /// Get current token's start and end byte positions.
+    fn get_token_span(&self) -> (usize, usize) {
+        (self.token_start_byte, self.byte_pos)
     }
 
     /// Parse the formula into tokens.
@@ -251,15 +346,20 @@ impl Tokenizer {
             return Ok(());
         } else if self.formula[0] == '=' {
             self.offset += 1;
+            self.byte_pos += 1; // Skip the '=' character
         } else {
             let formula_str: String = self.formula.iter().collect();
-            self.items.push(Token::new(
+            self.items.push(Token::new_with_span(
                 formula_str,
                 TokenType::Literal,
                 TokenSubType::None,
+                0,
+                self.formula_str.len(),
             ));
             return Ok(());
         }
+
+        self.start_token(); // Begin tracking for the first real token
 
         while self.offset < self.formula.len() {
             if self.check_scientific_notation()? {
@@ -268,6 +368,7 @@ impl Tokenizer {
             let curr_char = self.formula[self.offset];
             if is_token_ender(curr_char) {
                 self.save_token();
+                self.start_token(); // Start new token
             }
             // Dispatch based on the current character.
             let consumed = match curr_char {
@@ -283,10 +384,14 @@ impl Tokenizer {
                 ')' | '}' => self.parse_closer()?,
                 ';' | ',' => self.parse_separator()?,
                 _ => {
+                    if self.token.is_empty() {
+                        self.start_token();
+                    }
                     self.token.push(curr_char);
                     1
                 }
             };
+            self.advance_byte_pos(consumed);
             self.offset += consumed;
         }
         self.save_token();
@@ -302,6 +407,7 @@ impl Tokenizer {
             && self.is_scientific_notation_base()
         {
             self.token.push(curr_char);
+            self.advance_byte_pos(1);
             self.offset += 1;
             return Ok(true);
         }
@@ -347,6 +453,7 @@ impl Tokenizer {
                             self.offset,
                             self.formula.iter().collect::<String>()
                         ),
+                        pos: self.byte_pos,
                     });
                 }
             } else {
@@ -356,6 +463,7 @@ impl Tokenizer {
                         self.offset,
                         self.formula.iter().collect::<String>()
                     ),
+                    pos: self.byte_pos,
                 });
             }
         }
@@ -366,7 +474,9 @@ impl Tokenizer {
     fn save_token(&mut self) {
         if !self.token.is_empty() {
             let token_str: String = self.token.iter().collect();
-            self.items.push(Token::make_operand(token_str));
+            let (start, end) = self.get_token_span();
+            self.items
+                .push(Token::make_operand_with_span(token_str, start, end));
             self.token.clear();
         }
     }
@@ -384,6 +494,7 @@ impl Tokenizer {
         if !is_dollar_ref {
             self.assert_empty_token(Some(&[':']))?;
             self.save_token();
+            self.start_token(); // Start tracking for string token
         }
 
         // Manual parsing of quoted strings
@@ -423,7 +534,13 @@ impl Tokenizer {
             let matched_len = string_chars.len();
 
             if delim == '"' {
-                self.items.push(Token::make_operand(matched_str));
+                let start_byte = self.byte_pos;
+                let end_byte = start_byte + matched_str.len();
+                self.items.push(Token::make_operand_with_span(
+                    matched_str,
+                    start_byte,
+                    end_byte,
+                ));
             } else {
                 // For a single-quote delimited string (sheet name reference)
                 if is_dollar_ref {
@@ -447,6 +564,7 @@ impl Tokenizer {
                     subtype,
                     self.formula.iter().collect::<String>()
                 ),
+                pos: self.byte_pos,
             })
         }
     }
@@ -476,6 +594,7 @@ impl Tokenizer {
                 "Encountered unmatched '[' in '{}'",
                 self.formula.iter().collect::<String>()
             ),
+            pos: self.byte_pos,
         })
     }
 
@@ -488,7 +607,14 @@ impl Tokenizer {
             if remaining.starts_with(err) {
                 let token_str: String = self.token.iter().collect();
                 let combined = format!("{}{}", token_str, err);
-                self.items.push(Token::make_operand(combined));
+                let (start, _) = if !self.token.is_empty() {
+                    self.get_token_span()
+                } else {
+                    (self.byte_pos, self.byte_pos)
+                };
+                let end = self.byte_pos + err.len();
+                self.items
+                    .push(Token::make_operand_with_span(combined, start, end));
                 self.token.clear();
                 return Ok(err.len());
             }
@@ -499,11 +625,13 @@ impl Tokenizer {
                 self.offset,
                 self.formula.iter().collect::<String>()
             ),
+            pos: self.byte_pos,
         })
     }
 
     /// Parse a sequence of whitespace characters.
     fn parse_whitespace(&mut self) -> Result<usize, TokenizerError> {
+        let start_byte = self.byte_pos;
         let start = self.offset;
         let mut i = start;
         while i < self.formula.len() {
@@ -516,10 +644,13 @@ impl Tokenizer {
         }
         let matched_len = i - start;
         let matched_str: String = self.formula[start..i].iter().collect();
-        self.items.push(Token::new(
+        let end_byte = start_byte + matched_str.len(); // ASCII whitespace is 1 byte each
+        self.items.push(Token::new_with_span(
             matched_str,
             TokenType::Whitespace,
             TokenSubType::None,
+            start_byte,
+            end_byte,
         ));
         Ok(matched_len)
     }
@@ -527,11 +658,19 @@ impl Tokenizer {
     /// Parse an operator token.
     fn parse_operator(&mut self) -> Result<usize, TokenizerError> {
         self.save_token();
+        self.start_token(); // Start new token for operator
+
         if self.offset + 1 < self.formula.len() {
             let op2: String = self.formula[self.offset..self.offset + 2].iter().collect();
             if op2 == ">=" || op2 == "<=" || op2 == "<>" {
-                self.items
-                    .push(Token::new(op2, TokenType::OpInfix, TokenSubType::None));
+                let end_byte = self.byte_pos + 2; // Two-character operators are ASCII
+                self.items.push(Token::new_with_span(
+                    op2,
+                    TokenType::OpInfix,
+                    TokenSubType::None,
+                    self.byte_pos,
+                    end_byte,
+                ));
                 return Ok(2);
             }
         }
@@ -540,20 +679,31 @@ impl Tokenizer {
             curr_char,
             '%' | '*' | '/' | '^' | '&' | '=' | '>' | '<' | '+' | '-'
         ));
+        let end_byte = self.byte_pos + 1; // Single character operators are ASCII
         let token = if curr_char == '%' {
-            Token::new("%".to_string(), TokenType::OpPostfix, TokenSubType::None)
+            Token::new_with_span(
+                "%".to_string(),
+                TokenType::OpPostfix,
+                TokenSubType::None,
+                self.byte_pos,
+                end_byte,
+            )
         } else if "* /^&=><".contains(curr_char) {
-            Token::new(
+            Token::new_with_span(
                 curr_char.to_string(),
                 TokenType::OpInfix,
                 TokenSubType::None,
+                self.byte_pos,
+                end_byte,
             )
         } else if curr_char == '+' || curr_char == '-' {
             if self.items.is_empty() {
-                Token::new(
+                Token::new_with_span(
                     curr_char.to_string(),
                     TokenType::OpPrefix,
                     TokenSubType::None,
+                    self.byte_pos,
+                    end_byte,
                 )
             } else {
                 let prev = self
@@ -567,24 +717,30 @@ impl Tokenizer {
                         || p.token_type == TokenType::Operand
                 });
                 if is_infix {
-                    Token::new(
+                    Token::new_with_span(
                         curr_char.to_string(),
                         TokenType::OpInfix,
                         TokenSubType::None,
+                        self.byte_pos,
+                        end_byte,
                     )
                 } else {
-                    Token::new(
+                    Token::new_with_span(
                         curr_char.to_string(),
                         TokenType::OpPrefix,
                         TokenSubType::None,
+                        self.byte_pos,
+                        end_byte,
                     )
                 }
             }
         } else {
-            Token::new(
+            Token::new_with_span(
                 curr_char.to_string(),
                 TokenType::OpInfix,
                 TokenSubType::None,
+                self.byte_pos,
+                end_byte,
             )
         };
         self.items.push(token);
@@ -595,15 +751,22 @@ impl Tokenizer {
     fn parse_opener(&mut self) -> Result<usize, TokenizerError> {
         let curr_char = self.formula[self.offset];
         assert!(curr_char == '(' || curr_char == '{');
+
         let token = if curr_char == '{' {
             self.assert_empty_token(None)?;
-            Token::make_subexp("{", false)
+            self.start_token();
+            let end_byte = self.byte_pos + 1;
+            Token::make_subexp_with_span("{", false, self.byte_pos, end_byte)
         } else if !self.token.is_empty() {
             let token_value: String = self.token.iter().collect::<String>() + "(";
+            let (start, _) = self.get_token_span();
+            let end_byte = self.byte_pos + 1;
             self.token.clear();
-            Token::make_subexp(&token_value, true)
+            Token::make_subexp_with_span(&token_value, true, start, end_byte)
         } else {
-            Token::make_subexp("(", false)
+            self.start_token();
+            let end_byte = self.byte_pos + 1;
+            Token::make_subexp_with_span("(", false, self.byte_pos, end_byte)
         };
         self.items.push(token.clone());
         self.token_stack.push(token);
@@ -615,15 +778,19 @@ impl Tokenizer {
         let curr_char = self.formula[self.offset];
         assert!(curr_char == ')' || curr_char == '}');
         if let Some(open_token) = self.token_stack.pop() {
-            let closer = open_token.get_closer()?;
+            let mut closer = open_token.get_closer()?;
             if closer.value.chars().next().unwrap() != curr_char {
                 return Err(TokenizerError {
                     message: format!(
                         "Mismatched ( and {{ pair in '{}'",
                         self.formula.iter().collect::<String>()
                     ),
+                    pos: self.byte_pos,
                 });
             }
+            // Set correct byte positions for the closer
+            closer.start = self.byte_pos;
+            closer.end = self.byte_pos + 1;
             self.items.push(closer);
             Ok(1)
         } else {
@@ -633,6 +800,7 @@ impl Tokenizer {
                     self.offset,
                     self.formula.iter().collect::<String>()
                 ),
+                pos: self.byte_pos,
             })
         }
     }
@@ -641,18 +809,39 @@ impl Tokenizer {
     fn parse_separator(&mut self) -> Result<usize, TokenizerError> {
         let curr_char = self.formula[self.offset];
         assert!(curr_char == ';' || curr_char == ',');
+        let start_byte = self.byte_pos;
+        let end_byte = self.byte_pos + 1;
+
         let token = if curr_char == ';' {
-            Token::make_separator(";")
+            Token::make_separator_with_span(";", start_byte, end_byte)
         } else if let Some(top) = self.token_stack.last() {
             if top.token_type == TokenType::Paren {
-                Token::new(",".to_string(), TokenType::OpInfix, TokenSubType::None)
+                Token::new_with_span(
+                    ",".to_string(),
+                    TokenType::OpInfix,
+                    TokenSubType::None,
+                    start_byte,
+                    end_byte,
+                )
             } else if top.token_type == TokenType::Func || top.token_type == TokenType::Array {
-                Token::make_separator(",")
+                Token::make_separator_with_span(",", start_byte, end_byte)
             } else {
-                Token::new(",".to_string(), TokenType::OpInfix, TokenSubType::None)
+                Token::new_with_span(
+                    ",".to_string(),
+                    TokenType::OpInfix,
+                    TokenSubType::None,
+                    start_byte,
+                    end_byte,
+                )
             }
         } else {
-            Token::new(",".to_string(), TokenType::OpInfix, TokenSubType::None)
+            Token::new_with_span(
+                ",".to_string(),
+                TokenType::OpInfix,
+                TokenSubType::None,
+                start_byte,
+                end_byte,
+            )
         };
         self.items.push(token);
         Ok(1)

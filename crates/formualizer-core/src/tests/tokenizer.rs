@@ -974,4 +974,203 @@ mod tests {
         assert_eq!(tokenizer.items[1].value, "J7");
         assert_eq!(tokenizer.items[2].value, ",");
     }
+
+    /// Helper function to validate token substring matches source
+    fn assert_token_substring_matches(formula: &str, token: &Token) {
+        let actual_substring = &formula[token.start..token.end];
+        assert_eq!(
+            actual_substring, token.value,
+            "Token value '{}' doesn't match substring '{}' at [{}..{})",
+            token.value, actual_substring, token.start, token.end
+        );
+    }
+
+    #[test]
+    fn test_basic_token_positions() {
+        let formula = "=A1+10";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens: "A1"(1,3), "+"(3,4), "10"(4,6)
+        assert_eq!(tokenizer.items.len(), 3);
+
+        let a1_token = &tokenizer.items[0];
+        assert_eq!(a1_token.value, "A1");
+        assert_eq!(a1_token.start, 1);
+        assert_eq!(a1_token.end, 3);
+        assert_token_substring_matches(formula, a1_token);
+
+        let plus_token = &tokenizer.items[1];
+        assert_eq!(plus_token.value, "+");
+        assert_eq!(plus_token.start, 3);
+        assert_eq!(plus_token.end, 4);
+        assert_token_substring_matches(formula, plus_token);
+
+        let ten_token = &tokenizer.items[2];
+        assert_eq!(ten_token.value, "10");
+        assert_eq!(ten_token.start, 4);
+        assert_eq!(ten_token.end, 6);
+        assert_token_substring_matches(formula, ten_token);
+    }
+
+    #[test]
+    fn test_function_positions() {
+        let formula = "=SUM(B2:B4)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens: "SUM("(1,5), "B2:B4"(5,10), ")"(10,11)
+        assert_eq!(tokenizer.items.len(), 3);
+
+        let sum_token = &tokenizer.items[0];
+        assert_eq!(sum_token.value, "SUM(");
+        assert_eq!(sum_token.start, 1);
+        assert_eq!(sum_token.end, 5);
+        assert_token_substring_matches(formula, sum_token);
+
+        let range_token = &tokenizer.items[1];
+        assert_eq!(range_token.value, "B2:B4");
+        assert_eq!(range_token.start, 5);
+        assert_eq!(range_token.end, 10);
+        assert_token_substring_matches(formula, range_token);
+
+        let close_token = &tokenizer.items[2];
+        assert_eq!(close_token.value, ")");
+        assert_eq!(close_token.start, 10);
+        assert_eq!(close_token.end, 11);
+        assert_token_substring_matches(formula, close_token);
+    }
+
+    #[test]
+    fn test_string_with_quotes_positions() {
+        let formula = "=\"ab\"\"c\"";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens: "\"ab\"\"c\""(1,8)
+        assert_eq!(tokenizer.items.len(), 1);
+
+        let string_token = &tokenizer.items[0];
+        assert_eq!(string_token.value, "\"ab\"\"c\"");
+        assert_eq!(string_token.start, 1);
+        assert_eq!(string_token.end, 8);
+        assert_token_substring_matches(formula, string_token);
+    }
+
+    #[test]
+    fn test_error_literal_positions() {
+        let formula = "=#DIV/0!";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens: "#DIV/0!"(1,8)
+        assert_eq!(tokenizer.items.len(), 1);
+
+        let error_token = &tokenizer.items[0];
+        assert_eq!(error_token.value, "#DIV/0!");
+        assert_eq!(error_token.start, 1);
+        assert_eq!(error_token.end, 8);
+        assert_token_substring_matches(formula, error_token);
+    }
+
+    #[test]
+    fn test_whitespace_positions() {
+        let formula = "= A1 + B2 ";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens (with whitespace): " "(1,2), "A1"(2,4), " "(4,5), "+"(5,6), " "(6,7), "B2"(7,9), " "(9,10)
+        let whitespace_tokens: Vec<&Token> = tokenizer
+            .items
+            .iter()
+            .filter(|t| t.token_type == TokenType::Whitespace)
+            .collect();
+
+        assert!(whitespace_tokens.len() >= 3);
+
+        // Verify each token's substring matches
+        for token in &tokenizer.items {
+            assert_token_substring_matches(formula, token);
+        }
+    }
+
+    #[test]
+    fn test_complex_formula_positions() {
+        let formula = "=SUM(A1:B2)*MAX(C3,D4)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Verify all tokens have correct positions
+        for token in &tokenizer.items {
+            assert_token_substring_matches(formula, token);
+            // Verify positions are valid
+            assert!(token.start <= token.end);
+            assert!(token.end <= formula.len());
+        }
+    }
+
+    #[test]
+    fn test_literal_formula_positions() {
+        let formula = "SUM(A1:B2)";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // For literal formulas (not starting with =), we should have one token spanning entire string
+        assert_eq!(tokenizer.items.len(), 1);
+
+        let literal_token = &tokenizer.items[0];
+        assert_eq!(literal_token.value, formula);
+        assert_eq!(literal_token.start, 0);
+        assert_eq!(literal_token.end, formula.len());
+        assert_token_substring_matches(formula, literal_token);
+    }
+
+    #[test]
+    fn test_operator_positions() {
+        let formula = "=A1>=B1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Expected tokens: "A1"(1,3), ">="(3,5), "B1"(5,7)
+        assert_eq!(tokenizer.items.len(), 3);
+
+        let a1_token = &tokenizer.items[0];
+        assert_eq!(a1_token.value, "A1");
+        assert_token_substring_matches(formula, a1_token);
+
+        let ge_token = &tokenizer.items[1];
+        assert_eq!(ge_token.value, ">=");
+        assert_eq!(ge_token.start, 3);
+        assert_eq!(ge_token.end, 5);
+        assert_token_substring_matches(formula, ge_token);
+
+        let b1_token = &tokenizer.items[2];
+        assert_eq!(b1_token.value, "B1");
+        assert_token_substring_matches(formula, b1_token);
+    }
+
+    #[test]
+    fn test_array_formula_positions() {
+        let formula = "={1,2;3,4}";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        // Verify all tokens have correct byte positions
+        for token in &tokenizer.items {
+            assert_token_substring_matches(formula, token);
+        }
+
+        // Check specific tokens
+        let open_brace = tokenizer.items.iter().find(|t| t.value == "{").unwrap();
+        assert_eq!(open_brace.start, 1);
+        assert_eq!(open_brace.end, 2);
+
+        let close_brace = tokenizer.items.iter().find(|t| t.value == "}").unwrap();
+        assert_eq!(close_brace.start, 9);
+        assert_eq!(close_brace.end, 10);
+    }
+
+    #[test]
+    fn test_scientific_notation_positions() {
+        let formula = "=1.23E+45";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+
+        assert_eq!(tokenizer.items.len(), 1);
+        let scientific_token = &tokenizer.items[0];
+        assert_eq!(scientific_token.value, "1.23E+45");
+        assert_eq!(scientific_token.start, 1);
+        assert_eq!(scientific_token.end, 9);
+        assert_token_substring_matches(formula, scientific_token);
+    }
 }

@@ -3,5 +3,5 @@ resolver = "2"
 
 members = [ "crates/formualizer-common",
   "crates/formualizer-core", "crates/formualizer-eval", "crates/formualizer-macros",
-  "crates/formualizer-common"
+  "crates/formualizer-common", "bindings/python"
 ]
