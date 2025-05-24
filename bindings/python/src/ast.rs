@@ -1,7 +1,7 @@
 use crate::reference::{reference_type_to_py, PyReferenceLike};
 use crate::token::PyToken;
-use formualizer_common::{ExcelError, LiteralValue};
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_common::LiteralValue;
+use formualizer_core::parser::{ASTNode, ASTNodeType};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -217,19 +217,19 @@ impl PyASTNode {
         }
     }
 
-    fn collect_references(&self) -> Vec<PyReference> {
+    fn collect_references(&self) -> Vec<PyReferenceLike> {
         let mut refs = Vec::new();
         self.collect_refs_recursive(&mut refs);
         refs
     }
 
-    fn collect_refs_recursive(&self, refs: &mut Vec<PyReference>) {
+    fn collect_refs_recursive(&self, refs: &mut Vec<PyReferenceLike>) {
         match &self.inner.node_type {
             ASTNodeType::Reference {
                 reference,
                 original,
             } => {
-                refs.push(PyReference::new(reference.clone(), original.clone()));
+                refs.push(reference_type_to_py(reference, original));
             }
             ASTNodeType::UnaryOp { expr, .. } => {
                 PyASTNode::new((**expr).clone()).collect_refs_recursive(refs);
@@ -329,48 +329,9 @@ impl PyASTNode {
     }
 }
 
-#[pyclass(module = "formualizer")]
-#[derive(Clone)]
-pub struct PyReference {
-    inner: ReferenceType,
-    original: String,
-}
-
-impl PyReference {
-    pub fn new(inner: ReferenceType, original: String) -> Self {
-        PyReference { inner, original }
-    }
-}
-
-#[pymethods]
-impl PyReference {
-    /// Get the normalized reference string
-    fn normalise(&self) -> String {
-        self.inner.normalise()
-    }
-
-    /// Get the Excel-style reference string
-    fn to_excel(&self) -> String {
-        self.inner.to_excel_string()
-    }
-
-    /// Get the original reference string
-    fn original(&self) -> String {
-        self.original.clone()
-    }
-
-    fn __repr__(&self) -> String {
-        format!("Reference({})", self.original)
-    }
-
-    fn __str__(&self) -> String {
-        self.original.clone()
-    }
-}
-
 #[pyclass]
 pub struct PyRefWalker {
-    refs: Vec<PyReference>,
+    refs: Vec<PyReferenceLike>,
     index: usize,
 }
 
@@ -380,11 +341,11 @@ impl PyRefWalker {
         slf
     }
 
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> Option<PyReference> {
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> Option<PyObject> {
         if slf.index < slf.refs.len() {
             let reference = slf.refs[slf.index].clone();
             slf.index += 1;
-            Some(reference)
+            Some(Python::with_gil(|py| reference.into_py(py)))
         } else {
             None
         }
@@ -393,7 +354,6 @@ impl PyRefWalker {
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyASTNode>()?;
-    m.add_class::<PyReference>()?;
     m.add_class::<PyRefWalker>()?;
     Ok(())
 }

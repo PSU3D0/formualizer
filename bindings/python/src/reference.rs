@@ -1,4 +1,4 @@
-use formualizer_core::parser::{ReferenceType, TableReference, TableSpecifier};
+use formualizer_core::parser::ReferenceType;
 use pyo3::prelude::*;
 
 #[pyclass(module = "formualizer")]
@@ -174,7 +174,7 @@ impl UnknownRef {
 }
 
 // Union type for all reference types
-#[derive(FromPyObject)]
+#[derive(FromPyObject, Clone)]
 pub enum PyReferenceLike {
     Cell(CellRef),
     Range(RangeRef),
