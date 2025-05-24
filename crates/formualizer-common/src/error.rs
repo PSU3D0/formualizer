@@ -9,7 +9,7 @@
 //! When a future error needs its own payload, just add another variant
 //! to `ExcelErrorExtra`; existing code does not break.
 
-use std::{borrow::Cow, error::Error, fmt};
+use std::{error::Error, fmt};
 
 use crate::LiteralValue;
 
@@ -77,27 +77,22 @@ impl ExcelErrorKind {
 /// Keep this minimal—anything only one error kind needs belongs in
 /// `ExcelErrorExtra`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub struct ErrorContext {
     pub row: Option<u32>,
     pub col: Option<u32>,
     // Add more sheet-wide coordinates here if ever required (sheet name, etc.)
 }
 
-impl Default for ErrorContext {
-    fn default() -> Self {
-        Self {
-            row: None,
-            col: None,
-        }
-    }
-}
 
 /// Kind-specific payloads (“extension slot”).
 ///
 /// Only variants that need extra data get it—rest stay at `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum ExcelErrorExtra {
     /// No additional payload (the vast majority of errors).
+    #[default]
     None,
 
     /// `#SPILL!` – information about the intended spill size.
@@ -109,11 +104,6 @@ pub enum ExcelErrorExtra {
     // AnotherKind { … },
 }
 
-impl Default for ExcelErrorExtra {
-    fn default() -> Self {
-        ExcelErrorExtra::None
-    }
-}
 
 /// The single struct your API passes around.
 ///
@@ -229,7 +219,7 @@ impl From<ExcelError> for LiteralValue {
 
 impl PartialEq<str> for ExcelErrorKind {
     fn eq(&self, other: &str) -> bool {
-        self.to_string() == other
+        self == other
     }
 }
 

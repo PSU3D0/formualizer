@@ -9,8 +9,8 @@ macro_rules! arg {
             V::Number(n) => Ok(*n != 0.0),
             V::Int(i) => Ok(*i != 0),
             V::Empty => Ok(false),
-            V::Error(e) => Err(crate::error::ExcelError::from(e.clone())),
-            _ => Err(crate::error::ExcelError::new(
+            V::Error(e) => Err($crate::error::ExcelError::from(e.clone())),
+            _ => Err($crate::error::ExcelError::new(
                 crate::error::ExcelErrorKind::Value,
             )),
         }

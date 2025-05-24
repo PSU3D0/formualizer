@@ -11,7 +11,7 @@ use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType, TableSpecifi
 
 use crate::interpreter::Interpreter;
 use formualizer_common::{
-    ArgKind, ArgSpec, LiteralValue,
+    ArgSpec, LiteralValue,
     error::{ExcelError, ExcelErrorKind},
 };
 

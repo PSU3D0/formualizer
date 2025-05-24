@@ -107,7 +107,7 @@ pub fn or_fn(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    
 
     use formualizer_core::LiteralValue;
 
@@ -119,8 +119,8 @@ mod tests {
 
     fn interp() -> Interpreter {
         let wb = TestWorkbook::new().with_fns(with_fns![__FnTRUE, __FnFALSE, __FnAND, __FnOR,]);
-        let interp = wb.interpreter();
-        interp
+        
+        wb.interpreter()
     }
 
     #[test]

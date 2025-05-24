@@ -487,7 +487,7 @@ mod tests {
                 return *start_col == Some(1)
                     && *end_col == Some(1)
                     && *start_row == Some(1)
-                    && *end_row == None;
+                    && end_row.is_none();
             }
             false
         }));
@@ -505,7 +505,7 @@ mod tests {
             {
                 return *start_col == Some(1)
                     && *end_col == Some(1)
-                    && *start_row == None
+                    && start_row.is_none()
                     && *end_row == Some(10);
             }
             false
@@ -523,11 +523,11 @@ mod tests {
                 ..
             } = r
             {
-                return sheet.as_ref().map_or(false, |s| s == "Sheet1")
+                return sheet.as_ref().is_some_and(|s| s == "Sheet1")
                     && *start_col == Some(1)
                     && *end_col == Some(1)
-                    && *start_row == None
-                    && *end_row == None;
+                    && start_row.is_none()
+                    && end_row.is_none();
             }
             false
         }));
@@ -1560,7 +1560,7 @@ mod reference_tests {
         let tokenizer = Tokenizer::new(formula).unwrap();
 
         // Just verify the tokenizer doesn't crash
-        assert!(tokenizer.items.len() > 0);
+        assert!(!tokenizer.items.is_empty());
 
         // Note: In the future, this should be enhanced to properly parse
         // table intersections and verify they're handled correctly

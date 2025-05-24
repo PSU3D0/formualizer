@@ -743,19 +743,19 @@ impl ASTNode {
                     }
                     LiteralValue::Date(d) => {
                         hasher.write(&[6]); // Date subtype
-                        hasher.write(&d.to_string().as_bytes());
+                        hasher.write(d.to_string().as_bytes());
                     }
                     LiteralValue::Time(t) => {
                         hasher.write(&[7]); // Time subtype
-                        hasher.write(&t.to_string().as_bytes());
+                        hasher.write(t.to_string().as_bytes());
                     }
                     LiteralValue::DateTime(dt) => {
                         hasher.write(&[8]); // DateTime subtype
-                        hasher.write(&dt.to_string().as_bytes());
+                        hasher.write(dt.to_string().as_bytes());
                     }
                     LiteralValue::Duration(dur) => {
                         hasher.write(&[9]); // Duration subtype
-                        hasher.write(&dur.to_string().as_bytes());
+                        hasher.write(dur.to_string().as_bytes());
                     }
                     LiteralValue::Array(a) => {
                         hasher.write(&[10]); // Array subtype
@@ -788,19 +788,19 @@ impl ASTNode {
                                     }
                                     LiteralValue::Date(d) => {
                                         hasher.write(&[6]); // Date subtype
-                                        hasher.write(&d.to_string().as_bytes());
+                                        hasher.write(d.to_string().as_bytes());
                                     }
                                     LiteralValue::Time(t) => {
                                         hasher.write(&[7]); // Time subtype
-                                        hasher.write(&t.to_string().as_bytes());
+                                        hasher.write(t.to_string().as_bytes());
                                     }
                                     LiteralValue::DateTime(dt) => {
                                         hasher.write(&[8]); // DateTime subtype
-                                        hasher.write(&dt.to_string().as_bytes());
+                                        hasher.write(dt.to_string().as_bytes());
                                     }
                                     LiteralValue::Duration(dur) => {
                                         hasher.write(&[9]); // Duration subtype
-                                        hasher.write(&dur.to_string().as_bytes());
+                                        hasher.write(dur.to_string().as_bytes());
                                     }
                                     LiteralValue::Array(_) => {
                                         // For simplicity, we don't support nested arrays

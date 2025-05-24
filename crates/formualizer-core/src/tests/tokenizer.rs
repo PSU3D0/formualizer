@@ -590,13 +590,13 @@ mod tests {
         assert_eq!(tokenizer.render(), formula);
 
         let column_wise_with_lower_bound = "=A1:A";
-        let tokenizer = Tokenizer::new(&column_wise_with_lower_bound).unwrap();
+        let tokenizer = Tokenizer::new(column_wise_with_lower_bound).unwrap();
         assert_eq!(tokenizer.items[0].value, "A1:A");
         assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
         assert_eq!(tokenizer.render(), column_wise_with_lower_bound);
 
         let column_wise_with_upper_bound = "=A:A500";
-        let tokenizer = Tokenizer::new(&column_wise_with_upper_bound).unwrap();
+        let tokenizer = Tokenizer::new(column_wise_with_upper_bound).unwrap();
         assert_eq!(tokenizer.items[0].value, "A:A500");
         assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
         assert_eq!(tokenizer.render(), column_wise_with_upper_bound);

@@ -20,7 +20,7 @@ fn test_sum_fn(
         ));
     }
 
-    let mut total = 0.0;
+    let total = 0.0;
     let mut total = 0.0;
     for h in args {
         match h.value()?.as_ref() {
@@ -28,11 +28,11 @@ fn test_sum_fn(
             LiteralValue::Array(arr) => {
                 for row in arr {
                     for v in row {
-                        total += coerce_num(&v)?;
+                        total += coerce_num(v)?;
                     }
                 }
             }
-            v => total += coerce_num(&v)?,
+            v => total += coerce_num(v)?,
         }
     }
     Ok(LiteralValue::Number(total))
@@ -80,7 +80,7 @@ mod tests {
     use formualizer_common::error::{ExcelError, ExcelErrorKind};
     use formualizer_core::parser::Parser;
     use formualizer_core::tokenizer::Tokenizer;
-    use std::collections::HashMap;
+    
 
     use super::{__FnIF, __FnSUM};
     use crate::builtins::logical::{__FnAND, __FnFALSE, __FnOR, __FnTRUE};
@@ -94,15 +94,15 @@ mod tests {
             .map_err(|e| ExcelError::new(ExcelErrorKind::Error).with_message(e.message.clone()))?;
 
         let interpreter = wb.interpreter();
-        let result = interpreter.evaluate_ast(&ast);
-        result
+        
+        interpreter.evaluate_ast(&ast)
     }
 
     fn create_workbook() -> TestWorkbook {
-        let wb = TestWorkbook::new().with_fns(with_fns![
+        
+        TestWorkbook::new().with_fns(with_fns![
             __FnSUM, __FnIF, __FnAND, __FnOR, __FnFALSE, __FnTRUE
-        ]);
-        wb
+        ])
     }
 
     #[test]
