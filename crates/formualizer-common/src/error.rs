@@ -76,20 +76,17 @@ impl ExcelErrorKind {
 ///
 /// Keep this minimal—anything only one error kind needs belongs in
 /// `ExcelErrorExtra`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ErrorContext {
     pub row: Option<u32>,
     pub col: Option<u32>,
     // Add more sheet-wide coordinates here if ever required (sheet name, etc.)
 }
 
-
 /// Kind-specific payloads (“extension slot”).
 ///
 /// Only variants that need extra data get it—rest stay at `None`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum ExcelErrorExtra {
     /// No additional payload (the vast majority of errors).
     #[default]
@@ -103,7 +100,6 @@ pub enum ExcelErrorExtra {
     // --- Add future custom payloads below -------------------------------
     // AnotherKind { … },
 }
-
 
 /// The single struct your API passes around.
 ///

@@ -6,9 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "formualizer"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "stub_gen"
+path = "src/bin/stub_gen.rs"
 
 [dependencies]
 pyo3 = { version = "0.24.0", features = ["extension-module"] }
+pyo3-stub-gen = "0.8.2"
+pyo3-stub-gen-derive = "0.8.2"
 formualizer-core = { path = "../../crates/formualizer-core" }
 formualizer-common = { path = "../../crates/formualizer-common" }

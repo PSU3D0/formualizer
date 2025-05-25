@@ -1,11 +1,13 @@
-use crate::reference::{reference_type_to_py, PyReferenceLike};
+use crate::reference::{reference_type_to_py, ReferenceLike};
 use crate::token::PyToken;
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ASTNodeType};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
 
-#[pyclass(module = "formualizer")]
+#[gen_stub_pyclass]
+#[pyclass(module = "formualizer", name = "ASTNode")]
 #[derive(Clone)]
 pub struct PyASTNode {
     inner: ASTNode,
@@ -17,6 +19,7 @@ impl PyASTNode {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyASTNode {
     /// Get the pretty-printed representation of this AST
@@ -105,7 +108,7 @@ impl PyASTNode {
     }
 
     /// Get the reference as a rich object for reference nodes
-    fn get_reference(&self) -> Option<PyReferenceLike> {
+    fn get_reference(&self) -> Option<ReferenceLike> {
         match &self.inner.node_type {
             ASTNodeType::Reference {
                 reference,
@@ -217,13 +220,13 @@ impl PyASTNode {
         }
     }
 
-    fn collect_references(&self) -> Vec<PyReferenceLike> {
+    fn collect_references(&self) -> Vec<ReferenceLike> {
         let mut refs = Vec::new();
         self.collect_refs_recursive(&mut refs);
         refs
     }
 
-    fn collect_refs_recursive(&self, refs: &mut Vec<PyReferenceLike>) {
+    fn collect_refs_recursive(&self, refs: &mut Vec<ReferenceLike>) {
         match &self.inner.node_type {
             ASTNodeType::Reference {
                 reference,
@@ -329,9 +332,10 @@ impl PyASTNode {
     }
 }
 
-#[pyclass]
+#[gen_stub_pyclass]
+#[pyclass(module = "formualizer")]
 pub struct PyRefWalker {
-    refs: Vec<PyReferenceLike>,
+    refs: Vec<ReferenceLike>,
     index: usize,
 }
 

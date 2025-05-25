@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Install uv
+      run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    - name: Install Python dependencies
+      working-directory: bindings/python
+      run: |
+        uv venv
+        uv pip install -e ".[dev]"
+
+    - name: Build Python extension
+      working-directory: bindings/python
+      run: |
+        source .venv/bin/activate
+        maturin develop
+
+    - name: Generate Python stubs
+      working-directory: bindings/python
+      run: |
+        source .venv/bin/activate
+        cargo run --bin stub_gen
+
+    - name: Run Python linting
+      working-directory: bindings/python
+      run: |
+        source .venv/bin/activate
+        ruff check .
+        ruff format --check .
+
+    - name: Run Python type checking
+      working-directory: bindings/python
+      run: |
+        source .venv/bin/activate
+        mypy formualizer
+
+    - name: Run Python tests with coverage
+      working-directory: bindings/python
+      run: |
+        source .venv/bin/activate
+        pytest
+
+    - name: Upload coverage to Codecov
+      if: matrix.python-version == '3.11'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./bindings/python/coverage.xml
+        fail_ci_if_error: true
+
+  test-rust:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Check Rust formatting
+      run: cargo fmt --all -- --check
+
+    - name: Run Rust clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+    - name: Run Rust tests
+      run: cargo test --all-features
+
+  build-wheels:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build wheels
+      uses: PyO3/maturin-action@v1
+      with:
+        working-directory: bindings/python
+        args: --release --out dist --find-interpreter
+        sccache: 'true'
+
+    - name: Upload wheels
+      uses: actions/upload-artifact@v3
+      with:
+        name: wheels-${{ matrix.os }}
+        path: bindings/python/dist

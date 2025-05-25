@@ -1,7 +1,9 @@
 use crate::{errors::TokenizerError, token::PyToken};
 use formualizer_core::Tokenizer;
 use pyo3::prelude::*;
+use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
 
+#[gen_stub_pyclass]
 #[pyclass(module = "formualizer")]
 pub struct PyTokenizer {
     inner: Tokenizer,
@@ -13,6 +15,7 @@ impl PyTokenizer {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyTokenizer {
     #[new]
@@ -64,7 +67,8 @@ impl PyTokenizer {
     }
 }
 
-#[pyclass]
+#[gen_stub_pyclass]
+#[pyclass(module = "formualizer")]
 pub struct PyTokenizerIter {
     tokens: Vec<PyToken>,
     index: usize,

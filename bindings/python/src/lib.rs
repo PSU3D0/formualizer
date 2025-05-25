@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use pyo3_stub_gen::{derive::gen_stub_pyfunction, define_stub_info_gatherer};
 
 mod ast;
 mod enums;
@@ -12,12 +13,14 @@ use ast::PyASTNode;
 use tokenizer::PyTokenizer;
 
 /// Convenience function to tokenize a formula string
+#[gen_stub_pyfunction]
 #[pyfunction]
 fn tokenize(formula: &str) -> PyResult<PyTokenizer> {
     PyTokenizer::from_formula(formula)
 }
 
 /// Convenience function to parse a formula string
+#[gen_stub_pyfunction]
 #[pyfunction]
 fn parse(formula: &str) -> PyResult<PyASTNode> {
     parser::parse_formula(formula)
@@ -41,3 +44,6 @@ fn formualizer(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
+
+// Define a function to gather stub information
+define_stub_info_gatherer!(stub_info);

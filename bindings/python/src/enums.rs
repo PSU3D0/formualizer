@@ -3,8 +3,10 @@ use std::fmt::Display;
 use formualizer_core::parser::ASTNodeType as CoreASTNodeType;
 use formualizer_core::tokenizer::{TokenSubType as CoreTokenSubType, TokenType as CoreTokenType};
 use pyo3::prelude::*;
+use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
 
 /// Python-exposed token type enum
+#[gen_stub_pyclass_enum]
 #[pyclass(module = "formualizer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyTokenType {
@@ -19,6 +21,7 @@ pub enum PyTokenType {
     OpPostfix,
     Whitespace,
 }
+
 
 impl Display for PyTokenType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -83,6 +86,7 @@ impl From<PyTokenType> for CoreTokenType {
 }
 
 /// Python-exposed token subtype enum
+#[gen_stub_pyclass_enum]
 #[pyclass(module = "formualizer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyTokenSubType {

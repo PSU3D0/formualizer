@@ -80,7 +80,6 @@ mod tests {
     use formualizer_common::error::{ExcelError, ExcelErrorKind};
     use formualizer_core::parser::Parser;
     use formualizer_core::tokenizer::Tokenizer;
-    
 
     use super::{__FnIF, __FnSUM};
     use crate::builtins::logical::{__FnAND, __FnFALSE, __FnOR, __FnTRUE};
@@ -94,12 +93,11 @@ mod tests {
             .map_err(|e| ExcelError::new(ExcelErrorKind::Error).with_message(e.message.clone()))?;
 
         let interpreter = wb.interpreter();
-        
+
         interpreter.evaluate_ast(&ast)
     }
 
     fn create_workbook() -> TestWorkbook {
-        
         TestWorkbook::new().with_fns(with_fns![
             __FnSUM, __FnIF, __FnAND, __FnOR, __FnFALSE, __FnTRUE
         ])
