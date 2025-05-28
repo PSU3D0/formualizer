@@ -262,7 +262,15 @@ class OpenpyxlResolver(FormulaResolver):
 
             # openpyxl stores formulas without the leading =
             if cell.data_type == "f" and cell.value:
-                return cell.value
+                formula = cell.value
+
+                if hasattr(
+                    formula, "ref"
+                ):  # This is an array formula. Prob not the right way to handle this.
+                    return formula.ref
+                else:
+                    return formula
+
             return None
         except (KeyError, AttributeError):
             return None
@@ -270,15 +278,11 @@ class OpenpyxlResolver(FormulaResolver):
     def get_value(self, address: CellRef) -> Any:
         """Get computed value for cell."""
         try:
-            # Load workbook with data_only=True for calculated values
-            if not hasattr(self, "_data_workbook"):
-                self._data_workbook = self.openpyxl.load_workbook(
-                    self.workbook.path if hasattr(self.workbook, "path") else None,
-                    data_only=True,
-                )
+            worksheet = self.workbook[address.sheet]
+            cell = worksheet[f"{address.str_col}{address.row}"]
 
-            worksheet = self._data_workbook[address.sheet]
-            cell = worksheet[f"{address.col}{address.row}"]
+            if cell.data_type == "f":
+                return None
             return cell.value
         except (KeyError, AttributeError):
             return None

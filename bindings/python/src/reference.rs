@@ -87,8 +87,13 @@ impl CellRef {
 
     fn __repr__(&self) -> String {
         format!(
-            "CellRef(sheet={:?}, row={}, col={})",
-            self.sheet, self.row, self.col
+            "CellRef(sheet={}, row={}, col={})",
+            match &self.sheet {
+                Some(s) => format!("{:?}", s),
+                None => "None".to_string(),
+            },
+            self.row,
+            self.col
         )
     }
 
@@ -141,8 +146,19 @@ impl RangeRef {
 
     fn __repr__(&self) -> String {
         format!(
-            "RangeRef(sheet={:?}, start={:?}, end={:?})",
-            self.sheet, self.start, self.end
+            "RangeRef(sheet={}, start={}, end={})",
+            match &self.sheet {
+                Some(s) => format!("{:?}", s),
+                None => "None".to_string(),
+            },
+            match &self.start {
+                Some(s) => s.__str__(),
+                None => "None".to_string(),
+            },
+            match &self.end {
+                Some(e) => e.__str__(),
+                None => "None".to_string(),
+            },
         )
     }
 
