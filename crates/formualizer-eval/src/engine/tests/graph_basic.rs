@@ -181,6 +181,15 @@ fn test_placeholder_creation() {
     assert!(matches!(a1_vertex.kind, VertexKind::FormulaScalar { .. }));
 }
 
+#[test]
+fn test_default_sheet_handling() {
+    let mut graph = DependencyGraph::new();
+    assert_eq!(graph.default_sheet(), "Sheet1");
+
+    graph.set_default_sheet("MyCustomSheet");
+    assert_eq!(graph.default_sheet(), "MyCustomSheet");
+}
+
 // Helper to create a cell reference AST node
 fn create_cell_ref_ast(
     sheet: Option<&str>,

@@ -69,6 +69,9 @@ pub struct DependencyGraph {
     formula_to_range_deps: FxHashMap<VertexId, Vec<ReferenceType>>,
     /// A reverse index mapping a cell address to formulas that depend on it via a range.
     cell_to_range_dependents: FxHashMap<CellAddr, Vec<VertexId>>,
+
+    // Default sheet for relative references
+    default_sheet: String,
 }
 
 impl DependencyGraph {
@@ -80,7 +83,18 @@ impl DependencyGraph {
             volatile_vertices: FxHashSet::default(),
             formula_to_range_deps: FxHashMap::default(),
             cell_to_range_dependents: FxHashMap::default(),
+            default_sheet: "Sheet1".to_string(),
         }
+    }
+
+    /// Sets the default sheet name for relative references.
+    pub fn set_default_sheet(&mut self, sheet_name: &str) {
+        self.default_sheet = sheet_name.to_string();
+    }
+
+    /// Gets the default sheet name.
+    pub fn default_sheet(&self) -> &str {
+        &self.default_sheet
     }
 
     /// Set a value in a cell, returns affected vertex IDs
@@ -128,7 +142,7 @@ impl DependencyGraph {
 
         // Extract dependencies from AST, creating placeholders if needed
         let (new_dependencies, new_range_dependencies, mut created_placeholders) =
-            self.extract_dependencies(&ast)?;
+            self.extract_dependencies(&ast, sheet)?;
 
         // Check for self-reference (immediate cycle detection)
         let addr_vertex_id = self.get_or_create_vertex(&addr, &mut created_placeholders);
@@ -142,7 +156,7 @@ impl DependencyGraph {
         let volatile = self.is_ast_volatile(&ast);
 
         // Remove old dependencies first
-        self.remove_dependent_edges(addr_vertex_id);
+        self.remove_dependent_edges(addr_vertex_id, sheet);
 
         // Update existing vertex
         if let Some(vertex) = self.vertices.get_mut(addr_vertex_id.as_index()) {
@@ -157,7 +171,7 @@ impl DependencyGraph {
 
         // Add new dependency edges
         self.add_dependent_edges(addr_vertex_id, &new_dependencies);
-        self.add_range_dependent_edges(addr_vertex_id, &new_range_dependencies);
+        self.add_range_dependent_edges(addr_vertex_id, &new_range_dependencies, sheet);
 
         // Mark as volatile if needed
         if volatile {
@@ -264,12 +278,14 @@ impl DependencyGraph {
     fn extract_dependencies(
         &mut self,
         ast: &ASTNode,
+        current_sheet: &str,
     ) -> Result<(Vec<VertexId>, Vec<ReferenceType>, Vec<CellAddr>), ExcelError> {
         let mut dependencies = FxHashSet::default();
         let mut range_dependencies = Vec::new();
         let mut created_placeholders = Vec::new();
         self.extract_dependencies_recursive(
             ast,
+            current_sheet,
             &mut dependencies,
             &mut range_dependencies,
             &mut created_placeholders,
@@ -284,6 +300,7 @@ impl DependencyGraph {
     fn extract_dependencies_recursive(
         &mut self,
         ast: &ASTNode,
+        current_sheet: &str,
         dependencies: &mut FxHashSet<VertexId>,
         range_dependencies: &mut Vec<ReferenceType>,
         created_placeholders: &mut Vec<CellAddr>,
@@ -292,8 +309,11 @@ impl DependencyGraph {
             formualizer_core::parser::ASTNodeType::Reference { reference, .. } => {
                 match reference {
                     ReferenceType::Cell { .. } => {
-                        let vertex_id = self
-                            .get_or_create_vertex_for_reference(reference, created_placeholders)?;
+                        let vertex_id = self.get_or_create_vertex_for_reference(
+                            reference,
+                            current_sheet,
+                            created_placeholders,
+                        )?;
                         dependencies.insert(vertex_id);
                     }
                     ReferenceType::Range { .. } => {
@@ -305,12 +325,14 @@ impl DependencyGraph {
             formualizer_core::parser::ASTNodeType::BinaryOp { left, right, .. } => {
                 self.extract_dependencies_recursive(
                     left,
+                    current_sheet,
                     dependencies,
                     range_dependencies,
                     created_placeholders,
                 )?;
                 self.extract_dependencies_recursive(
                     right,
+                    current_sheet,
                     dependencies,
                     range_dependencies,
                     created_placeholders,
@@ -319,6 +341,7 @@ impl DependencyGraph {
             formualizer_core::parser::ASTNodeType::UnaryOp { expr, .. } => {
                 self.extract_dependencies_recursive(
                     expr,
+                    current_sheet,
                     dependencies,
                     range_dependencies,
                     created_placeholders,
@@ -328,6 +351,7 @@ impl DependencyGraph {
                 for arg in args {
                     self.extract_dependencies_recursive(
                         arg,
+                        current_sheet,
                         dependencies,
                         range_dependencies,
                         created_placeholders,
@@ -339,6 +363,7 @@ impl DependencyGraph {
                     for cell in row {
                         self.extract_dependencies_recursive(
                             cell,
+                            current_sheet,
                             dependencies,
                             range_dependencies,
                             created_placeholders,
@@ -374,11 +399,12 @@ impl DependencyGraph {
     fn get_or_create_vertex_for_reference(
         &mut self,
         reference: &formualizer_core::parser::ReferenceType,
+        current_sheet: &str,
         created_placeholders: &mut Vec<CellAddr>,
     ) -> Result<VertexId, ExcelError> {
         match reference {
             formualizer_core::parser::ReferenceType::Cell { sheet, row, col } => {
-                let sheet_name = sheet.as_deref().unwrap_or("Sheet1"); // Default to current sheet
+                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
                 let addr = CellAddr::new(sheet_name.to_string(), *row, *col);
                 Ok(self.get_or_create_vertex(&addr, created_placeholders))
             }
@@ -403,21 +429,27 @@ impl DependencyGraph {
         }
     }
 
-    fn add_range_dependent_edges(&mut self, dependent: VertexId, ranges: &[ReferenceType]) {
+    fn add_range_dependent_edges(
+        &mut self,
+        dependent: VertexId,
+        ranges: &[ReferenceType],
+        current_sheet: &str,
+    ) {
         self.formula_to_range_deps
             .insert(dependent, ranges.to_vec());
         for range in ranges {
             if let ReferenceType::Range {
+                sheet,
                 start_row,
                 start_col,
                 end_row,
                 end_col,
-                ..
             } = range
             {
+                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
                 for row in start_row.unwrap_or(1)..=end_row.unwrap_or(1) {
                     for col in start_col.unwrap_or(1)..=end_col.unwrap_or(1) {
-                        let addr = CellAddr::new("Sheet1".to_string(), row, col);
+                        let addr = CellAddr::new(sheet_name.to_string(), row, col);
                         self.cell_to_range_dependents
                             .entry(addr)
                             .or_default()
@@ -428,7 +460,7 @@ impl DependencyGraph {
         }
     }
 
-    fn remove_dependent_edges(&mut self, dependent: VertexId) {
+    fn remove_dependent_edges(&mut self, dependent: VertexId, current_sheet: &str) {
         // Remove direct dependencies
         let old_deps = if let Some(vertex) = self.vertices.get(dependent.as_index()) {
             vertex.dependencies.clone()
@@ -445,16 +477,17 @@ impl DependencyGraph {
         if let Some(old_ranges) = self.formula_to_range_deps.remove(&dependent) {
             for range in old_ranges {
                 if let ReferenceType::Range {
+                    sheet,
                     start_row,
                     start_col,
                     end_row,
                     end_col,
-                    ..
                 } = range
                 {
+                    let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
                     for row in start_row.unwrap_or(1)..=end_row.unwrap_or(1) {
                         for col in start_col.unwrap_or(1)..=end_col.unwrap_or(1) {
-                            let addr = CellAddr::new("Sheet1".to_string(), row, col);
+                            let addr = CellAddr::new(sheet_name.to_string(), row, col);
                             if let Some(dependents) = self.cell_to_range_dependents.get_mut(&addr) {
                                 dependents.retain(|&id| id != dependent);
                             }

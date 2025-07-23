@@ -358,3 +358,52 @@ fn test_cross_sheet_dependencies() {
     assert_eq!(sheet1_vertex.dependents.len(), 1);
     assert_eq!(sheet1_vertex.dependents[0], sheet2_addr);
 }
+
+#[test]
+fn test_relative_sheet_dependency() {
+    let mut graph = DependencyGraph::new();
+
+    // Create Sheet2!A1 = 10
+    graph
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Int(10))
+        .unwrap();
+
+    // Create Sheet2!B1 = A1 (which should resolve to Sheet2!A1)
+    let ast_relative_ref = ASTNode {
+        node_type: ASTNodeType::Reference {
+            original: "A1".to_string(),
+            reference: ReferenceType::Cell {
+                sheet: None, // This is the key: no explicit sheet
+                row: 1,
+                col: 1,
+            },
+        },
+        source_token: None,
+    };
+
+    graph
+        .set_cell_formula("Sheet2", 1, 2, ast_relative_ref)
+        .unwrap();
+
+    // Verify the dependency is within Sheet2
+    let vertices = graph.vertices();
+    assert_eq!(vertices.len(), 2);
+
+    let sheet2_a1_id = graph
+        .cell_to_vertex()
+        .iter()
+        .find(|(addr, _)| addr.sheet == "Sheet2" && addr.row == 1 && addr.col == 1)
+        .map(|(_, &id)| id)
+        .unwrap();
+
+    let sheet2_b1_id = graph
+        .cell_to_vertex()
+        .iter()
+        .find(|(addr, _)| addr.sheet == "Sheet2" && addr.row == 1 && addr.col == 2)
+        .map(|(_, &id)| id)
+        .unwrap();
+
+    let sheet2_b1_vertex = &vertices[sheet2_b1_id.as_index()];
+    assert_eq!(sheet2_b1_vertex.dependencies.len(), 1);
+    assert_eq!(sheet2_b1_vertex.dependencies[0], sheet2_a1_id);
+}
