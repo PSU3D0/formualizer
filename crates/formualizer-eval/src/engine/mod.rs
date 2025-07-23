@@ -16,7 +16,25 @@ pub use graph::{CellAddr, DependencyGraph};
 pub use scheduler::{Layer, Schedule, Scheduler};
 pub use vertex::{Vertex, VertexId, VertexKind};
 
+// CalcObserver is defined below
+
 use crate::traits::EvaluationContext;
+
+/// 🔮 Scalability Hook: Performance monitoring trait for calculation observability
+pub trait CalcObserver: Send + Sync {
+    fn on_eval_start(&self, vertex_id: VertexId);
+    fn on_eval_complete(&self, vertex_id: VertexId, duration: std::time::Duration);
+    fn on_cycle_detected(&self, cycle: &[VertexId]);
+    fn on_dirty_propagation(&self, vertex_id: VertexId, affected_count: usize);
+}
+
+/// Default no-op observer
+impl CalcObserver for () {
+    fn on_eval_start(&self, _vertex_id: VertexId) {}
+    fn on_eval_complete(&self, _vertex_id: VertexId, _duration: std::time::Duration) {}
+    fn on_cycle_detected(&self, _cycle: &[VertexId]) {}
+    fn on_dirty_propagation(&self, _vertex_id: VertexId, _affected_count: usize) {}
+}
 
 /// Configuration for the evaluation engine
 #[derive(Debug, Clone)]
