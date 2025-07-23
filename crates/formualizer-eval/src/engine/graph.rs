@@ -4,6 +4,32 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::vertex::{Vertex, VertexId, VertexKind};
 
+/// 🔮 Scalability Hook: Change event tracking for future undo/redo support
+#[derive(Debug, Clone)]
+pub enum ChangeEvent {
+    SetValue {
+        addr: CellAddr,
+        old: Option<LiteralValue>,
+        new: LiteralValue,
+    },
+    SetFormula {
+        addr: CellAddr,
+        old: Option<ASTNode>,
+        new: ASTNode,
+    },
+}
+
+/// 🔮 Scalability Hook: Dependency reference types for future range compression
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DependencyRef {
+    /// A specific cell dependency
+    Cell(VertexId),
+    /// A whole column dependency (A:A) - future range compression
+    WholeColumn { sheet: String, col: u32 },
+    /// A whole row dependency (1:1) - future range compression  
+    WholeRow { sheet: String, row: u32 },
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct CellAddr {
     pub sheet: String,
@@ -210,10 +236,76 @@ impl DependencyGraph {
     }
 
     // Helper methods
-    fn extract_dependencies(&self, _ast: &ASTNode) -> Result<Vec<VertexId>, ExcelError> {
-        // Extract references from AST and map to vertex IDs
-        // This is a simplified implementation - expand based on AST structure
-        Ok(Vec::new()) // TODO: Implement dependency extraction
+    fn extract_dependencies(&self, ast: &ASTNode) -> Result<Vec<VertexId>, ExcelError> {
+        let mut dependencies = Vec::new();
+        self.extract_dependencies_recursive(ast, &mut dependencies)?;
+        Ok(dependencies)
+    }
+
+    fn extract_dependencies_recursive(
+        &self,
+        ast: &ASTNode,
+        dependencies: &mut Vec<VertexId>,
+    ) -> Result<(), ExcelError> {
+        match &ast.node_type {
+            formualizer_core::parser::ASTNodeType::Reference { reference, .. } => {
+                // Extract the vertex ID for this reference
+                if let Some(vertex_id) = self.resolve_reference_to_vertex_id(reference)? {
+                    if !dependencies.contains(&vertex_id) {
+                        dependencies.push(vertex_id);
+                    }
+                }
+            }
+            formualizer_core::parser::ASTNodeType::BinaryOp { left, right, .. } => {
+                self.extract_dependencies_recursive(left, dependencies)?;
+                self.extract_dependencies_recursive(right, dependencies)?;
+            }
+            formualizer_core::parser::ASTNodeType::UnaryOp { expr, .. } => {
+                self.extract_dependencies_recursive(expr, dependencies)?;
+            }
+            formualizer_core::parser::ASTNodeType::Function { args, .. } => {
+                for arg in args {
+                    self.extract_dependencies_recursive(arg, dependencies)?;
+                }
+            }
+            formualizer_core::parser::ASTNodeType::Array(rows) => {
+                for row in rows {
+                    for cell in row {
+                        self.extract_dependencies_recursive(cell, dependencies)?;
+                    }
+                }
+            }
+            formualizer_core::parser::ASTNodeType::Literal(_) => {
+                // Literals have no dependencies
+            }
+        }
+        Ok(())
+    }
+
+    fn resolve_reference_to_vertex_id(
+        &self,
+        reference: &formualizer_core::parser::ReferenceType,
+    ) -> Result<Option<VertexId>, ExcelError> {
+        match reference {
+            formualizer_core::parser::ReferenceType::Cell { sheet, row, col } => {
+                let sheet_name = sheet.as_deref().unwrap_or("Sheet1"); // Default to current sheet
+                let addr = CellAddr::new(sheet_name.to_string(), *row, *col);
+                Ok(self.cell_to_vertex.get(&addr).copied())
+            }
+            formualizer_core::parser::ReferenceType::Range { .. } => {
+                // For now, we don't support range dependencies in basic implementation
+                // This will be enhanced in later phases
+                Ok(None)
+            }
+            formualizer_core::parser::ReferenceType::NamedRange(_) => {
+                // Named ranges not supported in basic implementation
+                Ok(None)
+            }
+            formualizer_core::parser::ReferenceType::Table(_) => {
+                // Table references not supported in basic implementation
+                Ok(None)
+            }
+        }
     }
 
     fn is_ast_volatile(&self, _ast: &ASTNode) -> bool {
