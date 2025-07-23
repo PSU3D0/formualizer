@@ -6,10 +6,11 @@ fn test_vertex_creation_and_lookup() {
     let mut graph = DependencyGraph::new();
 
     // Test creating a vertex with set_cell_value
-    let affected = graph
+    let summary = graph
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(42))
         .unwrap();
-    assert_eq!(affected.len(), 1);
+    assert_eq!(summary.affected_vertices.len(), 1);
+    assert_eq!(summary.created_placeholders.len(), 1);
 
     // Test that we can look up the value
     let value = graph.get_cell_value("Sheet1", 1, 1);
@@ -20,17 +21,18 @@ fn test_vertex_creation_and_lookup() {
     assert_eq!(empty_value, None);
 
     // Test updating an existing cell
-    let affected2 = graph
+    let summary2 = graph
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(3.14))
         .unwrap();
-    assert_eq!(affected2.len(), 1);
-    assert_eq!(affected[0], affected2[0]); // Same vertex ID
+    assert_eq!(summary2.affected_vertices.len(), 1);
+    assert_eq!(summary.affected_vertices[0], summary2.affected_vertices[0]); // Same vertex ID
+    assert!(summary2.created_placeholders.is_empty()); // Not a new placeholder
 
     let updated_value = graph.get_cell_value("Sheet1", 1, 1);
     assert_eq!(updated_value, Some(LiteralValue::Number(3.14)));
 
     // Verify internal structure
-    assert_eq!(graph.vertices().len(), 1);
+    assert_eq!(graph.vertices().len(), 1); // Only A1 exists
     let vertex = &graph.vertices()[0];
     assert_eq!(vertex.sheet, "Sheet1");
     assert_eq!(vertex.row, Some(1));
@@ -111,7 +113,8 @@ fn test_vertex_kind_transitions() {
         source_token: None,
     };
 
-    graph.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
+    let summary = graph.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
+    assert!(summary.created_placeholders.is_empty());
 
     // After setting formula, value should be None (not evaluated yet)
     assert_eq!(graph.get_cell_value("Sheet1", 1, 1), None);
@@ -147,5 +150,53 @@ fn test_vertex_kind_transitions() {
     match &vertices[0].kind {
         VertexKind::Value(v) => assert_eq!(*v, LiteralValue::Text("hello".to_string())),
         _ => panic!("Expected VertexKind::Value after setting value"),
+    }
+}
+
+#[test]
+fn test_placeholder_creation() {
+    let mut graph = DependencyGraph::new();
+    let ast = create_cell_ref_ast(None, 1, 2, "B1"); // A1 = B1
+    let summary = graph.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
+
+    // A1 and B1 should have been created
+    assert_eq!(graph.vertices().len(), 2);
+    // Both A1 and B1 are created as placeholders initially
+    assert_eq!(summary.created_placeholders.len(), 2);
+
+    let a1_addr = crate::engine::CellAddr::new("Sheet1".to_string(), 1, 1);
+    let b1_addr = crate::engine::CellAddr::new("Sheet1".to_string(), 1, 2);
+
+    assert!(summary.created_placeholders.contains(&a1_addr));
+    assert!(summary.created_placeholders.contains(&b1_addr));
+
+    // Verify B1 is an Empty vertex
+    let b1_id = *graph.cell_to_vertex().get(&b1_addr).unwrap();
+    let b1_vertex = &graph.vertices()[b1_id.as_index()];
+    assert!(matches!(b1_vertex.kind, VertexKind::Empty));
+
+    // Verify A1 is a Formula vertex
+    let a1_id = *graph.cell_to_vertex().get(&a1_addr).unwrap();
+    let a1_vertex = &graph.vertices()[a1_id.as_index()];
+    assert!(matches!(a1_vertex.kind, VertexKind::FormulaScalar { .. }));
+}
+
+// Helper to create a cell reference AST node
+fn create_cell_ref_ast(
+    sheet: Option<&str>,
+    row: u32,
+    col: u32,
+    original: &str,
+) -> formualizer_core::parser::ASTNode {
+    formualizer_core::parser::ASTNode {
+        node_type: formualizer_core::parser::ASTNodeType::Reference {
+            original: original.to_string(),
+            reference: formualizer_core::parser::ReferenceType::Cell {
+                sheet: sheet.map(|s| s.to_string()),
+                row,
+                col,
+            },
+        },
+        source_token: None,
     }
 }

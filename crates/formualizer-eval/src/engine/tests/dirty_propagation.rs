@@ -71,12 +71,12 @@ fn test_mark_dirty_propagation() {
     }
 
     // Now change A1 - should propagate to A2, A3, A4
-    let affected = graph
+    let summary = graph
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(20))
         .unwrap();
 
     // All 4 vertices should be affected (A1 changed, A2/A3/A4 became dirty)
-    assert_eq!(affected.len(), 4);
+    assert_eq!(summary.affected_vertices.len(), 4);
 
     // Verify dirty flags are set correctly
     let vertices = graph.vertices();
@@ -175,12 +175,12 @@ fn test_mark_dirty_diamond_dependency() {
     graph.clear_dirty_flags(&all_ids);
 
     // Change A1 - should mark A2, A3, A4 as dirty (but A4 only once)
-    let affected = graph
+    let summary = graph
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(20))
         .unwrap();
 
     // Should affect A1, A2, A3, A4 (4 total)
-    assert_eq!(affected.len(), 4);
+    assert_eq!(summary.affected_vertices.len(), 4);
 
     // Verify A4 is only marked dirty once despite two paths from A1
     let vertices = graph.vertices();
@@ -369,13 +369,13 @@ fn test_dirty_propagation_performance() {
 
     // Time the dirty propagation
     let start = std::time::Instant::now();
-    let affected = graph
+    let summary = graph
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(100))
         .unwrap();
     let elapsed = start.elapsed();
 
     // Should affect all 20 vertices
-    assert_eq!(affected.len(), 20);
+    assert_eq!(summary.affected_vertices.len(), 20);
 
     // Performance should be reasonable (this is a rough check)
     // With O(1) HashSet operations, even 20 vertices should be very fast

@@ -43,6 +43,16 @@ impl CellAddr {
     }
 }
 
+/// A summary of the results of a mutating operation on the graph.
+/// This serves as a "changelog" to the application layer.
+#[derive(Debug, Clone)]
+pub struct OperationSummary {
+    /// Vertices whose values have been directly or indirectly affected.
+    pub affected_vertices: Vec<VertexId>,
+    /// Placeholder cells that were newly created to satisfy dependencies.
+    pub created_placeholders: Vec<CellAddr>,
+}
+
 pub struct DependencyGraph {
     // Core storage - simple arena
     vertices: Vec<Vertex>,
@@ -72,8 +82,9 @@ impl DependencyGraph {
         row: u32,
         col: u32,
         value: LiteralValue,
-    ) -> Result<Vec<VertexId>, ExcelError> {
+    ) -> Result<OperationSummary, ExcelError> {
         let addr = CellAddr::new(sheet.to_string(), row, col);
+        let mut created_placeholders = Vec::new();
 
         let vertex_id = if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
             // Update existing vertex
@@ -83,6 +94,7 @@ impl DependencyGraph {
             existing_id
         } else {
             // Create new vertex
+            created_placeholders.push(addr.clone());
             let vertex_id = VertexId::new(self.vertices.len() as u32);
             let vertex = Vertex::new_value(sheet.to_string(), Some(row), Some(col), value);
             self.vertices.push(vertex);
@@ -90,7 +102,10 @@ impl DependencyGraph {
             vertex_id
         };
 
-        Ok(self.mark_dirty(vertex_id))
+        Ok(OperationSummary {
+            affected_vertices: self.mark_dirty(vertex_id),
+            created_placeholders,
+        })
     }
 
     /// Set a formula in a cell, returns affected vertex IDs  
@@ -100,60 +115,49 @@ impl DependencyGraph {
         row: u32,
         col: u32,
         ast: ASTNode,
-    ) -> Result<Vec<VertexId>, ExcelError> {
+    ) -> Result<OperationSummary, ExcelError> {
         let addr = CellAddr::new(sheet.to_string(), row, col);
 
-        // Extract dependencies from AST
-        let new_dependencies = self.extract_dependencies(&ast)?;
+        // Extract dependencies from AST, creating placeholders if needed
+        let (new_dependencies, mut created_placeholders) = self.extract_dependencies(&ast)?;
 
         // Check for self-reference (immediate cycle detection)
-        let addr_vertex_id = self.cell_to_vertex.get(&addr).copied();
-        if let Some(existing_id) = addr_vertex_id {
-            if new_dependencies.contains(&existing_id) {
-                return Err(ExcelError::new(ExcelErrorKind::Circ)
-                    .with_message("Self-reference detected".to_string()));
-            }
+        let addr_vertex_id = self.get_or_create_vertex(&addr, &mut created_placeholders);
+
+        if new_dependencies.contains(&addr_vertex_id) {
+            return Err(ExcelError::new(ExcelErrorKind::Circ)
+                .with_message("Self-reference detected".to_string()));
         }
 
         // Determine if volatile
         let volatile = self.is_ast_volatile(&ast);
 
-        let vertex_id = if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
-            // Remove old dependencies first
-            self.remove_dependent_edges(existing_id);
+        // Remove old dependencies first
+        self.remove_dependent_edges(addr_vertex_id);
 
-            // Update existing vertex
-            if let Some(vertex) = self.vertices.get_mut(existing_id.as_index()) {
-                // Update vertex
-                vertex.kind = VertexKind::FormulaScalar {
-                    ast,
-                    result: None,
-                    dirty: true,
-                    volatile,
-                };
-                vertex.dependencies = new_dependencies.clone();
-            }
-            existing_id
-        } else {
-            // Create new vertex
-            let vertex_id = VertexId::new(self.vertices.len() as u32);
-            let mut vertex =
-                Vertex::new_formula_scalar(sheet.to_string(), Some(row), Some(col), ast, volatile);
+        // Update existing vertex
+        if let Some(vertex) = self.vertices.get_mut(addr_vertex_id.as_index()) {
+            vertex.kind = VertexKind::FormulaScalar {
+                ast,
+                result: None,
+                dirty: true,
+                volatile,
+            };
             vertex.dependencies = new_dependencies.clone();
-            self.vertices.push(vertex);
-            self.cell_to_vertex.insert(addr, vertex_id);
-            vertex_id
-        };
+        }
 
         // Add new dependency edges
-        self.add_dependent_edges(vertex_id, &new_dependencies);
+        self.add_dependent_edges(addr_vertex_id, &new_dependencies);
 
         // Mark as volatile if needed
         if volatile {
-            self.volatile_vertices.insert(vertex_id);
+            self.volatile_vertices.insert(addr_vertex_id);
         }
 
-        Ok(self.mark_dirty(vertex_id))
+        Ok(OperationSummary {
+            affected_vertices: self.mark_dirty(addr_vertex_id),
+            created_placeholders,
+        })
     }
 
     /// Get current value from a cell
@@ -236,42 +240,48 @@ impl DependencyGraph {
     }
 
     // Helper methods
-    fn extract_dependencies(&self, ast: &ASTNode) -> Result<Vec<VertexId>, ExcelError> {
-        let mut dependencies = Vec::new();
-        self.extract_dependencies_recursive(ast, &mut dependencies)?;
-        Ok(dependencies)
+    fn extract_dependencies(
+        &mut self,
+        ast: &ASTNode,
+    ) -> Result<(Vec<VertexId>, Vec<CellAddr>), ExcelError> {
+        let mut dependencies = FxHashSet::default();
+        let mut created_placeholders = Vec::new();
+        self.extract_dependencies_recursive(ast, &mut dependencies, &mut created_placeholders)?;
+        Ok((dependencies.into_iter().collect(), created_placeholders))
     }
 
     fn extract_dependencies_recursive(
-        &self,
+        &mut self,
         ast: &ASTNode,
-        dependencies: &mut Vec<VertexId>,
+        dependencies: &mut FxHashSet<VertexId>,
+        created_placeholders: &mut Vec<CellAddr>,
     ) -> Result<(), ExcelError> {
         match &ast.node_type {
             formualizer_core::parser::ASTNodeType::Reference { reference, .. } => {
-                // Extract the vertex ID for this reference
-                if let Some(vertex_id) = self.resolve_reference_to_vertex_id(reference)? {
-                    if !dependencies.contains(&vertex_id) {
-                        dependencies.push(vertex_id);
-                    }
-                }
+                let vertex_id =
+                    self.get_or_create_vertex_for_reference(reference, created_placeholders)?;
+                dependencies.insert(vertex_id);
             }
             formualizer_core::parser::ASTNodeType::BinaryOp { left, right, .. } => {
-                self.extract_dependencies_recursive(left, dependencies)?;
-                self.extract_dependencies_recursive(right, dependencies)?;
+                self.extract_dependencies_recursive(left, dependencies, created_placeholders)?;
+                self.extract_dependencies_recursive(right, dependencies, created_placeholders)?;
             }
             formualizer_core::parser::ASTNodeType::UnaryOp { expr, .. } => {
-                self.extract_dependencies_recursive(expr, dependencies)?;
+                self.extract_dependencies_recursive(expr, dependencies, created_placeholders)?;
             }
             formualizer_core::parser::ASTNodeType::Function { args, .. } => {
                 for arg in args {
-                    self.extract_dependencies_recursive(arg, dependencies)?;
+                    self.extract_dependencies_recursive(arg, dependencies, created_placeholders)?;
                 }
             }
             formualizer_core::parser::ASTNodeType::Array(rows) => {
                 for row in rows {
                     for cell in row {
-                        self.extract_dependencies_recursive(cell, dependencies)?;
+                        self.extract_dependencies_recursive(
+                            cell,
+                            dependencies,
+                            created_placeholders,
+                        )?;
                     }
                 }
             }
@@ -282,28 +292,48 @@ impl DependencyGraph {
         Ok(())
     }
 
-    fn resolve_reference_to_vertex_id(
-        &self,
+    fn get_or_create_vertex(
+        &mut self,
+        addr: &CellAddr,
+        created_placeholders: &mut Vec<CellAddr>,
+    ) -> VertexId {
+        if let Some(&vertex_id) = self.cell_to_vertex.get(addr) {
+            return vertex_id;
+        }
+
+        created_placeholders.push(addr.clone());
+        let vertex_id = VertexId::new(self.vertices.len() as u32);
+        let vertex = Vertex::new_empty(addr.sheet.clone(), Some(addr.row), Some(addr.col));
+        self.vertices.push(vertex);
+        self.cell_to_vertex.insert(addr.clone(), vertex_id);
+        vertex_id
+    }
+
+    /// Gets the VertexId for a reference, creating a placeholder vertex if it doesn't exist.
+    fn get_or_create_vertex_for_reference(
+        &mut self,
         reference: &formualizer_core::parser::ReferenceType,
-    ) -> Result<Option<VertexId>, ExcelError> {
+        created_placeholders: &mut Vec<CellAddr>,
+    ) -> Result<VertexId, ExcelError> {
         match reference {
             formualizer_core::parser::ReferenceType::Cell { sheet, row, col } => {
                 let sheet_name = sheet.as_deref().unwrap_or("Sheet1"); // Default to current sheet
                 let addr = CellAddr::new(sheet_name.to_string(), *row, *col);
-                Ok(self.cell_to_vertex.get(&addr).copied())
+                Ok(self.get_or_create_vertex(&addr, created_placeholders))
             }
             formualizer_core::parser::ReferenceType::Range { .. } => {
-                // For now, we don't support range dependencies in basic implementation
-                // This will be enhanced in later phases
-                Ok(None)
+                let vertex_id = VertexId::new(self.vertices.len() as u32);
+                let vertex = Vertex::new_empty("RangePlaceholder".to_string(), None, None);
+                self.vertices.push(vertex);
+                Ok(vertex_id)
             }
-            formualizer_core::parser::ReferenceType::NamedRange(_) => {
-                // Named ranges not supported in basic implementation
-                Ok(None)
+            formualizer_core::parser::ReferenceType::NamedRange(name) => {
+                Err(ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("Named range '{}' not supported yet.", name)))
             }
-            formualizer_core::parser::ReferenceType::Table(_) => {
-                // Table references not supported in basic implementation
-                Ok(None)
+            formualizer_core::parser::ReferenceType::Table(table) => {
+                Err(ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("Table '{}' not supported yet.", table.name)))
             }
         }
     }
@@ -338,8 +368,7 @@ impl DependencyGraph {
         }
     }
 
-    // Testing accessors
-    #[cfg(test)]
+    // Accessors for scheduler and tests
     pub(crate) fn vertices(&self) -> &[Vertex] {
         &self.vertices
     }

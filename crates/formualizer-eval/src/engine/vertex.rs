@@ -28,6 +28,9 @@ impl VertexId {
 
 #[derive(Debug, Clone)]
 pub enum VertexKind {
+    /// An implicitly created placeholder cell that has not been defined.
+    Empty,
+
     /// Literal value or cached scalar result
     Value(LiteralValue),
 
@@ -64,19 +67,9 @@ impl VertexMetadata {
     pub fn new(id: VertexId, kind: &VertexKind) -> Self {
         let mut flags = 0u32;
         let kind_tag = match kind {
-            VertexKind::Value(_) => 0,
+            VertexKind::Empty => 0,
+            VertexKind::Value(_) => 1,
             VertexKind::FormulaScalar {
-                dirty, volatile, ..
-            } => {
-                if *dirty {
-                    flags |= 0x01;
-                }
-                if *volatile {
-                    flags |= 0x02;
-                }
-                1
-            }
-            VertexKind::FormulaArray {
                 dirty, volatile, ..
             } => {
                 if *dirty {
@@ -87,7 +80,18 @@ impl VertexMetadata {
                 }
                 2
             }
-            VertexKind::InfiniteRange { .. } => 3,
+            VertexKind::FormulaArray {
+                dirty, volatile, ..
+            } => {
+                if *dirty {
+                    flags |= 0x01;
+                }
+                if *volatile {
+                    flags |= 0x02;
+                }
+                3
+            }
+            VertexKind::InfiniteRange { .. } => 4,
         };
 
         Self {
@@ -117,6 +121,17 @@ pub struct Vertex {
 }
 
 impl Vertex {
+    pub fn new_empty(sheet: String, row: Option<u32>, col: Option<u32>) -> Self {
+        Self {
+            kind: VertexKind::Empty,
+            sheet,
+            row,
+            col,
+            dependencies: Vec::new(),
+            dependents: Vec::new(),
+        }
+    }
+
     pub fn new_value(
         sheet: String,
         row: Option<u32>,

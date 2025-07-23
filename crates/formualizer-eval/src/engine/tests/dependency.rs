@@ -210,11 +210,6 @@ fn test_dependency_edge_management() {
 fn test_circular_dependency_detection() {
     let mut graph = DependencyGraph::new();
 
-    // Create A1 = 10
-    graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))
-        .unwrap();
-
     // Try to create A1 = A1 (self-reference)
     let ast_self_ref = ASTNode {
         node_type: ASTNodeType::Reference {
@@ -237,11 +232,15 @@ fn test_circular_dependency_detection() {
         other => panic!("Expected circular reference error, got {:?}", other),
     }
 
-    // A1 should still be a value, not a formula
+    // A1 should be an empty placeholder, not a formula
     let vertices = graph.vertices();
+    assert_eq!(vertices.len(), 1);
     match &vertices[0].kind {
-        VertexKind::Value(_) => {} // Expected
-        _ => panic!("A1 should still be a value after failed formula update"),
+        VertexKind::Empty => {} // Expected
+        other => panic!(
+            "A1 should be an Empty vertex after failed formula update, but was {:?}",
+            other
+        ),
     }
 }
 
