@@ -1,5 +1,5 @@
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::ASTNode;
+use formualizer_core::parser::{ASTNode, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::vertex::{Vertex, VertexId, VertexKind};
@@ -63,6 +63,12 @@ pub struct DependencyGraph {
     // Scheduling state - using HashSet for O(1) operations
     dirty_vertices: FxHashSet<VertexId>,
     volatile_vertices: FxHashSet<VertexId>,
+
+    // NEW: Specialized managers for range dependencies (Hybrid Model)
+    /// Maps a formula vertex to the ranges it depends on.
+    formula_to_range_deps: FxHashMap<VertexId, Vec<ReferenceType>>,
+    /// A reverse index mapping a cell address to formulas that depend on it via a range.
+    cell_to_range_dependents: FxHashMap<CellAddr, Vec<VertexId>>,
 }
 
 impl DependencyGraph {
@@ -72,6 +78,8 @@ impl DependencyGraph {
             cell_to_vertex: FxHashMap::default(),
             dirty_vertices: FxHashSet::default(),
             volatile_vertices: FxHashSet::default(),
+            formula_to_range_deps: FxHashMap::default(),
+            cell_to_range_dependents: FxHashMap::default(),
         }
     }
 
@@ -119,7 +127,8 @@ impl DependencyGraph {
         let addr = CellAddr::new(sheet.to_string(), row, col);
 
         // Extract dependencies from AST, creating placeholders if needed
-        let (new_dependencies, mut created_placeholders) = self.extract_dependencies(&ast)?;
+        let (new_dependencies, new_range_dependencies, mut created_placeholders) =
+            self.extract_dependencies(&ast)?;
 
         // Check for self-reference (immediate cycle detection)
         let addr_vertex_id = self.get_or_create_vertex(&addr, &mut created_placeholders);
@@ -148,6 +157,7 @@ impl DependencyGraph {
 
         // Add new dependency edges
         self.add_dependent_edges(addr_vertex_id, &new_dependencies);
+        self.add_range_dependent_edges(addr_vertex_id, &new_range_dependencies);
 
         // Mark as volatile if needed
         if volatile {
@@ -181,6 +191,17 @@ impl DependencyGraph {
         let mut affected = FxHashSet::default();
         let mut to_visit = vec![vertex_id];
 
+        // Initial propagation from direct and range dependents
+        if let Some(vertex) = self.vertices.get(vertex_id.as_index()) {
+            to_visit.extend(&vertex.dependents);
+            if let (Some(row), Some(col)) = (vertex.row, vertex.col) {
+                let addr = CellAddr::new(vertex.sheet.clone(), row, col);
+                if let Some(dependents) = self.cell_to_range_dependents.get(&addr) {
+                    to_visit.extend(dependents);
+                }
+            }
+        }
+
         while let Some(id) = to_visit.pop() {
             if !affected.insert(id) {
                 continue; // Already processed
@@ -194,7 +215,7 @@ impl DependencyGraph {
                     _ => {}
                 }
 
-                // Add dependents to visit list
+                // Add direct dependents to visit list
                 to_visit.extend(&vertex.dependents);
             }
         }
@@ -243,35 +264,74 @@ impl DependencyGraph {
     fn extract_dependencies(
         &mut self,
         ast: &ASTNode,
-    ) -> Result<(Vec<VertexId>, Vec<CellAddr>), ExcelError> {
+    ) -> Result<(Vec<VertexId>, Vec<ReferenceType>, Vec<CellAddr>), ExcelError> {
         let mut dependencies = FxHashSet::default();
+        let mut range_dependencies = Vec::new();
         let mut created_placeholders = Vec::new();
-        self.extract_dependencies_recursive(ast, &mut dependencies, &mut created_placeholders)?;
-        Ok((dependencies.into_iter().collect(), created_placeholders))
+        self.extract_dependencies_recursive(
+            ast,
+            &mut dependencies,
+            &mut range_dependencies,
+            &mut created_placeholders,
+        )?;
+        Ok((
+            dependencies.into_iter().collect(),
+            range_dependencies,
+            created_placeholders,
+        ))
     }
 
     fn extract_dependencies_recursive(
         &mut self,
         ast: &ASTNode,
         dependencies: &mut FxHashSet<VertexId>,
+        range_dependencies: &mut Vec<ReferenceType>,
         created_placeholders: &mut Vec<CellAddr>,
     ) -> Result<(), ExcelError> {
         match &ast.node_type {
             formualizer_core::parser::ASTNodeType::Reference { reference, .. } => {
-                let vertex_id =
-                    self.get_or_create_vertex_for_reference(reference, created_placeholders)?;
-                dependencies.insert(vertex_id);
+                match reference {
+                    ReferenceType::Cell { .. } => {
+                        let vertex_id = self
+                            .get_or_create_vertex_for_reference(reference, created_placeholders)?;
+                        dependencies.insert(vertex_id);
+                    }
+                    ReferenceType::Range { .. } => {
+                        range_dependencies.push(reference.clone());
+                    }
+                    _ => {} // Ignore others for now
+                }
             }
             formualizer_core::parser::ASTNodeType::BinaryOp { left, right, .. } => {
-                self.extract_dependencies_recursive(left, dependencies, created_placeholders)?;
-                self.extract_dependencies_recursive(right, dependencies, created_placeholders)?;
+                self.extract_dependencies_recursive(
+                    left,
+                    dependencies,
+                    range_dependencies,
+                    created_placeholders,
+                )?;
+                self.extract_dependencies_recursive(
+                    right,
+                    dependencies,
+                    range_dependencies,
+                    created_placeholders,
+                )?;
             }
             formualizer_core::parser::ASTNodeType::UnaryOp { expr, .. } => {
-                self.extract_dependencies_recursive(expr, dependencies, created_placeholders)?;
+                self.extract_dependencies_recursive(
+                    expr,
+                    dependencies,
+                    range_dependencies,
+                    created_placeholders,
+                )?;
             }
             formualizer_core::parser::ASTNodeType::Function { args, .. } => {
                 for arg in args {
-                    self.extract_dependencies_recursive(arg, dependencies, created_placeholders)?;
+                    self.extract_dependencies_recursive(
+                        arg,
+                        dependencies,
+                        range_dependencies,
+                        created_placeholders,
+                    )?;
                 }
             }
             formualizer_core::parser::ASTNodeType::Array(rows) => {
@@ -280,6 +340,7 @@ impl DependencyGraph {
                         self.extract_dependencies_recursive(
                             cell,
                             dependencies,
+                            range_dependencies,
                             created_placeholders,
                         )?;
                     }
@@ -321,20 +382,8 @@ impl DependencyGraph {
                 let addr = CellAddr::new(sheet_name.to_string(), *row, *col);
                 Ok(self.get_or_create_vertex(&addr, created_placeholders))
             }
-            formualizer_core::parser::ReferenceType::Range { .. } => {
-                let vertex_id = VertexId::new(self.vertices.len() as u32);
-                let vertex = Vertex::new_empty("RangePlaceholder".to_string(), None, None);
-                self.vertices.push(vertex);
-                Ok(vertex_id)
-            }
-            formualizer_core::parser::ReferenceType::NamedRange(name) => {
-                Err(ExcelError::new(ExcelErrorKind::Name)
-                    .with_message(format!("Named range '{}' not supported yet.", name)))
-            }
-            formualizer_core::parser::ReferenceType::Table(table) => {
-                Err(ExcelError::new(ExcelErrorKind::Name)
-                    .with_message(format!("Table '{}' not supported yet.", table.name)))
-            }
+            _ => Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("Expected a cell reference, but got a range or other type.")),
         }
     }
 
@@ -354,16 +403,64 @@ impl DependencyGraph {
         }
     }
 
+    fn add_range_dependent_edges(&mut self, dependent: VertexId, ranges: &[ReferenceType]) {
+        self.formula_to_range_deps
+            .insert(dependent, ranges.to_vec());
+        for range in ranges {
+            if let ReferenceType::Range {
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                ..
+            } = range
+            {
+                for row in start_row.unwrap_or(1)..=end_row.unwrap_or(1) {
+                    for col in start_col.unwrap_or(1)..=end_col.unwrap_or(1) {
+                        let addr = CellAddr::new("Sheet1".to_string(), row, col);
+                        self.cell_to_range_dependents
+                            .entry(addr)
+                            .or_default()
+                            .push(dependent);
+                    }
+                }
+            }
+        }
+    }
+
     fn remove_dependent_edges(&mut self, dependent: VertexId) {
+        // Remove direct dependencies
         let old_deps = if let Some(vertex) = self.vertices.get(dependent.as_index()) {
             vertex.dependencies.clone()
         } else {
             return;
         };
-
         for dep_id in old_deps {
             if let Some(dep_vertex) = self.vertices.get_mut(dep_id.as_index()) {
                 dep_vertex.dependents.retain(|&id| id != dependent);
+            }
+        }
+
+        // Remove range dependencies
+        if let Some(old_ranges) = self.formula_to_range_deps.remove(&dependent) {
+            for range in old_ranges {
+                if let ReferenceType::Range {
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    ..
+                } = range
+                {
+                    for row in start_row.unwrap_or(1)..=end_row.unwrap_or(1) {
+                        for col in start_col.unwrap_or(1)..=end_col.unwrap_or(1) {
+                            let addr = CellAddr::new("Sheet1".to_string(), row, col);
+                            if let Some(dependents) = self.cell_to_range_dependents.get_mut(&addr) {
+                                dependents.retain(|&id| id != dependent);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

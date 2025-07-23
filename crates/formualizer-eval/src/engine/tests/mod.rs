@@ -3,5 +3,7 @@ mod debug_graph;
 mod dependency;
 mod dirty_propagation;
 mod graph_basic;
+mod range_dependencies;
+mod schedule_integration;
 mod tarjan_scc;
 mod topo_layers;

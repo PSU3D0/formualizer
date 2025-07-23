@@ -44,6 +44,7 @@ impl<'a> Scheduler<'a> {
         let mut lowlinks = FxHashMap::default();
         let mut on_stack = FxHashSet::default();
         let mut sccs = Vec::new();
+        let vertex_set: FxHashSet<VertexId> = vertices.iter().copied().collect();
 
         for &vertex in vertices {
             if !indices.contains_key(&vertex) {
@@ -55,6 +56,7 @@ impl<'a> Scheduler<'a> {
                     &mut lowlinks,
                     &mut on_stack,
                     &mut sccs,
+                    &vertex_set,
                 )?;
             }
         }
@@ -71,6 +73,7 @@ impl<'a> Scheduler<'a> {
         lowlinks: &mut FxHashMap<VertexId, usize>,
         on_stack: &mut FxHashSet<VertexId>,
         sccs: &mut Vec<Vec<VertexId>>,
+        vertex_set: &FxHashSet<VertexId>,
     ) -> Result<(), ExcelError> {
         // Set the depth index for vertex to the smallest unused index
         indices.insert(vertex, *index_counter);
@@ -82,6 +85,11 @@ impl<'a> Scheduler<'a> {
         // Consider successors of vertex (dependencies)
         if let Some(v) = self.graph.vertices().get(vertex.as_index()) {
             for &dependency in &v.dependencies {
+                // Only consider dependencies that are part of the current scheduling task
+                if !vertex_set.contains(&dependency) {
+                    continue;
+                }
+
                 if !indices.contains_key(&dependency) {
                     // Successor dependency has not yet been visited; recurse on it
                     self.tarjan_visit(
@@ -92,6 +100,7 @@ impl<'a> Scheduler<'a> {
                         lowlinks,
                         on_stack,
                         sccs,
+                        vertex_set,
                     )?;
                     let dep_lowlink = lowlinks[&dependency];
                     lowlinks.insert(vertex, lowlinks[&vertex].min(dep_lowlink));
@@ -100,8 +109,6 @@ impl<'a> Scheduler<'a> {
                     let dep_index = indices[&dependency];
                     lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
                 }
-                // If dependency is not on stack, then (vertex, dependency) is a cross-edge in DFS tree
-                // and must be ignored
             }
         }
 
@@ -122,7 +129,7 @@ impl<'a> Scheduler<'a> {
         Ok(())
     }
 
-    fn separate_cycles(
+    pub(crate) fn separate_cycles(
         &self,
         sccs: Vec<Vec<VertexId>>,
     ) -> (Vec<Vec<VertexId>>, Vec<Vec<VertexId>>) {
@@ -148,14 +155,75 @@ impl<'a> Scheduler<'a> {
         }
     }
 
-    fn build_layers(&self, acyclic_sccs: Vec<Vec<VertexId>>) -> Result<Vec<Layer>, ExcelError> {
-        // TODO: Implement layer building using Kahn's algorithm
-        // For now, just return a single layer with all vertices
+    pub(crate) fn build_layers(
+        &self,
+        acyclic_sccs: Vec<Vec<VertexId>>,
+    ) -> Result<Vec<Layer>, ExcelError> {
         let vertices: Vec<VertexId> = acyclic_sccs.into_iter().flatten().collect();
         if vertices.is_empty() {
-            Ok(Vec::new())
-        } else {
-            Ok(vec![Layer { vertices }])
+            return Ok(Vec::new());
         }
+        let vertex_set: FxHashSet<VertexId> = vertices.iter().copied().collect();
+
+        // Calculate in-degrees for all vertices in the acyclic subgraph
+        let mut in_degrees: FxHashMap<VertexId, usize> = vertices.iter().map(|&v| (v, 0)).collect();
+        for &vertex_id in &vertices {
+            if let Some(vertex) = self.graph.vertices().get(vertex_id.as_index()) {
+                for &dep_id in &vertex.dependencies {
+                    if vertex_set.contains(&dep_id) {
+                        if let Some(in_degree) = in_degrees.get_mut(&vertex_id) {
+                            *in_degree += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Initialize the queue with all nodes having an in-degree of 0
+        let mut queue: std::collections::VecDeque<VertexId> = in_degrees
+            .iter()
+            .filter(|&(_, &in_degree)| in_degree == 0)
+            .map(|(&v, _)| v)
+            .collect();
+
+        let mut layers = Vec::new();
+        let mut processed_count = 0;
+
+        while !queue.is_empty() {
+            let mut current_layer_vertices = Vec::new();
+            for _ in 0..queue.len() {
+                let u = queue.pop_front().unwrap();
+                current_layer_vertices.push(u);
+                processed_count += 1;
+
+                // For each dependent of u, reduce its in-degree
+                if let Some(vertex) = self.graph.vertices().get(u.as_index()) {
+                    for &v_dep in &vertex.dependents {
+                        if let Some(in_degree) = in_degrees.get_mut(&v_dep) {
+                            *in_degree -= 1;
+                            if *in_degree == 0 {
+                                queue.push_back(v_dep);
+                            }
+                        }
+                    }
+                }
+            }
+            // Sort for deterministic output in tests
+            current_layer_vertices.sort();
+            layers.push(Layer {
+                vertices: current_layer_vertices,
+            });
+        }
+
+        if processed_count != vertices.len() {
+            return Err(
+                ExcelError::new(formualizer_common::ExcelErrorKind::Circ).with_message(
+                    "Unexpected cycle detected in acyclic components during layer construction"
+                        .to_string(),
+                ),
+            );
+        }
+
+        Ok(layers)
     }
 }
