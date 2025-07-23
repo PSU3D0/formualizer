@@ -24,6 +24,12 @@ pub trait Range: Debug + Send + Sync {
     fn is_sparse(&self) -> bool {
         false
     }
+
+    // Handle infinite ranges (A:A, 1:1)
+    fn is_infinite(&self) -> bool {
+        false
+    }
+
     fn materialise(&self) -> Cow<'_, [Vec<LiteralValue>]> {
         Cow::Owned(
             (0..self.dimensions().0)

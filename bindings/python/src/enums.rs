@@ -22,7 +22,6 @@ pub enum PyTokenType {
     Whitespace,
 }
 
-
 impl Display for PyTokenType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.__str__())

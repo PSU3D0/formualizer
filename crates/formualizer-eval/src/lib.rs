@@ -7,4 +7,6 @@ pub mod builtins;
 mod macros;
 pub mod test_workbook;
 
+pub mod engine;
+
 mod tests;

@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3_stub_gen::{derive::gen_stub_pyfunction, define_stub_info_gatherer};
+use pyo3_stub_gen::{define_stub_info_gatherer, derive::gen_stub_pyfunction};
 
 mod ast;
 mod enums;

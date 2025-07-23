@@ -8,3 +8,4 @@ formualizer-core = { path = "../formualizer-core" }
 formualizer-macros  = { path = "../formualizer-macros" }
 formualizer-common = { path = "../formualizer-common" }
 once_cell = "1.21.3"
+rustc-hash = "1.1"
