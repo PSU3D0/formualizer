@@ -217,6 +217,7 @@ impl PyASTNode {
             LiteralValue::Duration(dur) => format!("Duration({})", dur),
             LiteralValue::Array(arr) => format!("Array({:?})", arr),
             LiteralValue::Empty => "Empty".to_string(),
+            LiteralValue::Pending => "Pending".to_string(),
         }
     }
 
@@ -328,6 +329,7 @@ impl PyASTNode {
                 py_arr.to_object(py)
             }
             LiteralValue::Empty => py.None(),
+            LiteralValue::Pending => py.None(),
         }
     }
 }

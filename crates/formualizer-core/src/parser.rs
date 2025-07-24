@@ -809,12 +809,18 @@ impl ASTNode {
                                     LiteralValue::Empty => {
                                         hasher.write(&[11]);
                                     }
+                                    LiteralValue::Pending => {
+                                        hasher.write(&[12]); // Pending subtype
+                                    }
                                 }
                             }
                         }
                     }
                     LiteralValue::Empty => {
                         hasher.write(&[11]); // Empty subtype
+                    }
+                    LiteralValue::Pending => {
+                        hasher.write(&[12]); // Pending subtype
                     }
                 }
             }
