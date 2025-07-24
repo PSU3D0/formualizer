@@ -2,6 +2,7 @@ mod cycle_detection;
 mod debug_graph;
 mod dependency;
 mod dirty_propagation;
+mod evaluation;
 mod graph_basic;
 mod range_dependencies;
 mod schedule_integration;

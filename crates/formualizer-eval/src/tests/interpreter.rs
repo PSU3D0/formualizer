@@ -85,7 +85,7 @@ mod tests {
     use crate::builtins::logical::{__FnAND, __FnFALSE, __FnOR, __FnTRUE};
 
     /// Helper function to parse and evaluate a formula.
-    fn evaluate_formula(formula: &str, wb: TestWorkbook) -> Result<LiteralValue, ExcelError> {
+    fn evaluate_formula(formula: &str, wb: &TestWorkbook) -> Result<LiteralValue, ExcelError> {
         let tokenizer = Tokenizer::new(formula).unwrap();
         let mut parser = Parser::new(tokenizer.items, false);
         let ast = parser
@@ -105,319 +105,316 @@ mod tests {
 
     #[test]
     fn test_basic_arithmetic() {
+        let wb = create_workbook();
         // Basic arithmetic
         assert_eq!(
-            evaluate_formula("=1+2", create_workbook()).unwrap(),
+            evaluate_formula("=1+2", &wb).unwrap(),
             LiteralValue::Number(3.0)
         );
         assert_eq!(
-            evaluate_formula("=3-1", create_workbook()).unwrap(),
+            evaluate_formula("=3-1", &wb).unwrap(),
             LiteralValue::Number(2.0)
         );
         assert_eq!(
-            evaluate_formula("=2*3", create_workbook()).unwrap(),
+            evaluate_formula("=2*3", &wb).unwrap(),
             LiteralValue::Number(6.0)
         );
         assert_eq!(
-            evaluate_formula("=6/2", create_workbook()).unwrap(),
+            evaluate_formula("=6/2", &wb).unwrap(),
             LiteralValue::Number(3.0)
         );
         assert_eq!(
-            evaluate_formula("=2^3", create_workbook()).unwrap(),
+            evaluate_formula("=2^3", &wb).unwrap(),
             LiteralValue::Number(8.0)
         );
 
         // Order of operations
         assert_eq!(
-            evaluate_formula("=1+2*3", create_workbook()).unwrap(),
+            evaluate_formula("=1+2*3", &wb).unwrap(),
             LiteralValue::Number(7.0)
         );
         assert_eq!(
-            evaluate_formula("=(1+2)*3", create_workbook()).unwrap(),
+            evaluate_formula("=(1+2)*3", &wb).unwrap(),
             LiteralValue::Number(9.0)
         );
         assert_eq!(
-            evaluate_formula("=2^3+1", create_workbook()).unwrap(),
+            evaluate_formula("=2^3+1", &wb).unwrap(),
             LiteralValue::Number(9.0)
         );
         assert_eq!(
-            evaluate_formula("=2^(3+1)", create_workbook()).unwrap(),
+            evaluate_formula("=2^(3+1)", &wb).unwrap(),
             LiteralValue::Number(16.0)
         );
     }
 
     #[test]
     fn test_unary_operators() {
+        let wb = create_workbook();
         // Unary operators
         assert_eq!(
-            evaluate_formula("=-5", create_workbook()).unwrap(),
+            evaluate_formula("=-5", &wb).unwrap(),
             LiteralValue::Number(-5.0)
         );
         assert_eq!(
-            evaluate_formula("=+5", create_workbook()).unwrap(),
+            evaluate_formula("=+5", &wb).unwrap(),
             LiteralValue::Number(5.0)
         );
         assert_eq!(
-            evaluate_formula("=--5", create_workbook()).unwrap(),
+            evaluate_formula("=--5", &wb).unwrap(),
             LiteralValue::Number(5.0)
         );
         assert_eq!(
-            evaluate_formula("=-(-5)", create_workbook()).unwrap(),
+            evaluate_formula("=-(-5)", &wb).unwrap(),
             LiteralValue::Number(5.0)
         );
 
         // Percentage operator
         assert_eq!(
-            evaluate_formula("=50%", create_workbook()).unwrap(),
+            evaluate_formula("=50%", &wb).unwrap(),
             LiteralValue::Number(0.5)
         );
         assert_eq!(
-            evaluate_formula("=100%+20%", create_workbook()).unwrap(),
+            evaluate_formula("=100%+20%", &wb).unwrap(),
             LiteralValue::Number(1.2)
         );
     }
 
     #[test]
     fn test_value_coercion() {
+        let wb = create_workbook();
         // Boolean to number coercion
         assert_eq!(
-            evaluate_formula("=TRUE+1", create_workbook()).unwrap(),
+            evaluate_formula("=TRUE+1", &wb).unwrap(),
             LiteralValue::Number(2.0)
         );
         assert_eq!(
-            evaluate_formula("=FALSE+1", create_workbook()).unwrap(),
+            evaluate_formula("=FALSE+1", &wb).unwrap(),
             LiteralValue::Number(1.0)
         );
 
         // Text to number coercion
         assert_eq!(
-            evaluate_formula("=\"5\"+2", create_workbook()).unwrap(),
+            evaluate_formula("=\"5\"+2", &wb).unwrap(),
             LiteralValue::Number(7.0)
         );
 
         // Number to boolean coercion in logical contexts
         assert_eq!(
-            evaluate_formula("=IF(1, \"Yes\", \"No\")", create_workbook()).unwrap(),
+            evaluate_formula("=IF(1, \"Yes\", \"No\")", &wb).unwrap(),
             LiteralValue::Text("Yes".to_string())
         );
         assert_eq!(
-            evaluate_formula("=IF(0, \"Yes\", \"No\")", create_workbook()).unwrap(),
+            evaluate_formula("=IF(0, \"Yes\", \"No\")", &wb).unwrap(),
             LiteralValue::Text("No".to_string())
         );
     }
 
     #[test]
     fn test_string_concatenation() {
+        let wb = create_workbook();
         // String concatenation
         assert_eq!(
-            evaluate_formula("=\"Hello\"&\" \"&\"World\"", create_workbook()).unwrap(),
+            evaluate_formula("=\"Hello\"&\" \"&\"World\"", &wb).unwrap(),
             LiteralValue::Text("Hello World".to_string())
         );
 
         // Number to string coercion in concatenation
         assert_eq!(
-            evaluate_formula("=\"LiteralValue: \"&123", create_workbook()).unwrap(),
+            evaluate_formula("=\"LiteralValue: \"&123", &wb).unwrap(),
             LiteralValue::Text("LiteralValue: 123".to_string())
         );
 
         // Boolean to string coercion in concatenation
         assert_eq!(
-            evaluate_formula("=\"Is true: \"&TRUE", create_workbook()).unwrap(),
+            evaluate_formula("=\"Is true: \"&TRUE", &wb).unwrap(),
             LiteralValue::Text("Is true: TRUE".to_string())
         );
     }
 
     #[test]
     fn test_comparisons() {
+        let wb = create_workbook();
         // Equal and not equal
         assert_eq!(
-            evaluate_formula("=1=1", create_workbook()).unwrap(),
+            evaluate_formula("=1=1", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            evaluate_formula("=1<>1", create_workbook()).unwrap(),
+            evaluate_formula("=1<>1", &wb).unwrap(),
             LiteralValue::Boolean(false)
         );
         assert_eq!(
-            evaluate_formula("=1=2", create_workbook()).unwrap(),
+            evaluate_formula("=1=2", &wb).unwrap(),
             LiteralValue::Boolean(false)
         );
         assert_eq!(
-            evaluate_formula("=1<>2", create_workbook()).unwrap(),
+            evaluate_formula("=1<>2", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
 
         // Greater than, less than
         assert_eq!(
-            evaluate_formula("=2>1", create_workbook()).unwrap(),
+            evaluate_formula("=2>1", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            evaluate_formula("=1<2", create_workbook()).unwrap(),
+            evaluate_formula("=1<2", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            evaluate_formula("=1>2", create_workbook()).unwrap(),
+            evaluate_formula("=1>2", &wb).unwrap(),
             LiteralValue::Boolean(false)
         );
         assert_eq!(
-            evaluate_formula("=2<1", create_workbook()).unwrap(),
+            evaluate_formula("=2<1", &wb).unwrap(),
             LiteralValue::Boolean(false)
         );
 
         // Greater than or equal, less than or equal
         assert_eq!(
-            evaluate_formula("=2>=1", create_workbook()).unwrap(),
+            evaluate_formula("=2>=1", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            evaluate_formula("=1<=2", create_workbook()).unwrap(),
+            evaluate_formula("=1<=2", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            evaluate_formula("=1>=1", create_workbook()).unwrap(),
+            evaluate_formula("=1>=1", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            evaluate_formula("=1<=1", create_workbook()).unwrap(),
+            evaluate_formula("=1<=1", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
 
         // Text comparisons
         assert_eq!(
-            evaluate_formula("=\"a\"=\"a\"", create_workbook()).unwrap(),
+            evaluate_formula("=\"a\"=\"a\"", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            evaluate_formula("=\"a\"=\"A\"", create_workbook()).unwrap(),
+            evaluate_formula("=\"a\"=\"A\"", &wb).unwrap(),
             LiteralValue::Boolean(true)
         ); // Case-insensitive
         assert_eq!(
-            evaluate_formula("=\"a\"<\"b\"", create_workbook()).unwrap(),
+            evaluate_formula("=\"a\"<\"b\"", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            evaluate_formula("=\"b\">\"a\"", create_workbook()).unwrap(),
+            evaluate_formula("=\"b\">\"a\"", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
 
         // Mixed type comparisons
         assert_eq!(
-            evaluate_formula("=\"5\"=5", create_workbook()).unwrap(),
+            evaluate_formula("=\"5\"=5", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            evaluate_formula("=TRUE=1", create_workbook()).unwrap(),
+            evaluate_formula("=TRUE=1", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
     }
 
     #[test]
     fn test_function_calls() {
+        let wb = create_workbook();
         assert_eq!(
-            evaluate_formula("=SUM(1,2,3)", create_workbook()).unwrap(),
+            evaluate_formula("=SUM(1,2,3)", &wb).unwrap(),
             LiteralValue::Number(6.0)
         );
 
         // Function with array argument
         assert_eq!(
-            evaluate_formula("=SUM({1,2,3;4,5,6})", create_workbook()).unwrap(),
+            evaluate_formula("=SUM({1,2,3;4,5,6})", &wb).unwrap(),
             LiteralValue::Number(21.0)
         );
 
         // Nested function calls
         assert_eq!(
-            evaluate_formula(
-                "=IF(SUM(1,2)>0, \"Positive\", \"Negative\")",
-                create_workbook()
-            )
-            .unwrap(),
+            evaluate_formula("=IF(SUM(1,2)>0, \"Positive\", \"Negative\")", &wb).unwrap(),
             LiteralValue::Text("Positive".to_string())
         );
 
         // Function with boolean logic
         assert_eq!(
-            evaluate_formula("=AND(TRUE, TRUE)", create_workbook()).unwrap(),
+            evaluate_formula("=AND(TRUE, TRUE)", &wb).unwrap(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            evaluate_formula("=AND(TRUE, FALSE)", create_workbook()).unwrap(),
+            evaluate_formula("=AND(TRUE, FALSE)", &wb).unwrap(),
             LiteralValue::Boolean(false)
         );
     }
 
     #[test]
     fn test_cell_references() {
-        fn create_workbook_with_cell_references() -> TestWorkbook {
-            create_workbook()
-                .with_cell("Sheet1", 1, 1, LiteralValue::Number(5.0))
-                .with_cell("Sheet1", 1, 2, LiteralValue::Number(10.0))
-                .with_cell("Sheet1", 1, 3, LiteralValue::Text("Hello".to_string()))
-        }
+        let wb = create_workbook()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Number(5.0))
+            .with_cell("Sheet1", 1, 2, LiteralValue::Number(10.0))
+            .with_cell("Sheet1", 1, 3, LiteralValue::Text("Hello".to_string()));
 
         // Basic cell references
         assert_eq!(
-            evaluate_formula("=A1", create_workbook_with_cell_references()).unwrap(),
+            evaluate_formula("=A1", &wb).unwrap(),
             LiteralValue::Number(5.0)
         );
         assert_eq!(
-            evaluate_formula("=A1+B1", create_workbook_with_cell_references()).unwrap(),
+            evaluate_formula("=A1+B1", &wb).unwrap(),
             LiteralValue::Number(15.0)
         );
         assert_eq!(
-            evaluate_formula("=C1&\" World\"", create_workbook_with_cell_references()).unwrap(),
+            evaluate_formula("=C1&\" World\"", &wb).unwrap(),
             LiteralValue::Text("Hello World".to_string())
         );
 
         // Reference in function
         assert_eq!(
-            evaluate_formula("=SUM(A1,B1)", create_workbook_with_cell_references()).unwrap(),
+            evaluate_formula("=SUM(A1,B1)", &wb).unwrap(),
             LiteralValue::Number(15.0)
         );
     }
 
     #[test]
     fn test_range_references() {
-        fn create_workbook_with_range_references() -> TestWorkbook {
-            create_workbook()
-                .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
-                .with_cell("Sheet1", 1, 2, LiteralValue::Number(2.0))
-                .with_cell("Sheet1", 2, 1, LiteralValue::Number(3.0))
-                .with_cell("Sheet1", 2, 2, LiteralValue::Number(4.0))
-        }
+        let wb = create_workbook()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
+            .with_cell("Sheet1", 1, 2, LiteralValue::Number(2.0))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Number(3.0))
+            .with_cell("Sheet1", 2, 2, LiteralValue::Number(4.0));
 
         // Sum of range
         assert_eq!(
-            evaluate_formula("=SUM(A1:B2)", create_workbook_with_range_references()).unwrap(),
+            evaluate_formula("=SUM(A1:B2)", &wb).unwrap(),
             LiteralValue::Number(10.0)
         );
     }
 
     #[test]
     fn test_named_ranges() {
-        fn create_workbook_with_named_ranges() -> TestWorkbook {
-            create_workbook()
-                .with_named_range(
-                    "MyRange",
-                    vec![
-                        vec![LiteralValue::Number(10.0), LiteralValue::Number(20.0)],
-                        vec![LiteralValue::Number(30.0), LiteralValue::Number(40.0)],
-                    ],
-                )
-                .with_cell("MyRange", 1, 1, LiteralValue::Number(100.0))
-        }
+        let wb = create_workbook()
+            .with_named_range(
+                "MyRange",
+                vec![
+                    vec![LiteralValue::Number(10.0), LiteralValue::Number(20.0)],
+                    vec![LiteralValue::Number(30.0), LiteralValue::Number(40.0)],
+                ],
+            )
+            .with_cell("MyRange", 1, 1, LiteralValue::Number(100.0));
 
         // Use named range
         assert_eq!(
-            evaluate_formula("=SUM(MyRange)", create_workbook_with_named_ranges()).unwrap(),
+            evaluate_formula("=SUM(MyRange)", &wb).unwrap(),
             LiteralValue::Number(100.0)
         );
     }
 
     #[test]
     fn test_array_operations() {
+        let wb = create_workbook();
         // Create an array
-        let result = evaluate_formula("={1,2,3;4,5,6}", create_workbook()).unwrap();
+        let result = evaluate_formula("={1,2,3;4,5,6}", &wb).unwrap();
         if let LiteralValue::Array(arr) = result {
             assert_eq!(arr.len(), 2);
             assert_eq!(arr[0].len(), 3);
@@ -428,7 +425,7 @@ mod tests {
         }
 
         // Array arithmetic
-        let result = evaluate_formula("={1,2,3}+{4,5,6}", create_workbook()).unwrap();
+        let result = evaluate_formula("={1,2,3}+{4,5,6}", &wb).unwrap();
         if let LiteralValue::Array(arr) = result {
             assert_eq!(arr[0][0], LiteralValue::Number(5.0));
             assert_eq!(arr[0][1], LiteralValue::Number(7.0));
@@ -440,19 +437,13 @@ mod tests {
 
     #[test]
     fn test_complex_formulas() {
-        fn create_workbook_with_complex_formulas() -> TestWorkbook {
-            create_workbook()
-                .with_cell_a1("Sheet1", "A1", LiteralValue::Number(10.0))
-                .with_cell_a1("Sheet1", "B1", LiteralValue::Number(5.0))
-                .with_cell_a1("Sheet1", "C1", LiteralValue::Boolean(true))
-        }
+        let wb = create_workbook()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Number(10.0))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Number(5.0))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Boolean(true));
         // Complex formula with multiple operations and functions
         assert_eq!(
-            evaluate_formula(
-                "=IF(A1>B1, SUM(A1, B1)/(A1-B1), \"A1 <= B1\")",
-                create_workbook_with_complex_formulas()
-            )
-            .unwrap(),
+            evaluate_formula("=IF(A1>B1, SUM(A1, B1)/(A1-B1), \"A1 <= B1\")", &wb).unwrap(),
             LiteralValue::Number(3.0)
         );
 
@@ -460,7 +451,7 @@ mod tests {
         assert_eq!(
             evaluate_formula(
                 "=IF(AND(A1>0, B1>0, C1), \"All positive\", \"Not all positive\")",
-                create_workbook_with_complex_formulas()
+                &wb
             )
             .unwrap(),
             LiteralValue::Text("All positive".to_string())
@@ -469,10 +460,11 @@ mod tests {
 
     #[test]
     fn test_array_mismatched_dimensions() {
+        let wb = create_workbook();
         // {1,2} is a 1x2 array and {3} is a 1x1 array.
         // Expected: elementwise addition with missing values treated as Empty (coerced to 0).
         // => [[1+3, 2+0]] = [[4, 2]]
-        let result = evaluate_formula("={1,2}+{3}", create_workbook()).unwrap();
+        let result = evaluate_formula("={1,2}+{3}", &wb).unwrap();
         let expected = LiteralValue::Array(vec![vec![
             LiteralValue::Number(4.0),
             LiteralValue::Number(2.0),
@@ -482,7 +474,8 @@ mod tests {
 
     #[test]
     fn test_unary_operator_on_array() {
-        let result = evaluate_formula("=-({1,-2,3})", create_workbook()).unwrap();
+        let wb = create_workbook();
+        let result = evaluate_formula("=-({1,-2,3})", &wb).unwrap();
         let expected = LiteralValue::Array(vec![vec![
             LiteralValue::Number(-1.0),
             LiteralValue::Number(2.0),
@@ -493,7 +486,8 @@ mod tests {
 
     #[test]
     fn test_percentage_operator_on_array() {
-        let result = evaluate_formula("=({50,100}%)", create_workbook()).unwrap();
+        let wb = create_workbook();
+        let result = evaluate_formula("=({50,100}%)", &wb).unwrap();
         let expected = LiteralValue::Array(vec![vec![
             LiteralValue::Number(0.5),
             LiteralValue::Number(1.0),
@@ -503,10 +497,9 @@ mod tests {
 
     #[test]
     fn test_exponentiation_error() {
+        let wb = create_workbook();
         // Negative base with fractional exponent should yield a #NUM! error.
-        if let LiteralValue::Error(ref e) =
-            evaluate_formula("=(-4)^(0.5)", create_workbook()).unwrap()
-        {
+        if let LiteralValue::Error(ref e) = evaluate_formula("=(-4)^(0.5)", &wb).unwrap() {
             assert_eq!(e, "#NUM!");
         } else {
             panic!("Expected error result");
@@ -515,13 +508,15 @@ mod tests {
 
     #[test]
     fn test_zero_power_zero() {
-        let result = evaluate_formula("=0^0", create_workbook()).unwrap();
+        let wb = create_workbook();
+        let result = evaluate_formula("=0^0", &wb).unwrap();
         assert_eq!(result, LiteralValue::Number(1.0));
     }
 
     #[test]
     fn test_division_array_scalar() {
-        let result = evaluate_formula("={10,20}/10", create_workbook()).unwrap();
+        let wb = create_workbook();
+        let result = evaluate_formula("={10,20}/10", &wb).unwrap();
         let expected = LiteralValue::Array(vec![vec![
             LiteralValue::Number(1.0),
             LiteralValue::Number(2.0),
@@ -531,7 +526,8 @@ mod tests {
 
     #[test]
     fn test_division_scalar_array() {
-        let result = evaluate_formula("=10/{2,0}", create_workbook()).unwrap();
+        let wb = create_workbook();
+        let result = evaluate_formula("=10/{2,0}", &wb).unwrap();
         if let LiteralValue::Array(arr) = result {
             assert_eq!(arr.len(), 1);
             assert_eq!(arr[0].len(), 2);
@@ -548,7 +544,8 @@ mod tests {
 
     #[test]
     fn test_error_propagation_in_array() {
-        let result = evaluate_formula("={\"abc\",5}+1", create_workbook()).unwrap();
+        let wb = create_workbook();
+        let result = evaluate_formula("={\"abc\",5}+1", &wb).unwrap();
         if let LiteralValue::Array(arr) = result {
             assert_eq!(arr.len(), 1);
             assert_eq!(arr[0].len(), 2);
@@ -565,7 +562,8 @@ mod tests {
 
     #[test]
     fn test_invalid_reference() {
-        let result = evaluate_formula("=Z999", create_workbook()).unwrap();
+        let wb = create_workbook();
+        let result = evaluate_formula("=Z999", &wb).unwrap();
         if let LiteralValue::Error(ref e) = result {
             assert_eq!(e, "#REF!");
         } else {
@@ -575,8 +573,9 @@ mod tests {
 
     #[test]
     fn test_sum_function_argument_count() {
+        let wb = create_workbook();
         // SUM expects at least one argument.
-        let result = evaluate_formula("=SUM()", create_workbook()).unwrap();
+        let result = evaluate_formula("=SUM()", &wb).unwrap();
         if let LiteralValue::Error(ref e) = result {
             assert!(e.message.clone().unwrap().contains("at least"));
         } else {
@@ -586,8 +585,9 @@ mod tests {
 
     #[test]
     fn test_if_function_argument_count() {
+        let wb = create_workbook();
         // IF expects at most 3 arguments.
-        let result = evaluate_formula("=IF(TRUE,1,2,3,4)", create_workbook()).unwrap();
+        let result = evaluate_formula("=IF(TRUE,1,2,3,4)", &wb).unwrap();
         if let LiteralValue::Error(ref e) = result {
             // expected should mention "at most 3"
             assert!(
@@ -603,7 +603,8 @@ mod tests {
 
     #[test]
     fn test_named_range_not_found() {
-        let result = evaluate_formula("=SUM(NonExistentNamedRange)", create_workbook()).unwrap();
+        let wb = create_workbook();
+        let result = evaluate_formula("=SUM(NonExistentNamedRange)", &wb).unwrap();
         if let LiteralValue::Error(ref e) = result {
             assert_eq!(e, "#NAME?");
         } else {
@@ -613,8 +614,9 @@ mod tests {
 
     #[test]
     fn test_incompatible_types() {
+        let wb = create_workbook();
         // Subtracting a number from a text string (not using concatenation) should yield #VALUE!
-        let result = evaluate_formula("=\"text\"-1", create_workbook()).unwrap();
+        let result = evaluate_formula("=\"text\"-1", &wb).unwrap();
         if let LiteralValue::Error(ref e) = result {
             assert_eq!(e, "#VALUE!");
         } else {
@@ -624,15 +626,17 @@ mod tests {
 
     #[test]
     fn test_mixed_precedence_concatenation() {
+        let wb = create_workbook();
         // Concatenation (&) has lower precedence than addition.
         // So "=\"A\"&1+2" should evaluate as "A" & (1+2) => "A3"
-        let result = evaluate_formula("=\"A\"&1+2", create_workbook()).unwrap();
+        let result = evaluate_formula("=\"A\"&1+2", &wb).unwrap();
         assert_eq!(result, LiteralValue::Text("A3".to_string()));
     }
 
     #[test]
     fn test_binary_ops_with_int_and_number() {
-        let result = evaluate_formula("={1}+{2.5}", create_workbook()).unwrap();
+        let wb = create_workbook();
+        let result = evaluate_formula("={1}+{2.5}", &wb).unwrap();
         if let LiteralValue::Array(arr) = result {
             assert_eq!(arr[0][0], LiteralValue::Number(3.5));
         } else {
@@ -640,7 +644,7 @@ mod tests {
         }
 
         // Test Number + Int
-        let result = evaluate_formula("={2.5}+{1}", create_workbook()).unwrap();
+        let result = evaluate_formula("={2.5}+{1}", &wb).unwrap();
         if let LiteralValue::Array(arr) = result {
             assert_eq!(arr[0][0], LiteralValue::Number(3.5));
         } else {
@@ -648,7 +652,7 @@ mod tests {
         }
 
         // Test Int - Number
-        let result = evaluate_formula("={5}-{2.5}", create_workbook()).unwrap();
+        let result = evaluate_formula("={5}-{2.5}", &wb).unwrap();
         if let LiteralValue::Array(arr) = result {
             assert_eq!(arr[0][0], LiteralValue::Number(2.5));
         } else {
@@ -656,7 +660,7 @@ mod tests {
         }
 
         // Test Int * Number
-        let result = evaluate_formula("={3}*{1.5}", create_workbook()).unwrap();
+        let result = evaluate_formula("={3}*{1.5}", &wb).unwrap();
         if let LiteralValue::Array(arr) = result {
             assert_eq!(arr[0][0], LiteralValue::Number(4.5));
         } else {
@@ -664,7 +668,7 @@ mod tests {
         }
 
         // Test Int / Number
-        let result = evaluate_formula("={6}/{2.5}", create_workbook()).unwrap();
+        let result = evaluate_formula("={6}/{2.5}", &wb).unwrap();
         if let LiteralValue::Array(arr) = result {
             assert_eq!(arr[0][0], LiteralValue::Number(2.4));
         } else {
@@ -672,7 +676,7 @@ mod tests {
         }
 
         // Test Int ^ Number
-        let result = evaluate_formula("={2}^{2.5}", create_workbook()).unwrap();
+        let result = evaluate_formula("={2}^{2.5}", &wb).unwrap();
         if let LiteralValue::Array(arr) = result {
             if let LiteralValue::Number(n) = arr[0][0] {
                 // Due to floating point precision issues, we compare with an epsilon

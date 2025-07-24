@@ -280,27 +280,33 @@ fn test_complex_circular_dependency() {
         source_token: None,
     };
 
-    // This should work for now (cycle detection will be enhanced in Phase 2)
-    // For basic implementation, we only detect immediate self-references
+    // For Milestone 1.2, creating this dependency is allowed.
+    // The full cycle detection is handled by the Scheduler in Milestone 2.
     let result = graph.set_cell_formula("Sheet1", 1, 2, ast_ref_a1);
-
-    // For Milestone 1.2, this should succeed (we'll add full cycle detection later)
     assert!(result.is_ok());
 
     // Verify the dependency chain was created
     let vertices = graph.vertices();
     assert_eq!(vertices.len(), 2);
 
-    // Both should be formulas with dependencies
-    match &vertices[0].kind {
-        VertexKind::FormulaScalar { .. } => {}
-        _ => panic!("A1 should be a formula"),
-    }
+    let a1_vertex = &vertices[0];
+    let b1_vertex = &vertices[1];
 
-    match &vertices[1].kind {
-        VertexKind::FormulaScalar { .. } => {}
-        _ => panic!("B1 should be a formula"),
-    }
+    // A1 should depend on B1
+    assert_eq!(a1_vertex.dependencies.len(), 1);
+    assert_eq!(a1_vertex.dependencies[0].as_index(), 1);
+
+    // B1 should depend on A1
+    assert_eq!(b1_vertex.dependencies.len(), 1);
+    assert_eq!(b1_vertex.dependencies[0].as_index(), 0);
+
+    // A1 should have B1 as a dependent
+    assert_eq!(a1_vertex.dependents.len(), 1);
+    assert_eq!(a1_vertex.dependents[0].as_index(), 1);
+
+    // B1 should have A1 as a dependent
+    assert_eq!(b1_vertex.dependents.len(), 1);
+    assert_eq!(b1_vertex.dependents[0].as_index(), 0);
 }
 
 #[test]

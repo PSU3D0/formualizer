@@ -2,12 +2,12 @@ use crate::traits::{ArgumentHandle, EvaluationContext};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 
-pub struct Interpreter {
-    pub context: Box<dyn EvaluationContext>,
+pub struct Interpreter<'a> {
+    pub context: &'a dyn EvaluationContext,
 }
 
-impl Interpreter {
-    pub fn new(context: Box<dyn EvaluationContext>) -> Self {
+impl<'a> Interpreter<'a> {
+    pub fn new(context: &'a dyn EvaluationContext) -> Self {
         Self { context }
     }
 
@@ -114,7 +114,7 @@ impl Interpreter {
         if let Some(fun) = self.context.get_function("", name) {
             let handles: Vec<ArgumentHandle> =
                 args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
-            fun.eval(&handles, self.context.as_ref())
+            fun.eval(&handles, self.context)
         } else {
             Ok(LiteralValue::Error(ExcelError::from_error_string("#NAME?")))
         }

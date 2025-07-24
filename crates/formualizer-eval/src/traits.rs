@@ -89,13 +89,13 @@ pub enum EvaluatedArg<'a> {
     Range(Box<dyn Range>),
 }
 
-pub struct ArgumentHandle<'a> {
+pub struct ArgumentHandle<'a, 'b> {
     node: &'a ASTNode,
-    interp: &'a Interpreter,
+    interp: &'a Interpreter<'b>,
 }
 
-impl<'a> ArgumentHandle<'a> {
-    pub(crate) fn new(node: &'a ASTNode, interp: &'a Interpreter) -> Self {
+impl<'a, 'b> ArgumentHandle<'a, 'b> {
+    pub(crate) fn new(node: &'a ASTNode, interp: &'a Interpreter<'b>) -> Self {
         Self { node, interp }
     }
 
@@ -204,7 +204,7 @@ impl Table for Box<dyn Table> {
 
 /* ─────────────────────── Resolver super-trait ─────────────────────── */
 
-pub trait ReferenceResolver {
+pub trait ReferenceResolver: Send + Sync {
     fn resolve_cell_reference(
         &self,
         sheet: Option<&str>,
@@ -212,7 +212,7 @@ pub trait ReferenceResolver {
         col: u32,
     ) -> Result<LiteralValue, ExcelError>;
 }
-pub trait RangeResolver {
+pub trait RangeResolver: Send + Sync {
     fn resolve_range_reference(
         &self,
         sheet: Option<&str>,
@@ -222,13 +222,13 @@ pub trait RangeResolver {
         ec: Option<u32>,
     ) -> Result<Box<dyn Range>, ExcelError>;
 }
-pub trait NamedRangeResolver {
+pub trait NamedRangeResolver: Send + Sync {
     fn resolve_named_range_reference(
         &self,
         name: &str,
     ) -> Result<Vec<Vec<LiteralValue>>, ExcelError>;
 }
-pub trait TableResolver {
+pub trait TableResolver: Send + Sync {
     fn resolve_table_reference(
         &self,
         tref: &formualizer_core::parser::TableReference,
@@ -275,7 +275,7 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
 
 /* ───────────────────── EvaluationContext = Resolver+Fns ───────────── */
 
-pub trait FunctionProvider {
+pub trait FunctionProvider: Send + Sync {
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>>;
 }
 pub trait EvaluationContext: Resolver + FunctionProvider {}
@@ -302,9 +302,9 @@ pub trait Function: Send + Sync + 'static {
     }
 
     /* core work */
-    fn eval(
+    fn eval<'a, 'b>(
         &self,
-        args: &[ArgumentHandle],
+        args: &'a [ArgumentHandle<'a, 'b>],
         ctx: &dyn EvaluationContext,
     ) -> Result<LiteralValue, ExcelError>;
 }

@@ -503,6 +503,29 @@ impl DependencyGraph {
         &self.vertices
     }
 
+    /// Gets a reference to a vertex by its ID.
+    pub(crate) fn get_vertex(&self, vertex_id: VertexId) -> Option<&Vertex> {
+        self.vertices.get(vertex_id.as_index())
+    }
+
+    /// Updates the cached value of a formula vertex.
+    pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
+        if let Some(vertex) = self.vertices.get_mut(vertex_id.as_index()) {
+            match &mut vertex.kind {
+                VertexKind::FormulaScalar { result, .. } => {
+                    *result = Some(value);
+                }
+                VertexKind::FormulaArray { results, .. } => {
+                    // TODO: Handle array results properly
+                    if let LiteralValue::Array(arr) = value {
+                        *results = Some(arr);
+                    }
+                }
+                _ => {} // Not a formula, nothing to update
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn cell_to_vertex(&self) -> &FxHashMap<CellAddr, VertexId> {
         &self.cell_to_vertex

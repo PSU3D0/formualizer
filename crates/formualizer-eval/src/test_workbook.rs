@@ -110,8 +110,8 @@ impl TestWorkbook {
     }
 
     /* ─────────────── interpreter shortcut ─────── */
-    pub fn interpreter(self) -> crate::interpreter::Interpreter {
-        crate::interpreter::Interpreter::new(Box::new(self))
+    pub fn interpreter(&self) -> crate::interpreter::Interpreter<'_> {
+        crate::interpreter::Interpreter::new(self)
     }
 }
 

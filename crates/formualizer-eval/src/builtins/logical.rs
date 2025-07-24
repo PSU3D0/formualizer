@@ -116,31 +116,31 @@ mod tests {
 
     use crate::builtins::logical::{__FnAND, __FnFALSE, __FnOR, __FnTRUE};
 
-    fn interp() -> Interpreter {
-        let wb = TestWorkbook::new().with_fns(with_fns![__FnTRUE, __FnFALSE, __FnAND, __FnOR,]);
-
+    fn interp(wb: &TestWorkbook) -> Interpreter<'_> {
         wb.interpreter()
     }
 
     #[test]
     fn test_true_false() {
-        let ctx = interp();
+        let wb = TestWorkbook::new().with_fns(with_fns![__FnTRUE, __FnFALSE, __FnAND, __FnOR,]);
+        let ctx = interp(&wb);
         let t = ctx.context.get_function("", "TRUE").unwrap();
         assert_eq!(
-            t.eval(&[], ctx.context.as_ref()).unwrap(),
+            t.eval(&[], ctx.context).unwrap(),
             LiteralValue::Boolean(true)
         );
 
         let f = ctx.context.get_function("", "FALSE").unwrap();
         assert_eq!(
-            f.eval(&[], ctx.context.as_ref()).unwrap(),
+            f.eval(&[], ctx.context).unwrap(),
             LiteralValue::Boolean(false)
         );
     }
 
     #[test]
     fn test_and_or() {
-        let ctx = interp();
+        let wb = TestWorkbook::new().with_fns(with_fns![__FnTRUE, __FnFALSE, __FnAND, __FnOR,]);
+        let ctx = interp(&wb);
 
         let and = ctx.context.get_function("", "AND").unwrap();
         let or = ctx.context.get_function("", "OR").unwrap();
@@ -162,7 +162,7 @@ mod tests {
             ArgumentHandle::new(&dummy_ast_one, &ctx),
         ];
         assert_eq!(
-            and.eval(&hs, ctx.context.as_ref()).unwrap(),
+            and.eval(&hs, ctx.context).unwrap(),
             LiteralValue::Boolean(true)
         );
 
@@ -171,11 +171,11 @@ mod tests {
             ArgumentHandle::new(&dummy_ast_one, &ctx),
         ];
         assert_eq!(
-            and.eval(&hs2, ctx.context.as_ref()).unwrap(),
+            and.eval(&hs2, ctx.context).unwrap(),
             LiteralValue::Boolean(false)
         );
         assert_eq!(
-            or.eval(&hs2, ctx.context.as_ref()).unwrap(),
+            or.eval(&hs2, ctx.context).unwrap(),
             LiteralValue::Boolean(true)
         );
     }
