@@ -6,6 +6,7 @@ use crate::interpreter::Interpreter;
 use crate::traits::EvaluationContext;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::ASTNode;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct Engine<R> {
     graph: DependencyGraph,
@@ -217,6 +218,186 @@ where
         self.graph.clear_dirty_flags(&to_evaluate);
 
         // Re-dirty volatile vertices for the next evaluation cycle
+        self.graph.redirty_volatiles();
+
+        Ok(EvalResult {
+            computed_vertices,
+            cycle_errors,
+            elapsed: start.elapsed(),
+        })
+    }
+
+    /// Evaluate all dirty/volatile vertices with cancellation support
+    pub fn evaluate_all_cancellable(
+        &mut self,
+        cancel_flag: &AtomicBool,
+    ) -> Result<EvalResult, ExcelError> {
+        let start = std::time::Instant::now();
+        let mut computed_vertices = 0;
+        let mut cycle_errors = 0;
+
+        let to_evaluate = self.graph.get_evaluation_vertices();
+        if to_evaluate.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices,
+                cycle_errors,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = scheduler.create_schedule(&to_evaluate)?;
+
+        // Handle cycles first by marking them with #CIRC!
+        for cycle in &schedule.cycles {
+            // Check cancellation between cycles
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                    .with_message("Evaluation cancelled during cycle handling".to_string()));
+            }
+
+            cycle_errors += 1;
+            let circ_error = LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Circ)
+                    .with_message("Circular dependency detected".to_string()),
+            );
+            for &vertex_id in cycle {
+                self.graph
+                    .update_vertex_value(vertex_id, circ_error.clone());
+            }
+        }
+
+        // Evaluate acyclic layers sequentially with cancellation checks
+        for layer in &schedule.layers {
+            // Check cancellation between layers
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                    .with_message("Evaluation cancelled between layers".to_string()));
+            }
+
+            // Evaluate vertices in this layer with periodic cancellation checks
+            for (i, &vertex_id) in layer.vertices.iter().enumerate() {
+                // Check cancellation every 256 vertices to balance responsiveness with performance
+                if i % 256 == 0 && cancel_flag.load(Ordering::Relaxed) {
+                    return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                        .with_message("Evaluation cancelled within layer".to_string()));
+                }
+
+                self.evaluate_vertex(vertex_id)?;
+                computed_vertices += 1;
+            }
+        }
+
+        // Clear dirty flags for all evaluated vertices (including cycles)
+        self.graph.clear_dirty_flags(&to_evaluate);
+
+        // Re-dirty volatile vertices for the next evaluation cycle
+        self.graph.redirty_volatiles();
+
+        Ok(EvalResult {
+            computed_vertices,
+            cycle_errors,
+            elapsed: start.elapsed(),
+        })
+    }
+
+    /// Evaluate only the necessary precedents for specific target cells with cancellation support
+    pub fn evaluate_until_cancellable(
+        &mut self,
+        targets: &[&str],
+        cancel_flag: &AtomicBool,
+    ) -> Result<EvalResult, ExcelError> {
+        let start = std::time::Instant::now();
+
+        // Parse target cell addresses
+        let mut target_addrs = Vec::new();
+        for target in targets {
+            // For now, assume simple A1-style references on default sheet
+            // TODO: Parse complex references with sheets
+            let addr = self.parse_cell_address(target)?;
+            target_addrs.push(addr);
+        }
+
+        // Find vertex IDs for targets
+        let mut target_vertex_ids = Vec::new();
+        for addr in &target_addrs {
+            if let Some(&vertex_id) = self.graph.get_vertex_id_for_address(addr) {
+                target_vertex_ids.push(vertex_id);
+            }
+        }
+
+        if target_vertex_ids.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices: 0,
+                cycle_errors: 0,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        // Find dirty precedents that need evaluation
+        let precedents_to_eval = self.find_dirty_precedents(&target_vertex_ids);
+
+        if precedents_to_eval.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices: 0,
+                cycle_errors: 0,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        // Create schedule for the minimal subgraph
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = scheduler.create_schedule(&precedents_to_eval)?;
+
+        // Handle cycles first
+        let mut cycle_errors = 0;
+        for cycle in &schedule.cycles {
+            // Check cancellation between cycles
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                    "Demand-driven evaluation cancelled during cycle handling".to_string(),
+                ));
+            }
+
+            cycle_errors += 1;
+            let circ_error = LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Circ)
+                    .with_message("Circular dependency detected".to_string()),
+            );
+            for &vertex_id in cycle {
+                self.graph
+                    .update_vertex_value(vertex_id, circ_error.clone());
+            }
+        }
+
+        // Evaluate layers with cancellation checks
+        let mut computed_vertices = 0;
+        for layer in &schedule.layers {
+            // Check cancellation between layers
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                    "Demand-driven evaluation cancelled between layers".to_string(),
+                ));
+            }
+
+            // Evaluate vertices in this layer with periodic cancellation checks
+            for (i, &vertex_id) in layer.vertices.iter().enumerate() {
+                // Check cancellation more frequently for demand-driven evaluation (every 128 vertices)
+                if i % 128 == 0 && cancel_flag.load(Ordering::Relaxed) {
+                    return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                        "Demand-driven evaluation cancelled within layer".to_string(),
+                    ));
+                }
+
+                self.evaluate_vertex(vertex_id)?;
+                computed_vertices += 1;
+            }
+        }
+
+        // Clear dirty flags for evaluated vertices
+        self.graph.clear_dirty_flags(&precedents_to_eval);
+
+        // Re-dirty volatile vertices
         self.graph.redirty_volatiles();
 
         Ok(EvalResult {

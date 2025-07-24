@@ -31,6 +31,7 @@ pub enum ExcelErrorKind {
     Spill,
     Calc,
     Circ,
+    Cancelled,
 }
 
 impl fmt::Display for ExcelErrorKind {
@@ -48,6 +49,7 @@ impl fmt::Display for ExcelErrorKind {
             Self::Spill => "#SPILL!",
             Self::Calc => "#CALC!",
             Self::Circ => "#CIRC!",
+            Self::Cancelled => "#CANCELLED!",
         })
     }
 }
@@ -67,6 +69,7 @@ impl ExcelErrorKind {
             "#spill!" => Self::Spill,
             "#calc!" => Self::Calc,
             "#circ!" => Self::Circ,
+            "#cancelled!" => Self::Cancelled,
             _ => panic!("Unknown error kind '{}'", s),
         }
     }

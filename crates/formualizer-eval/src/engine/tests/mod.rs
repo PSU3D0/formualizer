@@ -1,3 +1,4 @@
+mod cancellation;
 mod common;
 mod cycle_detection;
 mod debug_graph;
