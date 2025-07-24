@@ -251,8 +251,9 @@ fn test_dirty_flag_clearing() {
 #[test]
 fn test_volatile_vertex_handling() {
     let mut graph = DependencyGraph::new();
+    crate::builtins::random::register_builtins(); // Ensure RAND is registered
 
-    // Create a mock volatile AST (we'll implement proper volatile detection later)
+    // Create a volatile AST: =RAND()
     let volatile_ast = ASTNode {
         node_type: ASTNodeType::Function {
             name: "RAND".to_string(),
@@ -261,40 +262,22 @@ fn test_volatile_vertex_handling() {
         source_token: None,
     };
 
-    // Set A1 = RAND() - for now, this won't be detected as volatile automatically
-    // We'll manually test the volatile tracking system
+    // Set A1 = RAND()
     graph
         .set_cell_formula("Sheet1", 1, 1, volatile_ast)
         .unwrap();
 
-    // Manually mark as volatile for testing (in real implementation, is_ast_volatile would detect this)
+    // The vertex for A1 should be marked as volatile.
     let a1_id = VertexId::new(0);
-
-    // We need to access the volatile_vertices set - let's add a test helper
-    // For now, let's verify the infrastructure exists by testing get_evaluation_vertices
-
-    // Even if not dirty, volatile vertices should be included in evaluation
-    let vertex_ids = vec![a1_id];
-    graph.clear_dirty_flags(&vertex_ids);
-
-    // Create a non-volatile formula to compare
-    let normal_ast = ASTNode {
-        node_type: ASTNodeType::Literal(LiteralValue::Int(42)),
-        source_token: None,
-    };
-    graph.set_cell_formula("Sheet1", 2, 1, normal_ast).unwrap();
-
-    let a2_id = VertexId::new(1);
-    let vertex_ids = vec![a1_id, a2_id];
-    graph.clear_dirty_flags(&vertex_ids);
-
-    // Test volatile clearing
-    graph.clear_volatile_flags();
-
-    // After clearing, get_evaluation_vertices should return empty (no dirty, no volatile)
     let eval_vertices = graph.get_evaluation_vertices();
-    // This test verifies the infrastructure works - we'll enhance volatile detection later
-    assert!(eval_vertices.is_empty() || eval_vertices.len() <= 2);
+
+    // Volatile vertices are always included for evaluation.
+    assert!(eval_vertices.contains(&a1_id));
+
+    // Clear dirty flags, but volatile should remain.
+    graph.clear_dirty_flags(&[a1_id]);
+    let eval_vertices_after_clear = graph.get_evaluation_vertices();
+    assert!(eval_vertices_after_clear.contains(&a1_id));
 }
 
 #[test]

@@ -103,6 +103,39 @@ pub fn or_fn(
     Ok(LiteralValue::Boolean(found_true))
 }
 
+#[excel_fn(name = "IF", min = 2, variadic)]
+pub fn if_fn(
+    args: &[ArgumentHandle],
+    _ctx: &dyn EvaluationContext,
+) -> Result<LiteralValue, ExcelError> {
+    if args.len() < 2 || args.len() > 3 {
+        return Ok(LiteralValue::Error(
+            ExcelError::from_error_string("#VALUE!")
+                .with_message(format!("IF expects 2 or 3 arguments, got {}", args.len())),
+        ));
+    }
+
+    let condition = args[0].value()?;
+    let b = match condition.as_ref() {
+        LiteralValue::Boolean(b) => *b,
+        LiteralValue::Number(n) => *n != 0.0,
+        LiteralValue::Int(i) => *i != 0,
+        _ => {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#VALUE!",
+            )));
+        }
+    };
+
+    if b {
+        args[1].value().map(|cow| cow.into_owned())
+    } else if let Some(arg) = args.get(2) {
+        arg.value().map(|cow| cow.into_owned())
+    } else {
+        Ok(LiteralValue::Boolean(false))
+    }
+}
+
 /* ─────────────────────────── tests ─────────────────────────────── */
 
 #[cfg(test)]
@@ -179,4 +212,12 @@ mod tests {
             LiteralValue::Boolean(true)
         );
     }
+}
+
+pub fn register_builtins() {
+    crate::function_registry::register(std::sync::Arc::new(__FnTRUE));
+    crate::function_registry::register(std::sync::Arc::new(__FnFALSE));
+    crate::function_registry::register(std::sync::Arc::new(__FnAND));
+    crate::function_registry::register(std::sync::Arc::new(__FnOR));
+    crate::function_registry::register(std::sync::Arc::new(__FnIF));
 }

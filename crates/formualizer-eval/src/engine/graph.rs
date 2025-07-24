@@ -1,5 +1,5 @@
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::{ASTNode, ReferenceType};
+use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::vertex::{Vertex, VertexId, VertexKind};
@@ -72,6 +72,12 @@ pub struct DependencyGraph {
 
     // Default sheet for relative references
     default_sheet: String,
+}
+
+impl Default for DependencyGraph {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DependencyGraph {
@@ -246,7 +252,20 @@ impl DependencyGraph {
         let mut combined = FxHashSet::default();
         combined.extend(&self.dirty_vertices);
         combined.extend(&self.volatile_vertices);
-        let mut result: Vec<VertexId> = combined.into_iter().collect();
+
+        let mut result: Vec<VertexId> = combined
+            .into_iter()
+            .filter(|&id: &VertexId| {
+                if let Some(vertex) = self.vertices.get(id.as_index()) {
+                    matches!(
+                        vertex.kind,
+                        VertexKind::FormulaScalar { .. } | VertexKind::FormulaArray { .. }
+                    )
+                } else {
+                    false
+                }
+            })
+            .collect();
         result.sort_unstable();
         result
     }
@@ -272,6 +291,14 @@ impl DependencyGraph {
     /// 🔮 Scalability Hook: Clear volatile vertices after evaluation cycle (prevents accumulation)
     pub fn clear_volatile_flags(&mut self) {
         self.volatile_vertices.clear();
+    }
+
+    /// Re-marks all volatile vertices as dirty for the next evaluation cycle.
+    pub(crate) fn redirty_volatiles(&mut self) {
+        let volatile_ids: Vec<VertexId> = self.volatile_vertices.iter().copied().collect();
+        for id in volatile_ids {
+            self.mark_dirty(id);
+        }
     }
 
     // Helper methods
@@ -413,10 +440,26 @@ impl DependencyGraph {
         }
     }
 
-    fn is_ast_volatile(&self, _ast: &ASTNode) -> bool {
-        // Check if AST contains volatile functions like RAND(), NOW()
-        // TODO: Implement volatile detection
-        false
+    fn is_ast_volatile(&self, ast: &ASTNode) -> bool {
+        // Recursively check if any part of the AST contains a volatile function.
+        match &ast.node_type {
+            ASTNodeType::Function { name, args, .. } => {
+                if let Some(func) = crate::function_registry::get("", name) {
+                    if func.volatile() {
+                        return true;
+                    }
+                }
+                args.iter().any(|arg| self.is_ast_volatile(arg))
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                self.is_ast_volatile(left) || self.is_ast_volatile(right)
+            }
+            ASTNodeType::UnaryOp { expr, .. } => self.is_ast_volatile(expr),
+            ASTNodeType::Array(rows) => rows
+                .iter()
+                .any(|row| row.iter().any(|cell| self.is_ast_volatile(cell))),
+            _ => false, // Literals and references are not volatile themselves.
+        }
     }
 
     fn add_dependent_edges(&mut self, dependent: VertexId, dependencies: &[VertexId]) {

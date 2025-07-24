@@ -68,7 +68,7 @@ pub fn excel_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #func_item                            /* original user fn */
 
-        #vis struct #wrapper_ident;
+        pub struct #wrapper_ident;
 
         impl crate::traits::Function for #wrapper_ident {
             fn name(&self)      -> &'static str { #attr_name }

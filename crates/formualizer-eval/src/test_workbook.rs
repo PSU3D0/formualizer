@@ -182,7 +182,12 @@ impl TableResolver for TestWorkbook {
 
 impl FunctionProvider for TestWorkbook {
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
-        self.fns.get(&(ns, name)).cloned()
+        // First check local functions
+        self.fns
+            .get(&(ns, name))
+            .cloned()
+            // Then check global registry
+            .or_else(|| crate::function_registry::get(ns, name))
     }
 }
 

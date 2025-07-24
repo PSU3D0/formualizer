@@ -1,11 +1,11 @@
-// Placeholder for evaluation engine implementation
 use super::EvalConfig;
 use super::graph::DependencyGraph;
+use super::scheduler::Scheduler;
 use super::vertex::{VertexId, VertexKind};
 use crate::interpreter::Interpreter;
 use crate::traits::EvaluationContext;
-use formualizer_common::{ExcelError, LiteralValue};
-use formualizer_core::parser::{ASTNode, ReferenceType};
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_core::parser::ASTNode;
 
 pub struct Engine<R> {
     graph: DependencyGraph,
@@ -25,6 +25,7 @@ where
     R: EvaluationContext,
 {
     pub fn new(resolver: R, config: EvalConfig) -> Self {
+        crate::builtins::load_builtins();
         Self {
             graph: DependencyGraph::new(),
             resolver,
@@ -96,12 +97,51 @@ where
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
         let start = std::time::Instant::now();
+        let mut computed_vertices = 0;
+        let mut cycle_errors = 0;
 
-        // TODO: Implement full evaluation pipeline using the scheduler.
+        let to_evaluate = self.graph.get_evaluation_vertices();
+        if to_evaluate.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices,
+                cycle_errors,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = scheduler.create_schedule(&to_evaluate)?;
+
+        // Handle cycles first by marking them with #CIRC!
+        for cycle in &schedule.cycles {
+            cycle_errors += 1;
+            let circ_error = LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Circ)
+                    .with_message("Circular dependency detected".to_string()),
+            );
+            for &vertex_id in cycle {
+                self.graph
+                    .update_vertex_value(vertex_id, circ_error.clone());
+            }
+        }
+
+        // Evaluate acyclic layers sequentially
+        for layer in &schedule.layers {
+            for &vertex_id in &layer.vertices {
+                self.evaluate_vertex(vertex_id)?;
+                computed_vertices += 1;
+            }
+        }
+
+        // Clear dirty flags for all evaluated vertices (including cycles)
+        self.graph.clear_dirty_flags(&to_evaluate);
+
+        // Re-dirty volatile vertices for the next evaluation cycle
+        self.graph.redirty_volatiles();
 
         Ok(EvalResult {
-            computed_vertices: 0,
-            cycle_errors: 0,
+            computed_vertices,
+            cycle_errors,
             elapsed: start.elapsed(),
         })
     }

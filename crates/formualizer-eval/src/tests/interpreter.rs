@@ -73,16 +73,12 @@ fn test_if_fn(
 
 #[cfg(test)]
 mod tests {
-    use formualizer_core::LiteralValue;
-
+    use crate::interpreter::Interpreter;
     use crate::test_workbook::TestWorkbook;
-    use crate::with_fns;
     use formualizer_common::error::{ExcelError, ExcelErrorKind};
+    use formualizer_core::LiteralValue;
+    use formualizer_core::Tokenizer;
     use formualizer_core::parser::Parser;
-    use formualizer_core::tokenizer::Tokenizer;
-
-    use super::{__FnIF, __FnSUM};
-    use crate::builtins::logical::{__FnAND, __FnFALSE, __FnOR, __FnTRUE};
 
     /// Helper function to parse and evaluate a formula.
     fn evaluate_formula(formula: &str, wb: &TestWorkbook) -> Result<LiteralValue, ExcelError> {
@@ -98,9 +94,8 @@ mod tests {
     }
 
     fn create_workbook() -> TestWorkbook {
-        TestWorkbook::new().with_fns(with_fns![
-            __FnSUM, __FnIF, __FnAND, __FnOR, __FnFALSE, __FnTRUE
-        ])
+        crate::builtins::load_builtins();
+        TestWorkbook::new()
     }
 
     #[test]
