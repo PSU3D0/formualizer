@@ -569,6 +569,11 @@ impl DependencyGraph {
         }
     }
 
+    /// Get vertex ID for a cell address
+    pub fn get_vertex_id_for_address(&self, addr: &CellAddr) -> Option<&VertexId> {
+        self.cell_to_vertex.get(addr)
+    }
+
     #[cfg(test)]
     pub(crate) fn cell_to_vertex(&self) -> &FxHashMap<CellAddr, VertexId> {
         &self.cell_to_vertex

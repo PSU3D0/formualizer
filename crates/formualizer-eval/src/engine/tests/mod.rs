@@ -1,6 +1,7 @@
 mod common;
 mod cycle_detection;
 mod debug_graph;
+mod demand_driven;
 mod dependency;
 mod dirty_propagation;
 mod evaluation;

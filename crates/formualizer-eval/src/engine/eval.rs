@@ -94,6 +94,86 @@ where
         result
     }
 
+    /// Evaluate only the necessary precedents for specific target cells (demand-driven)
+    pub fn evaluate_until(&mut self, targets: &[&str]) -> Result<EvalResult, ExcelError> {
+        let start = std::time::Instant::now();
+
+        // Parse target cell addresses
+        let mut target_addrs = Vec::new();
+        for target in targets {
+            // For now, assume simple A1-style references on default sheet
+            // TODO: Parse complex references with sheets
+            let addr = self.parse_cell_address(target)?;
+            target_addrs.push(addr);
+        }
+
+        // Find vertex IDs for targets
+        let mut target_vertex_ids = Vec::new();
+        for addr in &target_addrs {
+            if let Some(&vertex_id) = self.graph.get_vertex_id_for_address(addr) {
+                target_vertex_ids.push(vertex_id);
+            }
+        }
+
+        if target_vertex_ids.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices: 0,
+                cycle_errors: 0,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        // Find dirty precedents that need evaluation
+        let precedents_to_eval = self.find_dirty_precedents(&target_vertex_ids);
+
+        if precedents_to_eval.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices: 0,
+                cycle_errors: 0,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        // Create schedule for the minimal subgraph
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = scheduler.create_schedule(&precedents_to_eval)?;
+
+        // Handle cycles first
+        let mut cycle_errors = 0;
+        for cycle in &schedule.cycles {
+            cycle_errors += 1;
+            let circ_error = LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Circ)
+                    .with_message("Circular dependency detected".to_string()),
+            );
+            for &vertex_id in cycle {
+                self.graph
+                    .update_vertex_value(vertex_id, circ_error.clone());
+            }
+        }
+
+        // Evaluate layers
+        let mut computed_vertices = 0;
+        for layer in &schedule.layers {
+            for &vertex_id in &layer.vertices {
+                self.evaluate_vertex(vertex_id)?;
+                computed_vertices += 1;
+            }
+        }
+
+        // Clear dirty flags for evaluated vertices
+        self.graph.clear_dirty_flags(&precedents_to_eval);
+
+        // Re-dirty volatile vertices
+        self.graph.redirty_volatiles();
+
+        Ok(EvalResult {
+            computed_vertices,
+            cycle_errors,
+            elapsed: start.elapsed(),
+        })
+    }
+
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
         let start = std::time::Instant::now();
@@ -144,6 +224,109 @@ where
             cycle_errors,
             elapsed: start.elapsed(),
         })
+    }
+
+    /// Parse a cell address string like "A1" into a CellAddr
+    fn parse_cell_address(&self, address: &str) -> Result<super::graph::CellAddr, ExcelError> {
+        // Simple A1-style parsing
+        if address.is_empty() {
+            return Err(
+                ExcelError::new(ExcelErrorKind::Ref).with_message("Empty cell address".to_string())
+            );
+        }
+
+        let chars: Vec<char> = address.chars().collect();
+        let mut col_end = 0;
+
+        // Find where letters end and numbers begin
+        for (i, &ch) in chars.iter().enumerate() {
+            if ch.is_ascii_alphabetic() {
+                col_end = i + 1;
+            } else if ch.is_ascii_digit() {
+                break;
+            } else {
+                return Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message(format!("Invalid character in cell address: {}", ch)));
+            }
+        }
+
+        if col_end == 0 || col_end == chars.len() {
+            return Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message(format!("Invalid cell address format: {}", address)));
+        }
+
+        let col_str = &address[..col_end].to_uppercase();
+        let row_str = &address[col_end..];
+
+        // Parse row
+        let row: u32 = row_str.parse().map_err(|_| {
+            ExcelError::new(ExcelErrorKind::Ref)
+                .with_message(format!("Invalid row number: {}", row_str))
+        })?;
+
+        // Parse column (A=1, B=2, AA=27, etc.)
+        let mut col = 0u32;
+        for ch in col_str.chars() {
+            if !ch.is_ascii_alphabetic() {
+                return Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message(format!("Invalid column letter: {}", ch)));
+            }
+            col = col * 26 + (ch as u32 - 'A' as u32 + 1);
+        }
+
+        Ok(super::graph::CellAddr::new(
+            self.graph.default_sheet().to_string(),
+            row,
+            col,
+        ))
+    }
+
+    /// Find dirty precedents that need evaluation for the given target vertices
+    fn find_dirty_precedents(&self, target_vertices: &[VertexId]) -> Vec<VertexId> {
+        use rustc_hash::FxHashSet;
+
+        let mut to_evaluate = FxHashSet::default();
+        let mut visited = FxHashSet::default();
+        let mut stack = Vec::new();
+
+        // Start reverse traversal from target vertices
+        for &target in target_vertices {
+            stack.push(target);
+        }
+
+        while let Some(vertex_id) = stack.pop() {
+            if !visited.insert(vertex_id) {
+                continue; // Already processed
+            }
+
+            if let Some(vertex) = self.graph.get_vertex(vertex_id) {
+                // Check if this vertex needs evaluation
+                let needs_eval = match &vertex.kind {
+                    super::vertex::VertexKind::FormulaScalar {
+                        dirty, volatile, ..
+                    } => *dirty || *volatile,
+                    super::vertex::VertexKind::FormulaArray {
+                        dirty, volatile, ..
+                    } => *dirty || *volatile,
+                    _ => false, // Values and empty cells don't need evaluation
+                };
+
+                if needs_eval {
+                    to_evaluate.insert(vertex_id);
+                }
+
+                // Continue traversal to dependencies (precedents)
+                for &dep_id in &vertex.dependencies {
+                    if !visited.contains(&dep_id) {
+                        stack.push(dep_id);
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<VertexId> = to_evaluate.into_iter().collect();
+        result.sort_unstable();
+        result
     }
 }
 
