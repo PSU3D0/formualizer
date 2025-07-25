@@ -1,5 +1,6 @@
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ReferenceType};
+use std::borrow::Cow;
 
 /// 🔮 Scalability Hook: Engine-internal vertex identity (opaque for future sharding support)
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -167,6 +168,24 @@ impl Vertex {
             col,
             dependencies: Vec::new(),
             dependents: Vec::new(),
+        }
+    }
+
+    /// Returns the cached value of the vertex if available, without cloning.
+    pub fn value(&self) -> Cow<LiteralValue> {
+        match &self.kind {
+            VertexKind::Value(v) => Cow::Borrowed(v),
+            VertexKind::FormulaScalar { result, .. } => {
+                if let Some(v) = result {
+                    Cow::Borrowed(v)
+                } else {
+                    Cow::Owned(LiteralValue::Empty)
+                }
+            }
+            VertexKind::Empty => Cow::Owned(LiteralValue::Empty),
+            _ => Cow::Owned(LiteralValue::Error(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::Value,
+            ))),
         }
     }
 

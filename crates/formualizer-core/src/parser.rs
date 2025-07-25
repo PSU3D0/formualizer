@@ -222,6 +222,38 @@ pub fn normalise_reference(input: &str) -> Result<String, ParsingError> {
 }
 
 impl ReferenceType {
+    pub fn contains(&self, sheet_name: &str, row: u32, col: u32) -> bool {
+        match self {
+            ReferenceType::Cell {
+                sheet,
+                row: r,
+                col: c,
+            } => {
+                let s = sheet.as_deref().unwrap_or_default();
+                (s.is_empty() || s == sheet_name) && *r == row && *c == col
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => {
+                let s = sheet.as_deref().unwrap_or_default();
+                if !s.is_empty() && s != sheet_name {
+                    return false;
+                }
+
+                let r_start = start_row.unwrap_or(1);
+                let c_start = start_col.unwrap_or(1);
+                let r_end = end_row.unwrap_or(u32::MAX);
+                let c_end = end_col.unwrap_or(u32::MAX);
+
+                row >= r_start && row <= r_end && col >= c_start && col <= c_end
+            }
+            _ => false, // Named ranges and tables would need resolution first
+        }
+    }
     /// Parse a reference string into a ReferenceType.
     pub fn parse(reference: &str) -> Result<Self, ParsingError> {
         // Check if this is a table reference

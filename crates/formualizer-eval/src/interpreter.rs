@@ -4,11 +4,19 @@ use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 pub struct Interpreter<'a> {
     pub context: &'a dyn EvaluationContext,
+    current_sheet: &'a str,
 }
 
 impl<'a> Interpreter<'a> {
-    pub fn new(context: &'a dyn EvaluationContext) -> Self {
-        Self { context }
+    pub fn new(context: &'a dyn EvaluationContext, current_sheet: &'a str) -> Self {
+        Self {
+            context,
+            current_sheet,
+        }
+    }
+
+    pub fn current_sheet(&self) -> &'a str {
+        self.current_sheet
     }
 
     /* ===================  public  =================== */
@@ -25,11 +33,34 @@ impl<'a> Interpreter<'a> {
 
     /* ===================  reference  =================== */
     fn eval_reference(&self, reference: &ReferenceType) -> Result<LiteralValue, ExcelError> {
-        match self.context.resolve_range_like(reference) {
-            Ok(range) => {
-                let (rows, cols) = range.dimensions();
-                let data = range.materialise().into_owned();
-                if rows == 1 && cols == 1 {
+        match self
+            .context
+            .resolve_range_storage(reference, self.current_sheet)
+        {
+            Ok(storage) => {
+                // For a single cell reference, just return the value.
+                if let ReferenceType::Cell { .. } = reference {
+                    return Ok(storage
+                        .into_iter()
+                        .next()
+                        .map(|cow| cow.into_owned())
+                        .unwrap_or(LiteralValue::Empty));
+                }
+
+                // For ranges, materialize into an array.
+                let data: Vec<Vec<LiteralValue>> =
+                    if let crate::engine::range_stream::RangeStorage::Owned(cow) = storage {
+                        cow.into_owned()
+                    } else {
+                        // This path is inefficient and should be avoided in hot loops.
+                        // It's a fallback for when a function requires a materialized array from a stream.
+                        // let (rows, cols) = (0,0); // How to get dimensions without consuming?
+                        // For now, we just collect. A better implementation would be needed for functions
+                        // that need dimensions without full materialization.
+                        vec![storage.into_iter().map(|c| c.into_owned()).collect()]
+                    };
+
+                if data.len() == 1 && data[0].len() == 1 {
                     Ok(data[0][0].clone())
                 } else {
                     Ok(LiteralValue::Array(data))

@@ -19,15 +19,46 @@ pub enum ChangeEvent {
     },
 }
 
-/// 🔮 Scalability Hook: Dependency reference types for future range compression
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// 🔮 Scalability Hook: Dependency reference types for range compression
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DependencyRef {
     /// A specific cell dependency
     Cell(VertexId),
+    /// A dependency on a finite, rectangular range
+    Range {
+        sheet: String,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32, // Inclusive
+        end_col: u32, // Inclusive
+    },
     /// A whole column dependency (A:A) - future range compression
     WholeColumn { sheet: String, col: u32 },
     /// A whole row dependency (1:1) - future range compression  
     WholeRow { sheet: String, row: u32 },
+}
+
+/// A key representing a coarse-grained section of a sheet
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct StripeKey {
+    pub sheet: String,
+    pub stripe_type: StripeType,
+    pub index: u32, // The index of the row, column, or block stripe
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum StripeType {
+    Row,
+    Column,
+    Block, // For dense, square-like ranges
+}
+
+/// Block stripe indexing mathematics
+const BLOCK_H: u32 = 256;
+const BLOCK_W: u32 = 256;
+
+pub fn block_index(row: u32, col: u32) -> u32 {
+    (row / BLOCK_H) << 16 | (col / BLOCK_W)
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -53,6 +84,7 @@ pub struct OperationSummary {
     pub created_placeholders: Vec<CellAddr>,
 }
 
+#[derive(Debug)]
 pub struct DependencyGraph {
     // Core storage - simple arena
     vertices: Vec<Vertex>,
@@ -67,11 +99,15 @@ pub struct DependencyGraph {
     // NEW: Specialized managers for range dependencies (Hybrid Model)
     /// Maps a formula vertex to the ranges it depends on.
     formula_to_range_deps: FxHashMap<VertexId, Vec<ReferenceType>>,
-    /// A reverse index mapping a cell address to formulas that depend on it via a range.
-    cell_to_range_dependents: FxHashMap<CellAddr, Vec<VertexId>>,
+
+    /// Maps a stripe to formulas that depend on it via a compressed range.
+    /// CRITICAL: VertexIds are deduplicated within each stripe to avoid quadratic blow-ups.
+    stripe_to_dependents: FxHashMap<StripeKey, FxHashSet<VertexId>>,
 
     // Default sheet for relative references
     default_sheet: String,
+    // Evaluation configuration
+    config: super::EvalConfig,
 }
 
 impl Default for DependencyGraph {
@@ -88,9 +124,27 @@ impl DependencyGraph {
             dirty_vertices: FxHashSet::default(),
             volatile_vertices: FxHashSet::default(),
             formula_to_range_deps: FxHashMap::default(),
-            cell_to_range_dependents: FxHashMap::default(),
+            stripe_to_dependents: FxHashMap::default(),
             default_sheet: "Sheet1".to_string(),
+            config: super::EvalConfig::default(),
         }
+    }
+
+    pub fn new_with_config(config: super::EvalConfig) -> Self {
+        Self {
+            config,
+            ..Self::new()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn formula_to_range_deps(&self) -> &FxHashMap<VertexId, Vec<ReferenceType>> {
+        &self.formula_to_range_deps
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stripe_to_dependents(&self) -> &FxHashMap<StripeKey, FxHashSet<VertexId>> {
+        &self.stripe_to_dependents
     }
 
     /// Sets the default sheet name for relative references.
@@ -162,7 +216,7 @@ impl DependencyGraph {
         let volatile = self.is_ast_volatile(&ast);
 
         // Remove old dependencies first
-        self.remove_dependent_edges(addr_vertex_id, sheet);
+        self.remove_dependent_edges(addr_vertex_id);
 
         // Update existing vertex
         if let Some(vertex) = self.vertices.get_mut(addr_vertex_id.as_index()) {
@@ -210,22 +264,68 @@ impl DependencyGraph {
     fn mark_dirty(&mut self, vertex_id: VertexId) -> Vec<VertexId> {
         let mut affected = FxHashSet::default();
         let mut to_visit = vec![vertex_id];
+        let mut visited_for_propagation = FxHashSet::default();
 
         // Initial propagation from direct and range dependents
         if let Some(vertex) = self.vertices.get(vertex_id.as_index()) {
             to_visit.extend(&vertex.dependents);
             if let (Some(row), Some(col)) = (vertex.row, vertex.col) {
-                let addr = CellAddr::new(vertex.sheet.clone(), row, col);
-                if let Some(dependents) = self.cell_to_range_dependents.get(&addr) {
-                    to_visit.extend(dependents);
+                let dirty_addr = CellAddr::new(vertex.sheet.clone(), row, col);
+
+                // New stripe-based dependents lookup (Milestone 5.3)
+                let mut potential_dependents = FxHashSet::default();
+
+                // 1. Column stripe lookup
+                let column_key = StripeKey {
+                    sheet: dirty_addr.sheet.clone(),
+                    stripe_type: StripeType::Column,
+                    index: dirty_addr.col,
+                };
+                if let Some(dependents) = self.stripe_to_dependents.get(&column_key) {
+                    potential_dependents.extend(dependents);
+                }
+
+                // 2. Row stripe lookup
+                let row_key = StripeKey {
+                    sheet: dirty_addr.sheet.clone(),
+                    stripe_type: StripeType::Row,
+                    index: dirty_addr.row,
+                };
+                if let Some(dependents) = self.stripe_to_dependents.get(&row_key) {
+                    potential_dependents.extend(dependents);
+                }
+
+                // 3. Block stripe lookup
+                if self.config.enable_block_stripes {
+                    let block_key = StripeKey {
+                        sheet: dirty_addr.sheet.clone(),
+                        stripe_type: StripeType::Block,
+                        index: block_index(dirty_addr.row, dirty_addr.col),
+                    };
+                    if let Some(dependents) = self.stripe_to_dependents.get(&block_key) {
+                        potential_dependents.extend(dependents);
+                    }
+                }
+
+                // Precision check: ensure the dirtied cell is actually within the formula's range
+                for &dep_id in &potential_dependents {
+                    if let Some(ranges) = self.formula_to_range_deps.get(&dep_id) {
+                        for range in ranges {
+                            if range.contains(&dirty_addr.sheet, dirty_addr.row, dirty_addr.col) {
+                                to_visit.push(dep_id);
+                                break; // Found a matching range, no need to check others for this dependent
+                            }
+                        }
+                    }
                 }
             }
         }
 
         while let Some(id) = to_visit.pop() {
-            if !affected.insert(id) {
-                continue; // Already processed
+            if !visited_for_propagation.insert(id) {
+                continue; // Already processed for propagation
             }
+            affected.insert(id);
 
             // Mark vertex as dirty
             if let Some(vertex) = self.vertices.get_mut(id.as_index()) {
@@ -317,6 +417,16 @@ impl DependencyGraph {
             &mut range_dependencies,
             &mut created_placeholders,
         )?;
+
+        // Deduplicate range references using manual approach since ReferenceType may not be Ord
+        let mut deduped_ranges = Vec::new();
+        for range_ref in range_dependencies {
+            if !deduped_ranges.contains(&range_ref) {
+                deduped_ranges.push(range_ref);
+            }
+        }
+        let range_dependencies = deduped_ranges;
+
         Ok((
             dependencies.into_iter().collect(),
             range_dependencies,
@@ -343,8 +453,41 @@ impl DependencyGraph {
                         )?;
                         dependencies.insert(vertex_id);
                     }
-                    ReferenceType::Range { .. } => {
-                        range_dependencies.push(reference.clone());
+                    ReferenceType::Range {
+                        sheet,
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                    } => {
+                        let start_row = start_row.unwrap_or(1);
+                        let start_col = start_col.unwrap_or(1);
+                        let end_row = end_row.unwrap_or(1);
+                        let end_col = end_col.unwrap_or(1);
+
+                        if start_row > end_row || start_col > end_col {
+                            return Err(ExcelError::new(ExcelErrorKind::Ref));
+                        }
+
+                        let height = end_row.saturating_sub(start_row) + 1;
+                        let width = end_col.saturating_sub(start_col) + 1;
+                        let size = (width * height) as usize;
+
+                        if size <= self.config.range_expansion_limit {
+                            // Expand to individual cells
+                            let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                            for row in start_row..=end_row {
+                                for col in start_col..=end_col {
+                                    let addr = CellAddr::new(sheet_name.to_string(), row, col);
+                                    let vertex_id =
+                                        self.get_or_create_vertex(&addr, created_placeholders);
+                                    dependencies.insert(vertex_id);
+                                }
+                            }
+                        } else {
+                            // Keep as a compressed range dependency
+                            range_dependencies.push(reference.clone());
+                        }
                     }
                     _ => {} // Ignore others for now
                 }
@@ -478,6 +621,9 @@ impl DependencyGraph {
         ranges: &[ReferenceType],
         current_sheet: &str,
     ) {
+        if ranges.is_empty() {
+            return;
+        }
         self.formula_to_range_deps
             .insert(dependent, ranges.to_vec());
         for range in ranges {
@@ -490,23 +636,68 @@ impl DependencyGraph {
             } = range
             {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-                for row in start_row.unwrap_or(1)..=end_row.unwrap_or(1) {
-                    for col in start_col.unwrap_or(1)..=end_col.unwrap_or(1) {
-                        let addr = CellAddr::new(sheet_name.to_string(), row, col);
-                        self.cell_to_range_dependents
-                            .entry(addr)
+                let start_row = start_row.unwrap_or(1);
+                let start_col = start_col.unwrap_or(1);
+                let end_row = end_row.unwrap_or(1);
+                let end_col = end_col.unwrap_or(1);
+
+                let height = end_row - start_row + 1;
+                let width = end_col - start_col + 1;
+
+                if self.config.enable_block_stripes && height > 1 && width > 1 {
+                    let start_block_row = start_row / BLOCK_H;
+                    let end_block_row = end_row / BLOCK_H;
+                    let start_block_col = start_col / BLOCK_W;
+                    let end_block_col = end_col / BLOCK_W;
+
+                    for block_row in start_block_row..=end_block_row {
+                        for block_col in start_block_col..=end_block_col {
+                            let key = StripeKey {
+                                sheet: sheet_name.to_string(),
+                                stripe_type: StripeType::Block,
+                                index: block_index(block_row * BLOCK_H, block_col * BLOCK_W),
+                            };
+                            self.stripe_to_dependents
+                                .entry(key)
+                                .or_default()
+                                .insert(dependent);
+                        }
+                    }
+                } else if height > width {
+                    // Tall range
+                    for col in start_col..=end_col {
+                        let key = StripeKey {
+                            sheet: sheet_name.to_string(),
+                            stripe_type: StripeType::Column,
+                            index: col,
+                        };
+                        self.stripe_to_dependents
+                            .entry(key)
                             .or_default()
-                            .push(dependent);
+                            .insert(dependent);
+                    }
+                } else {
+                    // Wide range
+                    for row in start_row..=end_row {
+                        let key = StripeKey {
+                            sheet: sheet_name.to_string(),
+                            stripe_type: StripeType::Row,
+                            index: row,
+                        };
+                        self.stripe_to_dependents
+                            .entry(key)
+                            .or_default()
+                            .insert(dependent);
                     }
                 }
             }
         }
     }
 
-    fn remove_dependent_edges(&mut self, dependent: VertexId, current_sheet: &str) {
+    fn remove_dependent_edges(&mut self, dependent: VertexId) {
         // Remove direct dependencies
-        let old_deps = if let Some(vertex) = self.vertices.get(dependent.as_index()) {
-            vertex.dependencies.clone()
+        let (old_deps, old_sheet) = if let Some(vertex) = self.vertices.get(dependent.as_index()) {
+            (vertex.dependencies.clone(), vertex.sheet.clone())
         } else {
             return;
         };
@@ -517,27 +708,25 @@ impl DependencyGraph {
         }
 
         // Remove range dependencies
-        if let Some(old_ranges) = self.formula_to_range_deps.remove(&dependent) {
-            for range in old_ranges {
-                if let ReferenceType::Range {
-                    sheet,
-                    start_row,
-                    start_col,
-                    end_row,
-                    end_col,
-                } = range
-                {
-                    let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-                    for row in start_row.unwrap_or(1)..=end_row.unwrap_or(1) {
-                        for col in start_col.unwrap_or(1)..=end_col.unwrap_or(1) {
-                            let addr = CellAddr::new(sheet_name.to_string(), row, col);
-                            if let Some(dependents) = self.cell_to_range_dependents.get_mut(&addr) {
-                                dependents.retain(|&id| id != dependent);
-                            }
-                        }
-                    }
-                }
+        if self.formula_to_range_deps.remove(&dependent).is_some() {
+            // The stripe cleanup logic below is now the only thing needed.
+            // For precision, we could recalculate the old stripes here and remove
+            // the dependent from just those, but for now, the global iteration is simpler.
+        }
+
+        // Remove stripe dependencies
+        // CRITICAL: Remove the VertexId from all stripe entries to prevent stale references
+        let mut empty_stripes = Vec::new();
+        for (stripe_key, dependents) in self.stripe_to_dependents.iter_mut() {
+            dependents.remove(&dependent);
+            if dependents.is_empty() {
+                empty_stripes.push(stripe_key.clone());
             }
+        }
+
+        // Remove empty stripe entries to prevent unbounded map growth
+        for stripe_key in empty_stripes {
+            self.stripe_to_dependents.remove(&stripe_key);
         }
     }
 

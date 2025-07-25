@@ -1,11 +1,10 @@
 use super::EvalConfig;
-use super::graph::DependencyGraph;
-use super::scheduler::Scheduler;
-use super::vertex::{VertexId, VertexKind};
+use crate::engine::range_stream::{RangeStorage, RangeStream};
+use crate::engine::{DependencyGraph, Scheduler, VertexId, VertexKind};
 use crate::interpreter::Interpreter;
 use crate::traits::EvaluationContext;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::ASTNode;
+use formualizer_core::parser::{ASTNode, ReferenceType};
 use rayon::ThreadPoolBuilder;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -50,7 +49,7 @@ where
         };
 
         Self {
-            graph: DependencyGraph::new(),
+            graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             config,
             thread_pool,
@@ -65,7 +64,7 @@ where
     ) -> Self {
         crate::builtins::load_builtins();
         Self {
-            graph: DependencyGraph::new(),
+            graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             config,
             thread_pool: Some(thread_pool),
@@ -104,9 +103,9 @@ where
     /// Evaluate a single vertex.
     /// This is the core of the sequential evaluation logic for Milestone 3.1.
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
-        let ast = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
+        let (ast, sheet) = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
             match &vertex.kind {
-                VertexKind::FormulaScalar { ast, .. } => ast.clone(),
+                VertexKind::FormulaScalar { ast, .. } => (ast.clone(), vertex.sheet.clone()),
                 // For now, empty cells evaluate to 0, consistent with Excel.
                 VertexKind::Empty => return Ok(LiteralValue::Int(0)),
                 // Already evaluated or a literal value.
@@ -124,7 +123,7 @@ where
         };
 
         // The interpreter uses a reference to the engine as the context.
-        let interpreter = Interpreter::new(self);
+        let interpreter = Interpreter::new(self, &sheet);
         let result = interpreter.evaluate_ast(&ast);
 
         // Store the result back into the graph.
@@ -673,9 +672,9 @@ where
 
     /// Evaluate a single vertex without mutating the graph (for parallel evaluation)
     fn evaluate_vertex_immutable(&self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
-        let ast = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
+        let (ast, sheet) = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
             match &vertex.kind {
-                VertexKind::FormulaScalar { ast, .. } => ast.clone(),
+                VertexKind::FormulaScalar { ast, .. } => (ast.clone(), vertex.sheet.clone()),
                 // For now, empty cells evaluate to 0, consistent with Excel.
                 VertexKind::Empty => return Ok(LiteralValue::Int(0)),
                 // Already evaluated or a literal value.
@@ -693,7 +692,7 @@ where
         };
 
         // The interpreter uses a reference to the engine as the context
-        let interpreter = Interpreter::new(self);
+        let interpreter = Interpreter::new(self, &sheet);
         interpreter.evaluate_ast(&ast)
     }
 
@@ -789,5 +788,78 @@ where
 {
     fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
         self.thread_pool.as_ref()
+    }
+
+    fn resolve_range_storage<'c>(
+        &'c self,
+        reference: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<RangeStorage<'c>, ExcelError> {
+        match reference {
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => {
+                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                let sr = start_row.unwrap_or(1);
+                let sc = start_col.unwrap_or(1);
+                // For now, we don't support infinite ranges in streaming yet
+                let er = end_row.ok_or(
+                    ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message("Infinite row ranges not supported in streaming"),
+                )?;
+                let ec = end_col.ok_or(
+                    ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message("Infinite column ranges not supported in streaming"),
+                )?;
+
+                let size = (er.saturating_sub(sr) + 1) as u64 * (ec.saturating_sub(sc) + 1) as u64;
+
+                if size > self.config.range_expansion_limit as u64 {
+                    Ok(RangeStorage::Stream(RangeStream::new(
+                        &self.graph,
+                        sheet_name.to_string(),
+                        sr,
+                        sc,
+                        er,
+                        ec,
+                    )))
+                } else {
+                    // Materialize small ranges
+                    let mut data = Vec::new();
+                    for r in sr..=er {
+                        let mut row_data = Vec::new();
+                        for c in sc..=ec {
+                            row_data.push(
+                                self.graph
+                                    .get_cell_value(sheet_name, r, c)
+                                    .unwrap_or(LiteralValue::Empty),
+                            );
+                        }
+                        data.push(row_data);
+                    }
+                    Ok(RangeStorage::Owned(std::borrow::Cow::Owned(data)))
+                }
+            }
+            ReferenceType::Cell { sheet, row, col } => {
+                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                let value = self
+                    .graph
+                    .get_cell_value(sheet_name, *row, *col)
+                    .unwrap_or(LiteralValue::Empty);
+                Ok(RangeStorage::Owned(std::borrow::Cow::Owned(vec![vec![
+                    value,
+                ]])))
+            }
+            ReferenceType::NamedRange(name) => {
+                let data = self.resolver.resolve_named_range_reference(name)?;
+                Ok(RangeStorage::Owned(std::borrow::Cow::Owned(data)))
+            }
+            ReferenceType::Table(_) => Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("Table references not yet supported in streaming evaluation.")),
+        }
     }
 }

@@ -45,6 +45,16 @@ pub struct EvalConfig {
     pub max_vertices: Option<usize>,
     pub max_eval_time: Option<std::time::Duration>,
     pub max_memory_mb: Option<usize>,
+
+    // Range handling configuration (Phase 5)
+    /// Ranges with size <= this limit are expanded into individual Cell dependencies
+    pub range_expansion_limit: usize,
+    /// Height of stripe blocks for dense range indexing
+    pub stripe_height: u32,
+    /// Width of stripe blocks for dense range indexing  
+    pub stripe_width: u32,
+    /// Enable block stripes for dense ranges (vs row/column stripes only)
+    pub enable_block_stripes: bool,
 }
 
 impl Default for EvalConfig {
@@ -55,6 +65,12 @@ impl Default for EvalConfig {
             max_vertices: None,
             max_eval_time: None,
             max_memory_mb: None,
+
+            // Range handling defaults (Phase 5)
+            range_expansion_limit: 64,
+            stripe_height: 256,
+            stripe_width: 256,
+            enable_block_stripes: false,
         }
     }
 }

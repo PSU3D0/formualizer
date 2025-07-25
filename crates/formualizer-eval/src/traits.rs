@@ -2,18 +2,18 @@
 //!
 //! Save/replace as `src/traits.rs`
 
+use crate::engine::range_stream::RangeStorage;
+use crate::interpreter::Interpreter;
+use formualizer_common::{
+    ArgSpec, LiteralValue,
+    error::{ExcelError, ExcelErrorKind},
+};
 use std::any::Any;
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::sync::Arc;
 
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType, TableSpecifier};
-
-use crate::interpreter::Interpreter;
-use formualizer_common::{
-    ArgSpec, LiteralValue,
-    error::{ExcelError, ExcelErrorKind},
-};
 
 /* ───────────────────────────── Range ───────────────────────────── */
 
@@ -124,6 +124,25 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             }
             _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                 .with_message(format!("Expected a range, got {:?}", self.node.node_type))),
+        }
+    }
+
+    pub fn range_storage(&self) -> Result<RangeStorage<'_>, ExcelError> {
+        match &self.node.node_type {
+            ASTNodeType::Reference { reference, .. } => self
+                .interp
+                .context
+                .resolve_range_storage(reference, self.interp.current_sheet()),
+            _ => {
+                // Fallback for non-reference types that might evaluate to a range (e.g. array literals)
+                let value = self.value()?;
+                if let LiteralValue::Array(data) = value.into_owned() {
+                    Ok(RangeStorage::Owned(Cow::Owned(data)))
+                } else {
+                    Err(ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("Argument cannot be interpreted as a range."))
+                }
+            }
         }
     }
 
@@ -284,6 +303,14 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
     fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
         None
     }
+
+    /// Resolves a reference into a `RangeStorage` object, which can be either
+    /// a materialized vector or a lazy stream, depending on the range size.
+    fn resolve_range_storage<'c>(
+        &'c self,
+        reference: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<RangeStorage<'c>, ExcelError>;
 }
 
 // Note: Blanket implementation is removed to allow specific implementations

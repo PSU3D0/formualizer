@@ -19,17 +19,18 @@ pub fn sum_fn(
     }
 
     let mut total = 0.0;
-    for h in args {
-        match h.value()?.as_ref() {
-            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
-            LiteralValue::Array(arr) => {
-                for row in arr {
-                    for v in row {
-                        total += coerce_num(v)?;
-                    }
-                }
+    for arg in args {
+        // Try to get a range/stream first. If that fails, fall back to a single value.
+        if let Ok(storage) = arg.range_storage() {
+            for value_cow in storage.into_iter() {
+                total += coerce_num(value_cow.as_ref())?;
             }
-            v => total += coerce_num(v)?,
+        } else {
+            // Fallback for arguments that are not ranges but might be single values or errors.
+            match arg.value()?.as_ref() {
+                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                v => total += coerce_num(v)?,
+            }
         }
     }
     Ok(LiteralValue::Number(total))

@@ -22,12 +22,16 @@
 //! ```
 //!
 //! (Add `pub mod test_workbook;` in `lib.rs` to re-export.)
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::traits::*;
+use crate::{engine::range_stream::RangeStorage, traits::*};
 use formualizer_common::{ExcelError, LiteralValue};
-use formualizer_core::{ExcelErrorKind, parser::TableReference};
+use formualizer_core::{
+    ExcelErrorKind,
+    parser::{ReferenceType, TableReference},
+};
 
 type V = LiteralValue;
 type CellKey = (u32, u32); // 1-based (row, col)
@@ -111,11 +115,23 @@ impl TestWorkbook {
 
     /* ─────────────── interpreter shortcut ─────── */
     pub fn interpreter(&self) -> crate::interpreter::Interpreter<'_> {
-        crate::interpreter::Interpreter::new(self)
+        crate::interpreter::Interpreter::new(self, "Sheet1")
     }
 }
 
 /* ─────────────────────── trait impls ─────────────────────── */
+impl EvaluationContext for TestWorkbook {
+    fn resolve_range_storage<'c>(
+        &'c self,
+        reference: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<RangeStorage<'c>, ExcelError> {
+        // For testing, we just materialize. The core engine tests streaming.
+        let range_box = self.resolve_range_like(reference)?;
+        let data = range_box.materialise().into_owned();
+        Ok(RangeStorage::Owned(Cow::Owned(data)))
+    }
+}
 impl ReferenceResolver for TestWorkbook {
     fn resolve_cell_reference(
         &self,
@@ -193,7 +209,6 @@ impl FunctionProvider for TestWorkbook {
 
 /* blanket */
 impl Resolver for TestWorkbook {}
-impl EvaluationContext for TestWorkbook {}
 
 /* ─────────────────────── util macros ─────────────────────── */
 /// Handy inside `with_fns!(__FnSUM, __FnAVERAGE, …)`
