@@ -114,6 +114,16 @@ impl<'a> Interpreter<'a> {
         if let Some(fun) = self.context.get_function("", name) {
             let handles: Vec<ArgumentHandle> =
                 args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
+
+            // Try parallel evaluation first if thread pool is available
+            let cancel_flag = std::sync::atomic::AtomicBool::new(false); // TODO: Pass from evaluation context
+            if let Some(parallel_result) =
+                fun.try_parallel_eval(&handles, self.context, &cancel_flag)
+            {
+                return parallel_result;
+            }
+
+            // Fall back to sequential evaluation
             fun.eval(&handles, self.context)
         } else {
             Ok(LiteralValue::Error(ExcelError::from_error_string("#NAME?")))

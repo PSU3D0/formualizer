@@ -278,8 +278,15 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
 pub trait FunctionProvider: Send + Sync {
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>>;
 }
-pub trait EvaluationContext: Resolver + FunctionProvider {}
-impl<T> EvaluationContext for T where T: Resolver + FunctionProvider {}
+pub trait EvaluationContext: Resolver + FunctionProvider {
+    /// Get access to the shared thread pool for parallel evaluation
+    /// Returns None if parallel evaluation is disabled or unavailable
+    fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
+        None
+    }
+}
+
+// Note: Blanket implementation is removed to allow specific implementations
 
 /// Excel-style callable – **object-safe** (no associated consts)
 pub trait Function: Send + Sync + 'static {
@@ -307,4 +314,17 @@ pub trait Function: Send + Sync + 'static {
         args: &'a [ArgumentHandle<'a, 'b>],
         ctx: &dyn EvaluationContext,
     ) -> Result<LiteralValue, ExcelError>;
+
+    /// Attempt to evaluate this function using internal parallelism.
+    /// If it returns None, the interpreter should fall back to the standard eval method.
+    /// This enables intra-function parallelism for computationally expensive operations.
+    fn try_parallel_eval<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        ctx: &dyn EvaluationContext,
+        cancel_flag: &std::sync::atomic::AtomicBool,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        // Default implementation: no parallel evaluation
+        None
+    }
 }

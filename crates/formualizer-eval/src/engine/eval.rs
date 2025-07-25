@@ -6,12 +6,15 @@ use crate::interpreter::Interpreter;
 use crate::traits::EvaluationContext;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::ASTNode;
+use rayon::ThreadPoolBuilder;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct Engine<R> {
     graph: DependencyGraph,
     resolver: R,
     config: EvalConfig,
+    thread_pool: Option<Arc<rayon::ThreadPool>>,
 }
 
 #[derive(Debug)]
@@ -27,10 +30,45 @@ where
 {
     pub fn new(resolver: R, config: EvalConfig) -> Self {
         crate::builtins::load_builtins();
+
+        // Initialize thread pool based on config
+        let thread_pool = if config.enable_parallel {
+            let mut builder = ThreadPoolBuilder::new();
+            if let Some(max_threads) = config.max_threads {
+                builder = builder.num_threads(max_threads);
+            }
+
+            match builder.build() {
+                Ok(pool) => Some(Arc::new(pool)),
+                Err(_) => {
+                    // Fall back to sequential evaluation if thread pool creation fails
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             graph: DependencyGraph::new(),
             resolver,
             config,
+            thread_pool,
+        }
+    }
+
+    /// Create an Engine with a custom thread pool (for shared thread pool scenarios)
+    pub fn with_thread_pool(
+        resolver: R,
+        config: EvalConfig,
+        thread_pool: Arc<rayon::ThreadPool>,
+    ) -> Self {
+        crate::builtins::load_builtins();
+        Self {
+            graph: DependencyGraph::new(),
+            resolver,
+            config,
+            thread_pool: Some(thread_pool),
         }
     }
 
@@ -206,11 +244,12 @@ where
             }
         }
 
-        // Evaluate acyclic layers sequentially
+        // Evaluate acyclic layers (parallel or sequential based on config)
         for layer in &schedule.layers {
-            for &vertex_id in &layer.vertices {
-                self.evaluate_vertex(vertex_id)?;
-                computed_vertices += 1;
+            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                computed_vertices += self.evaluate_layer_parallel(layer)?;
+            } else {
+                computed_vertices += self.evaluate_layer_sequential(layer)?;
             }
         }
 
@@ -275,16 +314,13 @@ where
                     .with_message("Evaluation cancelled between layers".to_string()));
             }
 
-            // Evaluate vertices in this layer with periodic cancellation checks
-            for (i, &vertex_id) in layer.vertices.iter().enumerate() {
-                // Check cancellation every 256 vertices to balance responsiveness with performance
-                if i % 256 == 0 && cancel_flag.load(Ordering::Relaxed) {
-                    return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                        .with_message("Evaluation cancelled within layer".to_string()));
-                }
-
-                self.evaluate_vertex(vertex_id)?;
-                computed_vertices += 1;
+            // Evaluate vertices in this layer (parallel or sequential)
+            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                computed_vertices +=
+                    self.evaluate_layer_parallel_cancellable(layer, cancel_flag)?;
+            } else {
+                computed_vertices +=
+                    self.evaluate_layer_sequential_cancellable(layer, cancel_flag)?;
             }
         }
 
@@ -380,17 +416,13 @@ where
                 ));
             }
 
-            // Evaluate vertices in this layer with periodic cancellation checks
-            for (i, &vertex_id) in layer.vertices.iter().enumerate() {
-                // Check cancellation more frequently for demand-driven evaluation (every 128 vertices)
-                if i % 128 == 0 && cancel_flag.load(Ordering::Relaxed) {
-                    return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
-                        "Demand-driven evaluation cancelled within layer".to_string(),
-                    ));
-                }
-
-                self.evaluate_vertex(vertex_id)?;
-                computed_vertices += 1;
+            // Evaluate vertices in this layer (parallel or sequential)
+            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                computed_vertices +=
+                    self.evaluate_layer_parallel_cancellable(layer, cancel_flag)?;
+            } else {
+                computed_vertices +=
+                    self.evaluate_layer_sequential_cancellable_demand_driven(layer, cancel_flag)?;
             }
         }
 
@@ -509,6 +541,166 @@ where
         result.sort_unstable();
         result
     }
+
+    /// Evaluate a layer sequentially
+    fn evaluate_layer_sequential(
+        &mut self,
+        layer: &super::scheduler::Layer,
+    ) -> Result<usize, ExcelError> {
+        for &vertex_id in &layer.vertices {
+            self.evaluate_vertex(vertex_id)?;
+        }
+        Ok(layer.vertices.len())
+    }
+
+    /// Evaluate a layer sequentially with cancellation support
+    fn evaluate_layer_sequential_cancellable(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        cancel_flag: &AtomicBool,
+    ) -> Result<usize, ExcelError> {
+        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
+            // Check cancellation every 256 vertices to balance responsiveness with performance
+            if i % 256 == 0 && cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                    .with_message("Evaluation cancelled within layer".to_string()));
+            }
+
+            self.evaluate_vertex(vertex_id)?;
+        }
+        Ok(layer.vertices.len())
+    }
+
+    /// Evaluate a layer sequentially with more frequent cancellation checks for demand-driven evaluation
+    fn evaluate_layer_sequential_cancellable_demand_driven(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        cancel_flag: &AtomicBool,
+    ) -> Result<usize, ExcelError> {
+        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
+            // Check cancellation more frequently for demand-driven evaluation (every 128 vertices)
+            if i % 128 == 0 && cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                    .with_message("Demand-driven evaluation cancelled within layer".to_string()));
+            }
+
+            self.evaluate_vertex(vertex_id)?;
+        }
+        Ok(layer.vertices.len())
+    }
+
+    /// Evaluate a layer in parallel using the thread pool
+    fn evaluate_layer_parallel(
+        &mut self,
+        layer: &super::scheduler::Layer,
+    ) -> Result<usize, ExcelError> {
+        use rayon::prelude::*;
+
+        let thread_pool = self.thread_pool.as_ref().unwrap();
+
+        // Collect all evaluation results first, then update the graph sequentially
+        let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
+            thread_pool.install(|| {
+                layer
+                    .vertices
+                    .par_iter()
+                    .map(|&vertex_id| {
+                        let result = self.evaluate_vertex_immutable(vertex_id)?;
+                        Ok((vertex_id, result))
+                    })
+                    .collect()
+            });
+
+        // Update the graph with results sequentially (thread-safe)
+        match results {
+            Ok(vertex_results) => {
+                for (vertex_id, result) in vertex_results {
+                    self.graph.update_vertex_value(vertex_id, result);
+                }
+                Ok(layer.vertices.len())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Evaluate a layer in parallel with cancellation support
+    fn evaluate_layer_parallel_cancellable(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        cancel_flag: &AtomicBool,
+    ) -> Result<usize, ExcelError> {
+        use rayon::prelude::*;
+
+        let thread_pool = self.thread_pool.as_ref().unwrap();
+
+        // Check cancellation before starting parallel work
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                .with_message("Parallel evaluation cancelled before starting".to_string()));
+        }
+
+        // Collect all evaluation results first, then update the graph sequentially
+        let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
+            thread_pool.install(|| {
+                layer
+                    .vertices
+                    .par_iter()
+                    .map(|&vertex_id| {
+                        // Check cancellation periodically during parallel work
+                        if cancel_flag.load(Ordering::Relaxed) {
+                            return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                                "Parallel evaluation cancelled during execution".to_string(),
+                            ));
+                        }
+
+                        let result = self.evaluate_vertex_immutable(vertex_id)?;
+                        Ok((vertex_id, result))
+                    })
+                    .collect()
+            });
+
+        // Update the graph with results sequentially (thread-safe)
+        match results {
+            Ok(vertex_results) => {
+                for (vertex_id, result) in vertex_results {
+                    self.graph.update_vertex_value(vertex_id, result);
+                }
+                Ok(layer.vertices.len())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Evaluate a single vertex without mutating the graph (for parallel evaluation)
+    fn evaluate_vertex_immutable(&self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
+        let ast = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
+            match &vertex.kind {
+                VertexKind::FormulaScalar { ast, .. } => ast.clone(),
+                // For now, empty cells evaluate to 0, consistent with Excel.
+                VertexKind::Empty => return Ok(LiteralValue::Int(0)),
+                // Already evaluated or a literal value.
+                VertexKind::Value(v) => return Ok(v.clone()),
+                _ => {
+                    return Ok(LiteralValue::Error(
+                        ExcelError::new(formualizer_common::ExcelErrorKind::Na)
+                            .with_message("Array formulas not yet supported".to_string()),
+                    ));
+                }
+            }
+        } else {
+            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
+                .with_message(format!("Vertex not found: {:?}", vertex_id)));
+        };
+
+        // The interpreter uses a reference to the engine as the context
+        let interpreter = Interpreter::new(self);
+        interpreter.evaluate_ast(&ast)
+    }
+
+    /// Get access to the shared thread pool for parallel evaluation
+    pub fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
+        self.thread_pool.as_ref()
+    }
 }
 
 // Implement the resolver traits for the Engine.
@@ -590,5 +782,12 @@ where
     }
 }
 
-// Since the Engine is a Resolver and a FunctionProvider, the blanket implementation
-// in traits.rs makes it an EvaluationContext automatically.
+// Override EvaluationContext to provide thread pool access
+impl<R> crate::traits::EvaluationContext for Engine<R>
+where
+    R: EvaluationContext,
+{
+    fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
+        self.thread_pool.as_ref()
+    }
+}

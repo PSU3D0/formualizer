@@ -1,6 +1,8 @@
-use crate::traits::{ArgumentHandle, EvaluationContext};
+use crate::traits::{ArgumentHandle, EvaluationContext, Function};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::excel_fn;
+use rayon::prelude::*;
+use std::sync::atomic::AtomicBool;
 
 /* ─────────────────────────── SUM() ──────────────────────────── */
 
@@ -86,6 +88,102 @@ mod tests {
     }
 }
 
+/* ─────────────────────── PARALLEL_SUM() Example ──────────────────────── */
+
+/// Example parallel SUM function demonstrating try_parallel_eval hook
+#[derive(Debug)]
+pub struct ParallelSumFn;
+
+impl Function for ParallelSumFn {
+    fn name(&self) -> &'static str {
+        "PARALLEL_SUM"
+    }
+
+    fn min_args(&self) -> usize {
+        1
+    }
+
+    fn variadic(&self) -> bool {
+        true
+    }
+
+    fn eval<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        // Fallback sequential implementation
+        let mut total = 0.0;
+        for h in args {
+            match h.value()?.as_ref() {
+                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                LiteralValue::Array(arr) => {
+                    for row in arr {
+                        for v in row {
+                            total += coerce_num(v)?;
+                        }
+                    }
+                }
+                v => total += coerce_num(v)?,
+            }
+        }
+        Ok(LiteralValue::Number(total))
+    }
+
+    fn try_parallel_eval<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        ctx: &dyn EvaluationContext,
+        cancel_flag: &AtomicBool,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        use std::sync::atomic::Ordering;
+
+        // Only use parallel evaluation if we have a thread pool
+        let thread_pool = ctx.thread_pool()?;
+
+        // Check cancellation before starting
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Some(Err(ExcelError::new(
+                formualizer_common::ExcelErrorKind::Cancelled,
+            )
+            .with_message("Parallel SUM cancelled before execution".to_string())));
+        }
+
+        // Use the thread pool for parallel evaluation
+        let result =
+            thread_pool.install(|| {
+                args.par_iter()
+                    .map(|h| -> Result<f64, ExcelError> {
+                        // Check cancellation periodically
+                        if cancel_flag.load(Ordering::Relaxed) {
+                            return Err(ExcelError::new(
+                                formualizer_common::ExcelErrorKind::Cancelled,
+                            )
+                            .with_message("Parallel SUM cancelled during execution".to_string()));
+                        }
+
+                        match h.value()?.as_ref() {
+                            LiteralValue::Error(e) => Err(e.clone()),
+                            LiteralValue::Array(arr) => {
+                                let mut subtotal = 0.0;
+                                for row in arr {
+                                    for v in row {
+                                        subtotal += coerce_num(v)?;
+                                    }
+                                }
+                                Ok(subtotal)
+                            }
+                            v => coerce_num(v),
+                        }
+                    })
+                    .try_reduce(|| 0.0, |a, b| Ok(a + b))
+            });
+
+        Some(result.map(LiteralValue::Number))
+    }
+}
+
 pub fn register_builtins() {
     crate::function_registry::register(std::sync::Arc::new(__FnSUM));
+    crate::function_registry::register(std::sync::Arc::new(ParallelSumFn));
 }

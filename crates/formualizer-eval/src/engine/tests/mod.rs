@@ -8,6 +8,7 @@ mod dirty_propagation;
 mod evaluation;
 mod graph_basic;
 mod layer_evaluation;
+mod parallel;
 mod range_dependencies;
 mod schedule_integration;
 mod tarjan_scc;

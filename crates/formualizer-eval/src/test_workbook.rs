@@ -193,6 +193,7 @@ impl FunctionProvider for TestWorkbook {
 
 /* blanket */
 impl Resolver for TestWorkbook {}
+impl EvaluationContext for TestWorkbook {}
 
 /* ─────────────────────── util macros ─────────────────────── */
 /// Handy inside `with_fns!(__FnSUM, __FnAVERAGE, …)`
