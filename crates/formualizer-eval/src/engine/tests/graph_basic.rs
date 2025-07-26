@@ -1,4 +1,7 @@
-use crate::engine::{CellAddr, DependencyGraph, VertexKind};
+use crate::{
+    CellRef, Coord,
+    engine::{DependencyGraph, VertexKind},
+};
 use formualizer_common::LiteralValue;
 
 #[test]
@@ -34,7 +37,7 @@ fn test_vertex_creation_and_lookup() {
     // Verify internal structure
     assert_eq!(graph.vertices().len(), 1); // Only A1 exists
     let vertex = &graph.vertices()[0];
-    assert_eq!(vertex.sheet, "Sheet1");
+    assert_eq!(vertex.sheet_id, 0);
     assert_eq!(vertex.row, Some(1));
     assert_eq!(vertex.col, Some(1));
 
@@ -49,9 +52,9 @@ fn test_cell_address_mapping() {
     let mut graph = DependencyGraph::new();
 
     // Create vertices in different sheets and positions
-    let addr1 = CellAddr::new("Sheet1".to_string(), 1, 1);
-    let addr2 = CellAddr::new("Sheet1".to_string(), 2, 2);
-    let addr3 = CellAddr::new("Sheet2".to_string(), 1, 1);
+    let addr1 = CellRef::new(0, Coord::new(1, 1, true, true));
+    let addr2 = CellRef::new(0, Coord::new(2, 2, true, true));
+    let addr3 = CellRef::new(1, Coord::new(1, 1, true, true));
 
     graph
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
@@ -164,8 +167,8 @@ fn test_placeholder_creation() {
     // Both A1 and B1 are created as placeholders initially
     assert_eq!(summary.created_placeholders.len(), 2);
 
-    let a1_addr = crate::engine::CellAddr::new("Sheet1".to_string(), 1, 1);
-    let b1_addr = crate::engine::CellAddr::new("Sheet1".to_string(), 1, 2);
+    let a1_addr = CellRef::new(0, Coord::new(1, 1, true, true));
+    let b1_addr = CellRef::new(0, Coord::new(1, 2, true, true));
 
     assert!(summary.created_placeholders.contains(&a1_addr));
     assert!(summary.created_placeholders.contains(&b1_addr));
@@ -184,10 +187,10 @@ fn test_placeholder_creation() {
 #[test]
 fn test_default_sheet_handling() {
     let mut graph = DependencyGraph::new();
-    assert_eq!(graph.default_sheet(), "Sheet1");
+    assert_eq!(graph.default_sheet_name(), "Sheet1");
 
-    graph.set_default_sheet("MyCustomSheet");
-    assert_eq!(graph.default_sheet(), "MyCustomSheet");
+    graph.set_default_sheet_by_name("MyCustomSheet");
+    assert_eq!(graph.default_sheet_name(), "MyCustomSheet");
 }
 
 // Helper to create a cell reference AST node

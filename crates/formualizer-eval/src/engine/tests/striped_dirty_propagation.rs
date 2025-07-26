@@ -1,6 +1,9 @@
 //! Tests for striped dirty propagation (Milestone 5.3)
 
-use crate::engine::{CellAddr, DependencyGraph, EvalConfig};
+use crate::{
+    CellRef,
+    engine::{DependencyGraph, EvalConfig},
+};
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -44,7 +47,7 @@ fn test_change_in_tiny_range_dirties_dependent() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellAddr::new("Sheet1".to_string(), 1, 2))
+        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
         .unwrap();
 
     // Set initial values and clear dirty flags
@@ -78,7 +81,7 @@ fn test_change_in_large_tall_range_dirties_dependent() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellAddr::new("Sheet1".to_string(), 1, 2))
+        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
         .unwrap();
 
     // Clear dirty flags
@@ -109,7 +112,7 @@ fn test_change_in_large_wide_range_dirties_dependent() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellAddr::new("Sheet1".to_string(), 1, 2))
+        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
         .unwrap();
 
     // Clear dirty flags
@@ -140,7 +143,7 @@ fn test_change_outside_range_does_not_dirty_dependent() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellAddr::new("Sheet1".to_string(), 1, 2))
+        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
         .unwrap();
 
     // Clear dirty flags
@@ -186,7 +189,7 @@ fn test_multi_stripe_border_cell_edit() {
         .unwrap();
 
     let c1_id = *graph
-        .get_vertex_id_for_address(&CellAddr::new("Sheet1".to_string(), 1, 3))
+        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 3))
         .unwrap();
 
     // Clear dirty flags
@@ -237,12 +240,13 @@ fn prop_any_cell_change_in_range_dirties_dependent() {
     let mut graph = DependencyGraph::new_with_config(config);
 
     // Test range: A1:AZ50 (large enough to use stripe indexing)
+
     graph
         .set_cell_formula("Sheet1", 1, 100, sum_ast(1, 1, 50, 52)) // AZ is column 52
         .unwrap();
 
     let formula_id = *graph
-        .get_vertex_id_for_address(&CellAddr::new("Sheet1".to_string(), 1, 100))
+        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 100))
         .unwrap();
 
     // Test various coordinates within the range
@@ -292,10 +296,10 @@ fn test_multiple_ranges_same_stripe() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellAddr::new("Sheet1".to_string(), 1, 2))
+        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
         .unwrap();
     let c1_id = *graph
-        .get_vertex_id_for_address(&CellAddr::new("Sheet1".to_string(), 1, 3))
+        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 3))
         .unwrap();
 
     // Clear dirty flags
@@ -332,7 +336,7 @@ fn test_cross_sheet_stripe_isolation() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellAddr::new("Sheet1".to_string(), 1, 2))
+        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
         .unwrap();
 
     // Clear dirty flags

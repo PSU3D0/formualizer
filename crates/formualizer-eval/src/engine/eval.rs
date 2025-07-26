@@ -1,16 +1,17 @@
-use super::EvalConfig;
+use crate::SheetId;
 use crate::engine::range_stream::{RangeStorage, RangeStream};
-use crate::engine::{DependencyGraph, Scheduler, VertexId, VertexKind};
+use crate::engine::{DependencyGraph, EvalConfig, Scheduler, VertexId, VertexKind};
 use crate::interpreter::Interpreter;
+use crate::reference::{CellRef, Coord};
 use crate::traits::EvaluationContext;
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::{ASTNode, ReferenceType};
+use formualizer_core::parser::ReferenceType;
+use formualizer_core::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct Engine<R> {
-    graph: DependencyGraph,
+    pub graph: DependencyGraph,
     resolver: R,
     config: EvalConfig,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
@@ -71,6 +72,26 @@ where
         }
     }
 
+    pub fn default_sheet_id(&self) -> SheetId {
+        self.graph.default_sheet_id()
+    }
+
+    pub fn default_sheet_name(&self) -> &str {
+        self.graph.default_sheet_name()
+    }
+
+    pub fn sheet_id(&self, name: &str) -> Option<SheetId> {
+        self.graph.sheet_id(name)
+    }
+
+    pub fn set_default_sheet_by_name(&mut self, name: &str) {
+        self.graph.set_default_sheet_by_name(name);
+    }
+
+    pub fn set_default_sheet_by_id(&mut self, id: SheetId) {
+        self.graph.set_default_sheet_by_id(id);
+    }
+
     /// Set a cell value
     pub fn set_cell_value(
         &mut self,
@@ -103,9 +124,9 @@ where
     /// Evaluate a single vertex.
     /// This is the core of the sequential evaluation logic for Milestone 3.1.
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
-        let (ast, sheet) = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
+        let (ast, sheet_id) = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
             match &vertex.kind {
-                VertexKind::FormulaScalar { ast, .. } => (ast.clone(), vertex.sheet.clone()),
+                VertexKind::FormulaScalar { ast, .. } => (ast.clone(), vertex.sheet_id),
                 // For now, empty cells evaluate to 0, consistent with Excel.
                 VertexKind::Empty => return Ok(LiteralValue::Int(0)),
                 // Already evaluated or a literal value.
@@ -123,7 +144,8 @@ where
         };
 
         // The interpreter uses a reference to the engine as the context.
-        let interpreter = Interpreter::new(self, &sheet);
+        let sheet_name = self.graph.sheet_name(sheet_id);
+        let interpreter = Interpreter::new(self, sheet_name);
         let result = interpreter.evaluate_ast(&ast);
 
         // Store the result back into the graph.
@@ -141,15 +163,17 @@ where
         for target in targets {
             // For now, assume simple A1-style references on default sheet
             // TODO: Parse complex references with sheets
-            let addr = self.parse_cell_address(target)?;
-            target_addrs.push(addr);
+            let (sheet, row, col) = Self::parse_a1_notation(target)?;
+            let sheet_id = self.graph.sheet_id_mut(&sheet);
+            let coord = Coord::new(row, col, true, true);
+            target_addrs.push(CellRef::new(sheet_id, coord));
         }
 
         // Find vertex IDs for targets
         let mut target_vertex_ids = Vec::new();
         for addr in &target_addrs {
-            if let Some(&vertex_id) = self.graph.get_vertex_id_for_address(addr) {
-                target_vertex_ids.push(vertex_id);
+            if let Some(vertex_id) = self.graph.get_vertex_id_for_address(addr) {
+                target_vertex_ids.push(*vertex_id);
             }
         }
 
@@ -347,17 +371,17 @@ where
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
         for target in targets {
-            // For now, assume simple A1-style references on default sheet
-            // TODO: Parse complex references with sheets
-            let addr = self.parse_cell_address(target)?;
-            target_addrs.push(addr);
+            let (sheet, row, col) = Self::parse_a1_notation(target)?;
+            let sheet_id = self.graph.sheet_id_mut(&sheet);
+            let coord = Coord::new(row, col, true, true);
+            target_addrs.push(CellRef::new(sheet_id, coord));
         }
 
         // Find vertex IDs for targets
         let mut target_vertex_ids = Vec::new();
         for addr in &target_addrs {
-            if let Some(&vertex_id) = self.graph.get_vertex_id_for_address(addr) {
-                target_vertex_ids.push(vertex_id);
+            if let Some(vertex_id) = self.graph.get_vertex_id_for_address(addr) {
+                target_vertex_ids.push(*vertex_id);
             }
         }
 
@@ -438,59 +462,36 @@ where
         })
     }
 
-    /// Parse a cell address string like "A1" into a CellAddr
-    fn parse_cell_address(&self, address: &str) -> Result<super::graph::CellAddr, ExcelError> {
-        // Simple A1-style parsing
-        if address.is_empty() {
-            return Err(
-                ExcelError::new(ExcelErrorKind::Ref).with_message("Empty cell address".to_string())
-            );
-        }
+    fn parse_a1_notation(address: &str) -> Result<(String, u32, u32), ExcelError> {
+        let parts: Vec<&str> = address.split('!').collect();
+        let (sheet, cell_part) = if parts.len() == 2 {
+            (parts[0].to_string(), parts[1])
+        } else {
+            ("Sheet1".to_string(), address) // Assume default sheet if not specified
+        };
 
-        let chars: Vec<char> = address.chars().collect();
         let mut col_end = 0;
-
-        // Find where letters end and numbers begin
-        for (i, &ch) in chars.iter().enumerate() {
-            if ch.is_ascii_alphabetic() {
+        for (i, c) in cell_part.chars().enumerate() {
+            if c.is_alphabetic() {
                 col_end = i + 1;
-            } else if ch.is_ascii_digit() {
-                break;
             } else {
-                return Err(ExcelError::new(ExcelErrorKind::Ref)
-                    .with_message(format!("Invalid character in cell address: {}", ch)));
+                break;
             }
         }
 
-        if col_end == 0 || col_end == chars.len() {
-            return Err(ExcelError::new(ExcelErrorKind::Ref)
-                .with_message(format!("Invalid cell address format: {}", address)));
-        }
+        let col_str = &cell_part[..col_end];
+        let row_str = &cell_part[col_end..];
 
-        let col_str = &address[..col_end].to_uppercase();
-        let row_str = &address[col_end..];
-
-        // Parse row
-        let row: u32 = row_str.parse().map_err(|_| {
-            ExcelError::new(ExcelErrorKind::Ref)
-                .with_message(format!("Invalid row number: {}", row_str))
+        let row = row_str.parse::<u32>().map_err(|_| {
+            ExcelError::new(ExcelErrorKind::Ref).with_message(format!("Invalid row: {}", row_str))
         })?;
 
-        // Parse column (A=1, B=2, AA=27, etc.)
-        let mut col = 0u32;
-        for ch in col_str.chars() {
-            if !ch.is_ascii_alphabetic() {
-                return Err(ExcelError::new(ExcelErrorKind::Ref)
-                    .with_message(format!("Invalid column letter: {}", ch)));
-            }
-            col = col * 26 + (ch as u32 - 'A' as u32 + 1);
+        let mut col = 0;
+        for c in col_str.to_uppercase().chars() {
+            col = col * 26 + (c as u32 - 'A' as u32) + 1; // +1 for 1-based indexing
         }
 
-        Ok(super::graph::CellAddr::new(
-            self.graph.default_sheet().to_string(),
-            row,
-            col,
-        ))
+        Ok((sheet, row, col))
     }
 
     /// Find dirty precedents that need evaluation for the given target vertices
@@ -672,9 +673,9 @@ where
 
     /// Evaluate a single vertex without mutating the graph (for parallel evaluation)
     fn evaluate_vertex_immutable(&self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
-        let (ast, sheet) = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
+        let (ast, sheet_id) = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
             match &vertex.kind {
-                VertexKind::FormulaScalar { ast, .. } => (ast.clone(), vertex.sheet.clone()),
+                VertexKind::FormulaScalar { ast, .. } => (ast.clone(), vertex.sheet_id),
                 // For now, empty cells evaluate to 0, consistent with Excel.
                 VertexKind::Empty => return Ok(LiteralValue::Int(0)),
                 // Already evaluated or a literal value.
@@ -692,7 +693,8 @@ where
         };
 
         // The interpreter uses a reference to the engine as the context
-        let interpreter = Interpreter::new(self, &sheet);
+        let sheet_name = self.graph.sheet_name(sheet_id);
+        let interpreter = Interpreter::new(self, sheet_name);
         interpreter.evaluate_ast(&ast)
     }
 
@@ -714,7 +716,7 @@ where
         row: u32,
         col: u32,
     ) -> Result<LiteralValue, ExcelError> {
-        let sheet_name = sheet.unwrap_or_else(|| self.graph.default_sheet());
+        let sheet_name = sheet.unwrap_or("Sheet1"); // FIXME: This should use the current sheet context
         Ok(self
             .graph
             .get_cell_value(sheet_name, row, col)
@@ -804,6 +806,10 @@ where
                 end_col,
             } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                let sheet_id = self
+                    .graph
+                    .sheet_id(sheet_name)
+                    .ok_or(ExcelError::new(ExcelErrorKind::Ref))?;
                 let sr = start_row.unwrap_or(1);
                 let sc = start_col.unwrap_or(1);
                 // For now, we don't support infinite ranges in streaming yet
@@ -821,7 +827,7 @@ where
                 if size > self.config.range_expansion_limit as u64 {
                     Ok(RangeStorage::Stream(RangeStream::new(
                         &self.graph,
-                        sheet_name.to_string(),
+                        sheet_id,
                         sr,
                         sc,
                         er,

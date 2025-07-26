@@ -20,7 +20,9 @@
 //!                └────────────────┘
 //! ```
 
-use core::fmt; // `no_std`‑friendly; swap for `std::fmt` if you prefer
+use core::fmt;
+
+use crate::SheetRegistry; // `no_std`‑friendly; swap for `std::fmt` if you prefer
 
 //------------------------------------------------------------------------------
 // Coord
@@ -180,6 +182,14 @@ impl CellRef {
         Self { sheet_id, coord }
     }
 
+    #[inline]
+    pub fn new_absolute(sheet_id: SheetId, row: u32, col: u32) -> Self {
+        Self {
+            sheet_id,
+            coord: Coord::new(row, col, true, true),
+        }
+    }
+
     /// Rebase using underlying `Coord` logic.
     #[inline]
     pub fn rebase(self, origin: Coord, target: Coord) -> Self {
@@ -187,6 +197,11 @@ impl CellRef {
             sheet_id: self.sheet_id,
             coord: self.coord.rebase(origin, target),
         }
+    }
+
+    #[inline]
+    pub fn sheet_name<'a>(&self, sheet_reg: &'a SheetRegistry) -> &'a str {
+        sheet_reg.name(self.sheet_id)
     }
 }
 

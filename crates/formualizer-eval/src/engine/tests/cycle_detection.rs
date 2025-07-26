@@ -79,11 +79,11 @@ fn test_cycle_with_acyclic_branch() {
 
     let d1_id = graph
         .cell_to_vertex()
-        .get(&crate::engine::CellAddr::new("Sheet1".to_string(), 2, 2))
+        .get(&crate::CellRef::new_absolute(0, 2, 2))
         .unwrap();
     let c1_id = graph
         .cell_to_vertex()
-        .get(&crate::engine::CellAddr::new("Sheet1".to_string(), 2, 1))
+        .get(&crate::CellRef::new_absolute(0, 2, 1))
         .unwrap();
 
     assert_eq!(schedule.layers[0].vertices[0], *d1_id);

@@ -1,6 +1,9 @@
+use crate::{SheetId, SheetRegistry};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::reference::{CellRef, Coord};
 
 use super::vertex::{Vertex, VertexId, VertexKind};
 
@@ -8,12 +11,12 @@ use super::vertex::{Vertex, VertexId, VertexKind};
 #[derive(Debug, Clone)]
 pub enum ChangeEvent {
     SetValue {
-        addr: CellAddr,
+        addr: CellRef,
         old: Option<LiteralValue>,
         new: LiteralValue,
     },
     SetFormula {
-        addr: CellAddr,
+        addr: CellRef,
         old: Option<ASTNode>,
         new: ASTNode,
     },
@@ -41,7 +44,7 @@ pub enum DependencyRef {
 /// A key representing a coarse-grained section of a sheet
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct StripeKey {
-    pub sheet: String,
+    pub sheet_id: SheetId,
     pub stripe_type: StripeType,
     pub index: u32, // The index of the row, column, or block stripe
 }
@@ -61,19 +64,6 @@ pub fn block_index(row: u32, col: u32) -> u32 {
     (row / BLOCK_H) << 16 | (col / BLOCK_W)
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct CellAddr {
-    pub sheet: String,
-    pub row: u32,
-    pub col: u32,
-}
-
-impl CellAddr {
-    pub fn new(sheet: String, row: u32, col: u32) -> Self {
-        Self { sheet, row, col }
-    }
-}
-
 /// A summary of the results of a mutating operation on the graph.
 /// This serves as a "changelog" to the application layer.
 #[derive(Debug, Clone)]
@@ -81,7 +71,7 @@ pub struct OperationSummary {
     /// Vertices whose values have been directly or indirectly affected.
     pub affected_vertices: Vec<VertexId>,
     /// Placeholder cells that were newly created to satisfy dependencies.
-    pub created_placeholders: Vec<CellAddr>,
+    pub created_placeholders: Vec<CellRef>,
 }
 
 #[derive(Debug)]
@@ -90,7 +80,7 @@ pub struct DependencyGraph {
     vertices: Vec<Vertex>,
 
     // Address mappings using fast hashing
-    cell_to_vertex: FxHashMap<CellAddr, VertexId>,
+    cell_to_vertex: FxHashMap<CellRef, VertexId>,
 
     // Scheduling state - using HashSet for O(1) operations
     dirty_vertices: FxHashSet<VertexId>,
@@ -104,8 +94,10 @@ pub struct DependencyGraph {
     /// CRITICAL: VertexIds are deduplicated within each stripe to avoid quadratic blow-ups.
     stripe_to_dependents: FxHashMap<StripeKey, FxHashSet<VertexId>>,
 
-    // Default sheet for relative references
-    default_sheet: String,
+    // Sheet name/ID mapping
+    sheet_reg: SheetRegistry,
+    default_sheet_id: SheetId,
+
     // Evaluation configuration
     config: super::EvalConfig,
 }
@@ -118,6 +110,8 @@ impl Default for DependencyGraph {
 
 impl DependencyGraph {
     pub fn new() -> Self {
+        let mut sheet_reg = SheetRegistry::new();
+        let default_sheet_id = sheet_reg.id_for("Sheet1");
         Self {
             vertices: Vec::new(),
             cell_to_vertex: FxHashMap::default(),
@@ -125,7 +119,8 @@ impl DependencyGraph {
             volatile_vertices: FxHashSet::default(),
             formula_to_range_deps: FxHashMap::default(),
             stripe_to_dependents: FxHashMap::default(),
-            default_sheet: "Sheet1".to_string(),
+            sheet_reg,
+            default_sheet_id,
             config: super::EvalConfig::default(),
         }
     }
@@ -135,6 +130,41 @@ impl DependencyGraph {
             config,
             ..Self::new()
         }
+    }
+
+    pub fn default_sheet_id(&self) -> SheetId {
+        self.default_sheet_id
+    }
+
+    pub fn default_sheet_name(&self) -> &str {
+        self.sheet_reg.name(self.default_sheet_id)
+    }
+
+    pub fn set_default_sheet_by_name(&mut self, name: &str) {
+        self.default_sheet_id = self.sheet_id_mut(name);
+    }
+
+    pub fn set_default_sheet_by_id(&mut self, id: SheetId) {
+        self.default_sheet_id = id;
+    }
+
+    /// Returns the ID for a sheet name, creating one if it doesn't exist.
+    pub fn sheet_id_mut(&mut self, name: &str) -> SheetId {
+        self.sheet_reg.id_for(name)
+    }
+
+    pub fn sheet_id(&self, name: &str) -> Option<SheetId> {
+        self.sheet_reg.get_id(name)
+    }
+
+    /// Returns the name of a sheet given its ID.
+    pub fn sheet_name(&self, id: SheetId) -> &str {
+        self.sheet_reg.name(id)
+    }
+
+    /// Converts a `CellRef` to a fully qualified A1-style string (e.g., "Sheet1!A1").
+    pub fn to_a1(&self, cell_ref: CellRef) -> String {
+        format!("{}!{}", self.sheet_name(cell_ref.sheet_id), cell_ref.coord)
     }
 
     #[cfg(test)]
@@ -147,16 +177,6 @@ impl DependencyGraph {
         &self.stripe_to_dependents
     }
 
-    /// Sets the default sheet name for relative references.
-    pub fn set_default_sheet(&mut self, sheet_name: &str) {
-        self.default_sheet = sheet_name.to_string();
-    }
-
-    /// Gets the default sheet name.
-    pub fn default_sheet(&self) -> &str {
-        &self.default_sheet
-    }
-
     /// Set a value in a cell, returns affected vertex IDs
     pub fn set_cell_value(
         &mut self,
@@ -165,14 +185,19 @@ impl DependencyGraph {
         col: u32,
         value: LiteralValue,
     ) -> Result<OperationSummary, ExcelError> {
-        let addr = CellAddr::new(sheet.to_string(), row, col);
+        let sheet_id = self.sheet_id_mut(sheet);
+        let coord = Coord::new(row, col, true, true); // Assuming absolute reference for direct sets
+        let addr = CellRef::new(sheet_id, coord);
         let mut created_placeholders = Vec::new();
 
         let vertex_id = if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
             // To avoid borrow checker issues, we check the kind first, then borrow mutably.
             let is_formula = {
                 let vertex = &self.vertices[existing_id.as_index()];
-                matches!(vertex.kind, VertexKind::FormulaScalar { .. } | VertexKind::FormulaArray { .. })
+                matches!(
+                    vertex.kind,
+                    VertexKind::FormulaScalar { .. } | VertexKind::FormulaArray { .. }
+                )
             };
 
             if is_formula {
@@ -186,9 +211,9 @@ impl DependencyGraph {
             existing_id
         } else {
             // Create new vertex
-            created_placeholders.push(addr.clone());
+            created_placeholders.push(addr);
             let vertex_id = VertexId::new(self.vertices.len() as u32);
-            let vertex = Vertex::new_value(sheet.to_string(), Some(row), Some(col), value);
+            let vertex = Vertex::new_value(sheet_id, Some(row), Some(col), value);
             self.vertices.push(vertex);
             self.cell_to_vertex.insert(addr, vertex_id);
             vertex_id
@@ -200,7 +225,7 @@ impl DependencyGraph {
         })
     }
 
-    /// Set a formula in a cell, returns affected vertex IDs  
+    /// Set a formula in a cell, returns affected vertex IDs
     pub fn set_cell_formula(
         &mut self,
         sheet: &str,
@@ -208,11 +233,13 @@ impl DependencyGraph {
         col: u32,
         ast: ASTNode,
     ) -> Result<OperationSummary, ExcelError> {
-        let addr = CellAddr::new(sheet.to_string(), row, col);
+        let sheet_id = self.sheet_id_mut(sheet);
+        let coord = Coord::new(row, col, true, true);
+        let addr = CellRef::new(sheet_id, coord);
 
         // Extract dependencies from AST, creating placeholders if needed
         let (new_dependencies, new_range_dependencies, mut created_placeholders) =
-            self.extract_dependencies(&ast, sheet)?;
+            self.extract_dependencies(&ast, sheet_id)?;
 
         // Check for self-reference (immediate cycle detection)
         let addr_vertex_id = self.get_or_create_vertex(&addr, &mut created_placeholders);
@@ -241,7 +268,7 @@ impl DependencyGraph {
 
         // Add new dependency edges
         self.add_dependent_edges(addr_vertex_id, &new_dependencies);
-        self.add_range_dependent_edges(addr_vertex_id, &new_range_dependencies, sheet);
+        self.add_range_dependent_edges(addr_vertex_id, &new_range_dependencies, sheet_id);
 
         // Mark as volatile if needed
         if volatile {
@@ -256,7 +283,9 @@ impl DependencyGraph {
 
     /// Get current value from a cell
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
-        let addr = CellAddr::new(sheet.to_string(), row, col);
+        let sheet_id = self.sheet_reg.get_id(sheet)?;
+        let coord = Coord::new(row, col, true, true);
+        let addr = CellRef::new(sheet_id, coord);
 
         self.cell_to_vertex
             .get(&addr)
@@ -280,16 +309,16 @@ impl DependencyGraph {
         if let Some(vertex) = self.vertices.get(vertex_id.as_index()) {
             to_visit.extend(&vertex.dependents);
             if let (Some(row), Some(col)) = (vertex.row, vertex.col) {
-                let dirty_addr = CellAddr::new(vertex.sheet.clone(), row, col);
+                let dirty_sheet_id = vertex.sheet_id;
 
                 // New stripe-based dependents lookup (Milestone 5.3)
                 let mut potential_dependents = FxHashSet::default();
 
                 // 1. Column stripe lookup
                 let column_key = StripeKey {
-                    sheet: dirty_addr.sheet.clone(),
+                    sheet_id: dirty_sheet_id,
                     stripe_type: StripeType::Column,
-                    index: dirty_addr.col,
+                    index: col,
                 };
                 if let Some(dependents) = self.stripe_to_dependents.get(&column_key) {
                     potential_dependents.extend(dependents);
@@ -297,9 +326,9 @@ impl DependencyGraph {
 
                 // 2. Row stripe lookup
                 let row_key = StripeKey {
-                    sheet: dirty_addr.sheet.clone(),
+                    sheet_id: dirty_sheet_id,
                     stripe_type: StripeType::Row,
-                    index: dirty_addr.row,
+                    index: row,
                 };
                 if let Some(dependents) = self.stripe_to_dependents.get(&row_key) {
                     potential_dependents.extend(dependents);
@@ -308,9 +337,9 @@ impl DependencyGraph {
                 // 3. Block stripe lookup
                 if self.config.enable_block_stripes {
                     let block_key = StripeKey {
-                        sheet: dirty_addr.sheet.clone(),
+                        sheet_id: dirty_sheet_id,
                         stripe_type: StripeType::Block,
-                        index: block_index(dirty_addr.row, dirty_addr.col),
+                        index: block_index(row, col),
                     };
                     if let Some(dependents) = self.stripe_to_dependents.get(&block_key) {
                         potential_dependents.extend(dependents);
@@ -321,9 +350,30 @@ impl DependencyGraph {
                 for &dep_id in &potential_dependents {
                     if let Some(ranges) = self.formula_to_range_deps.get(&dep_id) {
                         for range in ranges {
-                            if range.contains(&dirty_addr.sheet, dirty_addr.row, dirty_addr.col) {
-                                to_visit.push(dep_id);
-                                break; // Found a matching range, no need to check others for this dependent
+                            if let ReferenceType::Range {
+                                sheet,
+                                start_row,
+                                start_col,
+                                end_row,
+                                end_col,
+                            } = range
+                            {
+                                let range_sheet_name = sheet
+                                    .as_deref()
+                                    .unwrap_or_else(|| self.sheet_name(dirty_sheet_id));
+                                if let Some(range_sheet_id) =
+                                    self.sheet_reg.get_id(range_sheet_name)
+                                {
+                                    if range_sheet_id == dirty_sheet_id
+                                        && row >= start_row.unwrap_or(1)
+                                        && row <= end_row.unwrap_or(u32::MAX)
+                                        && col >= start_col.unwrap_or(1)
+                                        && col <= end_col.unwrap_or(u32::MAX)
+                                    {
+                                        to_visit.push(dep_id);
+                                        break; // Found a matching range, no need to check others for this dependent
+                                    }
+                                }
                             }
                         }
                     }
@@ -415,14 +465,14 @@ impl DependencyGraph {
     fn extract_dependencies(
         &mut self,
         ast: &ASTNode,
-        current_sheet: &str,
-    ) -> Result<(Vec<VertexId>, Vec<ReferenceType>, Vec<CellAddr>), ExcelError> {
+        current_sheet_id: SheetId,
+    ) -> Result<(Vec<VertexId>, Vec<ReferenceType>, Vec<CellRef>), ExcelError> {
         let mut dependencies = FxHashSet::default();
         let mut range_dependencies = Vec::new();
         let mut created_placeholders = Vec::new();
         self.extract_dependencies_recursive(
             ast,
-            current_sheet,
+            current_sheet_id,
             &mut dependencies,
             &mut range_dependencies,
             &mut created_placeholders,
@@ -447,10 +497,10 @@ impl DependencyGraph {
     fn extract_dependencies_recursive(
         &mut self,
         ast: &ASTNode,
-        current_sheet: &str,
+        current_sheet_id: SheetId,
         dependencies: &mut FxHashSet<VertexId>,
         range_dependencies: &mut Vec<ReferenceType>,
-        created_placeholders: &mut Vec<CellAddr>,
+        created_placeholders: &mut Vec<CellRef>,
     ) -> Result<(), ExcelError> {
         match &ast.node_type {
             formualizer_core::parser::ASTNodeType::Reference { reference, .. } => {
@@ -458,7 +508,7 @@ impl DependencyGraph {
                     ReferenceType::Cell { .. } => {
                         let vertex_id = self.get_or_create_vertex_for_reference(
                             reference,
-                            current_sheet,
+                            current_sheet_id,
                             created_placeholders,
                         )?;
                         dependencies.insert(vertex_id);
@@ -485,10 +535,14 @@ impl DependencyGraph {
 
                         if size <= self.config.range_expansion_limit {
                             // Expand to individual cells
-                            let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                            let sheet_id = match sheet {
+                                Some(name) => self.sheet_id_mut(name),
+                                None => current_sheet_id,
+                            };
                             for row in start_row..=end_row {
                                 for col in start_col..=end_col {
-                                    let addr = CellAddr::new(sheet_name.to_string(), row, col);
+                                    let coord = Coord::new(row, col, true, true);
+                                    let addr = CellRef::new(sheet_id, coord);
                                     let vertex_id =
                                         self.get_or_create_vertex(&addr, created_placeholders);
                                     dependencies.insert(vertex_id);
@@ -505,14 +559,14 @@ impl DependencyGraph {
             formualizer_core::parser::ASTNodeType::BinaryOp { left, right, .. } => {
                 self.extract_dependencies_recursive(
                     left,
-                    current_sheet,
+                    current_sheet_id,
                     dependencies,
                     range_dependencies,
                     created_placeholders,
                 )?;
                 self.extract_dependencies_recursive(
                     right,
-                    current_sheet,
+                    current_sheet_id,
                     dependencies,
                     range_dependencies,
                     created_placeholders,
@@ -521,7 +575,7 @@ impl DependencyGraph {
             formualizer_core::parser::ASTNodeType::UnaryOp { expr, .. } => {
                 self.extract_dependencies_recursive(
                     expr,
-                    current_sheet,
+                    current_sheet_id,
                     dependencies,
                     range_dependencies,
                     created_placeholders,
@@ -531,7 +585,7 @@ impl DependencyGraph {
                 for arg in args {
                     self.extract_dependencies_recursive(
                         arg,
-                        current_sheet,
+                        current_sheet_id,
                         dependencies,
                         range_dependencies,
                         created_placeholders,
@@ -543,7 +597,7 @@ impl DependencyGraph {
                     for cell in row {
                         self.extract_dependencies_recursive(
                             cell,
-                            current_sheet,
+                            current_sheet_id,
                             dependencies,
                             range_dependencies,
                             created_placeholders,
@@ -560,18 +614,18 @@ impl DependencyGraph {
 
     fn get_or_create_vertex(
         &mut self,
-        addr: &CellAddr,
-        created_placeholders: &mut Vec<CellAddr>,
+        addr: &CellRef,
+        created_placeholders: &mut Vec<CellRef>,
     ) -> VertexId {
         if let Some(&vertex_id) = self.cell_to_vertex.get(addr) {
             return vertex_id;
         }
 
-        created_placeholders.push(addr.clone());
+        created_placeholders.push(*addr);
         let vertex_id = VertexId::new(self.vertices.len() as u32);
-        let vertex = Vertex::new_empty(addr.sheet.clone(), Some(addr.row), Some(addr.col));
+        let vertex = Vertex::new_empty(addr.sheet_id, Some(addr.coord.row), Some(addr.coord.col));
         self.vertices.push(vertex);
-        self.cell_to_vertex.insert(addr.clone(), vertex_id);
+        self.cell_to_vertex.insert(*addr, vertex_id);
         vertex_id
     }
 
@@ -579,13 +633,17 @@ impl DependencyGraph {
     fn get_or_create_vertex_for_reference(
         &mut self,
         reference: &formualizer_core::parser::ReferenceType,
-        current_sheet: &str,
-        created_placeholders: &mut Vec<CellAddr>,
+        current_sheet_id: SheetId,
+        created_placeholders: &mut Vec<CellRef>,
     ) -> Result<VertexId, ExcelError> {
         match reference {
             formualizer_core::parser::ReferenceType::Cell { sheet, row, col } => {
-                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-                let addr = CellAddr::new(sheet_name.to_string(), *row, *col);
+                let sheet_id = match sheet {
+                    Some(name) => self.sheet_id_mut(name),
+                    None => current_sheet_id,
+                };
+                let coord = Coord::new(*row, *col, true, true);
+                let addr = CellRef::new(sheet_id, coord);
                 Ok(self.get_or_create_vertex(&addr, created_placeholders))
             }
             _ => Err(ExcelError::new(ExcelErrorKind::Value)
@@ -629,7 +687,7 @@ impl DependencyGraph {
         &mut self,
         dependent: VertexId,
         ranges: &[ReferenceType],
-        current_sheet: &str,
+        current_sheet_id: SheetId,
     ) {
         if ranges.is_empty() {
             return;
@@ -645,7 +703,10 @@ impl DependencyGraph {
                 end_col,
             } = range
             {
-                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                let sheet_id = match sheet {
+                    Some(name) => self.sheet_id_mut(name),
+                    None => current_sheet_id,
+                };
                 let start_row = start_row.unwrap_or(1);
                 let start_col = start_col.unwrap_or(1);
                 let end_row = end_row.unwrap_or(1);
@@ -663,7 +724,7 @@ impl DependencyGraph {
                     for block_row in start_block_row..=end_block_row {
                         for block_col in start_block_col..=end_block_col {
                             let key = StripeKey {
-                                sheet: sheet_name.to_string(),
+                                sheet_id,
                                 stripe_type: StripeType::Block,
                                 index: block_index(block_row * BLOCK_H, block_col * BLOCK_W),
                             };
@@ -677,7 +738,7 @@ impl DependencyGraph {
                     // Tall range
                     for col in start_col..=end_col {
                         let key = StripeKey {
-                            sheet: sheet_name.to_string(),
+                            sheet_id,
                             stripe_type: StripeType::Column,
                             index: col,
                         };
@@ -690,7 +751,7 @@ impl DependencyGraph {
                     // Wide range
                     for row in start_row..=end_row {
                         let key = StripeKey {
-                            sheet: sheet_name.to_string(),
+                            sheet_id,
                             stripe_type: StripeType::Row,
                             index: row,
                         };
@@ -706,8 +767,9 @@ impl DependencyGraph {
 
     fn remove_dependent_edges(&mut self, dependent: VertexId) {
         // Remove direct dependencies
-        let (old_deps, old_sheet) = if let Some(vertex) = self.vertices.get(dependent.as_index()) {
-            (vertex.dependencies.clone(), vertex.sheet.clone())
+        let (old_deps, old_sheet_id) = if let Some(vertex) = self.vertices.get(dependent.as_index())
+        {
+            (vertex.dependencies.clone(), vertex.sheet_id)
         } else {
             return;
         };
@@ -728,7 +790,10 @@ impl DependencyGraph {
                     end_col,
                 } = range
                 {
-                    let sheet_name = sheet.as_deref().unwrap_or(&old_sheet);
+                    let sheet_id = match sheet {
+                        Some(name) => self.sheet_reg.get_id(name).unwrap_or(old_sheet_id),
+                        None => old_sheet_id,
+                    };
                     let start_row = start_row.unwrap_or(1);
                     let start_col = start_col.unwrap_or(1);
                     let end_row = end_row.unwrap_or(1);
@@ -748,7 +813,7 @@ impl DependencyGraph {
                         for block_row in start_block_row..=end_block_row {
                             for block_col in start_block_col..=end_block_col {
                                 keys_to_clean.insert(StripeKey {
-                                    sheet: sheet_name.to_string(),
+                                    sheet_id,
                                     stripe_type: StripeType::Block,
                                     index: block_index(block_row * BLOCK_H, block_col * BLOCK_W),
                                 });
@@ -758,7 +823,7 @@ impl DependencyGraph {
                         // Tall range
                         for col in start_col..=end_col {
                             keys_to_clean.insert(StripeKey {
-                                sheet: sheet_name.to_string(),
+                                sheet_id,
                                 stripe_type: StripeType::Column,
                                 index: col,
                             });
@@ -767,7 +832,7 @@ impl DependencyGraph {
                         // Wide range
                         for row in start_row..=end_row {
                             keys_to_clean.insert(StripeKey {
-                                sheet: sheet_name.to_string(),
+                                sheet_id,
                                 stripe_type: StripeType::Row,
                                 index: row,
                             });
@@ -816,12 +881,12 @@ impl DependencyGraph {
     }
 
     /// Get vertex ID for a cell address
-    pub fn get_vertex_id_for_address(&self, addr: &CellAddr) -> Option<&VertexId> {
+    pub fn get_vertex_id_for_address(&self, addr: &CellRef) -> Option<&VertexId> {
         self.cell_to_vertex.get(addr)
     }
 
     #[cfg(test)]
-    pub(crate) fn cell_to_vertex(&self) -> &FxHashMap<CellAddr, VertexId> {
+    pub(crate) fn cell_to_vertex(&self) -> &FxHashMap<CellRef, VertexId> {
         &self.cell_to_vertex
     }
 }

@@ -1,15 +1,15 @@
-//! Streaming iterator for large ranges.
+use crate::SheetId;
+use crate::reference::{CellRef, Coord};
+use formualizer_common::LiteralValue;
 use std::borrow::Cow;
 
-use formualizer_common::LiteralValue;
-
-use super::graph::{CellAddr, DependencyGraph};
+use super::graph::DependencyGraph;
 
 /// A memory-efficient, streaming iterator over a large range in the dependency graph.
 #[derive(Debug)]
 pub struct RangeStream<'g> {
     graph: &'g DependencyGraph,
-    sheet: String,
+    sheet_id: SheetId,
     start_row: u32,
     start_col: u32,
     end_row: u32,
@@ -23,7 +23,7 @@ pub struct RangeStream<'g> {
 impl<'g> RangeStream<'g> {
     pub fn new(
         graph: &'g DependencyGraph,
-        sheet: String,
+        sheet_id: SheetId,
         start_row: u32,
         start_col: u32,
         end_row: u32,
@@ -31,7 +31,7 @@ impl<'g> RangeStream<'g> {
     ) -> Self {
         Self {
             graph,
-            sheet,
+            sheet_id,
             start_row,
             start_col,
             end_row,
@@ -58,7 +58,8 @@ impl<'g> Iterator for RangeStream<'g> {
             return None;
         }
 
-        let addr = CellAddr::new(self.sheet.clone(), self.current_row, self.current_col);
+        let coord = Coord::new(self.current_row, self.current_col, true, true);
+        let addr = CellRef::new(self.sheet_id, coord);
         let value = self
             .graph
             .get_vertex_id_for_address(&addr)

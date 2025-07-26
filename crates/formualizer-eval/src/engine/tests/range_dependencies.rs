@@ -43,7 +43,7 @@ fn test_tiny_range_expands_to_cell_dependencies() {
         .unwrap();
 
     let c1_id = *graph
-        .get_vertex_id_for_address(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 3))
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
         .unwrap();
     let c1_vertex = graph.get_vertex(c1_id).unwrap();
 
@@ -81,7 +81,7 @@ fn test_range_dependency_dirtiness() {
         .unwrap();
     let c1_id = *graph
         .cell_to_vertex()
-        .get(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 3))
+        .get(&crate::CellRef::new_absolute(0, 1, 3))
         .unwrap();
 
     // Create a value in the middle of the range, e.g., A5.
@@ -116,7 +116,7 @@ fn test_range_dependency_updates_on_formula_change() {
         .unwrap();
     let b1_id = *graph
         .cell_to_vertex()
-        .get(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 2))
+        .get(&crate::CellRef::new_absolute(0, 1, 2))
         .unwrap();
 
     // Change A1, B1 should be dirty
@@ -158,7 +158,7 @@ fn test_large_range_creates_single_compressed_ref() {
         .unwrap();
 
     let c1_id = *graph
-        .get_vertex_id_for_address(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 3))
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
         .unwrap();
     let c1_vertex = graph.get_vertex(c1_id).unwrap();
 
@@ -191,7 +191,7 @@ fn test_tall_range_populates_column_stripe_index() {
         .unwrap();
 
     let c1_id = *graph
-        .get_vertex_id_for_address(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 3))
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
         .unwrap();
 
     let stripes = graph.stripe_to_dependents();
@@ -199,7 +199,7 @@ fn test_tall_range_populates_column_stripe_index() {
 
     // Check for column stripe
     let key = crate::engine::graph::StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: crate::engine::graph::StripeType::Column,
         index: 1,
     };
@@ -219,7 +219,7 @@ fn test_wide_range_populates_row_stripe_index() {
         .unwrap();
 
     let c1_id = *graph
-        .get_vertex_id_for_address(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 3))
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
         .unwrap();
 
     let stripes = graph.stripe_to_dependents();
@@ -227,7 +227,7 @@ fn test_wide_range_populates_row_stripe_index() {
 
     // Check for row stripe
     let key = crate::engine::graph::StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: crate::engine::graph::StripeType::Row,
         index: 1,
     };
@@ -248,7 +248,7 @@ fn test_dense_range_populates_block_stripe_index() {
         .unwrap();
 
     let c1_id = *graph
-        .get_vertex_id_for_address(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 3))
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
         .unwrap();
 
     let stripes = graph.stripe_to_dependents();
@@ -256,7 +256,7 @@ fn test_dense_range_populates_block_stripe_index() {
 
     // Check for block stripe
     let key = crate::engine::graph::StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: crate::engine::graph::StripeType::Block,
         index: crate::engine::graph::block_index(1, 1),
     };
@@ -276,7 +276,7 @@ fn test_formula_replacement_cleans_stripes() {
         .unwrap();
 
     let key = crate::engine::graph::StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: crate::engine::graph::StripeType::Column,
         index: 1,
     };
@@ -292,7 +292,7 @@ fn test_formula_replacement_cleans_stripes() {
 
     // The new stripe for column C should exist
     let new_key = crate::engine::graph::StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: crate::engine::graph::StripeType::Column,
         index: 3,
     };
@@ -322,7 +322,7 @@ fn test_duplicate_range_refs_in_formula() {
     graph.set_cell_formula("Sheet1", 1, 2, formula).unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 2))
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 2))
         .unwrap();
 
     // Should only have one compressed range dependency, not two
@@ -356,7 +356,7 @@ fn test_cross_sheet_implicit_range_stripes() {
 
     let _stripes = graph.stripe_to_dependents();
     let _key = crate::engine::graph::StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: crate::engine::graph::StripeType::Column,
         index: 1,
     };
@@ -382,15 +382,15 @@ fn test_duplicate_vertex_not_pushed_twice() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 2))
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 2))
         .unwrap();
     let c1_id = *graph
-        .get_vertex_id_for_address(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 3))
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
         .unwrap();
 
     // Check that both vertices are in the column stripe for column A
     let key = crate::engine::graph::StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: crate::engine::graph::StripeType::Column,
         index: 1,
     };
@@ -431,7 +431,7 @@ fn test_threshold_stripe_interplay() {
         .unwrap();
 
     let a1_id = *graph
-        .get_vertex_id_for_address(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 1))
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 1))
         .unwrap();
 
     // Should have compressed range dependency (not expanded)
@@ -441,7 +441,7 @@ fn test_threshold_stripe_interplay() {
 
     // Should create column stripe
     let key = crate::engine::graph::StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: crate::engine::graph::StripeType::Column,
         index: 1,
     };

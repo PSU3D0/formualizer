@@ -94,8 +94,8 @@ fn create_test_graph_with_formulas()
     for (addr, &vertex_id) in graph.cell_to_vertex() {
         let cell_ref = format!(
             "{}{}",
-            char::from_u32('A' as u32 + addr.col - 1).unwrap(),
-            addr.row
+            char::from_u32('A' as u32 + addr.coord.col - 1).unwrap(),
+            addr.coord.row
         );
         cell_map.insert(cell_ref, vertex_id);
     }
@@ -222,17 +222,17 @@ fn test_tarjan_self_loops() {
 
     let a1_id = *graph
         .cell_to_vertex()
-        .get(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 1))
+        .get(&crate::CellRef::new_absolute(0, 1, 1))
         .unwrap();
     assert!(scc_singles.iter().any(|scc| scc[0] == a1_id));
 
     let c1_id = *graph
         .cell_to_vertex()
-        .get(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 3))
+        .get(&crate::CellRef::new_absolute(0, 1, 3))
         .unwrap();
     let d1_id = *graph
         .cell_to_vertex()
-        .get(&crate::engine::CellAddr::new("Sheet1".to_string(), 1, 4))
+        .get(&crate::CellRef::new_absolute(0, 1, 4))
         .unwrap();
     assert!(scc_with_cycle.contains(&c1_id));
     assert!(scc_with_cycle.contains(&d1_id));

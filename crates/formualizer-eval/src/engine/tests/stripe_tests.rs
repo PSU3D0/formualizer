@@ -7,19 +7,19 @@ use rustc_hash::FxHashSet;
 #[test]
 fn test_stripe_key_hashing_and_equality() {
     let key1 = StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: StripeType::Row,
         index: 10,
     };
 
     let key2 = StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: StripeType::Row,
         index: 10,
     };
 
     let key3 = StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: StripeType::Column,
         index: 10,
     };
@@ -105,13 +105,13 @@ fn test_eval_config_range_thresholds() {
 #[test]
 fn test_stripe_key_different_sheets() {
     let key1 = StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: StripeType::Row,
         index: 10,
     };
 
     let key2 = StripeKey {
-        sheet: "Sheet2".to_string(),
+        sheet_id: 1,
         stripe_type: StripeType::Row,
         index: 10,
     };
@@ -127,13 +127,13 @@ fn test_stripe_key_different_sheets() {
 #[test]
 fn test_stripe_key_different_indices() {
     let key1 = StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: StripeType::Row,
         index: 10,
     };
 
     let key2 = StripeKey {
-        sheet: "Sheet1".to_string(),
+        sheet_id: 0,
         stripe_type: StripeType::Row,
         index: 20,
     };

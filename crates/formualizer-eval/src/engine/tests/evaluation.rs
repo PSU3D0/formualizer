@@ -1,7 +1,7 @@
 //! Tests for the evaluation logic of the engine.
-use crate::engine::{DependencyGraph, Engine, EvalConfig, VertexId};
+use crate::engine::{Engine, EvalConfig, VertexId};
 use crate::test_workbook::TestWorkbook;
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 fn create_simple_engine() -> Engine<TestWorkbook> {
@@ -147,7 +147,6 @@ fn test_sequential_evaluation_of_dependency_chain() {
     engine
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))
         .unwrap();
-    let a1_id = VertexId::new(0);
 
     // A2 = A1 + 5
     let a2_ast = op_ast(

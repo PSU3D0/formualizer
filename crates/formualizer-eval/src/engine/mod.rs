@@ -12,7 +12,7 @@ pub mod vertex;
 mod tests;
 
 pub use eval::{Engine, EvalResult};
-pub use graph::{CellAddr, DependencyGraph};
+pub use graph::DependencyGraph;
 pub use scheduler::{Layer, Schedule, Scheduler};
 pub use vertex::{Vertex, VertexId, VertexKind};
 

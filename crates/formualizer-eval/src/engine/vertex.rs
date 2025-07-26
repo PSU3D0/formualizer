@@ -1,3 +1,4 @@
+use crate::SheetId;
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ReferenceType};
 use std::borrow::Cow;
@@ -114,7 +115,7 @@ impl VertexMetadata {
 #[derive(Debug, Clone)]
 pub struct Vertex {
     pub kind: VertexKind,
-    pub sheet: String,
+    pub sheet_id: SheetId,
     pub row: Option<u32>,            // None for ranges/named
     pub col: Option<u32>,            // None for ranges/named
     pub dependencies: Vec<VertexId>, // What this depends on
@@ -122,10 +123,10 @@ pub struct Vertex {
 }
 
 impl Vertex {
-    pub fn new_empty(sheet: String, row: Option<u32>, col: Option<u32>) -> Self {
+    pub fn new_empty(sheet_id: SheetId, row: Option<u32>, col: Option<u32>) -> Self {
         Self {
             kind: VertexKind::Empty,
-            sheet,
+            sheet_id,
             row,
             col,
             dependencies: Vec::new(),
@@ -134,14 +135,14 @@ impl Vertex {
     }
 
     pub fn new_value(
-        sheet: String,
+        sheet_id: SheetId,
         row: Option<u32>,
         col: Option<u32>,
         value: LiteralValue,
     ) -> Self {
         Self {
             kind: VertexKind::Value(value),
-            sheet,
+            sheet_id,
             row,
             col,
             dependencies: Vec::new(),
@@ -150,7 +151,7 @@ impl Vertex {
     }
 
     pub fn new_formula_scalar(
-        sheet: String,
+        sheet_id: SheetId,
         row: Option<u32>,
         col: Option<u32>,
         ast: ASTNode,
@@ -163,7 +164,7 @@ impl Vertex {
                 dirty: true,
                 volatile,
             },
-            sheet,
+            sheet_id,
             row,
             col,
             dependencies: Vec::new(),
