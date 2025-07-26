@@ -169,7 +169,17 @@ impl DependencyGraph {
         let mut created_placeholders = Vec::new();
 
         let vertex_id = if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
-            // Update existing vertex
+            // To avoid borrow checker issues, we check the kind first, then borrow mutably.
+            let is_formula = {
+                let vertex = &self.vertices[existing_id.as_index()];
+                matches!(vertex.kind, VertexKind::FormulaScalar { .. } | VertexKind::FormulaArray { .. })
+            };
+
+            if is_formula {
+                self.remove_dependent_edges(existing_id);
+            }
+
+            // Now, get the mutable reference to update the kind.
             if let Some(vertex) = self.vertices.get_mut(existing_id.as_index()) {
                 vertex.kind = VertexKind::Value(value);
             }
@@ -707,26 +717,73 @@ impl DependencyGraph {
             }
         }
 
-        // Remove range dependencies
-        if self.formula_to_range_deps.remove(&dependent).is_some() {
-            // The stripe cleanup logic below is now the only thing needed.
-            // For precision, we could recalculate the old stripes here and remove
-            // the dependent from just those, but for now, the global iteration is simpler.
-        }
+        // Remove range dependencies and clean up stripes precisely
+        if let Some(old_ranges) = self.formula_to_range_deps.remove(&dependent) {
+            for range in &old_ranges {
+                if let ReferenceType::Range {
+                    sheet,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                } = range
+                {
+                    let sheet_name = sheet.as_deref().unwrap_or(&old_sheet);
+                    let start_row = start_row.unwrap_or(1);
+                    let start_col = start_col.unwrap_or(1);
+                    let end_row = end_row.unwrap_or(1);
+                    let end_col = end_col.unwrap_or(1);
 
-        // Remove stripe dependencies
-        // CRITICAL: Remove the VertexId from all stripe entries to prevent stale references
-        let mut empty_stripes = Vec::new();
-        for (stripe_key, dependents) in self.stripe_to_dependents.iter_mut() {
-            dependents.remove(&dependent);
-            if dependents.is_empty() {
-                empty_stripes.push(stripe_key.clone());
+                    let height = end_row.saturating_sub(start_row) + 1;
+                    let width = end_col.saturating_sub(start_col) + 1;
+
+                    let mut keys_to_clean = FxHashSet::default();
+
+                    if self.config.enable_block_stripes && height > 1 && width > 1 {
+                        let start_block_row = start_row / BLOCK_H;
+                        let end_block_row = end_row / BLOCK_H;
+                        let start_block_col = start_col / BLOCK_W;
+                        let end_block_col = end_col / BLOCK_W;
+
+                        for block_row in start_block_row..=end_block_row {
+                            for block_col in start_block_col..=end_block_col {
+                                keys_to_clean.insert(StripeKey {
+                                    sheet: sheet_name.to_string(),
+                                    stripe_type: StripeType::Block,
+                                    index: block_index(block_row * BLOCK_H, block_col * BLOCK_W),
+                                });
+                            }
+                        }
+                    } else if height > width {
+                        // Tall range
+                        for col in start_col..=end_col {
+                            keys_to_clean.insert(StripeKey {
+                                sheet: sheet_name.to_string(),
+                                stripe_type: StripeType::Column,
+                                index: col,
+                            });
+                        }
+                    } else {
+                        // Wide range
+                        for row in start_row..=end_row {
+                            keys_to_clean.insert(StripeKey {
+                                sheet: sheet_name.to_string(),
+                                stripe_type: StripeType::Row,
+                                index: row,
+                            });
+                        }
+                    }
+
+                    for key in keys_to_clean {
+                        if let Some(dependents) = self.stripe_to_dependents.get_mut(&key) {
+                            dependents.remove(&dependent);
+                            if dependents.is_empty() {
+                                self.stripe_to_dependents.remove(&key);
+                            }
+                        }
+                    }
+                }
             }
-        }
-
-        // Remove empty stripe entries to prevent unbounded map growth
-        for stripe_key in empty_stripes {
-            self.stripe_to_dependents.remove(&stripe_key);
         }
     }
 

@@ -48,17 +48,26 @@ impl<'a> Interpreter<'a> {
                 }
 
                 // For ranges, materialize into an array.
-                let data: Vec<Vec<LiteralValue>> =
-                    if let crate::engine::range_stream::RangeStorage::Owned(cow) = storage {
-                        cow.into_owned()
-                    } else {
-                        // This path is inefficient and should be avoided in hot loops.
-                        // It's a fallback for when a function requires a materialized array from a stream.
-                        // let (rows, cols) = (0,0); // How to get dimensions without consuming?
-                        // For now, we just collect. A better implementation would be needed for functions
-                        // that need dimensions without full materialization.
-                        vec![storage.into_iter().map(|c| c.into_owned()).collect()]
-                    };
+                let data: Vec<Vec<LiteralValue>> = match storage {
+                    crate::engine::range_stream::RangeStorage::Owned(cow) => cow.into_owned(),
+                    crate::engine::range_stream::RangeStorage::Stream(mut stream) => {
+                        let (rows, cols) = stream.dimensions();
+                        let mut data = Vec::with_capacity(rows as usize);
+                        for _ in 0..rows {
+                            let mut row_data = Vec::with_capacity(cols as usize);
+                            for _ in 0..cols {
+                                row_data.push(
+                                    stream
+                                        .next()
+                                        .map(|c| c.into_owned())
+                                        .unwrap_or(LiteralValue::Empty),
+                                );
+                            }
+                            data.push(row_data);
+                        }
+                        data
+                    }
+                };
 
                 if data.len() == 1 && data[0].len() == 1 {
                     Ok(data[0][0].clone())

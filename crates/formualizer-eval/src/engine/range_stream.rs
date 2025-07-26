@@ -17,6 +17,7 @@ pub struct RangeStream<'g> {
     // Current position
     current_row: u32,
     current_col: u32,
+    finished: bool,
 }
 
 impl<'g> RangeStream<'g> {
@@ -28,7 +29,6 @@ impl<'g> RangeStream<'g> {
         end_row: u32,
         end_col: u32,
     ) -> Self {
-        // Debug: eprintln!("RangeStream::new - sheet: {}, range: {}:{} to {}:{}", sheet, start_row, start_col, end_row, end_col);
         Self {
             graph,
             sheet,
@@ -38,7 +38,15 @@ impl<'g> RangeStream<'g> {
             end_col,
             current_row: start_row,
             current_col: start_col,
+            finished: start_row > end_row || start_col > end_col,
         }
+    }
+
+    pub fn dimensions(&self) -> (u32, u32) {
+        (
+            self.end_row.saturating_sub(self.start_row) + 1,
+            self.end_col.saturating_sub(self.start_col) + 1,
+        )
     }
 }
 
@@ -46,13 +54,7 @@ impl<'g> Iterator for RangeStream<'g> {
     type Item = Cow<'g, LiteralValue>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Check if we've passed the end bounds BEFORE processing
-        if self.current_row > self.end_row {
-            return None;
-        }
-
-        // Additional check: if we're beyond the column range, we're done
-        if self.current_row == self.end_row && self.current_col > self.end_col {
+        if self.finished {
             return None;
         }
 
@@ -64,13 +66,13 @@ impl<'g> Iterator for RangeStream<'g> {
             .map(|v| v.value())
             .unwrap_or(Cow::Owned(LiteralValue::Empty));
 
-        // Debug: eprintln!("Processing cell {}:{} -> {:?}", self.current_row, self.current_col, value);
-
-        // Advance position AFTER getting the value
-        self.current_col += 1;
-        if self.current_col > self.end_col {
+        if self.current_row == self.end_row && self.current_col == self.end_col {
+            self.finished = true;
+        } else if self.current_col >= self.end_col {
             self.current_col = self.start_col;
             self.current_row += 1;
+        } else {
+            self.current_col += 1;
         }
 
         Some(value)
