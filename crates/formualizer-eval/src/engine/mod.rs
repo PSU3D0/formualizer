@@ -10,6 +10,7 @@ pub mod vertex;
 
 // New SoA modules
 pub mod debug_views;
+pub mod epoch_tracker;
 pub mod packed_coord;
 pub mod vertex_store;
 
