@@ -1,4 +1,4 @@
-use super::graph::DependencyGraph;
+use super::DependencyGraph;
 use super::vertex::VertexId;
 use formualizer_common::ExcelError;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -83,32 +83,31 @@ impl<'a> Scheduler<'a> {
         on_stack.insert(vertex);
 
         // Consider successors of vertex (dependencies)
-        if let Some(v) = self.graph.vertices().get(vertex.as_index()) {
-            for &dependency in &v.dependencies {
-                // Only consider dependencies that are part of the current scheduling task
-                if !vertex_set.contains(&dependency) {
-                    continue;
-                }
+        let dependencies = self.graph.get_dependencies(vertex);
+        for &dependency in &dependencies {
+            // Only consider dependencies that are part of the current scheduling task
+            if !vertex_set.contains(&dependency) {
+                continue;
+            }
 
-                if !indices.contains_key(&dependency) {
-                    // Successor dependency has not yet been visited; recurse on it
-                    self.tarjan_visit(
-                        dependency,
-                        index_counter,
-                        stack,
-                        indices,
-                        lowlinks,
-                        on_stack,
-                        sccs,
-                        vertex_set,
-                    )?;
-                    let dep_lowlink = lowlinks[&dependency];
-                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_lowlink));
-                } else if on_stack.contains(&dependency) {
-                    // Successor dependency is in stack and hence in the current SCC
-                    let dep_index = indices[&dependency];
-                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
-                }
+            if !indices.contains_key(&dependency) {
+                // Successor dependency has not yet been visited; recurse on it
+                self.tarjan_visit(
+                    dependency,
+                    index_counter,
+                    stack,
+                    indices,
+                    lowlinks,
+                    on_stack,
+                    sccs,
+                    vertex_set,
+                )?;
+                let dep_lowlink = lowlinks[&dependency];
+                lowlinks.insert(vertex, lowlinks[&vertex].min(dep_lowlink));
+            } else if on_stack.contains(&dependency) {
+                // Successor dependency is in stack and hence in the current SCC
+                let dep_index = indices[&dependency];
+                lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
             }
         }
 
@@ -148,11 +147,7 @@ impl<'a> Scheduler<'a> {
     }
 
     fn has_self_loop(&self, vertex: VertexId) -> bool {
-        if let Some(v) = self.graph.vertices().get(vertex.as_index()) {
-            v.dependencies.contains(&vertex)
-        } else {
-            false
-        }
+        self.graph.has_self_loop(vertex)
     }
 
     pub(crate) fn build_layers(
@@ -168,12 +163,11 @@ impl<'a> Scheduler<'a> {
         // Calculate in-degrees for all vertices in the acyclic subgraph
         let mut in_degrees: FxHashMap<VertexId, usize> = vertices.iter().map(|&v| (v, 0)).collect();
         for &vertex_id in &vertices {
-            if let Some(vertex) = self.graph.vertices().get(vertex_id.as_index()) {
-                for &dep_id in &vertex.dependencies {
-                    if vertex_set.contains(&dep_id) {
-                        if let Some(in_degree) = in_degrees.get_mut(&vertex_id) {
-                            *in_degree += 1;
-                        }
+            let dependencies = self.graph.get_dependencies(vertex_id);
+            for &dep_id in &dependencies {
+                if vertex_set.contains(&dep_id) {
+                    if let Some(in_degree) = in_degrees.get_mut(&vertex_id) {
+                        *in_degree += 1;
                     }
                 }
             }
@@ -197,13 +191,11 @@ impl<'a> Scheduler<'a> {
                 processed_count += 1;
 
                 // For each dependent of u, reduce its in-degree
-                if let Some(vertex) = self.graph.vertices().get(u.as_index()) {
-                    for &v_dep in &vertex.dependents {
-                        if let Some(in_degree) = in_degrees.get_mut(&v_dep) {
-                            *in_degree -= 1;
-                            if *in_degree == 0 {
-                                queue.push_back(v_dep);
-                            }
+                for v_dep in self.graph.get_dependents(u) {
+                    if let Some(in_degree) = in_degrees.get_mut(&v_dep) {
+                        *in_degree -= 1;
+                        if *in_degree == 0 {
+                            queue.push_back(v_dep);
                         }
                     }
                 }

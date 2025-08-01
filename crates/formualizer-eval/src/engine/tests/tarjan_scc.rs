@@ -1,3 +1,4 @@
+use super::common::get_vertex_ids_in_order;
 use crate::engine::{DependencyGraph, Scheduler, VertexId};
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
@@ -159,10 +160,11 @@ fn test_tarjan_cycle_detection() {
 
     let scheduler = Scheduler::new(&graph);
 
-    // Get the three vertices in the cycle
-    let cycle_vertices: Vec<VertexId> = (0..3).map(|i| VertexId::new(i)).collect();
+    // Get all vertices from the graph (should be 3: A1, B1, C1)
+    let all_vertices: Vec<VertexId> = graph.cell_to_vertex().values().copied().collect();
+    assert_eq!(all_vertices.len(), 3, "Expected 3 vertices in the graph");
 
-    let sccs = scheduler.tarjan_scc(&cycle_vertices).unwrap();
+    let sccs = scheduler.tarjan_scc(&all_vertices).unwrap();
 
     // Should find one SCC containing all three vertices
     assert_eq!(sccs.len(), 1);
@@ -170,7 +172,7 @@ fn test_tarjan_cycle_detection() {
 
     // Verify all three vertices are in the same SCC
     let scc_set: std::collections::HashSet<VertexId> = sccs[0].iter().copied().collect();
-    for &vertex_id in &cycle_vertices {
+    for &vertex_id in &all_vertices {
         assert!(
             scc_set.contains(&vertex_id),
             "Vertex {:?} not found in cycle SCC",
@@ -277,9 +279,9 @@ fn test_tarjan_complex_graph() {
     graph.set_cell_formula("Sheet1", 1, 8, h1_ast).unwrap();
 
     let scheduler = Scheduler::new(&graph);
-    let all_vertices: Vec<VertexId> = (0..8).map(|i| VertexId::new(i)).collect();
+    let all_vertex_ids = get_vertex_ids_in_order(&graph);
 
-    let sccs = scheduler.tarjan_scc(&all_vertices).unwrap();
+    let sccs = scheduler.tarjan_scc(&all_vertex_ids).unwrap();
 
     // Should find:
     // - SCC 1: {A1, B1} (2-vertex cycle)
@@ -315,13 +317,13 @@ fn test_tarjan_single_vertex() {
         .unwrap();
 
     let scheduler = Scheduler::new(&graph);
-    let vertices = vec![VertexId::new(0)];
+    let vertices: Vec<VertexId> = graph.cell_to_vertex().values().copied().collect();
 
     let sccs = scheduler.tarjan_scc(&vertices).unwrap();
 
     assert_eq!(sccs.len(), 1);
     assert_eq!(sccs[0].len(), 1);
-    assert_eq!(sccs[0][0], VertexId::new(0));
+    assert_eq!(sccs[0][0], vertices[0]);
 }
 
 /// Property test: Verify SCC partitioning correctness

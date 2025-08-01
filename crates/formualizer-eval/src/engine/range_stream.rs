@@ -3,7 +3,7 @@ use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
 use std::borrow::Cow;
 
-use super::graph::DependencyGraph;
+use super::DependencyGraph;
 
 /// A memory-efficient, streaming iterator over a large range in the dependency graph.
 #[derive(Debug)]
@@ -64,8 +64,8 @@ impl<'g> Iterator for RangeStream<'g> {
             .graph
             .get_vertex_id_for_address(&addr)
             .and_then(|id| self.graph.get_vertex(*id))
-            .map(|v| v.value())
-            .unwrap_or(Cow::Owned(LiteralValue::Empty));
+            .map(|v| v.value().into_owned())
+            .unwrap_or(LiteralValue::Empty);
 
         if self.current_row == self.end_row && self.current_col == self.end_col {
             self.finished = true;
@@ -76,7 +76,7 @@ impl<'g> Iterator for RangeStream<'g> {
             self.current_col += 1;
         }
 
-        Some(value)
+        Some(Cow::Owned(value))
     }
 }
 

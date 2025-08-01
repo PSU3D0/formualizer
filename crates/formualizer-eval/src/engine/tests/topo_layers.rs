@@ -1,5 +1,6 @@
 //! Tests for topological layer construction (Kahn's algorithm).
-use crate::engine::{DependencyGraph, Scheduler, VertexId};
+use super::common::get_vertex_ids_in_order;
+use crate::engine::{DependencyGraph, Scheduler};
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -61,10 +62,10 @@ fn test_kahn_topological_layers() {
         .unwrap(); // E1
 
     let scheduler = Scheduler::new(&graph);
-    let all_vertices: Vec<VertexId> = (0..5).map(|i| VertexId::new(i)).collect();
+    let all_vertex_ids = get_vertex_ids_in_order(&graph);
 
     // We need to get the acyclic components first
-    let sccs = scheduler.tarjan_scc(&all_vertices).unwrap();
+    let sccs = scheduler.tarjan_scc(&all_vertex_ids).unwrap();
     let (_, acyclic_sccs) = scheduler.separate_cycles(sccs);
 
     let layers = scheduler.build_layers(acyclic_sccs).unwrap();
@@ -72,21 +73,18 @@ fn test_kahn_topological_layers() {
     assert_eq!(layers.len(), 3, "Should be 3 topological layers");
 
     // Layer 0 should contain A1 and B1
-    let layer0_ids: Vec<_> = layers[0].vertices.iter().map(|v| v.as_index()).collect();
-    assert_eq!(layer0_ids.len(), 2);
-    assert!(layer0_ids.contains(&0)); // A1
-    assert!(layer0_ids.contains(&1)); // B1
+    assert_eq!(layers[0].vertices.len(), 2);
+    assert!(layers[0].vertices.contains(&all_vertex_ids[0])); // A1
+    assert!(layers[0].vertices.contains(&all_vertex_ids[1])); // B1
 
     // Layer 1 should contain C1 and D1
-    let layer1_ids: Vec<_> = layers[1].vertices.iter().map(|v| v.as_index()).collect();
-    assert_eq!(layer1_ids.len(), 2);
-    assert!(layer1_ids.contains(&2)); // C1
-    assert!(layer1_ids.contains(&3)); // D1
+    assert_eq!(layers[1].vertices.len(), 2);
+    assert!(layers[1].vertices.contains(&all_vertex_ids[2])); // C1
+    assert!(layers[1].vertices.contains(&all_vertex_ids[3])); // D1
 
     // Layer 2 should contain E1
-    let layer2_ids: Vec<_> = layers[2].vertices.iter().map(|v| v.as_index()).collect();
-    assert_eq!(layer2_ids.len(), 1);
-    assert!(layer2_ids.contains(&4)); // E1
+    assert_eq!(layers[2].vertices.len(), 1);
+    assert!(layers[2].vertices.contains(&all_vertex_ids[4])); // E1
 }
 
 #[test]
@@ -109,8 +107,8 @@ fn test_layer_parallelism_safety_setup() {
         .unwrap();
 
     let scheduler = Scheduler::new(&graph);
-    let all_vertices: Vec<VertexId> = (0..4).map(|i| VertexId::new(i)).collect();
-    let sccs = scheduler.tarjan_scc(&all_vertices).unwrap();
+    let all_vertex_ids = get_vertex_ids_in_order(&graph);
+    let sccs = scheduler.tarjan_scc(&all_vertex_ids).unwrap();
     let (_, acyclic_sccs) = scheduler.separate_cycles(sccs);
     let layers = scheduler.build_layers(acyclic_sccs).unwrap();
 
@@ -154,7 +152,8 @@ fn test_build_layers_with_cycle_errors() {
 
     // IMPORTANT: We are deliberately passing a cyclic component to `build_layers`
     // to test its internal error handling.
-    let cyclic_scc = vec![vec![VertexId::new(0), VertexId::new(1)]];
+    let all_vertex_ids = get_vertex_ids_in_order(&graph);
+    let cyclic_scc = vec![vec![all_vertex_ids[0], all_vertex_ids[1]]];
 
     let result = scheduler.build_layers(cyclic_scc);
 

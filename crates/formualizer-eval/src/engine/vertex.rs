@@ -1,6 +1,6 @@
 use crate::SheetId;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ReferenceType};
+use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 use std::borrow::Cow;
 
 /// 🔮 Scalability Hook: Engine-internal vertex identity (opaque for future sharding support)
@@ -72,12 +72,31 @@ impl VertexKind {
     pub fn from_tag(tag: u8) -> Self {
         match tag {
             0 => VertexKind::Empty,
+            1 => VertexKind::Value(LiteralValue::Int(0)), // Placeholder, actual value in values map
+            2 => VertexKind::FormulaScalar {
+                ast: ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(0)), None), // Placeholder
+                result: None,
+                dirty: false,
+                volatile: false,
+            },
+            3 => VertexKind::FormulaArray {
+                ast: ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(0)), None), // Placeholder
+                results: None,
+                dims: (1, 1),
+                dirty: false,
+                volatile: false,
+            },
+            4 => VertexKind::InfiniteRange {
+                reference: ReferenceType::Cell {
+                    sheet: None,
+                    row: 1,
+                    col: 1,
+                }, // Placeholder
+            },
             5 => VertexKind::Cell,
             6 => VertexKind::Range,
             7 => VertexKind::External,
-            // For now, default to Cell for other values
-            // In full implementation, this would handle all cases
-            _ => VertexKind::Cell,
+            _ => VertexKind::Empty,
         }
     }
 

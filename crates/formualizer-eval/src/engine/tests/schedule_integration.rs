@@ -1,5 +1,6 @@
 //! Tests for the complete scheduling pipeline.
-use crate::engine::{DependencyGraph, Scheduler, VertexId};
+use super::common::get_vertex_ids_in_order;
+use crate::engine::{DependencyGraph, Scheduler};
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -37,8 +38,8 @@ fn test_schedule_creation_end_to_end() {
         .unwrap(); // C1 = B1
 
     let scheduler = Scheduler::new(&graph);
-    let all_vertices: Vec<VertexId> = (0..4).map(|i| VertexId::new(i)).collect();
-    let schedule = scheduler.create_schedule(&all_vertices).unwrap();
+    let all_vertex_ids = get_vertex_ids_in_order(&graph);
+    let schedule = scheduler.create_schedule(&all_vertex_ids).unwrap();
 
     assert!(schedule.cycles.is_empty());
     assert_eq!(schedule.layers.len(), 3);
@@ -66,8 +67,8 @@ fn test_cycle_separation_logic() {
         .unwrap(); // D1 = C1
 
     let scheduler = Scheduler::new(&graph);
-    let all_vertices: Vec<VertexId> = (0..4).map(|i| VertexId::new(i)).collect();
-    let schedule = scheduler.create_schedule(&all_vertices).unwrap();
+    let all_vertex_ids = get_vertex_ids_in_order(&graph);
+    let schedule = scheduler.create_schedule(&all_vertex_ids).unwrap();
 
     assert_eq!(schedule.cycles.len(), 1);
     assert_eq!(schedule.cycles[0].len(), 2);
@@ -87,7 +88,9 @@ fn test_scheduling_with_external_dependencies() {
         .unwrap(); // B1 = A1
 
     // Mark only B1 as dirty
-    let dirty_vertices = vec![VertexId::new(1)];
+    let all_vertex_ids = get_vertex_ids_in_order(&graph);
+    let b1_id = all_vertex_ids[1]; // B1 is the second vertex
+    let dirty_vertices = vec![b1_id];
 
     let scheduler = Scheduler::new(&graph);
     let schedule = scheduler.create_schedule(&dirty_vertices).unwrap();
@@ -96,5 +99,5 @@ fn test_scheduling_with_external_dependencies() {
     assert!(schedule.cycles.is_empty());
     assert_eq!(schedule.layers.len(), 1);
     assert_eq!(schedule.layers[0].vertices.len(), 1);
-    assert_eq!(schedule.layers[0].vertices[0], VertexId::new(1));
+    assert_eq!(schedule.layers[0].vertices[0], b1_id);
 }

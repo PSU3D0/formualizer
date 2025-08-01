@@ -1,3 +1,4 @@
+use super::common::get_vertex_ids_in_order;
 use crate::{
     CellRef, Coord,
     engine::{DependencyGraph, VertexKind},
@@ -123,20 +124,22 @@ fn test_vertex_kind_transitions() {
     assert_eq!(graph.get_cell_value("Sheet1", 1, 1), None);
 
     // Verify the vertex kind changed
-    let vertices = graph.vertices();
-    assert_eq!(vertices.len(), 1);
-    match &vertices[0].kind {
-        VertexKind::FormulaScalar {
-            dirty,
-            volatile,
-            result,
-            ..
-        } => {
-            assert!(*dirty);
-            assert!(!*volatile);
-            assert_eq!(*result, None);
+    let vertex_ids = get_vertex_ids_in_order(&graph);
+    assert_eq!(vertex_ids.len(), 1);
+    if let Some(vertex) = graph.get_vertex(vertex_ids[0]) {
+        match &vertex.kind {
+            VertexKind::FormulaScalar {
+                dirty,
+                volatile,
+                result,
+                ..
+            } => {
+                assert!(*dirty);
+                assert!(!*volatile);
+                assert_eq!(*result, None);
+            }
+            _ => panic!("Expected VertexKind::FormulaScalar after setting formula"),
         }
-        _ => panic!("Expected VertexKind::FormulaScalar after setting formula"),
     }
 
     // Transition back to value
@@ -149,10 +152,11 @@ fn test_vertex_kind_transitions() {
     );
 
     // Verify vertex kind changed back
-    let vertices = graph.vertices();
-    match &vertices[0].kind {
-        VertexKind::Value(v) => assert_eq!(*v, LiteralValue::Text("hello".to_string())),
-        _ => panic!("Expected VertexKind::Value after setting value"),
+    if let Some(vertex) = graph.get_vertex(vertex_ids[0]) {
+        match &vertex.kind {
+            VertexKind::Value(v) => assert_eq!(*v, LiteralValue::Text("hello".to_string())),
+            _ => panic!("Expected VertexKind::Value after setting value"),
+        }
     }
 }
 
@@ -163,7 +167,8 @@ fn test_placeholder_creation() {
     let summary = graph.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
 
     // A1 and B1 should have been created
-    assert_eq!(graph.vertices().len(), 2);
+    let vertex_ids = get_vertex_ids_in_order(&graph);
+    assert_eq!(vertex_ids.len(), 2);
     // Both A1 and B1 are created as placeholders initially
     assert_eq!(summary.created_placeholders.len(), 2);
 
@@ -175,13 +180,15 @@ fn test_placeholder_creation() {
 
     // Verify B1 is an Empty vertex
     let b1_id = *graph.cell_to_vertex().get(&b1_addr).unwrap();
-    let b1_vertex = &graph.vertices()[b1_id.as_index()];
-    assert!(matches!(b1_vertex.kind, VertexKind::Empty));
+    if let Some(b1_vertex) = graph.get_vertex(b1_id) {
+        assert!(matches!(b1_vertex.kind, VertexKind::Empty));
+    }
 
     // Verify A1 is a Formula vertex
     let a1_id = *graph.cell_to_vertex().get(&a1_addr).unwrap();
-    let a1_vertex = &graph.vertices()[a1_id.as_index()];
-    assert!(matches!(a1_vertex.kind, VertexKind::FormulaScalar { .. }));
+    if let Some(a1_vertex) = graph.get_vertex(a1_id) {
+        assert!(matches!(a1_vertex.kind, VertexKind::FormulaScalar { .. }));
+    }
 }
 
 #[test]

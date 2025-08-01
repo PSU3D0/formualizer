@@ -97,6 +97,7 @@ pub const EXTERNAL_VERTEX_START: u32 = 256;
 /// - Dense columnar arrays for hot data
 /// - Atomic flags for lock-free operations
 #[repr(C, align(64))]
+#[derive(Debug)]
 pub struct VertexStore {
     // Dense columnar arrays - 21B per vertex logical
     coords: Vec<PackedCoord>, // 8B (packed row/col)
@@ -153,6 +154,19 @@ impl VertexStore {
         self.len
     }
 
+    /// Convert vertex ID to index, returning None if invalid
+    #[inline]
+    fn vertex_id_to_index(&self, id: VertexId) -> Option<usize> {
+        if id.0 < FIRST_NORMAL_VERTEX {
+            return None;
+        }
+        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
+        if idx >= self.len {
+            return None;
+        }
+        Some(idx)
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
@@ -161,34 +175,47 @@ impl VertexStore {
     // Accessors
     #[inline]
     pub fn coord(&self, id: VertexId) -> PackedCoord {
-        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
-        self.coords[idx]
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            self.coords[idx]
+        } else {
+            PackedCoord::new(0, 0) // Default for invalid vertices
+        }
     }
 
     #[inline]
     pub fn sheet_id(&self, id: VertexId) -> SheetId {
-        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
-        (self.sheet_kind[idx] >> 16) as SheetId
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            (self.sheet_kind[idx] >> 16) as SheetId
+        } else {
+            0 // Default sheet ID for invalid vertices
+        }
     }
 
     #[inline]
     pub fn kind(&self, id: VertexId) -> VertexKind {
-        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
-        let tag = ((self.sheet_kind[idx] >> 8) & 0xFF) as u8;
-        VertexKind::from_tag(tag)
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            let tag = ((self.sheet_kind[idx] >> 8) & 0xFF) as u8;
+            VertexKind::from_tag(tag)
+        } else {
+            VertexKind::Empty // Default kind for invalid vertices
+        }
     }
 
     #[inline]
     pub fn set_kind(&mut self, id: VertexId, kind: VertexKind) {
-        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
-        let sheet_bits = self.sheet_kind[idx] & 0xFFFF0000;
-        self.sheet_kind[idx] = sheet_bits | ((kind.to_tag() as u32) << 8);
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            let sheet_bits = self.sheet_kind[idx] & 0xFFFF0000;
+            self.sheet_kind[idx] = sheet_bits | ((kind.to_tag() as u32) << 8);
+        }
     }
 
     #[inline]
     pub fn flags(&self, id: VertexId) -> u8 {
-        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
-        self.flags[idx].load(Ordering::Acquire)
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            self.flags[idx].load(Ordering::Acquire)
+        } else {
+            0 // Default flags for invalid vertices
+        }
     }
 
     #[inline]
@@ -208,7 +235,13 @@ impl VertexStore {
 
     #[inline]
     pub fn set_dirty(&self, id: VertexId, dirty: bool) {
+        if id.0 < FIRST_NORMAL_VERTEX {
+            return; // Skip invalid vertex IDs
+        }
         let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
+        if idx >= self.flags.len() {
+            return; // Out of bounds
+        }
         if dirty {
             self.flags[idx].fetch_or(0x01, Ordering::Release);
         } else {
@@ -218,35 +251,44 @@ impl VertexStore {
 
     #[inline]
     pub fn set_volatile(&self, id: VertexId, volatile: bool) {
-        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
-        if volatile {
-            self.flags[idx].fetch_or(0x02, Ordering::Release);
-        } else {
-            self.flags[idx].fetch_and(!0x02, Ordering::Release);
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            if volatile {
+                self.flags[idx].fetch_or(0x02, Ordering::Release);
+            } else {
+                self.flags[idx].fetch_and(!0x02, Ordering::Release);
+            }
         }
     }
 
     #[inline]
     pub fn value_ref(&self, id: VertexId) -> u32 {
-        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
-        self.value_ref[idx]
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            self.value_ref[idx]
+        } else {
+            0 // Default value ref for invalid vertices
+        }
     }
 
     #[inline]
     pub fn set_value_ref(&mut self, id: VertexId, value_ref: u32) {
-        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
-        self.value_ref[idx] = value_ref;
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            self.value_ref[idx] = value_ref;
+        }
     }
 
     #[inline]
     pub fn edge_offset(&self, id: VertexId) -> u32 {
-        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
-        self.edge_offset[idx]
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            self.edge_offset[idx]
+        } else {
+            0 // Default edge offset for invalid vertices
+        }
     }
 
     #[inline]
     pub fn set_edge_offset(&mut self, id: VertexId, offset: u32) {
-        let idx = (id.0 - FIRST_NORMAL_VERTEX) as usize;
-        self.edge_offset[idx] = offset;
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            self.edge_offset[idx] = offset;
+        }
     }
 }

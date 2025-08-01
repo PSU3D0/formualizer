@@ -1,5 +1,5 @@
 //! Tests for the hybrid model of range dependency management.
-use crate::engine::{DependencyGraph, EvalConfig, VertexId};
+use crate::engine::{DependencyGraph, EvalConfig, StripeKey, StripeType, VertexId, block_index};
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -198,9 +198,9 @@ fn test_tall_range_populates_column_stripe_index() {
     assert!(!stripes.is_empty(), "Stripes should be created");
 
     // Check for column stripe
-    let key = crate::engine::graph::StripeKey {
+    let key = StripeKey {
         sheet_id: 0,
-        stripe_type: crate::engine::graph::StripeType::Column,
+        stripe_type: StripeType::Column,
         index: 1,
     };
     assert!(stripes.contains_key(&key));
@@ -226,9 +226,9 @@ fn test_wide_range_populates_row_stripe_index() {
     assert!(!stripes.is_empty(), "Stripes should be created");
 
     // Check for row stripe
-    let key = crate::engine::graph::StripeKey {
+    let key = StripeKey {
         sheet_id: 0,
-        stripe_type: crate::engine::graph::StripeType::Row,
+        stripe_type: StripeType::Row,
         index: 1,
     };
     assert!(stripes.contains_key(&key));
@@ -255,10 +255,10 @@ fn test_dense_range_populates_block_stripe_index() {
     assert!(!stripes.is_empty(), "Stripes should be created");
 
     // Check for block stripe
-    let key = crate::engine::graph::StripeKey {
+    let key = StripeKey {
         sheet_id: 0,
-        stripe_type: crate::engine::graph::StripeType::Block,
-        index: crate::engine::graph::block_index(1, 1),
+        stripe_type: StripeType::Block,
+        index: block_index(1, 1),
     };
     assert!(stripes.contains_key(&key));
     assert!(stripes.get(&key).unwrap().contains(&c1_id));
@@ -275,9 +275,9 @@ fn test_formula_replacement_cleans_stripes() {
         .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 500, 1))
         .unwrap();
 
-    let key = crate::engine::graph::StripeKey {
+    let key = StripeKey {
         sheet_id: 0,
-        stripe_type: crate::engine::graph::StripeType::Column,
+        stripe_type: StripeType::Column,
         index: 1,
     };
     assert!(graph.stripe_to_dependents().contains_key(&key));
@@ -291,9 +291,9 @@ fn test_formula_replacement_cleans_stripes() {
     assert!(!graph.stripe_to_dependents().contains_key(&key));
 
     // The new stripe for column C should exist
-    let new_key = crate::engine::graph::StripeKey {
+    let new_key = StripeKey {
         sheet_id: 0,
-        stripe_type: crate::engine::graph::StripeType::Column,
+        stripe_type: StripeType::Column,
         index: 3,
     };
     assert!(graph.stripe_to_dependents().contains_key(&new_key));
@@ -355,9 +355,9 @@ fn test_cross_sheet_implicit_range_stripes() {
         .unwrap();
 
     let _stripes = graph.stripe_to_dependents();
-    let _key = crate::engine::graph::StripeKey {
+    let _key = StripeKey {
         sheet_id: 0,
-        stripe_type: crate::engine::graph::StripeType::Column,
+        stripe_type: StripeType::Column,
         index: 1,
     };
     // Note: Cross-sheet handling needs more comprehensive implementation
@@ -389,9 +389,9 @@ fn test_duplicate_vertex_not_pushed_twice() {
         .unwrap();
 
     // Check that both vertices are in the column stripe for column A
-    let key = crate::engine::graph::StripeKey {
+    let key = StripeKey {
         sheet_id: 0,
-        stripe_type: crate::engine::graph::StripeType::Column,
+        stripe_type: StripeType::Column,
         index: 1,
     };
 
@@ -440,9 +440,9 @@ fn test_threshold_stripe_interplay() {
     assert!(range_deps.contains_key(&a1_id));
 
     // Should create column stripe
-    let key = crate::engine::graph::StripeKey {
+    let key = StripeKey {
         sheet_id: 0,
-        stripe_type: crate::engine::graph::StripeType::Column,
+        stripe_type: StripeType::Column,
         index: 1,
     };
     assert!(graph.stripe_to_dependents().contains_key(&key));

@@ -4,6 +4,7 @@
 
 pub mod eval;
 pub mod graph;
+pub mod graph_soa;
 pub mod range_stream;
 pub mod scheduler;
 pub mod vertex;
@@ -20,7 +21,11 @@ pub mod vertex_store;
 mod tests;
 
 pub use eval::{Engine, EvalResult};
-pub use graph::DependencyGraph;
+// Use SoA implementation
+pub use graph_soa::{
+    ChangeEvent, DependencyGraph, DependencyRef, OperationSummary, StripeKey, StripeType,
+    block_index,
+};
 pub use scheduler::{Layer, Schedule, Scheduler};
 pub use vertex::{Vertex, VertexId, VertexKind};
 

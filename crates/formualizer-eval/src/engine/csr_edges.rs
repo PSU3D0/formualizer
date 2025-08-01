@@ -7,7 +7,12 @@ mod tests {
 
     #[test]
     fn test_csr_construction() {
-        let edges = vec![(0, vec![1, 2]), (1, vec![2, 3]), (2, vec![3]), (3, vec![])];
+        let edges = vec![
+            (0u32, vec![1u32, 2u32]),
+            (1u32, vec![2u32, 3u32]),
+            (2u32, vec![3u32]),
+            (3u32, vec![]),
+        ];
 
         let coords = vec![
             PackedCoord::new(0, 0),
@@ -29,23 +34,23 @@ mod tests {
         let mut edges = Vec::new();
         let mut coords = Vec::new();
 
-        for i in 0..10_000 {
-            let targets: Vec<_> = (0..4).map(|j| (i + j + 1) % 10_000).collect();
+        for i in 0..10_000u32 {
+            let targets: Vec<_> = (0..4).map(|j| ((i + j + 1) % 10_000) as u32).collect();
             edges.push((i, targets));
-            coords.push(PackedCoord::new(i as u32, i as u32));
+            coords.push(PackedCoord::new(i, i));
         }
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
         // Should use ~200KB (40k edges × 4B + 10k vertices × 4B)
-        assert!(csr.memory_usage() < 210_000);
+        assert!(csr.memory_usage() < 410_000, "{}", csr.memory_usage());
     }
 
     #[test]
     fn test_csr_edge_ordering() {
         // Test that edges are sorted by (row, col, id) for determinism
         let edges = vec![
-            (0, vec![3, 1, 2]), // Unsorted input
+            (0u32, vec![3u32, 1u32, 2u32]), // Unsorted input
         ];
 
         let coords = vec![
@@ -67,7 +72,7 @@ mod tests {
 
     #[test]
     fn test_csr_empty_graph() {
-        let edges: Vec<(usize, Vec<usize>)> = vec![];
+        let edges: Vec<(u32, Vec<u32>)> = vec![];
         let coords: Vec<PackedCoord> = vec![];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
@@ -75,12 +80,12 @@ mod tests {
         assert_eq!(csr.num_vertices(), 0);
         assert_eq!(csr.num_edges(), 0);
         // Empty graph has one offset entry (0) = 4 bytes
-        assert_eq!(csr.memory_usage(), 4);
+        assert_eq!(csr.memory_usage(), 8);
     }
 
     #[test]
     fn test_csr_single_vertex() {
-        let edges = vec![(0, vec![])];
+        let edges = vec![(0u32, vec![])];
         let coords = vec![PackedCoord::new(0, 0)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
@@ -92,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_csr_self_loop() {
-        let edges = vec![(0, vec![0])]; // Self loop
+        let edges = vec![(0u32, vec![0u32])]; // Self loop
         let coords = vec![PackedCoord::new(0, 0)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
@@ -104,7 +109,7 @@ mod tests {
     #[test]
     fn test_csr_duplicate_edges() {
         // CSR should preserve duplicates (formulas can reference same cell multiple times)
-        let edges = vec![(0, vec![1, 1, 2, 1])];
+        let edges = vec![(0u32, vec![1u32, 1u32, 2u32, 1u32])];
         let coords = vec![
             PackedCoord::new(0, 0),
             PackedCoord::new(0, 1),
@@ -123,10 +128,10 @@ mod tests {
     #[test]
     fn test_degree_calculation() {
         let edges = vec![
-            (0, vec![1, 2, 3]),
-            (1, vec![2]),
-            (2, vec![]),
-            (3, vec![0, 1]),
+            (0u32, vec![1u32, 2u32, 3u32]),
+            (1u32, vec![2u32]),
+            (2u32, vec![]),
+            (3u32, vec![0u32, 1u32]),
         ];
 
         let coords = vec![
@@ -145,20 +150,24 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn test_out_of_bounds_access() {
-        let edges = vec![(0, vec![])];
+        let edges = vec![(0u32, vec![])];
         let coords = vec![PackedCoord::new(0, 0)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
-        // Should panic - only vertex 0 exists
-        csr.out_edges(VertexId(1));
+        // Should return empty slice - only vertex 0 exists
+        assert_eq!(csr.out_edges(VertexId(1)), &[]);
     }
 
     #[test]
     fn test_csr_iterator() {
-        let edges = vec![(0, vec![1, 2]), (1, vec![3]), (2, vec![1, 3]), (3, vec![])];
+        let edges = vec![
+            (0u32, vec![1u32, 2u32]),
+            (1u32, vec![3u32]),
+            (2u32, vec![1u32, 3u32]),
+            (3u32, vec![]),
+        ];
 
         let coords = vec![
             PackedCoord::new(0, 0),
@@ -179,10 +188,10 @@ mod tests {
     #[test]
     fn test_has_edge() {
         let edges = vec![
-            (0, vec![1, 2]),
-            (1, vec![3]),
-            (2, vec![]),
-            (3, vec![0]), // Back edge
+            (0u32, vec![1u32, 2u32]),
+            (1u32, vec![3u32]),
+            (2u32, vec![]),
+            (3u32, vec![0u32]), // Back edge
         ];
 
         let coords = vec![
@@ -202,52 +211,81 @@ mod tests {
     }
 
     #[test]
-    fn test_csr_with_vertex_store_integration() {
-        use crate::engine::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
+    fn test_csr_with_offset_vertex_ids() {
+        // Test CSR with vertex IDs starting at 1024 (FIRST_NORMAL_VERTEX)
+        let base_id = 1024u32;
+        let edges = vec![
+            (base_id, vec![base_id + 1, base_id + 2]),
+            (base_id + 1, vec![base_id + 3]),
+            (base_id + 2, vec![base_id + 3]),
+            (base_id + 3, vec![]),
+        ];
 
-        // Create vertices in store
-        let mut store = VertexStore::new();
-        let v0 = store.allocate(PackedCoord::new(0, 0), 0, 0);
-        let v1 = store.allocate(PackedCoord::new(0, 1), 0, 0);
-        let v2 = store.allocate(PackedCoord::new(1, 0), 0, 0);
-        let v3 = store.allocate(PackedCoord::new(1, 1), 0, 0);
+        let coords = vec![
+            PackedCoord::new(0, 0),
+            PackedCoord::new(0, 1),
+            PackedCoord::new(1, 0),
+            PackedCoord::new(1, 1),
+        ];
 
-        // Build CSR edges
-        let mut builder = CsrBuilder::new();
+        let csr = CsrEdges::from_adjacency(edges, &coords);
 
-        // Add vertices with their coordinates
-        for i in 0..4 {
-            let id = VertexId(i + FIRST_NORMAL_VERTEX);
-            builder.add_vertex(store.coord(id));
-        }
+        // Verify min vertex ID
+        assert_eq!(csr.min_vertex_id, base_id);
 
-        // Add edges (using indices, not VertexIds)
-        builder.add_edge(0, 1); // v0 -> v1
-        builder.add_edge(0, 2); // v0 -> v2
-        builder.add_edge(1, 3); // v1 -> v3
-        builder.add_edge(2, 3); // v2 -> v3
-
-        let csr = builder.build();
-
-        // Verify edges
-        assert_eq!(csr.out_edges(VertexId(0)), &[VertexId(1), VertexId(2)]);
-        assert_eq!(csr.out_edges(VertexId(1)), &[VertexId(3)]);
-        assert_eq!(csr.out_edges(VertexId(2)), &[VertexId(3)]);
-        assert_eq!(csr.out_edges(VertexId(3)), &[]);
-
-        // Update edge offsets in store
-        store.set_edge_offset(v0, 0);
-        store.set_edge_offset(v1, csr.out_degree(VertexId(0)) as u32);
-        store.set_edge_offset(
-            v2,
-            (csr.out_degree(VertexId(0)) + csr.out_degree(VertexId(1))) as u32,
+        // Verify edges work with offset IDs
+        assert_eq!(
+            csr.out_edges(VertexId(base_id)),
+            &[VertexId(base_id + 1), VertexId(base_id + 2)]
         );
-        store.set_edge_offset(
-            v3,
-            (csr.out_degree(VertexId(0))
-                + csr.out_degree(VertexId(1))
-                + csr.out_degree(VertexId(2))) as u32,
+        assert_eq!(
+            csr.out_edges(VertexId(base_id + 1)),
+            &[VertexId(base_id + 3)]
         );
+        assert_eq!(
+            csr.out_edges(VertexId(base_id + 2)),
+            &[VertexId(base_id + 3)]
+        );
+        assert_eq!(csr.out_edges(VertexId(base_id + 3)), &[]);
+
+        // Verify out of bounds returns empty
+        assert_eq!(csr.out_edges(VertexId(0)), &[]); // Before min
+        assert_eq!(csr.out_edges(VertexId(base_id + 100)), &[]); // After max
+    }
+
+    #[test]
+    fn test_csr_with_sparse_vertex_ids() {
+        // Test CSR with sparse vertex IDs (gaps in numbering)
+        let edges = vec![
+            (100u32, vec![300u32, 500u32]),
+            (300u32, vec![500u32]),
+            (500u32, vec![100u32]), // Back edge
+        ];
+
+        let coords = vec![
+            PackedCoord::new(0, 0), // For vertex 100 (index 0)
+            PackedCoord::new(0, 0), // Padding (index 100-199)
+            PackedCoord::new(1, 0), // For vertex 300 (index 200)
+            PackedCoord::new(0, 0), // Padding (index 300-399)
+            PackedCoord::new(2, 0), // For vertex 500 (index 400)
+        ];
+
+        let csr = CsrEdges::from_adjacency(edges, &coords);
+
+        // Verify min vertex ID
+        assert_eq!(csr.min_vertex_id, 100);
+
+        // Verify edges work
+        assert_eq!(
+            csr.out_edges(VertexId(100)),
+            &[VertexId(300), VertexId(500)]
+        );
+        assert_eq!(csr.out_edges(VertexId(300)), &[VertexId(500)]);
+        assert_eq!(csr.out_edges(VertexId(500)), &[VertexId(100)]);
+
+        // Non-existent vertices return empty
+        assert_eq!(csr.out_edges(VertexId(200)), &[]);
+        assert_eq!(csr.out_edges(VertexId(400)), &[]);
     }
 }
 
@@ -267,30 +305,80 @@ pub struct CsrEdges {
 
     /// All edges concatenated, sorted within each vertex's section
     edges: Vec<VertexId>,
+
+    /// Reverse edges: offsets for incoming edges
+    reverse_offsets: Vec<u32>,
+
+    /// All incoming edges concatenated
+    reverse_edges: Vec<VertexId>,
+
+    /// Minimum vertex ID in the graph (for offset calculation)
+    min_vertex_id: u32,
 }
 
 impl CsrEdges {
     /// Create CSR from adjacency list representation
     ///
     /// # Arguments
-    /// - adj: Vector of (vertex_index, outgoing_edges)
+    /// - adj: Vector of (vertex_id, outgoing_edges) where vertex_id is the actual VertexId value
     /// - coords: Packed coordinates for each vertex (used for deterministic ordering)
     ///
     /// # Edge Ordering
     /// Edges are sorted by (row, col, vertex_id) to ensure deterministic
     /// evaluation order for formulas (important for functions with side effects)
-    pub fn from_adjacency(adj: Vec<(usize, Vec<usize>)>, coords: &[PackedCoord]) -> Self {
-        let num_vertices = adj.len();
-        let mut offsets = Vec::with_capacity(num_vertices + 1);
+    pub fn from_adjacency(adj: Vec<(u32, Vec<u32>)>, coords: &[PackedCoord]) -> Self {
+        if adj.is_empty() {
+            return Self {
+                offsets: vec![0],
+                edges: Vec::new(),
+                reverse_offsets: vec![0],
+                reverse_edges: Vec::new(),
+                min_vertex_id: 0,
+            };
+        }
+
+        // Find min and max vertex IDs
+        let mut min_id = u32::MAX;
+        let mut max_id = 0;
+        for &(vid, ref targets) in &adj {
+            min_id = min_id.min(vid);
+            max_id = max_id.max(vid);
+            for &target in targets {
+                min_id = min_id.min(target);
+                max_id = max_id.max(target);
+            }
+        }
+
+        // If no vertices, return empty
+        if min_id == u32::MAX {
+            return Self {
+                offsets: vec![0],
+                edges: Vec::new(),
+                reverse_offsets: vec![0],
+                reverse_edges: Vec::new(),
+                min_vertex_id: 0,
+            };
+        }
+
+        let num_vertices = (max_id - min_id + 1) as usize;
+        let mut offsets = vec![0u32; num_vertices + 1];
         let mut edges = Vec::new();
 
-        offsets.push(0);
+        // Build adjacency data indexed by offset
+        let mut adj_by_offset: Vec<Vec<u32>> = vec![Vec::new(); num_vertices];
+        for (vid, targets) in adj {
+            let offset_idx = (vid - min_id) as usize;
+            adj_by_offset[offset_idx] = targets;
+        }
 
-        for (_vertex_idx, mut targets) in adj {
+        // Build forward edges
+        for (idx, mut targets) in adj_by_offset.clone().into_iter().enumerate() {
             // Sort targets by their coordinates for deterministic ordering
             targets.sort_by_key(|&t| {
-                if t < coords.len() {
-                    let coord = coords[t];
+                // Convert vertex ID to index in coords array
+                let coord_idx = (t - min_id) as usize;
+                if coord_idx < coords.len() {
+                    let coord = coords[coord_idx];
                     (coord.row(), coord.col(), t)
                 } else {
                     // Handle out-of-bounds gracefully for construction
@@ -298,28 +386,112 @@ impl CsrEdges {
                 }
             });
 
-            edges.extend(targets.into_iter().map(|t| VertexId(t as u32)));
-            offsets.push(edges.len() as u32);
+            edges.extend(targets.into_iter().map(VertexId));
+            offsets[idx + 1] = edges.len() as u32;
         }
 
-        Self { offsets, edges }
+        // Build reverse edges (incoming edges for each vertex)
+        let mut reverse_offsets = vec![0u32; num_vertices + 1];
+        let mut reverse_edges = Vec::new();
+        let mut reverse_adj: Vec<Vec<u32>> = vec![Vec::new(); num_vertices];
+
+        // Collect reverse edges
+        for (idx, targets) in adj_by_offset.into_iter().enumerate() {
+            let source = min_id + idx as u32;
+            for target in targets {
+                let target_idx = (target - min_id) as usize;
+                if target_idx < num_vertices {
+                    reverse_adj[target_idx].push(source);
+                }
+            }
+        }
+
+        // Build reverse CSR
+        for (idx, mut sources) in reverse_adj.into_iter().enumerate() {
+            // Sort sources by their coordinates for deterministic ordering
+            sources.sort_by_key(|&s| {
+                let coord_idx = (s - min_id) as usize;
+                if coord_idx < coords.len() {
+                    let coord = coords[coord_idx];
+                    (coord.row(), coord.col(), s)
+                } else {
+                    (u32::MAX, u32::MAX, s)
+                }
+            });
+
+            reverse_edges.extend(sources.into_iter().map(VertexId));
+            reverse_offsets[idx + 1] = reverse_edges.len() as u32;
+        }
+
+        Self {
+            offsets,
+            edges,
+            reverse_offsets,
+            reverse_edges,
+            min_vertex_id: min_id,
+        }
     }
 
     /// Get outgoing edges for a vertex
     #[inline]
     pub fn out_edges(&self, v: VertexId) -> &[VertexId] {
-        let idx = v.0 as usize;
-        assert!(idx < self.offsets.len() - 1, "Vertex {:?} out of bounds", v);
+        // Handle empty graph
+        if self.offsets.len() <= 1 {
+            return &[];
+        }
+
+        // Convert vertex ID to offset index
+        if v.0 < self.min_vertex_id {
+            return &[];
+        }
+
+        let idx = (v.0 - self.min_vertex_id) as usize;
+        if idx >= self.offsets.len() - 1 {
+            return &[];
+        }
 
         let start = self.offsets[idx] as usize;
         let end = self.offsets[idx + 1] as usize;
         &self.edges[start..end]
     }
 
+    /// Get incoming edges for a vertex (who depends on this vertex)
+    #[inline]
+    pub fn in_edges(&self, v: VertexId) -> &[VertexId] {
+        // Handle empty graph
+        if self.reverse_offsets.len() <= 1 {
+            return &[];
+        }
+
+        // Convert vertex ID to offset index
+        if v.0 < self.min_vertex_id {
+            return &[];
+        }
+
+        let idx = (v.0 - self.min_vertex_id) as usize;
+        if idx >= self.reverse_offsets.len() - 1 {
+            return &[];
+        }
+
+        let start = self.reverse_offsets[idx] as usize;
+        let end = self.reverse_offsets[idx + 1] as usize;
+        &self.reverse_edges[start..end]
+    }
+
     /// Get the out-degree of a vertex
     #[inline]
     pub fn out_degree(&self, v: VertexId) -> usize {
-        let idx = v.0 as usize;
+        // Handle empty graph
+        if self.offsets.len() <= 1 {
+            return 0;
+        }
+
+        // Convert vertex ID to offset index
+        if v.0 < self.min_vertex_id {
+            return 0;
+        }
+
+        let idx = (v.0 - self.min_vertex_id) as usize;
         if idx >= self.offsets.len() - 1 {
             return 0;
         }
@@ -327,6 +499,12 @@ impl CsrEdges {
         let start = self.offsets[idx];
         let end = self.offsets[idx + 1];
         (end - start) as usize
+    }
+
+    /// Get the in-degree of a vertex
+    #[inline]
+    pub fn in_degree(&self, v: VertexId) -> usize {
+        self.in_edges(v).len()
     }
 
     /// Number of vertices in the graph
@@ -345,6 +523,8 @@ impl CsrEdges {
     pub fn memory_usage(&self) -> usize {
         self.offsets.len() * std::mem::size_of::<u32>()
             + self.edges.len() * std::mem::size_of::<VertexId>()
+            + self.reverse_offsets.len() * std::mem::size_of::<u32>()
+            + self.reverse_edges.len() * std::mem::size_of::<VertexId>()
     }
 
     /// Create an empty CSR graph
@@ -352,6 +532,9 @@ impl CsrEdges {
         Self {
             offsets: vec![0],
             edges: Vec::new(),
+            reverse_offsets: vec![0],
+            reverse_edges: Vec::new(),
+            min_vertex_id: 0,
         }
     }
 
@@ -388,7 +571,7 @@ impl<'a> Iterator for CsrIterator<'a> {
             return None;
         }
 
-        let vertex_id = VertexId(self.current_vertex as u32);
+        let vertex_id = VertexId(self.current_vertex as u32 + self.csr.min_vertex_id);
         let edges = self.csr.out_edges(vertex_id);
         self.current_vertex += 1;
 
@@ -427,7 +610,13 @@ impl CsrBuilder {
 
     /// Build the final CSR structure
     pub fn build(self) -> CsrEdges {
-        let adj: Vec<_> = self.adjacency.into_iter().enumerate().collect();
+        // Convert to (vertex_id, edges) format starting from vertex ID 0
+        let adj: Vec<_> = self
+            .adjacency
+            .into_iter()
+            .enumerate()
+            .map(|(idx, edges)| (idx as u32, edges.into_iter().map(|e| e as u32).collect()))
+            .collect();
         CsrEdges::from_adjacency(adj, &self.coords)
     }
 }

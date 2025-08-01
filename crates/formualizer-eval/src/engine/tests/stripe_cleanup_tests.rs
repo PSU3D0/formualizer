@@ -5,8 +5,7 @@
 //! stale references.
 
 use crate::CellRef;
-use crate::engine::graph::{StripeKey, StripeType};
-use crate::engine::{DependencyGraph, EvalConfig};
+use crate::engine::{DependencyGraph, EvalConfig, StripeKey, StripeType};
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 

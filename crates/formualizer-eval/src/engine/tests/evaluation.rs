@@ -1,5 +1,6 @@
 //! Tests for the evaluation logic of the engine.
-use crate::engine::{Engine, EvalConfig, VertexId};
+use super::common::get_vertex_ids_in_order;
+use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
@@ -52,7 +53,8 @@ fn test_vertex_evaluation_scalar() {
         .unwrap();
 
     // The vertex ID for A1 should be 0.
-    let a1_id = VertexId::new(0);
+    let vertex_ids = get_vertex_ids_in_order(&engine.graph);
+    let a1_id = vertex_ids[0];
     let result = engine.evaluate_vertex(a1_id).unwrap();
 
     assert_eq!(result, LiteralValue::Number(3.0));
@@ -76,7 +78,8 @@ fn test_evaluation_of_empty_placeholders() {
 
     // Evaluate A1. The interpreter will ask the engine to resolve B1.
     // The engine's EvaluationContext impl will see B1 is empty and return 0.
-    let a1_id = VertexId::new(0);
+    let vertex_ids = get_vertex_ids_in_order(&engine.graph);
+    let a1_id = vertex_ids[0];
     let result = engine.evaluate_vertex(a1_id).unwrap();
 
     // The result of A1 should be 0.
@@ -95,7 +98,8 @@ fn test_evaluation_error_handling() {
     );
     engine.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
 
-    let a1_id = VertexId::new(0);
+    let vertex_ids = get_vertex_ids_in_order(&engine.graph);
+    let a1_id = vertex_ids[0];
     let result = engine.evaluate_vertex(a1_id).unwrap();
 
     assert_eq!(
@@ -123,13 +127,15 @@ fn test_error_propagation_through_dependencies() {
     engine.set_cell_formula("Sheet1", 2, 1, ref_a1_ast).unwrap();
 
     // Evaluate A1, which should result in an error
-    let a1_id = VertexId::new(0);
+    let vertex_ids = get_vertex_ids_in_order(&engine.graph);
+    let a1_id = vertex_ids[0];
     let a1_result = engine.evaluate_vertex(a1_id).unwrap();
     assert!(matches!(a1_result, LiteralValue::Error(_)));
 
     // Now, evaluate A2. It should resolve A1 to its cached error value
     // and propagate it.
-    let a2_id = VertexId::new(1);
+    let vertex_ids = get_vertex_ids_in_order(&engine.graph);
+    let a2_id = vertex_ids[1];
     let a2_result = engine.evaluate_vertex(a2_id).unwrap();
 
     assert_eq!(a2_result, a1_result);
@@ -155,7 +161,6 @@ fn test_sequential_evaluation_of_dependency_chain() {
         "+",
     );
     engine.set_cell_formula("Sheet1", 2, 1, a2_ast).unwrap();
-    let a2_id = VertexId::new(1);
 
     // A3 = A2 * 2
     let a3_ast = op_ast(
@@ -164,7 +169,11 @@ fn test_sequential_evaluation_of_dependency_chain() {
         "*",
     );
     engine.set_cell_formula("Sheet1", 3, 1, a3_ast).unwrap();
-    let a3_id = VertexId::new(2);
+
+    // Get vertex IDs after all cells are created
+    let vertex_ids = get_vertex_ids_in_order(&engine.graph);
+    let a2_id = vertex_ids[1];
+    let a3_id = vertex_ids[2];
 
     // Manually evaluate in topological order, simulating the scheduler
     // A1 is a value, no evaluation needed.

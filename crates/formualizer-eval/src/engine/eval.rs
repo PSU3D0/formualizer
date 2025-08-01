@@ -121,6 +121,16 @@ where
         self.graph.get_cell_value(sheet, row, col)
     }
 
+    /// Begin batch operations - defer CSR rebuilds for better performance
+    pub fn begin_batch(&mut self) {
+        self.graph.begin_batch();
+    }
+
+    /// End batch operations and trigger CSR rebuild
+    pub fn end_batch(&mut self) {
+        self.graph.end_batch();
+    }
+
     /// Evaluate a single vertex.
     /// This is the core of the sequential evaluation logic for Milestone 3.1.
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {

@@ -30,7 +30,8 @@ fn test_two_node_cycle_detection() {
         .unwrap(); // B1 = A1
 
     let scheduler = Scheduler::new(&graph);
-    let all_vertices: Vec<VertexId> = (0..2).map(|i| VertexId::new(i)).collect();
+    // Get the actual vertex IDs from the graph
+    let all_vertices: Vec<VertexId> = graph.cell_to_vertex().values().copied().collect();
     let schedule = scheduler.create_schedule(&all_vertices).unwrap();
 
     // The schedule should detect one cycle containing both vertices.
@@ -38,10 +39,18 @@ fn test_two_node_cycle_detection() {
     assert_eq!(schedule.cycles[0].len(), 2);
     assert!(schedule.layers.is_empty());
 
+    // Get the actual vertex IDs for A1 and B1
+    let a1_id = *graph
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 1))
+        .unwrap();
+    let b1_id = *graph
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 2))
+        .unwrap();
+
     let cycle_set: std::collections::HashSet<VertexId> =
         schedule.cycles[0].iter().copied().collect();
-    assert!(cycle_set.contains(&VertexId::new(0)));
-    assert!(cycle_set.contains(&VertexId::new(1)));
+    assert!(cycle_set.contains(&a1_id));
+    assert!(cycle_set.contains(&b1_id));
 }
 
 #[test]
@@ -65,7 +74,8 @@ fn test_cycle_with_acyclic_branch() {
         .unwrap(); // D1 = 42
 
     let scheduler = Scheduler::new(&graph);
-    let all_vertices: Vec<VertexId> = (0..4).map(|i| VertexId::new(i)).collect();
+    // Get the actual vertex IDs from the graph
+    let all_vertices: Vec<VertexId> = graph.cell_to_vertex().values().copied().collect();
     let schedule = scheduler.create_schedule(&all_vertices).unwrap();
 
     // Verify cycle is detected
