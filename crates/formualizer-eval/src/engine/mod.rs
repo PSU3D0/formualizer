@@ -8,6 +8,10 @@ pub mod range_stream;
 pub mod scheduler;
 pub mod vertex;
 
+// New SoA modules
+pub mod packed_coord;
+pub mod vertex_store;
+
 #[cfg(test)]
 mod tests;
 

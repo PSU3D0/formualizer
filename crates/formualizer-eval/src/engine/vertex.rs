@@ -28,13 +28,14 @@ impl VertexId {
     }
 }
 
-#[derive(Debug, Clone)]
+#[repr(u8)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VertexKind {
     /// An implicitly created placeholder cell that has not been defined.
-    Empty,
+    Empty = 0,
 
     /// Literal value or cached scalar result
-    Value(LiteralValue),
+    Value(LiteralValue) = 1,
 
     /// Formula that evaluates to a scalar
     FormulaScalar {
@@ -42,7 +43,7 @@ pub enum VertexKind {
         result: Option<LiteralValue>,
         dirty: bool,
         volatile: bool,
-    },
+    } = 2,
 
     /// Formula that returns an array (no spill detection yet)
     FormulaArray {
@@ -51,10 +52,48 @@ pub enum VertexKind {
         dims: (usize, usize), // expected rows, cols
         dirty: bool,
         volatile: bool,
-    },
+    } = 3,
 
     /// Infinite range placeholder (A:A, 1:1)
-    InfiniteRange { reference: ReferenceType },
+    InfiniteRange { reference: ReferenceType } = 4,
+
+    /// Cell reference - used in SoA representation
+    Cell = 5,
+
+    /// Range reference - used in SoA representation  
+    Range = 6,
+
+    /// External reference - used in SoA representation
+    External = 7,
+}
+
+impl VertexKind {
+    #[inline]
+    pub fn from_tag(tag: u8) -> Self {
+        match tag {
+            0 => VertexKind::Empty,
+            5 => VertexKind::Cell,
+            6 => VertexKind::Range,
+            7 => VertexKind::External,
+            // For now, default to Cell for other values
+            // In full implementation, this would handle all cases
+            _ => VertexKind::Cell,
+        }
+    }
+
+    #[inline]
+    pub fn to_tag(self) -> u8 {
+        match self {
+            VertexKind::Empty => 0,
+            VertexKind::Value(_) => 1,
+            VertexKind::FormulaScalar { .. } => 2,
+            VertexKind::FormulaArray { .. } => 3,
+            VertexKind::InfiniteRange { .. } => 4,
+            VertexKind::Cell => 5,
+            VertexKind::Range => 6,
+            VertexKind::External => 7,
+        }
+    }
 }
 
 /// 🔮 Scalability Hook: Extract metadata for future SoA memory layout
@@ -94,6 +133,9 @@ impl VertexMetadata {
                 3
             }
             VertexKind::InfiniteRange { .. } => 4,
+            VertexKind::Cell => 5,
+            VertexKind::Range => 6,
+            VertexKind::External => 7,
         };
 
         Self {
