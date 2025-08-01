@@ -9,6 +9,7 @@ pub mod scheduler;
 pub mod vertex;
 
 // New SoA modules
+pub mod debug_views;
 pub mod packed_coord;
 pub mod vertex_store;
 

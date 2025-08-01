@@ -1,3 +1,54 @@
+/// Bit-packed coordinate representation for memory efficiency
+///
+/// Layout (64 bits):
+/// [63:44] Reserved (20 bits) - MUST BE ZERO
+/// [43:24] Row (20 bits) - 0 to 1,048,575 (zero-based)
+/// [23:10] Col (14 bits) - 0 to 16,383 (zero-based)
+/// [9:0]   Reserved (10 bits) - MUST BE ZERO
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct PackedCoord(u64);
+
+impl PackedCoord {
+    pub const INVALID: Self = Self(u64::MAX);
+    pub const RESERVED_MASK: u64 = 0xFFFFF00000000000 | 0x3FF; // Bits [63:44] and [9:0]
+
+    /// Creates a new PackedCoord from row and column indices
+    ///
+    /// # Safety Invariants
+    /// - Row must be <= 1,048,575 (20 bits)
+    /// - Column must be <= 16,383 (14 bits)
+    /// - Reserved bits [63:44] and [9:0] MUST remain zero
+    pub fn new(row: u32, col: u32) -> Self {
+        assert!(row <= 0x000FFFFF, "Row {} exceeds 20 bits", row);
+        assert!(col <= 0x00003FFF, "Col {} exceeds 14 bits", col);
+        Self((row as u64) << 24 | (col as u64) << 10)
+    }
+
+    #[inline(always)]
+    pub fn row(self) -> u32 {
+        ((self.0 >> 24) & 0x000FFFFF) as u32
+    }
+
+    #[inline(always)]
+    pub fn col(self) -> u32 {
+        ((self.0 >> 10) & 0x00003FFF) as u32
+    }
+
+    #[inline(always)]
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+
+    pub fn is_valid(self) -> bool {
+        self.0 != u64::MAX
+    }
+
+    // For serialization - ensures reserved bits are zero
+    pub fn normalize(self) -> Self {
+        Self(self.0 & !Self::RESERVED_MASK)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -47,56 +98,5 @@ mod tests {
     #[should_panic(expected = "Col 16384 exceeds 14 bits")]
     fn test_packed_coord_col_overflow() {
         PackedCoord::new(0, 16_384); // 2^14
-    }
-}
-
-/// Bit-packed coordinate representation for memory efficiency
-///
-/// Layout (64 bits):
-/// [63:44] Reserved (20 bits) - MUST BE ZERO
-/// [43:24] Row (20 bits) - 0 to 1,048,575 (zero-based)
-/// [23:10] Col (14 bits) - 0 to 16,383 (zero-based)
-/// [9:0]   Reserved (10 bits) - MUST BE ZERO
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct PackedCoord(u64);
-
-impl PackedCoord {
-    pub const INVALID: Self = Self(u64::MAX);
-    pub const RESERVED_MASK: u64 = 0xFFFFF00000000000 | 0x3FF; // Bits [63:44] and [9:0]
-
-    /// Creates a new PackedCoord from row and column indices
-    ///
-    /// # Safety Invariants
-    /// - Row must be <= 1,048,575 (20 bits)
-    /// - Column must be <= 16,383 (14 bits)
-    /// - Reserved bits [63:44] and [9:0] MUST remain zero
-    pub fn new(row: u32, col: u32) -> Self {
-        assert!(row <= 0x000FFFFF, "Row {} exceeds 20 bits", row);
-        assert!(col <= 0x00003FFF, "Col {} exceeds 14 bits", col);
-        Self((row as u64) << 24 | (col as u64) << 10)
-    }
-
-    #[inline(always)]
-    pub fn row(self) -> u32 {
-        ((self.0 >> 24) & 0x000FFFFF) as u32
-    }
-
-    #[inline(always)]
-    pub fn col(self) -> u32 {
-        ((self.0 >> 10) & 0x00003FFF) as u32
-    }
-
-    #[inline(always)]
-    pub fn as_u64(self) -> u64 {
-        self.0
-    }
-
-    pub fn is_valid(self) -> bool {
-        self.0 != u64::MAX
-    }
-
-    // For serialization - ensures reserved bits are zero
-    pub fn normalize(self) -> Self {
-        Self(self.0 & !Self::RESERVED_MASK)
     }
 }
