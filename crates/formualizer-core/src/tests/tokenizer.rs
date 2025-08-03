@@ -558,14 +558,14 @@ mod tests {
     fn test_infinite_range() {
         let column_wise = "A:A";
         let row_wise = "1:1";
-        let formula = format!("=SUM({})", column_wise);
+        let formula = format!("=SUM({column_wise})");
         let tokenizer = Tokenizer::new(&formula).unwrap();
         assert_eq!(tokenizer.items[0].value, "SUM(");
         assert_eq!(tokenizer.items[1].value, "A:A");
         assert_eq!(tokenizer.items[1].subtype, TokenSubType::Range);
         assert_eq!(tokenizer.render(), formula);
 
-        let formula = format!("=SUM({})", row_wise);
+        let formula = format!("=SUM({row_wise})");
         let tokenizer = Tokenizer::new(&formula).unwrap();
         assert_eq!(tokenizer.items[0].value, "SUM(");
         assert_eq!(tokenizer.items[1].value, "1:1");
@@ -575,14 +575,14 @@ mod tests {
         let column_wise_with_sheet = "Sheet1!A:A";
         let column_wise_with_quoted_sheet = "'Sheet 1'!A:A";
 
-        let formula = format!("=SUM({})", column_wise_with_sheet);
+        let formula = format!("=SUM({column_wise_with_sheet})");
         let tokenizer = Tokenizer::new(&formula).unwrap();
         assert_eq!(tokenizer.items[0].value, "SUM(");
         assert_eq!(tokenizer.items[1].value, "Sheet1!A:A");
         assert_eq!(tokenizer.items[1].subtype, TokenSubType::Range);
         assert_eq!(tokenizer.render(), formula);
 
-        let formula = format!("=SUM({})", column_wise_with_quoted_sheet);
+        let formula = format!("=SUM({column_wise_with_quoted_sheet})");
         let tokenizer = Tokenizer::new(&formula).unwrap();
         assert_eq!(tokenizer.items[0].value, "SUM(");
         assert_eq!(tokenizer.items[1].value, "'Sheet 1'!A:A");
@@ -951,7 +951,7 @@ mod tests {
         let formula = "=-SUMIFS($COGS!$J:$J,$COGS!$D:$D, \">=\"&$'Test 24-25'!C2, $COGS!$D:$D, \"<=\"&$'Test 24-25'!C3,$COGS!$A:$A,$'Test 24-25'!$A$4)";
         let tokenizer = Tokenizer::new(formula).unwrap();
         let items = tokenizer.items;
-        println!("items: {:?}", items);
+        println!("items: {items:?}");
         assert_eq!(items.len(), 23);
         assert_eq!(items[0].value, "-");
         assert_eq!(items[1].value, "SUMIFS(");

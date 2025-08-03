@@ -455,6 +455,14 @@ impl Tokenizer {
             self.save_token();
         }
 
+        // Check for unmatched opening parentheses/brackets
+        if !self.token_stack.is_empty() {
+            return Err(TokenizerError {
+                message: "Unmatched opening parenthesis or bracket".to_string(),
+                pos: self.offset,
+            });
+        }
+
         Ok(())
     }
 

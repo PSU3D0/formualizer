@@ -7,7 +7,10 @@ mod tests {
 
     // Helper function to parse a formula
     fn parse_formula(formula: &str) -> Result<ASTNode, ParserError> {
-        let tokenizer = Tokenizer::new(formula).unwrap();
+        let tokenizer = Tokenizer::new(formula).map_err(|e| ParserError {
+            message: e.to_string(),
+            position: Some(e.pos),
+        })?;
         let mut parser = Parser::new(tokenizer.items, false);
         parser.parse()
     }
@@ -64,7 +67,7 @@ mod tests {
     fn test_parse_function_call() {
         let ast = parse_formula("=SUM(A1:B2)").unwrap();
 
-        println!("AST: {:?}", ast);
+        println!("AST: {ast:?}");
 
         if let ASTNodeType::Function { name, args } = ast.node_type {
             assert_eq!(name, "SUM");
@@ -194,7 +197,7 @@ mod tests {
     fn test_function_multiple_args() {
         let ast = parse_formula("=IF(A1>0,B1,C1)").unwrap();
 
-        println!("AST: {:?}", ast);
+        println!("AST: {ast:?}");
 
         if let ASTNodeType::Function { name, args } = ast.node_type {
             assert_eq!(name, "IF");
@@ -260,7 +263,7 @@ mod tests {
 
         // Test with multiple optional arguments - some specified, some not
         let ast = parse_formula("=IFERROR(A1/B1,)").unwrap();
-        if let ASTNodeType::Function { name, args } = ast.node_type {
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
             assert_eq!(name, "IFERROR");
             assert_eq!(args.len(), 2);
             // Second argument should be an empty string
@@ -333,7 +336,7 @@ mod tests {
     fn test_nested_functions() {
         let ast = parse_formula("=IF(SUM(A1:A10)>100,MAX(B1:B10),0)").unwrap();
 
-        println!("AST: {:?}", ast);
+        println!("AST: {ast:?}");
 
         if let ASTNodeType::Function { name, args } = ast.node_type {
             assert_eq!(name, "IF");
@@ -563,7 +566,7 @@ mod tests {
     fn test_complex_formula() {
         let ast = parse_formula("=IF(AND(A1>0,B1<10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")").unwrap();
 
-        println!("AST: {:?}", ast);
+        println!("AST: {ast:?}");
 
         if let ASTNodeType::Function { name, args } = ast.node_type {
             assert_eq!(name, "IF");
@@ -720,8 +723,8 @@ mod fingerprint_tests {
         let f1 = "=SUM(a1, 2)";
         let f2 = "=  SUM( A1 ,2 )"; // diff whitespace/casing
 
-        let fp1 = Parser::from(f1).unwrap().parse().unwrap().fingerprint();
-        let fp2 = Parser::from(f2).unwrap().parse().unwrap().fingerprint();
+        let fp1 = Parser::from(f1).parse().unwrap().fingerprint();
+        let fp2 = Parser::from(f2).parse().unwrap().fingerprint();
 
         assert_eq!(
             fp1, fp2,
@@ -729,11 +732,7 @@ mod fingerprint_tests {
         );
 
         // Different values should have different fingerprints
-        let fp3 = Parser::from("=SUM(A1,3)")
-            .unwrap()
-            .parse()
-            .unwrap()
-            .fingerprint();
+        let fp3 = Parser::from("=SUM(A1,3)").parse().unwrap().fingerprint();
         assert_ne!(
             fp1, fp3,
             "Formulas with different values should have different fingerprints"
@@ -746,8 +745,8 @@ mod fingerprint_tests {
         let f1 = "=sum(a1)";
         let f2 = "=SUM(A1)";
 
-        let fp1 = Parser::from(f1).unwrap().parse().unwrap().fingerprint();
-        let fp2 = Parser::from(f2).unwrap().parse().unwrap().fingerprint();
+        let fp1 = Parser::from(f1).parse().unwrap().fingerprint();
+        let fp2 = Parser::from(f2).parse().unwrap().fingerprint();
 
         assert_eq!(
             fp1, fp2,
@@ -761,8 +760,8 @@ mod fingerprint_tests {
         let f1 = "=SUM(A1,B1)";
         let f2 = "=SUM(A1+B1)";
 
-        let fp1 = Parser::from(f1).unwrap().parse().unwrap().fingerprint();
-        let fp2 = Parser::from(f2).unwrap().parse().unwrap().fingerprint();
+        let fp1 = Parser::from(f1).parse().unwrap().fingerprint();
+        let fp2 = Parser::from(f2).parse().unwrap().fingerprint();
 
         assert_ne!(
             fp1, fp2,
@@ -793,7 +792,7 @@ mod fingerprint_tests {
     fn test_fingerprint_deterministic() {
         // Test that the fingerprint is deterministic across calls
         let formula = "=SUM(A1:B10)/COUNT(A1:B10)";
-        let ast = Parser::from(formula).unwrap().parse().unwrap();
+        let ast = Parser::from(formula).parse().unwrap();
 
         let fp1 = ast.fingerprint();
         let fp2 = ast.fingerprint();
@@ -810,8 +809,8 @@ mod fingerprint_tests {
         let f1 = "=IF(AND(A1>0,B1<10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")";
         let f2 = "=IF(AND(A1>0,B1<10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")";
 
-        let fp1 = Parser::from(f1).unwrap().parse().unwrap().fingerprint();
-        let fp2 = Parser::from(f2).unwrap().parse().unwrap().fingerprint();
+        let fp1 = Parser::from(f1).parse().unwrap().fingerprint();
+        let fp2 = Parser::from(f2).parse().unwrap().fingerprint();
 
         assert_eq!(
             fp1, fp2,
@@ -820,7 +819,7 @@ mod fingerprint_tests {
 
         // Slightly different formula
         let f3 = "=IF(AND(A1>0,B1<=10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")";
-        let fp3 = Parser::from(f3).unwrap().parse().unwrap().fingerprint();
+        let fp3 = Parser::from(f3).parse().unwrap().fingerprint();
 
         assert_ne!(
             fp1, fp3,
@@ -833,18 +832,14 @@ mod fingerprint_tests {
         // Test the specific validation example from the requirements
         let f1 = "=SUM(a1, 2)";
         let f2 = "=  SUM( A1 ,2 )"; // diff whitespace/casing
-        let fp1 = Parser::from(f1).unwrap().parse().unwrap().fingerprint();
-        let fp2 = Parser::from(f2).unwrap().parse().unwrap().fingerprint();
+        let fp1 = Parser::from(f1).parse().unwrap().fingerprint();
+        let fp2 = Parser::from(f2).parse().unwrap().fingerprint();
         assert_eq!(
             fp1, fp2,
             "Formulas with different whitespace and casing should have the same fingerprint"
         );
 
-        let fp3 = Parser::from("=SUM(A1,3)")
-            .unwrap()
-            .parse()
-            .unwrap()
-            .fingerprint();
+        let fp3 = Parser::from("=SUM(A1,3)").parse().unwrap().fingerprint();
         assert_ne!(
             fp1, fp3,
             "Formulas with different values should have different fingerprints"
@@ -947,7 +942,7 @@ mod reference_tests {
     fn test_cell_reference_parsing() {
         // Simple cell reference
         let reference = "A1";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Cell {
@@ -959,7 +954,7 @@ mod reference_tests {
 
         // Cell reference with sheet
         let reference = "Sheet1!B2";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Cell {
@@ -971,7 +966,7 @@ mod reference_tests {
 
         // Cell reference with quoted sheet name
         let reference = "'Sheet 1'!C3";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Cell {
@@ -983,7 +978,7 @@ mod reference_tests {
 
         // Cell reference with absolute reference
         let reference = "$D$4";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Cell {
@@ -998,7 +993,7 @@ mod reference_tests {
     fn test_range_reference_parsing() {
         // Simple range
         let reference = "A1:B2";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1012,7 +1007,7 @@ mod reference_tests {
 
         // Range with sheet
         let reference = "Sheet1!C3:D4";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1026,7 +1021,7 @@ mod reference_tests {
 
         // Range with quoted sheet name
         let reference = "'Sheet 1'!E5:F6";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1040,7 +1035,7 @@ mod reference_tests {
 
         // Range with absolute references
         let reference = "$G$7:$H$8";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1057,7 +1052,7 @@ mod reference_tests {
     fn test_infinite_range_parsing() {
         // Infinite column range (A:A)
         let reference = "A:A";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1071,7 +1066,7 @@ mod reference_tests {
 
         // Infinite row range (1:1)
         let reference = "1:1";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1085,7 +1080,7 @@ mod reference_tests {
 
         // Infinite column range with sheet (Sheet1!A:A)
         let reference = "Sheet1!A:A";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1099,7 +1094,7 @@ mod reference_tests {
 
         // Range with column-only to column-only (A:B)
         let reference = "A:B";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1113,7 +1108,7 @@ mod reference_tests {
 
         // Range with row-only to row-only (1:5)
         let reference = "1:5";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1127,7 +1122,7 @@ mod reference_tests {
 
         // Range with bounded start, unbounded end (A1:A)
         let reference = "A1:A";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1141,7 +1136,7 @@ mod reference_tests {
 
         // Range with unbounded start, bounded end (A:A10)
         let reference = "A:A10";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
             ReferenceType::Range {
@@ -1211,7 +1206,7 @@ mod reference_tests {
     fn test_table_reference_parsing() {
         // Table reference
         let reference = "Table1[Column1]";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
 
         // Check that we get a table reference with the correct name and column
         if let ReferenceType::Table(table_ref) = ref_type {
@@ -1231,7 +1226,7 @@ mod reference_tests {
     fn test_named_range_parsing() {
         // Named range
         let reference = "SalesData";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(ref_type, ReferenceType::NamedRange(reference.to_string()));
     }
 
@@ -1319,7 +1314,7 @@ mod reference_tests {
         let ast = parser.parse().unwrap();
 
         let dependencies = ast.get_dependency_strings();
-        println!("Dependencies: {:?}", dependencies);
+        println!("Dependencies: {dependencies:?}");
 
         assert_eq!(dependencies.len(), 3);
         assert!(dependencies.contains(&"Sheet1!A1:A10".to_string()));
@@ -1334,7 +1329,7 @@ mod reference_tests {
         println!("tokenizer: {:?}", tokenizer.items);
         let mut parser = Parser::new(tokenizer.items, false);
         let ast = parser.parse().unwrap();
-        println!("ast: {:?}", ast);
+        println!("ast: {ast:?}");
     }
 
     #[test]
@@ -1344,7 +1339,7 @@ mod reference_tests {
         println!("tokenizer: {:?}", tokenizer.items);
         let mut parser = Parser::new(tokenizer.items, false);
         let ast = parser.parse().unwrap();
-        println!("ast: {:?}", ast);
+        println!("ast: {ast:?}");
 
         // When the formula is tokenized and parsed, the equals sign is removed,
         // so we compare against the formula without the equals sign
@@ -1375,7 +1370,7 @@ mod reference_tests {
     fn test_table_reference_with_simple_column() {
         // Test a simple table reference with just a column
         let reference = "Table1[Column1]";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
 
         if let ReferenceType::Table(table_ref) = ref_type {
             assert_eq!(table_ref.name, "Table1");
@@ -1399,7 +1394,7 @@ mod reference_tests {
     fn test_table_reference_with_column_range() {
         // Test a table reference with a column range
         let reference = "Table1[Column1:Column2]";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
 
         if let ReferenceType::Table(table_ref) = ref_type {
             assert_eq!(table_ref.name, "Table1");
@@ -1424,7 +1419,7 @@ mod reference_tests {
     fn test_table_reference_with_special_item() {
         // Test a table reference with a special item
         let reference = "Table1[#Headers]";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
 
         if let ReferenceType::Table(table_ref) = ref_type {
             assert_eq!(table_ref.name, "Table1");
@@ -1451,25 +1446,21 @@ mod reference_tests {
         println!("tokenizer: {:?}", tokenizer.items);
         let mut parser = Parser::new(tokenizer.items, false);
         let ast = parser.parse().unwrap();
-        println!("ast: {:?}", ast);
+        println!("ast: {ast:?}");
     }
 
     #[test]
     fn test_table_reference_without_specifier() {
         // Test a table reference without any specifier (entire table)
         let reference = "Table1";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
 
-        // The current implementation interprets this as a cell reference (B.1 - row 1, column B*1)
-        // In the future, this should be enhanced to properly detect table names without specifiers,
-        // but for now we just confirm current behavior to avoid regressions
-        if let ReferenceType::Cell { sheet, row, col: _ } = ref_type {
-            assert_eq!(sheet, None);
-            assert_eq!(row, 1);
-            // Don't assert on the column number since it's based on a string-to-number
-            // conversion for T1 (which might change)
+        // After our column name length limit (max 3 chars), "Table1" can't be parsed as a cell
+        // reference anymore (Table is 5 chars). It should be treated as a named range.
+        if let ReferenceType::NamedRange(name) = ref_type {
+            assert_eq!(name, "Table1");
         } else {
-            panic!("Expected Cell reference");
+            panic!("Expected NamedRange, got: {ref_type:?}");
         }
     }
 
@@ -1477,7 +1468,7 @@ mod reference_tests {
     fn test_table_item_with_column_reference() {
         // Test a table reference with an item specifier and column
         let reference = "Table1[[#Data],[Column1]]";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
 
         if let ReferenceType::Table(table_ref) = ref_type {
             assert_eq!(table_ref.name, "Table1");
@@ -1497,7 +1488,7 @@ mod reference_tests {
     fn test_table_this_row_with_column_reference() {
         // Test a table reference with this row specifier and column
         let reference = "Table1[[@],[Column1]]";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
 
         if let ReferenceType::Table(table_ref) = ref_type {
             assert_eq!(table_ref.name, "Table1");
@@ -1517,7 +1508,7 @@ mod reference_tests {
     fn test_table_multiple_item_specifiers() {
         // Test a table reference with multiple item specifiers
         let reference = "Table1[[#Headers],[#Data]]";
-        let ref_type = ReferenceType::parse(reference).unwrap();
+        let ref_type = ReferenceType::from_string(reference).unwrap();
 
         if let ReferenceType::Table(table_ref) = ref_type {
             assert_eq!(table_ref.name, "Table1");
