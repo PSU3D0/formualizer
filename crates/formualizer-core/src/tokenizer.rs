@@ -16,8 +16,8 @@ const fn build_token_enders() -> [bool; 256] {
 static TOKEN_ENDERS_TABLE: [bool; 256] = build_token_enders();
 
 #[inline(always)]
-fn is_token_ender(c: char) -> bool {
-    c.is_ascii() && TOKEN_ENDERS_TABLE[c as usize]
+fn is_token_ender(c: u8) -> bool {
+    TOKEN_ENDERS_TABLE[c as usize]
 }
 
 static ERROR_CODES: &[&str] = &[
@@ -54,7 +54,7 @@ impl fmt::Display for TokenizerError {
 impl Error for TokenizerError {}
 
 /// The type of a token.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenType {
     Literal,
     Operand,
@@ -70,12 +70,12 @@ pub enum TokenType {
 
 impl Display for TokenType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
 /// The subtype of a token.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenSubType {
     None,
     Text,
@@ -91,14 +91,14 @@ pub enum TokenSubType {
 
 impl Display for TokenSubType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
 /// A token in an Excel formula.
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Token {
-    pub value: String,
+    pub value: String, // We'll keep this for API compatibility but compute it lazily
     pub token_type: TokenType,
     pub subtype: TokenSubType,
     pub start: usize,
@@ -135,6 +135,22 @@ impl Token {
     ) -> Self {
         Token {
             value,
+            token_type,
+            subtype,
+            start,
+            end,
+        }
+    }
+
+    fn from_slice(
+        source: &str,
+        token_type: TokenType,
+        subtype: TokenSubType,
+        start: usize,
+        end: usize,
+    ) -> Self {
+        Token {
+            value: source[start..end].to_string(),
             token_type,
             subtype,
             start,
@@ -202,10 +218,26 @@ impl Token {
         Token::new_with_span(value, TokenType::Operand, subtype, start, end)
     }
 
+    fn make_operand_from_slice(source: &str, start: usize, end: usize) -> Self {
+        let value_str = &source[start..end];
+        let subtype = if value_str.starts_with('"') {
+            TokenSubType::Text
+        } else if value_str.starts_with('#') {
+            TokenSubType::Error
+        } else if value_str == "TRUE" || value_str == "FALSE" {
+            TokenSubType::Logical
+        } else if value_str.parse::<f64>().is_ok() {
+            TokenSubType::Number
+        } else {
+            TokenSubType::Range
+        };
+        Token::from_slice(source, TokenType::Operand, subtype, start, end)
+    }
+
     /// Create a subexpression token.
     ///
     /// `value` must end with one of '{', '}', '(' or ')'. If `func` is true,
-    /// the token’s type is forced to be Func.
+    /// the token's type is forced to be Func.
     pub fn make_subexp(value: &str, func: bool) -> Self {
         let last_char = value.chars().last().expect("Empty token value");
         assert!(matches!(last_char, '{' | '}' | '(' | ')'));
@@ -245,6 +277,26 @@ impl Token {
             TokenSubType::Open
         };
         Token::new_with_span(value.to_string(), token_type, subtype, start, end)
+    }
+
+    fn make_subexp_from_slice(source: &str, func: bool, start: usize, end: usize) -> Self {
+        let value_str = &source[start..end];
+        let last_char = value_str.chars().last().expect("Empty token value");
+        let token_type = if func {
+            TokenType::Func
+        } else if "{}".contains(last_char) {
+            TokenType::Array
+        } else if "()".contains(last_char) {
+            TokenType::Paren
+        } else {
+            TokenType::Func
+        };
+        let subtype = if ")}".contains(last_char) {
+            TokenSubType::Close
+        } else {
+            TokenSubType::Open
+        };
+        Token::from_slice(source, token_type, subtype, start, end)
     }
 
     /// Given an opener token, return its corresponding closer token.
@@ -291,125 +343,133 @@ impl Token {
 
 /// A tokenizer for Excel worksheet formulas.
 pub struct Tokenizer {
-    formula: Vec<char>,  // The formula as a vector of characters.
-    formula_str: String, // Original formula string for byte position tracking.
+    formula: String, // The formula string
     pub items: Vec<Token>,
     token_stack: Vec<Token>,
-    offset: usize,
-    byte_pos: usize,         // Current byte position in the original string.
-    token: Vec<char>,        // Accumulator for the current token.
-    token_start_byte: usize, // Byte position where current token started.
+    offset: usize,      // Byte offset in formula
+    token_start: usize, // Start of current token
+    token_end: usize,   // End of current token
 }
 
 impl Tokenizer {
     /// Create a new tokenizer and immediately parse the formula.
     pub fn new(formula: &str) -> Result<Self, TokenizerError> {
         let mut tokenizer = Tokenizer {
-            formula: formula.chars().collect(),
-            formula_str: formula.to_string(),
-            items: Vec::with_capacity(formula.len() * 6), // Very safe estimate of 6 characters per token
-            token_stack: Vec::with_capacity(64),
+            formula: formula.to_string(),
+            items: Vec::with_capacity(formula.len() / 2), // Reasonable estimate
+            token_stack: Vec::with_capacity(16),
             offset: 0,
-            byte_pos: 0,
-            token: Vec::with_capacity(64),
-            token_start_byte: 0,
+            token_start: 0,
+            token_end: 0,
         };
         tokenizer.parse()?;
         Ok(tokenizer)
     }
 
-    /// Advance byte position by the given number of characters.
-    fn advance_byte_pos(&mut self, char_count: usize) {
-        for i in 0..char_count {
-            if self.offset + i < self.formula.len() {
-                self.byte_pos += self.formula[self.offset + i].len_utf8();
-            }
-        }
+    /// Get byte at current offset
+    #[inline]
+    fn current_byte(&self) -> Option<u8> {
+        self.formula.as_bytes().get(self.offset).copied()
     }
 
-    /// Start tracking a new token at the current byte position.
+    /// Check if we have a token accumulated
+    #[inline]
+    fn has_token(&self) -> bool {
+        self.token_end > self.token_start
+    }
+
+    /// Start a new token at current position
+    #[inline]
     fn start_token(&mut self) {
-        self.token_start_byte = self.byte_pos;
+        self.token_start = self.offset;
+        self.token_end = self.offset;
     }
 
-    /// Get current token's start and end byte positions.
-    fn get_token_span(&self) -> (usize, usize) {
-        (self.token_start_byte, self.byte_pos)
+    /// Extend current token to current position
+    #[inline]
+    fn extend_token(&mut self) {
+        self.token_end = self.offset;
     }
 
     /// Parse the formula into tokens.
     fn parse(&mut self) -> Result<(), TokenizerError> {
-        if self.offset != 0 {
-            return Ok(());
-        }
         if self.formula.is_empty() {
             return Ok(());
-        } else if self.formula[0] == '=' {
-            self.offset += 1;
-            self.byte_pos += 1; // Skip the '=' character
-        } else {
-            let formula_str: String = self.formula.iter().collect();
+        }
+
+        // Check for literal formula (doesn't start with '=')
+        if self.formula.as_bytes()[0] != b'=' {
             self.items.push(Token::new_with_span(
-                formula_str,
+                self.formula.clone(),
                 TokenType::Literal,
                 TokenSubType::None,
                 0,
-                self.formula_str.len(),
+                self.formula.len(),
             ));
             return Ok(());
         }
 
-        self.start_token(); // Begin tracking for the first real token
+        // Skip the '=' character
+        self.offset = 1;
+        self.start_token();
 
         while self.offset < self.formula.len() {
             if self.check_scientific_notation()? {
                 continue;
             }
-            let curr_char = self.formula[self.offset];
-            if is_token_ender(curr_char) {
+
+            let curr_byte = self.formula.as_bytes()[self.offset];
+
+            // Check if this ends a token
+            if is_token_ender(curr_byte) && self.has_token() {
                 self.save_token();
-                self.start_token(); // Start new token
+                self.start_token();
             }
-            // Dispatch based on the current character.
-            let consumed = match curr_char {
-                '"' | '\'' => self.parse_string()?,
-                '[' => self.parse_brackets()?,
-                '#' => self.parse_error()?,
-                ' ' | '\n' => self.parse_whitespace()?,
+
+            // Dispatch based on the current character
+            match curr_byte {
+                b'"' | b'\'' => self.parse_string()?,
+                b'[' => self.parse_brackets()?,
+                b'#' => self.parse_error()?,
+                b' ' | b'\n' => self.parse_whitespace()?,
                 // operator characters
-                '+' | '-' | '*' | '/' | '^' | '&' | '=' | '>' | '<' | '%' => {
+                b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' => {
                     self.parse_operator()?
                 }
-                '{' | '(' => self.parse_opener()?,
-                ')' | '}' => self.parse_closer()?,
-                ';' | ',' => self.parse_separator()?,
+                b'{' | b'(' => self.parse_opener()?,
+                b')' | b'}' => self.parse_closer()?,
+                b';' | b',' => self.parse_separator()?,
                 _ => {
-                    if self.token.is_empty() {
+                    // Accumulate into current token
+                    if !self.has_token() {
                         self.start_token();
                     }
-                    self.token.push(curr_char);
-                    1
+                    self.offset += 1;
+                    self.extend_token();
                 }
-            };
-            self.advance_byte_pos(consumed);
-            self.offset += consumed;
+            }
         }
-        self.save_token();
+
+        // Save any remaining token
+        if self.has_token() {
+            self.save_token();
+        }
+
         Ok(())
     }
 
     /// If the current token looks like a number in scientific notation,
     /// consume the '+' or '-' as part of the number.
     fn check_scientific_notation(&mut self) -> Result<bool, TokenizerError> {
-        let curr_char = self.formula[self.offset];
-        if (curr_char == '+' || curr_char == '-')
-            && !self.token.is_empty()
-            && self.is_scientific_notation_base()
-        {
-            self.token.push(curr_char);
-            self.advance_byte_pos(1);
-            self.offset += 1;
-            return Ok(true);
+        if let Some(curr_byte) = self.current_byte() {
+            if (curr_byte == b'+' || curr_byte == b'-')
+                && self.has_token()
+                && self.is_scientific_notation_base()
+            {
+                self.offset += 1;
+                self.extend_token();
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -417,434 +477,364 @@ impl Tokenizer {
     /// Helper: Determine if the current accumulated token is the base of a
     /// scientific notation number (e.g., "1.23E" or "9e").
     fn is_scientific_notation_base(&self) -> bool {
-        let token = &self.token;
-        if token.len() < 2 {
+        if !self.has_token() {
             return false;
         }
-        let last = token[token.len() - 1];
-        if !(last == 'E' || last == 'e') {
+
+        let token_slice = &self.formula.as_bytes()[self.token_start..self.token_end];
+        if token_slice.len() < 2 {
             return false;
         }
-        let first = token[0];
-        if !('1'..='9').contains(&first) {
+
+        let last = token_slice[token_slice.len() - 1];
+        if !(last == b'E' || last == b'e') {
             return false;
         }
+
+        let first = token_slice[0];
+        if !first.is_ascii_digit() {
+            return false;
+        }
+
         let mut dot_seen = false;
-        // Iterate over everything except the first and last characters.
-        for &ch in &token[1..token.len() - 1] {
+        // Check middle characters
+        for &ch in &token_slice[1..token_slice.len() - 1] {
             match ch {
-                '0'..='9' => {}
-                '.' if !dot_seen => dot_seen = true,
+                b'0'..=b'9' => {}
+                b'.' if !dot_seen => dot_seen = true,
                 _ => return false,
             }
         }
         true
     }
 
-    /// Ensure that there is no unconsumed token (or that it ends in an allowed character).
-    fn assert_empty_token(&self, can_follow: Option<&[char]>) -> Result<(), TokenizerError> {
-        if !self.token.is_empty() {
-            if let Some(allowed) = can_follow {
-                let last_char = *self.token.last().unwrap();
-                if !allowed.contains(&last_char) {
-                    return Err(TokenizerError {
-                        message: format!(
-                            "Unexpected character at position {} in '{}'",
-                            self.offset,
-                            self.formula.iter().collect::<String>()
-                        ),
-                        pos: self.byte_pos,
-                    });
-                }
-            } else {
-                return Err(TokenizerError {
-                    message: format!(
-                        "Unexpected character at position {} in '{}'",
-                        self.offset,
-                        self.formula.iter().collect::<String>()
-                    ),
-                    pos: self.byte_pos,
-                });
-            }
-        }
-        Ok(())
-    }
-
     /// If there is an accumulated token, convert it to an operand token and add it to the list.
     fn save_token(&mut self) {
-        if !self.token.is_empty() {
-            let token_str: String = self.token.iter().collect();
-            let (start, end) = self.get_token_span();
-            self.items
-                .push(Token::make_operand_with_span(token_str, start, end));
-            self.token.clear();
+        if self.has_token() {
+            let token =
+                Token::make_operand_from_slice(&self.formula, self.token_start, self.token_end);
+            self.items.push(token);
         }
     }
 
     /// Parse a string (or link) literal.
-    fn parse_string(&mut self) -> Result<usize, TokenizerError> {
-        let delim = self.formula[self.offset];
-        assert!(delim == '"' || delim == '\'');
+    fn parse_string(&mut self) -> Result<(), TokenizerError> {
+        let delim = self.formula.as_bytes()[self.offset];
+        assert!(delim == b'"' || delim == b'\'');
 
-        // If we're parsing a single-quoted string and the token is just a $,
-        // don't save it as a separate token - it's part of the cell reference
-        let is_dollar_ref =
-            delim == '\'' && !self.token.is_empty() && self.token.iter().collect::<String>() == "$";
+        // Check for dollar reference special case
+        let is_dollar_ref = delim == b'\''
+            && self.has_token()
+            && self.token_end - self.token_start == 1
+            && self.formula.as_bytes()[self.token_start] == b'$';
 
-        if !is_dollar_ref {
-            self.assert_empty_token(Some(&[':']))?;
-            self.save_token();
-            self.start_token(); // Start tracking for string token
-        }
-
-        // Manual parsing of quoted strings
-        let mut i = self.offset;
-        let formula_len = self.formula.len();
-
-        // Collect the characters of the string, including the delimiters
-        let mut string_chars = Vec::with_capacity(64);
-        string_chars.push(delim);
-
-        i += 1; // Skip the opening delimiter
-
-        let mut found_end = false;
-
-        while i < formula_len {
-            let ch = self.formula[i];
-            string_chars.push(ch);
-            i += 1;
-
-            if ch == delim {
-                // Check if this is an escaped quote or the end
-                if i < formula_len && self.formula[i] == delim {
-                    // This is an escaped quote (doubled quotes) - include it
-                    string_chars.push(self.formula[i]);
-                    i += 1;
-                } else {
-                    // This is the end of the string
-                    found_end = true;
-                    break;
-                }
+        if !is_dollar_ref && self.has_token() {
+            // Check if last char is ':'
+            if self.token_end > 0 && self.formula.as_bytes()[self.token_end - 1] != b':' {
+                self.save_token();
+                self.start_token();
             }
         }
 
-        // Check if we found the closing delimiter
-        if found_end {
-            let matched_str: String = string_chars.iter().collect();
-            let matched_len = string_chars.len();
-
-            if delim == '"' {
-                let start_byte = self.byte_pos;
-                let end_byte = start_byte + matched_str.len();
-                self.items.push(Token::make_operand_with_span(
-                    matched_str,
-                    start_byte,
-                    end_byte,
-                ));
-            } else {
-                // For a single-quote delimited string (sheet name reference)
-                if is_dollar_ref {
-                    // Combine the $ with the matched string
-                    let dollar_str = format!("{}{}", "$", matched_str);
-                    self.token.clear();
-                    self.token.extend(dollar_str.chars());
-                } else {
-                    // Regular behavior
-                    self.token.extend(matched_str.chars());
-                }
-            }
-
-            Ok(matched_len)
+        let string_start = if is_dollar_ref {
+            self.token_start
         } else {
-            // Error handling remains the same
-            let subtype = if delim == '"' { "string" } else { "link" };
-            Err(TokenizerError {
-                message: format!(
-                    "Reached end of formula while parsing {} in '{}'",
-                    subtype,
-                    self.formula.iter().collect::<String>()
-                ),
-                pos: self.byte_pos,
-            })
+            self.offset
+        };
+        self.offset += 1; // Skip opening delimiter
+
+        while self.offset < self.formula.len() {
+            if self.formula.as_bytes()[self.offset] == delim {
+                self.offset += 1;
+                // Check for escaped quote
+                if self.offset < self.formula.len() && self.formula.as_bytes()[self.offset] == delim
+                {
+                    self.offset += 1; // Skip escaped quote
+                } else {
+                    // End of string
+                    if delim == b'"' {
+                        let token = Token::make_operand_from_slice(
+                            &self.formula,
+                            string_start,
+                            self.offset,
+                        );
+                        self.items.push(token);
+                        self.start_token();
+                    } else {
+                        // Single-quoted string becomes part of current token
+                        self.token_end = self.offset;
+                    }
+                    return Ok(());
+                }
+            } else {
+                self.offset += 1;
+            }
         }
+
+        Err(TokenizerError {
+            message: "Reached end of formula while parsing string".to_string(),
+            pos: self.offset,
+        })
     }
 
     /// Parse the text between matching square brackets.
-    fn parse_brackets(&mut self) -> Result<usize, TokenizerError> {
-        assert_eq!(self.formula[self.offset], '[');
-        let start = self.offset;
-        let mut open_count = 0;
-        for i in self.offset..self.formula.len() {
-            if self.formula[i] == '[' {
-                open_count += 1;
-            } else if self.formula[i] == ']' {
-                open_count -= 1;
-            }
-            if open_count == 0 {
-                let outer_right = i - start + 1;
-                let s: String = self.formula[self.offset..self.offset + outer_right]
-                    .iter()
-                    .collect();
-                self.token.extend(s.chars());
-                return Ok(outer_right);
-            }
+    fn parse_brackets(&mut self) -> Result<(), TokenizerError> {
+        assert_eq!(self.formula.as_bytes()[self.offset], b'[');
+
+        if !self.has_token() {
+            self.start_token();
         }
+
+        let mut open_count = 1;
+        self.offset += 1;
+
+        while self.offset < self.formula.len() {
+            match self.formula.as_bytes()[self.offset] {
+                b'[' => open_count += 1,
+                b']' => {
+                    open_count -= 1;
+                    if open_count == 0 {
+                        self.offset += 1;
+                        self.extend_token();
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+            self.offset += 1;
+        }
+
         Err(TokenizerError {
-            message: format!(
-                "Encountered unmatched '[' in '{}'",
-                self.formula.iter().collect::<String>()
-            ),
-            pos: self.byte_pos,
+            message: "Encountered unmatched '['".to_string(),
+            pos: self.offset,
         })
     }
 
     /// Parse an error literal that starts with '#'.
-    fn parse_error(&mut self) -> Result<usize, TokenizerError> {
-        self.assert_empty_token(Some(&['!']))?;
-        assert_eq!(self.formula[self.offset], '#');
-        let remaining: String = self.formula[self.offset..].iter().collect();
-        for &err in ERROR_CODES.iter() {
-            if remaining.starts_with(err) {
-                let token_str: String = self.token.iter().collect();
-                let combined = format!("{}{}", token_str, err);
-                let (start, _) = if !self.token.is_empty() {
-                    self.get_token_span()
-                } else {
-                    (self.byte_pos, self.byte_pos)
-                };
-                let end = self.byte_pos + err.len();
-                self.items
-                    .push(Token::make_operand_with_span(combined, start, end));
-                self.token.clear();
-                return Ok(err.len());
+    fn parse_error(&mut self) -> Result<(), TokenizerError> {
+        // Check if we have a partial token ending with '!'
+        if self.has_token()
+            && self.token_end > 0
+            && self.formula.as_bytes()[self.token_end - 1] != b'!'
+        {
+            self.save_token();
+            self.start_token();
+        }
+
+        let error_start = if self.has_token() {
+            self.token_start
+        } else {
+            self.offset
+        };
+
+        // Try to match error codes
+        for &err_code in ERROR_CODES {
+            let err_bytes = err_code.as_bytes();
+            if self.offset + err_bytes.len() <= self.formula.len() {
+                let slice = &self.formula.as_bytes()[self.offset..self.offset + err_bytes.len()];
+                if slice == err_bytes {
+                    let token = Token::make_operand_from_slice(
+                        &self.formula,
+                        error_start,
+                        self.offset + err_bytes.len(),
+                    );
+                    self.items.push(token);
+                    self.offset += err_bytes.len();
+                    self.start_token();
+                    return Ok(());
+                }
             }
         }
+
         Err(TokenizerError {
-            message: format!(
-                "Invalid error code at position {} in '{}'",
-                self.offset,
-                self.formula.iter().collect::<String>()
-            ),
-            pos: self.byte_pos,
+            message: format!("Invalid error code at position {}", self.offset),
+            pos: self.offset,
         })
     }
 
     /// Parse a sequence of whitespace characters.
-    fn parse_whitespace(&mut self) -> Result<usize, TokenizerError> {
-        let start_byte = self.byte_pos;
-        let start = self.offset;
-        let mut i = start;
-        while i < self.formula.len() {
-            let ch = self.formula[i];
-            if ch == ' ' || ch == '\n' {
-                i += 1;
-            } else {
-                break;
+    fn parse_whitespace(&mut self) -> Result<(), TokenizerError> {
+        self.save_token();
+
+        let ws_start = self.offset;
+        while self.offset < self.formula.len() {
+            match self.formula.as_bytes()[self.offset] {
+                b' ' | b'\n' => self.offset += 1,
+                _ => break,
             }
         }
-        let matched_len = i - start;
-        let matched_str: String = self.formula[start..i].iter().collect();
-        let end_byte = start_byte + matched_str.len(); // ASCII whitespace is 1 byte each
-        self.items.push(Token::new_with_span(
-            matched_str,
+
+        self.items.push(Token::from_slice(
+            &self.formula,
             TokenType::Whitespace,
             TokenSubType::None,
-            start_byte,
-            end_byte,
+            ws_start,
+            self.offset,
         ));
-        Ok(matched_len)
+        self.start_token();
+        Ok(())
     }
 
     /// Parse an operator token.
-    fn parse_operator(&mut self) -> Result<usize, TokenizerError> {
+    fn parse_operator(&mut self) -> Result<(), TokenizerError> {
         self.save_token();
-        self.start_token(); // Start new token for operator
 
+        // Check for two-character operators
         if self.offset + 1 < self.formula.len() {
-            let op2: String = self.formula[self.offset..self.offset + 2].iter().collect();
-            if op2 == ">=" || op2 == "<=" || op2 == "<>" {
-                let end_byte = self.byte_pos + 2; // Two-character operators are ASCII
-                self.items.push(Token::new_with_span(
-                    op2,
+            let two_char = &self.formula.as_bytes()[self.offset..self.offset + 2];
+            if two_char == b">=" || two_char == b"<=" || two_char == b"<>" {
+                self.items.push(Token::from_slice(
+                    &self.formula,
                     TokenType::OpInfix,
                     TokenSubType::None,
-                    self.byte_pos,
-                    end_byte,
+                    self.offset,
+                    self.offset + 2,
                 ));
-                return Ok(2);
+                self.offset += 2;
+                self.start_token();
+                return Ok(());
             }
         }
-        let curr_char = self.formula[self.offset];
-        assert!(matches!(
-            curr_char,
-            '%' | '*' | '/' | '^' | '&' | '=' | '>' | '<' | '+' | '-'
-        ));
-        let end_byte = self.byte_pos + 1; // Single character operators are ASCII
-        let token = if curr_char == '%' {
-            Token::new_with_span(
-                "%".to_string(),
-                TokenType::OpPostfix,
-                TokenSubType::None,
-                self.byte_pos,
-                end_byte,
-            )
-        } else if "* /^&=><".contains(curr_char) {
-            Token::new_with_span(
-                curr_char.to_string(),
-                TokenType::OpInfix,
-                TokenSubType::None,
-                self.byte_pos,
-                end_byte,
-            )
-        } else if curr_char == '+' || curr_char == '-' {
-            if self.items.is_empty() {
-                Token::new_with_span(
-                    curr_char.to_string(),
-                    TokenType::OpPrefix,
-                    TokenSubType::None,
-                    self.byte_pos,
-                    end_byte,
-                )
-            } else {
-                let prev = self
-                    .items
-                    .iter()
-                    .rev()
-                    .find(|t| t.token_type != TokenType::Whitespace);
-                let is_infix = prev.is_some_and(|p| {
-                    p.subtype == TokenSubType::Close
-                        || p.token_type == TokenType::OpPostfix
-                        || p.token_type == TokenType::Operand
-                });
-                if is_infix {
-                    Token::new_with_span(
-                        curr_char.to_string(),
-                        TokenType::OpInfix,
-                        TokenSubType::None,
-                        self.byte_pos,
-                        end_byte,
-                    )
+
+        let curr_byte = self.formula.as_bytes()[self.offset];
+        let token_type = match curr_byte {
+            b'%' => TokenType::OpPostfix,
+            b'+' | b'-' => {
+                // Determine if prefix or infix
+                if self.items.is_empty() {
+                    TokenType::OpPrefix
                 } else {
-                    Token::new_with_span(
-                        curr_char.to_string(),
-                        TokenType::OpPrefix,
-                        TokenSubType::None,
-                        self.byte_pos,
-                        end_byte,
-                    )
+                    let prev = self
+                        .items
+                        .iter()
+                        .rev()
+                        .find(|t| t.token_type != TokenType::Whitespace);
+                    if let Some(p) = prev {
+                        if p.subtype == TokenSubType::Close
+                            || p.token_type == TokenType::OpPostfix
+                            || p.token_type == TokenType::Operand
+                        {
+                            TokenType::OpInfix
+                        } else {
+                            TokenType::OpPrefix
+                        }
+                    } else {
+                        TokenType::OpPrefix
+                    }
                 }
             }
-        } else {
-            Token::new_with_span(
-                curr_char.to_string(),
-                TokenType::OpInfix,
-                TokenSubType::None,
-                self.byte_pos,
-                end_byte,
-            )
+            _ => TokenType::OpInfix,
         };
-        self.items.push(token);
-        Ok(1)
+
+        self.items.push(Token::from_slice(
+            &self.formula,
+            token_type,
+            TokenSubType::None,
+            self.offset,
+            self.offset + 1,
+        ));
+        self.offset += 1;
+        self.start_token();
+        Ok(())
     }
 
     /// Parse an opener token – either '(' or '{'.
-    fn parse_opener(&mut self) -> Result<usize, TokenizerError> {
-        let curr_char = self.formula[self.offset];
-        assert!(curr_char == '(' || curr_char == '{');
+    fn parse_opener(&mut self) -> Result<(), TokenizerError> {
+        let curr_byte = self.formula.as_bytes()[self.offset];
+        assert!(curr_byte == b'(' || curr_byte == b'{');
 
-        let token = if curr_char == '{' {
-            self.assert_empty_token(None)?;
-            self.start_token();
-            let end_byte = self.byte_pos + 1;
-            Token::make_subexp_with_span("{", false, self.byte_pos, end_byte)
-        } else if !self.token.is_empty() {
-            let token_value: String = self.token.iter().collect::<String>() + "(";
-            let (start, _) = self.get_token_span();
-            let end_byte = self.byte_pos + 1;
-            self.token.clear();
-            Token::make_subexp_with_span(&token_value, true, start, end_byte)
+        let token = if curr_byte == b'{' {
+            self.save_token();
+            Token::make_subexp_from_slice(&self.formula, false, self.offset, self.offset + 1)
+        } else if self.has_token() {
+            // Function call
+            let token = Token::make_subexp_from_slice(
+                &self.formula,
+                true,
+                self.token_start,
+                self.offset + 1,
+            );
+            self.token_start = self.offset + 1;
+            self.token_end = self.offset + 1;
+            token
         } else {
-            self.start_token();
-            let end_byte = self.byte_pos + 1;
-            Token::make_subexp_with_span("(", false, self.byte_pos, end_byte)
+            Token::make_subexp_from_slice(&self.formula, false, self.offset, self.offset + 1)
         };
+
         self.items.push(token.clone());
         self.token_stack.push(token);
-        Ok(1)
+        self.offset += 1;
+        self.start_token();
+        Ok(())
     }
 
     /// Parse a closer token – either ')' or '}'.
-    fn parse_closer(&mut self) -> Result<usize, TokenizerError> {
-        let curr_char = self.formula[self.offset];
-        assert!(curr_char == ')' || curr_char == '}');
+    fn parse_closer(&mut self) -> Result<(), TokenizerError> {
+        self.save_token();
+
+        let curr_byte = self.formula.as_bytes()[self.offset];
+        assert!(curr_byte == b')' || curr_byte == b'}');
+
         if let Some(open_token) = self.token_stack.pop() {
-            let mut closer = open_token.get_closer()?;
-            if closer.value.chars().next().unwrap() != curr_char {
+            let closer = open_token.get_closer()?;
+            if (curr_byte == b'}' && closer.value != "}")
+                || (curr_byte == b')' && closer.value != ")")
+            {
                 return Err(TokenizerError {
-                    message: format!(
-                        "Mismatched ( and {{ pair in '{}'",
-                        self.formula.iter().collect::<String>()
-                    ),
-                    pos: self.byte_pos,
+                    message: "Mismatched ( and { pair".to_string(),
+                    pos: self.offset,
                 });
             }
-            // Set correct byte positions for the closer
-            closer.start = self.byte_pos;
-            closer.end = self.byte_pos + 1;
-            self.items.push(closer);
-            Ok(1)
+
+            self.items.push(Token::from_slice(
+                &self.formula,
+                closer.token_type,
+                TokenSubType::Close,
+                self.offset,
+                self.offset + 1,
+            ));
         } else {
-            Err(TokenizerError {
-                message: format!(
-                    "No matching opener for closer at position {} in '{}'",
-                    self.offset,
-                    self.formula.iter().collect::<String>()
-                ),
-                pos: self.byte_pos,
-            })
+            return Err(TokenizerError {
+                message: format!("No matching opener for closer at position {}", self.offset),
+                pos: self.offset,
+            });
         }
+
+        self.offset += 1;
+        self.start_token();
+        Ok(())
     }
 
     /// Parse a separator token – either ',' or ';'.
-    fn parse_separator(&mut self) -> Result<usize, TokenizerError> {
-        let curr_char = self.formula[self.offset];
-        assert!(curr_char == ';' || curr_char == ',');
-        let start_byte = self.byte_pos;
-        let end_byte = self.byte_pos + 1;
+    fn parse_separator(&mut self) -> Result<(), TokenizerError> {
+        self.save_token();
 
-        let token = if curr_char == ';' {
-            Token::make_separator_with_span(";", start_byte, end_byte)
+        let curr_byte = self.formula.as_bytes()[self.offset];
+        assert!(curr_byte == b';' || curr_byte == b',');
+
+        let (token_type, subtype) = if curr_byte == b';' {
+            (TokenType::Sep, TokenSubType::Row)
         } else if let Some(top) = self.token_stack.last() {
-            if top.token_type == TokenType::Paren {
-                Token::new_with_span(
-                    ",".to_string(),
-                    TokenType::OpInfix,
-                    TokenSubType::None,
-                    start_byte,
-                    end_byte,
-                )
-            } else if top.token_type == TokenType::Func || top.token_type == TokenType::Array {
-                Token::make_separator_with_span(",", start_byte, end_byte)
+            if top.token_type == TokenType::Func || top.token_type == TokenType::Array {
+                (TokenType::Sep, TokenSubType::Arg)
             } else {
-                Token::new_with_span(
-                    ",".to_string(),
-                    TokenType::OpInfix,
-                    TokenSubType::None,
-                    start_byte,
-                    end_byte,
-                )
+                (TokenType::OpInfix, TokenSubType::None)
             }
         } else {
-            Token::new_with_span(
-                ",".to_string(),
-                TokenType::OpInfix,
-                TokenSubType::None,
-                start_byte,
-                end_byte,
-            )
+            (TokenType::OpInfix, TokenSubType::None)
         };
-        self.items.push(token);
-        Ok(1)
+
+        self.items.push(Token::from_slice(
+            &self.formula,
+            token_type,
+            subtype,
+            self.offset,
+            self.offset + 1,
+        ));
+
+        self.offset += 1;
+        self.start_token();
+        Ok(())
     }
 
     /// Reconstruct the formula from the parsed tokens.
@@ -855,7 +845,7 @@ impl Tokenizer {
             self.items[0].value.clone()
         } else {
             let concatenated: String = self.items.iter().map(|t| t.value.clone()).collect();
-            format!("={}", concatenated)
+            format!("={concatenated}")
         }
     }
 }

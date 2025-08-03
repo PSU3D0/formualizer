@@ -123,17 +123,17 @@ impl Display for TableSpecifier {
             TableSpecifier::Data => write!(f, "#Data"),
             TableSpecifier::Headers => write!(f, "#Headers"),
             TableSpecifier::Totals => write!(f, "#Totals"),
-            TableSpecifier::Row(row_spec) => write!(f, "{}", row_spec),
-            TableSpecifier::Column(column) => write!(f, "{}", column),
-            TableSpecifier::ColumnRange(start, end) => write!(f, "{}:{}", start, end),
-            TableSpecifier::SpecialItem(item) => write!(f, "{}", item),
+            TableSpecifier::Row(row_spec) => write!(f, "{row_spec}"),
+            TableSpecifier::Column(column) => write!(f, "{column}"),
+            TableSpecifier::ColumnRange(start, end) => write!(f, "{start}:{end}"),
+            TableSpecifier::SpecialItem(item) => write!(f, "{item}"),
             TableSpecifier::Combination(specs) => {
                 write!(f, "[")?;
                 for (i, spec) in specs.iter().enumerate() {
                     if i > 0 {
                         write!(f, ",")?;
                     }
-                    write!(f, "[{}]", spec)?;
+                    write!(f, "[{spec}]")?;
                 }
                 write!(f, "]")
             }
@@ -149,7 +149,7 @@ impl Display for TableRowSpecifier {
             TableRowSpecifier::Data => write!(f, "#Data"),
             TableRowSpecifier::Headers => write!(f, "#Headers"),
             TableRowSpecifier::Totals => write!(f, "#Totals"),
-            TableRowSpecifier::Index(idx) => write!(f, "{}", idx),
+            TableRowSpecifier::Index(idx) => write!(f, "{idx}"),
         }
     }
 }
@@ -208,8 +208,8 @@ impl Display for ReferenceType {
                     sheet.clone().unwrap_or_default()
                 )
             }
-            ReferenceType::Table(table_ref) => write!(f, "Table({})", table_ref),
-            ReferenceType::NamedRange(named_range) => write!(f, "NamedRange({})", named_range),
+            ReferenceType::Table(table_ref) => write!(f, "Table({table_ref})"),
+            ReferenceType::NamedRange(named_range) => write!(f, "NamedRange({named_range})"),
         }
     }
 }
@@ -294,12 +294,12 @@ impl ReferenceType {
                         || sheet_name.contains('\'')
                         || sheet_name.contains('\"')
                     {
-                        format!("'{}'!{}{}", sheet_name, col_str, row_str)
+                        format!("'{sheet_name}'!{col_str}{row_str}")
                     } else {
-                        format!("{}!{}{}", sheet_name, col_str, row_str)
+                        format!("{sheet_name}!{col_str}{row_str}")
                     }
                 } else {
-                    format!("{}{}", col_str, row_str)
+                    format!("{col_str}{row_str}")
                 }
             }
             ReferenceType::Range {
@@ -325,7 +325,7 @@ impl ReferenceType {
                     (None, None) => "".to_string(), // Should not happen in normal usage
                 };
 
-                let range_part = format!("{}:{}", start_ref, end_ref);
+                let range_part = format!("{start_ref}:{end_ref}");
 
                 if let Some(sheet_name) = sheet {
                     // Only quote sheet name if it contains spaces or special characters
@@ -334,9 +334,9 @@ impl ReferenceType {
                         || sheet_name.contains('\'')
                         || sheet_name.contains('\"')
                     {
-                        format!("'{}'!{}", sheet_name, range_part)
+                        format!("'{sheet_name}'!{range_part}")
                     } else {
-                        format!("{}!{}", sheet_name, range_part)
+                        format!("{sheet_name}!{range_part}")
                     }
                 } else {
                     range_part
@@ -427,8 +427,7 @@ impl ReferenceType {
 
         if depth != 0 || end_pos == 0 {
             return Err(ParsingError::InvalidReference(format!(
-                "Unbalanced brackets in table specifier: {}",
-                specifier_str
+                "Unbalanced brackets in table specifier: {specifier_str}"
             )));
         }
 
@@ -481,8 +480,7 @@ impl ReferenceType {
             "#Totals" => Ok(Some(TableSpecifier::SpecialItem(SpecialItem::Totals))),
             "@" => Ok(Some(TableSpecifier::Row(TableRowSpecifier::Current))),
             _ => Err(ParsingError::InvalidReference(format!(
-                "Unknown special item: {}",
-                content
+                "Unknown special item: {content}"
             ))),
         }
     }
@@ -554,14 +552,13 @@ impl ReferenceType {
             let row_str = captures.get(1).unwrap().as_str();
             let row = row_str
                 .parse::<u32>()
-                .map_err(|_| ParsingError::InvalidReference(format!("Invalid row: {}", row_str)))?;
+                .map_err(|_| ParsingError::InvalidReference(format!("Invalid row: {row_str}")))?;
             return Ok((None, Some(row)));
         }
 
         // If we can't parse it as any known format, return an error
         Err(ParsingError::InvalidReference(format!(
-            "Invalid range part: {}",
-            part
+            "Invalid range part: {part}"
         )))
     }
 
@@ -574,13 +571,12 @@ impl ReferenceType {
             let col = Self::column_to_number(col_str)?;
             let row = row_str
                 .parse::<u32>()
-                .map_err(|_| ParsingError::InvalidReference(format!("Invalid row: {}", row_str)))?;
+                .map_err(|_| ParsingError::InvalidReference(format!("Invalid row: {row_str}")))?;
 
             Ok((col, row))
         } else {
             Err(ParsingError::InvalidReference(format!(
-                "Invalid cell reference: {}",
-                reference
+                "Invalid cell reference: {reference}"
             )))
         }
     }
@@ -591,8 +587,7 @@ impl ReferenceType {
         for c in column.chars() {
             if !c.is_ascii_alphabetic() {
                 return Err(ParsingError::InvalidReference(format!(
-                    "Invalid column: {}",
-                    column
+                    "Invalid column: {column}"
                 )));
             }
             result = result * 26 + (c.to_ascii_uppercase() as u32 - 'A' as u32 + 1);
@@ -644,13 +639,13 @@ impl ReferenceType {
                     (None, None) => "".to_string(), // Should not happen in normal usage
                 };
 
-                let range_part = format!("{}:{}", start_ref, end_ref);
+                let range_part = format!("{start_ref}:{end_ref}");
 
                 if let Some(s) = sheet {
                     if s.contains(' ') {
-                        format!("'{}'!{}", s, range_part)
+                        format!("'{s}'!{range_part}")
                     } else {
-                        format!("{}!{}", s, range_part)
+                        format!("{s}!{range_part}")
                     }
                 } else {
                     range_part
@@ -695,14 +690,14 @@ pub enum ASTNodeType {
 impl Display for ASTNodeType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ASTNodeType::Literal(value) => write!(f, "{:?}", value),
-            ASTNodeType::Reference { original, .. } => write!(f, "Reference({})", original),
-            ASTNodeType::UnaryOp { op, expr } => write!(f, "UnaryOp({}, {:?})", op, expr),
+            ASTNodeType::Literal(value) => write!(f, "{value:?}"),
+            ASTNodeType::Reference { original, .. } => write!(f, "Reference({original})"),
+            ASTNodeType::UnaryOp { op, expr } => write!(f, "UnaryOp({op}, {expr:?})"),
             ASTNodeType::BinaryOp { op, left, right } => {
-                write!(f, "BinaryOp({}, {:?}, {:?})", op, left, right)
+                write!(f, "BinaryOp({op}, {left:?}, {right:?})")
             }
-            ASTNodeType::Function { name, args } => write!(f, "Function({}, {:?})", name, args),
-            ASTNodeType::Array(rows) => write!(f, "Array({:?})", rows),
+            ASTNodeType::Function { name, args } => write!(f, "Function({name}, {args:?})"),
+            ASTNodeType::Array(rows) => write!(f, "Array({rows:?})"),
         }
     }
 }
@@ -913,7 +908,7 @@ impl ASTNode {
     ) -> Result<Self, ParserError> {
         // Parse the reference string right away
         let reference = ReferenceType::parse(&reference_str).map_err(|e| ParserError {
-            message: format!("Failed to parse reference '{}': {}", reference_str, e),
+            message: format!("Failed to parse reference '{reference_str}': {e}"),
             position: None,
         })?;
 
@@ -1246,7 +1241,7 @@ impl Parser {
             TokenType::Func => self.parse_function_call(),
             TokenType::Array => self.parse_array_literal(),
             _ => Err(ParserError {
-                message: format!("Unexpected token: {}", token),
+                message: format!("Unexpected token: {token}"),
                 position: Some(self.current),
             }),
         }

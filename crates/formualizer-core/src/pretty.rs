@@ -13,7 +13,7 @@ use crate::tokenizer::Tokenizer;
 pub fn pretty_print(ast: &ASTNode) -> String {
     match &ast.node_type {
         ASTNodeType::Literal(value) => {
-            format!("{}", value)
+            format!("{value}")
         }
         ASTNodeType::Reference { reference, .. } => reference.normalise(),
         ASTNodeType::UnaryOp { op, expr } => {
@@ -48,7 +48,7 @@ pub fn pretty_print(ast: &ASTNode) -> String {
                 .collect::<Vec<String>>()
                 .join("; ");
 
-            format!("{{{}}}", rows_str)
+            format!("{{{rows_str}}}")
         }
     }
 }
@@ -65,7 +65,7 @@ pub fn pretty_parse_render(formula: &str) -> Result<String, ParserError> {
     // If formula doesn't start with '=', add it before parsing and remove it after
     let needs_equals = !formula.starts_with('=');
     let formula_to_parse = if needs_equals {
-        format!("={}", formula)
+        format!("={formula}")
     } else {
         formula.to_string()
     };
@@ -91,7 +91,7 @@ pub fn pretty_parse_render(formula: &str) -> Result<String, ParserError> {
     if needs_equals {
         Ok(pretty_printed)
     } else {
-        Ok(format!("={}", pretty_printed))
+        Ok(format!("={pretty_printed}"))
     }
 }
 
