@@ -64,7 +64,6 @@ impl<'g> Iterator for RangeStream<'g> {
             .graph
             .get_vertex_id_for_address(&addr)
             .and_then(|id| self.graph.get_value(*id))
-            .cloned()
             .unwrap_or(LiteralValue::Empty);
 
         if self.current_row == self.end_row && self.current_col == self.end_col {

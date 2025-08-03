@@ -3,6 +3,7 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
 use super::packed_coord::PackedCoord;
 use super::vertex::{VertexId, VertexKind};
@@ -85,9 +86,10 @@ pub struct DependencyGraph {
     // Edge storage with delta slab
     edges: CsrMutableEdges,
 
-    // Value storage (temporary - will be moved to arenas in Phase 1)
-    values: FxHashMap<VertexId, LiteralValue>,
-    formulas: FxHashMap<VertexId, ASTNode>,
+    // Arena-based value and formula storage (Phase 1 complete)
+    data_store: DataStore,
+    vertex_values: FxHashMap<VertexId, ValueRef>,
+    vertex_formulas: FxHashMap<VertexId, AstNodeId>,
 
     // Address mappings using fast hashing
     cell_to_vertex: FxHashMap<CellRef, VertexId>,
@@ -125,8 +127,9 @@ impl DependencyGraph {
         Self {
             store: VertexStore::new(),
             edges: CsrMutableEdges::new(),
-            values: FxHashMap::default(),
-            formulas: FxHashMap::default(),
+            data_store: DataStore::new(),
+            vertex_values: FxHashMap::default(),
+            vertex_formulas: FxHashMap::default(),
             cell_to_vertex: FxHashMap::default(),
             dirty_vertices: FxHashSet::default(),
             volatile_vertices: FxHashSet::default(),
@@ -226,12 +229,13 @@ impl DependencyGraph {
 
             if is_formula {
                 self.remove_dependent_edges(existing_id);
-                self.formulas.remove(&existing_id);
+                self.vertex_formulas.remove(&existing_id);
             }
 
             // Update to value kind
             self.store.set_kind(existing_id, VertexKind::Cell);
-            self.values.insert(existing_id, value);
+            let value_ref = self.data_store.store_value(value);
+            self.vertex_values.insert(existing_id, value_ref);
             existing_id
         } else {
             // Create new vertex
@@ -243,7 +247,8 @@ impl DependencyGraph {
             self.edges.add_vertex(packed_coord, vertex_id.0);
 
             self.store.set_kind(vertex_id, VertexKind::Cell);
-            self.values.insert(vertex_id, value);
+            let value_ref = self.data_store.store_value(value);
+            self.vertex_values.insert(vertex_id, value_ref);
             self.cell_to_vertex.insert(addr, vertex_id);
             vertex_id
         };
@@ -287,11 +292,12 @@ impl DependencyGraph {
         // Update vertex properties
         self.store
             .set_kind(addr_vertex_id, VertexKind::FormulaScalar);
-        self.formulas.insert(addr_vertex_id, ast);
+        let ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
+        self.vertex_formulas.insert(addr_vertex_id, ast_id);
         self.store.set_dirty(addr_vertex_id, true);
 
         // Clear any cached value since this is now a formula
-        self.values.remove(&addr_vertex_id);
+        self.vertex_values.remove(&addr_vertex_id);
 
         if volatile {
             self.store.set_volatile(addr_vertex_id, true);
@@ -320,7 +326,9 @@ impl DependencyGraph {
 
         self.cell_to_vertex.get(&addr).and_then(|&vertex_id| {
             // Check values hashmap (stores both cell values and formula results)
-            self.values.get(&vertex_id).cloned()
+            self.vertex_values
+                .get(&vertex_id)
+                .map(|&value_ref| self.data_store.retrieve_value(value_ref))
         })
     }
 
@@ -877,7 +885,8 @@ impl DependencyGraph {
 
     /// Updates the cached value of a formula vertex.
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
-        self.values.insert(vertex_id, value);
+        let value_ref = self.data_store.store_value(value);
+        self.vertex_values.insert(vertex_id, value_ref);
     }
 
     /// Check if a vertex exists
@@ -900,13 +909,17 @@ impl DependencyGraph {
     }
 
     /// Get the formula AST for a vertex
-    pub(crate) fn get_formula(&self, vertex_id: VertexId) -> Option<&ASTNode> {
-        self.formulas.get(&vertex_id)
+    pub(crate) fn get_formula(&self, vertex_id: VertexId) -> Option<ASTNode> {
+        self.vertex_formulas
+            .get(&vertex_id)
+            .and_then(|&ast_id| self.data_store.retrieve_ast(ast_id, &self.sheet_reg))
     }
 
     /// Get the value stored for a vertex
-    pub(crate) fn get_value(&self, vertex_id: VertexId) -> Option<&LiteralValue> {
-        self.values.get(&vertex_id)
+    pub(crate) fn get_value(&self, vertex_id: VertexId) -> Option<LiteralValue> {
+        self.vertex_values
+            .get(&vertex_id)
+            .map(|&value_ref| self.data_store.retrieve_value(value_ref))
     }
 
     /// Get the cell reference for a vertex

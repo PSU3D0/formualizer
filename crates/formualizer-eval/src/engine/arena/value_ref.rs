@@ -61,10 +61,6 @@ impl ValueRef {
     const SMALL_INT_MIN: i32 = -(1 << 27); // -2^27
     const SMALL_INT_SIGN_BIT: u32 = 1 << 27; // Sign bit for i28
 
-    // Error code extraction
-    const ERROR_CODE_SHIFT: u32 = 24;
-    const ERROR_CODE_MASK: u32 = 0x0F000000;
-
     /// Create an empty/uninitialized reference
     pub const fn empty() -> Self {
         Self { raw: 0 }
@@ -143,22 +139,21 @@ impl ValueRef {
         }
     }
 
-    /// Create an error reference with an error code
-    pub fn error(code: u8) -> Self {
-        // Error code goes in bits [27:24] of the payload (28-bit payload)
-        // We want the error code in the upper 4 bits of the payload
-        // Payload bits [27:24] correspond to raw bits [27:24]
-        assert!(code <= 15, "Error code must fit in 4 bits");
-        let payload = (code as u32) << 24;
+    /// Create an error reference with an ErrorRef index
+    pub fn error(error_ref: u32) -> Self {
+        assert!(
+            error_ref <= Self::PAYLOAD_MASK,
+            "ErrorRef must fit in 28 bits"
+        );
         Self {
-            raw: (ValueType::Error as u32) << Self::TYPE_SHIFT | payload,
+            raw: (ValueType::Error as u32) << Self::TYPE_SHIFT | error_ref,
         }
     }
 
-    /// Extract an error code
-    pub fn as_error_code(self) -> Option<u8> {
+    /// Extract an error reference
+    pub fn as_error_ref(self) -> Option<u32> {
         if self.value_type() == ValueType::Error {
-            Some(((self.raw & Self::ERROR_CODE_MASK) >> Self::ERROR_CODE_SHIFT) as u8)
+            Some(self.payload())
         } else {
             None
         }
@@ -261,7 +256,7 @@ impl fmt::Debug for ValueRef {
                 }
             }
             ValueType::Error => {
-                if let Some(code) = self.as_error_code() {
+                if let Some(code) = self.as_error_ref() {
                     write!(f, "Error(code={code})")
                 } else {
                     write!(f, "Error(?)")
@@ -329,11 +324,11 @@ mod tests {
     fn test_value_ref_error() {
         let error_ref = ValueRef::error(5);
         assert_eq!(error_ref.value_type(), ValueType::Error);
-        assert_eq!(error_ref.as_error_code(), Some(5));
+        assert_eq!(error_ref.as_error_ref(), Some(5));
 
-        // Test max error code (4 bits)
-        let error_ref = ValueRef::error(15);
-        assert_eq!(error_ref.as_error_code(), Some(15));
+        // Test larger values within 28-bit range
+        let error_ref = ValueRef::error(1000);
+        assert_eq!(error_ref.as_error_ref(), Some(1000));
     }
 
     #[test]
@@ -370,11 +365,11 @@ mod tests {
     fn test_value_ref_type_checking() {
         let int_ref = ValueRef::small_int(42).unwrap();
         assert!(int_ref.as_boolean().is_none());
-        assert!(int_ref.as_error_code().is_none());
+        assert!(int_ref.as_error_ref().is_none());
 
         let bool_ref = ValueRef::boolean(true);
         assert!(bool_ref.as_small_int().is_none());
-        assert!(bool_ref.as_error_code().is_none());
+        assert!(bool_ref.as_error_ref().is_none());
     }
 
     #[test]

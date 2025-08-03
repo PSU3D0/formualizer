@@ -2,14 +2,16 @@
 /// Provides conversion between LiteralValue and ValueRef
 use super::array::ArrayArena;
 use super::ast::{AstArena, AstNodeId, CompactRefType};
+use super::error_arena::{ErrorArena, ErrorRef};
 use super::scalar::ScalarArena;
 use super::string_interner::{StringId, StringInterner};
 use super::value_ref::ValueRef;
+use crate::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType, TableReference};
-use rustc_hash::FxHashMap;
 
 /// Centralized data storage using arenas
+#[derive(Debug)]
 pub struct DataStore {
     /// Scalar values (floats and large integers)
     scalars: ScalarArena,
@@ -23,8 +25,8 @@ pub struct DataStore {
     /// AST nodes for formulas
     asts: AstArena,
 
-    /// Cache for error conversions (since errors are common)
-    error_cache: FxHashMap<ExcelErrorKind, ValueRef>,
+    /// Error storage with message preservation
+    errors: ErrorArena,
 }
 
 impl DataStore {
@@ -34,7 +36,7 @@ impl DataStore {
             strings: StringInterner::new(),
             arrays: ArrayArena::new(),
             asts: AstArena::new(),
-            error_cache: FxHashMap::default(),
+            errors: ErrorArena::new(),
         }
     }
 
@@ -44,7 +46,7 @@ impl DataStore {
             strings: StringInterner::with_capacity(estimated_cells / 10),
             arrays: ArrayArena::with_capacity(estimated_cells / 100),
             asts: AstArena::with_capacity(estimated_cells / 2),
-            error_cache: FxHashMap::default(),
+            errors: ErrorArena::with_capacity(estimated_cells / 20),
         }
     }
 
@@ -139,7 +141,7 @@ impl DataStore {
             ValueType::SmallInt => {
                 // Small integers are inlined
                 if let Some(i) = value_ref.as_small_int() {
-                    LiteralValue::Number(i as f64)
+                    LiteralValue::Int(i as i64)
                 } else {
                     LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))
                 }
@@ -149,7 +151,7 @@ impl DataStore {
                 if let Some(idx) = value_ref.arena_index() {
                     let scalar_ref = super::scalar::ScalarRef::from_raw(idx | (1 << 31));
                     if let Some(i) = self.scalars.get_integer(scalar_ref) {
-                        LiteralValue::Number(i as f64)
+                        LiteralValue::Int(i)
                     } else {
                         LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))
                     }
@@ -190,8 +192,13 @@ impl DataStore {
             }
 
             ValueType::Error => {
-                if let Some(code) = value_ref.as_error_code() {
-                    LiteralValue::Error(self.error_from_code(code))
+                if let Some(error_ref_raw) = value_ref.as_error_ref() {
+                    let error_ref = ErrorRef::from_raw(error_ref_raw);
+                    if let Some(error) = self.errors.get(error_ref) {
+                        LiteralValue::Error(error)
+                    } else {
+                        LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))
+                    }
                 } else {
                     LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))
                 }
@@ -253,17 +260,17 @@ impl DataStore {
     }
 
     /// Store an AST node and return its ID
-    pub fn store_ast(&mut self, ast: &ASTNode) -> AstNodeId {
-        self.convert_ast_node(ast)
+    pub fn store_ast(&mut self, ast: &ASTNode, sheet_registry: &SheetRegistry) -> AstNodeId {
+        self.convert_ast_node(ast, sheet_registry)
     }
 
     /// Retrieve an AST node from its ID
-    pub fn retrieve_ast(&self, id: AstNodeId) -> Option<ASTNode> {
-        self.reconstruct_ast_node(id)
+    pub fn retrieve_ast(&self, id: AstNodeId, sheet_registry: &SheetRegistry) -> Option<ASTNode> {
+        self.reconstruct_ast_node(id, sheet_registry)
     }
 
     /// Convert ASTNode to arena representation
-    fn convert_ast_node(&mut self, node: &ASTNode) -> AstNodeId {
+    fn convert_ast_node(&mut self, node: &ASTNode, sheet_registry: &SheetRegistry) -> AstNodeId {
         match &node.node_type {
             ASTNodeType::Literal(lit) => {
                 let value_ref = self.store_value(lit.clone());
@@ -274,24 +281,26 @@ impl DataStore {
                 original,
                 reference,
             } => {
-                let ref_type = self.convert_reference_type(reference);
+                let ref_type = self.convert_reference_type(reference, sheet_registry);
                 self.asts.insert_reference(original, ref_type)
             }
 
             ASTNodeType::UnaryOp { op, expr } => {
-                let expr_id = self.convert_ast_node(expr);
+                let expr_id = self.convert_ast_node(expr, sheet_registry);
                 self.asts.insert_unary_op(op, expr_id)
             }
 
             ASTNodeType::BinaryOp { op, left, right } => {
-                let left_id = self.convert_ast_node(left);
-                let right_id = self.convert_ast_node(right);
+                let left_id = self.convert_ast_node(left, sheet_registry);
+                let right_id = self.convert_ast_node(right, sheet_registry);
                 self.asts.insert_binary_op(op, left_id, right_id)
             }
 
             ASTNodeType::Function { name, args } => {
-                let arg_ids: Vec<AstNodeId> =
-                    args.iter().map(|arg| self.convert_ast_node(arg)).collect();
+                let arg_ids: Vec<AstNodeId> = args
+                    .iter()
+                    .map(|arg| self.convert_ast_node(arg, sheet_registry))
+                    .collect();
                 self.asts.insert_function(name, arg_ids)
             }
 
@@ -304,7 +313,7 @@ impl DataStore {
 
                 for row in rows {
                     for elem in row {
-                        elements.push(self.convert_ast_node(elem));
+                        elements.push(self.convert_ast_node(elem, sheet_registry));
                     }
                 }
 
@@ -314,17 +323,16 @@ impl DataStore {
     }
 
     /// Convert ReferenceType to CompactRefType
-    fn convert_reference_type(&mut self, ref_type: &ReferenceType) -> CompactRefType {
+    fn convert_reference_type(
+        &mut self,
+        ref_type: &ReferenceType,
+        sheet_registry: &SheetRegistry,
+    ) -> CompactRefType {
         match ref_type {
             ReferenceType::Cell { sheet, row, col } => {
-                let sheet_id = sheet.as_ref().map(|s| {
-                    // For now, use a simple hash of the sheet name as ID
-                    // In production, this would use a proper sheet registry
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = rustc_hash::FxHasher::default();
-                    s.hash(&mut hasher);
-                    (hasher.finish() & 0xFFFF) as u16
-                });
+                let sheet_id = sheet
+                    .as_ref()
+                    .map(|s| sheet_registry.get_id(s).unwrap_or(0));
                 CompactRefType::Cell {
                     sheet_id,
                     row: *row,
@@ -339,12 +347,9 @@ impl DataStore {
                 end_row,
                 end_col,
             } => {
-                let sheet_id = sheet.as_ref().map(|s| {
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = rustc_hash::FxHasher::default();
-                    s.hash(&mut hasher);
-                    (hasher.finish() & 0xFFFF) as u16
-                });
+                let sheet_id = sheet
+                    .as_ref()
+                    .map(|s| sheet_registry.get_id(s).unwrap_or(0));
                 // For optional range bounds, use 0 as sentinel for unbounded
                 CompactRefType::Range {
                     sheet_id,
@@ -369,7 +374,11 @@ impl DataStore {
     }
 
     /// Reconstruct an ASTNode from arena representation
-    fn reconstruct_ast_node(&self, id: AstNodeId) -> Option<ASTNode> {
+    fn reconstruct_ast_node(
+        &self,
+        id: AstNodeId,
+        sheet_registry: &SheetRegistry,
+    ) -> Option<ASTNode> {
         use super::ast::AstNodeData;
 
         let node_data = self.asts.get(id)?;
@@ -385,7 +394,7 @@ impl DataStore {
                 ref_type,
             } => {
                 let original = self.asts.resolve_string(*original_id).to_string();
-                let reference = self.reconstruct_reference_type(ref_type);
+                let reference = self.reconstruct_reference_type(ref_type, sheet_registry);
                 ASTNodeType::Reference {
                     original,
                     reference,
@@ -394,7 +403,7 @@ impl DataStore {
 
             AstNodeData::UnaryOp { op_id, expr_id } => {
                 let op = self.asts.resolve_string(*op_id).to_string();
-                let expr = Box::new(self.reconstruct_ast_node(*expr_id)?);
+                let expr = Box::new(self.reconstruct_ast_node(*expr_id, sheet_registry)?);
                 ASTNodeType::UnaryOp { op, expr }
             }
 
@@ -404,8 +413,8 @@ impl DataStore {
                 right_id,
             } => {
                 let op = self.asts.resolve_string(*op_id).to_string();
-                let left = Box::new(self.reconstruct_ast_node(*left_id)?);
-                let right = Box::new(self.reconstruct_ast_node(*right_id)?);
+                let left = Box::new(self.reconstruct_ast_node(*left_id, sheet_registry)?);
+                let right = Box::new(self.reconstruct_ast_node(*right_id, sheet_registry)?);
                 ASTNodeType::BinaryOp { op, left, right }
             }
 
@@ -414,7 +423,7 @@ impl DataStore {
                 let arg_ids = self.asts.get_function_args(id)?;
                 let args: Vec<ASTNode> = arg_ids
                     .iter()
-                    .filter_map(|&arg_id| self.reconstruct_ast_node(arg_id))
+                    .filter_map(|&arg_id| self.reconstruct_ast_node(arg_id, sheet_registry))
                     .collect();
                 ASTNodeType::Function { name, args }
             }
@@ -428,7 +437,7 @@ impl DataStore {
                     for c in 0..*cols {
                         let idx = (r * *cols + c) as usize;
                         if let Some(&elem_id) = elements.get(idx) {
-                            if let Some(node) = self.reconstruct_ast_node(elem_id) {
+                            if let Some(node) = self.reconstruct_ast_node(elem_id, sheet_registry) {
                                 row.push(node);
                             }
                         }
@@ -447,11 +456,14 @@ impl DataStore {
     }
 
     /// Reconstruct a ReferenceType from CompactRefType
-    fn reconstruct_reference_type(&self, ref_type: &CompactRefType) -> ReferenceType {
+    fn reconstruct_reference_type(
+        &self,
+        ref_type: &CompactRefType,
+        sheet_registry: &SheetRegistry,
+    ) -> ReferenceType {
         match ref_type {
             CompactRefType::Cell { sheet_id, row, col } => {
-                // TODO: Proper sheet name lookup from sheet_id
-                let sheet = sheet_id.map(|_| "Sheet1".to_string());
+                let sheet = sheet_id.map(|id| sheet_registry.name(id).to_string());
                 ReferenceType::Cell {
                     sheet,
                     row: *row,
@@ -466,7 +478,7 @@ impl DataStore {
                 end_row,
                 end_col,
             } => {
-                let sheet = sheet_id.map(|_| "Sheet1".to_string());
+                let sheet = sheet_id.map(|id| sheet_registry.name(id).to_string());
                 // Convert sentinel values back to None
                 ReferenceType::Range {
                     sheet,
@@ -508,55 +520,10 @@ impl DataStore {
         }
     }
 
-    /// Store an error, using cache for common errors
+    /// Store an error with message preservation
     fn store_error(&mut self, error: &ExcelError) -> ValueRef {
-        let kind = error.kind;
-
-        if let Some(&cached) = self.error_cache.get(&kind) {
-            return cached;
-        }
-
-        // Map error kind to a 4-bit code
-        let code = match kind {
-            ExcelErrorKind::Div => 0,
-            ExcelErrorKind::Na => 1,
-            ExcelErrorKind::Name => 2,
-            ExcelErrorKind::Null => 3,
-            ExcelErrorKind::Num => 4,
-            ExcelErrorKind::Ref => 5,
-            ExcelErrorKind::Value => 6,
-            ExcelErrorKind::Error => 7,
-            ExcelErrorKind::NImpl => 8,
-            ExcelErrorKind::Spill => 9,
-            ExcelErrorKind::Calc => 10,
-            ExcelErrorKind::Circ => 11,
-            ExcelErrorKind::Cancelled => 12,
-        };
-
-        let value_ref = ValueRef::error(code);
-        self.error_cache.insert(kind, value_ref);
-        value_ref
-    }
-
-    /// Convert error code back to ExcelError
-    fn error_from_code(&self, code: u8) -> ExcelError {
-        let kind = match code {
-            0 => ExcelErrorKind::Div,
-            1 => ExcelErrorKind::Na,
-            2 => ExcelErrorKind::Name,
-            3 => ExcelErrorKind::Null,
-            4 => ExcelErrorKind::Num,
-            5 => ExcelErrorKind::Ref,
-            6 => ExcelErrorKind::Value,
-            7 => ExcelErrorKind::Error,
-            8 => ExcelErrorKind::NImpl,
-            9 => ExcelErrorKind::Spill,
-            10 => ExcelErrorKind::Calc,
-            11 => ExcelErrorKind::Circ,
-            12 => ExcelErrorKind::Cancelled,
-            _ => ExcelErrorKind::Value,
-        };
-        ExcelError::new(kind)
+        let error_ref = self.errors.insert(error);
+        ValueRef::error(error_ref.as_u32())
     }
 
     /// Get memory usage statistics
@@ -566,10 +533,12 @@ impl DataStore {
             string_bytes: self.strings.memory_usage(),
             array_bytes: self.arrays.memory_usage(),
             ast_bytes: self.asts.memory_usage(),
+            error_bytes: self.errors.memory_usage(),
             total_scalars: self.scalars.len(),
             total_strings: self.strings.len(),
             total_arrays: self.arrays.len(),
             total_ast_nodes: self.asts.stats().node_count,
+            total_errors: self.errors.len(),
         }
     }
 
@@ -579,7 +548,7 @@ impl DataStore {
         self.strings.clear();
         self.arrays.clear();
         self.asts.clear();
-        self.error_cache.clear();
+        self.errors.clear();
     }
 }
 
@@ -596,15 +565,17 @@ pub struct DataStoreStats {
     pub string_bytes: usize,
     pub array_bytes: usize,
     pub ast_bytes: usize,
+    pub error_bytes: usize,
     pub total_scalars: usize,
     pub total_strings: usize,
     pub total_arrays: usize,
     pub total_ast_nodes: usize,
+    pub total_errors: usize,
 }
 
 impl DataStoreStats {
     pub fn total_bytes(&self) -> usize {
-        self.scalar_bytes + self.string_bytes + self.array_bytes + self.ast_bytes
+        self.scalar_bytes + self.string_bytes + self.array_bytes + self.ast_bytes + self.error_bytes
     }
 }
 
@@ -703,14 +674,16 @@ mod tests {
     #[test]
     fn test_data_store_ast_literal() {
         let mut store = DataStore::new();
+        let mut sheet_registry = crate::SheetRegistry::new();
+        sheet_registry.id_for("Sheet1");
 
         let ast = ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Number(42.0)),
             source_token: None,
         };
 
-        let ast_id = store.store_ast(&ast);
-        let retrieved = store.retrieve_ast(ast_id).unwrap();
+        let ast_id = store.store_ast(&ast, &sheet_registry);
+        let retrieved = store.retrieve_ast(ast_id, &sheet_registry).unwrap();
 
         match retrieved.node_type {
             ASTNodeType::Literal(lit) => assert_eq!(lit, LiteralValue::Number(42.0)),
@@ -721,6 +694,8 @@ mod tests {
     #[test]
     fn test_data_store_ast_binary_op() {
         let mut store = DataStore::new();
+        let mut sheet_registry = crate::SheetRegistry::new();
+        sheet_registry.id_for("Sheet1");
 
         let ast = ASTNode {
             node_type: ASTNodeType::BinaryOp {
@@ -737,8 +712,8 @@ mod tests {
             source_token: None,
         };
 
-        let ast_id = store.store_ast(&ast);
-        let retrieved = store.retrieve_ast(ast_id).unwrap();
+        let ast_id = store.store_ast(&ast, &sheet_registry);
+        let retrieved = store.retrieve_ast(ast_id, &sheet_registry).unwrap();
 
         match retrieved.node_type {
             ASTNodeType::BinaryOp { op, left, right } => {
@@ -759,6 +734,8 @@ mod tests {
     #[test]
     fn test_data_store_ast_function() {
         let mut store = DataStore::new();
+        let mut sheet_registry = crate::SheetRegistry::new();
+        sheet_registry.id_for("Sheet1");
 
         let ast = ASTNode {
             node_type: ASTNodeType::Function {
@@ -777,8 +754,8 @@ mod tests {
             source_token: None,
         };
 
-        let ast_id = store.store_ast(&ast);
-        let retrieved = store.retrieve_ast(ast_id).unwrap();
+        let ast_id = store.store_ast(&ast, &sheet_registry);
+        let retrieved = store.retrieve_ast(ast_id, &sheet_registry).unwrap();
 
         match retrieved.node_type {
             ASTNodeType::Function { name, args } => {

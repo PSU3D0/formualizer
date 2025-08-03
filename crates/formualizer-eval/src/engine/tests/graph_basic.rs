@@ -43,10 +43,7 @@ fn test_vertex_creation_and_lookup() {
         .unwrap();
     assert_eq!(graph.get_vertex_sheet_id(vertex_id), 0);
     assert_eq!(graph.get_vertex_kind(vertex_id), VertexKind::Cell);
-    assert_eq!(
-        graph.get_value(vertex_id),
-        Some(&LiteralValue::Number(3.14))
-    );
+    assert_eq!(graph.get_value(vertex_id), Some(LiteralValue::Number(3.14)));
 }
 
 #[test]

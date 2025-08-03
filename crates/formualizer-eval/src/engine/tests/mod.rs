@@ -1,3 +1,4 @@
+mod arena_debug;
 mod cancellation;
 mod common;
 mod cycle_detection;
