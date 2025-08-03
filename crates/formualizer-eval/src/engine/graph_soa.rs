@@ -200,6 +200,10 @@ impl DependencyGraph {
         &self.stripe_to_dependents
     }
 
+    pub(crate) fn vertex_len(&self) -> usize {
+        self.store.len()
+    }
+
     /// Set a value in a cell, returns affected vertex IDs
     pub fn set_cell_value(
         &mut self,
@@ -216,7 +220,7 @@ impl DependencyGraph {
         let vertex_id = if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
             // Check if it was a formula and remove dependencies
             let is_formula = match self.store.kind(existing_id) {
-                VertexKind::FormulaScalar { .. } | VertexKind::FormulaArray { .. } => true,
+                VertexKind::FormulaScalar | VertexKind::FormulaArray => true,
                 _ => false,
             };
 
@@ -281,16 +285,10 @@ impl DependencyGraph {
         self.remove_dependent_edges(addr_vertex_id);
 
         // Update vertex properties
-        self.store.set_kind(
-            addr_vertex_id,
-            VertexKind::FormulaScalar {
-                ast: ast.clone(), // Temporary clone until Phase 1 arenas
-                result: None,
-                dirty: true,
-                volatile,
-            },
-        );
+        self.store
+            .set_kind(addr_vertex_id, VertexKind::FormulaScalar);
         self.formulas.insert(addr_vertex_id, ast);
+        self.store.set_dirty(addr_vertex_id, true);
 
         // Clear any cached value since this is now a formula
         self.values.remove(&addr_vertex_id);
@@ -321,25 +319,30 @@ impl DependencyGraph {
         let addr = CellRef::new(sheet_id, coord);
 
         self.cell_to_vertex.get(&addr).and_then(|&vertex_id| {
-            // First check the cached values for formulas
-            if let Some(value) = self.values.get(&vertex_id) {
-                return Some(value.clone());
-            }
-
-            // Then check if it's a value vertex
-            let view = self.store.view(vertex_id);
-            match view.kind() {
-                super::vertex::VertexKind::Value(ref v) => Some(v.clone()),
-                _ => None, // Formula without cached value or empty cell
-            }
+            // Check values hashmap (stores both cell values and formula results)
+            self.values.get(&vertex_id).cloned()
         })
     }
 
     /// Mark vertex dirty and propagate to dependents
     fn mark_dirty(&mut self, vertex_id: VertexId) -> Vec<VertexId> {
         let mut affected = FxHashSet::default();
-        let mut to_visit = vec![vertex_id];
+        let mut to_visit = Vec::new();
         let mut visited_for_propagation = FxHashSet::default();
+
+        // Only mark the source vertex as dirty if it's a formula
+        // Value cells don't get marked dirty themselves but are still affected
+        let is_formula = matches!(
+            self.store.kind(vertex_id),
+            VertexKind::FormulaScalar | VertexKind::FormulaArray
+        );
+
+        if is_formula {
+            to_visit.push(vertex_id);
+        } else {
+            // Value cells are affected (for tracking) but not marked dirty
+            affected.insert(vertex_id);
+        }
 
         // Initial propagation from direct and range dependents
         {
@@ -453,7 +456,7 @@ impl DependencyGraph {
                 // Only include formula vertices
                 matches!(
                     self.store.kind(id),
-                    VertexKind::FormulaScalar { .. } | VertexKind::FormulaArray { .. }
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
                 )
             })
             .collect();
@@ -868,111 +871,60 @@ impl DependencyGraph {
         }
     }
 
-    // Compatibility layer for scheduler - creates temporary Vertex struct
-    pub(crate) fn vertices(&mut self) -> Vec<super::vertex::Vertex> {
-        let mut vertices = Vec::with_capacity(self.store.len());
-
-        for i in 0..self.store.len() {
-            let id = VertexId(i as u32 + FIRST_NORMAL_VERTEX);
-            let view = self.store.view(id);
-
-            // Get dependencies from CSR edges
-            let dependencies = self.edges.out_edges(id);
-
-            // Get dependents (handles delta correctly)
-            let dependents = self.get_dependents(id);
-
-            // Create vertex with appropriate kind
-            let kind = match self.store.kind(id) {
-                VertexKind::Empty => VertexKind::Empty,
-                VertexKind::Cell => {
-                    if let Some(value) = self.values.get(&id) {
-                        VertexKind::Value(value.clone())
-                    } else {
-                        VertexKind::Empty
-                    }
-                }
-                VertexKind::FormulaScalar { .. } => {
-                    if let Some(ast) = self.formulas.get(&id) {
-                        VertexKind::FormulaScalar {
-                            ast: ast.clone(),
-                            result: self.values.get(&id).cloned(),
-                            dirty: view.is_dirty(),
-                            volatile: view.is_volatile(),
-                        }
-                    } else {
-                        VertexKind::Empty
-                    }
-                }
-                kind => kind,
-            };
-
-            vertices.push(super::vertex::Vertex {
-                kind,
-                sheet_id: view.sheet_id(),
-                row: Some(view.row()),
-                col: Some(view.col()),
-                dependencies,
-                dependents: dependents.to_vec(),
-            });
-        }
-
-        vertices
-    }
-
-    /// Gets a reference to a vertex by its ID.
-    pub(crate) fn get_vertex(&self, vertex_id: VertexId) -> Option<super::vertex::Vertex> {
-        if vertex_id.0 < FIRST_NORMAL_VERTEX
-            || (vertex_id.0 - FIRST_NORMAL_VERTEX) as usize >= self.store.len()
-        {
-            return None;
-        }
-
-        let view = self.store.view(vertex_id);
-        let dependencies = self.edges.out_edges(vertex_id);
-
-        // Get dependents from reverse edges
-        let dependents = self.edges.in_edges(vertex_id);
-
-        // Create vertex with appropriate kind
-        let store_kind = self.store.kind(vertex_id);
-        let kind = match store_kind {
-            VertexKind::Empty => VertexKind::Empty,
-            VertexKind::Cell => {
-                if let Some(value) = self.values.get(&vertex_id) {
-                    VertexKind::Value(value.clone())
-                } else {
-                    VertexKind::Empty
-                }
-            }
-            VertexKind::FormulaScalar { .. } => {
-                if let Some(ast) = self.formulas.get(&vertex_id) {
-                    VertexKind::FormulaScalar {
-                        ast: ast.clone(),
-                        result: self.values.get(&vertex_id).cloned(),
-                        dirty: view.is_dirty(),
-                        volatile: view.is_volatile(),
-                    }
-                } else {
-                    VertexKind::Empty
-                }
-            }
-            kind => kind,
-        };
-
-        Some(super::vertex::Vertex {
-            kind,
-            sheet_id: view.sheet_id(),
-            row: Some(view.row()),
-            col: Some(view.col()),
-            dependencies,
-            dependents: dependents.to_vec(),
-        })
-    }
+    // Removed: vertices() and get_vertex() methods - no longer needed with SoA
+    // The old AoS Vertex struct has been eliminated in favor of direct
+    // access to columnar data through the VertexStore
 
     /// Updates the cached value of a formula vertex.
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
         self.values.insert(vertex_id, value);
+    }
+
+    /// Check if a vertex exists
+    pub(crate) fn vertex_exists(&self, vertex_id: VertexId) -> bool {
+        if vertex_id.0 < FIRST_NORMAL_VERTEX {
+            return false;
+        }
+        let index = (vertex_id.0 - FIRST_NORMAL_VERTEX) as usize;
+        index < self.store.len()
+    }
+
+    /// Get the kind of a vertex
+    pub(crate) fn get_vertex_kind(&self, vertex_id: VertexId) -> VertexKind {
+        self.store.kind(vertex_id)
+    }
+
+    /// Get the sheet ID of a vertex
+    pub(crate) fn get_vertex_sheet_id(&self, vertex_id: VertexId) -> SheetId {
+        self.store.sheet_id(vertex_id)
+    }
+
+    /// Get the formula AST for a vertex
+    pub(crate) fn get_formula(&self, vertex_id: VertexId) -> Option<&ASTNode> {
+        self.formulas.get(&vertex_id)
+    }
+
+    /// Get the value stored for a vertex
+    pub(crate) fn get_value(&self, vertex_id: VertexId) -> Option<&LiteralValue> {
+        self.values.get(&vertex_id)
+    }
+
+    /// Get the cell reference for a vertex
+    pub(crate) fn get_cell_ref(&self, vertex_id: VertexId) -> Option<CellRef> {
+        let packed_coord = self.store.coord(vertex_id);
+        let sheet_id = self.store.sheet_id(vertex_id);
+        let coord = Coord::new(packed_coord.row(), packed_coord.col(), true, true);
+        Some(CellRef::new(sheet_id, coord))
+    }
+
+    /// Check if a vertex is dirty
+    pub(crate) fn is_dirty(&self, vertex_id: VertexId) -> bool {
+        self.store.is_dirty(vertex_id)
+    }
+
+    /// Check if a vertex is volatile
+    pub(crate) fn is_volatile(&self, vertex_id: VertexId) -> bool {
+        self.store.is_volatile(vertex_id)
     }
 
     /// Get vertex ID for a cell address

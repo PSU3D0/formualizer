@@ -97,7 +97,7 @@ impl<'a> Interpreter<'a> {
             "%" => self.apply_number_unary(v, |n| n / 100.0),
             _ => {
                 Err(ExcelError::new(ExcelErrorKind::NImpl)
-                    .with_message(format!("Unary op '{}'", op)))
+                    .with_message(format!("Unary op '{op}'")))
             }
         }
     }
@@ -144,7 +144,7 @@ impl<'a> Interpreter<'a> {
                 .with_message("Range operator ':' inside value context")),
             _ => {
                 Err(ExcelError::new(ExcelErrorKind::NImpl)
-                    .with_message(format!("Binary op '{}'", op)))
+                    .with_message(format!("Binary op '{op}'")))
             }
         }
     }
@@ -320,7 +320,7 @@ impl<'a> Interpreter<'a> {
             Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
             Text(s) => s.trim().parse::<f64>().map_err(|_| {
                 ExcelError::new(ExcelErrorKind::Value)
-                    .with_message(format!("Cannot convert '{}' to number", s))
+                    .with_message(format!("Cannot convert '{s}' to number"))
             }),
             Empty => Ok(0.0),
             _ if v.as_serial_number().is_some() => Ok(v.as_serial_number().unwrap()),
@@ -338,7 +338,7 @@ impl<'a> Interpreter<'a> {
             Boolean(b) => if *b { "TRUE" } else { "FALSE" }.into(),
             Error(e) => e.to_string(),
             Empty => "".into(),
-            _ => format!("{:?}", v),
+            _ => format!("{v:?}"),
         }
     }
 

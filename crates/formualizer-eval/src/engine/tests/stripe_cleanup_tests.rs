@@ -192,7 +192,7 @@ fn test_remove_dependent_edges_cleans_block_stripes() {
     let block_stripe_key = StripeKey {
         sheet_id: 0,
         stripe_type: StripeType::Block,
-        index: crate::engine::graph::block_index(1, 1),
+        index: crate::engine::graph_soa::block_index(1, 1),
     };
 
     assert!(
@@ -293,7 +293,7 @@ fn test_remove_dependent_edges_handles_multiple_stripes() {
             let block_key = StripeKey {
                 sheet_id: 0,
                 stripe_type: StripeType::Block,
-                index: crate::engine::graph::block_index(block_row * 32, block_col * 32),
+                index: crate::engine::graph_soa::block_index(block_row * 32, block_col * 32),
             };
             if let Some(deps) = stripes.get(&block_key) {
                 if deps.contains(&formula_id) {
@@ -503,7 +503,7 @@ fn test_mixed_stripe_types_cleanup() {
             expected_block_stripes.push(StripeKey {
                 sheet_id: 0,
                 stripe_type: StripeType::Block,
-                index: crate::engine::graph::block_index(block_row * 32, block_col * 32),
+                index: crate::engine::graph_soa::block_index(block_row * 32, block_col * 32),
             });
         }
     }

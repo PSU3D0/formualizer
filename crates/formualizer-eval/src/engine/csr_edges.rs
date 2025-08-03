@@ -585,6 +585,12 @@ pub struct CsrBuilder {
     coords: Vec<PackedCoord>,
 }
 
+impl Default for CsrBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CsrBuilder {
     pub fn new() -> Self {
         Self {

@@ -45,11 +45,15 @@ fn test_tiny_range_expands_to_cell_dependencies() {
     let c1_id = *graph
         .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
         .unwrap();
-    let c1_vertex = graph.get_vertex(c1_id).unwrap();
+    let c1_vertex = graph
+        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
+        .unwrap();
+
+    let dependencies = graph.get_dependencies(c1_id);
 
     // Should have 4 direct dependencies
     assert_eq!(
-        c1_vertex.dependencies.len(),
+        dependencies.len(),
         4,
         "Should expand to 4 cell dependencies"
     );
@@ -62,9 +66,9 @@ fn test_tiny_range_expands_to_cell_dependencies() {
 
     // Verify the dependencies are correct
     let mut dep_addrs = Vec::new();
-    for &dep_id in &c1_vertex.dependencies {
-        let dep_vertex = graph.get_vertex(dep_id).unwrap();
-        dep_addrs.push((dep_vertex.row.unwrap(), dep_vertex.col.unwrap()));
+    for &dep_id in &dependencies {
+        let cell_ref = graph.get_cell_ref(dep_id).unwrap();
+        dep_addrs.push((cell_ref.coord.row, cell_ref.coord.col));
     }
     dep_addrs.sort();
     let expected_addrs = vec![(1, 1), (2, 1), (3, 1), (4, 1)];
@@ -160,11 +164,11 @@ fn test_large_range_creates_single_compressed_ref() {
     let c1_id = *graph
         .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
         .unwrap();
-    let c1_vertex = graph.get_vertex(c1_id).unwrap();
+    let c1_dependencies = graph.get_dependencies(c1_id);
 
     // Should have no direct dependencies
     assert!(
-        c1_vertex.dependencies.is_empty(),
+        c1_dependencies.is_empty(),
         "Should not have any direct cell dependencies"
     );
 

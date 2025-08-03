@@ -134,23 +134,39 @@ where
     /// Evaluate a single vertex.
     /// This is the core of the sequential evaluation logic for Milestone 3.1.
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
-        let (ast, sheet_id) = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
-            match &vertex.kind {
-                VertexKind::FormulaScalar { ast, .. } => (ast.clone(), vertex.sheet_id),
-                // For now, empty cells evaluate to 0, consistent with Excel.
-                VertexKind::Empty => return Ok(LiteralValue::Int(0)),
-                // Already evaluated or a literal value.
-                VertexKind::Value(v) => return Ok(v.clone()),
-                _ => {
-                    return Ok(LiteralValue::Error(
-                        ExcelError::new(formualizer_common::ExcelErrorKind::Na)
-                            .with_message("Array formulas not yet supported".to_string()),
-                    ));
+        // Check if vertex exists
+        if !self.graph.vertex_exists(vertex_id) {
+            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
+                .with_message(format!("Vertex not found: {vertex_id:?}")));
+        }
+
+        // Get vertex kind and check if it needs evaluation
+        let kind = self.graph.get_vertex_kind(vertex_id);
+        let sheet_id = self.graph.get_vertex_sheet_id(vertex_id);
+
+        let ast = match kind {
+            VertexKind::FormulaScalar => {
+                // Get the formula AST
+                if let Some(ast) = self.graph.get_formula(vertex_id) {
+                    ast.clone()
+                } else {
+                    return Ok(LiteralValue::Int(0));
                 }
             }
-        } else {
-            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
-                .with_message(format!("Vertex not found: {:?}", vertex_id)));
+            VertexKind::Empty | VertexKind::Cell => {
+                // Check if there's a value stored
+                if let Some(value) = self.graph.get_value(vertex_id) {
+                    return Ok(value.clone());
+                } else {
+                    return Ok(LiteralValue::Int(0)); // Empty cells evaluate to 0
+                }
+            }
+            _ => {
+                return Ok(LiteralValue::Error(
+                    ExcelError::new(formualizer_common::ExcelErrorKind::Na)
+                        .with_message("Array formulas not yet supported".to_string()),
+                ));
+            }
         };
 
         // The interpreter uses a reference to the engine as the context.
@@ -493,7 +509,7 @@ where
         let row_str = &cell_part[col_end..];
 
         let row = row_str.parse::<u32>().map_err(|_| {
-            ExcelError::new(ExcelErrorKind::Ref).with_message(format!("Invalid row: {}", row_str))
+            ExcelError::new(ExcelErrorKind::Ref).with_message(format!("Invalid row: {row_str}"))
         })?;
 
         let mut col = 0;
@@ -522,15 +538,14 @@ where
                 continue; // Already processed
             }
 
-            if let Some(vertex) = self.graph.get_vertex(vertex_id) {
+            if self.graph.vertex_exists(vertex_id) {
                 // Check if this vertex needs evaluation
-                let needs_eval = match &vertex.kind {
-                    super::vertex::VertexKind::FormulaScalar {
-                        dirty, volatile, ..
-                    } => *dirty || *volatile,
-                    super::vertex::VertexKind::FormulaArray {
-                        dirty, volatile, ..
-                    } => *dirty || *volatile,
+                let kind = self.graph.get_vertex_kind(vertex_id);
+                let needs_eval = match kind {
+                    super::vertex::VertexKind::FormulaScalar
+                    | super::vertex::VertexKind::FormulaArray => {
+                        self.graph.is_dirty(vertex_id) || self.graph.is_volatile(vertex_id)
+                    }
                     _ => false, // Values and empty cells don't need evaluation
                 };
 
@@ -539,7 +554,8 @@ where
                 }
 
                 // Continue traversal to dependencies (precedents)
-                for &dep_id in &vertex.dependencies {
+                let dependencies = self.graph.get_dependencies(vertex_id);
+                for &dep_id in &dependencies {
                     if !visited.contains(&dep_id) {
                         stack.push(dep_id);
                     }
@@ -683,23 +699,39 @@ where
 
     /// Evaluate a single vertex without mutating the graph (for parallel evaluation)
     fn evaluate_vertex_immutable(&self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
-        let (ast, sheet_id) = if let Some(vertex) = self.graph.get_vertex(vertex_id) {
-            match &vertex.kind {
-                VertexKind::FormulaScalar { ast, .. } => (ast.clone(), vertex.sheet_id),
-                // For now, empty cells evaluate to 0, consistent with Excel.
-                VertexKind::Empty => return Ok(LiteralValue::Int(0)),
-                // Already evaluated or a literal value.
-                VertexKind::Value(v) => return Ok(v.clone()),
-                _ => {
-                    return Ok(LiteralValue::Error(
-                        ExcelError::new(formualizer_common::ExcelErrorKind::Na)
-                            .with_message("Array formulas not yet supported".to_string()),
-                    ));
+        // Check if vertex exists
+        if !self.graph.vertex_exists(vertex_id) {
+            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
+                .with_message(format!("Vertex not found: {vertex_id:?}")));
+        }
+
+        // Get vertex kind and check if it needs evaluation
+        let kind = self.graph.get_vertex_kind(vertex_id);
+        let sheet_id = self.graph.get_vertex_sheet_id(vertex_id);
+
+        let ast = match kind {
+            VertexKind::FormulaScalar => {
+                // Get the formula AST
+                if let Some(ast) = self.graph.get_formula(vertex_id) {
+                    ast.clone()
+                } else {
+                    return Ok(LiteralValue::Int(0));
                 }
             }
-        } else {
-            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
-                .with_message(format!("Vertex not found: {:?}", vertex_id)));
+            VertexKind::Empty | VertexKind::Cell => {
+                // Check if there's a value stored
+                if let Some(value) = self.graph.get_value(vertex_id) {
+                    return Ok(value.clone());
+                } else {
+                    return Ok(LiteralValue::Int(0)); // Empty cells evaluate to 0
+                }
+            }
+            _ => {
+                return Ok(LiteralValue::Error(
+                    ExcelError::new(formualizer_common::ExcelErrorKind::Na)
+                        .with_message("Array formulas not yet supported".to_string()),
+                ));
+            }
         };
 
         // The interpreter uses a reference to the engine as the context

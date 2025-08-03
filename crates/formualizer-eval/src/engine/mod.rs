@@ -3,7 +3,6 @@
 //! Provides incremental formula evaluation with dependency tracking.
 
 pub mod eval;
-pub mod graph;
 pub mod graph_soa;
 pub mod range_stream;
 pub mod scheduler;
@@ -27,7 +26,7 @@ pub use graph_soa::{
     block_index,
 };
 pub use scheduler::{Layer, Schedule, Scheduler};
-pub use vertex::{Vertex, VertexId, VertexKind};
+pub use vertex::{VertexId, VertexKind};
 
 // CalcObserver is defined below
 

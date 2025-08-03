@@ -36,16 +36,17 @@ fn test_vertex_creation_and_lookup() {
     assert_eq!(updated_value, Some(LiteralValue::Number(3.14)));
 
     // Verify internal structure
-    assert_eq!(graph.vertices().len(), 1); // Only A1 exists
-    let vertex = &graph.vertices()[0];
-    assert_eq!(vertex.sheet_id, 0);
-    assert_eq!(vertex.row, Some(1));
-    assert_eq!(vertex.col, Some(1));
-
-    match &vertex.kind {
-        VertexKind::Value(v) => assert_eq!(*v, LiteralValue::Number(3.14)),
-        _ => panic!("Expected VertexKind::Value"),
-    }
+    assert_eq!(graph.vertex_len(), 1); // Only A1 exists
+    let vertex_id = *graph
+        .cell_to_vertex()
+        .get(&CellRef::new(0, Coord::new(1, 1, true, true)))
+        .unwrap();
+    assert_eq!(graph.get_vertex_sheet_id(vertex_id), 0);
+    assert_eq!(graph.get_vertex_kind(vertex_id), VertexKind::Cell);
+    assert_eq!(
+        graph.get_value(vertex_id),
+        Some(&LiteralValue::Number(3.14))
+    );
 }
 
 #[test]
@@ -126,21 +127,9 @@ fn test_vertex_kind_transitions() {
     // Verify the vertex kind changed
     let vertex_ids = get_vertex_ids_in_order(&graph);
     assert_eq!(vertex_ids.len(), 1);
-    if let Some(vertex) = graph.get_vertex(vertex_ids[0]) {
-        match &vertex.kind {
-            VertexKind::FormulaScalar {
-                dirty,
-                volatile,
-                result,
-                ..
-            } => {
-                assert!(*dirty);
-                assert!(!*volatile);
-                assert_eq!(*result, None);
-            }
-            _ => panic!("Expected VertexKind::FormulaScalar after setting formula"),
-        }
-    }
+    assert!(graph.is_dirty(vertex_ids[0]));
+    assert!(!graph.is_volatile(vertex_ids[0]));
+    assert_eq!(graph.get_cell_value("Sheet1", 1, 1), None);
 
     // Transition back to value
     graph
@@ -152,12 +141,10 @@ fn test_vertex_kind_transitions() {
     );
 
     // Verify vertex kind changed back
-    if let Some(vertex) = graph.get_vertex(vertex_ids[0]) {
-        match &vertex.kind {
-            VertexKind::Value(v) => assert_eq!(*v, LiteralValue::Text("hello".to_string())),
-            _ => panic!("Expected VertexKind::Value after setting value"),
-        }
-    }
+    assert_eq!(
+        graph.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Text("hello".to_string()))
+    );
 }
 
 #[test]
@@ -180,15 +167,14 @@ fn test_placeholder_creation() {
 
     // Verify B1 is an Empty vertex
     let b1_id = *graph.cell_to_vertex().get(&b1_addr).unwrap();
-    if let Some(b1_vertex) = graph.get_vertex(b1_id) {
-        assert!(matches!(b1_vertex.kind, VertexKind::Empty));
-    }
+    assert!(matches!(graph.get_vertex_kind(b1_id), VertexKind::Empty));
 
     // Verify A1 is a Formula vertex
     let a1_id = *graph.cell_to_vertex().get(&a1_addr).unwrap();
-    if let Some(a1_vertex) = graph.get_vertex(a1_id) {
-        assert!(matches!(a1_vertex.kind, VertexKind::FormulaScalar { .. }));
-    }
+    assert!(matches!(
+        graph.get_vertex_kind(a1_id),
+        VertexKind::FormulaScalar
+    ));
 }
 
 #[test]

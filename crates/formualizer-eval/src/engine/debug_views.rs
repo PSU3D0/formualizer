@@ -195,7 +195,7 @@ impl<'s> fmt::Display for VertexView<'s> {
         let row_1based = self.row() + 1;
 
         if self.sheet_id() == 0 {
-            write!(f, "{}{}", col_letters, row_1based)
+            write!(f, "{col_letters}{row_1based}")
         } else {
             write!(f, "Sheet{}!{}{}", self.sheet_id(), col_letters, row_1based)
         }
@@ -308,7 +308,7 @@ impl VertexStore {
     /// Debug helper to dump vertex info
     pub fn debug_vertex(&self, id: VertexId) -> String {
         let view = self.view(id);
-        format!("{:?}", view)
+        format!("{view:?}")
     }
 
     /// Debug helper to dump a range of vertices

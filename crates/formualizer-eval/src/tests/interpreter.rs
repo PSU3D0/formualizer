@@ -45,7 +45,7 @@ fn coerce_num(v: &LiteralValue) -> Result<f64, ExcelError> {
         LiteralValue::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
         LiteralValue::Empty => Ok(0.0),
         _ => Err(ExcelError::new(ExcelErrorKind::Value)
-            .with_message(format!("Cannot convert {:?} to number", v))),
+            .with_message(format!("Cannot convert {v:?} to number"))),
     }
 }
 

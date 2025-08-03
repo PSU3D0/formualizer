@@ -19,8 +19,8 @@ impl PackedCoord {
     /// - Column must be <= 16,383 (14 bits)
     /// - Reserved bits [63:44] and [9:0] MUST remain zero
     pub fn new(row: u32, col: u32) -> Self {
-        assert!(row <= 0x000FFFFF, "Row {} exceeds 20 bits", row);
-        assert!(col <= 0x00003FFF, "Col {} exceeds 14 bits", col);
+        assert!(row <= 0x000FFFFF, "Row {row} exceeds 20 bits");
+        assert!(col <= 0x00003FFF, "Col {col} exceeds 14 bits");
         Self((row as u64) << 24 | (col as u64) << 10)
     }
 

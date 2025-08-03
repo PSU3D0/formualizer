@@ -133,7 +133,7 @@ impl Coord {
     pub fn letters_to_col(s: &str) -> Option<u32> {
         let mut col: u32 = 0;
         for (i, ch) in s.bytes().enumerate() {
-            if !(b'A'..=b'Z').contains(&ch) {
+            if !ch.is_ascii_uppercase() {
                 return None;
             }
             let val = (ch - b'A') as u32;

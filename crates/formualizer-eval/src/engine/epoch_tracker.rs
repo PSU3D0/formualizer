@@ -241,8 +241,7 @@ impl EpochTracker {
     pub fn begin_read(&self, thread_id: usize) -> ReadGuard {
         assert!(
             thread_id < MAX_THREADS,
-            "Thread ID {} exceeds MAX_THREADS",
-            thread_id
+            "Thread ID {thread_id} exceeds MAX_THREADS"
         );
 
         let epoch = self.current_epoch.load(Ordering::Acquire);

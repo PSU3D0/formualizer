@@ -24,7 +24,7 @@ macro_rules! arg {
             V::Int(i) => Ok(*i as f64),
             V::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
             V::Empty => Ok(0.0),
-            V::Error(e) => Err(crate::error::ExcelError::from(e.clone())),
+            V::Error(e) => Err($crate::error::ExcelError::from(e.clone())),
             _ => Err(crate::error::ExcelError::new(
                 crate::error::ExcelErrorKind::Value,
             )),

@@ -63,8 +63,8 @@ impl<'g> Iterator for RangeStream<'g> {
         let value = self
             .graph
             .get_vertex_id_for_address(&addr)
-            .and_then(|id| self.graph.get_vertex(*id))
-            .map(|v| v.value().into_owned())
+            .and_then(|id| self.graph.get_value(*id))
+            .cloned()
             .unwrap_or(LiteralValue::Empty);
 
         if self.current_row == self.end_row && self.current_col == self.end_col {

@@ -3,7 +3,7 @@ use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::{
     borrow::Borrow,
-    hash::{Hash, Hasher},
+    hash::Hash,
     sync::Arc,
 };
 
@@ -33,7 +33,7 @@ impl<'a> From<&'a FnKey> for &'a FnKeyRef<'a> {
     }
 }
 
-static REG: Lazy<DashMap<FnKey, Arc<dyn Function>>> = Lazy::new(|| DashMap::new());
+static REG: Lazy<DashMap<FnKey, Arc<dyn Function>>> = Lazy::new(DashMap::new);
 
 pub fn register(f: Arc<dyn Function>) {
     REG.insert(

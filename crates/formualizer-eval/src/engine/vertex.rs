@@ -1,8 +1,3 @@
-use crate::SheetId;
-use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
-use std::borrow::Cow;
-
 /// 🔮 Scalability Hook: Engine-internal vertex identity (opaque for future sharding support)
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VertexId(pub(crate) u32);
@@ -29,42 +24,28 @@ impl VertexId {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VertexKind {
     /// An implicitly created placeholder cell that has not been defined.
     Empty = 0,
 
-    /// Literal value or cached scalar result
-    Value(LiteralValue) = 1,
+    /// Cell with a literal value (value stored in arena/hashmap)
+    Cell = 1,
 
-    /// Formula that evaluates to a scalar
-    FormulaScalar {
-        ast: ASTNode,
-        result: Option<LiteralValue>,
-        dirty: bool,
-        volatile: bool,
-    } = 2,
+    /// Formula that evaluates to a scalar (AST stored separately)
+    FormulaScalar = 2,
 
-    /// Formula that returns an array (no spill detection yet)
-    FormulaArray {
-        ast: ASTNode,
-        results: Option<Vec<Vec<LiteralValue>>>,
-        dims: (usize, usize), // expected rows, cols
-        dirty: bool,
-        volatile: bool,
-    } = 3,
+    /// Formula that returns an array (AST stored separately)
+    FormulaArray = 3,
 
     /// Infinite range placeholder (A:A, 1:1)
-    InfiniteRange { reference: ReferenceType } = 4,
+    InfiniteRange = 4,
 
-    /// Cell reference - used in SoA representation
-    Cell = 5,
+    /// Range reference
+    Range = 5,
 
-    /// Range reference - used in SoA representation  
-    Range = 6,
-
-    /// External reference - used in SoA representation
-    External = 7,
+    /// External reference
+    External = 6,
 }
 
 impl VertexKind {
@@ -72,187 +53,18 @@ impl VertexKind {
     pub fn from_tag(tag: u8) -> Self {
         match tag {
             0 => VertexKind::Empty,
-            1 => VertexKind::Value(LiteralValue::Int(0)), // Placeholder, actual value in values map
-            2 => VertexKind::FormulaScalar {
-                ast: ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(0)), None), // Placeholder
-                result: None,
-                dirty: false,
-                volatile: false,
-            },
-            3 => VertexKind::FormulaArray {
-                ast: ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(0)), None), // Placeholder
-                results: None,
-                dims: (1, 1),
-                dirty: false,
-                volatile: false,
-            },
-            4 => VertexKind::InfiniteRange {
-                reference: ReferenceType::Cell {
-                    sheet: None,
-                    row: 1,
-                    col: 1,
-                }, // Placeholder
-            },
-            5 => VertexKind::Cell,
-            6 => VertexKind::Range,
-            7 => VertexKind::External,
+            1 => VertexKind::Cell,
+            2 => VertexKind::FormulaScalar,
+            3 => VertexKind::FormulaArray,
+            4 => VertexKind::InfiniteRange,
+            5 => VertexKind::Range,
+            6 => VertexKind::External,
             _ => VertexKind::Empty,
         }
     }
 
     #[inline]
     pub fn to_tag(self) -> u8 {
-        match self {
-            VertexKind::Empty => 0,
-            VertexKind::Value(_) => 1,
-            VertexKind::FormulaScalar { .. } => 2,
-            VertexKind::FormulaArray { .. } => 3,
-            VertexKind::InfiniteRange { .. } => 4,
-            VertexKind::Cell => 5,
-            VertexKind::Range => 6,
-            VertexKind::External => 7,
-        }
-    }
-}
-
-/// 🔮 Scalability Hook: Extract metadata for future SoA memory layout
-#[derive(Debug, Clone)]
-pub struct VertexMetadata {
-    pub id: VertexId,
-    pub flags: u32, // dirty, volatile, etc (bit flags for future efficiency)
-    pub kind_tag: u8,
-}
-
-impl VertexMetadata {
-    pub fn new(id: VertexId, kind: &VertexKind) -> Self {
-        let mut flags = 0u32;
-        let kind_tag = match kind {
-            VertexKind::Empty => 0,
-            VertexKind::Value(_) => 1,
-            VertexKind::FormulaScalar {
-                dirty, volatile, ..
-            } => {
-                if *dirty {
-                    flags |= 0x01;
-                }
-                if *volatile {
-                    flags |= 0x02;
-                }
-                2
-            }
-            VertexKind::FormulaArray {
-                dirty, volatile, ..
-            } => {
-                if *dirty {
-                    flags |= 0x01;
-                }
-                if *volatile {
-                    flags |= 0x02;
-                }
-                3
-            }
-            VertexKind::InfiniteRange { .. } => 4,
-            VertexKind::Cell => 5,
-            VertexKind::Range => 6,
-            VertexKind::External => 7,
-        };
-
-        Self {
-            id,
-            flags,
-            kind_tag,
-        }
-    }
-
-    pub fn is_dirty(&self) -> bool {
-        self.flags & 0x01 != 0
-    }
-
-    pub fn is_volatile(&self) -> bool {
-        self.flags & 0x02 != 0
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Vertex {
-    pub kind: VertexKind,
-    pub sheet_id: SheetId,
-    pub row: Option<u32>,            // None for ranges/named
-    pub col: Option<u32>,            // None for ranges/named
-    pub dependencies: Vec<VertexId>, // What this depends on
-    pub dependents: Vec<VertexId>,   // What depends on this
-}
-
-impl Vertex {
-    pub fn new_empty(sheet_id: SheetId, row: Option<u32>, col: Option<u32>) -> Self {
-        Self {
-            kind: VertexKind::Empty,
-            sheet_id,
-            row,
-            col,
-            dependencies: Vec::new(),
-            dependents: Vec::new(),
-        }
-    }
-
-    pub fn new_value(
-        sheet_id: SheetId,
-        row: Option<u32>,
-        col: Option<u32>,
-        value: LiteralValue,
-    ) -> Self {
-        Self {
-            kind: VertexKind::Value(value),
-            sheet_id,
-            row,
-            col,
-            dependencies: Vec::new(),
-            dependents: Vec::new(),
-        }
-    }
-
-    pub fn new_formula_scalar(
-        sheet_id: SheetId,
-        row: Option<u32>,
-        col: Option<u32>,
-        ast: ASTNode,
-        volatile: bool,
-    ) -> Self {
-        Self {
-            kind: VertexKind::FormulaScalar {
-                ast,
-                result: None,
-                dirty: true,
-                volatile,
-            },
-            sheet_id,
-            row,
-            col,
-            dependencies: Vec::new(),
-            dependents: Vec::new(),
-        }
-    }
-
-    /// Returns the cached value of the vertex if available, without cloning.
-    pub fn value(&self) -> Cow<LiteralValue> {
-        match &self.kind {
-            VertexKind::Value(v) => Cow::Borrowed(v),
-            VertexKind::FormulaScalar { result, .. } => {
-                if let Some(v) = result {
-                    Cow::Borrowed(v)
-                } else {
-                    Cow::Owned(LiteralValue::Empty)
-                }
-            }
-            VertexKind::Empty => Cow::Owned(LiteralValue::Empty),
-            _ => Cow::Owned(LiteralValue::Error(formualizer_common::ExcelError::new(
-                formualizer_common::ExcelErrorKind::Value,
-            ))),
-        }
-    }
-
-    /// Get metadata for this vertex (🔮 scalability hook)
-    pub fn metadata(&self, id: VertexId) -> VertexMetadata {
-        VertexMetadata::new(id, &self.kind)
+        self as u8
     }
 }

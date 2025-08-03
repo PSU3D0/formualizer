@@ -60,17 +60,10 @@ fn test_mark_dirty_propagation() {
 
     // Verify all are clean
     for &vertex_id in &all_vertex_ids {
-        if let Some(vertex) = graph.get_vertex(vertex_id) {
-            match &vertex.kind {
-                VertexKind::FormulaScalar { dirty, .. } => {
-                    assert!(!dirty, "Vertex should be clean after clearing")
-                }
-                VertexKind::FormulaArray { dirty, .. } => {
-                    assert!(!dirty, "Vertex should be clean after clearing")
-                }
-                _ => {} // Values don't have dirty flags
-            }
-        }
+        assert!(
+            !graph.is_dirty(vertex_id),
+            "Vertex should be clean after clearing"
+        );
     }
 
     // Now change A1 - should propagate to A2, A3, A4
@@ -85,23 +78,27 @@ fn test_mark_dirty_propagation() {
     let vertex_ids = get_vertex_ids_in_order(&graph);
 
     // A1 is a value, so no dirty flag to check
-    if let Some(a1_vertex) = graph.get_vertex(vertex_ids[0]) {
-        match &a1_vertex.kind {
-            VertexKind::Value(_) => {} // Expected
-            _ => panic!("A1 should be a value"),
-        }
-    }
+    assert!(
+        !graph.is_dirty(vertex_ids[0]),
+        "A1 should be clean, as it is a value"
+    );
+    assert!(
+        graph.get_vertex_kind(vertex_ids[0]) == VertexKind::Cell,
+        "A1 should be a value"
+    );
 
     // A2, A3, A4 should all be dirty
     for i in 1..4 {
-        if let Some(vertex) = graph.get_vertex(vertex_ids[i]) {
-            match &vertex.kind {
-                VertexKind::FormulaScalar { dirty, .. } => {
-                    assert!(*dirty, "A{} should be dirty after A1 changed", i + 1);
-                }
-                _ => panic!("A{} should be a formula", i + 1),
-            }
-        }
+        assert!(
+            graph.is_dirty(vertex_ids[i]),
+            "A{} should be dirty after A1 changed",
+            i + 1
+        );
+        assert!(
+            graph.get_vertex_kind(vertex_ids[i]) == VertexKind::FormulaScalar,
+            "A{} should be a formula",
+            i + 1
+        );
     }
 
     // Verify get_evaluation_vertices includes all dirty ones
@@ -187,14 +184,11 @@ fn test_mark_dirty_diamond_dependency() {
     assert_eq!(summary.affected_vertices.len(), 4);
 
     // Verify A4 is only marked dirty once despite two paths from A1
-    if let Some(a4_vertex) = graph.get_vertex(all_vertex_ids[3]) {
-        match &a4_vertex.kind {
-            VertexKind::FormulaScalar { dirty, .. } => {
-                assert!(*dirty, "A4 should be dirty");
-            }
-            _ => panic!("A4 should be a formula"),
-        }
-    }
+    assert!(graph.is_dirty(all_vertex_ids[3]), "A4 should be dirty");
+    assert!(
+        graph.get_vertex_kind(all_vertex_ids[3]) == VertexKind::FormulaScalar,
+        "A4 should be a formula"
+    );
 }
 
 #[test]
@@ -221,24 +215,24 @@ fn test_dirty_flag_clearing() {
 
     // Both should be dirty after creation
     let all_vertex_ids = get_vertex_ids_in_order(&graph);
-    if let Some(a2_vertex) = graph.get_vertex(all_vertex_ids[1]) {
-        match &a2_vertex.kind {
-            VertexKind::FormulaScalar { dirty, .. } => assert!(*dirty),
-            _ => panic!("A2 should be a formula"),
-        }
-    }
+    assert!(
+        graph.is_dirty(all_vertex_ids[1]),
+        "A2 should be dirty after creation"
+    );
+    assert!(
+        graph.get_vertex_kind(all_vertex_ids[1]) == VertexKind::FormulaScalar,
+        "A2 should be a formula"
+    );
 
     // Clear dirty flags
     let vertex_ids = vec![all_vertex_ids[1]]; // Just A2 (second vertex)
     graph.clear_dirty_flags(&vertex_ids);
 
     // A2 should no longer be dirty
-    if let Some(a2_vertex) = graph.get_vertex(all_vertex_ids[1]) {
-        match &a2_vertex.kind {
-            VertexKind::FormulaScalar { dirty, .. } => assert!(!*dirty),
-            _ => panic!("A2 should be a formula"),
-        }
-    }
+    assert!(
+        !graph.is_dirty(all_vertex_ids[1]),
+        "A2 should be clean after clearing"
+    );
 
     // get_evaluation_vertices should not include A2
     let eval_vertices = graph.get_evaluation_vertices();
@@ -250,12 +244,10 @@ fn test_dirty_flag_clearing() {
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(30))
         .unwrap();
 
-    if let Some(a2_vertex) = graph.get_vertex(all_vertex_ids[1]) {
-        match &a2_vertex.kind {
-            VertexKind::FormulaScalar { dirty, .. } => assert!(*dirty),
-            _ => panic!("A2 should be a formula"),
-        }
-    }
+    assert!(
+        graph.is_dirty(all_vertex_ids[1]),
+        "A2 should be dirty after A1 changed"
+    );
 }
 
 #[test]
@@ -382,13 +374,15 @@ fn test_dirty_propagation_performance() {
     // Verify all downstream vertices are dirty
     for i in 1..20 {
         // Skip A1 (it's a value)
-        if let Some(vertex) = graph.get_vertex(all_vertex_ids[i]) {
-            match &vertex.kind {
-                VertexKind::FormulaScalar { dirty, .. } => {
-                    assert!(*dirty, "A{} should be dirty", i + 1);
-                }
-                _ => panic!("A{} should be a formula", i + 1),
-            }
-        }
+        assert!(
+            graph.is_dirty(all_vertex_ids[i]),
+            "A{} should be dirty",
+            i + 1
+        );
+        assert!(
+            graph.get_vertex_kind(all_vertex_ids[i]) == VertexKind::FormulaScalar,
+            "A{} should be a formula",
+            i + 1
+        );
     }
 }

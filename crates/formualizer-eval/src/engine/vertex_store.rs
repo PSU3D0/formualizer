@@ -110,6 +110,12 @@ pub struct VertexStore {
     len: usize,
 }
 
+impl Default for VertexStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VertexStore {
     pub fn new() -> Self {
         Self {
