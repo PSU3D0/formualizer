@@ -1,11 +1,7 @@
 use crate::traits::Function;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
-use std::{
-    borrow::Borrow,
-    hash::Hash,
-    sync::Arc,
-};
+use std::{borrow::Borrow, hash::Hash, sync::Arc};
 
 #[derive(Eq, PartialEq, Hash)]
 struct FnKey {

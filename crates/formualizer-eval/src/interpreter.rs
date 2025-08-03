@@ -96,8 +96,7 @@ impl<'a> Interpreter<'a> {
             "-" => self.apply_number_unary(v, |n| -n),
             "%" => self.apply_number_unary(v, |n| n / 100.0),
             _ => {
-                Err(ExcelError::new(ExcelErrorKind::NImpl)
-                    .with_message(format!("Unary op '{op}'")))
+                Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!("Unary op '{op}'")))
             }
         }
     }

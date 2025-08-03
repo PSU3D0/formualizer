@@ -16,6 +16,9 @@ pub mod epoch_tracker;
 pub mod packed_coord;
 pub mod vertex_store;
 
+// Phase 1: Arena modules
+pub mod arena;
+
 #[cfg(test)]
 mod tests;
 
