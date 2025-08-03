@@ -16,7 +16,7 @@
 //!            .with_fns(with_fns![__FnTRUE, __FnAND]);
 //!
 //! let interp = wb.interpreter();
-//! let ast = formualizer_core::parser::Parser::from("=AND(TRUE(),A1=42)").unwrap().parse().unwrap();
+//! let ast = formualizer_core::parser::Parser::from("=AND(TRUE(),A1=42)").parse().unwrap();
 //! let result = interp.evaluate_ast(&ast).unwrap();
 //! assert_eq!(result, V::Boolean(true));
 //! ```

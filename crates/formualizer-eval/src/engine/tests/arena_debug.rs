@@ -35,7 +35,7 @@ fn test_simple_sum_with_arena() {
 
     // Create a SUM formula
     let formula = "=SUM(A1:A3)";
-    let ast = Parser::from(formula).unwrap().parse().unwrap();
+    let ast = Parser::from(formula).parse().unwrap();
     engine
         .set_cell_formula("Sheet1", 4, 1, ast.clone())
         .unwrap();
@@ -73,7 +73,7 @@ fn test_cross_sheet_simple() {
 
     // Create formula on Sheet1 that references Sheet2
     let formula = "=Sheet2!A1";
-    let ast = Parser::from(formula).unwrap().parse().unwrap();
+    let ast = Parser::from(formula).parse().unwrap();
     println!("AST: {:?}", ast);
     engine.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
 

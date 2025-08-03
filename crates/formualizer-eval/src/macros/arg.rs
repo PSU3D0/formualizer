@@ -26,7 +26,7 @@ macro_rules! arg {
             V::Empty => Ok(0.0),
             V::Error(e) => Err($crate::error::ExcelError::from(e.clone())),
             _ => Err($crate::error::ExcelError::new(
-                crate::error::ExcelErrorKind::Value,
+                $crate::error::ExcelErrorKind::Value,
             )),
         }
     }}; // more coercions (text, date, range) as you need…

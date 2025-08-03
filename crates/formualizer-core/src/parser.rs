@@ -512,12 +512,11 @@ impl ReferenceType {
         // Handle unquoted sheet names
         i = 0;
         while i < bytes.len() {
-            if bytes[i] == b'!'
-                && i > 0 {
-                    let sheet = String::from(&reference[0..i]);
-                    let ref_part = String::from(&reference[i + 1..]);
-                    return (Some(sheet), ref_part);
-                }
+            if bytes[i] == b'!' && i > 0 {
+                let sheet = String::from(&reference[0..i]);
+                let ref_part = String::from(&reference[i + 1..]);
+                return (Some(sheet), ref_part);
+            }
             i += 1;
         }
 
@@ -888,9 +887,12 @@ pub struct Parser {
     position: usize,
 }
 
-impl From<&str> for Parser {
-    fn from(formula: &str) -> Self {
-        let tokens = Tokenizer::new(formula).unwrap().items;
+impl<T> From<T> for Parser
+where
+    T: AsRef<str>,
+{
+    fn from(formula: T) -> Self {
+        let tokens = Tokenizer::new(formula.as_ref()).unwrap().items;
         Self::new(tokens, false)
     }
 }

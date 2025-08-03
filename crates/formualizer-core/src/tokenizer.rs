@@ -1,3 +1,4 @@
+use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::{self, Display};
 
@@ -855,5 +856,21 @@ impl Tokenizer {
             let concatenated: String = self.items.iter().map(|t| t.value.clone()).collect();
             format!("={concatenated}")
         }
+    }
+}
+
+impl TryFrom<&str> for Tokenizer {
+    type Error = TokenizerError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Tokenizer::new(value)
+    }
+}
+
+impl TryFrom<String> for Tokenizer {
+    type Error = TokenizerError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Tokenizer::new(&value)
     }
 }

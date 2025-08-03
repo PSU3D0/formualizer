@@ -24,7 +24,7 @@ fn test_sum_over_large_range_succeeds_without_oom() {
 
     // Formula to sum the large range
     let formula_str = format!("=SUM(A1:A{})", large_range_size);
-    let ast = Parser::from(&formula_str).unwrap().parse().unwrap();
+    let ast = Parser::from(&formula_str).parse().unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
     // Evaluate
@@ -68,8 +68,8 @@ fn test_streaming_vs_materialized_threshold() {
 
     // Same formula in both
     let formula_str = format!("=SUM(A1:A{})", range_size);
-    let ast1 = Parser::from(&formula_str).unwrap().parse().unwrap();
-    let ast2 = Parser::from(&formula_str).unwrap().parse().unwrap();
+    let ast1 = Parser::from(&formula_str).parse().unwrap();
+    let ast2 = Parser::from(&formula_str).parse().unwrap();
 
     engine_materialized
         .set_cell_formula("Sheet1", 1, 2, ast1)
@@ -112,7 +112,7 @@ fn test_multiple_functions_use_streaming() {
 
     // Test SUM with streaming
     let sum_formula = format!("=SUM(A1:A{})", range_size);
-    let sum_ast = Parser::from(&sum_formula).unwrap().parse().unwrap();
+    let sum_ast = Parser::from(&sum_formula).parse().unwrap();
     engine.set_cell_formula("Sheet1", 1, 3, sum_ast).unwrap();
 
     // TODO: Add tests for other functions that should support streaming when implemented
@@ -141,7 +141,7 @@ fn test_streaming_with_sparse_data() {
     }
 
     let formula = format!("=SUM(A1:A{})", range_size);
-    let ast = Parser::from(&formula).unwrap().parse().unwrap();
+    let ast = Parser::from(&formula).parse().unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
     engine.evaluate_all().unwrap();
@@ -174,12 +174,12 @@ fn test_streaming_range_shapes() {
 
     // Tall range formula - put it outside the range at (51,1)
     let tall_formula = "=SUM(A1:A50)";
-    let tall_ast = Parser::from(tall_formula).unwrap().parse().unwrap();
+    let tall_ast = Parser::from(tall_formula).parse().unwrap();
     engine.set_cell_formula("Sheet1", 51, 1, tall_ast).unwrap();
 
     // Wide range formula - put it outside the range at (2,51)
     let wide_formula = "=SUM(A1:AX1)";
-    let wide_ast = Parser::from(wide_formula).unwrap().parse().unwrap();
+    let wide_ast = Parser::from(wide_formula).parse().unwrap();
     engine.set_cell_formula("Sheet1", 2, 51, wide_ast).unwrap();
 
     engine.evaluate_all().unwrap();
@@ -210,7 +210,7 @@ fn test_streaming_performance_regression() {
     }
 
     let formula = format!("=SUM(A1:A{})", range_size);
-    let ast = Parser::from(&formula).unwrap().parse().unwrap();
+    let ast = Parser::from(&formula).parse().unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
     // Time the evaluation
@@ -260,7 +260,7 @@ fn test_streaming_with_errors_in_range() {
     }
 
     let formula = format!("=SUM(A1:A{})", range_size);
-    let ast = Parser::from(&formula).unwrap().parse().unwrap();
+    let ast = Parser::from(&formula).parse().unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
     // Note: This will fail evaluation due to errors in the range
@@ -287,7 +287,7 @@ fn test_incremental_update_with_streaming_range() {
     }
 
     let formula = format!("=SUM(A1:A{})", range_size);
-    let ast = Parser::from(&formula).unwrap().parse().unwrap();
+    let ast = Parser::from(&formula).parse().unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
     // Initial evaluation
