@@ -14,6 +14,7 @@ pub mod debug_views;
 pub mod delta_edges;
 pub mod epoch_tracker;
 pub mod packed_coord;
+pub mod vertex_editor;
 pub mod vertex_store;
 
 // Phase 1: Arena modules
@@ -30,6 +31,7 @@ pub use graph_soa::{
 };
 pub use scheduler::{Layer, Schedule, Scheduler};
 pub use vertex::{VertexId, VertexKind};
+pub use vertex_editor::{VertexEditor, VertexMeta};
 
 // CalcObserver is defined below
 
