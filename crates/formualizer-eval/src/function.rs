@@ -55,6 +55,7 @@ bitflags::bitflags! {
 
 use crate::traits::EvaluationContext;
 use std::borrow::Cow;
+use bumpalo::Bump;
 
 /// A simple slice of homogeneous values for efficient iteration
 pub struct SliceStripe<'a> {
@@ -79,6 +80,8 @@ pub struct SimpleFoldCtx<'a, 'b> {
     args: &'a [ArgumentHandle<'a, 'b>],
     _ctx: &'a dyn EvaluationContext,
     result: Option<LiteralValue>,
+    /// Temporary arena for allocating iteration data
+    arena: Bump,
 }
 
 impl<'a, 'b> SimpleFoldCtx<'a, 'b> {
@@ -87,6 +90,7 @@ impl<'a, 'b> SimpleFoldCtx<'a, 'b> {
             args,
             _ctx: ctx,
             result: None,
+            arena: Bump::new(),
         }
     }
 
@@ -97,9 +101,8 @@ impl<'a, 'b> SimpleFoldCtx<'a, 'b> {
 
 impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
     fn numeric_stripes<'c>(&'c mut self) -> Box<dyn Iterator<Item = SliceStripe<'c>> + 'c> {
-        // For now, just collect all values and return as a single stripe
-        // This will be optimized later with SoA stripes
-        let mut all_values = Vec::new();
+        // Collect all values into a vec allocated in the arena
+        let mut all_values = bumpalo::collections::Vec::new_in(&self.arena);
 
         for arg in self.args {
             if let Ok(storage) = arg.range_storage() {
@@ -111,17 +114,15 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
             }
         }
 
-        // Leak the vec to get a stable reference (temporary hack for PoC)
-        // In production, this would use arena allocation or similar
-        let leaked: &'static mut Vec<LiteralValue> = Box::leak(Box::new(all_values));
-        let slice: &'c [LiteralValue] = leaked.as_slice();
+        // Convert to slice - the arena keeps it alive for the lifetime of SimpleFoldCtx
+        let slice: &'c [LiteralValue] = all_values.into_bump_slice();
 
         Box::new(std::iter::once(SliceStripe { head: slice }))
     }
 
     fn cow_iter<'c>(&'c mut self) -> Box<dyn Iterator<Item = Cow<'c, LiteralValue>> + 'c> {
-        // Fallback iterator - collects all values
-        let mut all_values = Vec::new();
+        // Fallback iterator - collects all values into arena
+        let mut all_values = bumpalo::collections::Vec::new_in(&self.arena);
 
         for arg in self.args {
             if let Ok(storage) = arg.range_storage() {
@@ -133,8 +134,9 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
             }
         }
 
-        let leaked: &'static Vec<LiteralValue> = Box::leak(Box::new(all_values));
-        Box::new(leaked.iter().map(Cow::Borrowed))
+        // Convert to slice - the arena keeps it alive for the lifetime of SimpleFoldCtx
+        let slice: &'c [LiteralValue] = all_values.into_bump_slice();
+        Box::new(slice.iter().map(Cow::Borrowed))
     }
 
     fn write_result(&mut self, v: LiteralValue) {

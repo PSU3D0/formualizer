@@ -147,6 +147,7 @@ name = "formualizer-eval"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "bumpalo",
  "chrono",
  "dashmap",
  "formualizer-common",
