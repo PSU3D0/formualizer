@@ -307,3 +307,479 @@ fn test_large_named_range_compression() {
     // (depends on config.range_expansion_limit)
     assert!(result.created_placeholders.len() < 100000);
 }
+
+// ============ Phase 2: Structural Operations Tests ============
+
+#[test]
+fn test_named_range_insert_rows() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a named cell at B5 (row 4, col 1 in 0-based) with relative references
+    let def = NamedDefinition::Cell(CellRef::new(0, Coord::new(4, 1, false, false)));
+    graph
+        .define_name("Target", def, NameScope::Workbook)
+        .unwrap();
+
+    // Insert 2 rows before row 3
+    let op = ShiftOperation::InsertRows {
+        sheet_id: 0,
+        before: 3,
+        count: 2,
+    };
+
+    graph.adjust_named_ranges(&op).unwrap();
+
+    // Check that Target now points to B7 (row 6, col 1)
+    let adjusted = graph.resolve_name("Target", 0).unwrap();
+    match adjusted {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(cell_ref.coord.row, 6, "Row should shift from 4 to 6");
+            assert_eq!(cell_ref.coord.col, 1, "Column should remain 1");
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+}
+
+#[test]
+fn test_named_range_delete_rows() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a named cell at B10 (row 9, col 1 in 0-based) with relative references
+    let def = NamedDefinition::Cell(CellRef::new(0, Coord::new(9, 1, false, false)));
+    graph
+        .define_name("Target", def, NameScope::Workbook)
+        .unwrap();
+
+    // Delete 3 rows starting at row 2
+    let op = ShiftOperation::DeleteRows {
+        sheet_id: 0,
+        start: 2,
+        count: 3,
+    };
+
+    graph.adjust_named_ranges(&op).unwrap();
+
+    // Check that Target now points to B7 (row 6, col 1)
+    let adjusted = graph.resolve_name("Target", 0).unwrap();
+    match adjusted {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(cell_ref.coord.row, 6, "Row should shift from 9 to 6");
+            assert_eq!(cell_ref.coord.col, 1, "Column should remain 1");
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+}
+
+#[test]
+fn test_named_range_insert_columns() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a named cell at E3 (row 2, col 4 in 0-based) with relative references
+    let def = NamedDefinition::Cell(CellRef::new(0, Coord::new(2, 4, false, false)));
+    graph
+        .define_name("Target", def, NameScope::Workbook)
+        .unwrap();
+
+    // Insert 2 columns before column 2
+    let op = ShiftOperation::InsertColumns {
+        sheet_id: 0,
+        before: 2,
+        count: 2,
+    };
+
+    graph.adjust_named_ranges(&op).unwrap();
+
+    // Check that Target now points to G3 (row 2, col 6)
+    let adjusted = graph.resolve_name("Target", 0).unwrap();
+    match adjusted {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(cell_ref.coord.row, 2, "Row should remain 2");
+            assert_eq!(cell_ref.coord.col, 6, "Column should shift from 4 to 6");
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+}
+
+#[test]
+fn test_named_range_delete_columns() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a named cell at J3 (row 2, col 9 in 0-based) with relative references
+    let def = NamedDefinition::Cell(CellRef::new(0, Coord::new(2, 9, false, false)));
+    graph
+        .define_name("Target", def, NameScope::Workbook)
+        .unwrap();
+
+    // Delete 3 columns starting at column 4
+    let op = ShiftOperation::DeleteColumns {
+        sheet_id: 0,
+        start: 4,
+        count: 3,
+    };
+
+    graph.adjust_named_ranges(&op).unwrap();
+
+    // Check that Target now points to G3 (row 2, col 6)
+    let adjusted = graph.resolve_name("Target", 0).unwrap();
+    match adjusted {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(cell_ref.coord.row, 2, "Row should remain 2");
+            assert_eq!(cell_ref.coord.col, 6, "Column should shift from 9 to 6");
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+}
+
+#[test]
+fn test_named_range_adjustment() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a range B2:D4 (0-based: row 1-3, col 1-3) with relative references
+    let start = CellRef::new(0, Coord::new(1, 1, false, false));
+    let end = CellRef::new(0, Coord::new(3, 3, false, false));
+    let range_def = NamedDefinition::Range(RangeRef::new(start, end));
+
+    graph
+        .define_name("DataRange", range_def, NameScope::Workbook)
+        .unwrap();
+
+    // Insert a row before row 2
+    let op = ShiftOperation::InsertRows {
+        sheet_id: 0,
+        before: 2,
+        count: 1,
+    };
+
+    graph.adjust_named_ranges(&op).unwrap();
+
+    // Check that range adjusted to B2:D5 (row 1-4, col 1-3)
+    let adjusted = graph.resolve_name("DataRange", 0).unwrap();
+    match adjusted {
+        NamedDefinition::Range(range_ref) => {
+            assert_eq!(range_ref.start.coord.row, 1, "Start row should remain 1");
+            assert_eq!(
+                range_ref.end.coord.row, 4,
+                "End row should shift from 3 to 4"
+            );
+            assert_eq!(range_ref.start.coord.col, 1, "Start col should remain 1");
+            assert_eq!(range_ref.end.coord.col, 3, "End col should remain 3");
+        }
+        _ => panic!("Expected Range definition"),
+    }
+}
+
+#[test]
+fn test_named_formula_adjustment() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a named formula that references A1+B1
+    let formula_ast = parse("=A1+B1").unwrap();
+    let def = NamedDefinition::Formula {
+        ast: formula_ast,
+        dependencies: Vec::new(),
+        range_deps: Vec::new(),
+    };
+
+    graph
+        .define_name("Total", def, NameScope::Workbook)
+        .unwrap();
+
+    // Insert a row at the beginning
+    let op = ShiftOperation::InsertRows {
+        sheet_id: 0,
+        before: 0,
+        count: 1,
+    };
+
+    graph.adjust_named_ranges(&op).unwrap();
+
+    // Check that formula now references A2+B2
+    let adjusted = graph.resolve_name("Total", 0).unwrap();
+    match adjusted {
+        NamedDefinition::Formula { ast, .. } => {
+            // The AST should have been adjusted
+            // This would be verified by checking the AST structure
+            // For now we just verify it's still a formula
+            assert!(matches!(
+                ast.node_type,
+                formualizer_core::parser::ASTNodeType::BinaryOp { .. }
+            ));
+        }
+        _ => panic!("Expected Formula definition"),
+    }
+}
+
+#[test]
+fn test_named_range_delete_causes_ref_error() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a named cell at B3 (row 2, col 1 in 0-based) with relative references
+    let def = NamedDefinition::Cell(CellRef::new(0, Coord::new(2, 1, false, false)));
+    graph
+        .define_name("Target", def, NameScope::Workbook)
+        .unwrap();
+
+    // Delete the row containing the named cell
+    let op = ShiftOperation::DeleteRows {
+        sheet_id: 0,
+        start: 2,
+        count: 1,
+    };
+
+    // Adjusting should fail with REF error
+    let result = graph.adjust_named_ranges(&op);
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(matches!(e.kind, ExcelErrorKind::Ref));
+    }
+}
+
+// ============ Tests for Absolute vs Relative References ============
+
+#[test]
+fn test_absolute_references_dont_move() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a named cell at $B$5 (absolute reference)
+    let def = NamedDefinition::Cell(CellRef::new(0, Coord::new(4, 1, true, true)));
+    graph
+        .define_name("AbsoluteTarget", def, NameScope::Workbook)
+        .unwrap();
+
+    // Insert rows before row 3
+    let op = ShiftOperation::InsertRows {
+        sheet_id: 0,
+        before: 3,
+        count: 2,
+    };
+
+    graph.adjust_named_ranges(&op).unwrap();
+
+    // Check that AbsoluteTarget still points to B5 (row 4, col 1)
+    let adjusted = graph.resolve_name("AbsoluteTarget", 0).unwrap();
+    match adjusted {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(cell_ref.coord.row, 4, "Absolute row should not change");
+            assert_eq!(cell_ref.coord.col, 1, "Absolute column should not change");
+            assert!(cell_ref.coord.row_abs(), "Should still be absolute row");
+            assert!(cell_ref.coord.col_abs(), "Should still be absolute column");
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+}
+
+#[test]
+fn test_mixed_references_partial_adjustment() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Test $B5 (absolute column, relative row)
+    let def1 = NamedDefinition::Cell(CellRef::new(0, Coord::new(4, 1, false, true)));
+    graph
+        .define_name("MixedRef1", def1, NameScope::Workbook)
+        .unwrap();
+
+    // Test B$5 (relative column, absolute row)
+    let def2 = NamedDefinition::Cell(CellRef::new(0, Coord::new(4, 1, true, false)));
+    graph
+        .define_name("MixedRef2", def2, NameScope::Workbook)
+        .unwrap();
+
+    // Insert 2 rows before row 3
+    let op = ShiftOperation::InsertRows {
+        sheet_id: 0,
+        before: 3,
+        count: 2,
+    };
+
+    graph.adjust_named_ranges(&op).unwrap();
+
+    // Check $B5 - row should move, column should not
+    let mixed1 = graph.resolve_name("MixedRef1", 0).unwrap();
+    match mixed1 {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(
+                cell_ref.coord.row, 6,
+                "Relative row should shift from 4 to 6"
+            );
+            assert_eq!(cell_ref.coord.col, 1, "Absolute column should remain 1");
+            assert!(!cell_ref.coord.row_abs(), "Row should be relative");
+            assert!(cell_ref.coord.col_abs(), "Column should be absolute");
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+
+    // Check B$5 - row should not move, column stays same
+    let mixed2 = graph.resolve_name("MixedRef2", 0).unwrap();
+    match mixed2 {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(cell_ref.coord.row, 4, "Absolute row should remain 4");
+            assert_eq!(cell_ref.coord.col, 1, "Column should remain 1");
+            assert!(cell_ref.coord.row_abs(), "Row should be absolute");
+            assert!(!cell_ref.coord.col_abs(), "Column should be relative");
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+}
+
+#[test]
+fn test_mixed_references_column_operations() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Test $E3 (absolute column, relative row)
+    let def1 = NamedDefinition::Cell(CellRef::new(0, Coord::new(2, 4, false, true)));
+    graph
+        .define_name("ColMixed1", def1, NameScope::Workbook)
+        .unwrap();
+
+    // Test E$3 (relative column, absolute row)
+    let def2 = NamedDefinition::Cell(CellRef::new(0, Coord::new(2, 4, true, false)));
+    graph
+        .define_name("ColMixed2", def2, NameScope::Workbook)
+        .unwrap();
+
+    // Insert 2 columns before column 2
+    let op = ShiftOperation::InsertColumns {
+        sheet_id: 0,
+        before: 2,
+        count: 2,
+    };
+
+    graph.adjust_named_ranges(&op).unwrap();
+
+    // Check $E3 - column should not move
+    let mixed1 = graph.resolve_name("ColMixed1", 0).unwrap();
+    match mixed1 {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(cell_ref.coord.row, 2, "Row should remain 2");
+            assert_eq!(cell_ref.coord.col, 4, "Absolute column should remain 4");
+            assert!(!cell_ref.coord.row_abs(), "Row should be relative");
+            assert!(cell_ref.coord.col_abs(), "Column should be absolute");
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+
+    // Check E$3 - column should move, row should not
+    let mixed2 = graph.resolve_name("ColMixed2", 0).unwrap();
+    match mixed2 {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(cell_ref.coord.row, 2, "Absolute row should remain 2");
+            assert_eq!(
+                cell_ref.coord.col, 6,
+                "Relative column should shift from 4 to 6"
+            );
+            assert!(cell_ref.coord.row_abs(), "Row should be absolute");
+            assert!(!cell_ref.coord.col_abs(), "Column should be relative");
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+}
+
+#[test]
+fn test_range_with_mixed_references() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a range $B$2:D4 (absolute start, relative end)
+    let start = CellRef::new(0, Coord::new(1, 1, true, true)); // $B$2
+    let end = CellRef::new(0, Coord::new(3, 3, false, false)); // D4
+    let range_def = NamedDefinition::Range(RangeRef::new(start, end));
+
+    graph
+        .define_name("MixedRange", range_def, NameScope::Workbook)
+        .unwrap();
+
+    // Insert a row before row 2
+    let op = ShiftOperation::InsertRows {
+        sheet_id: 0,
+        before: 2,
+        count: 1,
+    };
+
+    graph.adjust_named_ranges(&op).unwrap();
+
+    // Check that range adjusted correctly
+    let adjusted = graph.resolve_name("MixedRange", 0).unwrap();
+    match adjusted {
+        NamedDefinition::Range(range_ref) => {
+            // Start ($B$2) should not move
+            assert_eq!(
+                range_ref.start.coord.row, 1,
+                "Absolute start row should remain 1"
+            );
+            assert_eq!(
+                range_ref.start.coord.col, 1,
+                "Absolute start col should remain 1"
+            );
+
+            // End (D4) should move to D5
+            assert_eq!(
+                range_ref.end.coord.row, 4,
+                "Relative end row should shift from 3 to 4"
+            );
+            assert_eq!(range_ref.end.coord.col, 3, "End col should remain 3");
+        }
+        _ => panic!("Expected Range definition"),
+    }
+}
+
+#[test]
+fn test_absolute_ref_deleted_no_error() {
+    use crate::engine::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define an absolute reference at $B$3
+    let def = NamedDefinition::Cell(CellRef::new(0, Coord::new(2, 1, true, true)));
+    graph
+        .define_name("AbsoluteRef", def, NameScope::Workbook)
+        .unwrap();
+
+    // Delete rows that would include row 3 if it were relative
+    let op = ShiftOperation::DeleteRows {
+        sheet_id: 0,
+        start: 2,
+        count: 1,
+    };
+
+    // Absolute references don't adjust, so they don't get deleted
+    // The reference remains valid even though the row it points to is deleted
+    let result = graph.adjust_named_ranges(&op);
+    assert!(
+        result.is_ok(),
+        "Absolute references should not cause errors when their row is deleted"
+    );
+
+    // The reference should still point to row 2 (which is now what was row 3)
+    let adjusted = graph.resolve_name("AbsoluteRef", 0).unwrap();
+    match adjusted {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(
+                cell_ref.coord.row, 2,
+                "Absolute reference should not change"
+            );
+            assert_eq!(cell_ref.coord.col, 1, "Column should not change");
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+}

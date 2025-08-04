@@ -486,7 +486,10 @@ impl<'g> VertexEditor<'g> {
             }
         }
 
-        // 4. Log change event
+        // 4. Adjust named ranges
+        self.graph.adjust_named_ranges(&op)?;
+
+        // 5. Log change event
         if self.changelog_enabled {
             self.change_log.push(ChangeEvent::InsertRows {
                 sheet_id,
@@ -575,7 +578,10 @@ impl<'g> VertexEditor<'g> {
             }
         }
 
-        // 4. Log change event
+        // 4. Adjust named ranges
+        self.graph.adjust_named_ranges(&op)?;
+
+        // 5. Log change event
         if self.changelog_enabled {
             self.change_log.push(ChangeEvent::DeleteRows {
                 sheet_id,
@@ -649,7 +655,10 @@ impl<'g> VertexEditor<'g> {
             }
         }
 
-        // 4. Log change event
+        // 4. Adjust named ranges
+        self.graph.adjust_named_ranges(&op)?;
+
+        // 5. Log change event
         if self.changelog_enabled {
             self.change_log.push(ChangeEvent::InsertColumns {
                 sheet_id,
@@ -738,7 +747,10 @@ impl<'g> VertexEditor<'g> {
             }
         }
 
-        // 4. Log change event
+        // 4. Adjust named ranges
+        self.graph.adjust_named_ranges(&op)?;
+
+        // 5. Log change event
         if self.changelog_enabled {
             self.change_log.push(ChangeEvent::DeleteColumns {
                 sheet_id,

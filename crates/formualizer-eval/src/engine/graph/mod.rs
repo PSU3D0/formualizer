@@ -363,8 +363,9 @@ impl DependencyGraph {
     ) -> Result<(), ExcelError> {
         // Validate name
         if !is_valid_excel_name(name) {
-            return Err(ExcelError::new(ExcelErrorKind::Name)
-                .with_message(format!("Invalid name: {name}")));
+            return Err(
+                ExcelError::new(ExcelErrorKind::Name).with_message(format!("Invalid name: {name}"))
+            );
         }
 
         // Check for duplicates
@@ -1651,4 +1652,77 @@ impl DependencyGraph {
             None
         }
     }
+
+    // ========== Phase 2: Structural Operations ==========
+
+    /// Adjust named ranges during row/column operations
+    pub fn adjust_named_ranges(
+        &mut self,
+        operation: &crate::engine::reference_adjuster::ShiftOperation,
+    ) -> Result<(), ExcelError> {
+        let adjuster = crate::engine::reference_adjuster::ReferenceAdjuster::new();
+
+        // Adjust workbook-scoped names
+        for named_range in self.named_ranges.values_mut() {
+            adjust_named_definition(&mut named_range.definition, &adjuster, operation)?;
+        }
+
+        // Adjust sheet-scoped names
+        for named_range in self.sheet_named_ranges.values_mut() {
+            adjust_named_definition(&mut named_range.definition, &adjuster, operation)?;
+        }
+
+        Ok(())
+    }
+
+    /// Mark a vertex as having a #NAME! error
+    pub fn mark_as_name_error(&mut self, vertex_id: VertexId) {
+        // Mark the vertex as dirty
+        self.mark_vertex_dirty(vertex_id);
+        // In a real implementation, we would store the error in the vertex value
+        // For now, just mark it dirty so it will error on next evaluation
+    }
+}
+
+/// Helper function to adjust a named definition during structural operations
+fn adjust_named_definition(
+    definition: &mut NamedDefinition,
+    adjuster: &crate::engine::reference_adjuster::ReferenceAdjuster,
+    operation: &crate::engine::reference_adjuster::ShiftOperation,
+) -> Result<(), ExcelError> {
+    match definition {
+        NamedDefinition::Cell(cell_ref) => {
+            if let Some(adjusted) = adjuster.adjust_cell_ref(cell_ref, operation) {
+                *cell_ref = adjusted;
+            } else {
+                // Cell was deleted, convert to #REF! error
+                return Err(ExcelError::new(ExcelErrorKind::Ref));
+            }
+        }
+        NamedDefinition::Range(range_ref) => {
+            let adjusted_start = adjuster.adjust_cell_ref(&range_ref.start, operation);
+            let adjusted_end = adjuster.adjust_cell_ref(&range_ref.end, operation);
+
+            if let (Some(start), Some(end)) = (adjusted_start, adjusted_end) {
+                range_ref.start = start;
+                range_ref.end = end;
+            } else {
+                return Err(ExcelError::new(ExcelErrorKind::Ref));
+            }
+        }
+        NamedDefinition::Formula {
+            ast,
+            dependencies,
+            range_deps,
+        } => {
+            // Adjust AST references
+            let adjusted_ast = adjuster.adjust_ast(ast, operation);
+            *ast = adjusted_ast;
+
+            // Dependencies will be recalculated on next use
+            dependencies.clear();
+            range_deps.clear();
+        }
+    }
+    Ok(())
 }
