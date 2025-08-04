@@ -26,6 +26,9 @@ pub enum ChangeEvent {
         old: Option<ASTNode>,
         new: ASTNode,
     },
+    RemoveVertex {
+        id: VertexId,
+    },
 }
 
 /// 🔮 Scalability Hook: Dependency reference types for range compression
@@ -1045,7 +1048,7 @@ impl DependencyGraph {
     pub fn remove_all_edges(&mut self, id: VertexId) {
         // Enter batch mode to avoid intermediate rebuilds
         self.edges.begin_batch();
-        
+
         // Remove outgoing edges (this vertex's dependencies)
         self.remove_dependent_edges(id);
 
@@ -1092,5 +1095,81 @@ impl DependencyGraph {
         } else {
             self.volatile_vertices.remove(&id);
         }
+    }
+
+    /// Update vertex coordinate
+    #[doc(hidden)]
+    pub fn set_coord(&mut self, id: VertexId, coord: PackedCoord) {
+        self.store.set_coord(id, coord);
+    }
+
+    /// Update edge cache coordinate
+    #[doc(hidden)]
+    pub fn update_edge_coord(&mut self, id: VertexId, coord: PackedCoord) {
+        self.edges.update_coord(id, coord);
+    }
+
+    /// Mark vertex as deleted (tombstone)
+    #[doc(hidden)]
+    pub fn mark_deleted(&mut self, id: VertexId, deleted: bool) {
+        self.store.mark_deleted(id, deleted);
+    }
+
+    /// Set vertex kind
+    #[doc(hidden)]
+    pub fn set_kind(&mut self, id: VertexId, kind: VertexKind) {
+        self.store.set_kind(id, kind);
+    }
+
+    /// Set vertex dirty flag
+    #[doc(hidden)]
+    pub fn set_dirty(&mut self, id: VertexId, dirty: bool) {
+        self.store.set_dirty(id, dirty);
+        if dirty {
+            self.dirty_vertices.insert(id);
+        } else {
+            self.dirty_vertices.remove(&id);
+        }
+    }
+
+    /// Get vertex coord (for testing)
+    #[cfg(test)]
+    pub(crate) fn get_coord(&self, id: VertexId) -> PackedCoord {
+        self.store.coord(id)
+    }
+
+    /// Get vertex kind (for testing)
+    #[cfg(test)]
+    pub(crate) fn get_kind(&self, id: VertexId) -> VertexKind {
+        self.store.kind(id)
+    }
+
+    /// Get vertex flags (for testing)
+    #[cfg(test)]
+    pub(crate) fn get_flags(&self, id: VertexId) -> u8 {
+        self.store.flags(id)
+    }
+
+    /// Check if vertex is deleted (for testing)
+    #[cfg(test)]
+    pub(crate) fn is_deleted(&self, id: VertexId) -> bool {
+        self.store.is_deleted(id)
+    }
+
+    /// Force edge rebuild (internal use)
+    #[doc(hidden)]
+    pub fn rebuild_edges(&mut self) {
+        self.edges.rebuild();
+    }
+
+    /// Get delta size (internal use)
+    #[doc(hidden)]
+    pub fn edges_delta_size(&self) -> usize {
+        self.edges.delta_size()
+    }
+
+    /// Get vertex ID for specific cell address
+    pub fn get_vertex_for_cell(&self, addr: &CellRef) -> Option<VertexId> {
+        self.cell_to_vertex.get(addr).copied()
     }
 }

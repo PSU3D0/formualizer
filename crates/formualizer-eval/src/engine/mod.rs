@@ -34,7 +34,10 @@ pub use graph::{
 };
 pub use scheduler::{Layer, Schedule, Scheduler};
 pub use vertex::{VertexId, VertexKind};
-pub use vertex_editor::{VertexEditor, VertexMeta};
+pub use vertex_editor::{
+    DataUpdateSummary, EditorError, MetaUpdateSummary, VertexDataPatch, VertexEditor, VertexMeta,
+    VertexMetaPatch,
+};
 
 // CalcObserver is defined below
 
