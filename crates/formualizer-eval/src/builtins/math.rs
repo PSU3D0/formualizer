@@ -34,7 +34,7 @@ impl Function for SumFn {
         for arg in args {
             // Try to get a range/stream first. If that fails, fall back to a single value.
             if let Ok(storage) = arg.range_storage() {
-                for value_cow in storage.into_iter() {
+                for value_cow in storage.to_iterator() {
                     total += coerce_num(value_cow.as_ref())?;
                 }
             } else {

@@ -151,7 +151,7 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
     }
 
     fn query_node(
-        node: &Box<Node<T>>,
+        node: &Node<T>,
         query_low: u32,
         query_high: u32,
         results: &mut Vec<(u32, u32, HashSet<T>)>,

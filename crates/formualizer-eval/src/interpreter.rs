@@ -41,7 +41,7 @@ impl<'a> Interpreter<'a> {
                 // For a single cell reference, just return the value.
                 if let ReferenceType::Cell { .. } = reference {
                     return Ok(storage
-                        .into_iter()
+                        .to_iterator()
                         .next()
                         .map(|cow| cow.into_owned())
                         .unwrap_or(LiteralValue::Empty));

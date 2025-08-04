@@ -3,6 +3,14 @@ name = "formualizer-eval"
 version = "0.1.0"
 edition = "2024"
 
+[lints.rust]
+unused_variables = "allow"
+dead_code = "allow"
+
+[lints.clippy]
+too_many_arguments = "allow"
+only_used_in_recursion = "allow"
+
 [dependencies]
 formualizer-core = { path = "../formualizer-core" }
 formualizer-macros  = { path = "../formualizer-macros" }

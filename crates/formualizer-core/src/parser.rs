@@ -393,96 +393,107 @@ impl ReferenceType {
         }
         result
     }
+}
 
-    /// Get the display string for this reference.
-    pub fn to_string(&self) -> String {
-        match self {
-            ReferenceType::Cell { sheet, row, col } => {
-                let col_str = Self::number_to_column(*col);
-                let row_str = row.to_string();
+impl Display for ReferenceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                ReferenceType::Cell { sheet, row, col } => {
+                    let col_str = Self::number_to_column(*col);
+                    let row_str = row.to_string();
 
-                if let Some(sheet_name) = sheet {
-                    // Only quote sheet name if it contains spaces or special characters
-                    if sheet_name.contains(' ')
-                        || sheet_name.contains('!')
-                        || sheet_name.contains('\'')
-                        || sheet_name.contains('\"')
-                    {
-                        format!("'{sheet_name}'!{col_str}{row_str}")
+                    if let Some(sheet_name) = sheet {
+                        // Only quote sheet name if it contains spaces or special characters
+                        if sheet_name.contains(' ')
+                            || sheet_name.contains('!')
+                            || sheet_name.contains('\'')
+                            || sheet_name.contains('\"')
+                        {
+                            format!("'{sheet_name}'!{col_str}{row_str}")
+                        } else {
+                            format!("{sheet_name}!{col_str}{row_str}")
+                        }
                     } else {
-                        format!("{sheet_name}!{col_str}{row_str}")
+                        format!("{col_str}{row_str}")
                     }
-                } else {
-                    format!("{col_str}{row_str}")
                 }
-            }
-            ReferenceType::Range {
-                sheet,
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-            } => {
-                // Format start reference
-                let start_ref = match (start_col, start_row) {
-                    (Some(col), Some(row)) => format!("{}{}", Self::number_to_column(*col), row),
-                    (Some(col), None) => Self::number_to_column(*col),
-                    (None, Some(row)) => row.to_string(),
-                    (None, None) => "".to_string(), // Should not happen in normal usage
-                };
+                ReferenceType::Range {
+                    sheet,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                } => {
+                    // Format start reference
+                    let start_ref = match (start_col, start_row) {
+                        (Some(col), Some(row)) => {
+                            format!("{}{}", Self::number_to_column(*col), row)
+                        }
+                        (Some(col), None) => Self::number_to_column(*col),
+                        (None, Some(row)) => row.to_string(),
+                        (None, None) => "".to_string(), // Should not happen in normal usage
+                    };
 
-                // Format end reference
-                let end_ref = match (end_col, end_row) {
-                    (Some(col), Some(row)) => format!("{}{}", Self::number_to_column(*col), row),
-                    (Some(col), None) => Self::number_to_column(*col),
-                    (None, Some(row)) => row.to_string(),
-                    (None, None) => "".to_string(), // Should not happen in normal usage
-                };
+                    // Format end reference
+                    let end_ref = match (end_col, end_row) {
+                        (Some(col), Some(row)) => {
+                            format!("{}{}", Self::number_to_column(*col), row)
+                        }
+                        (Some(col), None) => Self::number_to_column(*col),
+                        (None, Some(row)) => row.to_string(),
+                        (None, None) => "".to_string(), // Should not happen in normal usage
+                    };
 
-                let range_part = format!("{start_ref}:{end_ref}");
+                    let range_part = format!("{start_ref}:{end_ref}");
 
-                if let Some(sheet_name) = sheet {
-                    // Only quote sheet name if it contains spaces or special characters
-                    if sheet_name.contains(' ')
-                        || sheet_name.contains('!')
-                        || sheet_name.contains('\'')
-                        || sheet_name.contains('\"')
-                    {
-                        format!("'{sheet_name}'!{range_part}")
+                    if let Some(sheet_name) = sheet {
+                        // Only quote sheet name if it contains spaces or special characters
+                        if sheet_name.contains(' ')
+                            || sheet_name.contains('!')
+                            || sheet_name.contains('\'')
+                            || sheet_name.contains('\"')
+                        {
+                            format!("'{sheet_name}'!{range_part}")
+                        } else {
+                            format!("{sheet_name}!{range_part}")
+                        }
                     } else {
-                        format!("{sheet_name}!{range_part}")
+                        range_part
                     }
-                } else {
-                    range_part
                 }
-            }
-            ReferenceType::Table(table_ref) => {
-                if let Some(specifier) = &table_ref.specifier {
-                    // For table references, we need to handle column specifiers specially
-                    // to remove leading/trailing whitespace
-                    match specifier {
-                        TableSpecifier::Column(column) => {
-                            format!("{}[{}]", table_ref.name, column.trim())
+                ReferenceType::Table(table_ref) => {
+                    if let Some(specifier) = &table_ref.specifier {
+                        // For table references, we need to handle column specifiers specially
+                        // to remove leading/trailing whitespace
+                        match specifier {
+                            TableSpecifier::Column(column) => {
+                                format!("{}[{}]", table_ref.name, column.trim())
+                            }
+                            TableSpecifier::ColumnRange(start, end) => {
+                                format!("{}[{}:{}]", table_ref.name, start.trim(), end.trim())
+                            }
+                            _ => {
+                                // For other specifiers, use the standard formatting
+                                format!("{}[{}]", table_ref.name, specifier)
+                            }
                         }
-                        TableSpecifier::ColumnRange(start, end) => {
-                            format!("{}[{}:{}]", table_ref.name, start.trim(), end.trim())
-                        }
-                        _ => {
-                            // For other specifiers, use the standard formatting
-                            format!("{}[{}]", table_ref.name, specifier)
-                        }
+                    } else {
+                        table_ref.name.clone()
                     }
-                } else {
-                    table_ref.name.clone()
                 }
+                ReferenceType::NamedRange(name) => name.clone(),
             }
-            ReferenceType::NamedRange(name) => name.clone(),
-        }
+        )
     }
+}
 
+impl ReferenceType {
     /// Normalise the reference string (convert to canonical form)
     pub fn normalise(&self) -> String {
-        self.to_string()
+        format!("{self}")
     }
 
     /// Extract a sheet name from a reference using byte operations.
@@ -835,7 +846,7 @@ impl ASTNode {
     pub fn get_dependency_strings(&self) -> Vec<String> {
         self.get_dependencies()
             .into_iter()
-            .map(|dep| dep.to_string())
+            .map(|dep| format!("{dep}"))
             .collect()
     }
 
@@ -1249,8 +1260,7 @@ impl Parser {
                     // Row separator
                     self.position += 1;
                     rows.push(current_row);
-                    current_row = Vec::new();
-                    current_row.push(self.parse_expression()?);
+                    current_row = vec![self.parse_expression()?];
                 }
             } else if token.token_type == TokenType::Array && token.subtype == TokenSubType::Close {
                 self.position += 1;

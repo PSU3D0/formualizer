@@ -15,7 +15,7 @@ impl ArgKind {
             "logical" => Self::Logical,
             "range" => Self::Range,
             "" | "_" | "any" => Self::Any,
-            other => panic!("Unknown arg kind '{}'", other),
+            other => panic!("Unknown arg kind '{other}'"),
         }
     }
 }

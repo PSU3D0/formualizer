@@ -106,7 +106,7 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
 
         for arg in self.args {
             if let Ok(storage) = arg.range_storage() {
-                for value_cow in storage.into_iter() {
+                for value_cow in storage.to_iterator() {
                     all_values.push(value_cow.into_owned());
                 }
             } else if let Ok(value) = arg.value() {
@@ -126,7 +126,7 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
 
         for arg in self.args {
             if let Ok(storage) = arg.range_storage() {
-                for value_cow in storage.into_iter() {
+                for value_cow in storage.to_iterator() {
                     all_values.push(value_cow.into_owned());
                 }
             } else if let Ok(value) = arg.value() {

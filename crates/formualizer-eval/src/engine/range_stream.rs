@@ -92,7 +92,7 @@ pub enum RangeStorage<'g> {
 
 impl<'g> RangeStorage<'g> {
     /// Provides a unified way to iterate over the range's values, consuming the storage.
-    pub fn into_iter(self) -> impl Iterator<Item = Cow<'g, LiteralValue>> {
+    pub fn to_iterator(self) -> impl Iterator<Item = Cow<'g, LiteralValue>> {
         match self {
             RangeStorage::Owned(owned_data) => {
                 // This is inefficient as it requires cloning all data to flatten.

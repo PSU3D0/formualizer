@@ -4,6 +4,10 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+// Type alias for complex return type
+type ExtractDependenciesResult =
+    Result<(Vec<VertexId>, Vec<ReferenceType>, Vec<CellRef>), ExcelError>;
+
 pub mod snapshot;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
@@ -562,10 +566,10 @@ impl DependencyGraph {
 
         let vertex_id = if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
             // Check if it was a formula and remove dependencies
-            let is_formula = match self.store.kind(existing_id) {
-                VertexKind::FormulaScalar | VertexKind::FormulaArray => true,
-                _ => false,
-            };
+            let is_formula = matches!(
+                self.store.kind(existing_id),
+                VertexKind::FormulaScalar | VertexKind::FormulaArray
+            );
 
             if is_formula {
                 self.remove_dependent_edges(existing_id);
@@ -842,7 +846,7 @@ impl DependencyGraph {
         &mut self,
         ast: &ASTNode,
         current_sheet_id: SheetId,
-    ) -> Result<(Vec<VertexId>, Vec<ReferenceType>, Vec<CellRef>), ExcelError> {
+    ) -> ExtractDependenciesResult {
         let mut dependencies = FxHashSet::default();
         let mut range_dependencies = Vec::new();
         let mut created_placeholders = Vec::new();

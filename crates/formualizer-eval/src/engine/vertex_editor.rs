@@ -522,13 +522,9 @@ impl<'g> VertexEditor<'g> {
         let vertices_to_delete: Vec<VertexId> = self
             .graph
             .vertices_in_sheet(sheet_id)
-            .filter_map(|id| {
+            .filter(|&id| {
                 let coord = self.graph.get_coord(id);
-                if coord.row() >= start && coord.row() < start + count {
-                    Some(id)
-                } else {
-                    None
-                }
+                coord.row() >= start && coord.row() < start + count
             })
             .collect();
 
@@ -691,13 +687,9 @@ impl<'g> VertexEditor<'g> {
         let vertices_to_delete: Vec<VertexId> = self
             .graph
             .vertices_in_sheet(sheet_id)
-            .filter_map(|id| {
+            .filter(|&id| {
                 let coord = self.graph.get_coord(id);
-                if coord.col() >= start && coord.col() < start + count {
-                    Some(id)
-                } else {
-                    None
-                }
+                coord.col() >= start && coord.col() < start + count
             })
             .collect();
 

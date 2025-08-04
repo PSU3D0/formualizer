@@ -70,7 +70,7 @@ impl ExcelErrorKind {
             "#calc!" => Self::Calc,
             "#circ!" => Self::Circ,
             "#cancelled!" => Self::Cancelled,
-            _ => panic!("Unknown error kind '{}'", s),
+            _ => panic!("Unknown error kind '{s}'"),
         }
     }
 }
@@ -177,7 +177,7 @@ impl fmt::Display for ExcelError {
 
         // Optional human message.
         if let Some(ref msg) = self.message {
-            write!(f, ": {}", msg)?;
+            write!(f, ": {msg}")?;
         }
 
         // Optional row/col context.
@@ -186,7 +186,7 @@ impl fmt::Display for ExcelError {
             col: Some(c),
         }) = self.context
         {
-            write!(f, " (row {}, col {})", r, c)?;
+            write!(f, " (row {r}, col {c})")?;
         }
 
         // Optional kind-specific payload - keep it terse for logs.
@@ -196,7 +196,7 @@ impl fmt::Display for ExcelError {
                 expected_rows,
                 expected_cols,
             } => {
-                write!(f, " [spill {}×{}]", expected_rows, expected_cols)?;
+                write!(f, " [spill {expected_rows}×{expected_cols}]")?;
             }
         }
 
@@ -207,7 +207,7 @@ impl fmt::Display for ExcelError {
 impl Error for ExcelError {}
 impl From<ExcelError> for String {
     fn from(error: ExcelError) -> Self {
-        format!("{}", error)
+        format!("{error}")
     }
 }
 impl From<ExcelError> for LiteralValue {
@@ -218,7 +218,7 @@ impl From<ExcelError> for LiteralValue {
 
 impl PartialEq<str> for ExcelErrorKind {
     fn eq(&self, other: &str) -> bool {
-        self == other
+        format!("{self}") == other
     }
 }
 
