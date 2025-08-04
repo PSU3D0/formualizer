@@ -26,6 +26,16 @@ impl ScalarRef {
         }
     }
 
+    pub fn from_integer_index(index: u32) -> Self {
+        Self {
+            raw: index | Self::TYPE_MASK,
+        }
+    }
+
+    pub fn from_float_index(index: u32) -> Self {
+        Self { raw: index }
+    }
+
     pub fn is_float(self) -> bool {
         self.raw & Self::TYPE_MASK == 0
     }

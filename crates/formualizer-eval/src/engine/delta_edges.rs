@@ -209,6 +209,23 @@ mod tests {
             vec![VertexId(base_id)]
         );
     }
+
+    #[test]
+    fn test_csr_coord_update() {
+        let mut edges = CsrMutableEdges::new();
+
+        edges.add_vertex(PackedCoord::new(1, 1), 1024);
+        edges.add_vertex(PackedCoord::new(2, 2), 1025);
+        edges.add_edge(VertexId(1024), VertexId(1025));
+
+        // Update coordinate
+        edges.update_coord(VertexId(1024), PackedCoord::new(5, 5));
+
+        // Verify sorting remains correct after rebuild
+        edges.rebuild();
+        let out = edges.out_edges(VertexId(1024));
+        assert_eq!(out, vec![VertexId(1025)]);
+    }
 }
 
 /// Delta slab for accumulating edge mutations between CSR rebuilds
@@ -225,6 +242,9 @@ pub struct DeltaEdgeSlab {
 
     /// Total operation count for rebuild threshold
     op_count: usize,
+
+    /// Flag indicating coordinates have changed and rebuild is needed
+    coord_changed: bool,
 }
 
 impl DeltaEdgeSlab {
@@ -234,6 +254,7 @@ impl DeltaEdgeSlab {
             additions: FxHashMap::default(),
             removals: FxHashMap::default(),
             op_count: 0,
+            coord_changed: false,
         }
     }
 
@@ -269,7 +290,12 @@ impl DeltaEdgeSlab {
 
     /// Check if the delta needs to be applied (rebuild threshold reached)
     pub fn needs_rebuild(&self) -> bool {
-        self.op_count >= 1000
+        self.op_count >= 1000 || self.coord_changed
+    }
+
+    /// Mark that coordinates have changed and rebuild is needed
+    pub fn mark_dirty(&mut self) {
+        self.coord_changed = true;
     }
 
     /// Get the current operation count
@@ -282,6 +308,7 @@ impl DeltaEdgeSlab {
         self.additions.clear();
         self.removals.clear();
         self.op_count = 0;
+        self.coord_changed = false;
     }
 
     /// Apply delta to CSR, creating a new CSR structure
@@ -432,6 +459,17 @@ impl CsrMutableEdges {
         self.rebuild();
 
         idx
+    }
+
+    /// Update coordinate for a vertex in the cache
+    /// Marks for rebuild to maintain sort order
+    pub fn update_coord(&mut self, vertex_id: VertexId, new_coord: PackedCoord) {
+        // Find vertex in vertex_ids array
+        if let Some(pos) = self.vertex_ids.iter().position(|&id| id == vertex_id.0) {
+            self.coords[pos] = new_coord;
+            // Force rebuild on next access to maintain sort invariants
+            self.delta.mark_dirty();
+        }
     }
 }
 

@@ -83,6 +83,47 @@ mod tests {
         store.set_volatile(id, true);
         assert!(store.is_volatile(id));
     }
+
+    #[test]
+    fn test_vertex_store_set_coord() {
+        let mut store = VertexStore::new();
+        let id = store.allocate(PackedCoord::new(1, 1), 0, 0);
+
+        // Update coordinate
+        store.set_coord(id, PackedCoord::new(5, 10));
+        assert_eq!(store.coord(id), PackedCoord::new(5, 10));
+    }
+
+    #[test]
+    fn test_vertex_store_atomic_flags() {
+        let mut store = VertexStore::new();
+        let id = store.allocate(PackedCoord::new(0, 0), 0, 0);
+
+        // Test atomic flag operations
+        store.set_dirty(id, true);
+        assert!(store.is_dirty(id));
+
+        store.set_volatile(id, true);
+        assert!(store.is_volatile(id));
+
+        // Mark as deleted (tombstone)
+        store.mark_deleted(id, true);
+        assert!(store.is_deleted(id));
+    }
+
+    #[test]
+    fn test_reserved_id_range_preserved() {
+        let mut store = VertexStore::new();
+
+        // Verify first allocation is >= FIRST_NORMAL_VERTEX
+        let id = store.allocate(PackedCoord::new(0, 0), 0, 0);
+        assert!(id.0 >= FIRST_NORMAL_VERTEX);
+
+        // Verify deletion uses tombstone, not physical removal
+        store.mark_deleted(id, true);
+        assert!(store.vertex_exists(id));
+        assert!(store.is_deleted(id));
+    }
 }
 
 /// Reserved vertex ID range constants
@@ -296,5 +337,38 @@ impl VertexStore {
         if let Some(idx) = self.vertex_id_to_index(id) {
             self.edge_offset[idx] = offset;
         }
+    }
+
+    /// Update the coordinate of a vertex
+    /// # Safety
+    /// Caller must ensure CSR edge cache is updated via CsrMutableEdges::update_coord
+    #[doc(hidden)]
+    pub fn set_coord(&mut self, id: VertexId, coord: PackedCoord) {
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            self.coords[idx] = coord;
+        }
+    }
+
+    /// Mark vertex as deleted (tombstone strategy)
+    pub fn mark_deleted(&self, id: VertexId, deleted: bool) {
+        if let Some(idx) = self.vertex_id_to_index(id) {
+            if deleted {
+                self.flags[idx].fetch_or(0x04, Ordering::Release);
+            } else {
+                self.flags[idx].fetch_and(!0x04, Ordering::Release);
+            }
+        }
+    }
+
+    /// Check if vertex exists (may be deleted/tombstoned)
+    pub fn vertex_exists(&self, id: VertexId) -> bool {
+        self.vertex_id_to_index(id).is_some()
+    }
+
+    /// Check if vertex exists and is not deleted
+    pub fn vertex_exists_active(&self, id: VertexId) -> bool {
+        self.vertex_id_to_index(id)
+            .map(|_| !self.is_deleted(id))
+            .unwrap_or(false)
     }
 }

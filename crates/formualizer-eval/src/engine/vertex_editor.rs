@@ -77,6 +77,7 @@ pub struct VertexEditor<'g> {
     graph: &'g mut DependencyGraph,
     change_log: Vec<ChangeEvent>,
     batch_mode: bool,
+    changelog_enabled: bool,
 }
 
 impl<'g> VertexEditor<'g> {
@@ -86,6 +87,7 @@ impl<'g> VertexEditor<'g> {
             graph,
             change_log: Vec::new(),
             batch_mode: false,
+            changelog_enabled: true,
         }
     }
 
@@ -103,6 +105,11 @@ impl<'g> VertexEditor<'g> {
             self.graph.end_batch();
             self.batch_mode = false;
         }
+    }
+
+    /// Enable or disable the change log
+    pub fn set_changelog_enabled(&mut self, enabled: bool) {
+        self.changelog_enabled = enabled;
     }
 
     /// Get the accumulated change log
@@ -209,7 +216,9 @@ impl<'g> VertexEditor<'g> {
             old: None,
             new: LiteralValue::Text(format!("Row shift: start={start_row}, delta={delta}")),
         };
-        self.change_log.push(change_event);
+        if self.changelog_enabled {
+            self.change_log.push(change_event);
+        }
 
         // TODO: Implement actual row shifting logic
         // This would require coordination with the vertex store and dependency tracking
@@ -230,7 +239,9 @@ impl<'g> VertexEditor<'g> {
             old: None,
             new: LiteralValue::Text(format!("Column shift: start={start_col}, delta={delta}")),
         };
-        self.change_log.push(change_event);
+        if self.changelog_enabled {
+            self.change_log.push(change_event);
+        }
 
         // TODO: Implement actual column shifting logic
         // This would require coordination with the vertex store and dependency tracking
