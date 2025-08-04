@@ -371,4 +371,9 @@ impl VertexStore {
             .map(|_| !self.is_deleted(id))
             .unwrap_or(false)
     }
+
+    /// Get an iterator over all vertex IDs (including deleted ones)
+    pub fn all_vertices(&self) -> impl Iterator<Item = VertexId> + '_ {
+        (0..self.len).map(|i| VertexId((i as u32) + FIRST_NORMAL_VERTEX))
+    }
 }

@@ -18,6 +18,7 @@ mod schedule_integration;
 mod sheet_index_integration;
 //mod streaming_evaluation;
 mod debug_vertex_lifecycle;
+mod row_operations;
 mod stripe_cleanup_tests;
 mod stripe_streaming_integration;
 mod stripe_tests;

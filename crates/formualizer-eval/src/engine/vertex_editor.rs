@@ -1,5 +1,6 @@
 use super::graph::{ChangeEvent, DependencyGraph};
 use super::packed_coord::PackedCoord;
+use super::reference_adjuster::{ReferenceAdjuster, ShiftOperation};
 use super::vertex::{VertexId, VertexKind};
 use crate::SheetId;
 use crate::reference::{CellRef, Coord};
@@ -73,6 +74,15 @@ pub struct DataUpdateSummary {
     pub dependents_marked_dirty: Vec<VertexId>,
 }
 
+/// Summary of shift operations (row/column insert/delete)
+#[derive(Debug, Clone, Default)]
+pub struct ShiftSummary {
+    pub vertices_moved: Vec<VertexId>,
+    pub vertices_deleted: Vec<VertexId>,
+    pub references_adjusted: usize,
+    pub formulas_updated: usize,
+}
+
 /// Custom error type for vertex editor operations
 #[derive(Debug, Clone)]
 pub enum EditorError {
@@ -100,15 +110,15 @@ impl std::fmt::Display for EditorError {
                 )
             }
             EditorError::OutOfBounds { row, col } => {
-                write!(f, "Cell position out of bounds: row {}, col {}", row, col)
+                write!(f, "Cell position out of bounds: row {row}, col {col}")
             }
             EditorError::InvalidName { name, reason } => {
-                write!(f, "Invalid name '{}': {}", name, reason)
+                write!(f, "Invalid name '{name}': {reason}")
             }
             EditorError::TransactionFailed { reason } => {
-                write!(f, "Transaction failed: {}", reason)
+                write!(f, "Transaction failed: {reason}")
             }
-            EditorError::Excel(e) => write!(f, "Excel error: {:?}", e),
+            EditorError::Excel(e) => write!(f, "Excel error: {e:?}"),
         }
     }
 }
@@ -252,6 +262,11 @@ impl<'g> VertexEditor<'g> {
         // Note: get_dependents may require CSR rebuild if delta has changes
         let dependents = self.graph.get_dependents(id);
 
+        // Remove from cell mapping if it exists
+        if let Some(cell_ref) = self.graph.get_cell_ref_for_vertex(id) {
+            self.graph.remove_cell_mapping(&cell_ref);
+        }
+
         // Remove all edges
         self.graph.remove_all_edges(id);
 
@@ -280,11 +295,25 @@ impl<'g> VertexEditor<'g> {
             ));
         }
 
+        // Get old cell reference
+        let old_cell_ref = self.graph.get_cell_ref_for_vertex(id);
+
+        // Create new cell reference
+        let sheet_id = self.graph.get_sheet_id(id);
+        let new_cell_ref = CellRef::new(
+            sheet_id,
+            Coord::new(new_coord.row(), new_coord.col(), true, true),
+        );
+
         // Update coordinate in store
         self.graph.set_coord(id, new_coord);
 
         // Update edge cache coordinate if needed
         self.graph.update_edge_coord(id, new_coord);
+
+        // Update cell mapping
+        self.graph
+            .update_cell_mapping(id, old_cell_ref, new_cell_ref);
 
         // Mark dependents as dirty
         self.graph.mark_dependents_dirty(id);
@@ -386,6 +415,169 @@ impl<'g> VertexEditor<'g> {
     pub fn remove_edge(&mut self, _from: VertexId, _to: VertexId) -> bool {
         // TODO: Remove edge through proper API when available
         true
+    }
+
+    /// Insert rows at the specified position, shifting existing rows down
+    pub fn insert_rows(
+        &mut self,
+        sheet_id: SheetId,
+        before: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
+        if count == 0 {
+            return Ok(ShiftSummary::default());
+        }
+
+        let mut summary = ShiftSummary::default();
+
+        // Begin batch for efficiency
+        self.begin_batch();
+
+        // 1. Collect vertices to shift (those at or after the insert point)
+        let vertices_to_shift: Vec<(VertexId, PackedCoord)> = self
+            .graph
+            .vertices_in_sheet(sheet_id)
+            .filter_map(|id| {
+                let coord = self.graph.get_coord(id);
+                if coord.row() >= before {
+                    Some((id, coord))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // 2. Shift vertices down
+        for (id, old_coord) in vertices_to_shift {
+            let new_coord = PackedCoord::new(old_coord.row() + count, old_coord.col());
+            self.move_vertex(id, new_coord)?;
+            summary.vertices_moved.push(id);
+        }
+
+        // 3. Adjust formulas using ReferenceAdjuster
+        let op = ShiftOperation::InsertRows {
+            sheet_id,
+            before,
+            count,
+        };
+        let adjuster = ReferenceAdjuster::new();
+
+        // Get all formulas and adjust them
+        let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
+
+        for id in formula_vertices {
+            if let Some(ast) = self.graph.get_formula(id) {
+                let adjusted = adjuster.adjust_ast(&ast, &op);
+                // Only update if the formula actually changed
+                if format!("{ast:?}") != format!("{adjusted:?}") {
+                    self.graph.update_vertex_formula(id, adjusted)?;
+                    self.graph.mark_vertex_dirty(id);
+                    summary.formulas_updated += 1;
+                }
+            }
+        }
+
+        // 4. Log change event
+        if self.changelog_enabled {
+            self.change_log.push(ChangeEvent::InsertRows {
+                sheet_id,
+                before,
+                count,
+            });
+        }
+
+        self.commit_batch();
+
+        Ok(summary)
+    }
+
+    /// Delete rows at the specified position, shifting remaining rows up
+    pub fn delete_rows(
+        &mut self,
+        sheet_id: SheetId,
+        start: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
+        if count == 0 {
+            return Ok(ShiftSummary::default());
+        }
+
+        let mut summary = ShiftSummary::default();
+
+        self.begin_batch();
+
+        // 1. Delete vertices in the range
+        let vertices_to_delete: Vec<VertexId> = self
+            .graph
+            .vertices_in_sheet(sheet_id)
+            .filter_map(|id| {
+                let coord = self.graph.get_coord(id);
+                if coord.row() >= start && coord.row() < start + count {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for id in vertices_to_delete {
+            self.remove_vertex(id)?;
+            summary.vertices_deleted.push(id);
+        }
+
+        // 2. Shift remaining vertices up
+        let vertices_to_shift: Vec<(VertexId, PackedCoord)> = self
+            .graph
+            .vertices_in_sheet(sheet_id)
+            .filter_map(|id| {
+                let coord = self.graph.get_coord(id);
+                if coord.row() >= start + count {
+                    Some((id, coord))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (id, old_coord) in vertices_to_shift {
+            let new_coord = PackedCoord::new(old_coord.row() - count, old_coord.col());
+            self.move_vertex(id, new_coord)?;
+            summary.vertices_moved.push(id);
+        }
+
+        // 3. Adjust formulas
+        let op = ShiftOperation::DeleteRows {
+            sheet_id,
+            start,
+            count,
+        };
+        let adjuster = ReferenceAdjuster::new();
+
+        let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
+
+        for id in formula_vertices {
+            if let Some(ast) = self.graph.get_formula(id) {
+                let adjusted = adjuster.adjust_ast(&ast, &op);
+                if format!("{ast:?}") != format!("{adjusted:?}") {
+                    self.graph.update_vertex_formula(id, adjusted)?;
+                    self.graph.mark_vertex_dirty(id);
+                    summary.formulas_updated += 1;
+                }
+            }
+        }
+
+        // 4. Log change event
+        if self.changelog_enabled {
+            self.change_log.push(ChangeEvent::DeleteRows {
+                sheet_id,
+                start,
+                count,
+            });
+        }
+
+        self.commit_batch();
+
+        Ok(summary)
     }
 
     /// Shift rows down/up within a sheet (Excel's insert/delete rows)

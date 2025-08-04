@@ -29,6 +29,26 @@ pub enum ChangeEvent {
     RemoveVertex {
         id: VertexId,
     },
+    InsertRows {
+        sheet_id: SheetId,
+        before: u32,
+        count: u32,
+    },
+    DeleteRows {
+        sheet_id: SheetId,
+        start: u32,
+        count: u32,
+    },
+    InsertColumns {
+        sheet_id: SheetId,
+        before: u32,
+        count: u32,
+    },
+    DeleteColumns {
+        sheet_id: SheetId,
+        start: u32,
+        count: u32,
+    },
 }
 
 /// 🔮 Scalability Hook: Dependency reference types for range compression
@@ -1132,12 +1152,6 @@ impl DependencyGraph {
         }
     }
 
-    /// Get vertex coord (for testing)
-    #[cfg(test)]
-    pub(crate) fn get_coord(&self, id: VertexId) -> PackedCoord {
-        self.store.coord(id)
-    }
-
     /// Get vertex kind (for testing)
     #[cfg(test)]
     pub(crate) fn get_kind(&self, id: VertexId) -> VertexKind {
@@ -1171,5 +1185,93 @@ impl DependencyGraph {
     /// Get vertex ID for specific cell address
     pub fn get_vertex_for_cell(&self, addr: &CellRef) -> Option<VertexId> {
         self.cell_to_vertex.get(addr).copied()
+    }
+
+    /// Get coord for a vertex (public for VertexEditor)
+    pub fn get_coord(&self, id: VertexId) -> PackedCoord {
+        self.store.coord(id)
+    }
+
+    /// Get sheet_id for a vertex (public for VertexEditor)
+    pub fn get_sheet_id(&self, id: VertexId) -> SheetId {
+        self.store.sheet_id(id)
+    }
+
+    /// Get all vertices in a sheet
+    pub fn vertices_in_sheet(&self, sheet_id: SheetId) -> impl Iterator<Item = VertexId> + '_ {
+        self.store
+            .all_vertices()
+            .filter(move |&id| self.vertex_exists(id) && self.store.sheet_id(id) == sheet_id)
+    }
+
+    /// Get all vertices with formulas
+    pub fn vertices_with_formulas(&self) -> impl Iterator<Item = VertexId> + '_ {
+        self.vertex_formulas.keys().copied()
+    }
+
+    /// Update a vertex's formula
+    pub fn update_vertex_formula(&mut self, id: VertexId, ast: ASTNode) -> Result<(), ExcelError> {
+        // Get the sheet_id for this vertex
+        let sheet_id = self.store.sheet_id(id);
+
+        // Extract dependencies from AST
+        let (new_dependencies, new_range_dependencies, _) =
+            self.extract_dependencies(&ast, sheet_id)?;
+
+        // Remove old dependencies first
+        self.remove_dependent_edges(id);
+
+        // Store the new formula
+        let ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
+        self.vertex_formulas.insert(id, ast_id);
+
+        // Add new dependency edges
+        self.add_dependent_edges(id, &new_dependencies);
+        self.add_range_dependent_edges(id, &new_range_dependencies, sheet_id);
+
+        // Mark as formula vertex
+        self.store.set_kind(id, VertexKind::FormulaScalar);
+
+        Ok(())
+    }
+
+    /// Mark a vertex as dirty without propagation (for VertexEditor)
+    pub fn mark_vertex_dirty(&mut self, vertex_id: VertexId) {
+        self.store.set_dirty(vertex_id, true);
+        self.dirty_vertices.insert(vertex_id);
+    }
+
+    /// Update cell mapping for a vertex (for VertexEditor)
+    pub fn update_cell_mapping(
+        &mut self,
+        id: VertexId,
+        old_addr: Option<CellRef>,
+        new_addr: CellRef,
+    ) {
+        // Remove old mapping if it exists
+        if let Some(old) = old_addr {
+            self.cell_to_vertex.remove(&old);
+        }
+        // Add new mapping
+        self.cell_to_vertex.insert(new_addr, id);
+    }
+
+    /// Remove cell mapping (for VertexEditor)
+    pub fn remove_cell_mapping(&mut self, addr: &CellRef) {
+        self.cell_to_vertex.remove(addr);
+    }
+
+    /// Get the cell reference for a vertex
+    pub fn get_cell_ref_for_vertex(&self, id: VertexId) -> Option<CellRef> {
+        let coord = self.store.coord(id);
+        let sheet_id = self.store.sheet_id(id);
+        // Find the cell reference in the mapping
+        let cell_ref = CellRef::new(sheet_id, Coord::new(coord.row(), coord.col(), true, true));
+        // Verify it actually maps to this vertex
+        if self.cell_to_vertex.get(&cell_ref) == Some(&id) {
+            Some(cell_ref)
+        } else {
+            None
+        }
     }
 }

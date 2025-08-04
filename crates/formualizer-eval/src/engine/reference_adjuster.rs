@@ -1,5 +1,4 @@
 use crate::reference::{CellRef, Coord};
-use formualizer_common::ExcelErrorKind;
 use formualizer_core::parser::{ASTNode, ASTNodeType};
 
 /// Centralized reference adjustment logic for structural changes
