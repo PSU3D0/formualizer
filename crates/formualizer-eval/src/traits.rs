@@ -3,9 +3,10 @@
 //! Save/replace as `src/traits.rs`
 
 use crate::engine::range_stream::RangeStorage;
+pub use crate::function::Function;
 use crate::interpreter::Interpreter;
 use formualizer_common::{
-    ArgSpec, LiteralValue,
+    LiteralValue,
     error::{ExcelError, ExcelErrorKind},
 };
 use std::any::Any;
@@ -297,6 +298,7 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
 pub trait FunctionProvider: Send + Sync {
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>>;
 }
+
 pub trait EvaluationContext: Resolver + FunctionProvider {
     /// Get access to the shared thread pool for parallel evaluation
     /// Returns None if parallel evaluation is disabled or unavailable
@@ -311,47 +313,4 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
         reference: &ReferenceType,
         current_sheet: &str,
     ) -> Result<RangeStorage<'c>, ExcelError>;
-}
-
-// Note: Blanket implementation is removed to allow specific implementations
-
-/// Excel-style callable – **object-safe** (no associated consts)
-pub trait Function: Send + Sync + 'static {
-    /* metadata getters */
-    fn name(&self) -> &'static str;
-    fn namespace(&self) -> &'static str {
-        ""
-    }
-    fn volatile(&self) -> bool {
-        false
-    }
-    fn min_args(&self) -> usize {
-        0
-    }
-    fn variadic(&self) -> bool {
-        false
-    }
-    fn arg_schema(&self) -> &'static [ArgSpec] {
-        &[]
-    }
-
-    /* core work */
-    fn eval<'a, 'b>(
-        &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn EvaluationContext,
-    ) -> Result<LiteralValue, ExcelError>;
-
-    /// Attempt to evaluate this function using internal parallelism.
-    /// If it returns None, the interpreter should fall back to the standard eval method.
-    /// This enables intra-function parallelism for computationally expensive operations.
-    fn try_parallel_eval<'a, 'b>(
-        &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn EvaluationContext,
-        cancel_flag: &std::sync::atomic::AtomicBool,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        // Default implementation: no parallel evaluation
-        None
-    }
 }

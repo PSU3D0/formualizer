@@ -1,5 +1,6 @@
 //! Tests for the layer-by-layer evaluation logic of the engine.
 use super::common::{create_binary_op_ast, create_cell_ref_ast};
+use crate::builtins::random::RandFn;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
@@ -174,7 +175,11 @@ fn test_evaluation_with_cycles() {
 
 #[test]
 fn test_volatile_cells_are_always_evaluated() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    // Register RAND function in global registry so is_ast_volatile can find it
+    crate::builtins::random::register_builtins();
+
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(RandFn));
+    let mut engine = Engine::new(wb, EvalConfig::default());
 
     // A1 = RAND()
     engine

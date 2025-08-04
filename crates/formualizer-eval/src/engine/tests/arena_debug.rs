@@ -1,3 +1,4 @@
+use crate::builtins::math::SumFn;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
@@ -5,7 +6,7 @@ use formualizer_core::parser::Parser;
 
 #[test]
 fn test_simple_sum_with_arena() {
-    let wb = TestWorkbook::new();
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
     let mut engine = Engine::new(wb, EvalConfig::default());
 
     // Set up simple values

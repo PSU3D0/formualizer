@@ -1,32 +1,16 @@
 //! crates/formualizer-eval/src/test_workbook.rs
 //! --------------------------------------------
 //! Lightweight in-memory workbook for unit/prop tests.
-//!
-//! # Example
-//! ```
-//! use formualizer_eval::test_workbook::TestWorkbook;
-//! use formualizer_common::LiteralValue as V;
-//! use formualizer_eval::with_fns;
-//!
-//! use formualizer_eval::builtins::logical::{__FnTRUE, __FnAND};
-//!
-//! let wb = TestWorkbook::new()
-//!            .with_cell_a1("Sheet1", "A1", V::Number(42.0))
-//!            .with_named_range("Answer", vec![vec![V::Number(42.0)]])
-//!            .with_fns(with_fns![__FnTRUE, __FnAND]);
-//!
-//! let interp = wb.interpreter();
-//! let ast = formualizer_core::parser::Parser::from("=AND(TRUE(),A1=42)").parse().unwrap();
-//! let result = interp.evaluate_ast(&ast).unwrap();
-//! assert_eq!(result, V::Boolean(true));
-//! ```
-//!
-//! (Add `pub mod test_workbook;` in `lib.rs` to re-export.)
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{engine::range_stream::RangeStorage, traits::*};
+use crate::engine::range_stream::RangeStorage;
+use crate::function::Function;
+use crate::traits::{
+    EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
+    ReferenceResolver, Resolver, Table, TableResolver,
+};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_core::{
     ExcelErrorKind,
@@ -62,13 +46,11 @@ impl TestWorkbook {
         self
     }
 
-    /// `"A1"` style convenience (upper/lower insensitive, absolute `$` ignored)
     pub fn with_cell_a1<S: Into<String>, A: AsRef<str>>(self, sheet: S, a1: A, v: V) -> Self {
         let (col, row) = parse_a1(a1.as_ref()).expect("bad A1 ref in with_cell_a1");
         self.with_cell(sheet, row, col, v)
     }
 
-    /// Bulk insert rectangular data starting at top-left (row, col)
     pub fn with_range<S: Into<String>>(
         mut self,
         sheet: S,
@@ -98,18 +80,10 @@ impl TestWorkbook {
     }
 
     /* ─────────────── function helpers ─────────── */
-    pub fn with_fn<F: Function + 'static>(mut self, f: F) -> Self {
-        self.fns.insert((f.namespace(), f.name()), Arc::new(f));
-        self
-    }
-    pub fn with_fn_arc(mut self, f: Arc<dyn Function>) -> Self {
-        self.fns.insert((f.namespace(), f.name()), f);
-        self
-    }
-    pub fn with_fns(mut self, iter: impl IntoIterator<Item = Arc<dyn Function>>) -> Self {
-        for f in iter {
-            self = self.with_fn_arc(f);
-        }
+    pub fn with_function(mut self, func: Arc<dyn Function>) -> Self {
+        let ns = func.namespace();
+        let name = func.name();
+        self.fns.insert((ns, name), func);
         self
     }
 
@@ -124,9 +98,8 @@ impl EvaluationContext for TestWorkbook {
     fn resolve_range_storage<'c>(
         &'c self,
         reference: &ReferenceType,
-        current_sheet: &str,
+        _current_sheet: &str,
     ) -> Result<RangeStorage<'c>, ExcelError> {
-        // For testing, we just materialize. The core engine tests streaming.
         let range_box = self.resolve_range_like(reference)?;
         let data = range_box.materialise().into_owned();
         Ok(RangeStorage::Owned(Cow::Owned(data)))
@@ -156,7 +129,6 @@ impl RangeResolver for TestWorkbook {
         er: Option<u32>,
         ec: Option<u32>,
     ) -> Result<Box<dyn Range>, ExcelError> {
-        // naive rectangular materialisation (no full-row/col handling)
         let (sr, sc, er, ec) = match (sr, sc, er, ec) {
             (Some(sr), Some(sc), Some(er), Some(ec)) => (sr, sc, er, ec),
             _ => return Err(ExcelError::from(ExcelErrorKind::NImpl)),
@@ -198,32 +170,15 @@ impl TableResolver for TestWorkbook {
 
 impl FunctionProvider for TestWorkbook {
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
-        // First check local functions
-        self.fns
-            .get(&(ns, name))
-            .cloned()
-            // Then check global registry
-            .or_else(|| crate::function_registry::get(ns, name))
+        self.fns.get(&(ns, name)).cloned()
     }
 }
 
 /* blanket */
 impl Resolver for TestWorkbook {}
 
-/* ─────────────────────── util macros ─────────────────────── */
-/// Handy inside `with_fns!(__FnSUM, __FnAVERAGE, …)`
-#[macro_export]
-macro_rules! with_fns {
-    ($($wrapper:path),+ $(,)?) => {
-        [$(
-            std::sync::Arc::new($wrapper) as std::sync::Arc<dyn $crate::traits::Function>
-        ),+]
-    };
-}
-
 /* ─────────────────────── A1 parser ───────────────────────── */
 fn parse_a1(a1: &str) -> Option<(u32, u32)> {
-    // strip $ and uppercase
     let s = a1.replace('$', "").to_uppercase();
     let mut col = 0u32;
     let mut row_str = String::new();

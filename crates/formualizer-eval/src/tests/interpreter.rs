@@ -1,79 +1,5 @@
-use formualizer_macros::excel_fn;
-
-use crate::traits::{ArgumentHandle, EvaluationContext};
-
-use formualizer_common::{
-    LiteralValue,
-    error::{ExcelError, ExcelErrorKind},
-};
-
-/* ─────────────── SUM(A, …) ─────────────── */
-#[excel_fn(name = "SUM", min = 1, variadic, arg_types = "any")]
-fn test_sum_fn(
-    args: &[ArgumentHandle],
-    _ctx: &dyn EvaluationContext,
-) -> Result<LiteralValue, ExcelError> {
-    if args.is_empty() {
-        return Ok(LiteralValue::Error(
-            ExcelError::new(ExcelErrorKind::Value)
-                .with_message("SUM expects at least one argument".to_string()),
-        ));
-    }
-
-    let total = 0.0;
-    let mut total = 0.0;
-    for h in args {
-        match h.value()?.as_ref() {
-            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
-            LiteralValue::Array(arr) => {
-                for row in arr {
-                    for v in row {
-                        total += coerce_num(v)?;
-                    }
-                }
-            }
-            v => total += coerce_num(v)?,
-        }
-    }
-    Ok(LiteralValue::Number(total))
-}
-
-fn coerce_num(v: &LiteralValue) -> Result<f64, ExcelError> {
-    match v {
-        LiteralValue::Number(n) => Ok(*n),
-        LiteralValue::Int(i) => Ok(*i as f64),
-        LiteralValue::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
-        LiteralValue::Empty => Ok(0.0),
-        _ => Err(ExcelError::new(ExcelErrorKind::Value)
-            .with_message(format!("Cannot convert {v:?} to number"))),
-    }
-}
-
-/* ─────────────── IF(cond, then, else) ─────────────── */
-#[excel_fn(name = "IF", min = 2, variadic)]
-fn test_if_fn(
-    args: &[ArgumentHandle],
-    ctx: &dyn EvaluationContext,
-) -> Result<LiteralValue, ExcelError> {
-    if args.len() < 2 || args.len() > 3 {
-        return Ok(LiteralValue::Error(
-            ExcelError::new(ExcelErrorKind::Value)
-                .with_message(format!("IF expects 2 or 3 arguments, got {}", args.len())),
-        ));
-    }
-    let cond = args[0].value()?;
-    let truthy = cond.is_truthy();
-    let branch = if truthy {
-        &args[1]
-    } else {
-        args.get(2).unwrap_or(&args[1])
-    };
-    branch.value().map(|v| v.into_owned())
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::interpreter::Interpreter;
     use crate::test_workbook::TestWorkbook;
     use formualizer_common::error::{ExcelError, ExcelErrorKind};
     use formualizer_core::LiteralValue;
@@ -94,8 +20,13 @@ mod tests {
     }
 
     fn create_workbook() -> TestWorkbook {
-        crate::builtins::load_builtins();
+        use std::sync::Arc;
         TestWorkbook::new()
+            .with_function(Arc::new(crate::builtins::math::SumFn))
+            .with_function(Arc::new(crate::builtins::logical::IfFn))
+            .with_function(Arc::new(crate::builtins::logical::AndFn))
+            .with_function(Arc::new(crate::builtins::logical::TrueFn))
+            .with_function(Arc::new(crate::builtins::logical::FalseFn))
     }
 
     #[test]
@@ -569,13 +500,9 @@ mod tests {
     #[test]
     fn test_sum_function_argument_count() {
         let wb = create_workbook();
-        // SUM expects at least one argument.
+        // SUM() with no arguments returns 0 (Excel behavior)
         let result = evaluate_formula("=SUM()", &wb).unwrap();
-        if let LiteralValue::Error(ref e) = result {
-            assert!(e.message.clone().unwrap().contains("at least"));
-        } else {
-            panic!("Expected wrong argument count error");
-        }
+        assert_eq!(result, LiteralValue::Number(0.0));
     }
 
     #[test]

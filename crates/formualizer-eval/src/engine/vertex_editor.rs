@@ -228,9 +228,7 @@ impl<'g> VertexEditor<'g> {
                 coord: Coord::new(0, start_col, true, true),
             },
             old: None,
-            new: LiteralValue::Text(format!(
-                "Column shift: start={start_col}, delta={delta}"
-            )),
+            new: LiteralValue::Text(format!("Column shift: start={start_col}, delta={delta}")),
         };
         self.change_log.push(change_event);
 

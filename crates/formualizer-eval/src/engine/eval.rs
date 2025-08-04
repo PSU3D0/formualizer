@@ -820,7 +820,7 @@ where
         &self,
         prefix: &str,
         name: &str,
-    ) -> Option<std::sync::Arc<dyn crate::traits::Function>> {
+    ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
         self.resolver.get_function(prefix, name)
     }
 }

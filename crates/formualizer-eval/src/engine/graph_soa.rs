@@ -690,7 +690,7 @@ impl DependencyGraph {
         match &ast.node_type {
             ASTNodeType::Function { name, args, .. } => {
                 if let Some(func) = crate::function_registry::get("", name) {
-                    if func.volatile() {
+                    if func.caps().contains(crate::function::FnCaps::VOLATILE) {
                         return true;
                     }
                 }
@@ -968,7 +968,7 @@ impl DependencyGraph {
         if self.edges.delta_size() > 0 {
             // Fall back to scanning when delta has changes
             let mut dependents = Vec::new();
-            for (&addr, &vid) in &self.cell_to_vertex {
+            for (&_addr, &vid) in &self.cell_to_vertex {
                 let out_edges = self.edges.out_edges(vid);
                 if out_edges.contains(&vertex_id) {
                     dependents.push(vid);

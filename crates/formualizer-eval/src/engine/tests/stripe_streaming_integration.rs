@@ -4,6 +4,7 @@
 //! evaluation, ensuring that large ranges are both efficiently tracked for
 //! dependencies AND efficiently evaluated via streaming.
 
+use crate::builtins::math::SumFn;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
@@ -14,7 +15,7 @@ use std::time::Instant;
 fn test_stripe_streaming_integration_basic() {
     let mut config = EvalConfig::default();
     config.range_expansion_limit = 32; // Force streaming for larger ranges
-    let wb = TestWorkbook::new();
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
     let mut engine = Engine::new(wb, config);
 
     // Create a large range that will use both stripe dependency tracking AND streaming evaluation
@@ -66,7 +67,7 @@ fn test_stripe_streaming_integration_basic() {
 fn test_multiple_overlapping_streaming_ranges() {
     let mut config = EvalConfig::default();
     config.range_expansion_limit = 32;
-    let wb = TestWorkbook::new();
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
     let mut engine = Engine::new(wb, config);
 
     let range_size = 500;
@@ -133,7 +134,7 @@ fn test_multiple_overlapping_streaming_ranges() {
 fn test_stripe_streaming_performance_integration() {
     let mut config = EvalConfig::default();
     config.range_expansion_limit = 32;
-    let wb = TestWorkbook::new();
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
     let mut engine = Engine::new(wb, config);
 
     // Create multiple large ranges that overlap
@@ -200,7 +201,7 @@ fn test_stripe_streaming_performance_integration() {
 fn test_stripe_streaming_cross_sheet() {
     let mut config = EvalConfig::default();
     config.range_expansion_limit = 32;
-    let wb = TestWorkbook::new();
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
     let mut engine = Engine::new(wb, config);
 
     let range_size = 1000;
@@ -246,7 +247,7 @@ fn test_stripe_streaming_cross_sheet() {
 fn test_streaming_with_sparse_data_and_stripes() {
     let mut config = EvalConfig::default();
     config.range_expansion_limit = 32;
-    let wb = TestWorkbook::new();
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
     let mut engine = Engine::new(wb, config);
 
     let range_size = 2000;
@@ -293,7 +294,7 @@ fn test_streaming_range_shape_variations() {
     let mut config = EvalConfig::default();
     config.range_expansion_limit = 32;
     config.enable_block_stripes = true;
-    let wb = TestWorkbook::new();
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
     let mut engine = Engine::new(wb, config);
 
     // Test different range shapes that should use different stripe types
@@ -376,7 +377,7 @@ fn test_streaming_threshold_behavior_with_stripes() {
     for &size in &range_sizes {
         let mut config = EvalConfig::default();
         config.range_expansion_limit = 32;
-        let wb = TestWorkbook::new();
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
         let mut engine = Engine::new(wb, config);
 
         // Populate data
@@ -424,7 +425,7 @@ fn test_streaming_memory_usage_with_stripes() {
     // Verify that streaming + stripes doesn't cause memory issues
     let mut config = EvalConfig::default();
     config.range_expansion_limit = 16;
-    let wb = TestWorkbook::new();
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
     let mut engine = Engine::new(wb, config);
 
     // Create many large overlapping ranges

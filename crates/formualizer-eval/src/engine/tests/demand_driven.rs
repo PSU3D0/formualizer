@@ -6,7 +6,9 @@ use formualizer_core::parser::{ASTNode, ASTNodeType};
 
 #[test]
 fn test_evaluate_until_single_clean_target() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let wb =
+        TestWorkbook::new().with_function(std::sync::Arc::new(crate::builtins::random::RandFn));
+    let mut engine = Engine::new(wb, EvalConfig::default());
 
     // Set up: A1 = 10, B1 = A1 + 1, both clean
     engine
@@ -38,7 +40,9 @@ fn test_evaluate_until_single_clean_target() {
 
 #[test]
 fn test_evaluate_until_single_dirty_target() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let wb =
+        TestWorkbook::new().with_function(std::sync::Arc::new(crate::builtins::random::RandFn));
+    let mut engine = Engine::new(wb, EvalConfig::default());
 
     // Set up: A1 = 10, B1 = A1 + 1
     engine
@@ -72,7 +76,9 @@ fn test_evaluate_until_single_dirty_target() {
 
 #[test]
 fn test_evaluate_until_dependency_chain() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let wb =
+        TestWorkbook::new().with_function(std::sync::Arc::new(crate::builtins::random::RandFn));
+    let mut engine = Engine::new(wb, EvalConfig::default());
 
     // Set up chain: A1 = 10, B1 = A1, C1 = B1
     engine
@@ -111,7 +117,9 @@ fn test_evaluate_until_dependency_chain() {
 
 #[test]
 fn test_evaluate_until_multiple_targets() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let wb =
+        TestWorkbook::new().with_function(std::sync::Arc::new(crate::builtins::random::RandFn));
+    let mut engine = Engine::new(wb, EvalConfig::default());
 
     // Set up:
     // A1 = 10
@@ -195,7 +203,12 @@ fn test_evaluate_until_multiple_targets() {
 
 #[test]
 fn test_evaluate_until_volatile_precedent() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    // Register RAND function in global registry so is_ast_volatile can find it
+    crate::builtins::random::register_builtins();
+
+    let wb =
+        TestWorkbook::new().with_function(std::sync::Arc::new(crate::builtins::random::RandFn));
+    let mut engine = Engine::new(wb, EvalConfig::default());
 
     // Set up: A1 = RAND(), B1 = A1 + 1
     let rand_ast = ASTNode {
@@ -227,7 +240,12 @@ fn test_evaluate_until_volatile_precedent() {
 
 #[test]
 fn test_evaluate_until_target_is_volatile() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    // Register RAND function in global registry so is_ast_volatile can find it
+    crate::builtins::random::register_builtins();
+
+    let wb =
+        TestWorkbook::new().with_function(std::sync::Arc::new(crate::builtins::random::RandFn));
+    let mut engine = Engine::new(wb, EvalConfig::default());
 
     // Set up: A1 = RAND()
     let rand_ast = ASTNode {
@@ -249,7 +267,9 @@ fn test_evaluate_until_target_is_volatile() {
 
 #[test]
 fn test_evaluate_until_precedents_include_a_cycle() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let wb =
+        TestWorkbook::new().with_function(std::sync::Arc::new(crate::builtins::random::RandFn));
+    let mut engine = Engine::new(wb, EvalConfig::default());
 
     // Set up: A1 = B1, B1 = A1 (cycle), C1 = A1 + 1 (depends on cycle)
     let a1_ast = create_cell_ref_ast(None, 1, 2); // A1 = B1

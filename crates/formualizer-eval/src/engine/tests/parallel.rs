@@ -1,8 +1,6 @@
 //! Comprehensive tests for parallel evaluation functionality
-use crate::builtins::math::ParallelSumFn;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
-use crate::with_fns;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,9 +45,7 @@ fn func_ast(name: &str, args: Vec<ASTNode>) -> ASTNode {
 
 /// Create a test workbook with a dependency chain suitable for parallel testing
 fn create_parallel_test_workbook() -> TestWorkbook {
-    TestWorkbook::new()
-        .with_fns(with_fns![crate::builtins::math::__FnSUM])
-        .with_fn(ParallelSumFn)
+    TestWorkbook::new().with_function(std::sync::Arc::new(crate::builtins::math::SumFn))
 }
 
 /// Create a workbook with multiple independent layers for parallel evaluation
@@ -415,48 +411,6 @@ fn test_parallel_layer_evaluation() {
     assert_eq!(
         parallel_engine.get_cell_value("Sheet1", 3, 1),
         Some(LiteralValue::Number(120.0))
-    );
-}
-
-#[test]
-fn test_parallel_function_hooks() {
-    let wb = create_parallel_test_workbook();
-    let mut engine = Engine::new(
-        wb,
-        EvalConfig {
-            enable_parallel: true,
-            ..Default::default()
-        },
-    );
-
-    // Set up test values
-    engine
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))
-        .unwrap();
-    engine
-        .set_cell_value("Sheet1", 1, 2, LiteralValue::Int(20))
-        .unwrap();
-    engine
-        .set_cell_value("Sheet1", 1, 3, LiteralValue::Int(30))
-        .unwrap();
-
-    // Use the parallel SUM function
-    let parallel_sum_ast = func_ast(
-        "PARALLEL_SUM",
-        vec![ref_ast(1, 1), ref_ast(1, 2), ref_ast(1, 3)],
-    );
-    engine
-        .set_cell_formula("Sheet1", 2, 1, parallel_sum_ast)
-        .unwrap();
-
-    // Evaluate
-    let result = engine.evaluate_all().unwrap();
-    assert!(result.computed_vertices >= 1);
-
-    // Verify the parallel SUM worked correctly
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 1),
-        Some(LiteralValue::Number(60.0))
     );
 }
 

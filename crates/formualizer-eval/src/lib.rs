@@ -1,3 +1,4 @@
+pub mod function;
 pub mod function_registry;
 pub mod interpreter;
 pub mod registry;
