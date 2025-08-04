@@ -50,6 +50,21 @@ pub enum ChangeEvent {
         start: u32,
         count: u32,
     },
+    DefineName {
+        name: String,
+        scope: NameScope,
+        definition: NamedDefinition,
+    },
+    UpdateName {
+        name: String,
+        scope: NameScope,
+        old_definition: NamedDefinition,
+        new_definition: NamedDefinition,
+    },
+    DeleteName {
+        name: String,
+        scope: NameScope,
+    },
 }
 
 /// 🔮 Scalability Hook: Dependency reference types for range compression

@@ -1,3 +1,4 @@
+use crate::engine::ChangeEvent;
 use crate::engine::graph::{DependencyGraph, NameScope, NamedDefinition};
 use crate::reference::{CellRef, Coord, RangeRef};
 use formualizer_common::{ExcelErrorKind, LiteralValue};
@@ -782,4 +783,277 @@ fn test_absolute_ref_deleted_no_error() {
         }
         _ => panic!("Expected Cell definition"),
     }
+}
+
+// ============ Phase 3: VertexEditor Integration Tests ============
+
+#[test]
+fn test_vertex_editor_define_name_for_cell() {
+    use crate::engine::vertex_editor::VertexEditor;
+
+    let mut graph = DependencyGraph::new();
+
+    // Set a value in the cell we'll name
+    graph
+        .set_cell_value("Sheet1", 5, 2, lit_num(100.0))
+        .unwrap();
+
+    // Use VertexEditor to define a name
+    {
+        let mut editor = VertexEditor::new(&mut graph);
+        editor
+            .define_name_for_cell("TotalSales", "Sheet1", 5, 2, NameScope::Workbook)
+            .expect("Should define name successfully");
+    }
+
+    // Verify the name was defined
+    let resolved = graph.resolve_name("TotalSales", 0).unwrap();
+    match resolved {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(cell_ref.coord.row, 5);
+            assert_eq!(cell_ref.coord.col, 2);
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+
+    // Use the name in a formula
+    let ast = parse("=TotalSales*1.1").unwrap();
+    let result = graph.set_cell_formula("Sheet1", 10, 10, ast);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_vertex_editor_define_name_for_range() {
+    use crate::engine::vertex_editor::VertexEditor;
+
+    let mut graph = DependencyGraph::new();
+
+    // Use VertexEditor to define a range name
+    {
+        let mut editor = VertexEditor::new(&mut graph);
+        editor
+            .define_name_for_range(
+                "SalesData",
+                "Sheet1",
+                1,
+                1, // A1
+                10,
+                3, // C10
+                NameScope::Workbook,
+            )
+            .expect("Should define range name successfully");
+    }
+
+    // Verify the range was defined
+    let resolved = graph.resolve_name("SalesData", 0).unwrap();
+    match resolved {
+        NamedDefinition::Range(range_ref) => {
+            assert_eq!(range_ref.start.coord.row, 1);
+            assert_eq!(range_ref.start.coord.col, 1);
+            assert_eq!(range_ref.end.coord.row, 10);
+            assert_eq!(range_ref.end.coord.col, 3);
+        }
+        _ => panic!("Expected Range definition"),
+    }
+}
+
+#[test]
+fn test_vertex_editor_sheet_scoped_names() {
+    use crate::engine::vertex_editor::VertexEditor;
+
+    let mut graph = DependencyGraph::new();
+
+    {
+        let mut editor = VertexEditor::new(&mut graph);
+
+        // Define workbook-scoped name
+        editor
+            .define_name_for_cell("Value", "Sheet1", 1, 1, NameScope::Workbook)
+            .expect("Should define workbook name");
+
+        // Define sheet-scoped name with same name
+        editor
+            .define_name_for_cell("Value", "Sheet1", 2, 2, NameScope::Sheet(0))
+            .expect("Should define sheet name");
+    }
+
+    // Sheet scope should take precedence
+    let resolved = graph.resolve_name("Value", 0).unwrap();
+    match resolved {
+        NamedDefinition::Cell(cell_ref) => {
+            assert_eq!(
+                cell_ref.coord.row, 2,
+                "Sheet-scoped name should take precedence"
+            );
+            assert_eq!(cell_ref.coord.col, 2);
+        }
+        _ => panic!("Expected Cell definition"),
+    }
+}
+
+#[test]
+fn test_vertex_editor_update_name() {
+    use crate::engine::vertex_editor::VertexEditor;
+
+    let mut graph = DependencyGraph::new();
+
+    // Set values in cells
+    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    graph.set_cell_value("Sheet1", 2, 2, lit_num(20.0)).unwrap();
+
+    // Define initial name
+    {
+        let mut editor = VertexEditor::new(&mut graph);
+        editor
+            .define_name_for_cell("Target", "Sheet1", 1, 1, NameScope::Workbook)
+            .expect("Should define name");
+    }
+
+    // Create formula using the name
+    let ast = parse("=Target+5").unwrap();
+    let vertex_id = graph
+        .set_cell_formula("Sheet1", 3, 3, ast)
+        .unwrap()
+        .affected_vertices[0];
+
+    // Update the name to point to a different cell
+    {
+        let mut editor = VertexEditor::new(&mut graph);
+        let new_def = NamedDefinition::Cell(CellRef::new(0, Coord::new(2, 2, true, true)));
+        editor
+            .update_name("Target", new_def, NameScope::Workbook)
+            .expect("Should update name");
+    }
+
+    // The formula should now be marked dirty
+    assert!(graph.is_dirty(vertex_id));
+}
+
+#[test]
+fn test_vertex_editor_delete_name() {
+    use crate::engine::vertex_editor::VertexEditor;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a name
+    {
+        let mut editor = VertexEditor::new(&mut graph);
+        editor
+            .define_name_for_cell("TempName", "Sheet1", 1, 1, NameScope::Workbook)
+            .expect("Should define name");
+    }
+
+    // Use in formula
+    let ast = parse("=TempName").unwrap();
+    let vertex_id = graph
+        .set_cell_formula("Sheet1", 2, 2, ast)
+        .unwrap()
+        .affected_vertices[0];
+
+    // Delete the name
+    {
+        let mut editor = VertexEditor::new(&mut graph);
+        editor
+            .delete_name("TempName", NameScope::Workbook)
+            .expect("Should delete name");
+    }
+
+    // The formula should be marked dirty (will error on next eval)
+    assert!(graph.is_dirty(vertex_id));
+
+    // Verify the name is gone
+    assert!(graph.resolve_name("TempName", 0).is_none());
+}
+
+#[test]
+fn test_vertex_editor_invalid_sheet_name() {
+    use crate::engine::vertex_editor::VertexEditor;
+
+    let mut graph = DependencyGraph::new();
+    let mut editor = VertexEditor::new(&mut graph);
+
+    // Try to define a name for a non-existent sheet
+    let result =
+        editor.define_name_for_cell("MyName", "NonExistentSheet", 1, 1, NameScope::Workbook);
+
+    assert!(result.is_err());
+    if let Err(e) = result {
+        match e {
+            crate::engine::vertex_editor::EditorError::InvalidName { name, reason } => {
+                assert_eq!(name, "NonExistentSheet");
+                assert!(reason.contains("not found"));
+            }
+            _ => panic!("Expected InvalidName error"),
+        }
+    }
+}
+
+#[test]
+fn test_vertex_editor_structural_operations_with_names() {
+    use crate::engine::vertex_editor::VertexEditor;
+
+    let mut graph = DependencyGraph::new();
+
+    // Define a named range that will be affected by structural operations
+    {
+        let mut editor = VertexEditor::new(&mut graph);
+        // Manually create range with relative references so it will move
+        let start = CellRef::new(0, Coord::new(3, 1, false, false)); // relative refs
+        let end = CellRef::new(0, Coord::new(5, 1, false, false)); // relative refs
+        let range_def = NamedDefinition::Range(RangeRef::new(start, end));
+        editor
+            .define_name("MyData", range_def, NameScope::Workbook)
+            .expect("Should define range name");
+
+        // Insert rows before the range
+        editor.insert_rows(0, 2, 1).expect("Should insert row");
+    }
+
+    // Verify the range was adjusted
+    let resolved = graph.resolve_name("MyData", 0).unwrap();
+    match resolved {
+        NamedDefinition::Range(range_ref) => {
+            // Range should have shifted down by 1 row
+            assert_eq!(
+                range_ref.start.coord.row, 4,
+                "Start should shift from 3 to 4"
+            );
+            assert_eq!(range_ref.end.coord.row, 6, "End should shift from 5 to 6");
+        }
+        _ => panic!("Expected Range definition"),
+    }
+}
+
+#[test]
+fn test_vertex_editor_change_log() {
+    use crate::engine::vertex_editor::VertexEditor;
+
+    let mut graph = DependencyGraph::new();
+    let mut editor = VertexEditor::new(&mut graph);
+
+    // Enable change log (it's enabled by default)
+    editor.set_changelog_enabled(true);
+
+    // Perform operations
+    editor
+        .define_name_for_cell("Name1", "Sheet1", 1, 1, NameScope::Workbook)
+        .expect("Should define name");
+
+    let new_def = NamedDefinition::Cell(CellRef::new(0, Coord::new(2, 2, true, true)));
+    editor
+        .update_name("Name1", new_def, NameScope::Workbook)
+        .expect("Should update name");
+
+    editor
+        .delete_name("Name1", NameScope::Workbook)
+        .expect("Should delete name");
+
+    // Check change log
+    let changes = editor.change_log();
+    assert_eq!(changes.len(), 3, "Should have 3 change events");
+
+    // Verify event types
+    assert!(matches!(&changes[0], ChangeEvent::DefineName { .. }));
+    assert!(matches!(&changes[1], ChangeEvent::UpdateName { .. }));
+    assert!(matches!(&changes[2], ChangeEvent::DeleteName { .. }));
 }

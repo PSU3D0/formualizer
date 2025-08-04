@@ -1125,6 +1125,124 @@ impl<'g> VertexEditor<'g> {
 
         Ok(summary)
     }
+
+    /// Define a named range
+    pub fn define_name(
+        &mut self,
+        name: &str,
+        definition: super::graph::NamedDefinition,
+        scope: super::graph::NameScope,
+    ) -> Result<(), EditorError> {
+        self.graph.define_name(name, definition.clone(), scope)?;
+
+        if self.changelog_enabled {
+            self.change_log.push(ChangeEvent::DefineName {
+                name: name.to_string(),
+                scope,
+                definition,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Helper to create definitions from coordinates for a single cell
+    pub fn define_name_for_cell(
+        &mut self,
+        name: &str,
+        sheet_name: &str,
+        row: u32,
+        col: u32,
+        scope: super::graph::NameScope,
+    ) -> Result<(), EditorError> {
+        let sheet_id = self
+            .graph
+            .sheet_id(sheet_name)
+            .ok_or_else(|| EditorError::InvalidName {
+                name: sheet_name.to_string(),
+                reason: "Sheet not found".to_string(),
+            })?;
+        let cell_ref = CellRef::new(sheet_id, Coord::new(row, col, true, true));
+        self.define_name(name, super::graph::NamedDefinition::Cell(cell_ref), scope)
+    }
+
+    /// Helper to create definitions from coordinates for a range
+    pub fn define_name_for_range(
+        &mut self,
+        name: &str,
+        sheet_name: &str,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+        scope: super::graph::NameScope,
+    ) -> Result<(), EditorError> {
+        let sheet_id = self
+            .graph
+            .sheet_id(sheet_name)
+            .ok_or_else(|| EditorError::InvalidName {
+                name: sheet_name.to_string(),
+                reason: "Sheet not found".to_string(),
+            })?;
+        let start = CellRef::new(sheet_id, Coord::new(start_row, start_col, true, true));
+        let end = CellRef::new(sheet_id, Coord::new(end_row, end_col, true, true));
+        let range_ref = crate::reference::RangeRef::new(start, end);
+        self.define_name(name, super::graph::NamedDefinition::Range(range_ref), scope)
+    }
+
+    /// Update an existing named range definition
+    pub fn update_name(
+        &mut self,
+        name: &str,
+        new_definition: super::graph::NamedDefinition,
+        scope: super::graph::NameScope,
+    ) -> Result<(), EditorError> {
+        // Get the old definition for the change log
+        let old_definition = self
+            .graph
+            .resolve_name(
+                name,
+                match scope {
+                    super::graph::NameScope::Sheet(id) => id,
+                    super::graph::NameScope::Workbook => 0,
+                },
+            )
+            .cloned();
+
+        self.graph
+            .update_name(name, new_definition.clone(), scope)?;
+
+        if self.changelog_enabled {
+            if let Some(old_def) = old_definition {
+                self.change_log.push(ChangeEvent::UpdateName {
+                    name: name.to_string(),
+                    scope,
+                    old_definition: old_def,
+                    new_definition,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Delete a named range
+    pub fn delete_name(
+        &mut self,
+        name: &str,
+        scope: super::graph::NameScope,
+    ) -> Result<(), EditorError> {
+        self.graph.delete_name(name, scope)?;
+
+        if self.changelog_enabled {
+            self.change_log.push(ChangeEvent::DeleteName {
+                name: name.to_string(),
+                scope,
+            });
+        }
+
+        Ok(())
+    }
 }
 
 /// Helper enum for cell data
