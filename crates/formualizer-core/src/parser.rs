@@ -1282,3 +1282,7 @@ pub fn normalise_reference(reference: &str) -> Result<String, ParsingError> {
     let ref_type = ReferenceType::from_string(reference)?;
     Ok(ref_type.to_string())
 }
+
+pub fn parse<T: AsRef<str>>(formula: T) -> Result<ASTNode, ParserError> {
+    Parser::from(formula.as_ref()).parse()
+}

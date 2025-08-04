@@ -1,11 +1,6 @@
 use crate::engine::{DependencyGraph, VertexEditor};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::ASTNode;
-
-fn parse(formula: &str) -> ASTNode {
-    use formualizer_core::parser::Parser;
-    Parser::from(formula).parse().unwrap()
-}
+use formualizer_core::parser::{ASTNode, parse};
 
 fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)
@@ -21,7 +16,7 @@ fn test_insert_columns() {
     graph.set_cell_value("Sheet1", 1, 2, lit_num(20.0)).unwrap();
     graph.set_cell_value("Sheet1", 1, 3, lit_num(30.0)).unwrap();
     let sum_result = graph
-        .set_cell_formula("Sheet1", 1, 4, parse("=SUM(A1:C1)"))
+        .set_cell_formula("Sheet1", 1, 4, parse("=SUM(A1:C1)").unwrap())
         .unwrap();
     let sum_id = sum_result.affected_vertices[0];
 
@@ -62,7 +57,7 @@ fn test_delete_columns() {
             .unwrap();
     }
     let formula_result = graph
-        .set_cell_formula("Sheet1", 1, 7, parse("=SUM(A1:E1)"))
+        .set_cell_formula("Sheet1", 1, 7, parse("=SUM(A1:E1)").unwrap())
         .unwrap();
 
     let mut editor = VertexEditor::new(&mut graph);
@@ -92,11 +87,11 @@ fn test_insert_columns_adjusts_formulas() {
 
     // A2 = A1 * 2
     graph
-        .set_cell_formula("Sheet1", 2, 1, parse("=A1*2"))
+        .set_cell_formula("Sheet1", 2, 1, parse("=A1*2").unwrap())
         .unwrap();
     // C2 = C1 + 5
     let c2_result = graph
-        .set_cell_formula("Sheet1", 2, 3, parse("=C1+5"))
+        .set_cell_formula("Sheet1", 2, 3, parse("=C1+5").unwrap())
         .unwrap();
     let c2_id = c2_result.affected_vertices[0];
 
@@ -123,7 +118,7 @@ fn test_delete_column_creates_ref_error() {
     graph.set_cell_value("Sheet1", 1, 2, lit_num(20.0)).unwrap();
     // B2 = B1 * 2
     let b2_result = graph
-        .set_cell_formula("Sheet1", 2, 2, parse("=B1*2"))
+        .set_cell_formula("Sheet1", 2, 2, parse("=B1*2").unwrap())
         .unwrap();
     let b2_id = b2_result.affected_vertices[0];
 
@@ -155,7 +150,7 @@ fn test_insert_columns_with_absolute_references() {
 
     // Formula with absolute reference: =$A$1+E1
     let formula_result = graph
-        .set_cell_formula("Sheet1", 2, 5, parse("=$A$1+E1"))
+        .set_cell_formula("Sheet1", 2, 5, parse("=$A$1+E1").unwrap())
         .unwrap();
     let formula_id = formula_result.affected_vertices[0];
 
@@ -220,7 +215,7 @@ fn test_mixed_row_column_operations() {
 
     // Add formula: D4 = SUM(A1:C3)
     let formula_result = graph
-        .set_cell_formula("Sheet1", 4, 4, parse("=SUM(A1:C3)"))
+        .set_cell_formula("Sheet1", 4, 4, parse("=SUM(A1:C3)").unwrap())
         .unwrap();
     let formula_id = formula_result.affected_vertices[0];
 
@@ -262,14 +257,14 @@ fn test_delete_columns_with_dependencies() {
     // Excel uses 1-based indexing
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
     graph
-        .set_cell_formula("Sheet1", 1, 2, parse("=A1*2"))
+        .set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap())
         .unwrap();
     let c1_result = graph
-        .set_cell_formula("Sheet1", 1, 3, parse("=B1+5"))
+        .set_cell_formula("Sheet1", 1, 3, parse("=B1+5").unwrap())
         .unwrap();
     let c1_id = c1_result.affected_vertices[0];
     graph
-        .set_cell_formula("Sheet1", 1, 4, parse("=C1"))
+        .set_cell_formula("Sheet1", 1, 4, parse("=C1").unwrap())
         .unwrap();
 
     let mut editor = VertexEditor::new(&mut graph);

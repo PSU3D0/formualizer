@@ -1,6 +1,7 @@
 use crate::engine::{DependencyGraph, VertexEditor};
 use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
+use formualizer_core::parse;
 
 fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
     CellRef {
@@ -11,11 +12,6 @@ fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
 
 fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)
-}
-
-fn parse(formula: &str) -> formualizer_core::parser::ASTNode {
-    use formualizer_core::parser::Parser;
-    Parser::from(formula).parse().unwrap()
 }
 
 #[test]
@@ -50,7 +46,7 @@ fn debug_dependency_creation() {
 
     // Create B1 with formula =A1*2
     println!("Creating B1 with formula =A1*2");
-    let formula = parse("=A1*2");
+    let formula = parse("=A1*2").unwrap();
 
     // Debug the parsed formula to see what reference it creates
     println!("Parsed formula: {:?}", formula);

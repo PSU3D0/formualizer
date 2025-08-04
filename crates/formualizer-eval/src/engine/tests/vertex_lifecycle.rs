@@ -5,7 +5,7 @@ use crate::engine::{
 };
 use crate::reference::{CellRef, Coord};
 use formualizer_common::{ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::ASTNode;
+use formualizer_core::{parse, parser::ASTNode};
 
 fn create_test_graph() -> DependencyGraph {
     DependencyGraph::new()
@@ -22,11 +22,6 @@ fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)
 }
 
-fn parse(formula: &str) -> ASTNode {
-    use formualizer_core::parser::Parser;
-    Parser::from(formula).parse().unwrap()
-}
-
 #[test]
 fn test_vertex_removal_cleanup() {
     let mut graph = create_test_graph();
@@ -36,12 +31,12 @@ fn test_vertex_removal_cleanup() {
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
 
     // Create B1 = A1 * 2 (B1 = row 1, col 2)
-    let b1_formula = parse("=A1*2");
+    let b1_formula = parse("=A1*2").unwrap();
     let b1_result = graph.set_cell_formula("Sheet1", 1, 2, b1_formula).unwrap();
     let b1 = b1_result.affected_vertices[0];
 
     // Create C1 = B1 + A1 (C1 = row 1, col 3)
-    let c1_formula = parse("=B1+A1");
+    let c1_formula = parse("=B1+A1").unwrap();
     let c1_result = graph.set_cell_formula("Sheet1", 1, 3, c1_formula).unwrap();
     let c1 = c1_result.affected_vertices[0];
 
@@ -115,7 +110,7 @@ fn test_patch_vertex_data() {
     let a1 = a1_result.affected_vertices[0];
 
     // Create B1 that depends on A1 (B1 = row 1, col 2)
-    let formula = parse("=A1*2");
+    let formula = parse("=A1*2").unwrap();
     let b1_result = graph.set_cell_formula("Sheet1", 1, 2, formula).unwrap();
     let b1 = b1_result.affected_vertices[0];
 
@@ -155,7 +150,7 @@ fn test_move_vertex_with_dependencies() {
     let a1 = editor.set_cell_value(cell_ref(0, 0, 0), lit_num(100.0));
 
     // Create B1 that depends on A1
-    let formula = parse("=A1+10");
+    let formula = parse("=A1+10").unwrap();
     let b1 = editor.set_cell_formula(cell_ref(0, 0, 1), formula);
 
     // Move A1 to new location
@@ -297,24 +292,24 @@ fn test_complex_removal_scenario() {
 
     // Create B1 = A1*2 (row 1, col 2)
     let b1_result = graph
-        .set_cell_formula("Sheet1", 1, 2, parse("=A1*2"))
+        .set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap())
         .unwrap();
     let b1 = b1_result.affected_vertices[0];
 
     // Create C1 = B1+1 (row 1, col 3)
     let c1_result = graph
-        .set_cell_formula("Sheet1", 1, 3, parse("=B1+1"))
+        .set_cell_formula("Sheet1", 1, 3, parse("=B1+1").unwrap())
         .unwrap();
     let c1 = c1_result.affected_vertices[0];
 
     // Create D2 = B1-1 (row 2, col 4)
     let _d2_result = graph
-        .set_cell_formula("Sheet1", 2, 4, parse("=B1-1"))
+        .set_cell_formula("Sheet1", 2, 4, parse("=B1-1").unwrap())
         .unwrap();
 
     // Create E1 = C1+D2 (row 1, col 5)
     let _e1_result = graph
-        .set_cell_formula("Sheet1", 1, 5, parse("=C1+D2"))
+        .set_cell_formula("Sheet1", 1, 5, parse("=C1+D2").unwrap())
         .unwrap();
 
     // Now use editor to remove B1

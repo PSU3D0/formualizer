@@ -465,11 +465,7 @@ impl RelativeReferenceAdjuster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use formualizer_core::parser::Parser;
-
-    fn parse(formula: &str) -> ASTNode {
-        Parser::from(formula).parse().unwrap()
-    }
+    use formualizer_core::parser::parse;
 
     fn format_formula(ast: &ASTNode) -> String {
         // TODO: Use the actual formualizer_core::parser::to_string when available
@@ -482,7 +478,7 @@ mod tests {
         let adjuster = ReferenceAdjuster::new();
 
         // Formula: =A5+B10
-        let ast = parse("=A5+B10");
+        let ast = parse("=A5+B10").unwrap();
 
         // Insert 2 rows before row 7
         let adjusted = adjuster.adjust_ast(
@@ -525,7 +521,7 @@ mod tests {
         let adjuster = ReferenceAdjuster::new();
 
         // Formula: =C1+F1
-        let ast = parse("=C1+F1");
+        let ast = parse("=C1+F1").unwrap();
 
         // Delete columns B and C (columns 2 and 3)
         let adjusted = adjuster.adjust_ast(
@@ -570,7 +566,7 @@ mod tests {
         let adjuster = ReferenceAdjuster::new();
 
         // Formula: =SUM(A1:A10)
-        let ast = parse("=SUM(A1:A10)");
+        let ast = parse("=SUM(A1:A10)").unwrap();
 
         // Insert 3 rows before row 5
         let adjusted = adjuster.adjust_ast(
@@ -605,7 +601,7 @@ mod tests {
         let adjuster = RelativeReferenceAdjuster::new(2, 3); // Move 2 rows down, 3 cols right
 
         // Formula: =A1+B2
-        let ast = parse("=A1+B2");
+        let ast = parse("=A1+B2").unwrap();
         let adjusted = adjuster.adjust_formula(&ast);
 
         // A1 -> D3, B2 -> E4
@@ -817,7 +813,7 @@ mod tests {
         let adjuster = ReferenceAdjuster::new();
 
         // Test that ranges expand when rows/cols are inserted within them
-        let ast = parse("=SUM(B2:D10)");
+        let ast = parse("=SUM(B2:D10)").unwrap();
 
         // Insert rows in the middle of the range
         let adjusted = adjuster.adjust_ast(
@@ -856,7 +852,7 @@ mod tests {
         let adjuster = ReferenceAdjuster::new();
 
         // Test that ranges contract when rows/cols are deleted within them
-        let ast = parse("=SUM(A5:A20)");
+        let ast = parse("=SUM(A5:A20)").unwrap();
 
         // Delete rows in the middle of the range
         let adjusted = adjuster.adjust_ast(

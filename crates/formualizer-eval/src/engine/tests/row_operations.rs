@@ -1,11 +1,6 @@
 use crate::engine::{DependencyGraph, VertexEditor};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::ASTNode;
-
-fn parse(formula: &str) -> ASTNode {
-    use formualizer_core::parser::Parser;
-    Parser::from(formula).parse().unwrap()
-}
+use formualizer_core::{parse, parser::ASTNode};
 
 fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)
@@ -21,7 +16,7 @@ fn test_insert_rows() {
     graph.set_cell_value("Sheet1", 2, 1, lit_num(20.0)).unwrap();
     graph.set_cell_value("Sheet1", 3, 1, lit_num(30.0)).unwrap();
     let sum_result = graph
-        .set_cell_formula("Sheet1", 4, 1, parse("=SUM(A1:A3)"))
+        .set_cell_formula("Sheet1", 4, 1, parse("=SUM(A1:A3)").unwrap())
         .unwrap();
     let sum_id = sum_result.affected_vertices[0];
 
@@ -62,7 +57,7 @@ fn test_delete_rows() {
             .unwrap();
     }
     let formula_result = graph
-        .set_cell_formula("Sheet1", 7, 1, parse("=SUM(A1:A5)"))
+        .set_cell_formula("Sheet1", 7, 1, parse("=SUM(A1:A5)").unwrap())
         .unwrap();
 
     let mut editor = VertexEditor::new(&mut graph);
@@ -92,11 +87,11 @@ fn test_insert_rows_adjusts_formulas() {
 
     // B1 = A1 * 2
     graph
-        .set_cell_formula("Sheet1", 1, 2, parse("=A1*2"))
+        .set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap())
         .unwrap();
     // B3 = A3 + 5
     let b3_result = graph
-        .set_cell_formula("Sheet1", 3, 2, parse("=A3+5"))
+        .set_cell_formula("Sheet1", 3, 2, parse("=A3+5").unwrap())
         .unwrap();
     let b3_id = b3_result.affected_vertices[0];
 
@@ -123,7 +118,7 @@ fn test_delete_row_creates_ref_error() {
     graph.set_cell_value("Sheet1", 2, 1, lit_num(20.0)).unwrap();
     // B2 = A2 * 2
     let b2_result = graph
-        .set_cell_formula("Sheet1", 2, 2, parse("=A2*2"))
+        .set_cell_formula("Sheet1", 2, 2, parse("=A2*2").unwrap())
         .unwrap();
     let b2_id = b2_result.affected_vertices[0];
 
@@ -155,7 +150,7 @@ fn test_insert_rows_with_absolute_references() {
 
     // Formula with absolute reference: =$A$1+A5
     let formula_result = graph
-        .set_cell_formula("Sheet1", 5, 2, parse("=$A$1+A5"))
+        .set_cell_formula("Sheet1", 5, 2, parse("=$A$1+A5").unwrap())
         .unwrap();
     let formula_id = formula_result.affected_vertices[0];
 

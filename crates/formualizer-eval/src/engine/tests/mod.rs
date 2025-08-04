@@ -19,6 +19,7 @@ mod sheet_index_integration;
 //mod streaming_evaluation;
 mod column_operations;
 mod debug_vertex_lifecycle;
+mod named_ranges;
 mod range_operations;
 mod row_operations;
 mod stripe_cleanup_tests;

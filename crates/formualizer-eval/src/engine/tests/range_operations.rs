@@ -1,11 +1,6 @@
 use crate::engine::{DependencyGraph, VertexEditor};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::ASTNode;
-
-fn parse(formula: &str) -> ASTNode {
-    use formualizer_core::parser::Parser;
-    Parser::from(formula).parse().unwrap()
-}
+use formualizer_core::{parse, parser::ASTNode};
 
 fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)
@@ -72,10 +67,10 @@ fn test_copy_range() {
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
     graph.set_cell_value("Sheet1", 1, 2, lit_num(20.0)).unwrap();
     graph
-        .set_cell_formula("Sheet1", 2, 1, parse("=A1*2"))
+        .set_cell_formula("Sheet1", 2, 1, parse("=A1*2").unwrap())
         .unwrap();
     graph
-        .set_cell_formula("Sheet1", 2, 2, parse("=B1+A1"))
+        .set_cell_formula("Sheet1", 2, 2, parse("=B1+A1").unwrap())
         .unwrap();
 
     let mut editor = VertexEditor::new(&mut graph);
@@ -142,7 +137,7 @@ fn test_copy_range_with_absolute_references() {
 
     // Formula with mixed references: =$A$1+E5
     graph
-        .set_cell_formula("Sheet1", 2, 2, parse("=$A$1+E5"))
+        .set_cell_formula("Sheet1", 2, 2, parse("=$A$1+E5").unwrap())
         .unwrap();
 
     let mut editor = VertexEditor::new(&mut graph);
@@ -167,15 +162,15 @@ fn test_clear_range_with_formulas() {
     // Setup cells with formulas that reference each other
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
     graph
-        .set_cell_formula("Sheet1", 1, 2, parse("=A1*2"))
+        .set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap())
         .unwrap();
     graph
-        .set_cell_formula("Sheet1", 1, 3, parse("=B1+5"))
+        .set_cell_formula("Sheet1", 1, 3, parse("=B1+5").unwrap())
         .unwrap();
 
     // D1 references C1 which is in the range to be cleared
     let d1_result = graph
-        .set_cell_formula("Sheet1", 1, 4, parse("=C1"))
+        .set_cell_formula("Sheet1", 1, 4, parse("=C1").unwrap())
         .unwrap();
     let d1_id = d1_result.affected_vertices[0];
 
@@ -200,15 +195,15 @@ fn test_move_range() {
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
     graph.set_cell_value("Sheet1", 1, 2, lit_num(20.0)).unwrap();
     graph
-        .set_cell_formula("Sheet1", 2, 1, parse("=A1*2"))
+        .set_cell_formula("Sheet1", 2, 1, parse("=A1*2").unwrap())
         .unwrap();
     graph
-        .set_cell_formula("Sheet1", 2, 2, parse("=B1+A1"))
+        .set_cell_formula("Sheet1", 2, 2, parse("=B1+A1").unwrap())
         .unwrap();
 
     // C3 references A1 (which will be moved)
     let c3_result = graph
-        .set_cell_formula("Sheet1", 3, 3, parse("=A1+10"))
+        .set_cell_formula("Sheet1", 3, 3, parse("=A1+10").unwrap())
         .unwrap();
     let c3_id = c3_result.affected_vertices[0];
 

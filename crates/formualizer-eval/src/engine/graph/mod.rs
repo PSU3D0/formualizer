@@ -1,3 +1,4 @@
+use crate::reference::RangeRef;
 use crate::{SheetId, SheetRegistry};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
@@ -93,6 +94,116 @@ pub fn block_index(row: u32, col: u32) -> u32 {
     (row / BLOCK_H) << 16 | (col / BLOCK_W)
 }
 
+/// Definition of a named range
+#[derive(Debug, Clone)]
+pub enum NamedDefinition {
+    /// Direct reference to a single cell
+    Cell(CellRef),
+
+    /// Reference to a range of cells
+    Range(RangeRef),
+
+    /// Named formula (evaluates to value/range)
+    Formula {
+        ast: ASTNode,
+        /// Cached dependencies from last parse
+        dependencies: Vec<VertexId>,
+        /// Cached range dependencies
+        range_deps: Vec<ReferenceType>,
+    },
+}
+
+/// Scope of a named range
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NameScope {
+    /// Available throughout workbook
+    Workbook,
+    /// Only available in specific sheet
+    Sheet(SheetId),
+}
+
+/// Complete named range entry
+#[derive(Debug, Clone)]
+pub struct NamedRange {
+    pub definition: NamedDefinition,
+    pub scope: NameScope,
+    /// Formulas that reference this name (for invalidation)
+    pub dependents: FxHashSet<VertexId>,
+}
+
+/// Validate that a name conforms to Excel naming rules
+fn is_valid_excel_name(name: &str) -> bool {
+    // Excel name rules:
+    // 1. Must start with a letter, underscore, or backslash
+    // 2. Can contain letters, numbers, periods, and underscores
+    // 3. Cannot be a cell reference (like A1, B2, etc.)
+    // 4. Cannot exceed 255 characters
+    // 5. Cannot contain spaces
+
+    if name.is_empty() || name.len() > 255 {
+        return false;
+    }
+
+    // Check if it looks like a cell reference (basic check)
+    if is_cell_reference(name) {
+        return false;
+    }
+
+    let mut chars = name.chars();
+
+    // First character must be letter, underscore, or backslash
+    if let Some(first) = chars.next() {
+        if !first.is_alphabetic() && first != '_' && first != '\\' {
+            return false;
+        }
+    }
+
+    // Remaining characters must be letters, digits, periods, or underscores
+    for c in chars {
+        if !c.is_alphanumeric() && c != '.' && c != '_' {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Check if a string looks like a cell reference
+fn is_cell_reference(s: &str) -> bool {
+    // A cell reference must:
+    // 1. Start with optional $, then 1-3 letters (column)
+    // 2. Followed by optional $, then digits (row)
+    // Examples: A1, $A$1, AB123, $XFD$1048576
+
+    let s = s.trim_start_matches('$');
+
+    // Find where letters end and digits begin
+    let letter_end = s.chars().position(|c| !c.is_alphabetic() && c != '$');
+
+    if let Some(pos) = letter_end {
+        let (col_part, rest) = s.split_at(pos);
+
+        // Column part must be 1-3 letters
+        if col_part.is_empty() || col_part.len() > 3 {
+            return false;
+        }
+
+        // Check if all are letters
+        if !col_part.chars().all(|c| c.is_alphabetic()) {
+            return false;
+        }
+
+        // Rest must be optional $ followed by digits only
+        let row_part = rest.trim_start_matches('$');
+
+        // Must have at least one digit and all must be digits
+        !row_part.is_empty() && row_part.chars().all(|c| c.is_ascii_digit())
+    } else {
+        // No digits found, not a cell reference
+        false
+    }
+}
+
 /// A summary of the results of a mutating operation on the graph.
 /// This serves as a "changelog" to the application layer.
 #[derive(Debug, Clone)]
@@ -140,6 +251,16 @@ pub struct DependencyGraph {
     sheet_reg: SheetRegistry,
     default_sheet_id: SheetId,
 
+    // Named ranges support
+    /// Workbook-scoped named ranges
+    named_ranges: FxHashMap<String, NamedRange>,
+
+    /// Sheet-scoped named ranges  
+    sheet_named_ranges: FxHashMap<(SheetId, String), NamedRange>,
+
+    /// Reverse mapping: vertex -> names it uses
+    vertex_to_names: FxHashMap<VertexId, Vec<String>>,
+
     // Evaluation configuration
     config: super::EvalConfig,
 }
@@ -168,6 +289,9 @@ impl DependencyGraph {
             sheet_indexes: FxHashMap::default(),
             sheet_reg,
             default_sheet_id,
+            named_ranges: FxHashMap::default(),
+            sheet_named_ranges: FxHashMap::default(),
+            vertex_to_names: FxHashMap::default(),
             config: super::EvalConfig::default(),
         }
     }
@@ -226,6 +350,160 @@ impl DependencyGraph {
     /// Converts a `CellRef` to a fully qualified A1-style string (e.g., "Sheet1!A1").
     pub fn to_a1(&self, cell_ref: CellRef) -> String {
         format!("{}!{}", self.sheet_name(cell_ref.sheet_id), cell_ref.coord)
+    }
+
+    // Named Range Methods
+
+    /// Define a new named range
+    pub fn define_name(
+        &mut self,
+        name: &str,
+        definition: NamedDefinition,
+        scope: NameScope,
+    ) -> Result<(), ExcelError> {
+        // Validate name
+        if !is_valid_excel_name(name) {
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message(format!("Invalid name: {name}")));
+        }
+
+        // Check for duplicates
+        match scope {
+            NameScope::Workbook => {
+                if self.named_ranges.contains_key(name) {
+                    return Err(ExcelError::new(ExcelErrorKind::Name)
+                        .with_message(format!("Name already exists: {name}")));
+                }
+            }
+            NameScope::Sheet(sheet_id) => {
+                if self
+                    .sheet_named_ranges
+                    .contains_key(&(sheet_id, name.to_string()))
+                {
+                    return Err(ExcelError::new(ExcelErrorKind::Name)
+                        .with_message(format!("Name already exists in sheet: {name}")));
+                }
+            }
+        }
+
+        // Extract dependencies if formula
+        let named_range = match definition {
+            NamedDefinition::Formula { ref ast, .. } => {
+                let (deps, range_deps, _) = self.extract_dependencies(
+                    ast,
+                    match scope {
+                        NameScope::Sheet(id) => id,
+                        NameScope::Workbook => self.default_sheet_id,
+                    },
+                )?;
+                NamedRange {
+                    definition: NamedDefinition::Formula {
+                        ast: ast.clone(),
+                        dependencies: deps,
+                        range_deps,
+                    },
+                    scope,
+                    dependents: FxHashSet::default(),
+                }
+            }
+            _ => NamedRange {
+                definition,
+                scope,
+                dependents: FxHashSet::default(),
+            },
+        };
+
+        // Store
+        match scope {
+            NameScope::Workbook => {
+                self.named_ranges.insert(name.to_string(), named_range);
+            }
+            NameScope::Sheet(id) => {
+                self.sheet_named_ranges
+                    .insert((id, name.to_string()), named_range);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Resolve a named range to its definition
+    pub fn resolve_name(&self, name: &str, current_sheet: SheetId) -> Option<&NamedDefinition> {
+        // Sheet scope takes precedence
+        self.sheet_named_ranges
+            .get(&(current_sheet, name.to_string()))
+            .or_else(|| self.named_ranges.get(name))
+            .map(|nr| &nr.definition)
+    }
+
+    /// Update an existing named range definition
+    pub fn update_name(
+        &mut self,
+        name: &str,
+        new_definition: NamedDefinition,
+        scope: NameScope,
+    ) -> Result<(), ExcelError> {
+        // First collect dependents to avoid borrow checker issues
+        let dependents_to_dirty = match scope {
+            NameScope::Workbook => self
+                .named_ranges
+                .get(name)
+                .map(|nr| nr.dependents.iter().copied().collect::<Vec<_>>()),
+            NameScope::Sheet(id) => self
+                .sheet_named_ranges
+                .get(&(id, name.to_string()))
+                .map(|nr| nr.dependents.iter().copied().collect::<Vec<_>>()),
+        };
+
+        if let Some(dependents) = dependents_to_dirty {
+            // Mark all dependents as dirty
+            for vertex_id in dependents {
+                self.mark_vertex_dirty(vertex_id);
+            }
+
+            // Now update the definition
+            let named_range = match scope {
+                NameScope::Workbook => self.named_ranges.get_mut(name),
+                NameScope::Sheet(id) => self.sheet_named_ranges.get_mut(&(id, name.to_string())),
+            };
+
+            if let Some(named_range) = named_range {
+                // Update definition
+                named_range.definition = new_definition;
+
+                // Clear dependents (will be rebuilt on next evaluation)
+                named_range.dependents.clear();
+            }
+
+            Ok(())
+        } else {
+            Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message(format!("Name not found: {name}")))
+        }
+    }
+
+    /// Delete a named range
+    pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), ExcelError> {
+        let named_range = match scope {
+            NameScope::Workbook => self.named_ranges.remove(name),
+            NameScope::Sheet(id) => self.sheet_named_ranges.remove(&(id, name.to_string())),
+        };
+
+        if let Some(named_range) = named_range {
+            // Mark all dependent formulas as needing recalculation with #NAME! error
+            for &vertex_id in &named_range.dependents {
+                // Mark as dirty to trigger recalculation (will error during eval)
+                self.mark_vertex_dirty(vertex_id);
+                // Remove from vertex_to_names mapping
+                if let Some(names) = self.vertex_to_names.get_mut(&vertex_id) {
+                    names.retain(|n| n != name);
+                }
+            }
+            Ok(())
+        } else {
+            Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message(format!("Name not found: {name}")))
+        }
     }
 
     #[cfg(test)]
@@ -632,6 +910,82 @@ impl DependencyGraph {
                         } else {
                             // Keep as a compressed range dependency
                             range_dependencies.push(reference.clone());
+                        }
+                    }
+                    ReferenceType::NamedRange(name) => {
+                        // Resolve the named range
+                        if let Some(definition) = self.resolve_name(name, current_sheet_id) {
+                            // Clone the definition to avoid borrow issues
+                            let definition = definition.clone();
+
+                            match definition {
+                                NamedDefinition::Cell(cell_ref) => {
+                                    let vertex_id =
+                                        self.get_or_create_vertex(&cell_ref, created_placeholders);
+                                    dependencies.insert(vertex_id);
+                                }
+                                NamedDefinition::Range(range_ref) => {
+                                    // Calculate range size
+                                    let height = range_ref
+                                        .end
+                                        .coord
+                                        .row
+                                        .saturating_sub(range_ref.start.coord.row)
+                                        + 1;
+                                    let width = range_ref
+                                        .end
+                                        .coord
+                                        .col
+                                        .saturating_sub(range_ref.start.coord.col)
+                                        + 1;
+                                    let size = (width * height) as usize;
+
+                                    if size <= self.config.range_expansion_limit {
+                                        // Expand to individual cells
+                                        for row in
+                                            range_ref.start.coord.row..=range_ref.end.coord.row
+                                        {
+                                            for col in
+                                                range_ref.start.coord.col..=range_ref.end.coord.col
+                                            {
+                                                let coord = Coord::new(row, col, true, true);
+                                                let addr =
+                                                    CellRef::new(range_ref.start.sheet_id, coord);
+                                                let vertex_id = self.get_or_create_vertex(
+                                                    &addr,
+                                                    created_placeholders,
+                                                );
+                                                dependencies.insert(vertex_id);
+                                            }
+                                        }
+                                    } else {
+                                        // Keep as compressed range
+                                        let sheet_name = self.sheet_name(range_ref.start.sheet_id);
+                                        range_dependencies.push(ReferenceType::Range {
+                                            sheet: Some(sheet_name.to_string()),
+                                            start_row: Some(range_ref.start.coord.row),
+                                            start_col: Some(range_ref.start.coord.col),
+                                            end_row: Some(range_ref.end.coord.row),
+                                            end_col: Some(range_ref.end.coord.col),
+                                        });
+                                    }
+                                }
+                                NamedDefinition::Formula {
+                                    dependencies: formula_deps,
+                                    range_deps,
+                                    ..
+                                } => {
+                                    // Add pre-computed dependencies
+                                    dependencies.extend(formula_deps);
+                                    range_dependencies.extend(range_deps);
+                                }
+                            }
+
+                            // Note: We should track that this vertex uses this name for invalidation
+                            // This will be done after the vertex is created in set_cell_formula
+                        } else {
+                            return Err(ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Undefined name: {name}")));
                         }
                     }
                     _ => {} // Ignore others for now
