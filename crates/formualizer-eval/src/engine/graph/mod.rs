@@ -1096,6 +1096,17 @@ impl DependencyGraph {
         self.dirty_vertices.insert(id);
     }
 
+    /// Check if a vertex has a #REF! error
+    pub fn is_ref_error(&self, id: VertexId) -> bool {
+        if let Some(value_ref) = self.vertex_values.get(&id) {
+            let value = self.data_store.retrieve_value(*value_ref);
+            if let LiteralValue::Error(err) = value {
+                return err.kind == ExcelErrorKind::Ref;
+            }
+        }
+        false
+    }
+
     /// Internal: Mark all direct dependents as dirty
     #[doc(hidden)]
     pub fn mark_dependents_dirty(&mut self, id: VertexId) {
