@@ -8,6 +8,7 @@ mod dirty_propagation;
 mod dirty_propagation_precision;
 mod evaluation;
 mod graph_basic;
+mod graph_internal_helpers;
 mod layer_evaluation;
 //mod mark_dirty_benchmarks;
 mod parallel;

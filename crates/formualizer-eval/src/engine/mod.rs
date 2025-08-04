@@ -3,7 +3,7 @@
 //! Provides incremental formula evaluation with dependency tracking.
 
 pub mod eval;
-pub mod graph_soa;
+pub mod graph;
 pub mod range_stream;
 pub mod scheduler;
 pub mod vertex;
@@ -27,7 +27,8 @@ mod tests;
 
 pub use eval::{Engine, EvalResult};
 // Use SoA implementation
-pub use graph_soa::{
+pub use graph::snapshot::VertexSnapshot;
+pub use graph::{
     ChangeEvent, DependencyGraph, DependencyRef, OperationSummary, StripeKey, StripeType,
     block_index,
 };

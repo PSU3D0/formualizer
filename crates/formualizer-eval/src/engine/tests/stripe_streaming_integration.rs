@@ -422,69 +422,81 @@ fn test_streaming_threshold_behavior_with_stripes() {
 
 #[test]
 fn test_streaming_memory_usage_with_stripes() {
-    // Verify that streaming + stripes doesn't cause memory issues
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
-    let mut engine = Engine::new(wb, config);
+    // Run test in a thread with larger stack size to handle deep recursion
+    // from many overlapping ranges
+    let builder = std::thread::Builder::new()
+        .name("test_streaming_memory".into())
+        .stack_size(8 * 1024 * 1024); // 8MB stack
 
-    // Create many large overlapping ranges
-    let num_ranges = 200;
-    let range_size = 5000;
+    let handle = builder
+        .spawn(|| {
+            // Verify that streaming + stripes doesn't cause memory issues
+            let mut config = EvalConfig::default();
+            config.range_expansion_limit = 16;
+            let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
+            let mut engine = Engine::new(wb, config);
 
-    // Populate base data
-    for i in 1..=range_size {
-        engine
-            .set_cell_value("Sheet1", i, 1, LiteralValue::Int(1))
-            .unwrap();
-    }
+            // Create many large overlapping ranges
+            let num_ranges = 200;
+            let range_size = 5000;
 
-    // Create overlapping ranges using batch mode for better performance
-    engine.begin_batch();
-    for f in 0..num_ranges {
-        let start_row = (f * 25) + 1; // Overlap by shifting start
-        let end_row = std::cmp::min(start_row + 999, range_size); // +999 to get 1000 cells
-        let formula_row = f + 1;
+            // Populate base data
+            for i in 1..=range_size {
+                engine
+                    .set_cell_value("Sheet1", i, 1, LiteralValue::Int(1))
+                    .unwrap();
+            }
 
-        let formula = format!("=SUM(A{}:A{})", start_row, end_row);
-        let ast = Parser::from(&formula).parse().unwrap();
-        engine
-            .set_cell_formula("Sheet1", formula_row, 2, ast)
-            .unwrap();
-    }
-    engine.end_batch();
+            // Create overlapping ranges using batch mode for better performance
+            engine.begin_batch();
+            for f in 0..num_ranges {
+                let start_row = (f * 25) + 1; // Overlap by shifting start
+                let end_row = std::cmp::min(start_row + 999, range_size); // +999 to get 1000 cells
+                let formula_row = f + 1;
 
-    // This should complete without running out of memory or taking too long
-    let start = Instant::now();
-    engine.evaluate_all().unwrap();
-    let duration = start.elapsed();
+                let formula = format!("=SUM(A{}:A{})", start_row, end_row);
+                let ast = Parser::from(&formula).parse().unwrap();
+                engine
+                    .set_cell_formula("Sheet1", formula_row, 2, ast)
+                    .unwrap();
+            }
+            engine.end_batch();
 
-    println!(
-        "Evaluated {} overlapping streaming ranges in {} ms",
-        num_ranges,
-        duration.as_millis()
-    );
+            // This should complete without running out of memory or taking too long
+            let start = Instant::now();
+            engine.evaluate_all().unwrap();
+            let duration = start.elapsed();
 
-    assert!(
-        duration.as_millis() < 10000,
-        "Large number of streaming ranges should evaluate in reasonable time"
-    );
+            println!(
+                "Evaluated {} overlapping streaming ranges in {} ms",
+                num_ranges,
+                duration.as_millis()
+            );
 
-    // Verify some results are correct
-    let first_result = engine.get_cell_value("Sheet1", 1, 2).unwrap();
-    assert_eq!(
-        first_result,
-        LiteralValue::Number(1000.0),
-        "First range should sum to 1000"
-    );
+            assert!(
+                duration.as_millis() < 10000,
+                "Large number of streaming ranges should evaluate in reasonable time"
+            );
 
-    let last_result = engine.get_cell_value("Sheet1", num_ranges, 2).unwrap();
-    let last_start = ((num_ranges - 1) * 25) + 1;
-    let last_end = std::cmp::min(last_start + 999, range_size); // +999 to get 1000 cells
-    let expected_last = (last_end - last_start + 1) as f64;
-    assert_eq!(
-        last_result,
-        LiteralValue::Number(expected_last),
-        "Last range should sum correctly"
-    );
+            // Verify some results are correct
+            let first_result = engine.get_cell_value("Sheet1", 1, 2).unwrap();
+            assert_eq!(
+                first_result,
+                LiteralValue::Number(1000.0),
+                "First range should sum to 1000"
+            );
+
+            let last_result = engine.get_cell_value("Sheet1", num_ranges, 2).unwrap();
+            let last_start = ((num_ranges - 1) * 25) + 1;
+            let last_end = std::cmp::min(last_start + 999, range_size); // +999 to get 1000 cells
+            let expected_last = (last_end - last_start + 1) as f64;
+            assert_eq!(
+                last_result,
+                LiteralValue::Number(expected_last),
+                "Last range should sum correctly"
+            );
+        })
+        .expect("Failed to spawn test thread");
+
+    handle.join().expect("Test thread panicked");
 }

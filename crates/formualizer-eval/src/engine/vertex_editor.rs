@@ -1,4 +1,4 @@
-use super::graph_soa::{ChangeEvent, DependencyGraph};
+use super::graph::{ChangeEvent, DependencyGraph};
 use super::packed_coord::PackedCoord;
 use super::vertex::{VertexId, VertexKind};
 use crate::SheetId;

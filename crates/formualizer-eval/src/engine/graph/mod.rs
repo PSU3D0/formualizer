@@ -3,6 +3,8 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+pub mod snapshot;
+
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
 use super::packed_coord::PackedCoord;
@@ -220,9 +222,7 @@ impl DependencyGraph {
     /// Get mutable access to a sheet's index, creating it if it doesn't exist
     /// This is the primary way VertexEditor and internal operations access the index
     pub fn sheet_index_mut(&mut self, sheet_id: SheetId) -> &mut SheetIndex {
-        self.sheet_indexes
-            .entry(sheet_id)
-            .or_default()
+        self.sheet_indexes.entry(sheet_id).or_default()
     }
 
     /// Get immutable access to a sheet's index, returns None if not initialized
@@ -1009,6 +1009,85 @@ impl DependencyGraph {
         } else {
             // Fast path: use reverse edges from CSR
             self.edges.in_edges(vertex_id).to_vec()
+        }
+    }
+
+    // Internal helper methods for Milestone 0.4
+
+    /// Internal: Create a snapshot of vertex state for rollback
+    #[doc(hidden)]
+    pub fn snapshot_vertex(&self, id: VertexId) -> crate::engine::VertexSnapshot {
+        let coord = self.store.coord(id);
+        let sheet_id = self.store.sheet_id(id);
+        let kind = self.store.kind(id);
+        let flags = self.store.flags(id);
+
+        // Get value and formula references
+        let value_ref = self.vertex_values.get(&id).copied();
+        let formula_ref = self.vertex_formulas.get(&id).copied();
+
+        // Get outgoing edges (dependencies)
+        let out_edges = self.get_dependencies(id);
+
+        crate::engine::VertexSnapshot {
+            coord,
+            sheet_id,
+            kind,
+            flags,
+            value_ref,
+            formula_ref,
+            out_edges,
+        }
+    }
+
+    /// Internal: Remove all edges for a vertex
+    #[doc(hidden)]
+    pub fn remove_all_edges(&mut self, id: VertexId) {
+        // Remove outgoing edges (this vertex's dependencies)
+        self.remove_dependent_edges(id);
+
+        // Force rebuild before getting dependents to ensure we have accurate data
+        // Otherwise get_dependents may use stale CSR data when delta has changes
+        self.edges.rebuild();
+
+        // Remove incoming edges (vertices that depend on this vertex)
+        let dependents = self.get_dependents(id);
+        for dependent in dependents {
+            self.edges.remove_edge(dependent, id);
+        }
+
+        // Rebuild again to apply the incoming edge removals
+        self.edges.rebuild();
+    }
+
+    /// Internal: Mark vertex as having #REF! error
+    #[doc(hidden)]
+    pub fn mark_as_ref_error(&mut self, id: VertexId) {
+        let error = LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref));
+        let value_ref = self.data_store.store_value(error);
+        self.vertex_values.insert(id, value_ref);
+        self.store.set_dirty(id, true);
+        self.dirty_vertices.insert(id);
+    }
+
+    /// Internal: Mark all direct dependents as dirty
+    #[doc(hidden)]
+    pub fn mark_dependents_dirty(&mut self, id: VertexId) {
+        let dependents = self.get_dependents(id);
+        for dep_id in dependents {
+            self.store.set_dirty(dep_id, true);
+            self.dirty_vertices.insert(dep_id);
+        }
+    }
+
+    /// Internal: Mark a vertex as volatile
+    #[doc(hidden)]
+    pub fn mark_volatile(&mut self, id: VertexId, volatile: bool) {
+        self.store.set_volatile(id, volatile);
+        if volatile {
+            self.volatile_vertices.insert(id);
+        } else {
+            self.volatile_vertices.remove(&id);
         }
     }
 }
