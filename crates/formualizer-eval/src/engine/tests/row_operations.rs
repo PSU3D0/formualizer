@@ -1,8 +1,4 @@
-use crate::engine::{
-    DependencyGraph, EditorError, VertexEditor,
-    reference_adjuster::{ReferenceAdjuster, ShiftOperation},
-};
-use crate::reference::{CellRef, Coord};
+use crate::engine::{DependencyGraph, VertexEditor};
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::ASTNode;
 

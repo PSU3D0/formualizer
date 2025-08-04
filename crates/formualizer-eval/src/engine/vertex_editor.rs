@@ -580,6 +580,169 @@ impl<'g> VertexEditor<'g> {
         Ok(summary)
     }
 
+    /// Insert columns at the specified position, shifting existing columns right
+    pub fn insert_columns(
+        &mut self,
+        sheet_id: SheetId,
+        before: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
+        if count == 0 {
+            return Ok(ShiftSummary::default());
+        }
+
+        let mut summary = ShiftSummary::default();
+
+        // Begin batch for efficiency
+        self.begin_batch();
+
+        // 1. Collect vertices to shift (those at or after the insert point)
+        let vertices_to_shift: Vec<(VertexId, PackedCoord)> = self
+            .graph
+            .vertices_in_sheet(sheet_id)
+            .filter_map(|id| {
+                let coord = self.graph.get_coord(id);
+                if coord.col() >= before {
+                    Some((id, coord))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // 2. Shift vertices right
+        for (id, old_coord) in vertices_to_shift {
+            let new_coord = PackedCoord::new(old_coord.row(), old_coord.col() + count);
+            self.move_vertex(id, new_coord)?;
+            summary.vertices_moved.push(id);
+        }
+
+        // 3. Adjust formulas using ReferenceAdjuster
+        let op = ShiftOperation::InsertColumns {
+            sheet_id,
+            before,
+            count,
+        };
+        let adjuster = ReferenceAdjuster::new();
+
+        // Get all formulas and adjust them
+        let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
+
+        for id in formula_vertices {
+            if let Some(ast) = self.graph.get_formula(id) {
+                let adjusted = adjuster.adjust_ast(&ast, &op);
+                // Only update if the formula actually changed
+                if format!("{ast:?}") != format!("{adjusted:?}") {
+                    self.graph.update_vertex_formula(id, adjusted)?;
+                    self.graph.mark_vertex_dirty(id);
+                    summary.formulas_updated += 1;
+                }
+            }
+        }
+
+        // 4. Log change event
+        if self.changelog_enabled {
+            self.change_log.push(ChangeEvent::InsertColumns {
+                sheet_id,
+                before,
+                count,
+            });
+        }
+
+        self.commit_batch();
+
+        Ok(summary)
+    }
+
+    /// Delete columns at the specified position, shifting remaining columns left
+    pub fn delete_columns(
+        &mut self,
+        sheet_id: SheetId,
+        start: u32,
+        count: u32,
+    ) -> Result<ShiftSummary, EditorError> {
+        if count == 0 {
+            return Ok(ShiftSummary::default());
+        }
+
+        let mut summary = ShiftSummary::default();
+
+        self.begin_batch();
+
+        // 1. Delete vertices in the range
+        let vertices_to_delete: Vec<VertexId> = self
+            .graph
+            .vertices_in_sheet(sheet_id)
+            .filter_map(|id| {
+                let coord = self.graph.get_coord(id);
+                if coord.col() >= start && coord.col() < start + count {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for id in vertices_to_delete {
+            self.remove_vertex(id)?;
+            summary.vertices_deleted.push(id);
+        }
+
+        // 2. Shift remaining vertices left
+        let vertices_to_shift: Vec<(VertexId, PackedCoord)> = self
+            .graph
+            .vertices_in_sheet(sheet_id)
+            .filter_map(|id| {
+                let coord = self.graph.get_coord(id);
+                if coord.col() >= start + count {
+                    Some((id, coord))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (id, old_coord) in vertices_to_shift {
+            let new_coord = PackedCoord::new(old_coord.row(), old_coord.col() - count);
+            self.move_vertex(id, new_coord)?;
+            summary.vertices_moved.push(id);
+        }
+
+        // 3. Adjust formulas
+        let op = ShiftOperation::DeleteColumns {
+            sheet_id,
+            start,
+            count,
+        };
+        let adjuster = ReferenceAdjuster::new();
+
+        let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
+
+        for id in formula_vertices {
+            if let Some(ast) = self.graph.get_formula(id) {
+                let adjusted = adjuster.adjust_ast(&ast, &op);
+                if format!("{ast:?}") != format!("{adjusted:?}") {
+                    self.graph.update_vertex_formula(id, adjusted)?;
+                    self.graph.mark_vertex_dirty(id);
+                    summary.formulas_updated += 1;
+                }
+            }
+        }
+
+        // 4. Log change event
+        if self.changelog_enabled {
+            self.change_log.push(ChangeEvent::DeleteColumns {
+                sheet_id,
+                start,
+                count,
+            });
+        }
+
+        self.commit_batch();
+
+        Ok(summary)
+    }
+
     /// Shift rows down/up within a sheet (Excel's insert/delete rows)
     pub fn shift_rows(&mut self, sheet_id: SheetId, start_row: u32, delta: i32) {
         if delta == 0 {

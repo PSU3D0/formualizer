@@ -17,6 +17,7 @@ mod range_property_tests;
 mod schedule_integration;
 mod sheet_index_integration;
 //mod streaming_evaluation;
+mod column_operations;
 mod debug_vertex_lifecycle;
 mod row_operations;
 mod stripe_cleanup_tests;
