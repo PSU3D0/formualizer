@@ -313,7 +313,7 @@ fn test_large_named_range_compression() {
 
 #[test]
 fn test_named_range_insert_rows() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -345,7 +345,7 @@ fn test_named_range_insert_rows() {
 
 #[test]
 fn test_named_range_delete_rows() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -377,7 +377,7 @@ fn test_named_range_delete_rows() {
 
 #[test]
 fn test_named_range_insert_columns() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -409,7 +409,7 @@ fn test_named_range_insert_columns() {
 
 #[test]
 fn test_named_range_delete_columns() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -441,7 +441,7 @@ fn test_named_range_delete_columns() {
 
 #[test]
 fn test_named_range_adjustment() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -481,7 +481,7 @@ fn test_named_range_adjustment() {
 
 #[test]
 fn test_named_formula_adjustment() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -524,7 +524,7 @@ fn test_named_formula_adjustment() {
 
 #[test]
 fn test_named_range_delete_causes_ref_error() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -553,7 +553,7 @@ fn test_named_range_delete_causes_ref_error() {
 
 #[test]
 fn test_absolute_references_dont_move() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -587,7 +587,7 @@ fn test_absolute_references_dont_move() {
 
 #[test]
 fn test_mixed_references_partial_adjustment() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -642,7 +642,7 @@ fn test_mixed_references_partial_adjustment() {
 
 #[test]
 fn test_mixed_references_column_operations() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -697,7 +697,7 @@ fn test_mixed_references_column_operations() {
 
 #[test]
 fn test_range_with_mixed_references() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 
@@ -746,7 +746,7 @@ fn test_range_with_mixed_references() {
 
 #[test]
 fn test_absolute_ref_deleted_no_error() {
-    use crate::engine::reference_adjuster::ShiftOperation;
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
 

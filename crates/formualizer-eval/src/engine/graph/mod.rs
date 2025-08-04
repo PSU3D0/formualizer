@@ -1593,9 +1593,9 @@ impl DependencyGraph {
     /// Adjust named ranges during row/column operations
     pub fn adjust_named_ranges(
         &mut self,
-        operation: &crate::engine::reference_adjuster::ShiftOperation,
+        operation: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
     ) -> Result<(), ExcelError> {
-        let adjuster = crate::engine::reference_adjuster::ReferenceAdjuster::new();
+        let adjuster = crate::engine::graph::editor::reference_adjuster::ReferenceAdjuster::new();
 
         // Adjust workbook-scoped names
         for named_range in self.named_ranges.values_mut() {
@@ -1622,8 +1622,8 @@ impl DependencyGraph {
 /// Helper function to adjust a named definition during structural operations
 fn adjust_named_definition(
     definition: &mut NamedDefinition,
-    adjuster: &crate::engine::reference_adjuster::ReferenceAdjuster,
-    operation: &crate::engine::reference_adjuster::ShiftOperation,
+    adjuster: &crate::engine::graph::editor::reference_adjuster::ReferenceAdjuster,
+    operation: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
 ) -> Result<(), ExcelError> {
     match definition {
         NamedDefinition::Cell(cell_ref) => {

@@ -2,6 +2,7 @@ pub mod change_log;
 pub mod transaction_context;
 pub mod transaction_manager;
 pub mod vertex_editor;
+pub mod reference_adjuster;
 
 pub use vertex_editor::{
     DataUpdateSummary, EditorError, MetaUpdateSummary, RangeSummary, ShiftSummary, TransactionId,
