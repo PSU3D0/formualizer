@@ -22,7 +22,7 @@
 
 use core::fmt;
 
-use crate::SheetRegistry; // `no_std`‑friendly; swap for `std::fmt` if you prefer
+use crate::engine::sheet_registry::SheetRegistry; // `no_std`‑friendly; swap for `std::fmt` if you prefer
 
 //------------------------------------------------------------------------------
 // Coord

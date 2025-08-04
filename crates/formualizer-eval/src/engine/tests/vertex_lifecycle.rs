@@ -1,8 +1,9 @@
-use crate::engine::{
-    DependencyGraph, EditorError, VertexDataPatch, VertexEditor, VertexMeta, VertexMetaPatch,
-    packed_coord::PackedCoord,
-    vertex::{VertexId, VertexKind},
+use crate::engine::graph::DependencyGraph;
+use crate::engine::graph::editor::{
+    EditorError, VertexDataPatch, VertexEditor, VertexMeta, VertexMetaPatch,
 };
+use crate::engine::packed_coord::PackedCoord;
+use crate::engine::vertex::{VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_core::{parse, parser::ASTNode};

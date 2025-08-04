@@ -1,5 +1,6 @@
-use crate::reference::RangeRef;
-use crate::{SheetId, SheetRegistry};
+use crate::SheetId;
+use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
+use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -8,6 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 type ExtractDependenciesResult =
     Result<(Vec<VertexId>, Vec<ReferenceType>, Vec<CellRef>), ExcelError>;
 
+pub mod editor;
 pub mod snapshot;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
@@ -18,58 +20,9 @@ use super::vertex::{VertexId, VertexKind};
 use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
 use crate::reference::{CellRef, Coord};
 
-/// 🔮 Scalability Hook: Change event tracking for future undo/redo support
-#[derive(Debug, Clone)]
-pub enum ChangeEvent {
-    SetValue {
-        addr: CellRef,
-        old: Option<LiteralValue>,
-        new: LiteralValue,
-    },
-    SetFormula {
-        addr: CellRef,
-        old: Option<ASTNode>,
-        new: ASTNode,
-    },
-    RemoveVertex {
-        id: VertexId,
-    },
-    InsertRows {
-        sheet_id: SheetId,
-        before: u32,
-        count: u32,
-    },
-    DeleteRows {
-        sheet_id: SheetId,
-        start: u32,
-        count: u32,
-    },
-    InsertColumns {
-        sheet_id: SheetId,
-        before: u32,
-        count: u32,
-    },
-    DeleteColumns {
-        sheet_id: SheetId,
-        start: u32,
-        count: u32,
-    },
-    DefineName {
-        name: String,
-        scope: NameScope,
-        definition: NamedDefinition,
-    },
-    UpdateName {
-        name: String,
-        scope: NameScope,
-        old_definition: NamedDefinition,
-        new_definition: NamedDefinition,
-    },
-    DeleteName {
-        name: String,
-        scope: NameScope,
-    },
-}
+pub use editor::change_log::{ChangeEvent, ChangeLog};
+
+// ChangeEvent is now imported from change_log module
 
 /// 🔮 Scalability Hook: Dependency reference types for range compression
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -111,43 +64,6 @@ const BLOCK_W: u32 = 256;
 
 pub fn block_index(row: u32, col: u32) -> u32 {
     (row / BLOCK_H) << 16 | (col / BLOCK_W)
-}
-
-/// Definition of a named range
-#[derive(Debug, Clone)]
-pub enum NamedDefinition {
-    /// Direct reference to a single cell
-    Cell(CellRef),
-
-    /// Reference to a range of cells
-    Range(RangeRef),
-
-    /// Named formula (evaluates to value/range)
-    Formula {
-        ast: ASTNode,
-        /// Cached dependencies from last parse
-        dependencies: Vec<VertexId>,
-        /// Cached range dependencies
-        range_deps: Vec<ReferenceType>,
-    },
-}
-
-/// Scope of a named range
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum NameScope {
-    /// Available throughout workbook
-    Workbook,
-    /// Only available in specific sheet
-    Sheet(SheetId),
-}
-
-/// Complete named range entry
-#[derive(Debug, Clone)]
-pub struct NamedRange {
-    pub definition: NamedDefinition,
-    pub scope: NameScope,
-    /// Formulas that reference this name (for invalidation)
-    pub dependents: FxHashSet<VertexId>,
 }
 
 /// Validate that a name conforms to Excel naming rules

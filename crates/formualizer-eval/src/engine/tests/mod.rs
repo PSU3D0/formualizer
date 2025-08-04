@@ -1,5 +1,6 @@
 mod arena_debug;
 mod cancellation;
+mod change_log;
 mod common;
 mod cycle_detection;
 mod demand_driven;
@@ -28,4 +29,5 @@ mod stripe_tests;
 mod striped_dirty_propagation;
 mod tarjan_scc;
 mod topo_layers;
+mod transactions;
 mod vertex_lifecycle;

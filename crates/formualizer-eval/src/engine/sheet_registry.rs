@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::SheetId;
+use crate::SheetId;
 
 #[derive(Default, Debug)]
 pub struct SheetRegistry {

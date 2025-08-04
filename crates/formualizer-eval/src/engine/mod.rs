@@ -14,10 +14,11 @@ pub mod debug_views;
 pub mod delta_edges;
 pub mod epoch_tracker;
 pub mod interval_tree;
+pub mod named_range;
 pub mod packed_coord;
 pub mod reference_adjuster;
 pub mod sheet_index;
-pub mod vertex_editor;
+pub mod sheet_registry;
 pub mod vertex_store;
 
 // Phase 1: Arena modules
@@ -35,10 +36,13 @@ pub use graph::{
 };
 pub use scheduler::{Layer, Schedule, Scheduler};
 pub use vertex::{VertexId, VertexKind};
-pub use vertex_editor::{
-    DataUpdateSummary, EditorError, MetaUpdateSummary, VertexDataPatch, VertexEditor, VertexMeta,
-    VertexMetaPatch,
+
+pub use graph::editor::{
+    DataUpdateSummary, EditorError, MetaUpdateSummary, RangeSummary, ShiftSummary, TransactionId,
+    VertexDataPatch, VertexEditor, VertexMeta, VertexMetaPatch,
 };
+
+pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 
 // CalcObserver is defined below
 

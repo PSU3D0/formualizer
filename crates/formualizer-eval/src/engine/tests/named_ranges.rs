@@ -1,5 +1,5 @@
-use crate::engine::ChangeEvent;
-use crate::engine::graph::{DependencyGraph, NameScope, NamedDefinition};
+use crate::engine::graph::DependencyGraph;
+use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::reference::{CellRef, Coord, RangeRef};
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::parse;
@@ -789,7 +789,7 @@ fn test_absolute_ref_deleted_no_error() {
 
 #[test]
 fn test_vertex_editor_define_name_for_cell() {
-    use crate::engine::vertex_editor::VertexEditor;
+    use crate::engine::graph::editor::VertexEditor;
 
     let mut graph = DependencyGraph::new();
 
@@ -824,7 +824,7 @@ fn test_vertex_editor_define_name_for_cell() {
 
 #[test]
 fn test_vertex_editor_define_name_for_range() {
-    use crate::engine::vertex_editor::VertexEditor;
+    use crate::engine::graph::editor::VertexEditor;
 
     let mut graph = DependencyGraph::new();
 
@@ -859,7 +859,7 @@ fn test_vertex_editor_define_name_for_range() {
 
 #[test]
 fn test_vertex_editor_sheet_scoped_names() {
-    use crate::engine::vertex_editor::VertexEditor;
+    use crate::engine::graph::editor::VertexEditor;
 
     let mut graph = DependencyGraph::new();
 
@@ -893,7 +893,7 @@ fn test_vertex_editor_sheet_scoped_names() {
 
 #[test]
 fn test_vertex_editor_update_name() {
-    use crate::engine::vertex_editor::VertexEditor;
+    use crate::engine::graph::editor::VertexEditor;
 
     let mut graph = DependencyGraph::new();
 
@@ -931,7 +931,7 @@ fn test_vertex_editor_update_name() {
 
 #[test]
 fn test_vertex_editor_delete_name() {
-    use crate::engine::vertex_editor::VertexEditor;
+    use crate::engine::graph::editor::VertexEditor;
 
     let mut graph = DependencyGraph::new();
 
@@ -967,7 +967,7 @@ fn test_vertex_editor_delete_name() {
 
 #[test]
 fn test_vertex_editor_invalid_sheet_name() {
-    use crate::engine::vertex_editor::VertexEditor;
+    use crate::engine::graph::editor::VertexEditor;
 
     let mut graph = DependencyGraph::new();
     let mut editor = VertexEditor::new(&mut graph);
@@ -979,7 +979,7 @@ fn test_vertex_editor_invalid_sheet_name() {
     assert!(result.is_err());
     if let Err(e) = result {
         match e {
-            crate::engine::vertex_editor::EditorError::InvalidName { name, reason } => {
+            crate::engine::graph::editor::EditorError::InvalidName { name, reason } => {
                 assert_eq!(name, "NonExistentSheet");
                 assert!(reason.contains("not found"));
             }
@@ -990,7 +990,7 @@ fn test_vertex_editor_invalid_sheet_name() {
 
 #[test]
 fn test_vertex_editor_structural_operations_with_names() {
-    use crate::engine::vertex_editor::VertexEditor;
+    use crate::engine::graph::editor::VertexEditor;
 
     let mut graph = DependencyGraph::new();
 
@@ -1026,33 +1026,36 @@ fn test_vertex_editor_structural_operations_with_names() {
 
 #[test]
 fn test_vertex_editor_change_log() {
-    use crate::engine::vertex_editor::VertexEditor;
+    use crate::engine::graph::editor::VertexEditor;
 
     let mut graph = DependencyGraph::new();
-    let mut editor = VertexEditor::new(&mut graph);
+    let mut log = crate::engine::graph::editor::change_log::ChangeLog::new();
 
-    // Enable change log (it's enabled by default)
-    editor.set_changelog_enabled(true);
+    {
+        let mut editor =
+            crate::engine::graph::editor::VertexEditor::with_logger(&mut graph, &mut log);
 
-    // Perform operations
-    editor
-        .define_name_for_cell("Name1", "Sheet1", 1, 1, NameScope::Workbook)
-        .expect("Should define name");
+        // Perform operations
+        editor
+            .define_name_for_cell("Name1", "Sheet1", 1, 1, NameScope::Workbook)
+            .expect("Should define name");
 
-    let new_def = NamedDefinition::Cell(CellRef::new(0, Coord::new(2, 2, true, true)));
-    editor
-        .update_name("Name1", new_def, NameScope::Workbook)
-        .expect("Should update name");
+        let new_def = NamedDefinition::Cell(CellRef::new(0, Coord::new(2, 2, true, true)));
+        editor
+            .update_name("Name1", new_def, NameScope::Workbook)
+            .expect("Should update name");
 
-    editor
-        .delete_name("Name1", NameScope::Workbook)
-        .expect("Should delete name");
+        editor
+            .delete_name("Name1", NameScope::Workbook)
+            .expect("Should delete name");
+    }
 
     // Check change log
-    let changes = editor.change_log();
+    let changes = log.events();
     assert_eq!(changes.len(), 3, "Should have 3 change events");
 
     // Verify event types
+    use crate::engine::graph::editor::change_log::ChangeEvent;
     assert!(matches!(&changes[0], ChangeEvent::DefineName { .. }));
     assert!(matches!(&changes[1], ChangeEvent::UpdateName { .. }));
     assert!(matches!(&changes[2], ChangeEvent::DeleteName { .. }));

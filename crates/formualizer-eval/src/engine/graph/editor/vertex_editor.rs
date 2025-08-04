@@ -1,11 +1,13 @@
-use super::graph::{ChangeEvent, DependencyGraph};
-use super::packed_coord::PackedCoord;
-use super::reference_adjuster::{ReferenceAdjuster, ShiftOperation};
-use super::vertex::{VertexId, VertexKind};
 use crate::SheetId;
+use crate::engine::graph::DependencyGraph;
+use crate::engine::named_range::{NameScope, NamedDefinition};
+use crate::engine::packed_coord::PackedCoord;
+use crate::engine::reference_adjuster::{ReferenceAdjuster, ShiftOperation};
+use crate::engine::{ChangeEvent, ChangeLogger, VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::ASTNode;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Metadata for creating a new vertex
 #[derive(Debug, Clone)]
@@ -92,6 +94,24 @@ pub struct RangeSummary {
     pub cells_moved: usize,
 }
 
+/// Transaction ID for tracking active transactions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransactionId(u64);
+
+impl TransactionId {
+    fn new() -> Self {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        TransactionId(COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+/// Represents an active transaction
+#[derive(Debug)]
+struct Transaction {
+    id: TransactionId,
+    start_index: usize, // Index in change_log where transaction started
+}
+
 /// Custom error type for vertex editor operations
 #[derive(Debug, Clone)]
 pub enum EditorError {
@@ -99,6 +119,8 @@ pub enum EditorError {
     OutOfBounds { row: u32, col: u32 },
     InvalidName { name: String, reason: String },
     TransactionFailed { reason: String },
+    NoActiveTransaction,
+    VertexNotFound { id: VertexId },
     Excel(ExcelError),
 }
 
@@ -126,6 +148,12 @@ impl std::fmt::Display for EditorError {
             }
             EditorError::TransactionFailed { reason } => {
                 write!(f, "Transaction failed: {reason}")
+            }
+            EditorError::NoActiveTransaction => {
+                write!(f, "No active transaction")
+            }
+            EditorError::VertexNotFound { id } => {
+                write!(f, "Vertex not found: {id:?}")
             }
             EditorError::Excel(e) => write!(f, "Excel error: {e:?}"),
         }
@@ -163,24 +191,32 @@ impl std::error::Error for EditorError {}
 /// // Commit batch operations
 /// editor.commit_batch();
 ///
-/// // Review change log for undo/redo
-/// println!("Changes made: {}", editor.change_log().len());
 /// ```
 pub struct VertexEditor<'g> {
     graph: &'g mut DependencyGraph,
-    change_log: Vec<ChangeEvent>,
+    change_logger: Option<&'g mut dyn ChangeLogger>,
     batch_mode: bool,
-    changelog_enabled: bool,
 }
 
 impl<'g> VertexEditor<'g> {
-    /// Create a new vertex editor with exclusive access to the graph
+    /// Create a new vertex editor without change logging
     pub fn new(graph: &'g mut DependencyGraph) -> Self {
         Self {
             graph,
-            change_log: Vec::new(),
+            change_logger: None,
             batch_mode: false,
-            changelog_enabled: true,
+        }
+    }
+
+    /// Create a new vertex editor with change logging
+    pub fn with_logger<L: ChangeLogger + 'g>(
+        graph: &'g mut DependencyGraph,
+        logger: &'g mut L,
+    ) -> Self {
+        Self {
+            graph,
+            change_logger: Some(logger as &'g mut dyn ChangeLogger),
+            batch_mode: false,
         }
     }
 
@@ -200,19 +236,148 @@ impl<'g> VertexEditor<'g> {
         }
     }
 
-    /// Enable or disable the change log
-    pub fn set_changelog_enabled(&mut self, enabled: bool) {
-        self.changelog_enabled = enabled;
+    /// Helper method to log a change event
+    fn log_change(&mut self, event: ChangeEvent) {
+        if let Some(logger) = &mut self.change_logger {
+            logger.record(event);
+        }
     }
 
-    /// Get the accumulated change log
-    pub fn change_log(&self) -> &[ChangeEvent] {
-        &self.change_log
+    /// Check if change logging is enabled
+    pub fn has_logger(&self) -> bool {
+        self.change_logger.is_some()
     }
 
-    /// Clear the change log
-    pub fn clear_change_log(&mut self) {
-        self.change_log.clear();
+    // Transaction support
+
+    // Transaction support has been moved to TransactionContext
+    // which coordinates ChangeLog, TransactionManager, and VertexEditor
+
+    /// Apply the inverse of a change event (used by TransactionContext for rollback)
+    pub fn apply_inverse(&mut self, change: ChangeEvent) -> Result<(), EditorError> {
+        match change {
+            ChangeEvent::SetValue { addr, old, new: _ } => {
+                // Restore old value
+                if let Some(old_value) = old {
+                    self.set_cell_value(addr, old_value);
+                } else {
+                    // Cell didn't exist before, remove it
+                    if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
+                        self.remove_vertex(id)?;
+                    }
+                }
+            }
+            ChangeEvent::SetFormula { addr, old, new: _ } => {
+                // Restore old formula
+                if let Some(old_formula) = old {
+                    self.set_cell_formula(addr, old_formula);
+                } else {
+                    // Cell didn't have formula before, remove it or set to value
+                    if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
+                        self.remove_vertex(id)?;
+                    }
+                }
+            }
+            ChangeEvent::RemoveVertex { id, .. } => {
+                // Need to restore the vertex - this is complex and would require
+                // capturing more state. For now, we'll skip this.
+                // TODO: Implement vertex restoration
+                return Err(EditorError::TransactionFailed {
+                    reason: "Cannot rollback vertex removal yet".to_string(),
+                });
+            }
+            ChangeEvent::InsertRows {
+                sheet_id,
+                before,
+                count,
+            } => {
+                // Inverse of insert is delete
+                self.delete_rows(sheet_id, before, count)?;
+            }
+            ChangeEvent::DeleteRows {
+                sheet_id,
+                start,
+                count,
+            } => {
+                // Inverse of delete is insert
+                self.insert_rows(sheet_id, start, count)?;
+            }
+            ChangeEvent::InsertColumns {
+                sheet_id,
+                before,
+                count,
+            } => {
+                // Inverse of insert is delete
+                self.delete_columns(sheet_id, before, count)?;
+            }
+            ChangeEvent::DeleteColumns {
+                sheet_id,
+                start,
+                count,
+            } => {
+                // Inverse of delete is insert
+                self.insert_columns(sheet_id, start, count)?;
+            }
+            ChangeEvent::DefineName { name, scope, .. } => {
+                // Inverse is delete name
+                self.graph.delete_name(&name, scope)?;
+            }
+            ChangeEvent::UpdateName {
+                name,
+                scope,
+                old_definition,
+                ..
+            } => {
+                // Restore old definition
+                self.graph.update_name(&name, old_definition, scope)?;
+            }
+            ChangeEvent::DeleteName { name, scope } => {
+                // Cannot restore deleted name without more info
+                // TODO: Capture definition when deleting
+                return Err(EditorError::TransactionFailed {
+                    reason: "Cannot rollback name deletion yet".to_string(),
+                });
+            }
+            // Granular events for compound operations
+            ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => {
+                // These are markers, no inverse needed
+            }
+            ChangeEvent::VertexMoved { id, old_coord, .. } => {
+                // Move back to old position
+                self.move_vertex(id, old_coord)?;
+            }
+            ChangeEvent::FormulaAdjusted { id, old_ast, .. } => {
+                // Restore old formula
+                // TODO: Need a method to update formula by vertex ID
+                return Err(EditorError::TransactionFailed {
+                    reason: "Cannot rollback formula adjustment yet".to_string(),
+                });
+            }
+            ChangeEvent::NamedRangeAdjusted {
+                name,
+                scope,
+                old_definition,
+                ..
+            } => {
+                // Restore old definition
+                self.graph.update_name(&name, old_definition, scope)?;
+            }
+            ChangeEvent::EdgeAdded { from, to } => {
+                // Remove the edge
+                // TODO: Need specific edge removal method
+                return Err(EditorError::TransactionFailed {
+                    reason: "Cannot rollback edge addition yet".to_string(),
+                });
+            }
+            ChangeEvent::EdgeRemoved { from, to } => {
+                // Re-add the edge
+                // TODO: Need specific edge addition method
+                return Err(EditorError::TransactionFailed {
+                    reason: "Cannot rollback edge removal yet".to_string(),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Add a vertex to the graph
@@ -284,13 +449,35 @@ impl<'g> VertexEditor<'g> {
             self.graph.mark_as_ref_error(dep_id);
         }
 
+        // Capture old state before deletion for change log
+        let old_value = if self.has_logger() {
+            self.graph.get_value(id)
+        } else {
+            None
+        };
+
+        let old_formula = if self.has_logger() {
+            self.graph.get_formula(id)
+        } else {
+            None
+        };
+
+        let old_dependencies = if self.has_logger() {
+            self.graph.get_dependencies(id)
+        } else {
+            vec![]
+        };
+
         // Mark as deleted in store (tombstone)
         self.graph.mark_deleted(id, true);
 
         // Log change event
-        if self.changelog_enabled {
-            self.change_log.push(ChangeEvent::RemoveVertex { id });
-        }
+        self.log_change(ChangeEvent::RemoveVertex {
+            id,
+            old_value,
+            old_formula,
+            old_dependencies,
+        });
 
         Ok(())
     }
@@ -490,13 +677,11 @@ impl<'g> VertexEditor<'g> {
         self.graph.adjust_named_ranges(&op)?;
 
         // 5. Log change event
-        if self.changelog_enabled {
-            self.change_log.push(ChangeEvent::InsertRows {
-                sheet_id,
-                before,
-                count,
-            });
-        }
+        self.log_change(ChangeEvent::InsertRows {
+            sheet_id,
+            before,
+            count,
+        });
 
         self.commit_batch();
 
@@ -578,13 +763,11 @@ impl<'g> VertexEditor<'g> {
         self.graph.adjust_named_ranges(&op)?;
 
         // 5. Log change event
-        if self.changelog_enabled {
-            self.change_log.push(ChangeEvent::DeleteRows {
-                sheet_id,
-                start,
-                count,
-            });
-        }
+        self.log_change(ChangeEvent::DeleteRows {
+            sheet_id,
+            start,
+            count,
+        });
 
         self.commit_batch();
 
@@ -655,13 +838,11 @@ impl<'g> VertexEditor<'g> {
         self.graph.adjust_named_ranges(&op)?;
 
         // 5. Log change event
-        if self.changelog_enabled {
-            self.change_log.push(ChangeEvent::InsertColumns {
-                sheet_id,
-                before,
-                count,
-            });
-        }
+        self.log_change(ChangeEvent::InsertColumns {
+            sheet_id,
+            before,
+            count,
+        });
 
         self.commit_batch();
 
@@ -743,13 +924,11 @@ impl<'g> VertexEditor<'g> {
         self.graph.adjust_named_ranges(&op)?;
 
         // 5. Log change event
-        if self.changelog_enabled {
-            self.change_log.push(ChangeEvent::DeleteColumns {
-                sheet_id,
-                start,
-                count,
-            });
-        }
+        self.log_change(ChangeEvent::DeleteColumns {
+            sheet_id,
+            start,
+            count,
+        });
 
         self.commit_batch();
 
@@ -771,9 +950,7 @@ impl<'g> VertexEditor<'g> {
             old: None,
             new: LiteralValue::Text(format!("Row shift: start={start_row}, delta={delta}")),
         };
-        if self.changelog_enabled {
-            self.change_log.push(change_event);
-        }
+        self.log_change(change_event);
 
         // TODO: Implement actual row shifting logic
         // This would require coordination with the vertex store and dependency tracking
@@ -794,9 +971,7 @@ impl<'g> VertexEditor<'g> {
             old: None,
             new: LiteralValue::Text(format!("Column shift: start={start_col}, delta={delta}")),
         };
-        if self.changelog_enabled {
-            self.change_log.push(change_event);
-        }
+        self.log_change(change_event);
 
         // TODO: Implement actual column shifting logic
         // This would require coordination with the vertex store and dependency tracking
@@ -805,6 +980,12 @@ impl<'g> VertexEditor<'g> {
     /// Set a cell value, creating the vertex if it doesn't exist
     pub fn set_cell_value(&mut self, cell_ref: CellRef, value: LiteralValue) -> VertexId {
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
+
+        // Capture old value before modification
+        let old_value = self
+            .graph
+            .get_vertex_id_for_address(&cell_ref)
+            .and_then(|&id| self.graph.get_value(id));
 
         // Use the existing DependencyGraph API
         match self.graph.set_cell_value(
@@ -817,10 +998,10 @@ impl<'g> VertexEditor<'g> {
                 // Log change event
                 let change_event = ChangeEvent::SetValue {
                     addr: cell_ref,
-                    old: None, // TODO: Capture old value for proper undo support
+                    old: old_value,
                     new: value,
                 };
-                self.change_log.push(change_event);
+                self.log_change(change_event);
 
                 summary
                     .affected_vertices
@@ -836,6 +1017,12 @@ impl<'g> VertexEditor<'g> {
     pub fn set_cell_formula(&mut self, cell_ref: CellRef, formula: ASTNode) -> VertexId {
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
 
+        // Capture old formula before modification
+        let old_formula = self
+            .graph
+            .get_vertex_id_for_address(&cell_ref)
+            .and_then(|&id| self.graph.get_formula(id));
+
         // Use the existing DependencyGraph API
         match self.graph.set_cell_formula(
             &sheet_name,
@@ -847,10 +1034,10 @@ impl<'g> VertexEditor<'g> {
                 // Log change event
                 let change_event = ChangeEvent::SetFormula {
                     addr: cell_ref,
-                    old: None, // TODO: Capture old formula for proper undo support
+                    old: old_formula,
                     new: formula,
                 };
-                self.change_log.push(change_event);
+                self.log_change(change_event);
 
                 summary
                     .affected_vertices
@@ -1122,18 +1309,16 @@ impl<'g> VertexEditor<'g> {
     pub fn define_name(
         &mut self,
         name: &str,
-        definition: super::graph::NamedDefinition,
-        scope: super::graph::NameScope,
+        definition: NamedDefinition,
+        scope: NameScope,
     ) -> Result<(), EditorError> {
         self.graph.define_name(name, definition.clone(), scope)?;
 
-        if self.changelog_enabled {
-            self.change_log.push(ChangeEvent::DefineName {
-                name: name.to_string(),
-                scope,
-                definition,
-            });
-        }
+        self.log_change(ChangeEvent::DefineName {
+            name: name.to_string(),
+            scope,
+            definition,
+        });
 
         Ok(())
     }
@@ -1145,7 +1330,7 @@ impl<'g> VertexEditor<'g> {
         sheet_name: &str,
         row: u32,
         col: u32,
-        scope: super::graph::NameScope,
+        scope: NameScope,
     ) -> Result<(), EditorError> {
         let sheet_id = self
             .graph
@@ -1155,7 +1340,7 @@ impl<'g> VertexEditor<'g> {
                 reason: "Sheet not found".to_string(),
             })?;
         let cell_ref = CellRef::new(sheet_id, Coord::new(row, col, true, true));
-        self.define_name(name, super::graph::NamedDefinition::Cell(cell_ref), scope)
+        self.define_name(name, NamedDefinition::Cell(cell_ref), scope)
     }
 
     /// Helper to create definitions from coordinates for a range
@@ -1167,7 +1352,7 @@ impl<'g> VertexEditor<'g> {
         start_col: u32,
         end_row: u32,
         end_col: u32,
-        scope: super::graph::NameScope,
+        scope: NameScope,
     ) -> Result<(), EditorError> {
         let sheet_id = self
             .graph
@@ -1179,15 +1364,15 @@ impl<'g> VertexEditor<'g> {
         let start = CellRef::new(sheet_id, Coord::new(start_row, start_col, true, true));
         let end = CellRef::new(sheet_id, Coord::new(end_row, end_col, true, true));
         let range_ref = crate::reference::RangeRef::new(start, end);
-        self.define_name(name, super::graph::NamedDefinition::Range(range_ref), scope)
+        self.define_name(name, NamedDefinition::Range(range_ref), scope)
     }
 
     /// Update an existing named range definition
     pub fn update_name(
         &mut self,
         name: &str,
-        new_definition: super::graph::NamedDefinition,
-        scope: super::graph::NameScope,
+        new_definition: NamedDefinition,
+        scope: NameScope,
     ) -> Result<(), EditorError> {
         // Get the old definition for the change log
         let old_definition = self
@@ -1195,8 +1380,8 @@ impl<'g> VertexEditor<'g> {
             .resolve_name(
                 name,
                 match scope {
-                    super::graph::NameScope::Sheet(id) => id,
-                    super::graph::NameScope::Workbook => 0,
+                    NameScope::Sheet(id) => id,
+                    NameScope::Workbook => 0,
                 },
             )
             .cloned();
@@ -1204,34 +1389,26 @@ impl<'g> VertexEditor<'g> {
         self.graph
             .update_name(name, new_definition.clone(), scope)?;
 
-        if self.changelog_enabled {
-            if let Some(old_def) = old_definition {
-                self.change_log.push(ChangeEvent::UpdateName {
-                    name: name.to_string(),
-                    scope,
-                    old_definition: old_def,
-                    new_definition,
-                });
-            }
+        if let Some(old_def) = old_definition {
+            self.log_change(ChangeEvent::UpdateName {
+                name: name.to_string(),
+                scope,
+                old_definition: old_def,
+                new_definition,
+            });
         }
 
         Ok(())
     }
 
     /// Delete a named range
-    pub fn delete_name(
-        &mut self,
-        name: &str,
-        scope: super::graph::NameScope,
-    ) -> Result<(), EditorError> {
+    pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), EditorError> {
         self.graph.delete_name(name, scope)?;
 
-        if self.changelog_enabled {
-            self.change_log.push(ChangeEvent::DeleteName {
-                name: name.to_string(),
-                scope,
-            });
-        }
+        self.log_change(ChangeEvent::DeleteName {
+            name: name.to_string(),
+            scope,
+        });
 
         Ok(())
     }
@@ -1324,6 +1501,7 @@ impl<'g> Drop for VertexEditor<'g> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::graph::editor::change_log::{ChangeEvent, ChangeLog};
     use crate::reference::Coord;
 
     fn create_test_graph() -> DependencyGraph {
@@ -1334,7 +1512,16 @@ mod tests {
     fn test_vertex_editor_creation() {
         let mut graph = create_test_graph();
         let editor = VertexEditor::new(&mut graph);
-        assert_eq!(editor.change_log().len(), 0);
+        assert!(!editor.has_logger());
+        assert!(!editor.batch_mode);
+    }
+
+    #[test]
+    fn test_vertex_editor_with_logger() {
+        let mut graph = create_test_graph();
+        let mut log = ChangeLog::new();
+        let editor = VertexEditor::with_logger(&mut graph, &mut log);
+        assert!(editor.has_logger());
         assert!(!editor.batch_mode);
     }
 
@@ -1409,7 +1596,7 @@ mod tests {
     #[test]
     fn test_set_cell_value() {
         let mut graph = create_test_graph();
-        let mut editor = VertexEditor::new(&mut graph);
+        let mut log = ChangeLog::new();
 
         let cell_ref = CellRef {
             sheet_id: 0,
@@ -1417,19 +1604,22 @@ mod tests {
         };
         let value = LiteralValue::Number(42.0);
 
-        let vertex_id = editor.set_cell_value(cell_ref, value.clone());
+        let vertex_id = {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            editor.set_cell_value(cell_ref, value.clone())
+        };
 
         // Verify vertex was created (simplified check)
         assert!(vertex_id.0 > 0);
 
         // Verify change log
-        assert_eq!(editor.change_log().len(), 1);
-        match &editor.change_log()[0] {
+        assert_eq!(log.len(), 1);
+        match &log.events()[0] {
             ChangeEvent::SetValue { addr, new, .. } => {
                 assert_eq!(addr.sheet_id, cell_ref.sheet_id);
                 assert_eq!(addr.coord.row, cell_ref.coord.row);
                 assert_eq!(addr.coord.col, cell_ref.coord.col);
-                assert_eq!(*new, value);
+                assert_eq!(new, &value);
             }
             _ => panic!("Expected SetValue event"),
         }
@@ -1438,7 +1628,7 @@ mod tests {
     #[test]
     fn test_set_cell_formula() {
         let mut graph = create_test_graph();
-        let mut editor = VertexEditor::new(&mut graph);
+        let mut log = ChangeLog::new();
 
         let cell_ref = CellRef {
             sheet_id: 0,
@@ -1451,14 +1641,17 @@ mod tests {
             source_token: None,
         };
 
-        let vertex_id = editor.set_cell_formula(cell_ref, formula.clone());
+        let vertex_id = {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            editor.set_cell_formula(cell_ref, formula.clone())
+        };
 
         // Verify vertex was created (simplified check)
         assert!(vertex_id.0 > 0);
 
         // Verify change log
-        assert_eq!(editor.change_log().len(), 1);
-        match &editor.change_log()[0] {
+        assert_eq!(log.len(), 1);
+        match &log.events()[0] {
             ChangeEvent::SetFormula { addr, .. } => {
                 assert_eq!(addr.sheet_id, cell_ref.sheet_id);
                 assert_eq!(addr.coord.row, cell_ref.coord.row);
@@ -1471,35 +1664,42 @@ mod tests {
     #[test]
     fn test_shift_rows() {
         let mut graph = create_test_graph();
-        let mut editor = VertexEditor::new(&mut graph);
+        let mut log = ChangeLog::new();
 
-        // Create vertices at different rows
-        let cell1 = CellRef {
-            sheet_id: 0,
-            coord: Coord::new(5, 1, true, true),
-        };
-        let cell2 = CellRef {
-            sheet_id: 0,
-            coord: Coord::new(10, 1, true, true),
-        };
-        let cell3 = CellRef {
-            sheet_id: 0,
-            coord: Coord::new(15, 1, true, true),
-        };
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
 
-        editor.set_cell_value(cell1, LiteralValue::Number(1.0));
-        editor.set_cell_value(cell2, LiteralValue::Number(2.0));
-        editor.set_cell_value(cell3, LiteralValue::Number(3.0));
+            // Create vertices at different rows
+            let cell1 = CellRef {
+                sheet_id: 0,
+                coord: Coord::new(5, 1, true, true),
+            };
+            let cell2 = CellRef {
+                sheet_id: 0,
+                coord: Coord::new(10, 1, true, true),
+            };
+            let cell3 = CellRef {
+                sheet_id: 0,
+                coord: Coord::new(15, 1, true, true),
+            };
+
+            editor.set_cell_value(cell1, LiteralValue::Number(1.0));
+            editor.set_cell_value(cell2, LiteralValue::Number(2.0));
+            editor.set_cell_value(cell3, LiteralValue::Number(3.0));
+        }
 
         // Clear change log to focus on shift operation
-        editor.clear_change_log();
+        log.clear();
 
-        // Shift rows starting at row 10, moving down by 2
-        editor.shift_rows(0, 10, 2);
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            // Shift rows starting at row 10, moving down by 2
+            editor.shift_rows(0, 10, 2);
+        }
 
         // Verify change log contains the shift operation
-        assert_eq!(editor.change_log().len(), 1);
-        match &editor.change_log()[0] {
+        assert_eq!(log.len(), 1);
+        match &log.events()[0] {
             ChangeEvent::SetValue { addr, new, .. } => {
                 assert_eq!(addr.sheet_id, 0);
                 assert_eq!(addr.coord.row, 10);
@@ -1516,30 +1716,37 @@ mod tests {
     #[test]
     fn test_shift_columns() {
         let mut graph = create_test_graph();
-        let mut editor = VertexEditor::new(&mut graph);
+        let mut log = ChangeLog::new();
 
-        // Create vertices at different columns
-        let cell1 = CellRef {
-            sheet_id: 0,
-            coord: Coord::new(1, 5, true, true),
-        };
-        let cell2 = CellRef {
-            sheet_id: 0,
-            coord: Coord::new(1, 10, true, true),
-        };
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
 
-        editor.set_cell_value(cell1, LiteralValue::Number(1.0));
-        editor.set_cell_value(cell2, LiteralValue::Number(2.0));
+            // Create vertices at different columns
+            let cell1 = CellRef {
+                sheet_id: 0,
+                coord: Coord::new(1, 5, true, true),
+            };
+            let cell2 = CellRef {
+                sheet_id: 0,
+                coord: Coord::new(1, 10, true, true),
+            };
+
+            editor.set_cell_value(cell1, LiteralValue::Number(1.0));
+            editor.set_cell_value(cell2, LiteralValue::Number(2.0));
+        }
 
         // Clear change log
-        editor.clear_change_log();
+        log.clear();
 
-        // Shift columns starting at col 8, moving right by 3
-        editor.shift_columns(0, 8, 3);
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            // Shift columns starting at col 8, moving right by 3
+            editor.shift_columns(0, 8, 3);
+        }
 
         // Verify change log
-        assert_eq!(editor.change_log().len(), 1);
-        match &editor.change_log()[0] {
+        assert_eq!(log.len(), 1);
+        match &log.events()[0] {
             ChangeEvent::SetValue { addr, new, .. } => {
                 assert_eq!(addr.sheet_id, 0);
                 assert_eq!(addr.coord.col, 8);
@@ -1593,19 +1800,22 @@ mod tests {
     #[test]
     fn test_change_log_management() {
         let mut graph = create_test_graph();
-        let mut editor = VertexEditor::new(&mut graph);
+        let mut log = ChangeLog::new();
 
-        let cell_ref = CellRef {
-            sheet_id: 0,
-            coord: Coord::new(0, 0, true, true),
-        };
-        editor.set_cell_value(cell_ref, LiteralValue::Number(1.0));
-        editor.set_cell_value(cell_ref, LiteralValue::Number(2.0));
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            let cell_ref = CellRef {
+                sheet_id: 0,
+                coord: Coord::new(0, 0, true, true),
+            };
+            editor.set_cell_value(cell_ref, LiteralValue::Number(1.0));
+            editor.set_cell_value(cell_ref, LiteralValue::Number(2.0));
+        }
 
-        assert_eq!(editor.change_log().len(), 2);
+        assert_eq!(log.len(), 2);
 
-        editor.clear_change_log();
-        assert_eq!(editor.change_log().len(), 0);
+        log.clear();
+        assert_eq!(log.len(), 0);
     }
 
     #[test]
