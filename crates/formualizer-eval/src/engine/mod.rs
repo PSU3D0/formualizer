@@ -15,6 +15,7 @@ pub mod delta_edges;
 pub mod epoch_tracker;
 pub mod interval_tree;
 pub mod packed_coord;
+pub mod reference_adjuster;
 pub mod sheet_index;
 pub mod vertex_editor;
 pub mod vertex_store;
