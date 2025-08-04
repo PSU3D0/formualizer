@@ -74,7 +74,7 @@ impl CellRef {
         reference: &str,
         default_sheet: Option<&str>,
     ) -> Result<Self, PyErr> {
-        match ReferenceType::parse(reference) {
+        match ReferenceType::from_string(reference) {
             Ok(ReferenceType::Cell { sheet, row, col }) => {
                 let sheet = if sheet.is_some() {
                     sheet

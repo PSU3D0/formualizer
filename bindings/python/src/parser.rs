@@ -57,7 +57,7 @@ impl PyParser {
 #[pyfunction]
 pub fn parse_formula(formula: &str) -> PyResult<PyASTNode> {
     let mut parser =
-        Parser::from(formula).map_err(|e| TokenizerError::new_with_pos(e.message, Some(e.pos)))?;
+        Parser::from(formula);
     let ast = parser
         .parse()
         .map_err(|e| ParserError::new_with_pos(e.message, e.position))?;
