@@ -405,6 +405,9 @@ fn test_cross_sheet_stripe_cleanup() {
     config.range_expansion_limit = 16;
     let mut graph = DependencyGraph::new_with_config(config);
 
+    graph.add_sheet("Sheet2").unwrap();
+    graph.add_sheet("Sheet3").unwrap();
+
     // Create formula on Sheet1 that depends on Sheet2
     // Sheet1!A1 = SUM(Sheet2!A1:A100)
     graph

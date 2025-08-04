@@ -1,7 +1,7 @@
 /// String interning for deduplication of text values and identifiers
 /// Uses FxHashMap for fast lookups and Box<str> to minimize allocations
 use rustc_hash::FxHashMap;
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 /// Reference to an interned string
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -37,9 +37,9 @@ impl fmt::Display for StringId {
 #[derive(Debug)]
 pub struct StringInterner {
     /// Storage for interned strings
-    strings: Vec<Box<str>>,
+    strings: Vec<Arc<str>>,
     /// Map from string content to ID for deduplication
-    lookup: FxHashMap<Box<str>, StringId>,
+    lookup: FxHashMap<Arc<str>, StringId>,
 }
 
 impl StringInterner {
@@ -73,7 +73,7 @@ impl StringInterner {
 
         // Add new string
         let id = StringId(index);
-        let boxed: Box<str> = s.into();
+        let boxed: Arc<str> = s.into();
 
         // We need to clone the boxed string for the lookup key
         // This is safe because Box<str> is cheap to clone (just pointer copy)

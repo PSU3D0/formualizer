@@ -507,6 +507,8 @@ fn test_property_cross_sheet_ranges() {
     config.range_expansion_limit = 16;
     let mut graph = DependencyGraph::new_with_config(config);
 
+    graph.add_sheet("Sheet2").unwrap();
+
     // Formula on Sheet1: A1 = SUM(Sheet2!A1:A100)
     graph
         .set_cell_formula("Sheet1", 1, 1, sum_range_ast(Some("Sheet2"), 1, 1, 100, 1))

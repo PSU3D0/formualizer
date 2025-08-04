@@ -158,6 +158,10 @@ impl DependencyGraph {
         self.edges.end_batch();
     }
 
+    pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
+        Ok(self.sheet_reg.id_for(name))
+    }
+
     pub fn default_sheet_id(&self) -> SheetId {
         self.default_sheet_id
     }

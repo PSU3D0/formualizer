@@ -330,9 +330,11 @@ impl DataStore {
     ) -> CompactRefType {
         match ref_type {
             ReferenceType::Cell { sheet, row, col } => {
-                let sheet_id = sheet
-                    .as_ref()
-                    .map(|s| sheet_registry.get_id(s).unwrap_or(0));
+                let sheet_id = sheet.as_ref().map(|s| {
+                    sheet_registry.get_id(s).unwrap_or_else(|| {
+                        panic!("Sheet not found: {s}"); // Sheets should always be defined by the time we get here
+                    })
+                });
                 CompactRefType::Cell {
                     sheet_id,
                     row: *row,
@@ -347,9 +349,11 @@ impl DataStore {
                 end_row,
                 end_col,
             } => {
-                let sheet_id = sheet
-                    .as_ref()
-                    .map(|s| sheet_registry.get_id(s).unwrap_or(0));
+                let sheet_id = sheet.as_ref().map(|s| {
+                    sheet_registry.get_id(s).unwrap_or_else(|| {
+                        panic!("Sheet not found: {s}"); // Sheets should always be defined by the time we get here
+                    })
+                });
                 // For optional range bounds, use 0 as sentinel for unbounded
                 CompactRefType::Range {
                     sheet_id,

@@ -54,8 +54,8 @@ bitflags::bitflags! {
 // --- Fast-Path Evaluation Contexts ---
 
 use crate::traits::EvaluationContext;
-use std::borrow::Cow;
 use bumpalo::Bump;
+use std::borrow::Cow;
 
 /// A simple slice of homogeneous values for efficient iteration
 pub struct SliceStripe<'a> {
