@@ -1043,11 +1043,14 @@ impl DependencyGraph {
     /// Internal: Remove all edges for a vertex
     #[doc(hidden)]
     pub fn remove_all_edges(&mut self, id: VertexId) {
+        // Enter batch mode to avoid intermediate rebuilds
+        self.edges.begin_batch();
+        
         // Remove outgoing edges (this vertex's dependencies)
         self.remove_dependent_edges(id);
 
-        // Force rebuild before getting dependents to ensure we have accurate data
-        // Otherwise get_dependents may use stale CSR data when delta has changes
+        // Force rebuild to get accurate dependents list
+        // This is necessary because get_dependents uses CSR reverse edges
         self.edges.rebuild();
 
         // Remove incoming edges (vertices that depend on this vertex)
@@ -1056,8 +1059,8 @@ impl DependencyGraph {
             self.edges.remove_edge(dependent, id);
         }
 
-        // Rebuild again to apply the incoming edge removals
-        self.edges.rebuild();
+        // Exit batch mode and rebuild once with all changes
+        self.edges.end_batch();
     }
 
     /// Internal: Mark vertex as having #REF! error
