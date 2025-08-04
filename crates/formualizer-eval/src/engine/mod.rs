@@ -13,7 +13,9 @@ pub mod csr_edges;
 pub mod debug_views;
 pub mod delta_edges;
 pub mod epoch_tracker;
+pub mod interval_tree;
 pub mod packed_coord;
+pub mod sheet_index;
 pub mod vertex_editor;
 pub mod vertex_store;
 

@@ -6,6 +6,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
 use super::packed_coord::PackedCoord;
+use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
 use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
 use crate::reference::{CellRef, Coord};
@@ -106,6 +107,10 @@ pub struct DependencyGraph {
     /// CRITICAL: VertexIds are deduplicated within each stripe to avoid quadratic blow-ups.
     stripe_to_dependents: FxHashMap<StripeKey, FxHashSet<VertexId>>,
 
+    // Sheet-level sparse indexes for O(log n + k) range queries
+    /// Maps sheet_id to its interval tree index for efficient row/column operations
+    sheet_indexes: FxHashMap<SheetId, SheetIndex>,
+
     // Sheet name/ID mapping
     sheet_reg: SheetRegistry,
     default_sheet_id: SheetId,
@@ -135,6 +140,7 @@ impl DependencyGraph {
             volatile_vertices: FxHashSet::default(),
             formula_to_range_deps: FxHashMap::default(),
             stripe_to_dependents: FxHashMap::default(),
+            sheet_indexes: FxHashMap::default(),
             sheet_reg,
             default_sheet_id,
             config: super::EvalConfig::default(),
@@ -211,6 +217,19 @@ impl DependencyGraph {
         self.store.len()
     }
 
+    /// Get mutable access to a sheet's index, creating it if it doesn't exist
+    /// This is the primary way VertexEditor and internal operations access the index
+    pub fn sheet_index_mut(&mut self, sheet_id: SheetId) -> &mut SheetIndex {
+        self.sheet_indexes
+            .entry(sheet_id)
+            .or_default()
+    }
+
+    /// Get immutable access to a sheet's index, returns None if not initialized
+    pub fn sheet_index(&self, sheet_id: SheetId) -> Option<&SheetIndex> {
+        self.sheet_indexes.get(&sheet_id)
+    }
+
     /// Set a value in a cell, returns affected vertex IDs
     pub fn set_cell_value(
         &mut self,
@@ -249,6 +268,10 @@ impl DependencyGraph {
 
             // Add vertex coordinate for CSR
             self.edges.add_vertex(packed_coord, vertex_id.0);
+
+            // Add to sheet index for O(log n + k) range queries
+            self.sheet_index_mut(sheet_id)
+                .add_vertex(packed_coord, vertex_id);
 
             self.store.set_kind(vertex_id, VertexKind::Cell);
             let value_ref = self.data_store.store_value(value);
@@ -662,6 +685,10 @@ impl DependencyGraph {
 
         // Add vertex coordinate for CSR
         self.edges.add_vertex(packed_coord, vertex_id.0);
+
+        // Add to sheet index for O(log n + k) range queries
+        self.sheet_index_mut(addr.sheet_id)
+            .add_vertex(packed_coord, vertex_id);
 
         self.store.set_kind(vertex_id, VertexKind::Empty);
         self.cell_to_vertex.insert(*addr, vertex_id);

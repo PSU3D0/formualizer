@@ -14,6 +14,7 @@ mod parallel;
 mod range_dependencies;
 mod range_property_tests;
 mod schedule_integration;
+mod sheet_index_integration;
 //mod streaming_evaluation;
 mod stripe_cleanup_tests;
 mod stripe_streaming_integration;
