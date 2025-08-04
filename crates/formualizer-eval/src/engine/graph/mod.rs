@@ -984,6 +984,18 @@ impl DependencyGraph {
         Some(CellRef::new(sheet_id, coord))
     }
 
+    /// Create a cell reference (helper for internal use)
+    pub(crate) fn make_cell_ref_internal(&self, sheet_id: SheetId, row: u32, col: u32) -> CellRef {
+        let coord = Coord::new(row, col, true, true);
+        CellRef::new(sheet_id, coord)
+    }
+
+    /// Create a cell reference from sheet name and coordinates
+    pub fn make_cell_ref(&self, sheet_name: &str, row: u32, col: u32) -> CellRef {
+        let sheet_id = self.sheet_reg.get_id(sheet_name).unwrap_or(0);
+        self.make_cell_ref_internal(sheet_id, row, col)
+    }
+
     /// Check if a vertex is dirty
     pub(crate) fn is_dirty(&self, vertex_id: VertexId) -> bool {
         self.store.is_dirty(vertex_id)

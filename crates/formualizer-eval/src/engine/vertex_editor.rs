@@ -83,6 +83,15 @@ pub struct ShiftSummary {
     pub formulas_updated: usize,
 }
 
+/// Summary of range operations
+#[derive(Debug, Clone, Default)]
+pub struct RangeSummary {
+    pub cells_affected: usize,
+    pub vertices_created: Vec<VertexId>,
+    pub vertices_updated: Vec<VertexId>,
+    pub cells_moved: usize,
+}
+
 /// Custom error type for vertex editor operations
 #[derive(Debug, Clone)]
 pub enum EditorError {
@@ -847,6 +856,337 @@ impl<'g> VertexEditor<'g> {
             }
             Err(_) => VertexId::new(0),
         }
+    }
+
+    // Range operations
+
+    /// Set values for a rectangular range of cells
+    pub fn set_range_values(
+        &mut self,
+        sheet_id: SheetId,
+        start_row: u32,
+        start_col: u32,
+        values: &[Vec<LiteralValue>],
+    ) -> Result<RangeSummary, EditorError> {
+        let mut summary = RangeSummary::default();
+
+        self.begin_batch();
+
+        for (row_offset, row_values) in values.iter().enumerate() {
+            for (col_offset, value) in row_values.iter().enumerate() {
+                let row = start_row + row_offset as u32;
+                let col = start_col + col_offset as u32;
+
+                // Check if cell already exists
+                let cell_ref = self.graph.make_cell_ref_internal(sheet_id, row, col);
+
+                if let Some(&existing_id) = self.graph.get_vertex_id_for_address(&cell_ref) {
+                    // Update existing vertex
+                    self.graph.update_vertex_value(existing_id, value.clone());
+                    self.graph.mark_vertex_dirty(existing_id);
+                    summary.vertices_updated.push(existing_id);
+                } else {
+                    // Create new vertex
+                    let meta = VertexMeta::new(row, col, sheet_id, VertexKind::Cell);
+                    let id = self.add_vertex(meta);
+                    self.graph.update_vertex_value(id, value.clone());
+                    summary.vertices_created.push(id);
+                }
+
+                summary.cells_affected += 1;
+            }
+        }
+
+        self.commit_batch();
+
+        Ok(summary)
+    }
+
+    /// Clear all cells in a rectangular range
+    pub fn clear_range(
+        &mut self,
+        sheet_id: SheetId,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> Result<RangeSummary, EditorError> {
+        let mut summary = RangeSummary::default();
+
+        self.begin_batch();
+
+        // Collect vertices in range
+        let vertices_in_range: Vec<_> = self
+            .graph
+            .vertices_in_sheet(sheet_id)
+            .filter(|&id| {
+                let coord = self.graph.get_coord(id);
+                let row = coord.row();
+                let col = coord.col();
+                row >= start_row && row <= end_row && col >= start_col && col <= end_col
+            })
+            .collect();
+
+        for id in vertices_in_range {
+            self.remove_vertex(id)?;
+            summary.cells_affected += 1;
+        }
+
+        self.commit_batch();
+
+        Ok(summary)
+    }
+
+    /// Copy a range to a new location
+    pub fn copy_range(
+        &mut self,
+        sheet_id: SheetId,
+        from_start_row: u32,
+        from_start_col: u32,
+        from_end_row: u32,
+        from_end_col: u32,
+        to_sheet_id: SheetId,
+        to_row: u32,
+        to_col: u32,
+    ) -> Result<RangeSummary, EditorError> {
+        let row_offset = to_row as i32 - from_start_row as i32;
+        let col_offset = to_col as i32 - from_start_col as i32;
+
+        let mut summary = RangeSummary::default();
+        let mut cell_data = Vec::new();
+
+        // Collect source data
+        let vertices_in_range: Vec<_> = self
+            .graph
+            .vertices_in_sheet(sheet_id)
+            .filter(|&id| {
+                let coord = self.graph.get_coord(id);
+                let row = coord.row();
+                let col = coord.col();
+                row >= from_start_row
+                    && row <= from_end_row
+                    && col >= from_start_col
+                    && col <= from_end_col
+            })
+            .collect();
+
+        for id in vertices_in_range {
+            let coord = self.graph.get_coord(id);
+            let row = coord.row();
+            let col = coord.col();
+
+            // Get value or formula
+            if let Some(formula) = self.graph.get_formula(id) {
+                cell_data.push((
+                    row - from_start_row,
+                    col - from_start_col,
+                    CellData::Formula(formula),
+                ));
+            } else if let Some(value) = self.graph.get_value(id) {
+                cell_data.push((
+                    row - from_start_row,
+                    col - from_start_col,
+                    CellData::Value(value),
+                ));
+            }
+        }
+
+        self.begin_batch();
+
+        // Apply to destination with relative adjustment
+        for (row_idx, col_idx, data) in cell_data {
+            let dest_row = (to_row as i32 + row_idx as i32) as u32;
+            let dest_col = (to_col as i32 + col_idx as i32) as u32;
+
+            match data {
+                CellData::Value(value) => {
+                    let cell_ref =
+                        self.graph
+                            .make_cell_ref_internal(to_sheet_id, dest_row, dest_col);
+
+                    if let Some(&existing_id) = self.graph.get_vertex_id_for_address(&cell_ref) {
+                        self.graph.update_vertex_value(existing_id, value);
+                        self.graph.mark_vertex_dirty(existing_id);
+                        summary.vertices_updated.push(existing_id);
+                    } else {
+                        let meta =
+                            VertexMeta::new(dest_row, dest_col, to_sheet_id, VertexKind::Cell);
+                        let id = self.add_vertex(meta);
+                        self.graph.update_vertex_value(id, value);
+                        summary.vertices_created.push(id);
+                    }
+                }
+                CellData::Formula(formula) => {
+                    // Adjust relative references in formula
+                    let adjuster = RelativeReferenceAdjuster::new(row_offset, col_offset);
+                    let adjusted = adjuster.adjust_formula(&formula, sheet_id, to_sheet_id);
+
+                    let cell_ref =
+                        self.graph
+                            .make_cell_ref_internal(to_sheet_id, dest_row, dest_col);
+
+                    if let Some(&existing_id) = self.graph.get_vertex_id_for_address(&cell_ref) {
+                        self.graph.update_vertex_formula(existing_id, adjusted)?;
+                        summary.vertices_updated.push(existing_id);
+                    } else {
+                        let meta = VertexMeta::new(
+                            dest_row,
+                            dest_col,
+                            to_sheet_id,
+                            VertexKind::FormulaScalar,
+                        );
+                        let id = self.add_vertex(meta);
+                        self.graph.update_vertex_formula(id, adjusted)?;
+                        summary.vertices_created.push(id);
+                    }
+                }
+            }
+
+            summary.cells_affected += 1;
+        }
+
+        self.commit_batch();
+
+        Ok(summary)
+    }
+
+    /// Move a range to a new location (copy + clear source)
+    pub fn move_range(
+        &mut self,
+        sheet_id: SheetId,
+        from_start_row: u32,
+        from_start_col: u32,
+        from_end_row: u32,
+        from_end_col: u32,
+        to_sheet_id: SheetId,
+        to_row: u32,
+        to_col: u32,
+    ) -> Result<RangeSummary, EditorError> {
+        // First copy the range
+        let mut summary = self.copy_range(
+            sheet_id,
+            from_start_row,
+            from_start_col,
+            from_end_row,
+            from_end_col,
+            to_sheet_id,
+            to_row,
+            to_col,
+        )?;
+
+        // Then clear the source range
+        let clear_summary = self.clear_range(
+            sheet_id,
+            from_start_row,
+            from_start_col,
+            from_end_row,
+            from_end_col,
+        )?;
+
+        summary.cells_moved = clear_summary.cells_affected;
+
+        // Update external references to moved cells
+        let row_offset = to_row as i32 - from_start_row as i32;
+        let col_offset = to_col as i32 - from_start_col as i32;
+
+        // Find all formulas that reference the moved range
+        let all_formula_vertices: Vec<_> = self.graph.vertices_with_formulas().collect();
+
+        for formula_id in all_formula_vertices {
+            if let Some(formula) = self.graph.get_formula(formula_id) {
+                let adjuster = MoveReferenceAdjuster::new(
+                    sheet_id,
+                    from_start_row,
+                    from_start_col,
+                    from_end_row,
+                    from_end_col,
+                    to_sheet_id,
+                    row_offset,
+                    col_offset,
+                );
+
+                if let Some(adjusted) = adjuster.adjust_if_references(&formula) {
+                    self.graph.update_vertex_formula(formula_id, adjusted)?;
+                }
+            }
+        }
+
+        Ok(summary)
+    }
+}
+
+/// Helper enum for cell data
+enum CellData {
+    Value(LiteralValue),
+    Formula(ASTNode),
+}
+
+/// Helper for adjusting relative references when copying
+struct RelativeReferenceAdjuster {
+    row_offset: i32,
+    col_offset: i32,
+}
+
+impl RelativeReferenceAdjuster {
+    fn new(row_offset: i32, col_offset: i32) -> Self {
+        Self {
+            row_offset,
+            col_offset,
+        }
+    }
+
+    fn adjust_formula(
+        &self,
+        formula: &ASTNode,
+        _from_sheet: SheetId,
+        _to_sheet: SheetId,
+    ) -> ASTNode {
+        // This would recursively adjust relative references in the formula
+        // For now, just clone the formula
+        formula.clone()
+    }
+}
+
+/// Helper for adjusting references when moving ranges
+struct MoveReferenceAdjuster {
+    from_sheet_id: SheetId,
+    from_start_row: u32,
+    from_start_col: u32,
+    from_end_row: u32,
+    from_end_col: u32,
+    to_sheet_id: SheetId,
+    row_offset: i32,
+    col_offset: i32,
+}
+
+impl MoveReferenceAdjuster {
+    fn new(
+        from_sheet_id: SheetId,
+        from_start_row: u32,
+        from_start_col: u32,
+        from_end_row: u32,
+        from_end_col: u32,
+        to_sheet_id: SheetId,
+        row_offset: i32,
+        col_offset: i32,
+    ) -> Self {
+        Self {
+            from_sheet_id,
+            from_start_row,
+            from_start_col,
+            from_end_row,
+            from_end_col,
+            to_sheet_id,
+            row_offset,
+            col_offset,
+        }
+    }
+
+    fn adjust_if_references(&self, formula: &ASTNode) -> Option<ASTNode> {
+        // This would check if the formula references the moved range
+        // and adjust those references accordingly
+        // For now, return None (no adjustment needed)
+        None
     }
 }
 

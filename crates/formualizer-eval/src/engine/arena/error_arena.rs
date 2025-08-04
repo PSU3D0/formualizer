@@ -109,6 +109,10 @@ impl ErrorArena {
         self.errors.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.errors.is_empty()
+    }
+
     /// Clear all errors
     pub fn clear(&mut self) {
         self.errors.clear();

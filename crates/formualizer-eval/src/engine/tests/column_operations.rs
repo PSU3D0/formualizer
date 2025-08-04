@@ -257,22 +257,28 @@ fn test_mixed_row_column_operations() {
 #[test]
 fn test_delete_columns_with_dependencies() {
     let mut graph = DependencyGraph::new();
-    
+
     // Setup: A1=10, B1=A1*2, C1=B1+5, D1=C1
     // Excel uses 1-based indexing
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
-    graph.set_cell_formula("Sheet1", 1, 2, parse("=A1*2")).unwrap();
-    let c1_result = graph.set_cell_formula("Sheet1", 1, 3, parse("=B1+5")).unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 2, parse("=A1*2"))
+        .unwrap();
+    let c1_result = graph
+        .set_cell_formula("Sheet1", 1, 3, parse("=B1+5"))
+        .unwrap();
     let c1_id = c1_result.affected_vertices[0];
-    graph.set_cell_formula("Sheet1", 1, 4, parse("=C1")).unwrap();
-    
+    graph
+        .set_cell_formula("Sheet1", 1, 4, parse("=C1"))
+        .unwrap();
+
     let mut editor = VertexEditor::new(&mut graph);
-    
+
     // Delete column B (column 2)
     editor.delete_columns(0, 2, 1).unwrap();
-    
+
     drop(editor);
-    
+
     // C1 -> B1, should have #REF! since it referenced deleted B1
     // Check that the formula that was at C1 (now at B1) has been marked as #REF!
     assert!(graph.is_ref_error(c1_id));
