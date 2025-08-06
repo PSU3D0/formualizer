@@ -1,8 +1,8 @@
 use crate::SheetId;
 use crate::engine::graph::DependencyGraph;
+use crate::engine::graph::editor::reference_adjuster::{ReferenceAdjuster, ShiftOperation};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::packed_coord::PackedCoord;
-use crate::engine::graph::editor::reference_adjuster::{ReferenceAdjuster, ShiftOperation};
 use crate::engine::{ChangeEvent, ChangeLogger, VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};

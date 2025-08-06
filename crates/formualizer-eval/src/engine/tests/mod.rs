@@ -23,6 +23,7 @@ mod debug_vertex_lifecycle;
 mod named_ranges;
 mod range_operations;
 mod row_operations;
+mod sheet_management;
 mod stripe_cleanup_tests;
 mod stripe_streaming_integration;
 mod stripe_tests;
