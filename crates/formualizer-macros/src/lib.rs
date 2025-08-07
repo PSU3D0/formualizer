@@ -4,7 +4,7 @@ use syn::{Path, Token, parse::Parser, punctuated::Punctuated};
 
 /// Macro to generate the caps() method and validate that required methods are implemented
 /// Usage:
-/// ```
+/// ```ignore
 /// use formualizer_eval::function::Function;
 /// pub struct SumFn;
 /// impl Function for SumFn {

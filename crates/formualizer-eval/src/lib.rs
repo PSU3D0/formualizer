@@ -13,6 +13,8 @@ pub use reference::SheetId;
 
 mod macros;
 pub mod test_workbook;
+#[cfg(test)]
+pub mod test_utils;
 
 pub mod engine;
 
