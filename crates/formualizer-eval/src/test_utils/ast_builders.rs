@@ -16,11 +16,12 @@ pub fn make_bool_ast(b: bool) -> ASTNode {
 }
 
 pub fn make_text_ast(s: &str) -> ASTNode {
-    ASTNode::new(ASTNodeType::Literal(LiteralValue::Text(s.to_string())), None)
+    ASTNode::new(
+        ASTNodeType::Literal(LiteralValue::Text(s.to_string())),
+        None,
+    )
 }
 
 pub fn make_array_ast(rows: Vec<Vec<ASTNode>>) -> ASTNode {
     ASTNode::new(ASTNodeType::Array(rows), None)
 }
-
-

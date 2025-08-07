@@ -11,4 +11,4 @@ pub use tokenizer::{Token, TokenSubType, TokenType, Tokenizer, TokenizerError};
 pub use types::ParsingError;
 
 // Re-export common types
-pub use formualizer_common::{ArgKind, ArgSpec, ExcelError, ExcelErrorKind, LiteralValue};
+pub use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};

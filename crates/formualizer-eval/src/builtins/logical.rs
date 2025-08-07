@@ -1,8 +1,10 @@
 // crates/formualizer-eval/src/builtins/logical.rs
 
+use super::utils::ARG_ANY_ONE;
+use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, EvaluationContext};
-use formualizer_common::{ArgKind, ArgSpec, ExcelError, LiteralValue};
+use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
 /* ─────────────────────────── TRUE() ─────────────────────────────── */
@@ -70,9 +72,8 @@ impl Function for AndFn {
     fn variadic(&self) -> bool {
         true
     }
-    fn arg_schema(&self) -> &'static [ArgSpec] {
-        static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)];
-        SCHEMA
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
     }
 
     fn eval_scalar<'a, 'b>(
@@ -127,9 +128,8 @@ impl Function for OrFn {
     fn variadic(&self) -> bool {
         true
     }
-    fn arg_schema(&self) -> &'static [ArgSpec] {
-        static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)];
-        SCHEMA
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
     }
 
     fn eval_scalar<'a, 'b>(

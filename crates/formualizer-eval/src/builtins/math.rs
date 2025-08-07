@@ -1,9 +1,13 @@
+use super::utils::{
+    ARG_ANY_ONE, ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, ARG_RANGE_NUM_LENIENT_ONE,
+    EPSILON_NEAR_ZERO, binary_numeric_args, coerce_num, unary_numeric_arg,
+};
+use crate::args::ArgSchema;
 use crate::function::{FnFoldCtx, Function};
 use crate::traits::{ArgumentHandle, EvaluationContext};
-use formualizer_common::{ArgKind, ArgSpec, ExcelError, LiteralValue};
+use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 use std::f64::consts::PI;
-use super::utils::{binary_numeric_args, coerce_num, unary_numeric_arg, EPSILON_NEAR_ZERO};
 
 /* ─────────────────────────── SUM() ──────────────────────────── */
 
@@ -22,9 +26,8 @@ impl Function for SumFn {
     fn variadic(&self) -> bool {
         true
     }
-    fn arg_schema(&self) -> &'static [ArgSpec] {
-        static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)];
-        SCHEMA
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
 
     fn eval_scalar<'a, 'b>(
@@ -77,8 +80,6 @@ impl Function for SumFn {
         Some(Ok(LiteralValue::Number(acc)))
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -175,10 +176,20 @@ pub fn register_builtins() {
 pub struct SinFn;
 impl Function for SinFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "SIN" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "SIN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.sin()))
     }
@@ -191,14 +202,18 @@ mod tests_sin {
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
 
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9, "{a} !~= {b}"); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9, "{a} !~= {b}");
+    }
 
     #[test]
     fn test_sin_basic() {
@@ -218,10 +233,20 @@ mod tests_sin {
 pub struct CosFn;
 impl Function for CosFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "COS" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "COS"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.cos()))
     }
@@ -233,14 +258,18 @@ mod tests_cos {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_cos_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CosFn));
@@ -259,10 +288,20 @@ mod tests_cos {
 pub struct TanFn;
 impl Function for TanFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "TAN" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "TAN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.tan()))
     }
@@ -274,14 +313,18 @@ mod tests_tan {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_tan_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(TanFn));
@@ -300,10 +343,20 @@ mod tests_tan {
 pub struct AsinFn;
 impl Function for AsinFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "ASIN" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "ASIN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if x < -1.0 || x > 1.0 {
             return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
@@ -318,14 +371,18 @@ mod tests_asin {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_asin_basic_and_domain() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AsinFn));
@@ -352,10 +409,20 @@ mod tests_asin {
 pub struct AcosFn;
 impl Function for AcosFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "ACOS" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "ACOS"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if x < -1.0 || x > 1.0 {
             return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
@@ -370,14 +437,18 @@ mod tests_acos {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_acos_basic_and_domain() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AcosFn));
@@ -402,10 +473,20 @@ mod tests_acos {
 pub struct AtanFn;
 impl Function for AtanFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "ATAN" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "ATAN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.atan()))
     }
@@ -417,14 +498,18 @@ mod tests_atan {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_atan_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AtanFn));
@@ -443,13 +528,25 @@ mod tests_atan {
 pub struct Atan2Fn;
 impl Function for Atan2Fn {
     func_caps!(PURE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "ATAN2" }
-    fn min_args(&self) -> usize { 2 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any), ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "ATAN2"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let (x, y) = binary_numeric_args(args)?; // Excel: ATAN2(x_num, y_num)
         if x == 0.0 && y == 0.0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#DIV/0!")));
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            )));
         }
         Ok(LiteralValue::Number(y.atan2(x)))
     }
@@ -461,14 +558,18 @@ mod tests_atan2 {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_atan2_basic_and_zero_zero() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(Atan2Fn));
@@ -477,7 +578,10 @@ mod tests_atan2 {
         // ATAN2(1,1) = pi/4
         let a0 = make_num_ast(1.0);
         let a1 = make_num_ast(1.0);
-        let args = vec![ArgumentHandle::new(&a0, &ctx), ArgumentHandle::new(&a1, &ctx)];
+        let args = vec![
+            ArgumentHandle::new(&a0, &ctx),
+            ArgumentHandle::new(&a1, &ctx),
+        ];
         match atan2.dispatch(&args, ctx.context).unwrap() {
             LiteralValue::Number(n) => assert_close(n, PI / 4.0),
             v => panic!("unexpected {v:?}"),
@@ -485,7 +589,10 @@ mod tests_atan2 {
         // ATAN2(0,0) => #DIV/0!
         let b0 = make_num_ast(0.0);
         let b1 = make_num_ast(0.0);
-        let args2 = vec![ArgumentHandle::new(&b0, &ctx), ArgumentHandle::new(&b1, &ctx)];
+        let args2 = vec![
+            ArgumentHandle::new(&b0, &ctx),
+            ArgumentHandle::new(&b1, &ctx),
+        ];
         match atan2.dispatch(&args2, ctx.context).unwrap() {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("expected error, got {v:?}"),
@@ -497,14 +604,26 @@ mod tests_atan2 {
 pub struct SecFn;
 impl Function for SecFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "SEC" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "SEC"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let c = x.cos();
         if c.abs() < EPSILON_NEAR_ZERO {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#DIV/0!")));
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            )));
         }
         Ok(LiteralValue::Number(1.0 / c))
     }
@@ -516,14 +635,18 @@ mod tests_sec {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_sec_basic_and_div0() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SecFn));
@@ -549,14 +672,26 @@ mod tests_sec {
 pub struct CscFn;
 impl Function for CscFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "CSC" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "CSC"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let s = x.sin();
         if s.abs() < EPSILON_NEAR_ZERO {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#DIV/0!")));
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            )));
         }
         Ok(LiteralValue::Number(1.0 / s))
     }
@@ -568,14 +703,18 @@ mod tests_csc {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_csc_basic_and_div0() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CscFn));
@@ -600,14 +739,26 @@ mod tests_csc {
 pub struct CotFn;
 impl Function for CotFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "COT" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "COT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let t = x.tan();
         if t.abs() < EPSILON_NEAR_ZERO {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#DIV/0!")));
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            )));
         }
         Ok(LiteralValue::Number(1.0 / t))
     }
@@ -619,14 +770,18 @@ mod tests_cot {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_cot_basic_and_div0() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CotFn));
@@ -651,10 +806,20 @@ mod tests_cot {
 pub struct AcotFn;
 impl Function for AcotFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "ACOT" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "ACOT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let result = if x == 0.0 {
             PI / 2.0
@@ -673,14 +838,18 @@ mod tests_acot {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_acot_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AcotFn));
@@ -701,10 +870,20 @@ mod tests_acot {
 pub struct SinhFn;
 impl Function for SinhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "SINH" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "SINH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.sinh()))
     }
@@ -716,14 +895,18 @@ mod tests_sinh {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_sinh_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SinhFn));
@@ -742,10 +925,20 @@ mod tests_sinh {
 pub struct CoshFn;
 impl Function for CoshFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "COSH" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "COSH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.cosh()))
     }
@@ -757,14 +950,18 @@ mod tests_cosh {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_cosh_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CoshFn));
@@ -783,10 +980,20 @@ mod tests_cosh {
 pub struct TanhFn;
 impl Function for TanhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "TANH" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "TANH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.tanh()))
     }
@@ -798,14 +1005,18 @@ mod tests_tanh {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_tanh_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(TanhFn));
@@ -824,10 +1035,20 @@ mod tests_tanh {
 pub struct AsinhFn;
 impl Function for AsinhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "ASINH" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "ASINH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.asinh()))
     }
@@ -839,14 +1060,18 @@ mod tests_asinh {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_asinh_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AsinhFn));
@@ -865,10 +1090,20 @@ mod tests_asinh {
 pub struct AcoshFn;
 impl Function for AcoshFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "ACOSH" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "ACOSH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if x < 1.0 {
             return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
@@ -883,7 +1118,9 @@ mod tests_acosh {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
@@ -897,7 +1134,10 @@ mod tests_acosh {
         let f = ctx.context.get_function("", "ACOSH").unwrap();
         let a0 = make_num_ast(1.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        assert_eq!(f.dispatch(&args, ctx.context).unwrap(), LiteralValue::Number(0.0));
+        assert_eq!(
+            f.dispatch(&args, ctx.context).unwrap(),
+            LiteralValue::Number(0.0)
+        );
         let a1 = make_num_ast(0.5);
         let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
         match f.dispatch(&args2, ctx.context).unwrap() {
@@ -911,10 +1151,20 @@ mod tests_acosh {
 pub struct AtanhFn;
 impl Function for AtanhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "ATANH" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "ATANH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if x <= -1.0 || x >= 1.0 {
             return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
@@ -929,14 +1179,18 @@ mod tests_atanh {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_atanh_basic_and_domain() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AtanhFn));
@@ -961,10 +1215,20 @@ mod tests_atanh {
 pub struct SechFn;
 impl Function for SechFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "SECH" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "SECH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(1.0 / x.cosh()))
     }
@@ -976,14 +1240,18 @@ mod tests_sech {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_sech_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SechFn));
@@ -1002,14 +1270,26 @@ mod tests_sech {
 pub struct CschFn;
 impl Function for CschFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "CSCH" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "CSCH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let s = x.sinh();
         if s == 0.0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#DIV/0!")));
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            )));
         }
         Ok(LiteralValue::Number(1.0 / s))
     }
@@ -1021,7 +1301,9 @@ mod tests_csch {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
@@ -1046,14 +1328,26 @@ mod tests_csch {
 pub struct CothFn;
 impl Function for CothFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "COTH" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "COTH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let s = x.sinh();
         if s.abs() < EPSILON_NEAR_ZERO {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#DIV/0!")));
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            )));
         }
         Ok(LiteralValue::Number(x.cosh() / s))
     }
@@ -1065,7 +1359,9 @@ mod tests_coth {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
@@ -1092,10 +1388,20 @@ mod tests_coth {
 pub struct RadiansFn;
 impl Function for RadiansFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "RADIANS" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "RADIANS"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let deg = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(deg * PI / 180.0))
     }
@@ -1107,14 +1413,18 @@ mod tests_radians {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_radians_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(RadiansFn));
@@ -1133,10 +1443,20 @@ mod tests_radians {
 pub struct DegreesFn;
 impl Function for DegreesFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
-    fn name(&self) -> &'static str { "DEGREES" }
-    fn min_args(&self) -> usize { 1 }
-    fn arg_schema(&self) -> &'static [ArgSpec] { static SCHEMA: &[ArgSpec] = &[ArgSpec::new(ArgKind::Any)]; SCHEMA }
-    fn eval_scalar<'a, 'b>(&self, args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "DEGREES"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         let rad = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(rad * 180.0 / PI))
     }
@@ -1148,14 +1468,18 @@ mod tests_degrees {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_core::LiteralValue;
-    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> { wb.interpreter() }
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
     fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
         formualizer_core::parser::ASTNode::new(
             formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
-    fn assert_close(a: f64, b: f64) { assert!((a - b).abs() < 1e-9); }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
     fn test_degrees_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(DegreesFn));
@@ -1174,9 +1498,17 @@ mod tests_degrees {
 pub struct PiFn;
 impl Function for PiFn {
     func_caps!(PURE);
-    fn name(&self) -> &'static str { "PI" }
-    fn min_args(&self) -> usize { 0 }
-    fn eval_scalar<'a, 'b>(&self, _args: &'a [ArgumentHandle<'a, 'b>], _ctx: &dyn EvaluationContext) -> Result<LiteralValue, ExcelError> {
+    fn name(&self) -> &'static str {
+        "PI"
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        _args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
         Ok(LiteralValue::Number(PI))
     }
 }
@@ -1191,6 +1523,9 @@ mod tests_pi {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(PiFn));
         let ctx = wb.interpreter();
         let f = ctx.context.get_function("", "PI").unwrap();
-        assert_eq!(f.eval_scalar(&[], ctx.context).unwrap(), LiteralValue::Number(PI));
+        assert_eq!(
+            f.eval_scalar(&[], ctx.context).unwrap(),
+            LiteralValue::Number(PI)
+        );
     }
 }

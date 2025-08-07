@@ -23,3 +23,4 @@ dashmap = "6.1.0"
 chrono = "0.4.41"
 bitflags = "2.9.1"
 bumpalo = { version = "3.16", features = ["collections"] }
+smallvec = "1.13"

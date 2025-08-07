@@ -1,9 +1,8 @@
 //! formualizer-eval/src/function.rs
 // New home for the core `Function` trait and its capability flags.
 
-use crate::traits::ArgumentHandle;
+use crate::{args::ArgSchema, traits::ArgumentHandle};
 use formualizer_common::{ExcelError, LiteralValue};
-use formualizer_core::ArgSpec;
 
 bitflags::bitflags! {
     /// Describes the capabilities and properties of a function.
@@ -174,7 +173,7 @@ pub trait Function: Send + Sync + 'static {
     fn volatile(&self) -> bool {
         self.caps().contains(FnCaps::VOLATILE)
     }
-    fn arg_schema(&self) -> &'static [ArgSpec] {
+    fn arg_schema(&self) -> &'static [ArgSchema] {
         &[]
     }
 
@@ -222,6 +221,18 @@ pub trait Function: Send + Sync + 'static {
         ctx: &dyn crate::traits::EvaluationContext,
     ) -> Result<LiteralValue, ExcelError> {
         let caps = self.caps();
+
+        // Central argument validation (always on)
+        {
+            use crate::args::{ValidationOptions, validate_and_prepare};
+            let schema = self.arg_schema();
+            // Strict validation; convert errors to value errors to preserve interpreter Ok path
+            if let Err(e) =
+                validate_and_prepare(args, schema, ctx, ValidationOptions { warn_only: false })
+            {
+                return Ok(LiteralValue::Error(e));
+            }
+        }
 
         // Try fast paths based on capabilities
         if caps.contains(FnCaps::REDUCTION) {

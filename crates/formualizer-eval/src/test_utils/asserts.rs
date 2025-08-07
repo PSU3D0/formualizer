@@ -17,5 +17,3 @@ pub fn assert_error_kind(v: &LiteralValue, code: &str) {
         other => panic!("expected error {code}, got {other:?}"),
     }
 }
-
-

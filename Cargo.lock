@@ -157,6 +157,7 @@ dependencies = [
  "rand",
  "rayon",
  "rustc-hash 1.1.0",
+ "smallvec",
 ]
 
 [[package]]

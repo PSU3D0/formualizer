@@ -19,17 +19,3 @@ impl ArgKind {
         }
     }
 }
-
-#[derive(Copy, Clone, Debug)]
-pub struct ArgSpec {
-    pub kind: ArgKind,
-    pub required: bool,
-}
-impl ArgSpec {
-    pub const fn new(kind: ArgKind) -> Self {
-        Self {
-            kind,
-            required: true,
-        }
-    }
-}
