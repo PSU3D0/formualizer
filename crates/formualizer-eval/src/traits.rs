@@ -306,6 +306,16 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
         None
     }
 
+    /// Optional cancellation token. When Some, long-running operations should periodically abort.
+    fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool> {
+        None
+    }
+
+    /// Optional chunk size hint for streaming visitors.
+    fn chunk_hint(&self) -> Option<usize> {
+        None
+    }
+
     /// Resolves a reference into a `RangeStorage` object, which can be either
     /// a materialized vector or a lazy stream, depending on the range size.
     fn resolve_range_storage<'c>(

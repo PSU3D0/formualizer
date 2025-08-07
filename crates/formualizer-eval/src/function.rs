@@ -54,7 +54,6 @@ bitflags::bitflags! {
 
 use crate::traits::EvaluationContext;
 use bumpalo::Bump;
-use std::borrow::Cow;
 
 /// A simple slice of homogeneous values for efficient iteration
 pub struct SliceStripe<'a> {
@@ -64,11 +63,18 @@ pub struct SliceStripe<'a> {
 /// Context for `eval_fold` (Reduction operations).
 /// Provides efficient iteration over input ranges for fold/reduce operations.
 pub trait FnFoldCtx {
-    /// Iterate stripes of homogeneous numeric literals (others boxed).
-    fn numeric_stripes<'a>(&'a mut self) -> Box<dyn Iterator<Item = SliceStripe<'a>> + 'a>;
+    /// Visit numeric chunks packed from all range arguments; no materialization required.
+    fn for_each_numeric_chunk(
+        &mut self,
+        min_chunk: usize,
+        f: &mut dyn FnMut(crate::stripes::NumericChunk) -> Result<(), ExcelError>,
+    ) -> Result<(), ExcelError>;
 
-    /// Stream fallback when stripes can't be produced efficiently.
-    fn cow_iter<'a>(&'a mut self) -> Box<dyn Iterator<Item = Cow<'a, LiteralValue>> + 'a>;
+    /// Visit cells (coerced via range visitors) in row-major order.
+    fn for_each_cell(
+        &mut self,
+        f: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
+    ) -> Result<(), ExcelError>;
 
     /// Return accumulated result (for two-pass folds like AVERAGE).
     fn write_result(&mut self, v: LiteralValue);
@@ -99,43 +105,56 @@ impl<'a, 'b> SimpleFoldCtx<'a, 'b> {
 }
 
 impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
-    fn numeric_stripes<'c>(&'c mut self) -> Box<dyn Iterator<Item = SliceStripe<'c>> + 'c> {
-        // Collect all values into a vec allocated in the arena
-        let mut all_values = bumpalo::collections::Vec::new_in(&self.arena);
-
+    fn for_each_numeric_chunk(
+        &mut self,
+        min_chunk: usize,
+        f: &mut dyn FnMut(crate::stripes::NumericChunk) -> Result<(), ExcelError>,
+    ) -> Result<(), ExcelError> {
         for arg in self.args {
-            if let Ok(storage) = arg.range_storage() {
-                for value_cow in storage.to_iterator() {
-                    all_values.push(value_cow.into_owned());
-                }
+            if let Ok(mut storage) = arg.range_storage() {
+                storage.for_each_numeric_chunk(
+                    crate::args::CoercionPolicy::NumberLenientText,
+                    min_chunk,
+                    f,
+                )?;
             } else if let Ok(value) = arg.value() {
-                all_values.push(value.into_owned());
+                // Pack single scalar if numeric/coercible per policy
+                let as_num = match value.as_ref() {
+                    LiteralValue::Error(e) => {
+                        return Err(e.clone());
+                    }
+                    LiteralValue::Number(n) => Some(*n),
+                    LiteralValue::Int(i) => Some(*i as f64),
+                    LiteralValue::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
+                    LiteralValue::Empty => Some(0.0),
+                    LiteralValue::Text(s) => s.trim().parse::<f64>().ok(),
+                    _ => None,
+                };
+                if let Some(n) = as_num {
+                    // provide a tiny chunk
+                    let one = [n];
+                    f(crate::stripes::NumericChunk {
+                        data: &one,
+                        validity: None,
+                    })?;
+                }
             }
         }
-
-        // Convert to slice - the arena keeps it alive for the lifetime of SimpleFoldCtx
-        let slice: &'c [LiteralValue] = all_values.into_bump_slice();
-
-        Box::new(std::iter::once(SliceStripe { head: slice }))
+        Ok(())
     }
 
-    fn cow_iter<'c>(&'c mut self) -> Box<dyn Iterator<Item = Cow<'c, LiteralValue>> + 'c> {
-        // Fallback iterator - collects all values into arena
-        let mut all_values = bumpalo::collections::Vec::new_in(&self.arena);
-
+    fn for_each_cell(
+        &mut self,
+        f: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
+    ) -> Result<(), ExcelError> {
         for arg in self.args {
-            if let Ok(storage) = arg.range_storage() {
-                for value_cow in storage.to_iterator() {
-                    all_values.push(value_cow.into_owned());
-                }
+            if let Ok(mut storage) = arg.range_storage() {
+                storage.for_each_cell_flat(f)?;
             } else if let Ok(value) = arg.value() {
-                all_values.push(value.into_owned());
+                f(value.as_ref())?;
             }
         }
-
-        // Convert to slice - the arena keeps it alive for the lifetime of SimpleFoldCtx
-        let slice: &'c [LiteralValue] = all_values.into_bump_slice();
-        Box::new(slice.iter().map(Cow::Borrowed))
+        Ok(())
     }
 
     fn write_result(&mut self, v: LiteralValue) {

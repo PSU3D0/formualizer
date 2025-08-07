@@ -3,7 +3,7 @@
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::Parser;
+use formualizer_core::parser::{Parser, parse};
 use std::time::Instant;
 
 #[test]
@@ -228,6 +228,34 @@ fn test_streaming_performance_regression() {
         "Streaming evaluation took too long: {}ms",
         duration.as_millis()
     );
+}
+
+#[test]
+fn sum_large_stream_does_not_materialize_entire_range() {
+    // Build a workbook with a large 200x200 range to exceed expansion limit and trigger streaming
+    let mut wb = TestWorkbook::new();
+    let rows = 200u32;
+    let cols = 200u32;
+    for r in 1..=rows {
+        for c in 1..=cols {
+            wb = wb.with_cell("Sheet1", r, c, LiteralValue::Int(1));
+        }
+    }
+    // Register SUM
+    wb = wb.with_function(std::sync::Arc::new(crate::builtins::math::SumFn));
+
+    // Engine config with low expansion limit to force RangeStorage::Stream
+    let mut config = EvalConfig::default();
+    config.range_expansion_limit = 16; // 16 cells
+    let mut engine = Engine::new(wb.clone(), config);
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=SUM(A1:GR200)").unwrap())
+        .unwrap();
+    let res = engine.evaluate_all().unwrap();
+    assert!(res.computed_vertices >= 1);
+    // Verify SUM result matches expected 40000
+    let v = engine.get_cell_value("Sheet1", 1, 1).unwrap();
+    assert_eq!(v, LiteralValue::Number((rows as f64) * (cols as f64)));
 }
 
 #[test]

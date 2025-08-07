@@ -834,6 +834,18 @@ where
         self.thread_pool.as_ref()
     }
 
+    fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool> {
+        // Engine-wide cancellation is exposed via evaluate_all_cancellable APIs; default None here.
+        None
+    }
+
+    fn chunk_hint(&self) -> Option<usize> {
+        // Use a simple heuristic from configuration (stripe width * height) as a default hint.
+        let hint =
+            (self.config.stripe_height as usize).saturating_mul(self.config.stripe_width as usize);
+        Some(hint.max(1024).min(1 << 20)) // clamp between 1K and ~1M
+    }
+
     fn resolve_range_storage<'c>(
         &'c self,
         reference: &ReferenceType,

@@ -54,30 +54,163 @@ impl Function for SumFn {
     }
 
     fn eval_fold(&self, f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
-        let mut acc = 0.0;
+        let mut acc = 0.0f64;
+        // Stream numeric chunks using the fold context. Use a moderate default chunk size.
+        let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
+            for &n in chunk.data {
+                acc += n;
+            }
+            Ok(())
+        };
+        if let Err(e) = f.for_each_numeric_chunk(4096, &mut cb) {
+            return Some(Ok(LiteralValue::Error(e)));
+        }
+        let out = LiteralValue::Number(acc);
+        f.write_result(out.clone());
+        Some(Ok(out))
+    }
+}
 
-        // Use numeric_stripes for efficient iteration
-        for stripe in f.numeric_stripes() {
-            for v in stripe.head {
-                acc += match v {
-                    LiteralValue::Number(n) => *n,
-                    LiteralValue::Int(i) => *i as f64,
-                    LiteralValue::Boolean(b) => {
-                        if *b {
-                            1.0
-                        } else {
-                            0.0
+/* ─────────────────────────── COUNT() ──────────────────────────── */
+
+#[derive(Debug)]
+pub struct CountFn;
+
+impl Function for CountFn {
+    func_caps!(PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
+
+    fn name(&self) -> &'static str {
+        "COUNT"
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        let mut count: i64 = 0;
+        for arg in args {
+            if let Ok(storage) = arg.range_storage() {
+                for value_cow in storage.to_iterator() {
+                    if coerce_num(value_cow.as_ref()).is_ok() {
+                        count += 1;
+                    }
+                }
+            } else {
+                match arg.value()?.as_ref() {
+                    LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                    v => {
+                        if coerce_num(v).is_ok() {
+                            count += 1;
                         }
                     }
-                    LiteralValue::Empty => 0.0,
-                    LiteralValue::Error(e) => return Some(Ok(LiteralValue::Error(e.clone()))),
-                    _ => 0.0, // Text and other non-numeric values are ignored like Excel
-                };
+                }
             }
         }
+        Ok(LiteralValue::Number(count as f64))
+    }
 
-        f.write_result(LiteralValue::Number(acc));
-        Some(Ok(LiteralValue::Number(acc)))
+    fn eval_fold(&self, f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
+        let mut cnt: i64 = 0;
+        let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
+            cnt += chunk.data.len() as i64;
+            Ok(())
+        };
+        if let Err(e) = f.for_each_numeric_chunk(4096, &mut cb) {
+            return Some(Ok(LiteralValue::Error(e)));
+        }
+        let out = LiteralValue::Number(cnt as f64);
+        f.write_result(out.clone());
+        Some(Ok(out))
+    }
+}
+
+/* ─────────────────────────── AVERAGE() ──────────────────────────── */
+
+#[derive(Debug)]
+pub struct AverageFn;
+
+impl Function for AverageFn {
+    func_caps!(PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
+
+    fn name(&self) -> &'static str {
+        "AVERAGE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn EvaluationContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        let mut sum = 0.0f64;
+        let mut cnt: i64 = 0;
+        for arg in args {
+            if let Ok(storage) = arg.range_storage() {
+                for value_cow in storage.to_iterator() {
+                    if let Ok(n) = coerce_num(value_cow.as_ref()) {
+                        sum += n;
+                        cnt += 1;
+                    }
+                }
+            } else {
+                match arg.value()?.as_ref() {
+                    LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                    v => {
+                        if let Ok(n) = coerce_num(v) {
+                            sum += n;
+                            cnt += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if cnt == 0 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            )));
+        }
+        Ok(LiteralValue::Number(sum / (cnt as f64)))
+    }
+
+    fn eval_fold(&self, f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
+        let mut sum = 0.0f64;
+        let mut cnt: i64 = 0;
+        let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
+            for &n in chunk.data {
+                sum += n;
+                cnt += 1;
+            }
+            Ok(())
+        };
+        if let Err(e) = f.for_each_numeric_chunk(4096, &mut cb) {
+            return Some(Ok(LiteralValue::Error(e)));
+        }
+        if cnt == 0 {
+            let e = ExcelError::from_error_string("#DIV/0!");
+            f.write_result(LiteralValue::Error(e.clone()));
+            return Some(Ok(LiteralValue::Error(e)));
+        }
+        let out = LiteralValue::Number(sum / (cnt as f64));
+        f.write_result(out.clone());
+        Some(Ok(out))
     }
 }
 
@@ -138,8 +271,169 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod tests_count {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_core::LiteralValue;
+    use formualizer_core::parser::ASTNode;
+    use formualizer_core::parser::ASTNodeType;
+
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+
+    #[test]
+    fn count_numbers_ignores_text() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountFn));
+        let ctx = interp(&wb);
+        // COUNT({1,2,"x",3}) => 3
+        let arr = LiteralValue::Array(vec![vec![
+            LiteralValue::Int(1),
+            LiteralValue::Int(2),
+            LiteralValue::Text("x".into()),
+            LiteralValue::Int(3),
+        ]]);
+        let node = ASTNode::new(ASTNodeType::Literal(arr), None);
+        let args = vec![ArgumentHandle::new(&node, &ctx)];
+        let f = ctx.context.get_function("", "COUNT").unwrap();
+        assert_eq!(
+            f.dispatch(&args, ctx.context).unwrap(),
+            LiteralValue::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn count_multiple_args_and_scalars() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountFn));
+        let ctx = interp(&wb);
+        let n1 = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(10)), None);
+        let n2 = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("n".into())), None);
+        let arr = LiteralValue::Array(vec![vec![LiteralValue::Int(1), LiteralValue::Int(2)]]);
+        let a = ASTNode::new(ASTNodeType::Literal(arr), None);
+        let args = vec![
+            ArgumentHandle::new(&a, &ctx),
+            ArgumentHandle::new(&n1, &ctx),
+            ArgumentHandle::new(&n2, &ctx),
+        ];
+        let f = ctx.context.get_function("", "COUNT").unwrap();
+        // Two from array + scalar 10 = 3
+        assert_eq!(
+            f.dispatch(&args, ctx.context).unwrap(),
+            LiteralValue::Number(3.0)
+        );
+    }
+
+    #[test]
+    fn count_direct_error_argument_propagates() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountFn));
+        let ctx = interp(&wb);
+        let err = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            ))),
+            None,
+        );
+        let args = vec![ArgumentHandle::new(&err, &ctx)];
+        let f = ctx.context.get_function("", "COUNT").unwrap();
+        match f.dispatch(&args, ctx.context).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests_average {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_core::LiteralValue;
+    use formualizer_core::parser::ASTNode;
+    use formualizer_core::parser::ASTNodeType;
+
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+
+    #[test]
+    fn average_basic_numbers() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageFn));
+        let ctx = interp(&wb);
+        let arr = LiteralValue::Array(vec![vec![
+            LiteralValue::Int(2),
+            LiteralValue::Int(4),
+            LiteralValue::Int(6),
+        ]]);
+        let node = ASTNode::new(ASTNodeType::Literal(arr), None);
+        let args = vec![ArgumentHandle::new(&node, &ctx)];
+        let f = ctx.context.get_function("", "AVERAGE").unwrap();
+        assert_eq!(
+            f.dispatch(&args, ctx.context).unwrap(),
+            LiteralValue::Number(4.0)
+        );
+    }
+
+    #[test]
+    fn average_mixed_with_text() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageFn));
+        let ctx = interp(&wb);
+        let arr = LiteralValue::Array(vec![vec![
+            LiteralValue::Int(2),
+            LiteralValue::Text("x".into()),
+            LiteralValue::Int(6),
+        ]]);
+        let node = ASTNode::new(ASTNodeType::Literal(arr), None);
+        let args = vec![ArgumentHandle::new(&node, &ctx)];
+        let f = ctx.context.get_function("", "AVERAGE").unwrap();
+        // average of 2 and 6 = 4
+        assert_eq!(
+            f.dispatch(&args, ctx.context).unwrap(),
+            LiteralValue::Number(4.0)
+        );
+    }
+
+    #[test]
+    fn average_no_numeric_div0() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageFn));
+        let ctx = interp(&wb);
+        let arr = LiteralValue::Array(vec![vec![
+            LiteralValue::Text("a".into()),
+            LiteralValue::Text("b".into()),
+        ]]);
+        let node = ASTNode::new(ASTNodeType::Literal(arr), None);
+        let args = vec![ArgumentHandle::new(&node, &ctx)];
+        let f = ctx.context.get_function("", "AVERAGE").unwrap();
+        match f.dispatch(&args, ctx.context).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            v => panic!("expected #DIV/0!, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn average_direct_error_argument_propagates() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageFn));
+        let ctx = interp(&wb);
+        let err = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            ))),
+            None,
+        );
+        let args = vec![ArgumentHandle::new(&err, &ctx)];
+        let f = ctx.context.get_function("", "AVERAGE").unwrap();
+        match f.dispatch(&args, ctx.context).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+}
+
 pub fn register_builtins() {
     crate::function_registry::register_function(std::sync::Arc::new(SumFn));
+    crate::function_registry::register_function(std::sync::Arc::new(CountFn));
+    crate::function_registry::register_function(std::sync::Arc::new(AverageFn));
     // --- Trigonometry: circular ---
     crate::function_registry::register_function(std::sync::Arc::new(SinFn));
     crate::function_registry::register_function(std::sync::Arc::new(CosFn));
