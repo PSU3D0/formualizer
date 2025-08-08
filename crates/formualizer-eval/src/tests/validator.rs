@@ -93,10 +93,20 @@ fn number_lenient_text_coercion_accepts_numeric_text() {
 }
 
 #[test]
-fn by_ref_rejected_until_supported() {
+fn by_ref_accepts_ast_reference() {
     let wb = TestWorkbook::new();
     let ctx = wb.interpreter();
-    let a0 = lit(LiteralValue::Number(1.0));
+    let a0 = formualizer_core::parser::ASTNode::new(
+        formualizer_core::parser::ASTNodeType::Reference {
+            original: "A1".to_string(),
+            reference: formualizer_core::parser::ReferenceType::Cell {
+                sheet: None,
+                row: 1,
+                col: 1,
+            },
+        },
+        None,
+    );
     let args: Vec<ArgumentHandle> = vec![&a0]
         .into_iter()
         .map(|n| ArgumentHandle::new(n, &ctx))
@@ -106,13 +116,21 @@ fn by_ref_rejected_until_supported() {
     s.by_ref = true;
     let schema = vec![s];
 
-    let res = validate_and_prepare(
+    let out = validate_and_prepare(
         &args,
         &schema,
         ctx.context,
         ValidationOptions { warn_only: false },
-    );
-    assert!(res.is_err());
-    let e = res.err().unwrap();
-    assert_eq!(e.kind, ExcelErrorKind::Ref);
+    )
+    .unwrap();
+    assert_eq!(out.items.len(), 1);
+    match &out.items[0] {
+        crate::args::PreparedArg::Reference(r) => match r {
+            formualizer_core::parser::ReferenceType::Cell { row, col, .. } => {
+                assert_eq!((*row, *col), (1, 1));
+            }
+            _ => panic!("expected cell reference"),
+        },
+        _ => panic!("expected reference"),
+    }
 }

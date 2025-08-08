@@ -47,6 +47,12 @@ bitflags::bitflags! {
         const STREAM_OK     = 0b0010_0000_0000;
         /// The function has a GPU-accelerated implementation.
         const GPU_OK        = 0b0100_0000_0000;
+
+        // --- Reference semantics ---
+        /// The function can return a reference (to a cell/range/table) when
+        /// evaluated in a reference context. When used in a value context,
+        /// engines may materialize the reference to a `LiteralValue`.
+        const RETURNS_REFERENCE = 0b1000_0000_0000;
     }
 }
 
@@ -247,6 +253,21 @@ pub trait Function: Send + Sync + 'static {
     ///
     /// This method is called by the engine if the `WINDOWED` capability is set.
     fn eval_window(&self, _w: &mut dyn FnWindowCtx) -> Option<Result<(), ExcelError>> {
+        None
+    }
+
+    /// Optional reference result path. Only called by the interpreter/engine
+    /// when the callsite expects a reference (e.g., range combinators, by-ref
+    /// argument positions, or spill sources).
+    ///
+    /// Default implementation returns `None`, indicating the function does not
+    /// support returning references. Functions that set `RETURNS_REFERENCE`
+    /// should override this.
+    fn eval_reference<'a, 'b>(
+        &self,
+        _args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn crate::traits::EvaluationContext,
+    ) -> Option<Result<formualizer_core::parser::ReferenceType, ExcelError>> {
         None
     }
 

@@ -83,7 +83,7 @@ pub enum CriteriaPredicate {
 pub enum PreparedArg<'a> {
     Value(Cow<'a, LiteralValue>),
     Range(crate::engine::range_stream::RangeStorage<'a>),
-    Reference(&'a formualizer_core::parser::ReferenceType),
+    Reference(formualizer_core::parser::ReferenceType),
     Predicate(CriteriaPredicate),
 }
 
@@ -131,13 +131,20 @@ pub fn validate_and_prepare<'a, 'b>(
             }
         };
 
-        // By-ref not supported yet; enforce violation only if specified
+        // By-ref argument: require a reference (AST literal or function-returned)
         if spec.by_ref {
-            if options.warn_only {
-                continue;
-            } else {
-                return Err(ExcelError::new(ExcelErrorKind::Ref)
-                    .with_message("By-ref argument required but not supported yet"));
+            match arg.as_reference_or_eval() {
+                Ok(r) => {
+                    items.push(PreparedArg::Reference(r));
+                    continue;
+                }
+                Err(e) => {
+                    if options.warn_only {
+                        continue;
+                    } else {
+                        return Err(e);
+                    }
+                }
             }
         }
 

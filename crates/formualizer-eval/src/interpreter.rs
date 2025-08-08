@@ -19,6 +19,36 @@ impl<'a> Interpreter<'a> {
         self.current_sheet
     }
 
+    /// Evaluate an AST node in a reference context and return a ReferenceType.
+    /// This is used for range combinators (e.g., ":"), by-ref argument flows,
+    /// and spill planning. Functions that can return references must set
+    /// `FnCaps::RETURNS_REFERENCE` and override `eval_reference`.
+    pub fn evaluate_ast_as_reference(&self, node: &ASTNode) -> Result<ReferenceType, ExcelError> {
+        match &node.node_type {
+            ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
+            ASTNodeType::Function { name, args } => {
+                if let Some(fun) = self.context.get_function("", name) {
+                    // Build handles; allow function to decide reference semantics
+                    let handles: Vec<ArgumentHandle> =
+                        args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
+                    if let Some(res) = fun.eval_reference(&handles, self.context) {
+                        res
+                    } else {
+                        Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("Function does not return a reference"))
+                    }
+                } else {
+                    Err(ExcelError::from(ExcelErrorKind::Name))
+                }
+            }
+            ASTNodeType::Array(_)
+            | ASTNodeType::UnaryOp { .. }
+            | ASTNodeType::BinaryOp { .. }
+            | ASTNodeType::Literal(_) => Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Expression cannot be used as a reference")),
+        }
+    }
+
     /* ===================  public  =================== */
     pub fn evaluate_ast(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
         match &node.node_type {
@@ -139,8 +169,17 @@ impl<'a> Interpreter<'a> {
                 self.coerce_text(&l_val),
                 self.coerce_text(&r_val)
             ))),
-            ":" => Err(ExcelError::new(ExcelErrorKind::NImpl)
-                .with_message("Range operator ':' inside value context")),
+            ":" => {
+                // Compute a combined reference; in value context return #REF! for now.
+                let lref = self.evaluate_ast_as_reference(left)?;
+                let rref = self.evaluate_ast_as_reference(right)?;
+                match crate::reference::combine_references(&lref, &rref) {
+                    Ok(_r) => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                        "Reference produced by ':' cannot be used directly as a value",
+                    )),
+                    Err(e) => Ok(LiteralValue::Error(e)),
+                }
+            }
             _ => {
                 Err(ExcelError::new(ExcelErrorKind::NImpl)
                     .with_message(format!("Binary op '{op}'")))

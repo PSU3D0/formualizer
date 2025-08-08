@@ -157,6 +157,44 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         self.node
     }
 
+    /// Returns the raw reference from the AST when this argument is a reference.
+    /// This does not evaluate the reference or materialize values.
+    pub fn as_reference(&self) -> Result<&'a ReferenceType, ExcelError> {
+        match &self.node.node_type {
+            ASTNodeType::Reference { reference, .. } => Ok(reference),
+            _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Expected a reference (by-ref argument)")),
+        }
+    }
+
+    /// Returns a `ReferenceType` if this argument is a reference or a function that
+    /// can yield a reference via `eval_reference`. Materializes no values.
+    pub fn as_reference_or_eval(&self) -> Result<ReferenceType, ExcelError> {
+        match &self.node.node_type {
+            ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
+            ASTNodeType::Function { name, args } => {
+                if let Some(fun) = self.interp.context.get_function("", name) {
+                    let handles: Vec<ArgumentHandle> = args
+                        .iter()
+                        .map(|n| ArgumentHandle::new(n, self.interp))
+                        .collect();
+                    if let Some(res) = fun.eval_reference(&handles, self.interp.context) {
+                        res
+                    } else {
+                        Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("Function does not return a reference"))
+                    }
+                } else {
+                    Err(ExcelError::new(ExcelErrorKind::Name))
+                }
+            }
+            _ => {
+                Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Argument is not a reference"))
+            }
+        }
+    }
+
     /* tiny validator helper for macro */
     pub fn matches_kind(&self, k: formualizer_common::ArgKind) -> Result<bool, ExcelError> {
         Ok(match k {

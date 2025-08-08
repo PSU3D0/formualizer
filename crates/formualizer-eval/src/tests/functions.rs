@@ -4,7 +4,7 @@ use crate::map_ctx::SimpleMapCtx;
 use crate::test_workbook::TestWorkbook;
 use crate::traits::ArgumentHandle;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType};
+use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
     wb.interpreter()
@@ -290,5 +290,119 @@ fn atan2_map_equals_scalar_per_cell_broadcast() {
             )
             .unwrap();
         assert_eq!(&expected, &row[idx]);
+    }
+}
+
+#[test]
+fn interpreter_ref_context_returns_range_reference() {
+    let wb = TestWorkbook::new()
+        .with_cell_a1("Sheet1", "A1", LiteralValue::Int(1))
+        .with_cell_a1("Sheet1", "A2", LiteralValue::Int(2));
+    let ctx = interp(&wb);
+
+    let node = ASTNode::new(
+        ASTNodeType::Reference {
+            original: "A1:A2".into(),
+            reference: ReferenceType::Range {
+                sheet: None,
+                start_row: Some(1),
+                start_col: Some(1),
+                end_row: Some(2),
+                end_col: Some(1),
+            },
+        },
+        None,
+    );
+    let r = ctx.evaluate_ast_as_reference(&node).expect("ref ok");
+    match r {
+        ReferenceType::Range {
+            start_row, end_row, ..
+        } => {
+            assert_eq!(start_row, Some(1));
+            assert_eq!(end_row, Some(2));
+        }
+        _ => panic!("expected range"),
+    }
+}
+
+#[test]
+fn range_operator_composition_same_sheet() {
+    let wb = TestWorkbook::new();
+    let ctx = interp(&wb);
+    let left = ASTNode::new(
+        ASTNodeType::Reference {
+            original: "A1".into(),
+            reference: ReferenceType::Cell {
+                sheet: None,
+                row: 1,
+                col: 1,
+            },
+        },
+        None,
+    );
+    let right = ASTNode::new(
+        ASTNodeType::Reference {
+            original: "B2".into(),
+            reference: ReferenceType::Cell {
+                sheet: None,
+                row: 2,
+                col: 2,
+            },
+        },
+        None,
+    );
+    // cannot call private eval_binary here; skip direct value-context enforcement
+    // reference context via helper
+    let lref = ctx.evaluate_ast_as_reference(&left).unwrap();
+    let rref = ctx.evaluate_ast_as_reference(&right).unwrap();
+    let comb = crate::reference::combine_references(&lref, &rref).unwrap();
+    match comb {
+        ReferenceType::Range {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            ..
+        } => {
+            assert_eq!(
+                (start_row, start_col, end_row, end_col),
+                (Some(1), Some(1), Some(2), Some(2))
+            );
+        }
+        _ => panic!("expected range"),
+    }
+}
+
+#[test]
+fn interpreter_evaluate_ast_as_reference_returns_reference_for_ast_reference() {
+    let wb = TestWorkbook::new()
+        .with_cell_a1("Sheet1", "A1", LiteralValue::Int(7))
+        .with_cell_a1("Sheet1", "A2", LiteralValue::Int(8));
+    let ctx = interp(&wb);
+
+    let node = ASTNode::new(
+        ASTNodeType::Reference {
+            original: "A1:A2".to_string(),
+            reference: ReferenceType::Range {
+                sheet: None,
+                start_row: Some(1),
+                start_col: Some(1),
+                end_row: Some(2),
+                end_col: Some(1),
+            },
+        },
+        None,
+    );
+    let r = ctx
+        .evaluate_ast_as_reference(&node)
+        .expect("expected reference");
+    match r {
+        ReferenceType::Range {
+            start_row, end_row, ..
+        } => {
+            assert_eq!(start_row, Some(1));
+            assert_eq!(end_row, Some(2));
+        }
+        _ => panic!("expected range reference"),
     }
 }

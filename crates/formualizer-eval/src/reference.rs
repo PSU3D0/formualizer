@@ -23,6 +23,8 @@
 use core::fmt;
 
 use crate::engine::sheet_registry::SheetRegistry; // `no_std`‑friendly; swap for `std::fmt` if you prefer
+use formualizer_common::{ExcelError, ExcelErrorKind};
+use formualizer_core::parser::ReferenceType;
 
 //------------------------------------------------------------------------------
 // Coord
@@ -144,6 +146,63 @@ impl Coord {
         }
         Some(col)
     }
+}
+
+/// Combine two references with the range operator ':'
+/// Supports combining Cell:Cell, Cell:Range (and Range:Cell), and Range:Range on the same sheet.
+/// Returns #REF! for cross-sheet combinations or incompatible shapes.
+pub fn combine_references(
+    a: &ReferenceType,
+    b: &ReferenceType,
+) -> Result<ReferenceType, ExcelError> {
+    // Extract sheet and bounds as (sheet, (sr, sc, er, ec))
+    fn to_bounds(r: &ReferenceType) -> Option<(Option<String>, (u32, u32, u32, u32))> {
+        match r {
+            ReferenceType::Cell { sheet, row, col } => {
+                Some((sheet.clone(), (*row, *col, *row, *col)))
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => {
+                let (sr, sc, er, ec) = match (start_row, start_col, end_row, end_col) {
+                    (Some(sr), Some(sc), Some(er), Some(ec)) => (*sr, *sc, *er, *ec),
+                    _ => return None,
+                };
+                Some((sheet.clone(), (sr, sc, er, ec)))
+            }
+            _ => None,
+        }
+    }
+
+    let (sheet_a, (a_sr, a_sc, a_er, a_ec)) = to_bounds(a).ok_or_else(|| {
+        ExcelError::new(ExcelErrorKind::Ref).with_message("Unsupported reference for ':'")
+    })?;
+    let (sheet_b, (b_sr, b_sc, b_er, b_ec)) = to_bounds(b).ok_or_else(|| {
+        ExcelError::new(ExcelErrorKind::Ref).with_message("Unsupported reference for ':'")
+    })?;
+
+    // Sheets must match (both None or equal Some)
+    if sheet_a != sheet_b {
+        return Err(ExcelError::new(ExcelErrorKind::Ref)
+            .with_message("Cannot combine references across sheets"));
+    }
+
+    let sr = a_sr.min(b_sr);
+    let sc = a_sc.min(b_sc);
+    let er = a_er.max(b_er);
+    let ec = a_ec.max(b_ec);
+
+    Ok(ReferenceType::Range {
+        sheet: sheet_a,
+        start_row: Some(sr),
+        start_col: Some(sc),
+        end_row: Some(er),
+        end_col: Some(ec),
+    })
 }
 
 impl fmt::Display for Coord {
