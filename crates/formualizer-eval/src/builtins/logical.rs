@@ -81,32 +81,47 @@ impl Function for AndFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
+        let mut first_error: Option<LiteralValue> = None;
         for h in args {
-            let v = h.value()?;
-            if let Some(err) = crate::error_policy::propagate_error1(v.as_ref()) {
-                return Ok(err);
-            }
-            match v.as_ref() {
-                // Blank treated as FALSE (Excel behaviour)
-                LiteralValue::Empty => return Ok(LiteralValue::Boolean(false)),
-                // Boolean – use as–is
-                LiteralValue::Boolean(b) => {
-                    if !*b {
+            let mut it = h.lazy_values_owned()?;
+            while let Some(v) = it.next() {
+                match v {
+                    LiteralValue::Error(_) => {
+                        if first_error.is_none() {
+                            first_error = Some(v);
+                        }
+                    }
+                    LiteralValue::Empty => {
                         return Ok(LiteralValue::Boolean(false));
                     }
-                }
-                // Numbers – zero = FALSE, non‑zero = TRUE
-                LiteralValue::Number(n) if *n == 0.0 => return Ok(LiteralValue::Boolean(false)),
-                LiteralValue::Number(_) => {}
-                LiteralValue::Int(i) if *i == 0 => return Ok(LiteralValue::Boolean(false)),
-                LiteralValue::Int(_) => {}
-                // Anything else → #VALUE!
-                _ => {
-                    return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                        "#VALUE!",
-                    )));
+                    LiteralValue::Boolean(b) => {
+                        if !b {
+                            return Ok(LiteralValue::Boolean(false));
+                        }
+                    }
+                    LiteralValue::Number(n) => {
+                        if n == 0.0 {
+                            return Ok(LiteralValue::Boolean(false));
+                        }
+                    }
+                    LiteralValue::Int(i) => {
+                        if i == 0 {
+                            return Ok(LiteralValue::Boolean(false));
+                        }
+                    }
+                    _ => {
+                        // Non-coercible (e.g., Text) → #VALUE! candidate
+                        if first_error.is_none() {
+                            first_error = Some(LiteralValue::Error(ExcelError::from_error_string(
+                                "#VALUE!",
+                            )));
+                        }
+                    }
                 }
             }
+        }
+        if let Some(err) = first_error {
+            return Ok(err);
         }
         Ok(LiteralValue::Boolean(true))
     }
@@ -138,39 +153,49 @@ impl Function for OrFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        let mut found_true = false;
-
+        let mut first_error: Option<LiteralValue> = None;
         for h in args {
-            let v = h.value()?;
-            if let Some(err) = crate::error_policy::propagate_error1(v.as_ref()) {
-                return Ok(err);
-            }
-            match v.as_ref() {
-                LiteralValue::Boolean(b) => {
-                    if *b {
-                        found_true = true
+            let mut it = h.lazy_values_owned()?;
+            while let Some(v) = it.next() {
+                match v {
+                    LiteralValue::Error(_) => {
+                        if first_error.is_none() {
+                            first_error = Some(v);
+                        }
                     }
-                }
-                LiteralValue::Number(n) => {
-                    if *n != 0.0 {
-                        found_true = true
+                    LiteralValue::Empty => {
+                        // ignored
                     }
-                }
-                LiteralValue::Int(i) => {
-                    if *i != 0 {
-                        found_true = true
+                    LiteralValue::Boolean(b) => {
+                        if b {
+                            return Ok(LiteralValue::Boolean(true));
+                        }
                     }
-                }
-                LiteralValue::Empty => {} // ignored
-                _ => {
-                    return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                        "#VALUE!",
-                    )));
+                    LiteralValue::Number(n) => {
+                        if n != 0.0 {
+                            return Ok(LiteralValue::Boolean(true));
+                        }
+                    }
+                    LiteralValue::Int(i) => {
+                        if i != 0 {
+                            return Ok(LiteralValue::Boolean(true));
+                        }
+                    }
+                    _ => {
+                        // Non-coercible → #VALUE! candidate
+                        if first_error.is_none() {
+                            first_error = Some(LiteralValue::Error(ExcelError::from_error_string(
+                                "#VALUE!",
+                            )));
+                        }
+                    }
                 }
             }
         }
-
-        Ok(LiteralValue::Boolean(found_true))
+        if let Some(err) = first_error {
+            return Ok(err);
+        }
+        Ok(LiteralValue::Boolean(false))
     }
 }
 
@@ -242,6 +267,52 @@ mod tests {
     use crate::traits::{ArgumentHandle, DefaultFunctionContext};
     use crate::{interpreter::Interpreter, test_workbook::TestWorkbook};
     use formualizer_core::LiteralValue;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[derive(Debug)]
+    struct CountFn(Arc<AtomicUsize>);
+    impl Function for CountFn {
+        func_caps!(PURE);
+        fn name(&self) -> &'static str {
+            "COUNTING"
+        }
+        fn min_args(&self) -> usize {
+            0
+        }
+        fn eval_scalar<'a, 'b>(
+            &self,
+            _args: &'a [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext,
+        ) -> Result<LiteralValue, ExcelError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(LiteralValue::Boolean(true))
+        }
+    }
+
+    #[derive(Debug)]
+    struct ErrorFn(Arc<AtomicUsize>);
+    impl Function for ErrorFn {
+        func_caps!(PURE);
+        fn name(&self) -> &'static str {
+            "ERRORFN"
+        }
+        fn min_args(&self) -> usize {
+            0
+        }
+        fn eval_scalar<'a, 'b>(
+            &self,
+            _args: &'a [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext,
+        ) -> Result<LiteralValue, ExcelError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#VALUE!",
+            )))
+        }
+    }
 
     fn interp(wb: &TestWorkbook) -> Interpreter<'_> {
         wb.interpreter()
@@ -311,6 +382,194 @@ mod tests {
         assert_eq!(
             or.eval_scalar(&hs2, &fctx).unwrap(),
             LiteralValue::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn and_short_circuits_on_false_without_evaluating_rest() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(AndFn))
+            .with_function(Arc::new(CountFn(counter.clone())));
+        let ctx = interp(&wb);
+        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let and = ctx.context.get_function("", "AND").unwrap();
+
+        // Build args: FALSE, COUNTING()
+        let a_false = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Boolean(false)),
+            None,
+        );
+        let counting_call = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Function {
+                name: "COUNTING".into(),
+                args: vec![],
+            },
+            None,
+        );
+        let hs = vec![
+            ArgumentHandle::new(&a_false, &ctx),
+            ArgumentHandle::new(&counting_call, &ctx),
+        ];
+        let out = and.eval_scalar(&hs, &fctx).unwrap();
+        assert_eq!(out, LiteralValue::Boolean(false));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "COUNTING should not be evaluated"
+        );
+    }
+
+    #[test]
+    fn or_short_circuits_on_true_without_evaluating_rest() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(OrFn))
+            .with_function(Arc::new(CountFn(counter.clone())));
+        let ctx = interp(&wb);
+        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let or = ctx.context.get_function("", "OR").unwrap();
+
+        // Build args: TRUE, COUNTING()
+        let a_true = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Boolean(true)),
+            None,
+        );
+        let counting_call = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Function {
+                name: "COUNTING".into(),
+                args: vec![],
+            },
+            None,
+        );
+        let hs = vec![
+            ArgumentHandle::new(&a_true, &ctx),
+            ArgumentHandle::new(&counting_call, &ctx),
+        ];
+        let out = or.eval_scalar(&hs, &fctx).unwrap();
+        assert_eq!(out, LiteralValue::Boolean(true));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "COUNTING should not be evaluated"
+        );
+    }
+
+    #[test]
+    fn or_range_arg_short_circuits_on_first_true_before_evaluating_next_arg() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(OrFn))
+            .with_function(Arc::new(CountFn(counter.clone())));
+        let ctx = interp(&wb);
+        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let or = ctx.context.get_function("", "OR").unwrap();
+
+        // First arg is an array literal with first element 1 (truey), then zeros.
+        let arr = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Array(vec![
+                vec![formualizer_core::parser::ASTNode::new(
+                    formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Int(1)),
+                    None,
+                )],
+                vec![formualizer_core::parser::ASTNode::new(
+                    formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Int(0)),
+                    None,
+                )],
+            ]),
+            None,
+        );
+        let counting_call = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Function {
+                name: "COUNTING".into(),
+                args: vec![],
+            },
+            None,
+        );
+        let hs = vec![
+            ArgumentHandle::new(&arr, &ctx),
+            ArgumentHandle::new(&counting_call, &ctx),
+        ];
+        let out = or.eval_scalar(&hs, &fctx).unwrap();
+        assert_eq!(out, LiteralValue::Boolean(true));
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "COUNTING should not be evaluated"
+        );
+    }
+
+    #[test]
+    fn and_returns_first_error_when_no_decisive_false() {
+        let err_counter = Arc::new(AtomicUsize::new(0));
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(AndFn))
+            .with_function(Arc::new(ErrorFn(err_counter.clone())));
+        let ctx = interp(&wb);
+        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let and = ctx.context.get_function("", "AND").unwrap();
+
+        // AND(1, ERRORFN(), 1) => #VALUE!
+        let one = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Int(1)),
+            None,
+        );
+        let errcall = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Function {
+                name: "ERRORFN".into(),
+                args: vec![],
+            },
+            None,
+        );
+        let hs = vec![
+            ArgumentHandle::new(&one, &ctx),
+            ArgumentHandle::new(&errcall, &ctx),
+            ArgumentHandle::new(&one, &ctx),
+        ];
+        let out = and.eval_scalar(&hs, &fctx).unwrap();
+        match out {
+            LiteralValue::Error(e) => assert_eq!(e.to_string(), "#VALUE!"),
+            _ => panic!("Expected error"),
+        }
+        assert_eq!(
+            err_counter.load(Ordering::SeqCst),
+            1,
+            "ERRORFN should be evaluated once"
+        );
+    }
+
+    #[test]
+    fn or_does_not_evaluate_error_after_true() {
+        let err_counter = Arc::new(AtomicUsize::new(0));
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(OrFn))
+            .with_function(Arc::new(ErrorFn(err_counter.clone())));
+        let ctx = interp(&wb);
+        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let or = ctx.context.get_function("", "OR").unwrap();
+
+        // OR(TRUE, ERRORFN()) => TRUE and ERRORFN not evaluated
+        let a_true = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Boolean(true)),
+            None,
+        );
+        let errcall = formualizer_core::parser::ASTNode::new(
+            formualizer_core::parser::ASTNodeType::Function {
+                name: "ERRORFN".into(),
+                args: vec![],
+            },
+            None,
+        );
+        let hs = vec![
+            ArgumentHandle::new(&a_true, &ctx),
+            ArgumentHandle::new(&errcall, &ctx),
+        ];
+        let out = or.eval_scalar(&hs, &fctx).unwrap();
+        assert_eq!(out, LiteralValue::Boolean(true));
+        assert_eq!(
+            err_counter.load(Ordering::SeqCst),
+            0,
+            "ERRORFN should not be evaluated"
         );
     }
 }

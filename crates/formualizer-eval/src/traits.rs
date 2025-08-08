@@ -154,6 +154,70 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             .or_else(|_| self.value().map(EvaluatedArg::LiteralValue))
     }
 
+    /// Lazily iterate values for this argument in row-major expansion order.
+    /// - Reference: stream via RangeStorage iterator (row-major)
+    /// - Array literal: evaluate each element lazily per cell
+    /// - Scalar/other expressions: a single value
+    pub fn lazy_values_owned(
+        &'a self,
+    ) -> Result<Box<dyn Iterator<Item = LiteralValue> + 'a>, ExcelError> {
+        match &self.node.node_type {
+            ASTNodeType::Reference { .. } => {
+                // Use RangeStorage iterator and materialize each item on demand
+                let storage = self.range_storage()?;
+                let iter = storage.to_iterator().map(|c| c.into_owned());
+                Ok(Box::new(iter))
+            }
+            ASTNodeType::Array(rows) => {
+                struct ArrayEvalIter<'a, 'b> {
+                    rows: &'a [Vec<ASTNode>],
+                    r: usize,
+                    c: usize,
+                    interp: &'a Interpreter<'b>,
+                }
+                impl<'a, 'b> Iterator for ArrayEvalIter<'a, 'b> {
+                    type Item = LiteralValue;
+                    fn next(&mut self) -> Option<Self::Item> {
+                        if self.rows.is_empty() {
+                            return None;
+                        }
+                        let rows = self.rows;
+                        let mut r = self.r;
+                        let mut c = self.c;
+                        if r >= rows.len() {
+                            return None;
+                        }
+                        let node = &rows[r][c];
+                        // advance indices
+                        c += 1;
+                        if c >= rows[r].len() {
+                            r += 1;
+                            c = 0;
+                        }
+                        self.r = r;
+                        self.c = c;
+                        match self.interp.evaluate_ast(node) {
+                            Ok(v) => Some(v),
+                            Err(e) => Some(LiteralValue::Error(e)),
+                        }
+                    }
+                }
+                let it = ArrayEvalIter {
+                    rows,
+                    r: 0,
+                    c: 0,
+                    interp: self.interp,
+                };
+                Ok(Box::new(it))
+            }
+            _ => {
+                // Single value expression
+                let v = self.value()?.into_owned();
+                Ok(Box::new(std::iter::once(v)))
+            }
+        }
+    }
+
     pub fn ast(&self) -> &'a ASTNode {
         self.node
     }
