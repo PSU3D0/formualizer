@@ -163,7 +163,25 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
 }
 
 /// Context for `eval_map` (Element-wise operations).
-pub trait FnMapCtx {}
+pub trait FnMapCtx {
+    /// Whether inputs indicate an array/range context. If false, callers should fall back to scalar.
+    fn is_array_context(&self) -> bool;
+
+    /// Apply a unary numeric mapping over the broadcasted input. The closure should return the mapped cell.
+    fn map_unary_numeric(
+        &mut self,
+        f: &mut dyn FnMut(f64) -> Result<LiteralValue, ExcelError>,
+    ) -> Result<(), ExcelError>;
+
+    /// Apply a binary numeric mapping over the broadcasted inputs (first two args).
+    fn map_binary_numeric(
+        &mut self,
+        f: &mut dyn FnMut(f64, f64) -> Result<LiteralValue, ExcelError>,
+    ) -> Result<(), ExcelError>;
+
+    /// Finalize and retrieve the output value (typically an Array). Implementations may move out internal buffers.
+    fn finalize(&mut self) -> LiteralValue;
+}
 
 /// Context for `eval_window` (Windowed operations).
 pub trait FnWindowCtx {}
@@ -221,7 +239,7 @@ pub trait Function: Send + Sync + 'static {
     /// This method is called by the engine if the `ELEMENTWISE` capability is set.
     /// It operates on a `FnMapCtx` which provides direct access to input/output
     /// data stripes for vectorized processing.
-    fn eval_map(&self, _m: &mut dyn FnMapCtx) -> Option<Result<(), ExcelError>> {
+    fn eval_map(&self, _m: &mut dyn FnMapCtx) -> Option<Result<LiteralValue, ExcelError>> {
         None
     }
 
@@ -263,10 +281,14 @@ pub trait Function: Send + Sync + 'static {
         }
 
         if caps.contains(FnCaps::ELEMENTWISE) {
-            // Try eval_map path (not implemented yet)
-            // if let Some(result) = self.eval_map(...) {
-            //     return result;
-            // }
+            // Minimal unary elementwise path: construct a simple map ctx and call eval_map
+            let mut m = crate::map_ctx::SimpleMapCtx::new(args, ctx);
+            if FnMapCtx::is_array_context(&m) {
+                let dyn_m: &mut dyn FnMapCtx = &mut m;
+                if let Some(result) = self.eval_map(dyn_m) {
+                    return result;
+                }
+            }
         }
 
         if caps.contains(FnCaps::WINDOWED) {

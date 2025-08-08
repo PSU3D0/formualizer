@@ -12,6 +12,14 @@ pub enum ValidityMask<'a> {
     Bools(&'a [bool]),
 }
 
+/// Heterogeneous cell chunk for elementwise mapping.
+pub enum CellChunk<'a> {
+    /// Mixed values provided as `LiteralValue` slice
+    Mixed(&'a [formualizer_common::LiteralValue]),
+    /// Numeric-only chunk (optional fast path for elementwise numeric)
+    Numbers(&'a [f64]),
+}
+
 impl<'a> NumericChunk<'a> {
     pub fn len(&self) -> usize {
         self.data.len()

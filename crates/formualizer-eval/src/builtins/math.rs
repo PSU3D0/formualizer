@@ -438,6 +438,7 @@ pub fn register_builtins() {
     crate::function_registry::register_function(std::sync::Arc::new(SinFn));
     crate::function_registry::register_function(std::sync::Arc::new(CosFn));
     crate::function_registry::register_function(std::sync::Arc::new(TanFn));
+    // A few elementwise numeric funcs are wired for map path; extend as needed
     crate::function_registry::register_function(std::sync::Arc::new(AsinFn));
     crate::function_registry::register_function(std::sync::Arc::new(AcosFn));
     crate::function_registry::register_function(std::sync::Arc::new(AtanFn));
@@ -486,6 +487,20 @@ impl Function for SinFn {
     ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.sin()))
+    }
+
+    fn eval_map(
+        &self,
+        m: &mut dyn crate::function::FnMapCtx,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        if !m.is_array_context() {
+            return None;
+        }
+        let mut closure = |n: f64| Ok(LiteralValue::Number(n.sin()));
+        if let Err(e) = m.map_unary_numeric(&mut closure) {
+            return Some(Ok(LiteralValue::Error(e)));
+        }
+        return Some(Ok(m.finalize()));
     }
 }
 
@@ -544,6 +559,20 @@ impl Function for CosFn {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.cos()))
     }
+
+    fn eval_map(
+        &self,
+        m: &mut dyn crate::function::FnMapCtx,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        if !m.is_array_context() {
+            return None;
+        }
+        let mut closure = |n: f64| Ok(LiteralValue::Number(n.cos()));
+        if let Err(e) = m.map_unary_numeric(&mut closure) {
+            return Some(Ok(LiteralValue::Error(e)));
+        }
+        return Some(Ok(m.finalize()));
+    }
 }
 
 #[cfg(test)]
@@ -598,6 +627,20 @@ impl Function for TanFn {
     ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         Ok(LiteralValue::Number(x.tan()))
+    }
+
+    fn eval_map(
+        &self,
+        m: &mut dyn crate::function::FnMapCtx,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        if !m.is_array_context() {
+            return None;
+        }
+        let mut closure = |n: f64| Ok(LiteralValue::Number(n.tan()));
+        if let Err(e) = m.map_unary_numeric(&mut closure) {
+            return Some(Ok(LiteralValue::Error(e)));
+        }
+        Some(Ok(m.finalize()))
     }
 }
 
@@ -821,7 +864,7 @@ mod tests_atan {
 #[derive(Debug)]
 pub struct Atan2Fn;
 impl Function for Atan2Fn {
-    func_caps!(PURE, NUMERIC_ONLY);
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
         "ATAN2"
     }
@@ -843,6 +886,28 @@ impl Function for Atan2Fn {
             )));
         }
         Ok(LiteralValue::Number(y.atan2(x)))
+    }
+
+    fn eval_map(
+        &self,
+        m: &mut dyn crate::function::FnMapCtx,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        if !m.is_array_context() {
+            return None;
+        }
+        let mut closure = |x: f64, y: f64| {
+            if x == 0.0 && y == 0.0 {
+                Ok(LiteralValue::Error(ExcelError::from_error_string(
+                    "#DIV/0!",
+                )))
+            } else {
+                Ok(LiteralValue::Number(y.atan2(x)))
+            }
+        };
+        if let Err(e) = m.map_binary_numeric(&mut closure) {
+            return Some(Ok(LiteralValue::Error(e)));
+        }
+        Some(Ok(m.finalize()))
     }
 }
 
