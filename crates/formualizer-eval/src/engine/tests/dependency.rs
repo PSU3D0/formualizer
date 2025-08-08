@@ -241,7 +241,7 @@ fn test_circular_dependency_detection() {
     assert!(result.is_err());
     match result.unwrap_err().kind {
         ExcelErrorKind::Circ => {} // Expected
-        other => panic!("Expected circular reference error, got {:?}", other),
+        other => panic!("Expected circular reference error, got {other:?}"),
     }
 
     // A1 should be an empty placeholder, not a formula
@@ -251,10 +251,9 @@ fn test_circular_dependency_detection() {
         .unwrap();
     match &graph.get_vertex_kind(a1_vertex_id) {
         VertexKind::Empty => {} // Expected
-        other => panic!(
-            "A1 should be an Empty vertex after failed formula update, but was {:?}",
-            other
-        ),
+        other => {
+            panic!("A1 should be an Empty vertex after failed formula update, but was {other:?}")
+        }
     }
 }
 

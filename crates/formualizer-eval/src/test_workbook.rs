@@ -170,7 +170,10 @@ impl TableResolver for TestWorkbook {
 
 impl FunctionProvider for TestWorkbook {
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
-        self.fns.get(&(ns, name)).cloned()
+        self.fns
+            .get(&(ns, name))
+            .cloned()
+            .or_else(|| crate::function_registry::get(ns, name))
     }
 }
 

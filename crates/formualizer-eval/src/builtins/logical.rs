@@ -3,7 +3,7 @@
 use super::utils::ARG_ANY_ONE;
 use crate::args::ArgSchema;
 use crate::function::Function;
-use crate::traits::{ArgumentHandle, EvaluationContext};
+use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
@@ -25,7 +25,7 @@ impl Function for TrueFn {
     fn eval_scalar<'a, 'b>(
         &self,
         _args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn EvaluationContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         Ok(LiteralValue::Boolean(true))
     }
@@ -49,7 +49,7 @@ impl Function for FalseFn {
     fn eval_scalar<'a, 'b>(
         &self,
         _args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn EvaluationContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         Ok(LiteralValue::Boolean(false))
     }
@@ -79,7 +79,7 @@ impl Function for AndFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn EvaluationContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         for h in args {
             let v = h.value()?;
@@ -136,7 +136,7 @@ impl Function for OrFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn EvaluationContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         let mut found_true = false;
 
@@ -195,7 +195,7 @@ impl Function for IfFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn EvaluationContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 || args.len() > 3 {
             return Ok(LiteralValue::Error(
@@ -226,12 +226,20 @@ impl Function for IfFn {
     }
 }
 
+pub fn register_builtins() {
+    crate::function_registry::register_function(std::sync::Arc::new(TrueFn));
+    crate::function_registry::register_function(std::sync::Arc::new(FalseFn));
+    crate::function_registry::register_function(std::sync::Arc::new(AndFn));
+    crate::function_registry::register_function(std::sync::Arc::new(OrFn));
+    crate::function_registry::register_function(std::sync::Arc::new(IfFn));
+}
+
 /* ─────────────────────────── tests ─────────────────────────────── */
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::ArgumentHandle;
+    use crate::traits::{ArgumentHandle, DefaultFunctionContext};
     use crate::{interpreter::Interpreter, test_workbook::TestWorkbook};
     use formualizer_core::LiteralValue;
 
@@ -247,14 +255,15 @@ mod tests {
 
         let ctx = interp(&wb);
         let t = ctx.context.get_function("", "TRUE").unwrap();
+        let fctx = DefaultFunctionContext::new(ctx.context, None);
         assert_eq!(
-            t.eval_scalar(&[], ctx.context).unwrap(),
+            t.eval_scalar(&[], &fctx).unwrap(),
             LiteralValue::Boolean(true)
         );
 
         let f = ctx.context.get_function("", "FALSE").unwrap();
         assert_eq!(
-            f.eval_scalar(&[], ctx.context).unwrap(),
+            f.eval_scalar(&[], &fctx).unwrap(),
             LiteralValue::Boolean(false)
         );
     }
@@ -265,6 +274,7 @@ mod tests {
             .with_function(std::sync::Arc::new(AndFn))
             .with_function(std::sync::Arc::new(OrFn));
         let ctx = interp(&wb);
+        let fctx = crate::traits::DefaultFunctionContext::new(ctx.context, None);
 
         let and = ctx.context.get_function("", "AND").unwrap();
         let or = ctx.context.get_function("", "OR").unwrap();
@@ -286,7 +296,7 @@ mod tests {
             ArgumentHandle::new(&dummy_ast_one, &ctx),
         ];
         assert_eq!(
-            and.eval_scalar(&hs, ctx.context).unwrap(),
+            and.eval_scalar(&hs, &fctx).unwrap(),
             LiteralValue::Boolean(true)
         );
 
@@ -295,20 +305,12 @@ mod tests {
             ArgumentHandle::new(&dummy_ast_one, &ctx),
         ];
         assert_eq!(
-            and.eval_scalar(&hs2, ctx.context).unwrap(),
+            and.eval_scalar(&hs2, &fctx).unwrap(),
             LiteralValue::Boolean(false)
         );
         assert_eq!(
-            or.eval_scalar(&hs2, ctx.context).unwrap(),
+            or.eval_scalar(&hs2, &fctx).unwrap(),
             LiteralValue::Boolean(true)
         );
     }
-}
-
-pub fn register_builtins() {
-    crate::function_registry::register_function(std::sync::Arc::new(TrueFn));
-    crate::function_registry::register_function(std::sync::Arc::new(FalseFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AndFn));
-    crate::function_registry::register_function(std::sync::Arc::new(OrFn));
-    crate::function_registry::register_function(std::sync::Arc::new(IfFn));
 }

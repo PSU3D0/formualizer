@@ -13,7 +13,7 @@ impl Locale {
     }
 
     /// Case folding for comparisons; invariant = ASCII lower.
-    pub fn fold_case_invariant<'a>(&self, s: &'a str) -> String {
+    pub fn fold_case_invariant(&self, s: &str) -> String {
         s.to_ascii_lowercase()
     }
 }

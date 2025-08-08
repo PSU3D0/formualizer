@@ -87,7 +87,7 @@ fn test_cancellation_between_layers() {
             );
         }
         Err(other_error) => {
-            panic!("Expected cancellation error, got: {:?}", other_error);
+            panic!("Expected cancellation error, got: {other_error:?}");
         }
     }
 }
@@ -145,10 +145,7 @@ fn test_cancellation_within_large_layer() {
             assert_eq!(eval_result.cycle_errors, 0);
         }
         Err(other_error) => {
-            panic!(
-                "Expected cancellation error or success, got: {:?}",
-                other_error
-            );
+            panic!("Expected cancellation error or success, got: {other_error:?}");
         }
     }
 }
@@ -203,7 +200,7 @@ fn test_cancellation_in_demand_driven_evaluation() {
             );
         }
         Err(other_error) => {
-            panic!("Expected cancellation error, got: {:?}", other_error);
+            panic!("Expected cancellation error, got: {other_error:?}");
         }
     }
 }
@@ -239,7 +236,7 @@ fn test_cancellation_during_cycle_handling() {
             panic!("Expected cancellation, but evaluation completed");
         }
         Err(other_error) => {
-            panic!("Expected cancellation error, got: {:?}", other_error);
+            panic!("Expected cancellation error, got: {other_error:?}");
         }
     }
 }

@@ -2,104 +2,6 @@ use super::vertex::{VertexId, VertexKind};
 use super::vertex_store::VertexStore;
 use std::fmt;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::engine::packed_coord::PackedCoord;
-
-    #[test]
-    fn test_vertex_view_access() {
-        let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(5, 10), 2, 0x03);
-
-        let view = store.view(id);
-        assert_eq!(view.row(), 5);
-        assert_eq!(view.col(), 10);
-        assert_eq!(view.sheet_id(), 2);
-        assert!(view.is_dirty());
-        assert!(view.is_volatile());
-    }
-
-    #[test]
-    fn test_debug_output() {
-        let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(1, 1), 0, 0x01);
-        store.set_kind(id, VertexKind::Cell);
-
-        let view = store.view(id);
-        let debug = format!("{:?}", view);
-        assert!(debug.contains("row: 1"));
-        assert!(debug.contains("col: 1"));
-        assert!(debug.contains("Cell"));
-    }
-
-    #[test]
-    fn test_mutable_view() {
-        let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(0, 0), 0, 0);
-
-        {
-            let mut view = store.view_mut(id);
-            view.set_dirty(true);
-            view.set_volatile(true);
-            view.set_value_ref(42);
-        }
-
-        assert!(store.is_dirty(id));
-        assert!(store.is_volatile(id));
-        assert_eq!(store.value_ref(id), 42);
-    }
-
-    #[test]
-    fn test_view_lifetime() {
-        let mut store = VertexStore::new();
-        let id1 = store.allocate(PackedCoord::new(0, 0), 0, 0);
-        let id2 = store.allocate(PackedCoord::new(1, 1), 0, 0);
-
-        // Multiple immutable views should work
-        let view1 = store.view(id1);
-        let view2 = store.view(id2);
-
-        assert_eq!(view1.row(), 0);
-        assert_eq!(view2.row(), 1);
-    }
-
-    #[test]
-    fn test_view_display() {
-        let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(0, 5), 1, 0x01);
-        store.set_kind(id, VertexKind::Cell);
-
-        let view = store.view(id);
-        let display = format!("{}", view);
-        assert!(display.contains("Sheet1!F1")); // col 5 = F, row 0 = 1 (1-based)
-    }
-
-    #[test]
-    fn test_zero_cost_abstraction() {
-        // Verify that view methods are truly zero-cost
-        // This test ensures inlining happens correctly
-        let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(100, 200), 5, 0x07);
-
-        // These should compile to direct array access
-        let view = store.view(id);
-
-        // Multiple accesses should be optimized
-        let row1 = view.row();
-        let row2 = view.row();
-        assert_eq!(row1, row2);
-        assert_eq!(row1, 100);
-
-        // Verify all accessors work efficiently
-        assert_eq!(view.col(), 200);
-        assert_eq!(view.sheet_id(), 5);
-        assert!(view.is_dirty());
-        assert!(view.is_volatile());
-        assert!(view.is_deleted());
-    }
-}
-
 /// Immutable view into a vertex's data in the columnar store
 ///
 /// Provides zero-cost abstraction for ergonomic access to vertex fields
@@ -319,5 +221,103 @@ impl VertexStore {
                 self.debug_vertex(id)
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::packed_coord::PackedCoord;
+
+    #[test]
+    fn test_vertex_view_access() {
+        let mut store = VertexStore::new();
+        let id = store.allocate(PackedCoord::new(5, 10), 2, 0x03);
+
+        let view = store.view(id);
+        assert_eq!(view.row(), 5);
+        assert_eq!(view.col(), 10);
+        assert_eq!(view.sheet_id(), 2);
+        assert!(view.is_dirty());
+        assert!(view.is_volatile());
+    }
+
+    #[test]
+    fn test_debug_output() {
+        let mut store = VertexStore::new();
+        let id = store.allocate(PackedCoord::new(1, 1), 0, 0x01);
+        store.set_kind(id, VertexKind::Cell);
+
+        let view = store.view(id);
+        let debug = format!("{view:?}");
+        assert!(debug.contains("row: 1"));
+        assert!(debug.contains("col: 1"));
+        assert!(debug.contains("Cell"));
+    }
+
+    #[test]
+    fn test_mutable_view() {
+        let mut store = VertexStore::new();
+        let id = store.allocate(PackedCoord::new(0, 0), 0, 0);
+
+        {
+            let mut view = store.view_mut(id);
+            view.set_dirty(true);
+            view.set_volatile(true);
+            view.set_value_ref(42);
+        }
+
+        assert!(store.is_dirty(id));
+        assert!(store.is_volatile(id));
+        assert_eq!(store.value_ref(id), 42);
+    }
+
+    #[test]
+    fn test_view_lifetime() {
+        let mut store = VertexStore::new();
+        let id1 = store.allocate(PackedCoord::new(0, 0), 0, 0);
+        let id2 = store.allocate(PackedCoord::new(1, 1), 0, 0);
+
+        // Multiple immutable views should work
+        let view1 = store.view(id1);
+        let view2 = store.view(id2);
+
+        assert_eq!(view1.row(), 0);
+        assert_eq!(view2.row(), 1);
+    }
+
+    #[test]
+    fn test_view_display() {
+        let mut store = VertexStore::new();
+        let id = store.allocate(PackedCoord::new(0, 5), 1, 0x01);
+        store.set_kind(id, VertexKind::Cell);
+
+        let view = store.view(id);
+        let display = format!("{view}");
+        assert!(display.contains("Sheet1!F1")); // col 5 = F, row 0 = 1 (1-based)
+    }
+
+    #[test]
+    fn test_zero_cost_abstraction() {
+        // Verify that view methods are truly zero-cost
+        // This test ensures inlining happens correctly
+        let mut store = VertexStore::new();
+        let id = store.allocate(PackedCoord::new(100, 200), 5, 0x07);
+
+        // These should compile to direct array access
+        let view = store.view(id);
+
+        // Multiple accesses should be optimized
+        let row1 = view.row();
+        let row2 = view.row();
+        assert_eq!(row1, row2);
+        assert_eq!(row1, 100);
+
+        // Verify all accessors work efficiently
+        assert_eq!(view.col(), 200);
+        assert_eq!(view.sheet_id(), 5);
+        assert!(view.is_dirty());
+        assert!(view.is_volatile());
+        assert!(view.is_deleted());
     }
 }

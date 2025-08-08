@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 fn ref_ast(row: u32, col: u32) -> ASTNode {
     ASTNode {
         node_type: ASTNodeType::Reference {
-            original: format!("R{}C{}", row, col),
+            original: format!("R{row}C{col}"),
             reference: ReferenceType::Cell {
                 sheet: None,
                 row,
@@ -130,8 +130,7 @@ fn assert_engines_equivalent(engine1: &Engine<TestWorkbook>, engine2: &Engine<Te
         let val2 = engine2.get_cell_value(sheet, row, col);
         assert_eq!(
             val1, val2,
-            "Cell {}!R{}C{} differs: {:?} vs {:?}",
-            sheet, row, col, val1, val2
+            "Cell {sheet}!R{row}C{col} differs: {val1:?} vs {val2:?}"
         );
     }
 }
@@ -299,8 +298,7 @@ fn test_parallel_evaluation_deterministic() {
     for (run_idx, result) in results.iter().enumerate().skip(1) {
         assert_eq!(
             first_result, result,
-            "Run {} produced different results",
-            run_idx
+            "Run {run_idx} produced different results"
         );
     }
 
@@ -563,8 +561,7 @@ fn test_thread_pool_configurations() {
     for (i, result) in all_results.iter().enumerate() {
         assert_eq!(
             *result, expected,
-            "Config {} produced different result: {:?}",
-            i, result
+            "Config {i} produced different result: {result:?}"
         );
     }
 }

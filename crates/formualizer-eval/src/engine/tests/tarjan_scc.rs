@@ -129,8 +129,7 @@ fn test_tarjan_simple_graph() {
         for &vertex_id in scc {
             assert!(
                 found_vertices.insert(vertex_id),
-                "Vertex {:?} found multiple times",
-                vertex_id
+                "Vertex {vertex_id:?} found multiple times"
             );
         }
     }
@@ -175,8 +174,7 @@ fn test_tarjan_cycle_detection() {
     for &vertex_id in &all_vertices {
         assert!(
             scc_set.contains(&vertex_id),
-            "Vertex {:?} not found in cycle SCC",
-            vertex_id
+            "Vertex {vertex_id:?} not found in cycle SCC"
         );
     }
 }
@@ -347,8 +345,7 @@ fn test_scc_partitioning_properties() {
         assert_eq!(
             vertex_count.get(&vertex_id),
             Some(&1),
-            "Vertex {:?} should appear exactly once",
-            vertex_id
+            "Vertex {vertex_id:?} should appear exactly once"
         );
     }
 

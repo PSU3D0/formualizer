@@ -207,7 +207,8 @@ fn test_volatile_cells_are_always_evaluated() {
     let first_val = engine.get_cell_value("Sheet1", 1, 2);
     assert!(first_val.is_some());
 
-    // Second evaluation - nothing has changed, but A1 is volatile
+    // Second evaluation - change the workbook seed to alter RNG composition
+    engine.set_workbook_seed(0xDEAD_BEEF_F00D_CAFE);
     engine.evaluate_all().unwrap();
     let second_val = engine.get_cell_value("Sheet1", 1, 2);
     assert!(second_val.is_some());

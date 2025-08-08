@@ -24,7 +24,7 @@ fn sum_range_ast(
                 node_type: ASTNodeType::Reference {
                     original: format!(
                         "{}R{}C{}:R{}C{}",
-                        sheet.map(|s| format!("{}!", s)).unwrap_or_default(),
+                        sheet.map(|s| format!("{s}!")).unwrap_or_default(),
                         start_row,
                         start_col,
                         end_row,
@@ -541,8 +541,7 @@ fn test_mixed_stripe_types_cleanup() {
     for (key, deps) in stripes.iter() {
         assert!(
             !deps.contains(&formula_id),
-            "Formula should not be in any stripe after replacement with small range, found in {:?}",
-            key
+            "Formula should not be in any stripe after replacement with small range, found in {key:?}"
         );
     }
 

@@ -1,5 +1,5 @@
 use crate::traits::ArgumentHandle;
-use crate::traits::EvaluationContext;
+// Note: Validator no longer depends on EvaluationContext; keep it engine-agnostic.
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
 use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
@@ -91,14 +91,9 @@ pub struct PreparedArgs<'a> {
     pub items: Vec<PreparedArg<'a>>,
 }
 
+#[derive(Default)]
 pub struct ValidationOptions {
     pub warn_only: bool,
-}
-
-impl Default for ValidationOptions {
-    fn default() -> Self {
-        Self { warn_only: false }
-    }
 }
 
 // Legacy adapter removed in clean break.
@@ -110,10 +105,9 @@ fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError> {
             // Operators: >=, <=, <>, >, <, =
             let ops = [">=", "<=", "<>", ">", "<", "="];
             for op in ops.iter() {
-                if s_trim.starts_with(op) {
-                    let rhs = &s_trim[op.len()..];
+                if let Some(rhs) = s_trim.strip_prefix(op) {
                     // Try numeric parse for comparisons
-                    if let Some(n) = rhs.trim().parse::<f64>().ok() {
+                    if let Ok(n) = rhs.trim().parse::<f64>() {
                         return Ok(match *op {
                             ">=" => CriteriaPredicate::Ge(n),
                             "<=" => CriteriaPredicate::Le(n),
@@ -168,7 +162,6 @@ fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError> {
 pub fn validate_and_prepare<'a, 'b>(
     args: &'a [ArgumentHandle<'a, 'b>],
     schema: &[ArgSchema],
-    _ctx: &dyn EvaluationContext,
     options: ValidationOptions,
 ) -> Result<PreparedArgs<'a>, ExcelError> {
     // Arity: simple rule – if schema.len() == 1, allow variadic repetition; else match up to schema.len()
@@ -237,8 +230,8 @@ pub fn validate_and_prepare<'a, 'b>(
                         let v = match v.as_ref() {
                             LiteralValue::Array(arr) => {
                                 let tl = arr
-                                    .get(0)
-                                    .and_then(|row| row.get(0))
+                                    .first()
+                                    .and_then(|row| row.first())
                                     .cloned()
                                     .unwrap_or(LiteralValue::Empty);
                                 Cow::Owned(tl)

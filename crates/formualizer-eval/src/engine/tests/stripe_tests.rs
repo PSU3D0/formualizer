@@ -82,7 +82,7 @@ fn test_eval_config_range_thresholds() {
     assert_eq!(config.range_expansion_limit, 64);
     assert_eq!(config.stripe_height, 256);
     assert_eq!(config.stripe_width, 256);
-    assert_eq!(config.enable_block_stripes, false);
+    assert!(!config.enable_block_stripes);
 
     // Test custom configuration
     let custom_config = EvalConfig {
@@ -97,8 +97,8 @@ fn test_eval_config_range_thresholds() {
     assert_eq!(custom_config.range_expansion_limit, 32);
     assert_eq!(custom_config.stripe_height, 128);
     assert_eq!(custom_config.stripe_width, 128);
-    assert_eq!(custom_config.enable_block_stripes, true);
-    assert_eq!(custom_config.enable_parallel, false);
+    assert!(custom_config.enable_block_stripes);
+    assert!(!custom_config.enable_parallel);
 }
 
 #[test]

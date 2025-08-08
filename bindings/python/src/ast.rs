@@ -4,7 +4,7 @@ use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ASTNodeType};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
+use pyo3_stub_gen::derive::*;
 
 #[gen_stub_pyclass]
 #[pyclass(module = "formualizer", name = "ASTNode")]

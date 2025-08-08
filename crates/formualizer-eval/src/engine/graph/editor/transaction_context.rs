@@ -13,7 +13,6 @@ use crate::engine::graph::editor::{EditorError, VertexEditor};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::vertex::VertexId;
 use crate::engine::{ChangeEvent, ChangeLog};
-use crate::reference::CellRef;
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::ASTNode;
 
@@ -377,7 +376,7 @@ impl<'g> TransactionContext<'g> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reference::Coord;
+    use crate::{CellRef, reference::Coord};
     use formualizer_core::parse;
 
     fn create_test_graph() -> DependencyGraph {

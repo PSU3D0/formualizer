@@ -9,9 +9,9 @@ use crate::SheetId;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::packed_coord::PackedCoord;
 use crate::engine::vertex::VertexId;
-use crate::reference::{CellRef, RangeRef};
+use crate::reference::CellRef;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ReferenceType};
+use formualizer_core::parser::ASTNode;
 
 /// Represents a single change to the dependency graph
 #[derive(Debug, Clone, PartialEq)]

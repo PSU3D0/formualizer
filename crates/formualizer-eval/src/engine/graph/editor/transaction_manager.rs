@@ -11,6 +11,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TransactionId(u64);
 
+impl Default for TransactionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TransactionId {
     /// Create a new unique transaction ID
     pub fn new() -> Self {
@@ -56,10 +62,10 @@ impl std::fmt::Display for TransactionError {
             Self::AlreadyActive => write!(f, "Transaction already active"),
             Self::NoActiveTransaction => write!(f, "No active transaction"),
             Self::TransactionTooLarge { size, max } => {
-                write!(f, "Transaction too large: {} > {}", size, max)
+                write!(f, "Transaction too large: {size} > {max}")
             }
-            Self::RollbackFailed(msg) => write!(f, "Rollback failed: {}", msg),
-            Self::SavepointNotFound(name) => write!(f, "Savepoint not found: {}", name),
+            Self::RollbackFailed(msg) => write!(f, "Rollback failed: {msg}"),
+            Self::SavepointNotFound(name) => write!(f, "Savepoint not found: {name}"),
         }
     }
 }
@@ -417,27 +423,27 @@ mod tests {
     #[test]
     fn test_error_display() {
         let err = TransactionError::AlreadyActive;
-        assert_eq!(format!("{}", err), "Transaction already active");
+        assert_eq!(format!("{err}"), "Transaction already active");
 
         let err = TransactionError::NoActiveTransaction;
-        assert_eq!(format!("{}", err), "No active transaction");
+        assert_eq!(format!("{err}"), "No active transaction");
 
         let err = TransactionError::TransactionTooLarge {
             size: 150,
             max: 100,
         };
-        assert_eq!(format!("{}", err), "Transaction too large: 150 > 100");
+        assert_eq!(format!("{err}"), "Transaction too large: 150 > 100");
 
         let err = TransactionError::RollbackFailed("test error".to_string());
-        assert_eq!(format!("{}", err), "Rollback failed: test error");
+        assert_eq!(format!("{err}"), "Rollback failed: test error");
 
         let err = TransactionError::SavepointNotFound("missing".to_string());
-        assert_eq!(format!("{}", err), "Savepoint not found: missing");
+        assert_eq!(format!("{err}"), "Savepoint not found: missing");
     }
 
     #[test]
     fn test_transaction_id_display() {
         let id = TransactionId(42);
-        assert_eq!(format!("{}", id), "tx:42");
+        assert_eq!(format!("{id}"), "tx:42");
     }
 }

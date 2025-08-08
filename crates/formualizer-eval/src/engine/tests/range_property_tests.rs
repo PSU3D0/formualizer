@@ -21,7 +21,7 @@ fn range_ast(
         node_type: ASTNodeType::Reference {
             original: format!(
                 "{}R{}C{}:R{}C{}",
-                sheet.map(|s| format!("{}!", s)).unwrap_or_default(),
+                sheet.map(|s| format!("{s}!")).unwrap_or_default(),
                 start_row,
                 start_col,
                 end_row,
@@ -104,13 +104,7 @@ fn test_property_small_range_dependency_tracking() {
             let dirty_vertices = graph.get_evaluation_vertices();
             assert!(
                 dirty_vertices.contains(&formula_id),
-                "Formula should be dirty when cell ({}, {}) changes (inside range {}:{} to {}:{})",
-                row,
-                col,
-                start_row,
-                start_col,
-                end_row,
-                end_col
+                "Formula should be dirty when cell ({row}, {col}) changes (inside range {start_row}:{start_col} to {end_row}:{end_col})"
             );
 
             // Clear dirty state for next iteration
@@ -138,13 +132,7 @@ fn test_property_small_range_dependency_tracking() {
             let dirty_vertices = graph.get_evaluation_vertices();
             assert!(
                 !dirty_vertices.contains(&formula_id),
-                "Formula should NOT be dirty when cell ({}, {}) changes (outside range {}:{} to {}:{})",
-                row,
-                col,
-                start_row,
-                start_col,
-                end_row,
-                end_col
+                "Formula should NOT be dirty when cell ({row}, {col}) changes (outside range {start_row}:{start_col} to {end_row}:{end_col})"
             );
         }
     }
@@ -199,9 +187,7 @@ fn test_property_large_range_stripe_tracking() {
         let dirty_vertices = graph.get_evaluation_vertices();
         assert!(
             dirty_vertices.contains(&formula_id),
-            "Formula should be dirty when cell ({}, {}) changes (inside stripe range A1:A1000)",
-            row,
-            col
+            "Formula should be dirty when cell ({row}, {col}) changes (inside stripe range A1:A1000)"
         );
 
         graph.clear_dirty_flags(&dirty_vertices);
@@ -225,9 +211,7 @@ fn test_property_large_range_stripe_tracking() {
             let dirty_vertices = graph.get_evaluation_vertices();
             assert!(
                 !dirty_vertices.contains(&formula_id),
-                "Formula should NOT be dirty when cell ({}, {}) changes (outside stripe range A1:A1000)",
-                row,
-                col
+                "Formula should NOT be dirty when cell ({row}, {col}) changes (outside stripe range A1:A1000)"
             );
         }
     }
@@ -282,9 +266,7 @@ fn test_property_wide_range_stripe_tracking() {
         let dirty_vertices = graph.get_evaluation_vertices();
         assert!(
             dirty_vertices.contains(&formula_id),
-            "Formula should be dirty when cell ({}, {}) changes (inside row range A1:Z1)",
-            row,
-            col
+            "Formula should be dirty when cell ({row}, {col}) changes (inside row range A1:Z1)"
         );
 
         graph.clear_dirty_flags(&dirty_vertices);
@@ -308,9 +290,7 @@ fn test_property_wide_range_stripe_tracking() {
             let dirty_vertices = graph.get_evaluation_vertices();
             assert!(
                 !dirty_vertices.contains(&formula_id),
-                "Formula should NOT be dirty when cell ({}, {}) changes (outside row range A1:Z1)",
-                row,
-                col
+                "Formula should NOT be dirty when cell ({row}, {col}) changes (outside row range A1:Z1)"
             );
         }
     }
@@ -368,9 +348,7 @@ fn test_property_dense_range_block_stripe_tracking() {
         let dirty_vertices = graph.get_evaluation_vertices();
         assert!(
             dirty_vertices.contains(&formula_id),
-            "Formula should be dirty when cell ({}, {}) changes (inside block range A1:Z26)",
-            row,
-            col
+            "Formula should be dirty when cell ({row}, {col}) changes (inside block range A1:Z26)"
         );
 
         graph.clear_dirty_flags(&dirty_vertices);
@@ -397,9 +375,7 @@ fn test_property_dense_range_block_stripe_tracking() {
             let dirty_vertices = graph.get_evaluation_vertices();
             assert!(
                 !dirty_vertices.contains(&formula_id),
-                "Formula should NOT be dirty when cell ({}, {}) changes (outside block range A1:Z26)",
-                row,
-                col
+                "Formula should NOT be dirty when cell ({row}, {col}) changes (outside block range A1:Z26)"
             );
         }
     }
@@ -606,9 +582,7 @@ fn test_property_edge_cases() {
         let dirty = graph.get_evaluation_vertices();
         assert!(
             !dirty.contains(&formula_id),
-            "Formula should NOT be dirty when adjacent cell ({},{}) changes",
-            row,
-            col
+            "Formula should NOT be dirty when adjacent cell ({row},{col}) changes"
         );
     }
 }

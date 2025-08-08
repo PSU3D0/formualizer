@@ -129,7 +129,7 @@ impl<'g> RangeStorage<'g> {
                 }
             }
             RangeStorage::Stream(stream) => {
-                while let Some(cv) = stream.next() {
+                for cv in stream.by_ref() {
                     let v = cv.as_ref();
                     f(v)?;
                 }
@@ -295,7 +295,7 @@ impl<'g> RangeStorage<'g> {
             RangeStorage::Stream(stream) => {
                 let cancel: Option<&std::sync::atomic::AtomicBool> = None; // placeholder until context wiring
                 let chunk_cap = min_chunk;
-                while let Some(cv) = stream.next() {
+                for cv in stream.by_ref() {
                     let v = cv.as_ref();
                     match pack_value(v)? {
                         Some(n) => {

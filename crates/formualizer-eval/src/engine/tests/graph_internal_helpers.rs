@@ -84,7 +84,7 @@ fn test_mark_as_ref_error() {
         LiteralValue::Error(err) => {
             assert_eq!(err.kind, ExcelErrorKind::Ref);
         }
-        _ => panic!("Expected REF error, got {:?}", value),
+        _ => panic!("Expected REF error, got {value:?}"),
     }
 
     // Verify vertex is marked dirty (using internal method)

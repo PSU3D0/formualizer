@@ -11,7 +11,7 @@ use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 fn range_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTNode {
     ASTNode {
         node_type: ASTNodeType::Reference {
-            original: format!("R{}C{}:R{}C{}", start_row, start_col, end_row, end_col),
+            original: format!("R{start_row}C{start_col}:R{end_row}C{end_col}"),
             reference: ReferenceType::Range {
                 sheet: None,
                 start_row: Some(start_row),
@@ -270,9 +270,7 @@ fn prop_any_cell_change_in_range_dirties_dependent() {
             // Should dirty the dependent
             assert!(
                 graph.get_evaluation_vertices().contains(&formula_id),
-                "Cell change at ({}, {}) should dirty range-dependent formula",
-                row,
-                col
+                "Cell change at ({row}, {col}) should dirty range-dependent formula"
             );
         }
     }

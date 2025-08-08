@@ -227,7 +227,7 @@ mod tests {
 
         // Intern many different strings
         for i in 0..1000 {
-            let s = format!("string_{}", i);
+            let s = format!("string_{i}");
             let id = interner.intern(&s);
             assert_eq!(interner.get(id), Some(s.as_str()));
         }

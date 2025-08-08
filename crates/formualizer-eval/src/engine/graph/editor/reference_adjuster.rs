@@ -470,7 +470,7 @@ mod tests {
     fn format_formula(ast: &ASTNode) -> String {
         // TODO: Use the actual formualizer_core::parser::to_string when available
         // For now, a simple representation
-        format!("{:?}", ast)
+        format!("{ast:?}")
     }
 
     #[test]

@@ -5,6 +5,7 @@
 use crate::engine::range_stream::RangeStorage;
 pub use crate::function::Function;
 use crate::interpreter::Interpreter;
+use crate::reference::CellRef;
 use formualizer_common::{
     LiteralValue,
     error::{ExcelError, ExcelErrorKind},
@@ -178,7 +179,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         .iter()
                         .map(|n| ArgumentHandle::new(n, self.interp))
                         .collect();
-                    if let Some(res) = fun.eval_reference(&handles, self.interp.context) {
+                    let fctx =
+                        crate::traits::DefaultFunctionContext::new(self.interp.context, None);
+                    if let Some(res) = fun.eval_reference(&handles, &fctx) {
                         res
                     } else {
                         Err(ExcelError::new(ExcelErrorKind::Ref)
@@ -365,5 +368,116 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
     /// Locale provider: invariant by default
     fn locale(&self) -> crate::locale::Locale {
         crate::locale::Locale::invariant()
+    }
+
+    /// Volatile granularity. Default Always for backwards compatibility.
+    fn volatile_level(&self) -> VolatileLevel {
+        VolatileLevel::Always
+    }
+
+    /// A stable workbook seed for RNG composition.
+    fn workbook_seed(&self) -> u64 {
+        0xF0F0_D0D0_AAAA_5555
+    }
+
+    /// Recalc epoch that increments on each full recalc when appropriate.
+    fn recalc_epoch(&self) -> u64 {
+        0
+    }
+}
+
+/* ───────────────────── FunctionContext (narrow) ───────────────────── */
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum VolatileLevel {
+    /// Value can change at any edit; seed excludes recalc_epoch by default.
+    Always,
+    /// Value changes per recalculation; seed should include recalc_epoch.
+    OnRecalc,
+    /// Value changes per open; seed uses only workbook_seed.
+    OnOpen,
+}
+
+/// Minimal context exposed to functions (no engine/graph APIs)
+pub trait FunctionContext {
+    fn locale(&self) -> crate::locale::Locale;
+    fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>>;
+    fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool>;
+    fn chunk_hint(&self) -> Option<usize>;
+
+    fn volatile_level(&self) -> VolatileLevel;
+    fn workbook_seed(&self) -> u64;
+    fn recalc_epoch(&self) -> u64;
+    fn current_cell(&self) -> Option<CellRef>;
+
+    /// Resolve a reference into a RangeStorage using the underlying engine context.
+    fn resolve_range_storage<'c>(
+        &'c self,
+        reference: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<RangeStorage<'c>, ExcelError>;
+
+    /// Deterministic RNG seeded for the current evaluation site and function salt.
+    fn rng_for_current(&self, fn_salt: u64) -> rand::rngs::SmallRng {
+        use crate::rng::{compose_seed, small_rng_from_lanes};
+        let (sheet_id, row, col) = self
+            .current_cell()
+            .map(|c| (c.sheet_id as u32, c.coord.row, c.coord.col))
+            .unwrap_or((0, 0, 0));
+        // Include epoch only for OnRecalc
+        let epoch = match self.volatile_level() {
+            VolatileLevel::OnRecalc => self.recalc_epoch(),
+            _ => 0,
+        };
+        let (l0, l1) = compose_seed(self.workbook_seed(), sheet_id, row, col, fn_salt, epoch);
+        small_rng_from_lanes(l0, l1)
+    }
+}
+
+/// Default adapter that wraps an EvaluationContext and provides the narrow FunctionContext.
+pub struct DefaultFunctionContext<'a> {
+    pub base: &'a dyn EvaluationContext,
+    pub current: Option<CellRef>,
+}
+
+impl<'a> DefaultFunctionContext<'a> {
+    pub fn new(base: &'a dyn EvaluationContext, current: Option<CellRef>) -> Self {
+        Self { base, current }
+    }
+}
+
+impl<'a> FunctionContext for DefaultFunctionContext<'a> {
+    fn locale(&self) -> crate::locale::Locale {
+        self.base.locale()
+    }
+    fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>> {
+        self.base.thread_pool()
+    }
+    fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool> {
+        self.base.cancellation_token()
+    }
+    fn chunk_hint(&self) -> Option<usize> {
+        self.base.chunk_hint()
+    }
+
+    fn volatile_level(&self) -> VolatileLevel {
+        self.base.volatile_level()
+    }
+    fn workbook_seed(&self) -> u64 {
+        self.base.workbook_seed()
+    }
+    fn recalc_epoch(&self) -> u64 {
+        self.base.recalc_epoch()
+    }
+    fn current_cell(&self) -> Option<CellRef> {
+        self.current
+    }
+
+    fn resolve_range_storage<'c>(
+        &'c self,
+        reference: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<RangeStorage<'c>, ExcelError> {
+        self.base.resolve_range_storage(reference, current_sheet)
     }
 }

@@ -35,7 +35,7 @@ mod tests {
         let mut coords = Vec::new();
 
         for i in 0..10_000u32 {
-            let targets: Vec<_> = (0..4).map(|j| ((i + j + 1) % 10_000) as u32).collect();
+            let targets: Vec<_> = (0..4).map(|j| ((i + j + 1) % 10_000)).collect();
             edges.push((i, targets));
             coords.push(PackedCoord::new(i, i));
         }

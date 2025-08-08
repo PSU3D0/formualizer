@@ -46,6 +46,7 @@ pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 // CalcObserver is defined below
 
 use crate::traits::EvaluationContext;
+use crate::traits::VolatileLevel;
 
 /// 🔮 Scalability Hook: Performance monitoring trait for calculation observability
 pub trait CalcObserver: Send + Sync {
@@ -73,6 +74,12 @@ pub struct EvalConfig {
     pub max_eval_time: Option<std::time::Duration>,
     pub max_memory_mb: Option<usize>,
 
+    /// Stable workbook seed used for deterministic RNG composition
+    pub workbook_seed: u64,
+
+    /// Volatile granularity for RNG seeding and re-evaluation policy
+    pub volatile_level: VolatileLevel,
+
     // Range handling configuration (Phase 5)
     /// Ranges with size <= this limit are expanded into individual Cell dependencies
     pub range_expansion_limit: usize,
@@ -92,6 +99,12 @@ impl Default for EvalConfig {
             max_vertices: None,
             max_eval_time: None,
             max_memory_mb: None,
+
+            // Deterministic RNG seed (matches traits default)
+            workbook_seed: 0xF0F0_D0D0_AAAA_5555,
+
+            // Volatile model default
+            volatile_level: VolatileLevel::Always,
 
             // Range handling defaults (Phase 5)
             range_expansion_limit: 64,

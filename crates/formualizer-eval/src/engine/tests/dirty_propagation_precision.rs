@@ -12,7 +12,7 @@ fn sum_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTNod
             name: "SUM".to_string(),
             args: vec![ASTNode {
                 node_type: ASTNodeType::Reference {
-                    original: format!("R{}C{}:R{}C{}", start_row, start_col, end_row, end_col),
+                    original: format!("R{start_row}C{start_col}:R{end_row}C{end_col}"),
                     reference: ReferenceType::Range {
                         sheet: None,
                         start_row: Some(start_row),

@@ -367,8 +367,7 @@ fn test_dirty_propagation_performance() {
     // With O(1) HashSet operations, even 20 vertices should be very fast
     assert!(
         elapsed < std::time::Duration::from_millis(10),
-        "Dirty propagation took too long: {:?}",
-        elapsed
+        "Dirty propagation took too long: {elapsed:?}"
     );
 
     // Verify all downstream vertices are dirty

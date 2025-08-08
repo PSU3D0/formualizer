@@ -1,6 +1,6 @@
 // Note: keep imports minimal; coercion is centralized via crate::coercion
 use crate::broadcast::{Shape2D, broadcast_shape, project_index};
-use crate::traits::{ArgumentHandle, EvaluationContext};
+use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 
 /// Elementwise mapping context (minimal unary-numeric support for Milestone 3)
@@ -12,13 +12,13 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 ///   designed for array/range cases and returns an error if no array present.
 pub struct SimpleMapCtx<'a, 'b> {
     args: &'a [ArgumentHandle<'a, 'b>],
-    ctx: &'a dyn EvaluationContext,
+    ctx: &'a dyn FunctionContext,
     shape: (usize, usize),
     output_rows: Vec<Vec<LiteralValue>>,
 }
 
 impl<'a, 'b> SimpleMapCtx<'a, 'b> {
-    pub fn new(args: &'a [ArgumentHandle<'a, 'b>], ctx: &'a dyn EvaluationContext) -> Self {
+    pub fn new(args: &'a [ArgumentHandle<'a, 'b>], ctx: &'a dyn FunctionContext) -> Self {
         // Determine broadcast shape across all inputs
         let mut shapes: Vec<Shape2D> = Vec::with_capacity(args.len().max(1));
         if args.is_empty() {
@@ -240,12 +240,12 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
 
     pub fn take_output(self) -> LiteralValue {
         if self.shape == (1, 1) {
-            if let Some(row) = self.output_rows.get(0) {
-                if let Some(cell) = row.get(0) {
+            if let Some(row) = self.output_rows.first() {
+                if let Some(cell) = row.first() {
                     return cell.clone();
                 }
             }
-            return LiteralValue::Empty;
+            LiteralValue::Empty
         } else {
             LiteralValue::Array(self.output_rows)
         }
@@ -261,14 +261,14 @@ impl<'a, 'b> crate::function::FnMapCtx for SimpleMapCtx<'a, 'b> {
         &mut self,
         f: &mut dyn FnMut(f64) -> Result<LiteralValue, ExcelError>,
     ) -> Result<(), ExcelError> {
-        self.map_unary_numeric(|n| f(n))
+        self.map_unary_numeric(f)
     }
 
     fn map_binary_numeric(
         &mut self,
         f: &mut dyn FnMut(f64, f64) -> Result<LiteralValue, ExcelError>,
     ) -> Result<(), ExcelError> {
-        self.map_binary_numeric(|a, b| f(a, b))
+        self.map_binary_numeric(f)
     }
 
     fn finalize(&mut self) -> LiteralValue {

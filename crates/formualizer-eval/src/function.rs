@@ -58,7 +58,7 @@ bitflags::bitflags! {
 
 // --- Fast-Path Evaluation Contexts ---
 
-use crate::traits::EvaluationContext;
+use crate::traits::FunctionContext;
 use bumpalo::Bump;
 
 /// A simple slice of homogeneous values for efficient iteration
@@ -89,14 +89,14 @@ pub trait FnFoldCtx {
 /// Concrete implementation of FnFoldCtx that works with current RangeStorage
 pub struct SimpleFoldCtx<'a, 'b> {
     args: &'a [ArgumentHandle<'a, 'b>],
-    _ctx: &'a dyn EvaluationContext,
+    _ctx: &'a dyn FunctionContext,
     result: Option<LiteralValue>,
     /// Temporary arena for allocating iteration data
     arena: Bump,
 }
 
 impl<'a, 'b> SimpleFoldCtx<'a, 'b> {
-    pub fn new(args: &'a [ArgumentHandle<'a, 'b>], ctx: &'a dyn EvaluationContext) -> Self {
+    pub fn new(args: &'a [ArgumentHandle<'a, 'b>], ctx: &'a dyn FunctionContext) -> Self {
         Self {
             args,
             _ctx: ctx,
@@ -218,6 +218,17 @@ pub trait Function: Send + Sync + 'static {
         &[]
     }
 
+    #[inline]
+    fn function_salt(&self) -> u64 {
+        // Stable hash of function name + namespace
+        let full_name = if self.namespace().is_empty() {
+            self.name().to_string()
+        } else {
+            format!("{}::{}", self.namespace(), self.name())
+        };
+        crate::rng::fnv1a64(full_name.as_bytes())
+    }
+
     /// The default, scalar evaluation path.
     ///
     /// This method is the fallback for all functions and the only required
@@ -225,7 +236,7 @@ pub trait Function: Send + Sync + 'static {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn crate::traits::EvaluationContext,
+        ctx: &dyn crate::traits::FunctionContext,
     ) -> Result<LiteralValue, ExcelError>;
 
     // --- Optional Fast Paths ---
@@ -264,7 +275,7 @@ pub trait Function: Send + Sync + 'static {
     fn eval_reference<'a, 'b>(
         &self,
         _args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn crate::traits::EvaluationContext,
+        _ctx: &dyn crate::traits::FunctionContext,
     ) -> Option<Result<formualizer_core::parser::ReferenceType, ExcelError>> {
         None
     }
@@ -274,7 +285,7 @@ pub trait Function: Send + Sync + 'static {
     fn dispatch<'a, 'b>(
         &self,
         args: &'a [crate::traits::ArgumentHandle<'a, 'b>],
-        ctx: &dyn crate::traits::EvaluationContext,
+        ctx: &dyn crate::traits::FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         let caps = self.caps();
 
@@ -284,7 +295,7 @@ pub trait Function: Send + Sync + 'static {
             let schema = self.arg_schema();
             // Strict validation; convert errors to value errors to preserve interpreter Ok path
             if let Err(e) =
-                validate_and_prepare(args, schema, ctx, ValidationOptions { warn_only: false })
+                validate_and_prepare(args, schema, ValidationOptions { warn_only: false })
             {
                 return Ok(LiteralValue::Error(e));
             }

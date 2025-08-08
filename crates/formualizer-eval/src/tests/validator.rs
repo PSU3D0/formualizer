@@ -24,12 +24,7 @@ fn validator_enforces_min_args_and_max_when_not_variadic() {
     let schema = vec![s];
 
     // Too many args → #VALUE! is enforced in dispatch, not in validator; validator should accept
-    let res = validate_and_prepare(
-        &args,
-        &schema,
-        ctx.context,
-        ValidationOptions { warn_only: false },
-    );
+    let res = validate_and_prepare(&args, &schema, ValidationOptions { warn_only: false });
     assert!(
         res.is_ok(),
         "validator should not enforce max; dispatch enforces max"
@@ -50,13 +45,7 @@ fn schema_scalar_allows_scalar_in_range_position_fallback() {
     s.shape = ShapeKind::Range; // function expects a range, but we provide a scalar
     let schema = vec![s];
 
-    let out = validate_and_prepare(
-        &args,
-        &schema,
-        ctx.context,
-        ValidationOptions { warn_only: false },
-    )
-    .unwrap();
+    let out = validate_and_prepare(&args, &schema, ValidationOptions { warn_only: false }).unwrap();
     assert_eq!(out.items.len(), 1);
     match &out.items[0] {
         crate::args::PreparedArg::Value(v) => assert_eq!(v.as_ref(), &LiteralValue::Number(6.0)),
@@ -77,13 +66,7 @@ fn number_lenient_text_coercion_accepts_numeric_text() {
     let s = ArgSchema::number_lenient_scalar();
     let schema = vec![s];
 
-    let out = validate_and_prepare(
-        &args,
-        &schema,
-        ctx.context,
-        ValidationOptions { warn_only: false },
-    )
-    .unwrap();
+    let out = validate_and_prepare(&args, &schema, ValidationOptions { warn_only: false }).unwrap();
     assert_eq!(out.items.len(), 1);
     // After Milestone 7: scalar values are coerced per schema. Expect a Number(42.0).
     match &out.items[0] {
@@ -116,13 +99,7 @@ fn by_ref_accepts_ast_reference() {
     s.by_ref = true;
     let schema = vec![s];
 
-    let out = validate_and_prepare(
-        &args,
-        &schema,
-        ctx.context,
-        ValidationOptions { warn_only: false },
-    )
-    .unwrap();
+    let out = validate_and_prepare(&args, &schema, ValidationOptions { warn_only: false }).unwrap();
     assert_eq!(out.items.len(), 1);
     match &out.items[0] {
         crate::args::PreparedArg::Reference(r) => match r {

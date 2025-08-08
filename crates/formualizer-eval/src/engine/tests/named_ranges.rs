@@ -80,7 +80,7 @@ fn test_named_range_for_range() {
     let result = graph.set_cell_formula("Sheet1", 5, 5, ast).unwrap();
 
     // Should have created placeholders for the range
-    assert!(result.created_placeholders.len() > 0);
+    assert!(!result.created_placeholders.is_empty());
 }
 
 #[test]
@@ -1026,8 +1026,6 @@ fn test_vertex_editor_structural_operations_with_names() {
 
 #[test]
 fn test_vertex_editor_change_log() {
-    use crate::engine::graph::editor::VertexEditor;
-
     let mut graph = DependencyGraph::new();
     let mut log = crate::engine::graph::editor::change_log::ChangeLog::new();
 

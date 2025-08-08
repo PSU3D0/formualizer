@@ -96,7 +96,7 @@ impl SheetRegistry {
         if let Some(&existing_id) = self.id_by_name.get(new_name) {
             if existing_id != id {
                 return Err(ExcelError::new(ExcelErrorKind::Value)
-                    .with_message(format!("Sheet name '{}' already exists", new_name)));
+                    .with_message(format!("Sheet name '{new_name}' already exists")));
             }
         }
 

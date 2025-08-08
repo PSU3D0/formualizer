@@ -263,8 +263,8 @@ mod tests {
         let float_ref = arena.insert_float(3.14);
         let int_ref = arena.insert_integer(42);
 
-        assert_eq!(format!("{}", float_ref), "Float(0)");
-        assert_eq!(format!("{}", int_ref), "Int(0)");
+        assert_eq!(format!("{float_ref}"), "Float(0)");
+        assert_eq!(format!("{int_ref}"), "Int(0)");
     }
 
     #[test]

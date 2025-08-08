@@ -1,6 +1,6 @@
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::{FnCaps, Function};
-use crate::traits::{ArgumentHandle, EvaluationContext};
+use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::ReferenceType;
 
@@ -87,14 +87,14 @@ impl Function for IndexFn {
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| arg_byref_array());
+        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_byref_array);
         &SCHEMA
     }
 
     fn eval_reference<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn EvaluationContext,
+        _ctx: &dyn FunctionContext,
     ) -> Option<Result<ReferenceType, ExcelError>> {
         // args: array(by_ref), row, col
         if args.len() < 3 {
@@ -107,7 +107,7 @@ impl Function for IndexFn {
         let row = match args[1].value() {
             Ok(v) => match v.as_ref() {
                 LiteralValue::Number(n) => *n as i64,
-                LiteralValue::Int(i) => *i as i64,
+                LiteralValue::Int(i) => *i,
                 _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
             },
             Err(e) => return Some(Err(e)),
@@ -115,7 +115,7 @@ impl Function for IndexFn {
         let col = match args[2].value() {
             Ok(v) => match v.as_ref() {
                 LiteralValue::Number(n) => *n as i64,
-                LiteralValue::Int(i) => *i as i64,
+                LiteralValue::Int(i) => *i,
                 _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
             },
             Err(e) => return Some(Err(e)),
@@ -157,7 +157,7 @@ impl Function for IndexFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn EvaluationContext,
+        ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if let Some(Ok(r)) = self.eval_reference(args, ctx) {
             // Materialize to value
@@ -202,14 +202,14 @@ impl Function for OffsetFn {
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| arg_byref_reference());
+        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_byref_reference);
         &SCHEMA
     }
 
     fn eval_reference<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn EvaluationContext,
+        _ctx: &dyn FunctionContext,
     ) -> Option<Result<ReferenceType, ExcelError>> {
         if args.len() < 3 {
             return Some(Err(ExcelError::new(ExcelErrorKind::Value)));
@@ -221,7 +221,7 @@ impl Function for OffsetFn {
         let dr = match args[1].value() {
             Ok(v) => match v.as_ref() {
                 LiteralValue::Number(n) => *n as i64,
-                LiteralValue::Int(i) => *i as i64,
+                LiteralValue::Int(i) => *i,
                 _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
             },
             Err(e) => return Some(Err(e)),
@@ -229,7 +229,7 @@ impl Function for OffsetFn {
         let dc = match args[2].value() {
             Ok(v) => match v.as_ref() {
                 LiteralValue::Number(n) => *n as i64,
-                LiteralValue::Int(i) => *i as i64,
+                LiteralValue::Int(i) => *i,
                 _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
             },
             Err(e) => return Some(Err(e)),
@@ -250,13 +250,13 @@ impl Function for OffsetFn {
             _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
         };
 
-        let mut nsr = (sr as i64) + dr;
-        let mut nsc = (sc as i64) + dc;
+        let nsr = (sr as i64) + dr;
+        let nsc = (sc as i64) + dc;
         let height = if args.len() >= 4 {
             match args[3].value() {
                 Ok(v) => match v.as_ref() {
                     LiteralValue::Number(n) => *n as i64,
-                    LiteralValue::Int(i) => *i as i64,
+                    LiteralValue::Int(i) => *i,
                     _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
                 },
                 Err(e) => return Some(Err(e)),
@@ -268,7 +268,7 @@ impl Function for OffsetFn {
             match args[4].value() {
                 Ok(v) => match v.as_ref() {
                     LiteralValue::Number(n) => *n as i64,
-                    LiteralValue::Int(i) => *i as i64,
+                    LiteralValue::Int(i) => *i,
                     _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
                 },
                 Err(e) => return Some(Err(e)),
@@ -303,7 +303,7 @@ impl Function for OffsetFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn EvaluationContext,
+        ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if let Some(Ok(r)) = self.eval_reference(args, ctx) {
             match ctx.resolve_range_storage(&r, "Sheet1") {
@@ -396,7 +396,7 @@ mod tests {
             ArgumentHandle::new(&col, &ctx),
         ];
         let f = ctx.context.get_function("", "INDEX").unwrap();
-        let v = f.dispatch(&args, ctx.context).unwrap();
+        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
         assert_eq!(v, LiteralValue::Int(42));
     }
 
@@ -441,7 +441,7 @@ mod tests {
             ArgumentHandle::new(&dc, &ctx),
         ];
         let f = ctx.context.get_function("", "OFFSET").unwrap();
-        let v = f.dispatch(&args, ctx.context).unwrap();
+        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
         assert_eq!(v, LiteralValue::Int(5));
     }
 }

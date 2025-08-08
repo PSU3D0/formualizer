@@ -75,7 +75,7 @@ fn test_cross_sheet_simple() {
     // Create formula on Sheet1 that references Sheet2
     let formula = "=Sheet2!A1";
     let ast = Parser::from(formula).parse().unwrap();
-    println!("AST: {:?}", ast);
+    println!("AST: {ast:?}");
     engine.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
 
     // Check if formula was stored
@@ -89,13 +89,13 @@ fn test_cross_sheet_simple() {
         .expect("Formula vertex should exist");
 
     let retrieved_ast = graph.get_formula(vertex_id);
-    println!("Retrieved AST: {:?}", retrieved_ast);
+    println!("Retrieved AST: {retrieved_ast:?}");
     assert!(retrieved_ast.is_some(), "Formula should be stored");
 
     engine.evaluate_all().unwrap();
 
     let result = engine.get_cell_value("Sheet1", 1, 1).unwrap();
-    println!("Result: {:?}", result);
+    println!("Result: {result:?}");
     assert_eq!(
         result,
         LiteralValue::Int(100),

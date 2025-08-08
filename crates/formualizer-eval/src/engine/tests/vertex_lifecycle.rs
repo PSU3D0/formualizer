@@ -6,7 +6,7 @@ use crate::engine::packed_coord::PackedCoord;
 use crate::engine::vertex::{VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
 use formualizer_common::{ExcelErrorKind, LiteralValue};
-use formualizer_core::{parse, parser::ASTNode};
+use formualizer_core::parse;
 
 fn create_test_graph() -> DependencyGraph {
     DependencyGraph::new()

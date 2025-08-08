@@ -29,7 +29,7 @@ fn test_stripe_streaming_integration_basic() {
     }
 
     // Formula B1 = SUM(A1:A1000) - should use both stripe tracking and streaming evaluation
-    let formula_str = format!("=SUM(A1:A{})", range_size);
+    let formula_str = format!("=SUM(A1:A{range_size})");
     let ast = Parser::from(&formula_str).parse().unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
@@ -81,7 +81,7 @@ fn test_multiple_overlapping_streaming_ranges() {
 
     // Create multiple overlapping formulas that should all use streaming
     // B1 = SUM(A1:A500)
-    let formula1 = format!("=SUM(A1:A{})", range_size);
+    let formula1 = format!("=SUM(A1:A{range_size})");
     let ast1 = Parser::from(&formula1).parse().unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast1).unwrap();
 
@@ -155,7 +155,7 @@ fn test_stripe_streaming_performance_integration() {
         let end_row = std::cmp::min(start_row + 199, range_size);
         let formula_row = f + 1;
 
-        let formula = format!("=SUM(A{}:A{})", start_row, end_row);
+        let formula = format!("=SUM(A{start_row}:A{end_row})");
         let ast = Parser::from(&formula).parse().unwrap();
         engine
             .set_cell_formula("Sheet1", formula_row, 2, ast)
@@ -214,7 +214,7 @@ fn test_stripe_streaming_cross_sheet() {
     }
 
     // Create formula on Sheet1 that references Sheet2 range
-    let formula = format!("=SUM(Sheet2!A1:A{})", range_size);
+    let formula = format!("=SUM(Sheet2!A1:A{range_size})");
     let ast = Parser::from(&formula).parse().unwrap();
     engine.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
 
@@ -260,7 +260,7 @@ fn test_streaming_with_sparse_data_and_stripes() {
     }
 
     // Create formula that sums the entire sparse range
-    let formula = format!("=SUM(A1:A{})", range_size);
+    let formula = format!("=SUM(A1:A{range_size})");
     let ast = Parser::from(&formula).parse().unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
@@ -387,7 +387,7 @@ fn test_streaming_threshold_behavior_with_stripes() {
                 .unwrap();
         }
 
-        let formula = format!("=SUM(A1:A{})", size);
+        let formula = format!("=SUM(A1:A{size})");
         let ast = Parser::from(&formula).parse().unwrap();
         engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
@@ -398,8 +398,7 @@ fn test_streaming_threshold_behavior_with_stripes() {
         assert_eq!(
             result,
             LiteralValue::Number(expected as f64),
-            "Range of size {} should evaluate correctly",
-            size
+            "Range of size {size} should evaluate correctly"
         );
 
         // Test incremental update
@@ -414,8 +413,7 @@ fn test_streaming_threshold_behavior_with_stripes() {
         assert_eq!(
             updated_result,
             LiteralValue::Number(expected_updated as f64),
-            "Range of size {} should update correctly",
-            size
+            "Range of size {size} should update correctly"
         );
     }
 }
@@ -454,7 +452,7 @@ fn test_streaming_memory_usage_with_stripes() {
                 let end_row = std::cmp::min(start_row + 999, range_size); // +999 to get 1000 cells
                 let formula_row = f + 1;
 
-                let formula = format!("=SUM(A{}:A{})", start_row, end_row);
+                let formula = format!("=SUM(A{start_row}:A{end_row})");
                 let ast = Parser::from(&formula).parse().unwrap();
                 engine
                     .set_cell_formula("Sheet1", formula_row, 2, ast)

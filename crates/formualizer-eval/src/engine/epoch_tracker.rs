@@ -4,176 +4,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Maximum number of concurrent reader threads supported
 pub const MAX_THREADS: usize = 256;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::thread;
-    use std::time::Duration;
-
-    #[test]
-    fn test_epoch_basic() {
-        let tracker = EpochTracker::new();
-
-        // Initial epoch should be 0
-        assert_eq!(tracker.current_epoch(), 0);
-
-        // Begin write should increment epoch
-        let _write = tracker.begin_write();
-        assert_eq!(tracker.current_epoch(), 1);
-    }
-
-    #[test]
-    fn test_read_guard() {
-        let tracker = EpochTracker::new();
-
-        // Begin read on thread 0
-        let _read = tracker.begin_read(0);
-
-        // Safe epoch should be 0 (reader is at epoch 0)
-        assert_eq!(tracker.safe_epoch(), 0);
-    }
-
-    #[test]
-    fn test_write_advances_epoch() {
-        let tracker = EpochTracker::new();
-
-        {
-            let _write = tracker.begin_write();
-            assert_eq!(tracker.current_epoch(), 1);
-        }
-
-        // After write guard drops, safe epoch updates
-        assert_eq!(tracker.safe_epoch(), 1);
-    }
-
-    #[test]
-    fn test_concurrent_readers() {
-        let tracker = Arc::new(EpochTracker::new());
-
-        // Start multiple readers
-        let handles: Vec<_> = (0..4)
-            .map(|i| {
-                let t = Arc::clone(&tracker);
-                thread::spawn(move || {
-                    let _read = t.begin_read(i);
-                    thread::sleep(Duration::from_millis(10));
-                })
-            })
-            .collect();
-
-        // Wait a bit for readers to start
-        thread::sleep(Duration::from_millis(5));
-
-        // Safe epoch should still be 0 (readers are at epoch 0)
-        assert_eq!(tracker.safe_epoch(), 0);
-
-        // Wait for all readers to finish
-        for h in handles {
-            h.join().unwrap();
-        }
-
-        // Force update after readers finish
-        tracker.update_safe_epoch();
-
-        // Safe epoch should be current epoch (0) after all readers finish
-        assert_eq!(tracker.safe_epoch(), 0);
-    }
-
-    #[test]
-    fn test_write_waits_for_readers() {
-        let tracker = Arc::new(EpochTracker::new());
-
-        // Start a long-running reader at epoch 0
-        let reader_tracker = Arc::clone(&tracker);
-        let reader = thread::spawn(move || {
-            let _read = reader_tracker.begin_read(0);
-            thread::sleep(Duration::from_millis(50));
-        });
-
-        // Give reader time to start
-        thread::sleep(Duration::from_millis(10));
-
-        // Create a write guard (advances to epoch 1)
-        let _write = tracker.begin_write();
-        assert_eq!(tracker.current_epoch(), 1);
-
-        // Safe epoch should still be 0 (reader is active at epoch 0)
-        tracker.update_safe_epoch();
-        assert_eq!(tracker.safe_epoch(), 0);
-
-        // Wait for reader to finish
-        reader.join().unwrap();
-
-        // Now safe epoch should advance
-        tracker.update_safe_epoch();
-        assert_eq!(tracker.safe_epoch(), 1);
-    }
-
-    #[test]
-    #[should_panic(expected = "Thread ID 256 exceeds MAX_THREADS")]
-    fn test_thread_id_overflow() {
-        let tracker = EpochTracker::new();
-        tracker.begin_read(MAX_THREADS); // Should panic
-    }
-
-    #[test]
-    fn test_multiple_write_guards() {
-        let tracker = EpochTracker::new();
-
-        let write1 = tracker.begin_write();
-        assert_eq!(tracker.current_epoch(), 1);
-
-        let write2 = tracker.begin_write();
-        assert_eq!(tracker.current_epoch(), 2);
-
-        drop(write1);
-        drop(write2);
-
-        assert_eq!(tracker.safe_epoch(), 2);
-    }
-
-    #[test]
-    fn test_mvcc_with_vertex_store() {
-        use crate::engine::packed_coord::PackedCoord;
-        use crate::engine::vertex_store::VertexStore;
-
-        let tracker = Arc::new(EpochTracker::new());
-        let store = Arc::new(std::sync::Mutex::new(VertexStore::new()));
-
-        // Writer adds vertices
-        let writer_tracker = Arc::clone(&tracker);
-        let writer_store = Arc::clone(&store);
-        let writer = thread::spawn(move || {
-            let _write = writer_tracker.begin_write();
-            let mut store = writer_store.lock().unwrap();
-
-            for i in 0..5 {
-                store.allocate(PackedCoord::new(i, i), 0, 0);
-            }
-        });
-
-        // Reader observes consistent snapshot
-        let reader_tracker = Arc::clone(&tracker);
-        let reader_store = Arc::clone(&store);
-        let reader = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(10)); // Let writer start
-
-            let _read = reader_tracker.begin_read(0);
-            let store = reader_store.lock().unwrap();
-
-            // Reader sees consistent view
-            let len = store.len();
-            len
-        });
-
-        writer.join().unwrap();
-        let observed_len = reader.join().unwrap();
-
-        // Reader either saw 0 (before write) or 5 (after write), not partial
-        assert!(observed_len == 0 || observed_len == 5);
-    }
-}
-
 /// Cache-padded atomic u64 to avoid false sharing
 #[repr(align(64))]
 struct CachePadded<T> {
@@ -338,5 +168,175 @@ impl<'a> Drop for ReadGuard<'a> {
             .value
             .store(u64::MAX, Ordering::Release);
         self.tracker.update_safe_epoch();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn test_epoch_basic() {
+        let tracker = EpochTracker::new();
+
+        // Initial epoch should be 0
+        assert_eq!(tracker.current_epoch(), 0);
+
+        // Begin write should increment epoch
+        let _write = tracker.begin_write();
+        assert_eq!(tracker.current_epoch(), 1);
+    }
+
+    #[test]
+    fn test_read_guard() {
+        let tracker = EpochTracker::new();
+
+        // Begin read on thread 0
+        let _read = tracker.begin_read(0);
+
+        // Safe epoch should be 0 (reader is at epoch 0)
+        assert_eq!(tracker.safe_epoch(), 0);
+    }
+
+    #[test]
+    fn test_write_advances_epoch() {
+        let tracker = EpochTracker::new();
+
+        {
+            let _write = tracker.begin_write();
+            assert_eq!(tracker.current_epoch(), 1);
+        }
+
+        // After write guard drops, safe epoch updates
+        assert_eq!(tracker.safe_epoch(), 1);
+    }
+
+    #[test]
+    fn test_concurrent_readers() {
+        let tracker = Arc::new(EpochTracker::new());
+
+        // Start multiple readers
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let t = Arc::clone(&tracker);
+                thread::spawn(move || {
+                    let _read = t.begin_read(i);
+                    thread::sleep(Duration::from_millis(10));
+                })
+            })
+            .collect();
+
+        // Wait a bit for readers to start
+        thread::sleep(Duration::from_millis(5));
+
+        // Safe epoch should still be 0 (readers are at epoch 0)
+        assert_eq!(tracker.safe_epoch(), 0);
+
+        // Wait for all readers to finish
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Force update after readers finish
+        tracker.update_safe_epoch();
+
+        // Safe epoch should be current epoch (0) after all readers finish
+        assert_eq!(tracker.safe_epoch(), 0);
+    }
+
+    #[test]
+    fn test_write_waits_for_readers() {
+        let tracker = Arc::new(EpochTracker::new());
+
+        // Start a long-running reader at epoch 0
+        let reader_tracker = Arc::clone(&tracker);
+        let reader = thread::spawn(move || {
+            let _read = reader_tracker.begin_read(0);
+            thread::sleep(Duration::from_millis(50));
+        });
+
+        // Give reader time to start
+        thread::sleep(Duration::from_millis(10));
+
+        // Create a write guard (advances to epoch 1)
+        let _write = tracker.begin_write();
+        assert_eq!(tracker.current_epoch(), 1);
+
+        // Safe epoch should still be 0 (reader is active at epoch 0)
+        tracker.update_safe_epoch();
+        assert_eq!(tracker.safe_epoch(), 0);
+
+        // Wait for reader to finish
+        reader.join().unwrap();
+
+        // Now safe epoch should advance
+        tracker.update_safe_epoch();
+        assert_eq!(tracker.safe_epoch(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Thread ID 256 exceeds MAX_THREADS")]
+    fn test_thread_id_overflow() {
+        let tracker = EpochTracker::new();
+        tracker.begin_read(MAX_THREADS); // Should panic
+    }
+
+    #[test]
+    fn test_multiple_write_guards() {
+        let tracker = EpochTracker::new();
+
+        let write1 = tracker.begin_write();
+        assert_eq!(tracker.current_epoch(), 1);
+
+        let write2 = tracker.begin_write();
+        assert_eq!(tracker.current_epoch(), 2);
+
+        drop(write1);
+        drop(write2);
+
+        assert_eq!(tracker.safe_epoch(), 2);
+    }
+
+    #[test]
+    fn test_mvcc_with_vertex_store() {
+        use crate::engine::packed_coord::PackedCoord;
+        use crate::engine::vertex_store::VertexStore;
+
+        let tracker = Arc::new(EpochTracker::new());
+        let store = Arc::new(std::sync::Mutex::new(VertexStore::new()));
+
+        // Writer adds vertices
+        let writer_tracker = Arc::clone(&tracker);
+        let writer_store = Arc::clone(&store);
+        let writer = thread::spawn(move || {
+            let _write = writer_tracker.begin_write();
+            let mut store = writer_store.lock().unwrap();
+
+            for i in 0..5 {
+                store.allocate(PackedCoord::new(i, i), 0, 0);
+            }
+        });
+
+        // Reader observes consistent snapshot
+        let reader_tracker = Arc::clone(&tracker);
+        let reader_store = Arc::clone(&store);
+        let reader = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10)); // Let writer start
+
+            let _read = reader_tracker.begin_read(0);
+            let store = reader_store.lock().unwrap();
+
+            // Reader sees consistent view
+
+            store.len()
+        });
+
+        writer.join().unwrap();
+        let observed_len = reader.join().unwrap();
+
+        // Reader either saw 0 (before write) or 5 (after write), not partial
+        assert!(observed_len == 0 || observed_len == 5);
     }
 }

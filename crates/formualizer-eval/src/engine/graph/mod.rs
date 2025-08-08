@@ -1663,7 +1663,7 @@ impl DependencyGraph {
     /// - Trying to remove the last sheet (workbook must have at least one sheet)
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
         // Check if sheet exists
-        if self.sheet_reg.name(sheet_id) == "" {
+        if self.sheet_reg.name(sheet_id).is_empty() {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Sheet does not exist"));
         }
 
@@ -1784,7 +1784,7 @@ impl DependencyGraph {
         if let Some(existing_id) = self.sheet_reg.get_id(new_name) {
             if existing_id != sheet_id {
                 return Err(ExcelError::new(ExcelErrorKind::Value)
-                    .with_message(format!("Sheet '{}' already exists", new_name)));
+                    .with_message(format!("Sheet '{new_name}' already exists")));
             }
             // Same name, nothing to do
             return Ok(());
@@ -1855,7 +1855,7 @@ impl DependencyGraph {
         // Check if new name is already taken
         if self.sheet_reg.get_id(new_name).is_some() {
             return Err(ExcelError::new(ExcelErrorKind::Value)
-                .with_message(format!("Sheet '{}' already exists", new_name)));
+                .with_message(format!("Sheet '{new_name}' already exists")));
         }
 
         // Create the new sheet

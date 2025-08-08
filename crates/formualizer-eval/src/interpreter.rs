@@ -1,10 +1,14 @@
-use crate::traits::{ArgumentHandle, EvaluationContext};
+use crate::{
+    CellRef,
+    traits::{ArgumentHandle, DefaultFunctionContext, EvaluationContext},
+};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 pub struct Interpreter<'a> {
     pub context: &'a dyn EvaluationContext,
     current_sheet: &'a str,
+    current_cell: Option<crate::CellRef>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -12,6 +16,19 @@ impl<'a> Interpreter<'a> {
         Self {
             context,
             current_sheet,
+            current_cell: None,
+        }
+    }
+
+    pub fn new_with_cell(
+        context: &'a dyn EvaluationContext,
+        current_sheet: &'a str,
+        cell: crate::CellRef,
+    ) -> Self {
+        Self {
+            context,
+            current_sheet,
+            current_cell: Some(cell),
         }
     }
 
@@ -31,7 +48,8 @@ impl<'a> Interpreter<'a> {
                     // Build handles; allow function to decide reference semantics
                     let handles: Vec<ArgumentHandle> =
                         args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
-                    if let Some(res) = fun.eval_reference(&handles, self.context) {
+                    let fctx = DefaultFunctionContext::new(self.context, None);
+                    if let Some(res) = fun.eval_reference(&handles, &fctx) {
                         res
                     } else {
                         Err(ExcelError::new(ExcelErrorKind::Ref)
@@ -195,12 +213,16 @@ impl<'a> Interpreter<'a> {
         if let Some(fun) = self.context.get_function("", name) {
             let handles: Vec<ArgumentHandle> =
                 args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
-
-            // Use the function's built-in dispatch method
-            fun.dispatch(&handles, self.context)
+            // Use the function's built-in dispatch method with a narrow FunctionContext
+            let fctx = DefaultFunctionContext::new(self.context, self.current_cell);
+            fun.dispatch(&handles, &fctx)
         } else {
             Ok(LiteralValue::Error(ExcelError::from_error_string("#NAME?")))
         }
+    }
+
+    pub fn function_context(&self, cell_ref: Option<&CellRef>) -> DefaultFunctionContext<'_> {
+        DefaultFunctionContext::new(self.context, cell_ref.cloned())
     }
 
     /* ===================  array literal  =================== */

@@ -7,6 +7,7 @@ pub mod function_registry;
 pub mod interpreter;
 pub mod locale;
 pub mod map_ctx;
+pub mod rng;
 pub mod stripes;
 pub mod traits;
 

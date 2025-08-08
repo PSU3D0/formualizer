@@ -15,6 +15,7 @@ pub struct Engine<R> {
     resolver: R,
     config: EvalConfig,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
+    recalc_epoch: u64,
 }
 
 #[derive(Debug)]
@@ -54,6 +55,7 @@ where
             resolver,
             config,
             thread_pool,
+            recalc_epoch: 0,
         }
     }
 
@@ -69,6 +71,7 @@ where
             resolver,
             config,
             thread_pool: Some(thread_pool),
+            recalc_epoch: 0,
         }
     }
 
@@ -78,6 +81,16 @@ where
 
     pub fn default_sheet_name(&self) -> &str {
         self.graph.default_sheet_name()
+    }
+
+    /// Update the workbook seed for deterministic RNGs in functions.
+    pub fn set_workbook_seed(&mut self, seed: u64) {
+        self.config.workbook_seed = seed;
+    }
+
+    /// Set the volatile level policy (Always/OnRecalc/OnOpen)
+    pub fn set_volatile_level(&mut self, level: crate::traits::VolatileLevel) {
+        self.config.volatile_level = level;
     }
 
     pub fn sheet_id(&self, name: &str) -> Option<SheetId> {
@@ -171,7 +184,11 @@ where
 
         // The interpreter uses a reference to the engine as the context.
         let sheet_name = self.graph.sheet_name(sheet_id);
-        let interpreter = Interpreter::new(self, sheet_name);
+        let cell_ref = self
+            .graph
+            .get_cell_ref(vertex_id)
+            .expect("cell ref for vertex");
+        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
         let result = interpreter.evaluate_ast(&ast);
 
         // Store the result back into the graph.
@@ -307,6 +324,9 @@ where
 
         // Re-dirty volatile vertices for the next evaluation cycle
         self.graph.redirty_volatiles();
+
+        // Advance recalc epoch after a full evaluation pass finishes
+        self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
 
         Ok(EvalResult {
             computed_vertices,
@@ -736,7 +756,11 @@ where
 
         // The interpreter uses a reference to the engine as the context
         let sheet_name = self.graph.sheet_name(sheet_id);
-        let interpreter = Interpreter::new(self, sheet_name);
+        let cell_ref = self
+            .graph
+            .get_cell_ref(vertex_id)
+            .expect("cell ref for vertex");
+        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
         interpreter.evaluate_ast(&ast)
     }
 
@@ -844,6 +868,18 @@ where
         let hint =
             (self.config.stripe_height as usize).saturating_mul(self.config.stripe_width as usize);
         Some(hint.max(1024).min(1 << 20)) // clamp between 1K and ~1M
+    }
+
+    fn volatile_level(&self) -> crate::traits::VolatileLevel {
+        self.config.volatile_level
+    }
+
+    fn workbook_seed(&self) -> u64 {
+        self.config.workbook_seed
+    }
+
+    fn recalc_epoch(&self) -> u64 {
+        self.recalc_epoch
     }
 
     fn resolve_range_storage<'c>(

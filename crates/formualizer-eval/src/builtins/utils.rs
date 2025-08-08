@@ -86,26 +86,15 @@ pub static ARG_ANY_TWO: LazyLock<Vec<ArgSchema>> =
 
 /// Single numeric scalar argument, with lenient text-to-number coercion.
 /// Ideal for elementwise numeric functions (e.g., `SIN`, `COS`, `ABS`).
-pub static ARG_NUM_LENIENT_ONE: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
-    vec![{
-        let s = ArgSchema::number_lenient_scalar();
-        s
-    }]
-});
+pub static ARG_NUM_LENIENT_ONE: LazyLock<Vec<ArgSchema>> =
+    LazyLock::new(|| vec![{ ArgSchema::number_lenient_scalar() }]);
 
 /// Two numeric scalar arguments, with lenient text-to-number coercion.
 /// Suited for binary numeric operations (e.g., `ATAN2`, `POWER`, `LOG(base)`).
 pub static ARG_NUM_LENIENT_TWO: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
-    vec![
-        {
-            let s = ArgSchema::number_lenient_scalar();
-            s
-        },
-        {
-            let s = ArgSchema::number_lenient_scalar();
-            s
-        },
-    ]
+    vec![{ ArgSchema::number_lenient_scalar() }, {
+        ArgSchema::number_lenient_scalar()
+    }]
 });
 
 /// Single range argument, numeric semantics with lenient text-to-number coercion.

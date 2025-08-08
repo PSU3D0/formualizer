@@ -6,7 +6,7 @@ use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 fn ref_ast(row: u32, col: u32) -> ASTNode {
     ASTNode {
         node_type: ASTNodeType::Reference {
-            original: format!("R{}C{}", row, col),
+            original: format!("R{row}C{col}"),
             reference: ReferenceType::Cell {
                 sheet: None,
                 row,
