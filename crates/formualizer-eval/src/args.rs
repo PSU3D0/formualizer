@@ -103,6 +103,68 @@ impl Default for ValidationOptions {
 
 // Legacy adapter removed in clean break.
 
+fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError> {
+    match v {
+        LiteralValue::Text(s) => {
+            let s_trim = s.trim();
+            // Operators: >=, <=, <>, >, <, =
+            let ops = [">=", "<=", "<>", ">", "<", "="];
+            for op in ops.iter() {
+                if s_trim.starts_with(op) {
+                    let rhs = &s_trim[op.len()..];
+                    // Try numeric parse for comparisons
+                    if let Some(n) = rhs.trim().parse::<f64>().ok() {
+                        return Ok(match *op {
+                            ">=" => CriteriaPredicate::Ge(n),
+                            "<=" => CriteriaPredicate::Le(n),
+                            ">" => CriteriaPredicate::Gt(n),
+                            "<" => CriteriaPredicate::Lt(n),
+                            "=" => CriteriaPredicate::Eq(LiteralValue::Number(n)),
+                            "<>" => CriteriaPredicate::Ne(LiteralValue::Number(n)),
+                            _ => unreachable!(),
+                        });
+                    }
+                    // Fallback: non-numeric equals/neq text
+                    let lit = LiteralValue::Text(rhs.to_string());
+                    return Ok(match *op {
+                        "=" => CriteriaPredicate::Eq(lit),
+                        "<>" => CriteriaPredicate::Ne(lit),
+                        ">=" | "<=" | ">" | "<" => {
+                            // Non-numeric compare: not fully supported; degrade to equality on full expression
+                            CriteriaPredicate::Eq(LiteralValue::Text(s_trim.to_string()))
+                        }
+                        _ => unreachable!(),
+                    });
+                }
+            }
+            // Wildcards * or ? => TextLike
+            if s_trim.contains('*') || s_trim.contains('?') {
+                return Ok(CriteriaPredicate::TextLike {
+                    pattern: s_trim.to_string(),
+                    case_insensitive: true,
+                });
+            }
+            // Booleans TRUE/FALSE
+            let lower = s_trim.to_ascii_lowercase();
+            if lower == "true" {
+                return Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(true)));
+            } else if lower == "false" {
+                return Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(false)));
+            }
+            // Plain text equality
+            Ok(CriteriaPredicate::Eq(LiteralValue::Text(
+                s_trim.to_string(),
+            )))
+        }
+        LiteralValue::Empty => Ok(CriteriaPredicate::IsBlank),
+        LiteralValue::Number(n) => Ok(CriteriaPredicate::Eq(LiteralValue::Number(*n))),
+        LiteralValue::Int(i) => Ok(CriteriaPredicate::Eq(LiteralValue::Int(*i))),
+        LiteralValue::Boolean(b) => Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(*b))),
+        LiteralValue::Error(e) => Err(e.clone()),
+        other => Ok(CriteriaPredicate::Eq(other.clone())),
+    }
+}
+
 pub fn validate_and_prepare<'a, 'b>(
     args: &'a [ArgumentHandle<'a, 'b>],
     schema: &[ArgSchema],
@@ -148,12 +210,96 @@ pub fn validate_and_prepare<'a, 'b>(
             }
         }
 
+        // Criteria policy: parse into predicate
+        if matches!(spec.coercion, CoercionPolicy::Criteria) {
+            let v = arg.value()?.into_owned();
+            match parse_criteria(&v) {
+                Ok(pred) => {
+                    items.push(PreparedArg::Predicate(pred));
+                    continue;
+                }
+                Err(e) => {
+                    if options.warn_only {
+                        continue;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
         // Shape handling
         match spec.shape {
             ShapeKind::Scalar => {
-                // Collapse to scalar if needed
+                // Collapse to scalar if needed (top-left for arrays)
                 match arg.value() {
-                    Ok(v) => items.push(PreparedArg::Value(v)),
+                    Ok(v) => {
+                        let v = match v.as_ref() {
+                            LiteralValue::Array(arr) => {
+                                let tl = arr
+                                    .get(0)
+                                    .and_then(|row| row.get(0))
+                                    .cloned()
+                                    .unwrap_or(LiteralValue::Empty);
+                                Cow::Owned(tl)
+                            }
+                            _ => v,
+                        };
+                        // Apply coercion policy to Value shapes when applicable
+                        let coerced = match spec.coercion {
+                            CoercionPolicy::None => v,
+                            CoercionPolicy::NumberStrict => {
+                                match crate::coercion::to_number_strict(v.as_ref()) {
+                                    Ok(n) => Cow::Owned(LiteralValue::Number(n)),
+                                    Err(e) => {
+                                        if options.warn_only {
+                                            v
+                                        } else {
+                                            return Err(e);
+                                        }
+                                    }
+                                }
+                            }
+                            CoercionPolicy::NumberLenientText => {
+                                match crate::coercion::to_number_lenient(v.as_ref()) {
+                                    Ok(n) => Cow::Owned(LiteralValue::Number(n)),
+                                    Err(e) => {
+                                        if options.warn_only {
+                                            v
+                                        } else {
+                                            return Err(e);
+                                        }
+                                    }
+                                }
+                            }
+                            CoercionPolicy::Logical => {
+                                match crate::coercion::to_logical(v.as_ref()) {
+                                    Ok(b) => Cow::Owned(LiteralValue::Boolean(b)),
+                                    Err(e) => {
+                                        if options.warn_only {
+                                            v
+                                        } else {
+                                            return Err(e);
+                                        }
+                                    }
+                                }
+                            }
+                            CoercionPolicy::Criteria => v, // handled per-function currently
+                            CoercionPolicy::DateTimeSerial => {
+                                match crate::coercion::to_datetime_serial(v.as_ref()) {
+                                    Ok(n) => Cow::Owned(LiteralValue::Number(n)),
+                                    Err(e) => {
+                                        if options.warn_only {
+                                            v
+                                        } else {
+                                            return Err(e);
+                                        }
+                                    }
+                                }
+                            }
+                        };
+                        items.push(PreparedArg::Value(coerced))
+                    }
                     Err(e) => items.push(PreparedArg::Value(Cow::Owned(LiteralValue::Error(e)))),
                 }
             }

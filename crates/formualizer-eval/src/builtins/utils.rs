@@ -11,14 +11,7 @@ pub const EPSILON_NEAR_ZERO: f64 = 1e-12;
 /// - Empty maps to 0.0
 /// - Others -> `#VALUE!`
 pub fn coerce_num(value: &LiteralValue) -> Result<f64, ExcelError> {
-    match value {
-        LiteralValue::Number(n) => Ok(*n),
-        LiteralValue::Int(i) => Ok(*i as f64),
-        LiteralValue::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
-        LiteralValue::Empty => Ok(0.0),
-        _ => Err(ExcelError::from_error_string("#VALUE!")
-            .with_message(format!("Cannot convert {value:?} to number"))),
-    }
+    crate::coercion::to_number_lenient(value)
 }
 
 /// Get a single numeric argument, with count and error checks.
@@ -60,23 +53,15 @@ pub fn binary_numeric_args<'a, 'b>(
 /// Forward-looking: clamp numeric result to Excel-friendly finite values.
 /// Converts NaN to `#NUM!` and +/-Inf to large finite sentinels if desired.
 pub fn sanitize_numeric_result(n: f64) -> Result<f64, ExcelError> {
-    if n.is_nan() {
-        return Err(ExcelError::from_error_string("#NUM!"));
-    }
-    Ok(n)
+    crate::coercion::sanitize_numeric(n)
 }
 
 /// Forward-looking: try converting text that looks like a number (Excel often parses text numbers).
 pub fn coerce_text_to_number_maybe(value: &LiteralValue) -> Option<f64> {
-    if let LiteralValue::Text(s) = value {
-        if let Ok(i) = s.trim().parse::<i64>() {
-            return Some(i as f64);
-        }
-        if let Ok(f) = s.trim().parse::<f64>() {
-            return Some(f);
-        }
+    match value {
+        LiteralValue::Text(_) => crate::coercion::to_number_lenient(value).ok(),
+        _ => None,
     }
-    None
 }
 
 /// Forward-looking: common rounding strategy for functions requiring specific rounding.

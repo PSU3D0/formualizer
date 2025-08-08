@@ -135,8 +135,11 @@ impl<'a> Interpreter<'a> {
     where
         F: Fn(f64) -> f64,
     {
-        match self.coerce_number(&v) {
-            Ok(n) => Ok(LiteralValue::Number(f(n))),
+        match crate::coercion::to_number_lenient_with_locale(&v, &self.context.locale()) {
+            Ok(n) => match crate::coercion::sanitize_numeric(f(n)) {
+                Ok(n2) => Ok(LiteralValue::Number(n2)),
+                Err(e) => Ok(LiteralValue::Error(e)),
+            },
             Err(e) => Ok(LiteralValue::Error(e)),
         }
     }
@@ -166,8 +169,8 @@ impl<'a> Interpreter<'a> {
             "^" => self.power(l_val, r_val),
             "&" => Ok(LiteralValue::Text(format!(
                 "{}{}",
-                self.coerce_text(&l_val),
-                self.coerce_text(&r_val)
+                crate::coercion::to_text_invariant(&l_val),
+                crate::coercion::to_text_invariant(&r_val)
             ))),
             ":" => {
                 // Compute a combined reference; in value context return #REF! for now.
@@ -229,10 +232,13 @@ impl<'a> Interpreter<'a> {
             (Array(arr), v) => self.map_array(arr, |x| self.numeric_binary(x, v.clone(), f)),
             (v, Array(arr)) => self.map_array(arr, |x| self.numeric_binary(v.clone(), x, f)),
             (l, r) => {
-                let a = self.coerce_number(&l);
-                let b = self.coerce_number(&r);
+                let a = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
+                let b = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
                 match (a, b) {
-                    (Ok(a), Ok(b)) => Ok(Number(f(a, b))),
+                    (Ok(a), Ok(b)) => match crate::coercion::sanitize_numeric(f(a, b)) {
+                        Ok(n2) => Ok(Number(n2)),
+                        Err(e) => Ok(LiteralValue::Error(e)),
+                    },
                     (Err(e), _) | (_, Err(e)) => Ok(LiteralValue::Error(e)),
                 }
             }
@@ -240,7 +246,9 @@ impl<'a> Interpreter<'a> {
     }
 
     fn divide(&self, left: LiteralValue, right: LiteralValue) -> Result<LiteralValue, ExcelError> {
-        let denom_num = |v: &LiteralValue| self.coerce_number(v);
+        let denom_num = |v: &LiteralValue| {
+            crate::coercion::to_number_lenient_with_locale(v, &self.context.locale())
+        };
         use LiteralValue::*;
         match (left, right) {
             (Array(l), Array(r)) => self.combine_arrays(l, r, |a, b| self.divide(a, b)),
@@ -253,13 +261,19 @@ impl<'a> Interpreter<'a> {
                         "#DIV/0!",
                     )));
                 }
-                let (ln, rn) = match (self.coerce_number(&l), d) {
+                let (ln, rn) = match (
+                    crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale()),
+                    d,
+                ) {
                     (Ok(a), Ok(b)) => (a, b),
                     (Err(e), _) | (_, Err(e)) => {
                         return Ok(LiteralValue::Error(e));
                     }
                 };
-                Ok(LiteralValue::Number(ln / rn))
+                match crate::coercion::sanitize_numeric(ln / rn) {
+                    Ok(n) => Ok(LiteralValue::Number(n)),
+                    Err(e) => Ok(LiteralValue::Error(e)),
+                }
             }
         }
     }
@@ -273,13 +287,12 @@ impl<'a> Interpreter<'a> {
             }
         };
         self.numeric_binary(left, right, |a, b| try_pow(a, b).unwrap_or(f64::NAN))
-            .map(|v| {
-                if let LiteralValue::Number(n) = &v {
-                    if n.is_nan() || n.is_infinite() {
-                        return LiteralValue::Error(ExcelError::from_error_string("#NUM!"));
-                    }
-                }
-                v
+            .map(|v| match v {
+                LiteralValue::Number(n) => match crate::coercion::sanitize_numeric(n) {
+                    Ok(n2) => LiteralValue::Number(n2),
+                    Err(e) => LiteralValue::Error(e),
+                },
+                other => other,
             })
     }
 
@@ -403,12 +416,24 @@ impl<'a> Interpreter<'a> {
                     (Text(a), Text(b)) => self.cmp_text(&a, &b, op),
                     (a, b) => {
                         // fallback to numeric coercion or text compare
-                        let an = self.coerce_number(&a).ok();
-                        let bn = self.coerce_number(&b).ok();
+                        let an = crate::coercion::to_number_lenient_with_locale(
+                            &a,
+                            &self.context.locale(),
+                        )
+                        .ok();
+                        let bn = crate::coercion::to_number_lenient_with_locale(
+                            &b,
+                            &self.context.locale(),
+                        )
+                        .ok();
                         if let (Some(a), Some(b)) = (an, bn) {
                             self.cmp_f64(a, b, op)
                         } else {
-                            self.cmp_text(&self.coerce_text(&a), &self.coerce_text(&b), op)
+                            self.cmp_text(
+                                &crate::coercion::to_text_invariant(&a),
+                                &crate::coercion::to_text_invariant(&b),
+                                op,
+                            )
                         }
                     }
                 };
@@ -429,7 +454,8 @@ impl<'a> Interpreter<'a> {
         }
     }
     fn cmp_text(&self, a: &str, b: &str, op: &str) -> bool {
-        let (a, b) = (a.to_ascii_lowercase(), b.to_ascii_lowercase());
+        let loc = self.context.locale();
+        let (a, b) = (loc.fold_case_invariant(a), loc.fold_case_invariant(b));
         self.cmp_f64(
             a.cmp(&b) as i32 as f64,
             0.0,

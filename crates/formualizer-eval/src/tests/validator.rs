@@ -85,9 +85,9 @@ fn number_lenient_text_coercion_accepts_numeric_text() {
     )
     .unwrap();
     assert_eq!(out.items.len(), 1);
-    // We currently do not coerce into numbers in PreparedArg::Value; ensure validator allows it
+    // After Milestone 7: scalar values are coerced per schema. Expect a Number(42.0).
     match &out.items[0] {
-        crate::args::PreparedArg::Value(v) => assert!(matches!(v.as_ref(), LiteralValue::Text(_))),
+        crate::args::PreparedArg::Value(v) => assert_eq!(v.as_ref(), &LiteralValue::Number(42.0)),
         _ => panic!("expected value"),
     }
 }

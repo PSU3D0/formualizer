@@ -83,11 +83,12 @@ impl Function for AndFn {
     ) -> Result<LiteralValue, ExcelError> {
         for h in args {
             let v = h.value()?;
+            if let Some(err) = crate::error_policy::propagate_error1(v.as_ref()) {
+                return Ok(err);
+            }
             match v.as_ref() {
                 // Blank treated as FALSE (Excel behaviour)
                 LiteralValue::Empty => return Ok(LiteralValue::Boolean(false)),
-                // Error propagates immediately
-                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
                 // Boolean – use as–is
                 LiteralValue::Boolean(b) => {
                     if !*b {
@@ -141,8 +142,10 @@ impl Function for OrFn {
 
         for h in args {
             let v = h.value()?;
+            if let Some(err) = crate::error_policy::propagate_error1(v.as_ref()) {
+                return Ok(err);
+            }
             match v.as_ref() {
-                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
                 LiteralValue::Boolean(b) => {
                     if *b {
                         found_true = true

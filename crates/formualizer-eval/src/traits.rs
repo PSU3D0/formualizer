@@ -361,4 +361,9 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
         reference: &ReferenceType,
         current_sheet: &str,
     ) -> Result<RangeStorage<'c>, ExcelError>;
+
+    /// Locale provider: invariant by default
+    fn locale(&self) -> crate::locale::Locale {
+        crate::locale::Locale::invariant()
+    }
 }

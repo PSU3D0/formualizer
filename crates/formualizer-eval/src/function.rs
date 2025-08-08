@@ -129,12 +129,10 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
                     LiteralValue::Error(e) => {
                         return Err(e.clone());
                     }
-                    LiteralValue::Number(n) => Some(*n),
-                    LiteralValue::Int(i) => Some(*i as f64),
-                    LiteralValue::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
-                    LiteralValue::Empty => Some(0.0),
-                    LiteralValue::Text(s) => s.trim().parse::<f64>().ok(),
-                    _ => None,
+                    other => {
+                        crate::coercion::to_number_lenient_with_locale(other, &self._ctx.locale())
+                            .ok()
+                    }
                 };
                 if let Some(n) = as_num {
                     // provide a tiny chunk

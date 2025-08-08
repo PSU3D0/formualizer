@@ -1,4 +1,4 @@
-use crate::args::{CoercionPolicy, ShapeKind};
+// Note: keep imports minimal; coercion is centralized via crate::coercion
 use crate::broadcast::{Shape2D, broadcast_shape, project_index};
 use crate::traits::{ArgumentHandle, EvaluationContext};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -83,13 +83,12 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
                 let mut out_row: Vec<LiteralValue> = Vec::with_capacity(row.len());
                 for cell in row.iter() {
                     let num_opt = match cell {
-                        LiteralValue::Number(n) => Some(*n),
-                        LiteralValue::Int(i) => Some(*i as f64),
-                        LiteralValue::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
-                        LiteralValue::Empty => Some(0.0),
-                        LiteralValue::Text(s) => s.trim().parse::<f64>().ok(),
                         LiteralValue::Error(e) => return Err(e.clone()),
-                        _ => None,
+                        other => crate::coercion::to_number_lenient_with_locale(
+                            other,
+                            &self.ctx.locale(),
+                        )
+                        .ok(),
                     };
                     match num_opt {
                         Some(n) => out_row.push(f(n)?),
@@ -116,13 +115,12 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
                     let mut out_row: Vec<LiteralValue> = Vec::with_capacity(row.len());
                     for cell in row.into_iter() {
                         let num_opt = match cell {
-                            LiteralValue::Number(n) => Some(n),
-                            LiteralValue::Int(i) => Some(i as f64),
-                            LiteralValue::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
-                            LiteralValue::Empty => Some(0.0),
-                            LiteralValue::Text(s) => s.trim().parse::<f64>().ok(),
                             LiteralValue::Error(e) => return Err(e),
-                            _ => None,
+                            other => crate::coercion::to_number_lenient_with_locale(
+                                &other,
+                                &self.ctx.locale(),
+                            )
+                            .ok(),
                         };
                         match num_opt {
                             Some(n) => out_row.push(f(n)?),
@@ -138,14 +136,9 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
             match v.as_ref() {
                 LiteralValue::Error(e) => return Err(e.clone()),
                 other => {
-                    let as_num = match other {
-                        LiteralValue::Number(n) => Some(*n),
-                        LiteralValue::Int(i) => Some(*i as f64),
-                        LiteralValue::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
-                        LiteralValue::Empty => Some(0.0),
-                        LiteralValue::Text(s) => s.trim().parse::<f64>().ok(),
-                        _ => None,
-                    };
+                    let as_num =
+                        crate::coercion::to_number_lenient_with_locale(other, &self.ctx.locale())
+                            .ok();
                     let out = match as_num {
                         Some(n) => f(n)?,
                         None => LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)),

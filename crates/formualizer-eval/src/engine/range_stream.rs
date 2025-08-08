@@ -232,25 +232,19 @@ impl<'g> RangeStorage<'g> {
         f: &mut dyn FnMut(NumericChunk) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
         let pack_value = |v: &LiteralValue| -> Result<Option<f64>, ExcelError> {
-            match v {
-                LiteralValue::Number(n) => Ok(Some(*n)),
-                LiteralValue::Int(i) => Ok(Some(*i as f64)),
-                LiteralValue::Boolean(b) => Ok(Some(if *b { 1.0 } else { 0.0 })),
-                LiteralValue::Empty => Ok(Some(0.0)),
-                LiteralValue::Text(s) => match policy {
-                    CoercionPolicy::NumberLenientText => {
-                        if let Ok(f) = s.trim().parse::<f64>() {
-                            Ok(Some(f))
-                        } else {
-                            Ok(None)
-                        }
-                    }
+            match policy {
+                CoercionPolicy::NumberLenientText => match v {
+                    LiteralValue::Error(e) => Err(e.clone()),
+                    other => Ok(crate::coercion::to_number_lenient(other).ok()),
+                },
+                CoercionPolicy::NumberStrict => match v {
+                    LiteralValue::Error(e) => Err(e.clone()),
+                    other => Ok(crate::coercion::to_number_strict(other).ok()),
+                },
+                _ => match v {
+                    LiteralValue::Error(e) => Err(e.clone()),
                     _ => Ok(None),
                 },
-                LiteralValue::Error(e) => {
-                    Err(ExcelError::new(ExcelErrorKind::Value).with_message(e.to_string()))
-                }
-                _ => Ok(None),
             }
         };
 
