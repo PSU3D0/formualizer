@@ -4,6 +4,7 @@ use crate::engine::{DependencyGraph, EvalConfig, Scheduler, VertexId, VertexKind
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord};
 use crate::traits::EvaluationContext;
+use crate::traits::FunctionProvider;
 use formualizer_core::parser::ReferenceType;
 use formualizer_core::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
@@ -125,7 +126,9 @@ where
         col: u32,
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
-        self.graph.set_cell_formula(sheet, row, col, ast)?;
+        let volatile = self.is_ast_volatile_with_provider(&ast);
+        self.graph
+            .set_cell_formula_with_volatility(sheet, row, col, ast, volatile)?;
         Ok(())
     }
 
@@ -538,6 +541,35 @@ where
         }
 
         Ok((sheet, row, col))
+    }
+
+    /// Determine volatility using this engine's FunctionProvider, falling back to global registry.
+    fn is_ast_volatile_with_provider(&self, ast: &ASTNode) -> bool {
+        use formualizer_core::parser::ASTNodeType;
+        match &ast.node_type {
+            ASTNodeType::Function { name, args, .. } => {
+                if let Some(func) = self
+                    .get_function("", name)
+                    .or_else(|| crate::function_registry::get("", name))
+                {
+                    if func.caps().contains(crate::function::FnCaps::VOLATILE) {
+                        return true;
+                    }
+                }
+                args.iter()
+                    .any(|arg| self.is_ast_volatile_with_provider(arg))
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                self.is_ast_volatile_with_provider(left)
+                    || self.is_ast_volatile_with_provider(right)
+            }
+            ASTNodeType::UnaryOp { expr, .. } => self.is_ast_volatile_with_provider(expr),
+            ASTNodeType::Array(rows) => rows.iter().any(|row| {
+                row.iter()
+                    .any(|cell| self.is_ast_volatile_with_provider(cell))
+            }),
+            _ => false,
+        }
     }
 
     /// Find dirty precedents that need evaluation for the given target vertices

@@ -527,6 +527,19 @@ impl DependencyGraph {
         col: u32,
         ast: ASTNode,
     ) -> Result<OperationSummary, ExcelError> {
+        let volatile = self.is_ast_volatile(&ast);
+        self.set_cell_formula_with_volatility(sheet, row, col, ast, volatile)
+    }
+
+    /// Set a formula in a cell with a known volatility flag (context-scoped detection upstream)
+    pub fn set_cell_formula_with_volatility(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        ast: ASTNode,
+        volatile: bool,
+    ) -> Result<OperationSummary, ExcelError> {
         let sheet_id = self.sheet_id_mut(sheet);
         let coord = Coord::new(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
@@ -542,9 +555,6 @@ impl DependencyGraph {
             return Err(ExcelError::new(ExcelErrorKind::Circ)
                 .with_message("Self-reference detected".to_string()));
         }
-
-        // Determine if volatile
-        let volatile = self.is_ast_volatile(&ast);
 
         // Remove old dependencies first
         self.remove_dependent_edges(addr_vertex_id);

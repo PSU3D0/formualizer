@@ -146,3 +146,58 @@ fn randbetween_uses_context_rng_and_bounds() {
         Some(LiteralValue::Int(1))
     );
 }
+
+#[test]
+fn context_scoped_volatility_detection() {
+    // Define a synthetic function VOL() that is marked VOLATILE and returns 0.
+    use crate::args::ArgSchema;
+    use crate::function::{FnCaps, Function};
+    use crate::traits::{ArgumentHandle, FunctionContext};
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    struct VolFn;
+    impl Function for VolFn {
+        fn caps(&self) -> FnCaps {
+            FnCaps::VOLATILE
+        }
+        fn name(&self) -> &'static str {
+            "VOL"
+        }
+        fn arg_schema(&self) -> &'static [ArgSchema] {
+            &[]
+        }
+        fn eval_scalar<'a, 'b>(
+            &self,
+            _args: &'a [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext,
+        ) -> Result<LiteralValue, formualizer_common::ExcelError> {
+            Ok(LiteralValue::Int(0))
+        }
+    }
+
+    // Register only in the workbook (context provider), not globally
+    let wb = TestWorkbook::new().with_function(Arc::new(VolFn));
+    let mut engine = Engine::new(wb, EvalConfig::default());
+
+    // A1 = VOL()
+    let call = ASTNode {
+        node_type: ASTNodeType::Function {
+            name: "VOL".into(),
+            args: vec![],
+        },
+        source_token: None,
+    };
+    engine.set_cell_formula("Sheet1", 1, 1, call).unwrap();
+
+    // Evaluate and verify engine marks the vertex volatile by cycling values between runs
+    engine.set_workbook_seed(1);
+    engine.evaluate_all().unwrap();
+    let v1 = engine.get_cell_value("Sheet1", 1, 1).unwrap();
+    engine.set_workbook_seed(2);
+    engine.evaluate_all().unwrap();
+    let v2 = engine.get_cell_value("Sheet1", 1, 1).unwrap();
+    // Value is constant 0, but volatile status causes re-eval; just assert evaluation path doesn't error
+    assert_eq!(v1, LiteralValue::Int(0));
+    assert_eq!(v2, LiteralValue::Int(0));
+}

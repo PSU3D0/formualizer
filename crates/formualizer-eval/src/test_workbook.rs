@@ -30,7 +30,8 @@ pub struct TestWorkbook {
     sheets: HashMap<String, Sheet>,
     named: HashMap<String, Vec<Vec<V>>>,
     tables: HashMap<String, Box<dyn Table>>,
-    fns: HashMap<(&'static str, &'static str), Arc<dyn Function>>,
+    fns: HashMap<(String, String), Arc<dyn Function>>,
+    aliases: HashMap<(String, String), (String, String)>,
 }
 
 impl TestWorkbook {
@@ -81,9 +82,26 @@ impl TestWorkbook {
 
     /* ─────────────── function helpers ─────────── */
     pub fn with_function(mut self, func: Arc<dyn Function>) -> Self {
-        let ns = func.namespace();
-        let name = func.name();
+        let ns = func.namespace().to_uppercase();
+        let name = func.name().to_uppercase();
         self.fns.insert((ns, name), func);
+        self
+    }
+
+    /// Register an alias for a function in this workbook (test helper)
+    pub fn with_alias<S: AsRef<str>>(
+        mut self,
+        ns: S,
+        alias: S,
+        target_ns: S,
+        target_name: S,
+    ) -> Self {
+        let key = (ns.as_ref().to_uppercase(), alias.as_ref().to_uppercase());
+        let val = (
+            target_ns.as_ref().to_uppercase(),
+            target_name.as_ref().to_uppercase(),
+        );
+        self.aliases.insert(key, val);
         self
     }
 
@@ -170,10 +188,20 @@ impl TableResolver for TestWorkbook {
 
 impl FunctionProvider for TestWorkbook {
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
-        self.fns
-            .get(&(ns, name))
-            .cloned()
-            .or_else(|| crate::function_registry::get(ns, name))
+        let nns = ns.to_uppercase();
+        let nname = name.to_uppercase();
+        // direct hit
+        if let Some(f) = self.fns.get(&(nns.clone(), nname.clone())) {
+            return Some(f.clone());
+        }
+        // alias in workbook scope
+        if let Some((t_ns, t_name)) = self.aliases.get(&(nns.clone(), nname.clone())) {
+            if let Some(f) = self.fns.get(&(t_ns.clone(), t_name.clone())) {
+                return Some(f.clone());
+            }
+        }
+        // fall back to global registry (case-insensitive with aliases)
+        crate::function_registry::get(&nns, &nname)
     }
 }
 
