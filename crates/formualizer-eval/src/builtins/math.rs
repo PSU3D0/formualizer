@@ -101,7 +101,11 @@ impl Function for CountFn {
         for arg in args {
             if let Ok(storage) = arg.range_storage() {
                 for value_cow in storage.to_iterator() {
-                    if coerce_num(value_cow.as_ref()).is_ok() {
+                    let v = value_cow.as_ref();
+                    if matches!(v, LiteralValue::Empty) {
+                        continue;
+                    }
+                    if coerce_num(v).is_ok() {
                         count += 1;
                     }
                 }
@@ -109,7 +113,7 @@ impl Function for CountFn {
                 match arg.value()?.as_ref() {
                     LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
                     v => {
-                        if coerce_num(v).is_ok() {
+                        if !matches!(v, LiteralValue::Empty) && coerce_num(v).is_ok() {
                             count += 1;
                         }
                     }
@@ -122,6 +126,7 @@ impl Function for CountFn {
     fn eval_fold(&self, f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
         let mut cnt: i64 = 0;
         let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
+            // Empty cells are excluded at packing time; all values here are numerics
             cnt += chunk.data.len() as i64;
             Ok(())
         };

@@ -17,6 +17,7 @@ pub struct Engine<R> {
     config: EvalConfig,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
     recalc_epoch: u64,
+    snapshot_id: std::sync::atomic::AtomicU64,
 }
 
 #[derive(Debug)]
@@ -57,6 +58,7 @@ where
             config,
             thread_pool,
             recalc_epoch: 0,
+            snapshot_id: std::sync::atomic::AtomicU64::new(1),
         }
     }
 
@@ -73,6 +75,7 @@ where
             config,
             thread_pool: Some(thread_pool),
             recalc_epoch: 0,
+            snapshot_id: std::sync::atomic::AtomicU64::new(1),
         }
     }
 
@@ -115,6 +118,9 @@ where
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
         self.graph.set_cell_value(sheet, row, col, value)?;
+        // Advance snapshot to reflect external mutation
+        self.snapshot_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -129,6 +135,9 @@ where
         let volatile = self.is_ast_volatile_with_provider(&ast);
         self.graph
             .set_cell_formula_with_volatility(sheet, row, col, ast, volatile)?;
+        // Advance snapshot to reflect external mutation
+        self.snapshot_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -914,6 +923,44 @@ where
         self.recalc_epoch
     }
 
+    fn used_rows_for_columns(
+        &self,
+        sheet: &str,
+        start_col: u32,
+        end_col: u32,
+    ) -> Option<(u32, u32)> {
+        let sheet_id = self.graph.sheet_id(sheet)?;
+        self.graph
+            .used_row_bounds_for_columns(sheet_id, start_col, end_col)
+    }
+
+    fn used_cols_for_rows(&self, sheet: &str, start_row: u32, end_row: u32) -> Option<(u32, u32)> {
+        let sheet_id = self.graph.sheet_id(sheet)?;
+        self.graph
+            .used_col_bounds_for_rows(sheet_id, start_row, end_row)
+    }
+
+    fn sheet_bounds(&self, sheet: &str) -> Option<(u32, u32)> {
+        let _ = self.graph.sheet_id(sheet)?;
+        // Excel-like upper bounds; we expose something finite but large.
+        // Backends may override with real bounds.
+        Some((1_048_576, 16_384)) // 1048576 rows, 16384 cols (XFD)
+    }
+
+    fn data_snapshot_id(&self) -> u64 {
+        self.snapshot_id.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn backend_caps(&self) -> crate::traits::BackendCaps {
+        crate::traits::BackendCaps {
+            streaming: true,
+            used_region: true,
+            write: false,
+            tables: false,
+            async_stream: false,
+        }
+    }
+
     fn resolve_range_storage<'c>(
         &'c self,
         reference: &ReferenceType,
@@ -932,19 +979,102 @@ where
                     .graph
                     .sheet_id(sheet_name)
                     .ok_or(ExcelError::new(ExcelErrorKind::Ref))?;
-                let sr = start_row.unwrap_or(1);
-                let sc = start_col.unwrap_or(1);
-                // For now, we don't support infinite ranges in streaming yet
-                let er = end_row.ok_or(
-                    ExcelError::new(ExcelErrorKind::NImpl)
-                        .with_message("Infinite row ranges not supported in streaming"),
-                )?;
-                let ec = end_col.ok_or(
-                    ExcelError::new(ExcelErrorKind::NImpl)
-                        .with_message("Infinite column ranges not supported in streaming"),
-                )?;
+                // Detect if this was an unbounded (infinite/partial) range at the reference level
+                let is_unbounded = start_row.is_none()
+                    || end_row.is_none()
+                    || start_col.is_none()
+                    || end_col.is_none();
+                // Resolve infinite/partial bounds via used-region + sheet bounds
+                // Start with provided values, fill None from used-region or sheet bounds.
+                let mut sr = *start_row;
+                let mut sc = *start_col;
+                let mut er = *end_row;
+                let mut ec = *end_col;
+
+                // Column-only: rows are None on both ends
+                if sr.is_none() && er.is_none() {
+                    let scv = sc.unwrap_or(1);
+                    let ecv = ec.unwrap_or(scv);
+                    if let Some((min_r, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
+                        sr = Some(min_r);
+                        er = Some(max_r);
+                    } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
+                        // Empty used-region: produce empty window by setting er < sr
+                        // Represent as zero-height later.
+                        sr = Some(1);
+                        er = Some(0);
+                    }
+                }
+
+                // Row-only: cols are None on both ends
+                if sc.is_none() && ec.is_none() {
+                    let srv = sr.unwrap_or(1);
+                    let erv = er.unwrap_or(srv);
+                    if let Some((min_c, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
+                        sc = Some(min_c);
+                        ec = Some(max_c);
+                    } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
+                        sc = Some(1);
+                        ec = Some(0);
+                    }
+                }
+
+                // Partially bounded (e.g., A1:A or A:A10)
+                if sr.is_some() && er.is_none() {
+                    let scv = sc.unwrap_or(1);
+                    let ecv = ec.unwrap_or(scv);
+                    if let Some((_, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
+                        er = Some(max_r);
+                    } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
+                        er = Some(max_rows);
+                    }
+                }
+                if er.is_some() && sr.is_none() {
+                    let scv = sc.unwrap_or(1);
+                    let ecv = ec.unwrap_or(scv);
+                    if let Some((min_r, _)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
+                        sr = Some(min_r);
+                    } else {
+                        sr = Some(1);
+                    }
+                }
+                if sc.is_some() && ec.is_none() {
+                    let srv = sr.unwrap_or(1);
+                    let erv = er.unwrap_or(srv);
+                    if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
+                        ec = Some(max_c);
+                    } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
+                        ec = Some(max_cols);
+                    }
+                }
+                if ec.is_some() && sc.is_none() {
+                    let srv = sr.unwrap_or(1);
+                    let erv = er.unwrap_or(srv);
+                    if let Some((min_c, _)) = self.used_cols_for_rows(sheet_name, srv, erv) {
+                        sc = Some(min_c);
+                    } else {
+                        sc = Some(1);
+                    }
+                }
+
+                let sr = sr.unwrap_or(1);
+                let sc = sc.unwrap_or(1);
+                let er = er.unwrap_or(sr.saturating_sub(1)); // may produce empty
+                let ec = ec.unwrap_or(sc.saturating_sub(1)); // may produce empty
 
                 let size = (er.saturating_sub(sr) + 1) as u64 * (ec.saturating_sub(sc) + 1) as u64;
+
+                // Stream-only for unbounded (infinite/partial) ranges, regardless of final size
+                if is_unbounded {
+                    return Ok(RangeStorage::Stream(RangeStream::new(
+                        &self.graph,
+                        sheet_id,
+                        sr,
+                        sc,
+                        er,
+                        ec,
+                    )));
+                }
 
                 if size > self.config.range_expansion_limit as u64 {
                     Ok(RangeStorage::Stream(RangeStream::new(
@@ -956,8 +1086,12 @@ where
                         ec,
                     )))
                 } else {
-                    // Materialize small ranges
+                    // Materialize small bounded ranges
                     let mut data = Vec::new();
+                    if er < sr || ec < sc {
+                        // Empty window
+                        return Ok(RangeStorage::Owned(std::borrow::Cow::Owned(Vec::new())));
+                    }
                     for r in sr..=er {
                         let mut row_data = Vec::new();
                         for c in sc..=ec {

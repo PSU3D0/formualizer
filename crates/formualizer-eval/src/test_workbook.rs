@@ -122,6 +122,57 @@ impl EvaluationContext for TestWorkbook {
         let data = range_box.materialise().into_owned();
         Ok(RangeStorage::Owned(Cow::Owned(data)))
     }
+
+    fn used_rows_for_columns(
+        &self,
+        sheet: &str,
+        start_col: u32,
+        end_col: u32,
+    ) -> Option<(u32, u32)> {
+        let sh = self.sheets.get(sheet)?;
+        let mut min_r: Option<u32> = None;
+        let mut max_r: Option<u32> = None;
+        for (&(r, c), _) in &sh.cells {
+            if c >= start_col && c <= end_col {
+                min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
+                max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
+            }
+        }
+        match (min_r, max_r) {
+            (Some(a), Some(b)) => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    fn used_cols_for_rows(&self, sheet: &str, start_row: u32, end_row: u32) -> Option<(u32, u32)> {
+        let sh = self.sheets.get(sheet)?;
+        let mut min_c: Option<u32> = None;
+        let mut max_c: Option<u32> = None;
+        for (&(r, c), _) in &sh.cells {
+            if r >= start_row && r <= end_row {
+                min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
+                max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
+            }
+        }
+        match (min_c, max_c) {
+            (Some(a), Some(b)) => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    fn sheet_bounds(&self, _sheet: &str) -> Option<(u32, u32)> {
+        Some((1_048_576, 16_384))
+    }
+
+    fn backend_caps(&self) -> crate::traits::BackendCaps {
+        crate::traits::BackendCaps {
+            streaming: false,
+            used_region: true,
+            write: false,
+            tables: false,
+            async_stream: false,
+        }
+    }
 }
 impl ReferenceResolver for TestWorkbook {
     fn resolve_cell_reference(

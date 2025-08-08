@@ -45,10 +45,14 @@ impl<'g> RangeStream<'g> {
     }
 
     pub fn dimensions(&self) -> (u32, u32) {
-        (
-            self.end_row.saturating_sub(self.start_row) + 1,
-            self.end_col.saturating_sub(self.start_col) + 1,
-        )
+        if self.end_row < self.start_row || self.end_col < self.start_col {
+            (0, 0)
+        } else {
+            (
+                self.end_row.saturating_sub(self.start_row) + 1,
+                self.end_col.saturating_sub(self.start_col) + 1,
+            )
+        }
     }
 }
 
@@ -189,35 +193,33 @@ impl<'g> RangeStorage<'g> {
                 }
             }
             RangeStorage::Stream(stream) => {
-                // Naive implementation: re-stream per column and advance to each (row, col)
-                // This avoids materializing the full range but is O(R*C^2). Suitable until we add a provider with random access.
-                let graph_ptr = stream.graph;
-                let sheet_id = stream.sheet_id;
-                let sr = stream.start_row;
-                let sc = stream.start_col;
-                let er = stream.end_row;
-                let ec = stream.end_col;
+                // Build columns in one pass: O(R*C) time and memory
                 let (rows, cols) = stream.dimensions();
-                let cols_usize = cols as usize;
                 let rows_usize = rows as usize;
-                let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(rows_usize);
-                for col in 0..cols_usize {
-                    col_buf.clear();
-                    // create a fresh stream starting at the beginning
-                    let mut s = RangeStream::new(graph_ptr, sheet_id, sr, sc, er, ec);
-                    for r in 0..rows_usize {
-                        let linear_index = r * cols_usize + col;
-                        for _ in 0..=linear_index {
-                            let _ = s.next();
-                        }
-                        // the last fetched item is the target cell value
-                        if let Some(cv) = s.next() {
-                            col_buf.push(cv.into_owned());
-                        } else {
-                            col_buf.push(LiteralValue::Empty);
-                        }
+                let cols_usize = cols as usize;
+                if rows_usize == 0 || cols_usize == 0 {
+                    return Ok(());
+                }
+
+                // Preallocate per-column buffers
+                let mut columns: Vec<Vec<LiteralValue>> = (0..cols_usize)
+                    .map(|_| Vec::with_capacity(rows_usize))
+                    .collect();
+
+                // Consume the stream row-major and distribute values into column buffers
+                for _r in 0..rows_usize {
+                    for j in 0..cols_usize {
+                        let v = stream
+                            .next()
+                            .map(|c| c.into_owned())
+                            .unwrap_or(LiteralValue::Empty);
+                        columns[j].push(v);
                     }
-                    f(&col_buf[..])?;
+                }
+
+                // Emit columns
+                for j in 0..cols_usize {
+                    f(&columns[j][..])?;
                 }
             }
         }
@@ -235,10 +237,12 @@ impl<'g> RangeStorage<'g> {
             match policy {
                 CoercionPolicy::NumberLenientText => match v {
                     LiteralValue::Error(e) => Err(e.clone()),
+                    LiteralValue::Empty => Ok(None), // skip empties for numeric stripes
                     other => Ok(crate::coercion::to_number_lenient(other).ok()),
                 },
                 CoercionPolicy::NumberStrict => match v {
                     LiteralValue::Error(e) => Err(e.clone()),
+                    LiteralValue::Empty => Ok(None),
                     other => Ok(crate::coercion::to_number_strict(other).ok()),
                 },
                 _ => match v {

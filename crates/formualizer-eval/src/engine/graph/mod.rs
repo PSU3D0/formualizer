@@ -5,6 +5,14 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+#[cfg(test)]
+#[derive(Debug, Default, Clone)]
+pub struct GraphInstrumentation {
+    pub edges_added: u64,
+    pub stripe_inserts: u64,
+    pub stripe_removes: u64,
+}
+
 // Type alias for complex return type
 type ExtractDependenciesResult =
     Result<(Vec<VertexId>, Vec<ReferenceType>, Vec<CellRef>), ExcelError>;
@@ -198,6 +206,9 @@ pub struct DependencyGraph {
 
     // Evaluation configuration
     config: super::EvalConfig,
+
+    #[cfg(test)]
+    instr: GraphInstrumentation,
 }
 
 impl Default for DependencyGraph {
@@ -207,6 +218,47 @@ impl Default for DependencyGraph {
 }
 
 impl DependencyGraph {
+    /// Compute min/max used row among vertices within [start_col..=end_col] on a sheet.
+    pub fn used_row_bounds_for_columns(
+        &self,
+        sheet_id: SheetId,
+        start_col: u32,
+        end_col: u32,
+    ) -> Option<(u32, u32)> {
+        let index = self.sheet_indexes.get(&sheet_id)?;
+        let mut min_r: Option<u32> = None;
+        let mut max_r: Option<u32> = None;
+        for vid in index.vertices_in_col_range(start_col, end_col) {
+            let r = self.store.coord(vid).row();
+            min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
+            max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
+        }
+        match (min_r, max_r) {
+            (Some(a), Some(b)) => Some((a, b)),
+            _ => None,
+        }
+    }
+
+    /// Compute min/max used column among vertices within [start_row..=end_row] on a sheet.
+    pub fn used_col_bounds_for_rows(
+        &self,
+        sheet_id: SheetId,
+        start_row: u32,
+        end_row: u32,
+    ) -> Option<(u32, u32)> {
+        let index = self.sheet_indexes.get(&sheet_id)?;
+        let mut min_c: Option<u32> = None;
+        let mut max_c: Option<u32> = None;
+        for vid in index.vertices_in_row_range(start_row, end_row) {
+            let c = self.store.coord(vid).col();
+            min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
+            max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
+        }
+        match (min_c, max_c) {
+            (Some(a), Some(b)) => Some((a, b)),
+            _ => None,
+        }
+    }
     pub fn new() -> Self {
         let mut sheet_reg = SheetRegistry::new();
         let default_sheet_id = sheet_reg.id_for("Sheet1");
@@ -228,6 +280,8 @@ impl DependencyGraph {
             sheet_named_ranges: FxHashMap::default(),
             vertex_to_names: FxHashMap::default(),
             config: super::EvalConfig::default(),
+            #[cfg(test)]
+            instr: GraphInstrumentation::default(),
         }
     }
 
@@ -236,6 +290,16 @@ impl DependencyGraph {
             config,
             ..Self::new()
         }
+    }
+
+    #[cfg(test)]
+    pub fn reset_instr(&mut self) {
+        self.instr = GraphInstrumentation::default();
+    }
+
+    #[cfg(test)]
+    pub fn instr(&self) -> GraphInstrumentation {
+        self.instr.clone()
     }
 
     /// Begin batch operations - defer CSR rebuilds until end_batch() is called
@@ -821,37 +885,46 @@ impl DependencyGraph {
                         end_row,
                         end_col,
                     } => {
-                        let start_row = start_row.unwrap_or(1);
-                        let start_col = start_col.unwrap_or(1);
-                        let end_row = end_row.unwrap_or(1);
-                        let end_col = end_col.unwrap_or(1);
-
-                        if start_row > end_row || start_col > end_col {
-                            return Err(ExcelError::new(ExcelErrorKind::Ref));
-                        }
-
-                        let height = end_row.saturating_sub(start_row) + 1;
-                        let width = end_col.saturating_sub(start_col) + 1;
-                        let size = (width * height) as usize;
-
-                        if size <= self.config.range_expansion_limit {
-                            // Expand to individual cells
-                            let sheet_id = match sheet {
-                                Some(name) => self.sheet_id_mut(name),
-                                None => current_sheet_id,
-                            };
-                            for row in start_row..=end_row {
-                                for col in start_col..=end_col {
-                                    let coord = Coord::new(row, col, true, true);
-                                    let addr = CellRef::new(sheet_id, coord);
-                                    let vertex_id =
-                                        self.get_or_create_vertex(&addr, created_placeholders);
-                                    dependencies.insert(vertex_id);
-                                }
-                            }
-                        } else {
-                            // Keep as a compressed range dependency
+                        // If any bound is missing (infinite/partial range), always keep compressed
+                        let has_unbounded = start_row.is_none()
+                            || end_row.is_none()
+                            || start_col.is_none()
+                            || end_col.is_none();
+                        if has_unbounded {
                             range_dependencies.push(reference.clone());
+                        } else {
+                            let sr = start_row.unwrap();
+                            let sc = start_col.unwrap();
+                            let er = end_row.unwrap();
+                            let ec = end_col.unwrap();
+
+                            if sr > er || sc > ec {
+                                return Err(ExcelError::new(ExcelErrorKind::Ref));
+                            }
+
+                            let height = er.saturating_sub(sr) + 1;
+                            let width = ec.saturating_sub(sc) + 1;
+                            let size = (width * height) as usize;
+
+                            if size <= self.config.range_expansion_limit {
+                                // Expand to individual cells
+                                let sheet_id = match sheet {
+                                    Some(name) => self.sheet_id_mut(name),
+                                    None => current_sheet_id,
+                                };
+                                for row in sr..=er {
+                                    for col in sc..=ec {
+                                        let coord = Coord::new(row, col, true, true);
+                                        let addr = CellRef::new(sheet_id, coord);
+                                        let vertex_id =
+                                            self.get_or_create_vertex(&addr, created_placeholders);
+                                        dependencies.insert(vertex_id);
+                                    }
+                                }
+                            } else {
+                                // Keep as a compressed range dependency
+                                range_dependencies.push(reference.clone());
+                            }
                         }
                     }
                     ReferenceType::NamedRange(name) => {
@@ -1061,6 +1134,10 @@ impl DependencyGraph {
         for &dep_id in dependencies {
             // Store edge as dependent -> dependency (what it depends on)
             self.edges.add_edge(dependent, dep_id);
+            #[cfg(test)]
+            {
+                self.instr.edges_added += 1;
+            }
         }
     }
 
@@ -1089,13 +1166,72 @@ impl DependencyGraph {
                     Some(name) => self.sheet_id_mut(name),
                     None => current_sheet_id,
                 };
-                let start_row = start_row.unwrap_or(1);
-                let start_col = start_col.unwrap_or(1);
-                let end_row = end_row.unwrap_or(1);
-                let end_col = end_col.unwrap_or(1);
+                let s_row = *start_row;
+                let e_row = *end_row;
+                let s_col = *start_col;
+                let e_col = *end_col;
 
-                let height = end_row - start_row + 1;
-                let width = end_col - start_col + 1;
+                // Decide coarse stripes for invalidation
+                let col_stripes = (s_row.is_none() && e_row.is_none())
+                    || (s_col.is_some() && e_col.is_some() && (s_row.is_none() || e_row.is_none())); // partial rows, fixed columns
+                let row_stripes = (s_col.is_none() && e_col.is_none())
+                    || (s_row.is_some() && e_row.is_some() && (s_col.is_none() || e_col.is_none())); // partial cols, fixed rows
+
+                if col_stripes && !row_stripes {
+                    let sc = s_col.unwrap_or(1);
+                    let ec = e_col.unwrap_or(sc);
+                    for col in sc..=ec {
+                        let key = StripeKey {
+                            sheet_id,
+                            stripe_type: StripeType::Column,
+                            index: col,
+                        };
+                        self.stripe_to_dependents
+                            .entry(key.clone())
+                            .or_default()
+                            .insert(dependent);
+                        #[cfg(test)]
+                        {
+                            // Count only when inserting into an empty set
+                            if self.stripe_to_dependents.get(&key).map(|s| s.len()) == Some(1) {
+                                self.instr.stripe_inserts += 1;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                if row_stripes && !col_stripes {
+                    let sr = s_row.unwrap_or(1);
+                    let er = e_row.unwrap_or(sr);
+                    for row in sr..=er {
+                        let key = StripeKey {
+                            sheet_id,
+                            stripe_type: StripeType::Row,
+                            index: row,
+                        };
+                        self.stripe_to_dependents
+                            .entry(key.clone())
+                            .or_default()
+                            .insert(dependent);
+                        #[cfg(test)]
+                        {
+                            if self.stripe_to_dependents.get(&key).map(|s| s.len()) == Some(1) {
+                                self.instr.stripe_inserts += 1;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                // Finite rectangle (or ambiguous): fall back to block/row/col heuristic
+                let start_row = s_row.unwrap_or(1);
+                let start_col = s_col.unwrap_or(1);
+                let end_row = e_row.unwrap_or(start_row);
+                let end_col = e_col.unwrap_or(start_col);
+
+                let height = end_row.saturating_sub(start_row) + 1;
+                let width = end_col.saturating_sub(start_col) + 1;
 
                 if self.config.enable_block_stripes && height > 1 && width > 1 {
                     let start_block_row = start_row / BLOCK_H;
@@ -1111,9 +1247,15 @@ impl DependencyGraph {
                                 index: block_index(block_row * BLOCK_H, block_col * BLOCK_W),
                             };
                             self.stripe_to_dependents
-                                .entry(key)
+                                .entry(key.clone())
                                 .or_default()
                                 .insert(dependent);
+                            #[cfg(test)]
+                            {
+                                if self.stripe_to_dependents.get(&key).map(|s| s.len()) == Some(1) {
+                                    self.instr.stripe_inserts += 1;
+                                }
+                            }
                         }
                     }
                 } else if height > width {
@@ -1125,9 +1267,15 @@ impl DependencyGraph {
                             index: col,
                         };
                         self.stripe_to_dependents
-                            .entry(key)
+                            .entry(key.clone())
                             .or_default()
                             .insert(dependent);
+                        #[cfg(test)]
+                        {
+                            if self.stripe_to_dependents.get(&key).map(|s| s.len()) == Some(1) {
+                                self.instr.stripe_inserts += 1;
+                            }
+                        }
                     }
                 } else {
                     // Wide range
@@ -1138,9 +1286,15 @@ impl DependencyGraph {
                             index: row,
                         };
                         self.stripe_to_dependents
-                            .entry(key)
+                            .entry(key.clone())
                             .or_default()
                             .insert(dependent);
+                        #[cfg(test)]
+                        {
+                            if self.stripe_to_dependents.get(&key).map(|s| s.len()) == Some(1) {
+                                self.instr.stripe_inserts += 1;
+                            }
+                        }
                     }
                 }
             }
@@ -1171,48 +1325,87 @@ impl DependencyGraph {
                         Some(name) => self.sheet_reg.get_id(name).unwrap_or(old_sheet_id),
                         None => old_sheet_id,
                     };
-                    let start_row = start_row.unwrap_or(1);
-                    let start_col = start_col.unwrap_or(1);
-                    let end_row = end_row.unwrap_or(1);
-                    let end_col = end_col.unwrap_or(1);
-
-                    let height = end_row.saturating_sub(start_row) + 1;
-                    let width = end_col.saturating_sub(start_col) + 1;
+                    let s_row = *start_row;
+                    let e_row = *end_row;
+                    let s_col = *start_col;
+                    let e_col = *end_col;
 
                     let mut keys_to_clean = FxHashSet::default();
 
-                    if self.config.enable_block_stripes && height > 1 && width > 1 {
-                        let start_block_row = start_row / BLOCK_H;
-                        let end_block_row = end_row / BLOCK_H;
-                        let start_block_col = start_col / BLOCK_W;
-                        let end_block_col = end_col / BLOCK_W;
+                    let col_stripes = (s_row.is_none() && e_row.is_none())
+                        || (s_col.is_some()
+                            && e_col.is_some()
+                            && (s_row.is_none() || e_row.is_none()));
+                    let row_stripes = (s_col.is_none() && e_col.is_none())
+                        || (s_row.is_some()
+                            && e_row.is_some()
+                            && (s_col.is_none() || e_col.is_none()));
 
-                        for block_row in start_block_row..=end_block_row {
-                            for block_col in start_block_col..=end_block_col {
-                                keys_to_clean.insert(StripeKey {
-                                    sheet_id,
-                                    stripe_type: StripeType::Block,
-                                    index: block_index(block_row * BLOCK_H, block_col * BLOCK_W),
-                                });
-                            }
-                        }
-                    } else if height > width {
-                        // Tall range
-                        for col in start_col..=end_col {
+                    if col_stripes && !row_stripes {
+                        let sc = s_col.unwrap_or(1);
+                        let ec = e_col.unwrap_or(sc);
+                        for col in sc..=ec {
                             keys_to_clean.insert(StripeKey {
                                 sheet_id,
                                 stripe_type: StripeType::Column,
                                 index: col,
                             });
                         }
-                    } else {
-                        // Wide range
-                        for row in start_row..=end_row {
+                    } else if row_stripes && !col_stripes {
+                        let sr = s_row.unwrap_or(1);
+                        let er = e_row.unwrap_or(sr);
+                        for row in sr..=er {
                             keys_to_clean.insert(StripeKey {
                                 sheet_id,
                                 stripe_type: StripeType::Row,
                                 index: row,
                             });
+                        }
+                    } else {
+                        let start_row = s_row.unwrap_or(1);
+                        let start_col = s_col.unwrap_or(1);
+                        let end_row = e_row.unwrap_or(start_row);
+                        let end_col = e_col.unwrap_or(start_col);
+
+                        let height = end_row.saturating_sub(start_row) + 1;
+                        let width = end_col.saturating_sub(start_col) + 1;
+
+                        if self.config.enable_block_stripes && height > 1 && width > 1 {
+                            let start_block_row = start_row / BLOCK_H;
+                            let end_block_row = end_row / BLOCK_H;
+                            let start_block_col = start_col / BLOCK_W;
+                            let end_block_col = end_col / BLOCK_W;
+
+                            for block_row in start_block_row..=end_block_row {
+                                for block_col in start_block_col..=end_block_col {
+                                    keys_to_clean.insert(StripeKey {
+                                        sheet_id,
+                                        stripe_type: StripeType::Block,
+                                        index: block_index(
+                                            block_row * BLOCK_H,
+                                            block_col * BLOCK_W,
+                                        ),
+                                    });
+                                }
+                            }
+                        } else if height > width {
+                            // Tall range
+                            for col in start_col..=end_col {
+                                keys_to_clean.insert(StripeKey {
+                                    sheet_id,
+                                    stripe_type: StripeType::Column,
+                                    index: col,
+                                });
+                            }
+                        } else {
+                            // Wide range
+                            for row in start_row..=end_row {
+                                keys_to_clean.insert(StripeKey {
+                                    sheet_id,
+                                    stripe_type: StripeType::Row,
+                                    index: row,
+                                });
+                            }
                         }
                     }
 
@@ -1221,6 +1414,10 @@ impl DependencyGraph {
                             dependents.remove(&vertex);
                             if dependents.is_empty() {
                                 self.stripe_to_dependents.remove(&key);
+                                #[cfg(test)]
+                                {
+                                    self.instr.stripe_removes += 1;
+                                }
                             }
                         }
                     }

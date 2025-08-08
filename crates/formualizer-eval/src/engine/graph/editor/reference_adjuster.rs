@@ -220,63 +220,79 @@ impl ReferenceAdjuster {
                 end_row,
                 end_col,
             } => {
+                // Check if this is an unbounded (infinite) range
+                // Unbounded column: A:A has no row bounds (both None)
+                // Unbounded row: 1:1 has no column bounds (both None)
+                let is_unbounded_column = start_row.is_none() && end_row.is_none();
+                let is_unbounded_row = start_col.is_none() && end_col.is_none();
+
+                // Don't adjust unbounded ranges - they conceptually represent "all rows/columns"
+                // and should remain unchanged during structural operations
+                if is_unbounded_column || is_unbounded_row {
+                    return reference.clone();
+                }
+
                 // Adjust range boundaries based on operation
                 let (adj_start_row, adj_end_row) = match op {
                     ShiftOperation::InsertRows { before, count, .. } => {
-                        let start = start_row.unwrap_or(1);
-                        let end = end_row.unwrap_or(u32::MAX - 1000); // Use large but not MAX to avoid overflow
-                        let adj_start = if start >= *before {
-                            start + count
-                        } else {
-                            start
-                        };
-                        let adj_end = if end >= *before {
-                            end.saturating_add(*count)
-                        } else {
-                            end
-                        };
-                        (Some(adj_start), Some(adj_end))
+                        // Only adjust if both bounds are present (bounded range)
+                        match (start_row, end_row) {
+                            (Some(start), Some(end)) => {
+                                let adj_start = if *start >= *before {
+                                    start + count
+                                } else {
+                                    *start
+                                };
+                                let adj_end = if *end >= *before { end + count } else { *end };
+                                (Some(adj_start), Some(adj_end))
+                            }
+                            // Preserve None values for partially bounded ranges
+                            _ => (*start_row, *end_row),
+                        }
                     }
                     ShiftOperation::DeleteRows { start, count, .. } => {
-                        // Complex range adjustment for deletions
-                        let range_start = start_row.unwrap_or(1);
-                        let range_end = end_row.unwrap_or(u32::MAX - 1000);
-
-                        if range_end < *start || range_start >= start + count {
-                            // Range outside delete area
-                            let adj_start = if range_start >= start + count {
-                                range_start - count
-                            } else {
-                                range_start
-                            };
-                            let adj_end = if range_end >= start + count {
-                                range_end - count
-                            } else {
-                                range_end
-                            };
-                            (Some(adj_start), Some(adj_end))
-                        } else if range_start >= *start && range_end < start + count {
-                            // Entire range deleted - mark with special sheet name
-                            return ReferenceType::Range {
-                                sheet: Some("#REF".to_string()),
-                                start_row: Some(0),
-                                start_col: Some(0),
-                                end_row: Some(0),
-                                end_col: Some(0),
-                            };
-                        } else {
-                            // Range partially overlaps delete area
-                            let adj_start = if range_start < *start {
-                                range_start
-                            } else {
-                                *start
-                            };
-                            let adj_end = if range_end >= start + count {
-                                range_end - count
-                            } else {
-                                start - 1
-                            };
-                            (Some(adj_start), Some(adj_end))
+                        // Only adjust if both bounds are present
+                        match (start_row, end_row) {
+                            (Some(range_start), Some(range_end)) => {
+                                if *range_end < *start || *range_start >= start + count {
+                                    // Range outside delete area
+                                    let adj_start = if *range_start >= start + count {
+                                        range_start - count
+                                    } else {
+                                        *range_start
+                                    };
+                                    let adj_end = if *range_end >= start + count {
+                                        range_end - count
+                                    } else {
+                                        *range_end
+                                    };
+                                    (Some(adj_start), Some(adj_end))
+                                } else if *range_start >= *start && *range_end < start + count {
+                                    // Entire range deleted - mark with special sheet name
+                                    return ReferenceType::Range {
+                                        sheet: Some("#REF".to_string()),
+                                        start_row: Some(0),
+                                        start_col: Some(0),
+                                        end_row: Some(0),
+                                        end_col: Some(0),
+                                    };
+                                } else {
+                                    // Range partially overlaps delete area
+                                    let adj_start = if *range_start < *start {
+                                        *range_start
+                                    } else {
+                                        *start
+                                    };
+                                    let adj_end = if *range_end >= start + count {
+                                        range_end - count
+                                    } else {
+                                        start - 1
+                                    };
+                                    (Some(adj_start), Some(adj_end))
+                                }
+                            }
+                            // Preserve None values for partially bounded ranges
+                            _ => (*start_row, *end_row),
                         }
                     }
                     _ => (*start_row, *end_row),
@@ -285,59 +301,64 @@ impl ReferenceAdjuster {
                 // Similar logic for columns
                 let (adj_start_col, adj_end_col) = match op {
                     ShiftOperation::InsertColumns { before, count, .. } => {
-                        let start = start_col.unwrap_or(1);
-                        let end = end_col.unwrap_or(u32::MAX - 1000);
-                        let adj_start = if start >= *before {
-                            start + count
-                        } else {
-                            start
-                        };
-                        let adj_end = if end >= *before {
-                            end.saturating_add(*count)
-                        } else {
-                            end
-                        };
-                        (Some(adj_start), Some(adj_end))
+                        // Only adjust if both bounds are present
+                        match (start_col, end_col) {
+                            (Some(start), Some(end)) => {
+                                let adj_start = if *start >= *before {
+                                    start + count
+                                } else {
+                                    *start
+                                };
+                                let adj_end = if *end >= *before { end + count } else { *end };
+                                (Some(adj_start), Some(adj_end))
+                            }
+                            // Preserve None values
+                            _ => (*start_col, *end_col),
+                        }
                     }
                     ShiftOperation::DeleteColumns { start, count, .. } => {
-                        let range_start = start_col.unwrap_or(1);
-                        let range_end = end_col.unwrap_or(u32::MAX - 1000);
-
-                        if range_end < *start || range_start >= start + count {
-                            // Range outside delete area
-                            let adj_start = if range_start >= start + count {
-                                range_start - count
-                            } else {
-                                range_start
-                            };
-                            let adj_end = if range_end >= start + count {
-                                range_end - count
-                            } else {
-                                range_end
-                            };
-                            (Some(adj_start), Some(adj_end))
-                        } else if range_start >= *start && range_end < start + count {
-                            // Entire range deleted - mark with special sheet name
-                            return ReferenceType::Range {
-                                sheet: Some("#REF".to_string()),
-                                start_row: Some(0),
-                                start_col: Some(0),
-                                end_row: Some(0),
-                                end_col: Some(0),
-                            };
-                        } else {
-                            // Range partially overlaps delete area
-                            let adj_start = if range_start < *start {
-                                range_start
-                            } else {
-                                *start
-                            };
-                            let adj_end = if range_end >= start + count {
-                                range_end - count
-                            } else {
-                                start - 1
-                            };
-                            (Some(adj_start), Some(adj_end))
+                        // Only adjust if both bounds are present
+                        match (start_col, end_col) {
+                            (Some(range_start), Some(range_end)) => {
+                                if *range_end < *start || *range_start >= start + count {
+                                    // Range outside delete area
+                                    let adj_start = if *range_start >= start + count {
+                                        range_start - count
+                                    } else {
+                                        *range_start
+                                    };
+                                    let adj_end = if *range_end >= start + count {
+                                        range_end - count
+                                    } else {
+                                        *range_end
+                                    };
+                                    (Some(adj_start), Some(adj_end))
+                                } else if *range_start >= *start && *range_end < start + count {
+                                    // Entire range deleted - mark with special sheet name
+                                    return ReferenceType::Range {
+                                        sheet: Some("#REF".to_string()),
+                                        start_row: Some(0),
+                                        start_col: Some(0),
+                                        end_row: Some(0),
+                                        end_col: Some(0),
+                                    };
+                                } else {
+                                    // Range partially overlaps delete area
+                                    let adj_start = if *range_start < *start {
+                                        *range_start
+                                    } else {
+                                        *start
+                                    };
+                                    let adj_end = if *range_end >= start + count {
+                                        range_end - count
+                                    } else {
+                                        start - 1
+                                    };
+                                    (Some(adj_start), Some(adj_end))
+                                }
+                            }
+                            // Preserve None values
+                            _ => (*start_col, *end_col),
                         }
                     }
                     _ => (*start_col, *end_col),

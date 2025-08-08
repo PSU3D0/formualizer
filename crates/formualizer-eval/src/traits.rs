@@ -448,6 +448,60 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
     fn recalc_epoch(&self) -> u64 {
         0
     }
+
+    /* ─────────────── Future-proof IO/backends hooks (default no-op) ─────────────── */
+
+    /// Optional: Return the min/max used rows for a set of columns on a sheet.
+    /// When None, the backend does not provide used-region hints.
+    fn used_rows_for_columns(
+        &self,
+        _sheet: &str,
+        _start_col: u32,
+        _end_col: u32,
+    ) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// Optional: Return the min/max used columns for a set of rows on a sheet.
+    /// When None, the backend does not provide used-region hints.
+    fn used_cols_for_rows(
+        &self,
+        _sheet: &str,
+        _start_row: u32,
+        _end_row: u32,
+    ) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// Optional: Physical sheet bounds (max rows, max cols) if known.
+    fn sheet_bounds(&self, _sheet: &str) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// Monotonic identifier for the current data snapshot; increments on mutation.
+    fn data_snapshot_id(&self) -> u64 {
+        0
+    }
+
+    /// Backend capability advertisement for IO/adapters.
+    fn backend_caps(&self) -> BackendCaps {
+        BackendCaps::default()
+    }
+}
+
+/// Minimal backend capability descriptor for planning and adapters.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct BackendCaps {
+    /// Provides RangeStorage::Stream (not just Owned), or equivalent lazy access
+    pub streaming: bool,
+    /// Can compute used-region for rows/columns
+    pub used_region: bool,
+    /// Supports write-back mutations via external sink
+    pub write: bool,
+    /// Provides table metadata/streaming beyond basic column access
+    pub tables: bool,
+    /// May provide asynchronous/lazy remote streams (reserved)
+    pub async_stream: bool,
 }
 
 /* ───────────────────── FunctionContext (narrow) ───────────────────── */
