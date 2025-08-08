@@ -434,6 +434,7 @@ pub fn register_builtins() {
     crate::function_registry::register_function(std::sync::Arc::new(SumFn));
     crate::function_registry::register_function(std::sync::Arc::new(CountFn));
     crate::function_registry::register_function(std::sync::Arc::new(AverageFn));
+    crate::function_registry::register_function(std::sync::Arc::new(AverageIfsFn));
     // --- Trigonometry: circular ---
     crate::function_registry::register_function(std::sync::Arc::new(SinFn));
     crate::function_registry::register_function(std::sync::Arc::new(CosFn));
@@ -463,6 +464,612 @@ pub fn register_builtins() {
     crate::function_registry::register_function(std::sync::Arc::new(RadiansFn));
     crate::function_registry::register_function(std::sync::Arc::new(DegreesFn));
     crate::function_registry::register_function(std::sync::Arc::new(PiFn));
+}
+
+/* ─────────────────────────── AVERAGEIFS() ──────────────────────────── */
+
+#[derive(Debug)]
+pub struct AverageIfsFn;
+
+impl Function for AverageIfsFn {
+    func_caps!(PURE, WINDOWED, STREAM_OK);
+
+    fn name(&self) -> &'static str {
+        "AVERAGEIFS"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        // [avg_range, criteria_range1, criteria1, criteria_range2, criteria2, ...]
+        // Use Criteria coercion for criteria values; ranges are accepted as Range/Array shape.
+        // For simplicity, accept Any and do parsing inside.
+        &super::utils::ARG_ANY_ONE[..]
+    }
+
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        // Fallback scalar path: expand everything and compute like Excel
+        // Build avg iterator and paired criteria.
+        if args.len() < 3 || (args.len() - 1) % 2 != 0 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#VALUE!",
+            )));
+        }
+
+        // Extract avg_range dims/iterator
+        let (mut avg_iter, dims): (
+            Box<dyn Iterator<Item = LiteralValue>>,
+            Option<(usize, usize)>,
+        ) = if let Ok(storage) = args[0].range_storage() {
+            let d = storage.dims();
+            (
+                Box::new(storage.to_iterator().map(|c| c.into_owned())),
+                Some(d),
+            )
+        } else {
+            let v = args[0].value()?.into_owned();
+            (
+                Box::new(std::iter::once(v)) as Box<dyn Iterator<Item = LiteralValue>>,
+                None,
+            )
+        };
+
+        // Prepare criteria pairs as iterators or broadcast scalars
+        let mut crit_iters: Vec<Box<dyn Iterator<Item = LiteralValue>>> = Vec::new();
+        let mut preds: Vec<crate::args::CriteriaPredicate> = Vec::new();
+        for i in (1..args.len()).step_by(2) {
+            // range
+            if let Ok(storage) = args[i].range_storage() {
+                let d = storage.dims();
+                if let Some(d0) = dims {
+                    if d0 != d {
+                        return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                            "#VALUE!",
+                        )));
+                    }
+                }
+                crit_iters.push(Box::new(storage.to_iterator().map(|c| c.into_owned())));
+            } else {
+                let v = args[i].value()?.into_owned();
+                let count = dims.map(|(r, c)| r * c).unwrap_or(1);
+                crit_iters.push(Box::new(std::iter::repeat(v).take(count)));
+            }
+            // criteria
+            let cval = args[i + 1].value()?.into_owned();
+            let pred = crate::args::parse_criteria(&cval)?;
+            preds.push(pred);
+        }
+
+        let mut sum = 0.0f64;
+        let mut cnt = 0i64;
+        let mut idx = 0usize;
+        loop {
+            let a = match avg_iter.next() {
+                Some(v) => v,
+                None => break,
+            };
+            let mut ok = true;
+            for (j, it) in crit_iters.iter_mut().enumerate() {
+                let v = it.next().unwrap_or(LiteralValue::Empty);
+                if !criteria_match(&preds[j], &v) {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                if let Ok(n) = super::utils::coerce_num(&a) {
+                    sum += n;
+                    cnt += 1;
+                }
+            }
+            idx += 1;
+        }
+        if cnt == 0 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            )));
+        }
+        Ok(LiteralValue::Number(sum / cnt as f64))
+    }
+
+    fn eval_window<'a, 'b>(
+        &self,
+        w: &mut crate::window_ctx::SimpleWindowCtx<'a, 'b>,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        // Use width=1, step=1 windows: iterate aligned positions across avg_range and each criteria_range
+        let mut sum = 0.0f64;
+        let mut cnt = 0i64;
+        // Build predicates from criteria arguments
+        if w.args.len() < 3 || (w.args.len() - 1) % 2 != 0 {
+            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#VALUE!",
+            ))));
+        }
+        let mut preds: Vec<crate::args::CriteriaPredicate> = Vec::new();
+        for i in (1..w.args.len()).step_by(2) {
+            let cval = match w.args[i + 1].value() {
+                Ok(v) => v.into_owned(),
+                Err(e) => return Some(Ok(LiteralValue::Error(e))),
+            };
+            match crate::args::parse_criteria(&cval) {
+                Ok(p) => preds.push(p),
+                Err(e) => return Some(Ok(LiteralValue::Error(e))),
+            }
+        }
+        let res = w.for_each_window(|cells| {
+            // cells[0] = avg value; cells[1],cells[3],.. = criteria_ranges; criteria at even indices after that
+            let avg_v = &cells[0];
+            let mut ok = true;
+            let mut pj = 0usize;
+            for j in (1..cells.len()).step_by(2) {
+                if !criteria_match(&preds[pj], &cells[j]) {
+                    ok = false;
+                    break;
+                }
+                pj += 1;
+            }
+            if ok {
+                if let Ok(n) = super::utils::coerce_num(avg_v) {
+                    sum += n;
+                    cnt += 1;
+                }
+            }
+            Ok(())
+        });
+        if let Err(e) = res {
+            return Some(Ok(LiteralValue::Error(e)));
+        }
+        if cnt == 0 {
+            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            ))));
+        }
+        Some(Ok(LiteralValue::Number(sum / cnt as f64)))
+    }
+}
+
+fn criteria_match(pred: &crate::args::CriteriaPredicate, v: &LiteralValue) -> bool {
+    use crate::args::CriteriaPredicate as P;
+    match pred {
+        P::Eq(t) => values_equal_invariant(t, v),
+        P::Ne(t) => !values_equal_invariant(t, v),
+        P::Gt(n) => value_to_number(v).map(|x| x > *n).unwrap_or(false),
+        P::Ge(n) => value_to_number(v).map(|x| x >= *n).unwrap_or(false),
+        P::Lt(n) => value_to_number(v).map(|x| x < *n).unwrap_or(false),
+        P::Le(n) => value_to_number(v).map(|x| x <= *n).unwrap_or(false),
+        P::TextLike {
+            pattern,
+            case_insensitive,
+        } => text_like_match(pattern, *case_insensitive, v),
+        P::IsBlank => matches!(v, LiteralValue::Empty),
+        P::IsNumber => value_to_number(v).is_ok(),
+        P::IsText => matches!(v, LiteralValue::Text(_)),
+        P::IsLogical => matches!(v, LiteralValue::Boolean(_)),
+    }
+}
+
+fn value_to_number(v: &LiteralValue) -> Result<f64, ExcelError> {
+    crate::coercion::to_number_lenient(v)
+}
+fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
+    match (a, b) {
+        (LiteralValue::Number(x), LiteralValue::Number(y)) => (x - y).abs() < 1e-12,
+        (LiteralValue::Int(x), LiteralValue::Int(y)) => x == y,
+        (LiteralValue::Boolean(x), LiteralValue::Boolean(y)) => x == y,
+        (LiteralValue::Text(x), LiteralValue::Text(y)) => x.eq_ignore_ascii_case(y),
+        (LiteralValue::Empty, LiteralValue::Empty) => true,
+        (LiteralValue::Number(x), _) => value_to_number(b)
+            .map(|y| (x - y).abs() < 1e-12)
+            .unwrap_or(false),
+        (_, LiteralValue::Number(_)) => values_equal_invariant(b, a),
+        _ => false,
+    }
+}
+
+fn text_like_match(pattern: &str, case_insensitive: bool, v: &LiteralValue) -> bool {
+    let s = match v {
+        LiteralValue::Text(t) => t.clone(),
+        LiteralValue::Number(n) => n.to_string(),
+        LiteralValue::Int(i) => i.to_string(),
+        LiteralValue::Boolean(b) => {
+            if *b {
+                "TRUE".into()
+            } else {
+                "FALSE".into()
+            }
+        }
+        LiteralValue::Empty => String::new(),
+        _ => return false,
+    };
+    let (pat, text) = if case_insensitive {
+        (pattern.to_ascii_lowercase(), s.to_ascii_lowercase())
+    } else {
+        (pattern.to_string(), s)
+    };
+    wildcard_match(&pat, &text)
+}
+
+fn wildcard_match(pat: &str, text: &str) -> bool {
+    // Simple glob-like matcher for * and ?
+    fn helper(p: &[u8], t: &[u8]) -> bool {
+        if p.is_empty() {
+            return t.is_empty();
+        }
+        match p[0] {
+            b'*' => {
+                // match zero or more
+                for i in 0..=t.len() {
+                    if helper(&p[1..], &t[i..]) {
+                        return true;
+                    }
+                }
+                false
+            }
+            b'?' => {
+                if t.is_empty() {
+                    false
+                } else {
+                    helper(&p[1..], &t[1..])
+                }
+            }
+            ch => {
+                if t.first().copied() == Some(ch) {
+                    helper(&p[1..], &t[1..])
+                } else {
+                    false
+                }
+            }
+        }
+    }
+    helper(pat.as_bytes(), text.as_bytes())
+}
+
+#[cfg(test)]
+mod tests_averageifs {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_core::parser::{ASTNode, ASTNodeType};
+
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+
+    #[test]
+    fn averageifs_basic_numeric() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
+        let ctx = interp(&wb);
+        // avg_range {1,2,3,4}, criteria_range {0,1,0,1}, criteria ">0"
+        let avg_arr = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(1),
+                LiteralValue::Int(2),
+                LiteralValue::Int(3),
+                LiteralValue::Int(4),
+            ]])),
+            None,
+        );
+        let crit_rng = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(0),
+                LiteralValue::Int(1),
+                LiteralValue::Int(0),
+                LiteralValue::Int(1),
+            ]])),
+            None,
+        );
+        let crit = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text(">0".into())), None);
+        let args = vec![
+            ArgumentHandle::new(&avg_arr, &ctx),
+            ArgumentHandle::new(&crit_rng, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+        ];
+        let f = ctx.context.get_function("", "AVERAGEIFS").unwrap();
+        let out = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        assert_eq!(out, LiteralValue::Number((2.0 + 4.0) / 2.0));
+    }
+
+    #[test]
+    fn averageifs_div0_when_no_match() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
+        let ctx = interp(&wb);
+        let avg_arr = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(1),
+                LiteralValue::Int(2),
+            ]])),
+            None,
+        );
+        let crit_rng = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(0),
+                LiteralValue::Int(0),
+            ]])),
+            None,
+        );
+        let crit = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text(">0".into())), None);
+        let args = vec![
+            ArgumentHandle::new(&avg_arr, &ctx),
+            ArgumentHandle::new(&crit_rng, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+        ];
+        let f = ctx.context.get_function("", "AVERAGEIFS").unwrap();
+        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            v => panic!("expected div0, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn averageifs_mismatched_shapes_value_error() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
+        let ctx = interp(&wb);
+        // avg 1x4, crit range 1x3 -> #VALUE!
+        let avg_arr = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(1),
+                LiteralValue::Int(2),
+                LiteralValue::Int(3),
+                LiteralValue::Int(4),
+            ]])),
+            None,
+        );
+        let crit_rng = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(0),
+                LiteralValue::Int(1),
+                LiteralValue::Int(0),
+            ]])),
+            None,
+        );
+        let crit = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text(">0".into())), None);
+        let args = vec![
+            ArgumentHandle::new(&avg_arr, &ctx),
+            ArgumentHandle::new(&crit_rng, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+        ];
+        let f = ctx.context.get_function("", "AVERAGEIFS").unwrap();
+        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
+            v => panic!("expected value error, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn averageifs_text_like_and_equality() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
+        let ctx = interp(&wb);
+        // avg {10,20,30} with crit texts {"alpha","beta","alphabet"} and pattern "al*"
+        let avg = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(10),
+                LiteralValue::Int(20),
+                LiteralValue::Int(30),
+            ]])),
+            None,
+        );
+        let crit_rng = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Text("alpha".into()),
+                LiteralValue::Text("beta".into()),
+                LiteralValue::Text("alphabet".into()),
+            ]])),
+            None,
+        );
+        let pat = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("al*".into())), None);
+        let args = vec![
+            ArgumentHandle::new(&avg, &ctx),
+            ArgumentHandle::new(&crit_rng, &ctx),
+            ArgumentHandle::new(&pat, &ctx),
+        ];
+        let f = ctx.context.get_function("", "AVERAGEIFS").unwrap();
+        // matches alpha and alphabet => (10+30)/2 = 20
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            LiteralValue::Number(20.0)
+        );
+    }
+
+    #[test]
+    fn averageifs_scalar_criteria_broadcasts() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
+        let ctx = interp(&wb);
+        let avg = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(1),
+                LiteralValue::Int(2),
+                LiteralValue::Int(3),
+            ]])),
+            None,
+        );
+        let crit_rng = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(1),
+                LiteralValue::Int(1),
+                LiteralValue::Int(1),
+            ]])),
+            None,
+        );
+        let crit = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("=1".into())), None);
+        let args = vec![
+            ArgumentHandle::new(&avg, &ctx),
+            ArgumentHandle::new(&crit_rng, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+        ];
+        let f = ctx.context.get_function("", "AVERAGEIFS").unwrap();
+        // all match => average of 1,2,3 = 2
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            LiteralValue::Number(2.0)
+        );
+    }
+
+    #[test]
+    fn averageifs_eval_window_parity_with_dispatch() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
+        let ctx = interp(&wb);
+        let avg = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(2),
+                LiteralValue::Int(4),
+                LiteralValue::Int(6),
+                LiteralValue::Int(8),
+            ]])),
+            None,
+        );
+        let crit_rng = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(0),
+                LiteralValue::Int(1),
+                LiteralValue::Int(0),
+                LiteralValue::Int(1),
+            ]])),
+            None,
+        );
+        let crit = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text(">0".into())), None);
+        let args = vec![
+            ArgumentHandle::new(&avg, &ctx),
+            ArgumentHandle::new(&crit_rng, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+        ];
+        let f = ctx.context.get_function("", "AVERAGEIFS").unwrap();
+        let disp = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        // Call eval_window directly
+        let fctx = ctx.function_context(None);
+        let mut wctx = crate::window_ctx::SimpleWindowCtx::new(
+            &args,
+            &fctx,
+            crate::window_ctx::WindowSpec::default(),
+        );
+        let win = f.eval_window(&mut wctx).unwrap().unwrap();
+        assert_eq!(disp, win);
+    }
+
+    #[test]
+    fn averageifs_multiple_criteria_pairs() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
+        let ctx = interp(&wb);
+        // avg [10,20,30,40], city [Bellevue,Issaquah,Bellevue,Issaquah], beds [2,3,4,5]
+        let avg = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(10),
+                LiteralValue::Int(20),
+                LiteralValue::Int(30),
+                LiteralValue::Int(40),
+            ]])),
+            None,
+        );
+        let city = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Text("Bellevue".into()),
+                LiteralValue::Text("Issaquah".into()),
+                LiteralValue::Text("Bellevue".into()),
+                LiteralValue::Text("Issaquah".into()),
+            ]])),
+            None,
+        );
+        let beds = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(2),
+                LiteralValue::Int(3),
+                LiteralValue::Int(4),
+                LiteralValue::Int(5),
+            ]])),
+            None,
+        );
+        let c_city = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Text("Bellevue".into())),
+            None,
+        );
+        let c_beds = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text(">=4".into())), None);
+        let args = vec![
+            ArgumentHandle::new(&avg, &ctx),
+            ArgumentHandle::new(&city, &ctx),
+            ArgumentHandle::new(&c_city, &ctx),
+            ArgumentHandle::new(&beds, &ctx),
+            ArgumentHandle::new(&c_beds, &ctx),
+        ];
+        let f = ctx.context.get_function("", "AVERAGEIFS").unwrap();
+        // Matches entries 3: avg 30 → 30
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            LiteralValue::Number(30.0)
+        );
+    }
+
+    #[test]
+    fn averageifs_error_in_criteria_range_does_not_crash_and_never_matches() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
+        let ctx = interp(&wb);
+        let avg = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(1),
+                LiteralValue::Int(2),
+            ]])),
+            None,
+        );
+        let crit_rng = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Error(ExcelError::from_error_string("#N/A")),
+                LiteralValue::Int(1),
+            ]])),
+            None,
+        );
+        let crit = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("=1".into())), None);
+        let args = vec![
+            ArgumentHandle::new(&avg, &ctx),
+            ArgumentHandle::new(&crit_rng, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+        ];
+        let f = ctx.context.get_function("", "AVERAGEIFS").unwrap();
+        // Only second matches -> average 2
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            LiteralValue::Number(2.0)
+        );
+    }
+
+    #[test]
+    fn averageifs_case_insensitive_text_matching() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
+        let ctx = interp(&wb);
+        let avg = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(5),
+                LiteralValue::Int(10),
+            ]])),
+            None,
+        );
+        let crit_rng = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Text("ALPHA".into()),
+                LiteralValue::Text("alpha".into()),
+            ]])),
+            None,
+        );
+        let crit = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Text("alpha".into())),
+            None,
+        );
+        let args = vec![
+            ArgumentHandle::new(&avg, &ctx),
+            ArgumentHandle::new(&crit_rng, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+        ];
+        let f = ctx.context.get_function("", "AVERAGEIFS").unwrap();
+        // both match case-insensitively -> average 7.5
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            LiteralValue::Number(7.5)
+        );
+    }
 }
 
 /* ─────────────────────────── TRIG: circular ────────────────────────── */

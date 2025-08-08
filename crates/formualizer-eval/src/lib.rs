@@ -10,6 +10,7 @@ pub mod map_ctx;
 pub mod rng;
 pub mod stripes;
 pub mod traits;
+pub mod window_ctx;
 
 pub mod builtins;
 pub mod reference;

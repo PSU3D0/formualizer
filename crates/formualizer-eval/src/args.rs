@@ -98,7 +98,7 @@ pub struct ValidationOptions {
 
 // Legacy adapter removed in clean break.
 
-fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError> {
+pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError> {
     match v {
         LiteralValue::Text(s) => {
             let s_trim = s.trim();

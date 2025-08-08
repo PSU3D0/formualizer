@@ -187,8 +187,7 @@ pub trait FnMapCtx {
     fn finalize(&mut self) -> LiteralValue;
 }
 
-/// Context for `eval_window` (Windowed operations).
-pub trait FnWindowCtx {}
+// Windowed functions use the trait from window_ctx module.
 
 /// Revised, object-safe trait for all Excel-style functions.
 ///
@@ -261,7 +260,10 @@ pub trait Function: Send + Sync + 'static {
     /// An optional, optimized path for windowed functions (e.g., `MOVING_AVERAGE`).
     ///
     /// This method is called by the engine if the `WINDOWED` capability is set.
-    fn eval_window(&self, _w: &mut dyn FnWindowCtx) -> Option<Result<(), ExcelError>> {
+    fn eval_window<'a, 'b>(
+        &self,
+        _w: &mut crate::window_ctx::SimpleWindowCtx<'a, 'b>,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
         None
     }
 
@@ -322,10 +324,15 @@ pub trait Function: Send + Sync + 'static {
         }
 
         if caps.contains(FnCaps::WINDOWED) {
-            // Try eval_window path (not implemented yet)
-            // if let Some(result) = self.eval_window(...) {
-            //     return result;
-            // }
+            // Construct a minimal window context with a default spec; functions can downcast.
+            let mut w = crate::window_ctx::SimpleWindowCtx::new(
+                args,
+                ctx,
+                crate::window_ctx::WindowSpec::default(),
+            );
+            if let Some(result) = self.eval_window(&mut w) {
+                return result;
+            }
         }
 
         // Fallback to scalar evaluation
