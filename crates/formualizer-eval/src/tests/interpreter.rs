@@ -388,14 +388,52 @@ mod tests {
     fn test_array_mismatched_dimensions() {
         let wb = create_workbook();
         // {1,2} is a 1x2 array and {3} is a 1x1 array.
-        // Expected: elementwise addition with missing values treated as Empty (coerced to 0).
-        // => [[1+3, 2+0]] = [[4, 2]]
+        // Expected: broadcasting {3} across both columns => [[1+3, 2+3]] = [[4, 5]]
         let result = evaluate_formula("={1,2}+{3}", &wb).unwrap();
         let expected = LiteralValue::Array(vec![vec![
             LiteralValue::Number(4.0),
-            LiteralValue::Number(2.0),
+            LiteralValue::Number(5.0),
         ]]);
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn interpreter_broadcasts_comparisons() {
+        let wb = create_workbook();
+        // {1,2} = {1;2} => 2x2 booleans
+        match evaluate_formula("={1,2}={1;2}", &wb).unwrap() {
+            LiteralValue::Array(rows) => {
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 2);
+                assert_eq!(rows[0][0], LiteralValue::Boolean(true));
+                assert_eq!(rows[0][1], LiteralValue::Boolean(false));
+                assert_eq!(rows[1][0], LiteralValue::Boolean(false));
+                assert_eq!(rows[1][1], LiteralValue::Boolean(true));
+            }
+            v => panic!("unexpected {v:?}"),
+        }
+    }
+
+    #[test]
+    fn interpreter_broadcasts_per_cell_errors() {
+        let wb = create_workbook();
+        // {1,0} ^ {-1;0.5} => per-cell #DIV/0! where 0^-1; others numeric
+        match evaluate_formula("={1,0}^{-1;0.5}", &wb).unwrap() {
+            LiteralValue::Array(rows) => {
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 2);
+                // 1^-1 = 1; 0^-1 is treated as #NUM! by current semantics
+                assert_eq!(rows[0][0], LiteralValue::Number(1.0));
+                match &rows[0][1] {
+                    LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
+                    v => panic!("expected num error, got {v:?}"),
+                }
+                // 1^0.5 = 1; 0^0.5 = 0
+                assert_eq!(rows[1][0], LiteralValue::Number(1.0));
+                assert_eq!(rows[1][1], LiteralValue::Number(0.0));
+            }
+            v => panic!("unexpected {v:?}"),
+        }
     }
 
     #[test]

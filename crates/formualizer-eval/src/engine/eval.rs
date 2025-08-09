@@ -186,11 +186,20 @@ where
                     return Ok(LiteralValue::Int(0)); // Empty cells evaluate to 0
                 }
             }
-            _ => {
-                return Ok(LiteralValue::Error(
-                    ExcelError::new(formualizer_common::ExcelErrorKind::Na)
-                        .with_message("Array formulas not yet supported".to_string()),
-                ));
+            VertexKind::FormulaArray => {
+                if let Some(ast) = self.graph.get_formula(vertex_id) {
+                    ast.clone()
+                } else {
+                    return Ok(LiteralValue::Int(0));
+                }
+            }
+            VertexKind::InfiniteRange | VertexKind::Range | VertexKind::External => {
+                // Not directly evaluatable here; return stored or 0
+                if let Some(value) = self.graph.get_value(vertex_id) {
+                    return Ok(value.clone());
+                } else {
+                    return Ok(LiteralValue::Int(0));
+                }
             }
         };
 
@@ -203,10 +212,89 @@ where
         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
         let result = interpreter.evaluate_ast(&ast);
 
-        // Store the result back into the graph.
-        self.graph.update_vertex_value(vertex_id, result.clone()?);
+        // If array result, perform spill from the anchor cell
+        match &result {
+            Ok(LiteralValue::Array(rows)) => {
+                // Update kind to FormulaArray for tracking
+                self.graph
+                    .set_kind(vertex_id, crate::engine::vertex::VertexKind::FormulaArray);
+                // Build target cells rectangle starting from anchor
+                let anchor = self
+                    .graph
+                    .get_cell_ref(vertex_id)
+                    .expect("cell ref for vertex");
+                let sheet_id = anchor.sheet_id;
+                let h = rows.len() as u32;
+                let w = rows.first().map(|r| r.len()).unwrap_or(0) as u32;
+                // Bounds check to avoid out-of-range writes (align to PackedCoord capacity)
+                const PACKED_MAX_ROW: u32 = 1_048_575; // 20-bit max
+                const PACKED_MAX_COL: u32 = 16_383; // 14-bit max
+                let end_row = anchor.coord.row.saturating_add(h).saturating_sub(1);
+                let end_col = anchor.coord.col.saturating_add(w).saturating_sub(1);
+                if end_row > PACKED_MAX_ROW || end_col > PACKED_MAX_COL {
+                    let spill_err = ExcelError::new(ExcelErrorKind::Spill)
+                        .with_message("Spill exceeds sheet bounds")
+                        .with_extra(formualizer_common::ExcelErrorExtra::Spill {
+                            expected_rows: h,
+                            expected_cols: w,
+                        });
+                    let spill_val = LiteralValue::Error(spill_err.clone());
+                    self.graph.update_vertex_value(vertex_id, spill_val.clone());
+                    return Ok(spill_val);
+                }
+                let mut targets = Vec::new();
+                for r in 0..h {
+                    for c in 0..w {
+                        targets.push(self.graph.make_cell_ref_internal(
+                            sheet_id,
+                            anchor.coord.row + r,
+                            anchor.coord.col + c,
+                        ));
+                    }
+                }
 
-        result
+                // Plan spill: if blocked, set anchor to #SPILL!
+                match self.graph.plan_spill_region(vertex_id, &targets) {
+                    Ok(()) => {
+                        // Commit: write values to grid
+                        if let Err(e) =
+                            self.graph
+                                .commit_spill_region(vertex_id, targets, rows.clone())
+                        {
+                            // If commit fails, mark as error
+                            self.graph
+                                .update_vertex_value(vertex_id, LiteralValue::Error(e.clone()));
+                            return Ok(LiteralValue::Error(e));
+                        }
+                        // Anchor shows the top-left value, like Excel
+                        let top_left = rows
+                            .get(0)
+                            .and_then(|r| r.get(0))
+                            .cloned()
+                            .unwrap_or(LiteralValue::Empty);
+                        self.graph.update_vertex_value(vertex_id, top_left.clone());
+                        Ok(top_left)
+                    }
+                    Err(e) => {
+                        let spill_err = ExcelError::new(ExcelErrorKind::Spill)
+                            .with_message(e.message.unwrap_or_else(|| "Spill blocked".to_string()))
+                            .with_extra(formualizer_common::ExcelErrorExtra::Spill {
+                                expected_rows: h,
+                                expected_cols: w,
+                            });
+                        let spill_val = LiteralValue::Error(spill_err.clone());
+                        self.graph.update_vertex_value(vertex_id, spill_val.clone());
+                        Ok(spill_val)
+                    }
+                }
+            }
+            _ => {
+                // Scalar result: store value and ensure any previous spill is cleared
+                self.graph.clear_spill_region(vertex_id);
+                self.graph.update_vertex_value(vertex_id, result.clone()?);
+                result
+            }
+        }
     }
 
     /// Evaluate only the necessary precedents for specific target cells (demand-driven)

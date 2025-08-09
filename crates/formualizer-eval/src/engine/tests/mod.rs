@@ -35,3 +35,5 @@ mod vertex_lifecycle;
 mod volatile_rng;
 
 mod infinite_ranges;
+mod spill_basic;
+mod spill_edges;

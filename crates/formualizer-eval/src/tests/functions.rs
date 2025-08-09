@@ -411,3 +411,105 @@ fn interpreter_evaluate_ast_as_reference_returns_reference_for_ast_reference() {
         _ => panic!("expected range reference"),
     }
 }
+
+#[test]
+fn interpreter_broadcasts_numeric_binary() {
+    let wb = TestWorkbook::new();
+    let ctx = interp(&wb);
+
+    // {1,2;3,4} + {10;20} => {11,12;23,24}
+    let left = LiteralValue::Array(vec![
+        vec![LiteralValue::Int(1), LiteralValue::Int(2)],
+        vec![LiteralValue::Int(3), LiteralValue::Int(4)],
+    ]);
+    let right = LiteralValue::Array(vec![
+        vec![LiteralValue::Int(10)],
+        vec![LiteralValue::Int(20)],
+    ]);
+    let lnode = ASTNode::new(ASTNodeType::Literal(left), None);
+    let rnode = ASTNode::new(ASTNodeType::Literal(right), None);
+    let plus = ASTNode::new(
+        ASTNodeType::BinaryOp {
+            op: "+".into(),
+            left: Box::new(lnode),
+            right: Box::new(rnode),
+        },
+        None,
+    );
+    let out = ctx.evaluate_ast(&plus).unwrap();
+    match out {
+        LiteralValue::Array(rows) => {
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0].len(), 2);
+            assert_eq!(rows[0][0], LiteralValue::Number(11.0));
+            assert_eq!(rows[0][1], LiteralValue::Number(12.0));
+            assert_eq!(rows[1][0], LiteralValue::Number(23.0));
+            assert_eq!(rows[1][1], LiteralValue::Number(24.0));
+        }
+        v => panic!("unexpected {v:?}"),
+    }
+}
+
+#[test]
+fn interpreter_broadcast_scalar_over_array() {
+    let wb = TestWorkbook::new();
+    let ctx = interp(&wb);
+    // 2 * {1,2,3} => {2,4,6}
+    let lnode = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(2)), None);
+    let right = LiteralValue::Array(vec![vec![
+        LiteralValue::Int(1),
+        LiteralValue::Int(2),
+        LiteralValue::Int(3),
+    ]]);
+    let rnode = ASTNode::new(ASTNodeType::Literal(right), None);
+    let node = ASTNode::new(
+        ASTNodeType::BinaryOp {
+            op: "*".into(),
+            left: Box::new(lnode),
+            right: Box::new(rnode),
+        },
+        None,
+    );
+    let out = ctx.evaluate_ast(&node).unwrap();
+    match out {
+        LiteralValue::Array(rows) => {
+            assert_eq!(
+                rows[0],
+                vec![
+                    LiteralValue::Number(2.0),
+                    LiteralValue::Number(4.0),
+                    LiteralValue::Number(6.0),
+                ]
+            );
+        }
+        v => panic!("unexpected {v:?}"),
+    }
+}
+
+#[test]
+fn interpreter_incompatible_broadcast_is_value_error() {
+    let wb = TestWorkbook::new();
+    let ctx = interp(&wb);
+
+    // {1,2} + {1,2,3} -> #VALUE!
+    let l = LiteralValue::Array(vec![vec![LiteralValue::Int(1), LiteralValue::Int(2)]]);
+    let r = LiteralValue::Array(vec![vec![
+        LiteralValue::Int(1),
+        LiteralValue::Int(2),
+        LiteralValue::Int(3),
+    ]]);
+    let lnode = ASTNode::new(ASTNodeType::Literal(l), None);
+    let rnode = ASTNode::new(ASTNodeType::Literal(r), None);
+    let n = ASTNode::new(
+        ASTNodeType::BinaryOp {
+            op: "+".into(),
+            left: Box::new(lnode),
+            right: Box::new(rnode),
+        },
+        None,
+    );
+    match ctx.evaluate_ast(&n).unwrap() {
+        LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
+        v => panic!("expected value error, got {v:?}"),
+    }
+}

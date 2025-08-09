@@ -1,5 +1,6 @@
 use crate::{
     CellRef,
+    broadcast::{broadcast_shape, project_index},
     traits::{ArgumentHandle, DefaultFunctionContext, EvaluationContext},
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -248,74 +249,56 @@ impl<'a> Interpreter<'a> {
     where
         F: Fn(f64, f64) -> f64 + Copy,
     {
-        use LiteralValue::*;
-        match (left, right) {
-            (Array(l), Array(r)) => self.combine_arrays(l, r, |a, b| self.numeric_binary(a, b, f)),
-            (Array(arr), v) => self.map_array(arr, |x| self.numeric_binary(x, v.clone(), f)),
-            (v, Array(arr)) => self.map_array(arr, |x| self.numeric_binary(v.clone(), x, f)),
-            (l, r) => {
-                let a = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
-                let b = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
-                match (a, b) {
-                    (Ok(a), Ok(b)) => match crate::coercion::sanitize_numeric(f(a, b)) {
-                        Ok(n2) => Ok(Number(n2)),
-                        Err(e) => Ok(LiteralValue::Error(e)),
-                    },
-                    (Err(e), _) | (_, Err(e)) => Ok(LiteralValue::Error(e)),
-                }
+        self.broadcast_apply(left, right, |l, r| {
+            let a = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
+            let b = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
+            match (a, b) {
+                (Ok(a), Ok(b)) => match crate::coercion::sanitize_numeric(f(a, b)) {
+                    Ok(n2) => Ok(LiteralValue::Number(n2)),
+                    Err(e) => Ok(LiteralValue::Error(e)),
+                },
+                (Err(e), _) | (_, Err(e)) => Ok(LiteralValue::Error(e)),
             }
-        }
+        })
     }
 
     fn divide(&self, left: LiteralValue, right: LiteralValue) -> Result<LiteralValue, ExcelError> {
-        let denom_num = |v: &LiteralValue| {
-            crate::coercion::to_number_lenient_with_locale(v, &self.context.locale())
-        };
-        use LiteralValue::*;
-        match (left, right) {
-            (Array(l), Array(r)) => self.combine_arrays(l, r, |a, b| self.divide(a, b)),
-            (Array(arr), v) => self.map_array(arr, |x| self.divide(x, v.clone())),
-            (v, Array(arr)) => self.map_array(arr, |x| self.divide(v.clone(), x)),
-            (l, r) => {
-                let d = denom_num(&r);
-                if matches!(d, Ok(n) if n == 0.0) {
-                    return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                        "#DIV/0!",
-                    )));
-                }
-                let (ln, rn) = match (
-                    crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale()),
-                    d,
-                ) {
-                    (Ok(a), Ok(b)) => (a, b),
-                    (Err(e), _) | (_, Err(e)) => {
-                        return Ok(LiteralValue::Error(e));
-                    }
-                };
-                match crate::coercion::sanitize_numeric(ln / rn) {
-                    Ok(n) => Ok(LiteralValue::Number(n)),
-                    Err(e) => Ok(LiteralValue::Error(e)),
-                }
+        self.broadcast_apply(left, right, |l, r| {
+            let ln = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
+            let rn = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
+            let (a, b) = match (ln, rn) {
+                (Ok(a), Ok(b)) => (a, b),
+                (Err(e), _) | (_, Err(e)) => return Ok(LiteralValue::Error(e)),
+            };
+            if b == 0.0 {
+                return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                    "#DIV/0!",
+                )));
             }
-        }
+            match crate::coercion::sanitize_numeric(a / b) {
+                Ok(n) => Ok(LiteralValue::Number(n)),
+                Err(e) => Ok(LiteralValue::Error(e)),
+            }
+        })
     }
 
     fn power(&self, left: LiteralValue, right: LiteralValue) -> Result<LiteralValue, ExcelError> {
-        let try_pow = |a: f64, b: f64| {
+        self.broadcast_apply(left, right, |l, r| {
+            let ln = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
+            let rn = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
+            let (a, b) = match (ln, rn) {
+                (Ok(a), Ok(b)) => (a, b),
+                (Err(e), _) | (_, Err(e)) => return Ok(LiteralValue::Error(e)),
+            };
+            // Excel domain: negative base with non-integer exponent -> #NUM!
             if a < 0.0 && b.fract() != 0.0 {
-                None
-            } else {
-                Some(a.powf(b))
+                return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
             }
-        };
-        self.numeric_binary(left, right, |a, b| try_pow(a, b).unwrap_or(f64::NAN))
-            .map(|v| match v {
-                LiteralValue::Number(n) => match crate::coercion::sanitize_numeric(n) {
-                    Ok(n2) => LiteralValue::Number(n2),
-                    Err(e) => LiteralValue::Error(e),
-                },
-                other => other,
-            })
+            match crate::coercion::sanitize_numeric(a.powf(b)) {
+                Ok(n) => Ok(LiteralValue::Number(n)),
+                Err(e) => Ok(LiteralValue::Error(e)),
+            }
+        })
     }
 
     fn map_array<F>(&self, arr: Vec<Vec<LiteralValue>>, f: F) -> Result<LiteralValue, ExcelError>
@@ -345,25 +328,28 @@ impl<'a> Interpreter<'a> {
     where
         F: Fn(LiteralValue, LiteralValue) -> Result<LiteralValue, ExcelError> + Copy,
     {
-        let rows = l.len().max(r.len());
-        let cols = l
-            .iter()
-            .map(|r| r.len())
-            .max()
-            .unwrap_or(0)
-            .max(r.iter().map(|r| r.len()).max().unwrap_or(0));
-        let mut out = Vec::with_capacity(rows);
-        for i in 0..rows {
-            let mut row = Vec::with_capacity(cols);
-            for j in 0..cols {
+        // Use strict broadcasting across dimensions
+        let l_shape = (l.len(), l.first().map(|r| r.len()).unwrap_or(0));
+        let r_shape = (r.len(), r.first().map(|r| r.len()).unwrap_or(0));
+        let target = match broadcast_shape(&[l_shape, r_shape]) {
+            Ok(s) => s,
+            Err(e) => return Ok(LiteralValue::Error(e)),
+        };
+
+        let mut out = Vec::with_capacity(target.0);
+        for i in 0..target.0 {
+            let mut row = Vec::with_capacity(target.1);
+            for j in 0..target.1 {
+                let (li, lj) = project_index((i, j), l_shape);
+                let (ri, rj) = project_index((i, j), r_shape);
                 let lv = l
-                    .get(i)
-                    .and_then(|r| r.get(j))
+                    .get(li)
+                    .and_then(|r| r.get(lj))
                     .cloned()
                     .unwrap_or(LiteralValue::Empty);
                 let rv = r
-                    .get(i)
-                    .and_then(|r| r.get(j))
+                    .get(ri)
+                    .and_then(|r| r.get(rj))
                     .cloned()
                     .unwrap_or(LiteralValue::Empty);
                 row.push(match f(lv, rv) {
@@ -374,6 +360,74 @@ impl<'a> Interpreter<'a> {
             out.push(row);
         }
         Ok(LiteralValue::Array(out))
+    }
+
+    fn broadcast_apply<F>(
+        &self,
+        left: LiteralValue,
+        right: LiteralValue,
+        f: F,
+    ) -> Result<LiteralValue, ExcelError>
+    where
+        F: Fn(LiteralValue, LiteralValue) -> Result<LiteralValue, ExcelError> + Copy,
+    {
+        use LiteralValue::*;
+        match (left, right) {
+            (Array(l), Array(r)) => self.combine_arrays(l, r, f),
+            (Array(arr), v) => {
+                let shape_l = (arr.len(), arr.first().map(|r| r.len()).unwrap_or(0));
+                let shape_r = (1usize, 1usize);
+                let target = match broadcast_shape(&[shape_l, shape_r]) {
+                    Ok(s) => s,
+                    Err(e) => return Ok(LiteralValue::Error(e)),
+                };
+                let mut out = Vec::with_capacity(target.0);
+                for i in 0..target.0 {
+                    let mut row = Vec::with_capacity(target.1);
+                    for j in 0..target.1 {
+                        let (li, lj) = project_index((i, j), shape_l);
+                        let lv = arr
+                            .get(li)
+                            .and_then(|r| r.get(lj))
+                            .cloned()
+                            .unwrap_or(LiteralValue::Empty);
+                        row.push(match f(lv, v.clone()) {
+                            Ok(vv) => vv,
+                            Err(e) => LiteralValue::Error(e),
+                        });
+                    }
+                    out.push(row);
+                }
+                Ok(LiteralValue::Array(out))
+            }
+            (v, Array(arr)) => {
+                let shape_l = (1usize, 1usize);
+                let shape_r = (arr.len(), arr.first().map(|r| r.len()).unwrap_or(0));
+                let target = match broadcast_shape(&[shape_l, shape_r]) {
+                    Ok(s) => s,
+                    Err(e) => return Ok(LiteralValue::Error(e)),
+                };
+                let mut out = Vec::with_capacity(target.0);
+                for i in 0..target.0 {
+                    let mut row = Vec::with_capacity(target.1);
+                    for j in 0..target.1 {
+                        let (ri, rj) = project_index((i, j), shape_r);
+                        let rv = arr
+                            .get(ri)
+                            .and_then(|r| r.get(rj))
+                            .cloned()
+                            .unwrap_or(LiteralValue::Empty);
+                        row.push(match f(v.clone(), rv) {
+                            Ok(vv) => vv,
+                            Err(e) => LiteralValue::Error(e),
+                        });
+                    }
+                    out.push(row);
+                }
+                Ok(LiteralValue::Array(out))
+            }
+            (l, r) => f(l, r),
+        }
     }
 
     /* ---------- coercion helpers ---------- */
@@ -422,11 +476,11 @@ impl<'a> Interpreter<'a> {
             return Ok(right);
         }
 
-        // arrays: element‑wise
+        // arrays: element‑wise with broadcasting
         match (left, right) {
             (Array(l), Array(r)) => self.combine_arrays(l, r, |a, b| self.compare(op, a, b)),
-            (Array(arr), v) => self.map_array(arr, |x| self.compare(op, x, v.clone())),
-            (v, Array(arr)) => self.map_array(arr, |x| self.compare(op, v.clone(), x)),
+            (Array(arr), v) => self.broadcast_apply(Array(arr), v, |a, b| self.compare(op, a, b)),
+            (v, Array(arr)) => self.broadcast_apply(v, Array(arr), |a, b| self.compare(op, a, b)),
             (l, r) => {
                 let res = match (l, r) {
                     (Number(a), Number(b)) => self.cmp_f64(a, b, op),

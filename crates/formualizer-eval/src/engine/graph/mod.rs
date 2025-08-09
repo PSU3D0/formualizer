@@ -207,6 +207,10 @@ pub struct DependencyGraph {
     // Evaluation configuration
     config: super::EvalConfig,
 
+    // Spill registry: anchor -> cells, and reverse mapping for blockers
+    spill_anchor_to_cells: FxHashMap<VertexId, Vec<CellRef>>,
+    spill_cell_to_anchor: FxHashMap<CellRef, VertexId>,
+
     #[cfg(test)]
     instr: GraphInstrumentation,
 }
@@ -280,6 +284,8 @@ impl DependencyGraph {
             sheet_named_ranges: FxHashMap::default(),
             vertex_to_names: FxHashMap::default(),
             config: super::EvalConfig::default(),
+            spill_anchor_to_cells: FxHashMap::default(),
+            spill_cell_to_anchor: FxHashMap::default(),
             #[cfg(test)]
             instr: GraphInstrumentation::default(),
         }
@@ -1434,6 +1440,126 @@ impl DependencyGraph {
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
         let value_ref = self.data_store.store_value(value);
         self.vertex_values.insert(vertex_id, value_ref);
+    }
+
+    /// Plan a spill region for an anchor; returns #SPILL! if blocked
+    pub fn plan_spill_region(
+        &self,
+        anchor: VertexId,
+        target_cells: &[CellRef],
+    ) -> Result<(), ExcelError> {
+        use formualizer_common::ExcelErrorKind;
+        // Allow overlapping with previously owned spill cells by this anchor
+        for cell in target_cells {
+            // If cell is already owned by this anchor's previous spill, it's allowed.
+            let owned_by_anchor = match self.spill_cell_to_anchor.get(cell) {
+                Some(&existing_anchor) if existing_anchor == anchor => true,
+                Some(_other) => {
+                    return Err(ExcelError::new(ExcelErrorKind::Spill)
+                        .with_message("Spill blocked by another spill"));
+                }
+                None => false,
+            };
+
+            if owned_by_anchor {
+                continue;
+            }
+
+            // If cell has a vertex with a non-empty value and is not the anchor cell itself, block
+            if let Some(&vid) = self.cell_to_vertex.get(cell) {
+                if vid != anchor {
+                    if let Some(vref) = self.vertex_values.get(&vid) {
+                        let v = self.data_store.retrieve_value(*vref);
+                        if !matches!(v, LiteralValue::Empty) {
+                            return Err(ExcelError::new(ExcelErrorKind::Spill)
+                                .with_message("Spill blocked by value"));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Commit a spill: write values to target cells, update registry, and clear prior spill cells not reused.
+    pub fn commit_spill_region(
+        &mut self,
+        anchor: VertexId,
+        target_cells: Vec<CellRef>,
+        values: Vec<Vec<LiteralValue>>,
+    ) -> Result<(), ExcelError> {
+        // Previous cells for this anchor
+        let prev_cells = self
+            .spill_anchor_to_cells
+            .get(&anchor)
+            .cloned()
+            .unwrap_or_default();
+        use rustc_hash::FxHashSet;
+        let new_set: FxHashSet<CellRef> = target_cells.iter().copied().collect();
+        let prev_set: FxHashSet<CellRef> = prev_cells.iter().copied().collect();
+
+        // Clear previous cells not in new set by setting them to Empty and removing mapping
+        for cell in prev_cells.iter() {
+            if !new_set.contains(cell) {
+                let sheet = self.sheet_name(cell.sheet_id).to_string();
+                let _ = self.set_cell_value(
+                    &sheet,
+                    cell.coord.row,
+                    cell.coord.col,
+                    LiteralValue::Empty,
+                );
+                self.spill_cell_to_anchor.remove(cell);
+            }
+        }
+
+        // Write new values and mark ownership
+        // values are row-major aligned with target_cells rectangle
+        if target_cells.is_empty() {
+            // Nothing to do
+            self.spill_anchor_to_cells.remove(&anchor);
+            return Ok(());
+        }
+        // Determine rectangle from target_cells by min/max; assume contiguous and row-major
+        let first = target_cells.first().copied().unwrap();
+        let row0 = first.coord.row;
+        let col0 = first.coord.col;
+        let sheet_name = self.sheet_name(first.sheet_id).to_string();
+        for (r_off, row_vals) in values.iter().enumerate() {
+            for (c_off, v) in row_vals.iter().enumerate() {
+                let _ = self.set_cell_value(
+                    &sheet_name,
+                    row0 + r_off as u32,
+                    col0 + c_off as u32,
+                    v.clone(),
+                );
+                let cell_ref = self.make_cell_ref_internal(
+                    first.sheet_id,
+                    row0 + r_off as u32,
+                    col0 + c_off as u32,
+                );
+                self.spill_cell_to_anchor.insert(cell_ref, anchor);
+            }
+        }
+
+        // Update anchor mapping
+        self.spill_anchor_to_cells.insert(anchor, target_cells);
+        Ok(())
+    }
+
+    /// Clear an existing spill region for an anchor (set cells to Empty and forget ownership)
+    pub fn clear_spill_region(&mut self, anchor: VertexId) {
+        if let Some(cells) = self.spill_anchor_to_cells.remove(&anchor) {
+            for cell in cells {
+                let sheet = self.sheet_name(cell.sheet_id).to_string();
+                let _ = self.set_cell_value(
+                    &sheet,
+                    cell.coord.row,
+                    cell.coord.col,
+                    LiteralValue::Empty,
+                );
+                self.spill_cell_to_anchor.remove(&cell);
+            }
+        }
     }
 
     /// Check if a vertex exists
