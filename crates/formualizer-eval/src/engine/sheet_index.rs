@@ -75,6 +75,57 @@ impl SheetIndex {
             .insert(vertex_id);
     }
 
+    /// Add many vertices in a single pass. Assumes coords belong to same sheet index.
+    pub fn add_vertices_batch(&mut self, items: &[(PackedCoord, VertexId)]) {
+        if items.is_empty() {
+            return;
+        }
+        // If trees are empty we can bulk build from sorted points in O(n log n) with better constants.
+        if self.row_tree.is_empty() && self.col_tree.is_empty() {
+            // Build row points
+            let mut row_items: Vec<(u32, HashSet<VertexId>)> = Vec::with_capacity(items.len());
+            let mut col_items: Vec<(u32, HashSet<VertexId>)> = Vec::with_capacity(items.len());
+            // Use temp hash maps for merging duplicates
+            use rustc_hash::FxHashMap;
+            let mut row_map: FxHashMap<u32, HashSet<VertexId>> = FxHashMap::default();
+            let mut col_map: FxHashMap<u32, HashSet<VertexId>> = FxHashMap::default();
+            for (coord, vid) in items {
+                row_map
+                    .entry(coord.row())
+                    .or_insert_with(HashSet::new)
+                    .insert(*vid);
+                col_map
+                    .entry(coord.col())
+                    .or_insert_with(HashSet::new)
+                    .insert(*vid);
+            }
+            row_items.reserve(row_map.len());
+            for (k, v) in row_map.into_iter() {
+                row_items.push((k, v));
+            }
+            col_items.reserve(col_map.len());
+            for (k, v) in col_map.into_iter() {
+                col_items.push((k, v));
+            }
+            self.row_tree.bulk_build_points(row_items);
+            self.col_tree.bulk_build_points(col_items);
+            return;
+        }
+        // Fallback: incremental for already populated index
+        for (coord, vid) in items {
+            let row = coord.row();
+            let col = coord.col();
+            self.row_tree
+                .entry(row, row)
+                .or_insert_with(HashSet::new)
+                .insert(*vid);
+            self.col_tree
+                .entry(col, col)
+                .or_insert_with(HashSet::new)
+                .insert(*vid);
+        }
+    }
+
     /// Remove a vertex from the index.
     ///
     /// ## Complexity

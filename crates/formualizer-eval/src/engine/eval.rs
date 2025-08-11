@@ -113,6 +113,10 @@ where
         self.graph.set_default_sheet_by_id(id);
     }
 
+    pub fn set_sheet_index_mode(&mut self, mode: crate::engine::SheetIndexMode) {
+        self.graph.set_sheet_index_mode(mode);
+    }
+
     /// Set a cell value
     pub fn set_cell_value(
         &mut self,

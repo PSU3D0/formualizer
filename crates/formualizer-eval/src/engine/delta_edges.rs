@@ -524,6 +524,23 @@ impl CsrMutableEdges {
         idx
     }
 
+    /// Add many vertices at once; single rebuild at end.
+    pub fn add_vertices_batch(&mut self, items: &[(PackedCoord, u32)]) {
+        if items.is_empty() {
+            return;
+        }
+        let start_len = self.coords.len();
+        self.coords.reserve(items.len());
+        self.vertex_ids.reserve(items.len());
+        for (coord, vid) in items {
+            self.coords.push(*coord);
+            self.vertex_ids.push(*vid);
+        }
+        // Single rebuild to incorporate all new vertices.
+        self.rebuild();
+        debug_assert_eq!(self.coords.len(), start_len + items.len());
+    }
+
     /// Update coordinate for a vertex in the cache
     /// Marks for rebuild to maintain sort order
     pub fn update_coord(&mut self, vertex_id: VertexId, new_coord: PackedCoord) {

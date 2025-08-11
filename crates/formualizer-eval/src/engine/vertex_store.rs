@@ -180,6 +180,30 @@ impl VertexStore {
         }
     }
 
+    /// Reserve additional capacity for upcoming vertex allocations.
+    pub fn reserve(&mut self, additional: usize) {
+        if additional == 0 {
+            return;
+        }
+        // Ensure each column has enough spare capacity
+        let target = self.len + additional;
+        if self.coords.capacity() < target {
+            self.coords.reserve(additional);
+        }
+        if self.sheet_kind.capacity() < target {
+            self.sheet_kind.reserve(additional);
+        }
+        if self.flags.capacity() < target {
+            self.flags.reserve(additional);
+        }
+        if self.value_ref.capacity() < target {
+            self.value_ref.reserve(additional);
+        }
+        if self.edge_offset.capacity() < target {
+            self.edge_offset.reserve(additional);
+        }
+    }
+
     /// Allocate a new vertex, returning its ID
     /// IDs start at FIRST_NORMAL_VERTEX to reserve 0-1023 for special vertices
     pub fn allocate(&mut self, coord: PackedCoord, sheet: SheetId, flags: u8) -> VertexId {

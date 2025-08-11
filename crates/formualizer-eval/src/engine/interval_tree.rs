@@ -227,6 +227,69 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
             high,
         }
     }
+
+    /// Bulk build optimization for a collection of point intervals [x,x].
+    /// Expects (low == high) for all items. Existing content is discarded if tree is empty; if not empty, falls back to incremental inserts.
+    pub fn bulk_build_points(&mut self, mut items: Vec<(u32, std::collections::HashSet<T>)>) {
+        if self.root.is_some() {
+            // Fallback: incremental insert to preserve existing nodes
+            for (k, set) in items.into_iter() {
+                for v in set {
+                    self.insert(k, k, v);
+                }
+            }
+            return;
+        }
+        if items.is_empty() {
+            return;
+        }
+        // Sort by coordinate to build balanced tree
+        items.sort_by_key(|(k, _)| *k);
+        // Deduplicate keys by merging sets
+        let mut dedup: Vec<(u32, std::collections::HashSet<T>)> = Vec::with_capacity(items.len());
+        for (k, set) in items.into_iter() {
+            if let Some(last) = dedup.last_mut() {
+                if last.0 == k {
+                    last.1.extend(set);
+                    continue;
+                }
+            }
+            dedup.push((k, set));
+        }
+        fn build_balanced<T: Clone + Eq + std::hash::Hash>(
+            slice: &[(u32, std::collections::HashSet<T>)],
+        ) -> Option<Box<Node<T>>> {
+            if slice.is_empty() {
+                return None;
+            }
+            let mid = slice.len() / 2;
+            let (low, values) = (&slice[mid].0, &slice[mid].1);
+            let left = build_balanced(&slice[..mid]);
+            let right = build_balanced(&slice[mid + 1..]);
+            // max_high is same as low (point interval); but need subtree max
+            let mut max_high = *low;
+            if let Some(ref l) = left {
+                if l.max_high > max_high {
+                    max_high = l.max_high;
+                }
+            }
+            if let Some(ref r) = right {
+                if r.max_high > max_high {
+                    max_high = r.max_high;
+                }
+            }
+            Some(Box::new(Node {
+                low: *low,
+                high: *low,
+                max_high,
+                values: values.clone(),
+                left,
+                right,
+            }))
+        }
+        self.size = dedup.len();
+        self.root = build_balanced(&dedup);
+    }
 }
 
 impl<T: Clone + Eq + std::hash::Hash> Default for IntervalTree<T> {

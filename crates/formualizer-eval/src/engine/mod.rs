@@ -106,6 +106,8 @@ pub struct EvalConfig {
     /// If true, reject edge insertions that would create a cycle (skip adding that dependency).
     /// If false, allow insertion and let scheduler handle cycles at evaluation time.
     pub pk_reject_cycle_edges: bool,
+    /// Sheet index build strategy for bulk loads
+    pub sheet_index_mode: SheetIndexMode,
 }
 
 impl Default for EvalConfig {
@@ -136,8 +138,19 @@ impl Default for EvalConfig {
             pk_compaction_interval_ops: 100_000,
             max_layer_width: None,
             pk_reject_cycle_edges: false,
+            sheet_index_mode: SheetIndexMode::Eager,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SheetIndexMode {
+    /// Build full interval-tree based index during inserts (current behavior)
+    Eager,
+    /// Defer building any sheet index until first range query or explicit finalize
+    Lazy,
+    /// Use fast batch building (sorted arrays -> tree) when bulk loading, otherwise incremental
+    FastBatch,
 }
 
 /// Construct a new engine with the given resolver and configuration

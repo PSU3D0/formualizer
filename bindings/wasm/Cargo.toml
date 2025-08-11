@@ -1,0 +1,42 @@
+[package]
+name = "formualizer-wasm"
+version = "0.1.0"
+edition = "2021"
+authors = ["Formualizer Contributors"]
+license = "MIT OR Apache-2.0"
+description = "WebAssembly bindings for Formualizer Excel formula parser"
+repository = "https://github.com/your-org/formualizer"
+categories = ["wasm", "parsing", "spreadsheet"]
+keywords = ["excel", "formula", "parser", "wasm", "webassembly"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2.95"
+wasm-bindgen-futures = "0.4.45"
+js-sys = "0.3.72"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6.5"
+console_error_panic_hook = { version = "0.1", optional = true }
+formualizer-core = { path = "../../crates/formualizer-core" }
+formualizer-common = { path = "../../crates/formualizer-common" }
+
+[dependencies.web-sys]
+version = "0.3.72"
+features = [
+  "console",
+]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[features]
+default = ["console_panic"]
+console_panic = ["console_error_panic_hook"]
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Single codegen unit for better optimization
+strip = true        # Strip symbols

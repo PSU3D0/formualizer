@@ -251,6 +251,35 @@ impl DependencyGraph {
         }
     }
 
+    /// Build (or rebuild) the sheet index for a given sheet if running in Lazy mode.
+    pub fn finalize_sheet_index(&mut self, sheet: &str) {
+        let Some(sheet_id) = self.sheet_reg.get_id(sheet) else {
+            return;
+        };
+        // If already present and non-empty, skip
+        if let Some(idx) = self.sheet_indexes.get(&sheet_id) {
+            if !idx.is_empty() {
+                return;
+            }
+        }
+        let mut idx = SheetIndex::new();
+        // Collect coords for this sheet
+        let mut batch: Vec<(PackedCoord, VertexId)> = Vec::new();
+        batch.reserve(self.cell_to_vertex.len());
+        for (cref, vid) in &self.cell_to_vertex {
+            if cref.sheet_id == sheet_id {
+                batch.push((PackedCoord::new(cref.coord.row, cref.coord.col), *vid));
+            }
+        }
+        // Use batch builder
+        idx.add_vertices_batch(&batch);
+        self.sheet_indexes.insert(sheet_id, idx);
+    }
+
+    pub fn set_sheet_index_mode(&mut self, mode: crate::engine::SheetIndexMode) {
+        self.config.sheet_index_mode = mode;
+    }
+
     /// Compute min/max used column among vertices within [start_row..=end_row] on a sheet.
     pub fn used_col_bounds_for_rows(
         &self,
@@ -633,6 +662,102 @@ impl DependencyGraph {
             affected_vertices: self.mark_dirty(vertex_id),
             created_placeholders,
         })
+    }
+
+    /// Reserve capacity hints for upcoming bulk cell inserts (values only for now).
+    pub fn reserve_cells(&mut self, additional: usize) {
+        self.store.reserve(additional);
+        self.vertex_values.reserve(additional);
+        self.cell_to_vertex.reserve(additional);
+        // sheet_indexes: cannot easily reserve per-sheet without distribution; skip.
+    }
+
+    /// Fast path for initial bulk load of value cells: avoids dirty propagation & dependency work.
+    pub fn set_cell_value_bulk_untracked(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: LiteralValue,
+    ) {
+        let sheet_id = self.sheet_id_mut(sheet);
+        let coord = Coord::new(row, col, true, true);
+        let addr = CellRef::new(sheet_id, coord);
+        if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
+            // Overwrite existing value vertex only (ignore formulas in bulk path)
+            let value_ref = self.data_store.store_value(value);
+            self.vertex_values.insert(existing_id, value_ref);
+            self.store.set_kind(existing_id, VertexKind::Cell);
+            return;
+        }
+        let packed_coord = PackedCoord::new(row, col);
+        let vertex_id = self.store.allocate(packed_coord, sheet_id, 0x00); // not dirty
+        self.edges.add_vertex(packed_coord, vertex_id.0);
+        self.sheet_index_mut(sheet_id)
+            .add_vertex(packed_coord, vertex_id);
+        self.store.set_kind(vertex_id, VertexKind::Cell);
+        let value_ref = self.data_store.store_value(value);
+        self.vertex_values.insert(vertex_id, value_ref);
+        self.cell_to_vertex.insert(addr, vertex_id);
+    }
+
+    /// Bulk insert a collection of plain value cells (no formulas) more efficiently.
+    pub fn bulk_insert_values<I>(&mut self, sheet: &str, cells: I)
+    where
+        I: IntoIterator<Item = (u32, u32, LiteralValue)>,
+    {
+        use std::time::Instant;
+        let t0 = Instant::now();
+        // Collect first to know size
+        let collected: Vec<(u32, u32, LiteralValue)> = cells.into_iter().collect();
+        if collected.is_empty() {
+            return;
+        }
+        let sheet_id = self.sheet_id_mut(sheet);
+        self.reserve_cells(collected.len());
+        let t_reserve = Instant::now();
+        let mut new_vertices: Vec<(PackedCoord, u32)> = Vec::with_capacity(collected.len());
+        let mut index_items: Vec<(PackedCoord, VertexId)> = Vec::with_capacity(collected.len());
+        for (row, col, value) in collected {
+            let coord = Coord::new(row, col, true, true);
+            let addr = CellRef::new(sheet_id, coord);
+            if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
+                let value_ref = self.data_store.store_value(value);
+                self.vertex_values.insert(existing_id, value_ref);
+                self.store.set_kind(existing_id, VertexKind::Cell);
+            } else {
+                let packed = PackedCoord::new(row, col);
+                let vertex_id = self.store.allocate(packed, sheet_id, 0x00);
+                self.store.set_kind(vertex_id, VertexKind::Cell);
+                let value_ref = self.data_store.store_value(value);
+                self.vertex_values.insert(vertex_id, value_ref);
+                self.cell_to_vertex.insert(addr, vertex_id);
+                new_vertices.push((packed, vertex_id.0));
+                index_items.push((packed, vertex_id));
+            }
+        }
+        let t_after_alloc = Instant::now();
+        if !new_vertices.is_empty() {
+            let t_edges_start = Instant::now();
+            self.edges.add_vertices_batch(&new_vertices);
+            let t_edges_done = Instant::now();
+
+            match self.config.sheet_index_mode {
+                crate::engine::SheetIndexMode::Eager => {
+                    self.sheet_index_mut(sheet_id)
+                        .add_vertices_batch(&index_items);
+                }
+                crate::engine::SheetIndexMode::Lazy => {
+                    // Skip building index now; will be built on-demand
+                }
+                crate::engine::SheetIndexMode::FastBatch => {
+                    // FastBatch for now delegates to same batch insert (future: build from sorted arrays)
+                    self.sheet_index_mut(sheet_id)
+                        .add_vertices_batch(&index_items);
+                }
+            }
+            let t_index_done = Instant::now();
+        }
     }
 
     /// Set a formula in a cell, returns affected vertex IDs
