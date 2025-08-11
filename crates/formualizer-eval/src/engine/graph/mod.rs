@@ -27,6 +27,8 @@ use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
 use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
 use crate::reference::{CellRef, Coord};
+use crate::engine::topo::{GraphAdapter, pk::{DynamicTopo, PkConfig}};
+// topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
 
 pub use editor::change_log::{ChangeEvent, ChangeLog};
 
@@ -207,6 +209,9 @@ pub struct DependencyGraph {
     // Evaluation configuration
     config: super::EvalConfig,
 
+    // Dynamic topology orderer (Pearce–Kelly) maintained alongside edges when enabled
+    pk_order: Option<DynamicTopo<VertexId>>,
+
     // Spill registry: anchor -> cells, and reverse mapping for blockers
     spill_anchor_to_cells: FxHashMap<VertexId, Vec<CellRef>>,
     spill_cell_to_anchor: FxHashMap<CellRef, VertexId>,
@@ -284,6 +289,7 @@ impl DependencyGraph {
             sheet_named_ranges: FxHashMap::default(),
             vertex_to_names: FxHashMap::default(),
             config: super::EvalConfig::default(),
+            pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
             spill_cell_to_anchor: FxHashMap::default(),
             #[cfg(test)]
@@ -292,11 +298,38 @@ impl DependencyGraph {
     }
 
     pub fn new_with_config(config: super::EvalConfig) -> Self {
-        Self {
-            config,
-            ..Self::new()
+        let mut g = Self { config: config.clone(), ..Self::new() };
+        if config.use_dynamic_topo {
+            // Seed with currently active vertices (likely empty at startup)
+            let nodes = g
+                .store
+                .all_vertices()
+                .filter(|&id| g.store.vertex_exists_active(id));
+            let mut pk = DynamicTopo::new(nodes, PkConfig {
+                visit_budget: config.pk_visit_budget,
+                compaction_interval_ops: config.pk_compaction_interval_ops,
+            });
+            // Build an initial order using current graph
+            let adapter = GraphAdapter { g: &g };
+            pk.rebuild_full(&adapter);
+            g.pk_order = Some(pk);
         }
+        g
     }
+
+    /// When dynamic topology is enabled, compute layers for a subset using PK ordering.
+    pub(crate) fn pk_layers_for(&self, subset: &[VertexId]) -> Option<Vec<crate::engine::Layer>> {
+        let pk = self.pk_order.as_ref()?;
+        let adapter = crate::engine::topo::GraphAdapter { g: self };
+        let layers = pk.layers_for(&adapter, subset, self.config.max_layer_width);
+        Some(layers
+            .into_iter()
+            .map(|vs| crate::engine::Layer { vertices: vs })
+            .collect())
+    }
+
+    #[inline]
+    pub(crate) fn dynamic_topo_enabled(&self) -> bool { self.pk_order.is_some() }
 
     #[cfg(test)]
     pub fn reset_instr(&mut self) {
@@ -1137,14 +1170,46 @@ impl DependencyGraph {
     }
 
     fn add_dependent_edges(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
+        // Batch to avoid repeated CSR rebuilds and keep reverse edges current
+        self.edges.begin_batch();
+
+        // If PK enabled, update order using a short-lived adapter without holding &mut self
+        // Track dependencies that should be skipped if rejecting cycle-creating edges
+        let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
+        if self.pk_order.is_some() {
+            if let Some(mut pk) = self.pk_order.take() {
+                pk.ensure_nodes(std::iter::once(dependent));
+                pk.ensure_nodes(dependencies.iter().copied());
+                {
+                    let adapter = GraphAdapter { g: self };
+                    for &dep_id in dependencies {
+                        match pk.try_add_edge(&adapter, dep_id, dependent) {
+                            Ok(_) => {}
+                            Err(_cycle) => {
+                                if self.config.pk_reject_cycle_edges {
+                                    skip_deps.insert(dep_id);
+                                } else {
+                                    pk.rebuild_full(&adapter);
+                                }
+                            }
+                        }
+                    }
+                } // drop adapter
+                self.pk_order = Some(pk);
+            }
+        }
+
+        // Now mutate engine edges; if rejecting cycles, re-check and skip those that would create cycles
         for &dep_id in dependencies {
-            // Store edge as dependent -> dependency (what it depends on)
+            if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) { continue; }
             self.edges.add_edge(dependent, dep_id);
             #[cfg(test)]
             {
                 self.instr.edges_added += 1;
             }
         }
+
+        self.edges.end_batch();
     }
 
     fn add_range_dependent_edges(
@@ -1310,9 +1375,20 @@ impl DependencyGraph {
     fn remove_dependent_edges(&mut self, vertex: VertexId) {
         // Remove all outgoing edges from this vertex (its dependencies)
         let dependencies = self.edges.out_edges(vertex);
+
+        self.edges.begin_batch();
+        if self.pk_order.is_some() {
+            if let Some(mut pk) = self.pk_order.take() {
+                for dep in &dependencies {
+                    pk.remove_edge(*dep, vertex);
+                }
+                self.pk_order = Some(pk);
+            }
+        }
         for dep in dependencies {
             self.edges.remove_edge(vertex, dep);
         }
+        self.edges.end_batch();
 
         // Remove range dependencies and clean up stripes
         if let Some(old_ranges) = self.formula_to_range_deps.remove(&vertex) {
@@ -1818,9 +1894,15 @@ impl DependencyGraph {
 
         // Remove incoming edges (vertices that depend on this vertex)
         let dependents = self.get_dependents(id);
-        for dependent in dependents {
-            self.edges.remove_edge(dependent, id);
+        if self.pk_order.is_some() {
+            if let Some(mut pk) = self.pk_order.take() {
+                for dependent in &dependents {
+                    pk.remove_edge(id, *dependent);
+                }
+                self.pk_order = Some(pk);
+            }
         }
+        for dependent in dependents { self.edges.remove_edge(dependent, id); }
 
         // Exit batch mode and rebuild once with all changes
         self.edges.end_batch();

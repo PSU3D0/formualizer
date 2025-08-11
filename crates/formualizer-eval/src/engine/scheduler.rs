@@ -31,7 +31,12 @@ impl<'a> Scheduler<'a> {
         let (cycles, acyclic_sccs) = self.separate_cycles(sccs);
 
         // 3. Topologically sort acyclic components into layers
-        let layers = self.build_layers(acyclic_sccs)?;
+        let layers = if self.graph.dynamic_topo_enabled() {
+            let subset: Vec<VertexId> = acyclic_sccs.into_iter().flatten().collect();
+            if subset.is_empty() { Vec::new() } else { self.graph.pk_layers_for(&subset).unwrap_or(self.build_layers(vec![subset])?) }
+        } else {
+            self.build_layers(acyclic_sccs)?
+        };
 
         Ok(Schedule { layers, cycles })
     }

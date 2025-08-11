@@ -30,6 +30,7 @@ mod stripe_tests;
 mod striped_dirty_propagation;
 mod tarjan_scc;
 mod topo_layers;
+mod dynamic_topo;
 mod transactions;
 mod vertex_lifecycle;
 mod volatile_rng;

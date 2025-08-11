@@ -20,6 +20,7 @@ pub mod packed_coord;
 pub mod sheet_index;
 pub mod sheet_registry;
 pub mod vertex_store;
+pub mod topo;
 
 // Phase 1: Arena modules
 pub mod arena;
@@ -102,6 +103,9 @@ pub struct EvalConfig {
     pub pk_compaction_interval_ops: u64,
     /// Maximum width for parallel evaluation layers
     pub max_layer_width: Option<usize>,
+    /// If true, reject edge insertions that would create a cycle (skip adding that dependency).
+    /// If false, allow insertion and let scheduler handle cycles at evaluation time.
+    pub pk_reject_cycle_edges: bool,
 }
 
 impl Default for EvalConfig {
@@ -131,6 +135,7 @@ impl Default for EvalConfig {
             pk_visit_budget: 50_000,
             pk_compaction_interval_ops: 100_000,
             max_layer_width: None,
+            pk_reject_cycle_edges: false,
         }
     }
 }
