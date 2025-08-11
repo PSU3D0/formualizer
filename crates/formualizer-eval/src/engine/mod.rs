@@ -6,6 +6,7 @@ pub mod eval;
 pub mod graph;
 pub mod range_stream;
 pub mod scheduler;
+pub mod spill;
 pub mod vertex;
 
 // New SoA modules
@@ -89,6 +90,18 @@ pub struct EvalConfig {
     pub stripe_width: u32,
     /// Enable block stripes for dense ranges (vs row/column stripes only)
     pub enable_block_stripes: bool,
+
+    /// Spill behavior configuration (conflicts, bounds, buffering)
+    pub spill: SpillConfig,
+
+    /// Use dynamic topological ordering (Pearce-Kelly algorithm)
+    pub use_dynamic_topo: bool,
+    /// Maximum nodes to visit before falling back to full rebuild
+    pub pk_visit_budget: usize,
+    /// Operations between periodic rank compaction
+    pub pk_compaction_interval_ops: u64,
+    /// Maximum width for parallel evaluation layers
+    pub max_layer_width: Option<usize>,
 }
 
 impl Default for EvalConfig {
@@ -111,6 +124,13 @@ impl Default for EvalConfig {
             stripe_height: 256,
             stripe_width: 256,
             enable_block_stripes: false,
+            spill: SpillConfig::default(),
+
+            // Dynamic topology configuration
+            use_dynamic_topo: false, // Disabled by default for compatibility
+            pk_visit_budget: 50_000,
+            pk_compaction_interval_ops: 100_000,
+            max_layer_width: None,
         }
     }
 }
@@ -121,4 +141,75 @@ where
     R: EvaluationContext + 'static,
 {
     Engine::new(resolver, config)
+}
+
+/// Configuration for spill behavior. Nested under EvalConfig to avoid bloating the top-level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpillConfig {
+    /// What to do when target region overlaps non-empty cells or other spills.
+    pub conflict_policy: SpillConflictPolicy,
+    /// Tiebreaker used when policy allows preemption or multiple anchors race.
+    pub tiebreaker: SpillTiebreaker,
+    /// Bounds handling when result exceeds sheet capacity.
+    pub bounds_policy: SpillBoundsPolicy,
+    /// Buffering approach for spill writes.
+    pub buffer_mode: SpillBufferMode,
+    /// Optional memory budget for shadow buffering in bytes.
+    pub memory_budget_bytes: Option<u64>,
+    /// Cancellation behavior while streaming rows.
+    pub cancellation: SpillCancellationPolicy,
+    /// Visibility policy for staged writes.
+    pub visibility: SpillVisibility,
+}
+
+impl Default for SpillConfig {
+    fn default() -> Self {
+        Self {
+            conflict_policy: SpillConflictPolicy::Error,
+            tiebreaker: SpillTiebreaker::FirstWins,
+            bounds_policy: SpillBoundsPolicy::Strict,
+            buffer_mode: SpillBufferMode::ShadowBuffer,
+            memory_budget_bytes: None,
+            cancellation: SpillCancellationPolicy::Cooperative,
+            visibility: SpillVisibility::OnCommit,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpillConflictPolicy {
+    Error,
+    Preempt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpillTiebreaker {
+    FirstWins,
+    EvaluationEpochAsc,
+    AnchorAddressAsc,
+    FunctionPriorityThenAddress,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpillBoundsPolicy {
+    Strict,
+    Truncate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpillBufferMode {
+    ShadowBuffer,
+    PersistenceJournal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpillCancellationPolicy {
+    Cooperative,
+    Strict,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpillVisibility {
+    OnCommit,
+    StagedLayer,
 }

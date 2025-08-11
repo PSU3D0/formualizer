@@ -1448,7 +1448,36 @@ impl DependencyGraph {
         anchor: VertexId,
         target_cells: &[CellRef],
     ) -> Result<(), ExcelError> {
-        use formualizer_common::ExcelErrorKind;
+        use formualizer_common::{ExcelErrorExtra, ExcelErrorKind};
+        // Compute expected spill shape from the target rectangle for better diagnostics
+        let (expected_rows, expected_cols) = if target_cells.is_empty() {
+            (0u32, 0u32)
+        } else {
+            let mut min_r = u32::MAX;
+            let mut max_r = 0u32;
+            let mut min_c = u32::MAX;
+            let mut max_c = 0u32;
+            for cell in target_cells {
+                let r = cell.coord.row;
+                let c = cell.coord.col;
+                if r < min_r {
+                    min_r = r;
+                }
+                if r > max_r {
+                    max_r = r;
+                }
+                if c < min_c {
+                    min_c = c;
+                }
+                if c > max_c {
+                    max_c = c;
+                }
+            }
+            (
+                max_r.saturating_sub(min_r).saturating_add(1),
+                max_c.saturating_sub(min_c).saturating_add(1),
+            )
+        };
         // Allow overlapping with previously owned spill cells by this anchor
         for cell in target_cells {
             // If cell is already owned by this anchor's previous spill, it's allowed.
@@ -1456,7 +1485,11 @@ impl DependencyGraph {
                 Some(&existing_anchor) if existing_anchor == anchor => true,
                 Some(_other) => {
                     return Err(ExcelError::new(ExcelErrorKind::Spill)
-                        .with_message("Spill blocked by another spill"));
+                        .with_message("BlockedBySpill")
+                        .with_extra(ExcelErrorExtra::Spill {
+                            expected_rows,
+                            expected_cols,
+                        }));
                 }
                 None => false,
             };
@@ -1465,14 +1498,32 @@ impl DependencyGraph {
                 continue;
             }
 
-            // If cell has a vertex with a non-empty value and is not the anchor cell itself, block
+            // If cell is occupied by another formula anchor, block regardless of value visibility
             if let Some(&vid) = self.cell_to_vertex.get(cell) {
                 if vid != anchor {
-                    if let Some(vref) = self.vertex_values.get(&vid) {
-                        let v = self.data_store.retrieve_value(*vref);
-                        if !matches!(v, LiteralValue::Empty) {
+                    // Prevent clobbering formulas (array or scalar) in the target area
+                    match self.store.kind(vid) {
+                        VertexKind::FormulaScalar | VertexKind::FormulaArray => {
                             return Err(ExcelError::new(ExcelErrorKind::Spill)
-                                .with_message("Spill blocked by value"));
+                                .with_message("BlockedByFormula")
+                                .with_extra(ExcelErrorExtra::Spill {
+                                    expected_rows,
+                                    expected_cols,
+                                }));
+                        }
+                        _ => {
+                            // If a non-empty value exists (and not this anchor), block
+                            if let Some(vref) = self.vertex_values.get(&vid) {
+                                let v = self.data_store.retrieve_value(*vref);
+                                if !matches!(v, LiteralValue::Empty) {
+                                    return Err(ExcelError::new(ExcelErrorKind::Spill)
+                                        .with_message("BlockedByValue")
+                                        .with_extra(ExcelErrorExtra::Spill {
+                                            expected_rows,
+                                            expected_cols,
+                                        }));
+                                }
+                            }
                         }
                     }
                 }
@@ -1481,67 +1532,125 @@ impl DependencyGraph {
         Ok(())
     }
 
-    /// Commit a spill: write values to target cells, update registry, and clear prior spill cells not reused.
-    pub fn commit_spill_region(
+    // Note: non-atomic commit_spill_region has been removed. All callers must use
+    // commit_spill_region_atomic_with_fault for atomicity and rollback on failure.
+
+    /// Commit a spill atomically with an internal shadow buffer and optional fault injection.
+    /// If a fault is injected partway through, all changes are rolled back to the pre-commit state.
+    /// This does not change behavior under normal operation; it's primarily for Phase 3 guarantees and tests.
+    pub fn commit_spill_region_atomic_with_fault(
         &mut self,
         anchor: VertexId,
         target_cells: Vec<CellRef>,
         values: Vec<Vec<LiteralValue>>,
+        fault_after_ops: Option<usize>,
     ) -> Result<(), ExcelError> {
-        // Previous cells for this anchor
+        use rustc_hash::FxHashSet;
+
+        // Capture previous owned cells for this anchor
         let prev_cells = self
             .spill_anchor_to_cells
             .get(&anchor)
             .cloned()
             .unwrap_or_default();
-        use rustc_hash::FxHashSet;
         let new_set: FxHashSet<CellRef> = target_cells.iter().copied().collect();
         let prev_set: FxHashSet<CellRef> = prev_cells.iter().copied().collect();
 
-        // Clear previous cells not in new set by setting them to Empty and removing mapping
+        // Compose operation list: clears first (prev - new), then writes for new rectangle
+        #[derive(Clone)]
+        struct Op {
+            sheet: String,
+            row: u32,
+            col: u32,
+            new_value: LiteralValue,
+        }
+        let mut ops: Vec<Op> = Vec::new();
+
+        // Clears for cells no longer used
         for cell in prev_cells.iter() {
             if !new_set.contains(cell) {
                 let sheet = self.sheet_name(cell.sheet_id).to_string();
-                let _ = self.set_cell_value(
-                    &sheet,
-                    cell.coord.row,
-                    cell.coord.col,
-                    LiteralValue::Empty,
-                );
+                ops.push(Op {
+                    sheet,
+                    row: cell.coord.row,
+                    col: cell.coord.col,
+                    new_value: LiteralValue::Empty,
+                });
+            }
+        }
+
+        // Writes for new values (row-major to match target rectangle)
+        if !target_cells.is_empty() {
+            let first = target_cells.first().copied().unwrap();
+            let row0 = first.coord.row;
+            let col0 = first.coord.col;
+            let sheet = self.sheet_name(first.sheet_id).to_string();
+            for (r_off, row_vals) in values.iter().enumerate() {
+                for (c_off, v) in row_vals.iter().enumerate() {
+                    ops.push(Op {
+                        sheet: sheet.clone(),
+                        row: row0 + r_off as u32,
+                        col: col0 + c_off as u32,
+                        new_value: v.clone(),
+                    });
+                }
+            }
+        }
+
+        // Shadow buffer of old values for rollback
+        #[derive(Clone)]
+        struct OldVal {
+            present: bool,
+            value: LiteralValue,
+        }
+        let mut old_values: Vec<((String, u32, u32), OldVal)> = Vec::with_capacity(ops.len());
+
+        // Capture old values before applying
+        for op in &ops {
+            let old = self
+                .get_cell_value(&op.sheet, op.row, op.col)
+                .unwrap_or(LiteralValue::Empty);
+            let present = true; // unified model: we always treat as present
+            old_values.push((
+                (op.sheet.clone(), op.row, op.col),
+                OldVal {
+                    present,
+                    value: old,
+                },
+            ));
+        }
+
+        // Apply with optional injected fault
+        let mut applied = 0usize;
+        for op in &ops {
+            // Inject fault after N operations
+            if let Some(n) = fault_after_ops {
+                if applied == n {
+                    // Roll back all applied ops
+                    for idx in (0..applied).rev() {
+                        let ((ref sheet, row, col), ref old) = old_values[idx];
+                        let _ = self.set_cell_value(sheet, row, col, old.value.clone());
+                    }
+                    return Err(ExcelError::new(ExcelErrorKind::Error)
+                        .with_message("Injected persistence fault during spill commit"));
+                }
+            }
+
+            let _ = self.set_cell_value(&op.sheet, op.row, op.col, op.new_value.clone());
+            applied += 1;
+        }
+
+        // Update spill ownership maps only on success
+        // Clear previous ownership not reused
+        for cell in prev_cells.iter() {
+            if !new_set.contains(cell) {
                 self.spill_cell_to_anchor.remove(cell);
             }
         }
-
-        // Write new values and mark ownership
-        // values are row-major aligned with target_cells rectangle
-        if target_cells.is_empty() {
-            // Nothing to do
-            self.spill_anchor_to_cells.remove(&anchor);
-            return Ok(());
+        // Mark ownership for new rectangle using the declared target cells only
+        for cell in &target_cells {
+            self.spill_cell_to_anchor.insert(*cell, anchor);
         }
-        // Determine rectangle from target_cells by min/max; assume contiguous and row-major
-        let first = target_cells.first().copied().unwrap();
-        let row0 = first.coord.row;
-        let col0 = first.coord.col;
-        let sheet_name = self.sheet_name(first.sheet_id).to_string();
-        for (r_off, row_vals) in values.iter().enumerate() {
-            for (c_off, v) in row_vals.iter().enumerate() {
-                let _ = self.set_cell_value(
-                    &sheet_name,
-                    row0 + r_off as u32,
-                    col0 + c_off as u32,
-                    v.clone(),
-                );
-                let cell_ref = self.make_cell_ref_internal(
-                    first.sheet_id,
-                    row0 + r_off as u32,
-                    col0 + c_off as u32,
-                );
-                self.spill_cell_to_anchor.insert(cell_ref, anchor);
-            }
-        }
-
-        // Update anchor mapping
         self.spill_anchor_to_cells.insert(anchor, target_cells);
         Ok(())
     }

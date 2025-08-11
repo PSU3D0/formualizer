@@ -160,10 +160,33 @@ fn empty_cells_do_not_block_spill() {
 }
 
 #[test]
-#[ignore] // Need to decide on spill poplicy
+fn non_empty_values_block_spill() {
+    let wb = TestWorkbook::new();
+    let mut cfg = EvalConfig::default();
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(wb, cfg);
+
+    // Pre-fill B1 with a non-empty value
+    engine
+        .set_cell_value("Sheet1", 1, 2, LiteralValue::Number(99.0))
+        .unwrap();
+    // A1 tries to spill 1x2 into A1:B1; B1 contains a value → #SPILL!
+    engine
+        .set_cell_formula("Sheet1", 1, 1, Parser::from("={10,20}").parse().unwrap())
+        .unwrap();
+    let _ = engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e, "#SPILL!"),
+        v => panic!("expected #SPILL!, got {v:?}"),
+    }
+}
+
+#[test]
 fn overlapping_spills_conflict() {
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, EvalConfig::default());
+    let mut cfg = EvalConfig::default();
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(wb, cfg);
 
     // A1 and A2 both try to spill 2x2 overlapping on A2:B3
     engine
@@ -180,5 +203,82 @@ fn overlapping_spills_conflict() {
     assert!(
         is_spill(&a1) || is_spill(&a2),
         "expected at least one anchor to be #SPILL!, got A1={a1:?}, A2={a2:?}"
+    );
+}
+
+#[test]
+fn formula_cells_block_spill() {
+    let wb = TestWorkbook::new();
+    let mut cfg = EvalConfig::default();
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(wb, cfg);
+
+    // Put a scalar formula in B1
+    engine
+        .set_cell_formula("Sheet1", 1, 2, Parser::from("=42").parse().unwrap())
+        .unwrap();
+    let _ = engine.evaluate_all().unwrap();
+
+    // A1 tries to spill 1x2 into A1:B1; B1 is occupied by a formula → #SPILL!
+    engine
+        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2}").parse().unwrap())
+        .unwrap();
+    let _ = engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e, "#SPILL!"),
+        v => panic!("expected #SPILL!, got {v:?}"),
+    }
+}
+
+#[test]
+fn overlapping_spills_firstwins_is_deterministic_sequential() {
+    let wb = TestWorkbook::new();
+    let mut cfg = EvalConfig::default();
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(wb, cfg);
+
+    // Evaluate A1 first, then A2; A2 should conflict and show #SPILL! (FirstWins)
+    engine
+        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
+        .unwrap();
+    let _ = engine.evaluate_all().unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 2, 1, Parser::from("={5,6;7,8}").parse().unwrap())
+        .unwrap();
+    let _ = engine.evaluate_all().unwrap();
+
+    let a1 = engine.get_cell_value("Sheet1", 1, 1).unwrap();
+    let a2 = engine.get_cell_value("Sheet1", 2, 1).unwrap();
+    match a2 {
+        LiteralValue::Error(e) => assert_eq!(e, "#SPILL!"),
+        v => panic!("expected #SPILL! at A2, got {v:?} (A1={a1:?})"),
+    }
+}
+
+#[test]
+fn spills_on_different_sheets_do_not_conflict() {
+    let wb = TestWorkbook::new();
+    let mut cfg = EvalConfig::default();
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(wb, cfg);
+    // Add Sheet2
+    engine.graph.add_sheet("Sheet2").unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2}").parse().unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet2", 1, 1, Parser::from("={3,4}").parse().unwrap())
+        .unwrap();
+    let _ = engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(1.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet2", 1, 1),
+        Some(LiteralValue::Number(3.0))
     );
 }

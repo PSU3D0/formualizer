@@ -1,5 +1,6 @@
 use crate::SheetId;
 use crate::engine::range_stream::{RangeStorage, RangeStream};
+use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::{DependencyGraph, EvalConfig, Scheduler, VertexId, VertexKind};
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord};
@@ -14,10 +15,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub struct Engine<R> {
     pub graph: DependencyGraph,
     resolver: R,
-    config: EvalConfig,
+    pub config: EvalConfig,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
-    recalc_epoch: u64,
+    pub recalc_epoch: u64,
     snapshot_id: std::sync::atomic::AtomicU64,
+    spill_mgr: ShimSpillManager,
 }
 
 #[derive(Debug)]
@@ -59,6 +61,7 @@ where
             thread_pool,
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
+            spill_mgr: ShimSpillManager::default(),
         }
     }
 
@@ -76,6 +79,7 @@ where
             thread_pool: Some(thread_pool),
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
+            spill_mgr: ShimSpillManager::default(),
         }
     }
 
@@ -253,14 +257,26 @@ where
                     }
                 }
 
-                // Plan spill: if blocked, set anchor to #SPILL!
-                match self.graph.plan_spill_region(vertex_id, &targets) {
+                // Plan spill via spill manager shim
+                match self.spill_mgr.reserve(
+                    vertex_id,
+                    anchor,
+                    SpillShape { rows: h, cols: w },
+                    SpillMeta {
+                        epoch: self.recalc_epoch,
+                        config: self.config.spill,
+                    },
+                ) {
                     Ok(()) => {
                         // Commit: write values to grid
-                        if let Err(e) =
-                            self.graph
-                                .commit_spill_region(vertex_id, targets, rows.clone())
-                        {
+                        // Default conflict policy is Error + FirstWins; reserve() enforces in-flight locks
+                        // and plan_spill_region enforces overlap with committed formulas/spills/values.
+                        if let Err(e) = self.spill_mgr.commit_array(
+                            &mut self.graph,
+                            vertex_id,
+                            &targets,
+                            rows.clone(),
+                        ) {
                             // If commit fails, mark as error
                             self.graph
                                 .update_vertex_value(vertex_id, LiteralValue::Error(e.clone()));
@@ -896,6 +912,77 @@ where
     /// Get access to the shared thread pool for parallel evaluation
     pub fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
         self.thread_pool.as_ref()
+    }
+}
+
+// Phase 2 shim: in-process spill manager delegating to current graph methods.
+#[derive(Default)]
+pub struct ShimSpillManager {
+    region_locks: RegionLockManager,
+    pub(crate) active_locks: rustc_hash::FxHashMap<VertexId, u64>,
+}
+
+impl ShimSpillManager {
+    pub(crate) fn reserve(
+        &mut self,
+        owner: VertexId,
+        anchor_cell: CellRef,
+        shape: SpillShape,
+        _meta: SpillMeta,
+    ) -> Result<(), ExcelError> {
+        // Derive region from anchor + shape; enforce in-flight exclusivity only.
+        let region = crate::engine::spill::Region {
+            sheet_id: anchor_cell.sheet_id as u32,
+            row_start: anchor_cell.coord.row,
+            row_end: anchor_cell
+                .coord
+                .row
+                .saturating_add(shape.rows)
+                .saturating_sub(1),
+            col_start: anchor_cell.coord.col,
+            col_end: anchor_cell
+                .coord
+                .col
+                .saturating_add(shape.cols)
+                .saturating_sub(1),
+        };
+        match self.region_locks.reserve(region, owner) {
+            Ok(id) => {
+                if id != 0 {
+                    self.active_locks.insert(owner, id);
+                }
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub(crate) fn commit_array(
+        &mut self,
+        graph: &mut DependencyGraph,
+        anchor_vertex: VertexId,
+        targets: &[CellRef],
+        rows: Vec<Vec<LiteralValue>>,
+    ) -> Result<(), ExcelError> {
+        // Re-run plan on concrete targets before committing to respect blockers.
+        let plan_res = graph.plan_spill_region(anchor_vertex, targets);
+        if let Err(e) = plan_res {
+            if let Some(id) = self.active_locks.remove(&anchor_vertex) {
+                self.region_locks.release(id);
+            }
+            return Err(e);
+        }
+
+        let commit_res = graph.commit_spill_region_atomic_with_fault(
+            anchor_vertex,
+            targets.to_vec(),
+            rows,
+            None,
+        );
+        if let Some(id) = self.active_locks.remove(&anchor_vertex) {
+            self.region_locks.release(id);
+        }
+        commit_res.map(|_| ())
     }
 }
 
