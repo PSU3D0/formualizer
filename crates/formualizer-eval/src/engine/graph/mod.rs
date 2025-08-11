@@ -26,8 +26,11 @@ use super::packed_coord::PackedCoord;
 use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
 use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
+use crate::engine::topo::{
+    GraphAdapter,
+    pk::{DynamicTopo, PkConfig},
+};
 use crate::reference::{CellRef, Coord};
-use crate::engine::topo::{GraphAdapter, pk::{DynamicTopo, PkConfig}};
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
 
 pub use editor::change_log::{ChangeEvent, ChangeLog};
@@ -298,17 +301,23 @@ impl DependencyGraph {
     }
 
     pub fn new_with_config(config: super::EvalConfig) -> Self {
-        let mut g = Self { config: config.clone(), ..Self::new() };
+        let mut g = Self {
+            config: config.clone(),
+            ..Self::new()
+        };
         if config.use_dynamic_topo {
             // Seed with currently active vertices (likely empty at startup)
             let nodes = g
                 .store
                 .all_vertices()
                 .filter(|&id| g.store.vertex_exists_active(id));
-            let mut pk = DynamicTopo::new(nodes, PkConfig {
-                visit_budget: config.pk_visit_budget,
-                compaction_interval_ops: config.pk_compaction_interval_ops,
-            });
+            let mut pk = DynamicTopo::new(
+                nodes,
+                PkConfig {
+                    visit_budget: config.pk_visit_budget,
+                    compaction_interval_ops: config.pk_compaction_interval_ops,
+                },
+            );
             // Build an initial order using current graph
             let adapter = GraphAdapter { g: &g };
             pk.rebuild_full(&adapter);
@@ -322,14 +331,18 @@ impl DependencyGraph {
         let pk = self.pk_order.as_ref()?;
         let adapter = crate::engine::topo::GraphAdapter { g: self };
         let layers = pk.layers_for(&adapter, subset, self.config.max_layer_width);
-        Some(layers
-            .into_iter()
-            .map(|vs| crate::engine::Layer { vertices: vs })
-            .collect())
+        Some(
+            layers
+                .into_iter()
+                .map(|vs| crate::engine::Layer { vertices: vs })
+                .collect(),
+        )
     }
 
     #[inline]
-    pub(crate) fn dynamic_topo_enabled(&self) -> bool { self.pk_order.is_some() }
+    pub(crate) fn dynamic_topo_enabled(&self) -> bool {
+        self.pk_order.is_some()
+    }
 
     #[cfg(test)]
     pub fn reset_instr(&mut self) {
@@ -1201,7 +1214,9 @@ impl DependencyGraph {
 
         // Now mutate engine edges; if rejecting cycles, re-check and skip those that would create cycles
         for &dep_id in dependencies {
-            if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) { continue; }
+            if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) {
+                continue;
+            }
             self.edges.add_edge(dependent, dep_id);
             #[cfg(test)]
             {
@@ -1902,7 +1917,9 @@ impl DependencyGraph {
                 self.pk_order = Some(pk);
             }
         }
-        for dependent in dependents { self.edges.remove_edge(dependent, id); }
+        for dependent in dependents {
+            self.edges.remove_edge(dependent, id);
+        }
 
         // Exit batch mode and rebuild once with all changes
         self.edges.end_batch();

@@ -19,8 +19,8 @@ pub mod named_range;
 pub mod packed_coord;
 pub mod sheet_index;
 pub mod sheet_registry;
-pub mod vertex_store;
 pub mod topo;
+pub mod vertex_store;
 
 // Phase 1: Arena modules
 pub mod arena;

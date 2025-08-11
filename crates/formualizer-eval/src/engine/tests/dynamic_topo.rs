@@ -1,6 +1,6 @@
-use rustc_hash::FxHashMap;
 use crate::engine::topo::pk::{DynamicTopo, GraphView, PkConfig};
 use crate::engine::vertex::VertexId;
+use rustc_hash::FxHashMap;
 
 struct SimpleGraph {
     succ: FxHashMap<VertexId, Vec<VertexId>>,
@@ -8,14 +8,29 @@ struct SimpleGraph {
 }
 
 impl GraphView<VertexId> for SimpleGraph {
-    fn successors(&self, n: VertexId, out: &mut Vec<VertexId>) { out.clear(); if let Some(v)=self.succ.get(&n){ out.extend(v.iter().copied()); } }
-    fn predecessors(&self, n: VertexId, out: &mut Vec<VertexId>) { out.clear(); if let Some(v)=self.pred.get(&n){ out.extend(v.iter().copied()); } }
-    fn exists(&self, _n: VertexId) -> bool { true }
+    fn successors(&self, n: VertexId, out: &mut Vec<VertexId>) {
+        out.clear();
+        if let Some(v) = self.succ.get(&n) {
+            out.extend(v.iter().copied());
+        }
+    }
+    fn predecessors(&self, n: VertexId, out: &mut Vec<VertexId>) {
+        out.clear();
+        if let Some(v) = self.pred.get(&n) {
+            out.extend(v.iter().copied());
+        }
+    }
+    fn exists(&self, _n: VertexId) -> bool {
+        true
+    }
 }
 
 #[test]
 fn pk_basic_insert_and_layers() {
-    let mut g = SimpleGraph { succ: FxHashMap::default(), pred: FxHashMap::default() };
+    let mut g = SimpleGraph {
+        succ: FxHashMap::default(),
+        pred: FxHashMap::default(),
+    };
     let nodes = vec![VertexId(1), VertexId(2), VertexId(3), VertexId(4)];
     let mut pk = DynamicTopo::new(nodes.clone(), PkConfig::default());
     pk.rebuild_full(&g);
@@ -39,7 +54,10 @@ fn pk_basic_insert_and_layers() {
 
 #[test]
 fn pk_cycle_detection() {
-    let mut g = SimpleGraph { succ: FxHashMap::default(), pred: FxHashMap::default() };
+    let mut g = SimpleGraph {
+        succ: FxHashMap::default(),
+        pred: FxHashMap::default(),
+    };
     let nodes = vec![VertexId(1), VertexId(2)];
     let mut pk = DynamicTopo::new(nodes.clone(), PkConfig::default());
     pk.rebuild_full(&g);

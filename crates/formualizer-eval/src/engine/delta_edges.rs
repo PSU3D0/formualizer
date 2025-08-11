@@ -226,6 +226,58 @@ mod tests {
         let out = edges.out_edges(VertexId(1024));
         assert_eq!(out, vec![VertexId(1025)]);
     }
+
+    #[test]
+    fn test_last_op_wins_add_then_remove() {
+        let csr = CsrEdges::from_adjacency(vec![(0u32, vec![])], &[PackedCoord::new(0, 0)]);
+        let mut delta = DeltaEdgeSlab::new();
+        delta.add_edge(VertexId(0), VertexId(1));
+        delta.remove_edge(VertexId(0), VertexId(1));
+        let merged = delta.merged_view(&csr, VertexId(0));
+        assert_eq!(merged, vec![]);
+    }
+
+    #[test]
+    fn test_last_op_wins_remove_then_add() {
+        let csr = CsrEdges::from_adjacency(vec![(0u32, vec![])], &[PackedCoord::new(0, 0)]);
+        let mut delta = DeltaEdgeSlab::new();
+        delta.remove_edge(VertexId(0), VertexId(1));
+        delta.add_edge(VertexId(0), VertexId(1));
+        let merged = delta.merged_view(&csr, VertexId(0));
+        assert_eq!(merged, vec![VertexId(1)]);
+    }
+
+    #[test]
+    fn test_dedup_additions_and_sorted() {
+        let csr = CsrEdges::from_adjacency(
+            vec![(0u32, vec![2u32])],
+            &[
+                PackedCoord::new(0, 0),
+                PackedCoord::new(0, 1),
+                PackedCoord::new(0, 2),
+            ],
+        );
+        let mut delta = DeltaEdgeSlab::new();
+        // Add duplicates and out-of-order ids
+        delta.add_edge(VertexId(0), VertexId(1));
+        delta.add_edge(VertexId(0), VertexId(3));
+        delta.add_edge(VertexId(0), VertexId(1)); // duplicate
+        let merged = delta.merged_view(&csr, VertexId(0));
+        // Should be deduped and sorted by VertexId
+        assert_eq!(merged, vec![VertexId(1), VertexId(2), VertexId(3)]);
+    }
+
+    #[test]
+    fn test_end_batch_rebuilds_on_coord_change_only() {
+        let mut edges =
+            CsrMutableEdges::with_coords(vec![PackedCoord::new(0, 0), PackedCoord::new(0, 1)]);
+        edges.begin_batch();
+        edges.update_coord(VertexId(0), PackedCoord::new(0, 2));
+        // No ops, only coord changed; end_batch should rebuild due to coord_dirty
+        edges.end_batch();
+        // Smoke: out_edges call should not panic and reflect empty edges
+        assert_eq!(edges.out_edges(VertexId(0)), Vec::<VertexId>::new());
+    }
 }
 
 /// Delta slab for accumulating edge mutations between CSR rebuilds
@@ -234,8 +286,8 @@ mod tests {
 /// separately, merging them with the base CSR on read.
 #[derive(Debug)]
 pub struct DeltaEdgeSlab {
-    /// New edges to add, grouped by source vertex
-    additions: FxHashMap<VertexId, Vec<VertexId>>,
+    /// New edges to add, grouped by source vertex (set semantics to avoid duplicates)
+    additions: FxHashMap<VertexId, FxHashSet<VertexId>>,
 
     /// Edges to remove, stored as sets for O(1) lookup
     removals: FxHashMap<VertexId, FxHashSet<VertexId>>,
@@ -260,31 +312,42 @@ impl DeltaEdgeSlab {
 
     /// Add an edge from source to target
     pub fn add_edge(&mut self, from: VertexId, to: VertexId) {
-        self.additions.entry(from).or_default().push(to);
+        // Last-op-wins: if previously removed, cancel the removal
+        if let Some(rem) = self.removals.get_mut(&from) {
+            rem.remove(&to);
+        }
+        // Insert into additions set
+        self.additions.entry(from).or_default().insert(to);
         self.op_count += 1;
     }
 
     /// Remove an edge from source to target
     pub fn remove_edge(&mut self, from: VertexId, to: VertexId) {
+        // Last-op-wins: if previously added in this slab, cancel the addition
+        if let Some(adds) = self.additions.get_mut(&from) {
+            adds.remove(&to);
+        }
+        // Record removal
         self.removals.entry(from).or_default().insert(to);
         self.op_count += 1;
     }
 
     /// Get a merged view of edges for a vertex, combining CSR and delta
     pub fn merged_view(&self, csr: &CsrEdges, v: VertexId) -> Vec<VertexId> {
-        // CSR stores the edges, it handles vertex ID mapping internally
+        // Start from base CSR out-edges
         let mut result: Vec<_> = csr.out_edges(v).to_vec();
-
         // Remove edges marked for deletion
         if let Some(removes) = self.removals.get(&v) {
             result.retain(|e| !removes.contains(e));
         }
-
-        // Add new edges
+        // Add new edges (set semantics)
         if let Some(adds) = self.additions.get(&v) {
-            result.extend_from_slice(adds);
+            result.extend(adds.iter().copied());
         }
-
+        // Dedup deterministically and sort by VertexId for stable order
+        let mut seen: FxHashSet<VertexId> = FxHashSet::default();
+        result.retain(|e| seen.insert(*e));
+        result.sort_by_key(|e| e.0);
         result
     }
 
@@ -420,7 +483,7 @@ impl CsrMutableEdges {
 
     /// Force a rebuild of the CSR structure
     pub fn rebuild(&mut self) {
-        if self.delta.op_count() > 0 {
+        if self.delta.op_count() > 0 || self.delta.needs_rebuild() {
             self.base = self
                 .delta
                 .apply_to_csr(&self.base, &self.coords, &self.vertex_ids);
@@ -443,7 +506,7 @@ impl CsrMutableEdges {
     /// Exit batch mode and rebuild if needed
     pub fn end_batch(&mut self) {
         self.batch_mode = false;
-        if self.delta.op_count() > 0 {
+        if self.delta.op_count() > 0 || self.delta.needs_rebuild() {
             self.rebuild();
         }
     }
