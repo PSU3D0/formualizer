@@ -1556,4 +1556,61 @@ mod reference_tests {
         // Note: In the future, this should be enhanced to properly parse
         // table intersections and verify they're handled correctly
     }
+
+    #[test]
+    fn structured_combination_roundtrip_prints_nested_brackets() {
+        use crate::parser::{ReferenceType, SpecialItem, TableReference, TableSpecifier};
+        let s = "Table1[[#Headers],[#Data]]";
+        let r = ReferenceType::from_string(s).expect("parse ok");
+        // Expect canonical nested-bracket printing
+        assert_eq!(r.to_string(), s);
+        // Also sanity-check structure
+        match r {
+            ReferenceType::Table(TableReference {
+                name,
+                specifier: Some(TableSpecifier::Combination(parts)),
+            }) => {
+                assert_eq!(name, "Table1");
+                assert!(
+                    parts
+                        .iter()
+                        .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Headers)))
+                );
+                assert!(
+                    parts
+                        .iter()
+                        .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Data)))
+                );
+            }
+            _ => panic!("expected table combination"),
+        }
+    }
+
+    #[test]
+    fn structured_combination_dedupes_duplicate_specials() {
+        use crate::parser::{ReferenceType, SpecialItem, TableReference, TableSpecifier};
+        // Input with duplicates of specials
+        let s = "Table1[[#Data],[#Data],[#Totals],[#Totals]]";
+        let r = ReferenceType::from_string(s).expect("parse ok");
+        // Our Display prints each special once when building Combination
+        // Note: order may follow detection order (#Data, then #Totals)
+        assert_eq!(r.to_string(), "Table1[[#Data],[#Totals]]");
+        if let ReferenceType::Table(TableReference {
+            specifier: Some(TableSpecifier::Combination(parts)),
+            ..
+        }) = r
+        {
+            let has_data = parts
+                .iter()
+                .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Data)));
+            let has_totals = parts
+                .iter()
+                .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Totals)));
+            assert!(has_data && has_totals);
+            // Ensure duplicates were not kept
+            assert_eq!(parts.len(), 2);
+        } else {
+            panic!("expected table combination");
+        }
+    }
 }

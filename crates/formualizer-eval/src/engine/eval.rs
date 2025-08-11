@@ -4,8 +4,8 @@ use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::{DependencyGraph, EvalConfig, Scheduler, VertexId, VertexKind};
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord};
-use crate::traits::EvaluationContext;
 use crate::traits::FunctionProvider;
+use crate::traits::{EvaluationContext, Resolver};
 use formualizer_core::parser::ReferenceType;
 use formualizer_core::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
@@ -1295,8 +1295,13 @@ where
                 let data = self.resolver.resolve_named_range_reference(name)?;
                 Ok(RangeStorage::Owned(std::borrow::Cow::Owned(data)))
             }
-            ReferenceType::Table(_) => Err(ExcelError::new(ExcelErrorKind::NImpl)
-                .with_message("Table references not yet supported in streaming evaluation.")),
+            ReferenceType::Table(tref) => {
+                // Materialize via Resolver::resolve_range_like for tranche 1
+                let boxed = self.resolve_range_like(&ReferenceType::Table(tref.clone()))?;
+                Ok(RangeStorage::Owned(std::borrow::Cow::Owned(
+                    boxed.materialise().into_owned(),
+                )))
+            }
         }
     }
 }

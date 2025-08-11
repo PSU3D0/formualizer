@@ -313,6 +313,34 @@ impl Range for InMemoryRange {
 pub trait Table: Debug + Send + Sync {
     fn get_cell(&self, row: usize, column: &str) -> Result<LiteralValue, ExcelError>;
     fn get_column(&self, column: &str) -> Result<Box<dyn Range>, ExcelError>;
+    /// Ordered list of column names
+    fn columns(&self) -> Vec<String> {
+        vec![]
+    }
+    /// Number of data rows (excluding headers/totals)
+    fn data_height(&self) -> usize {
+        0
+    }
+    /// Whether the table has a header row
+    fn has_headers(&self) -> bool {
+        false
+    }
+    /// Whether the table has a totals row
+    fn has_totals(&self) -> bool {
+        false
+    }
+    /// Headers row as a 1xW range
+    fn headers_row(&self) -> Option<Box<dyn Range>> {
+        None
+    }
+    /// Totals row as a 1xW range, if present
+    fn totals_row(&self) -> Option<Box<dyn Range>> {
+        None
+    }
+    /// Entire data body as HxW range
+    fn data_body(&self) -> Option<Box<dyn Range>> {
+        None
+    }
     fn clone_box(&self) -> Box<dyn Table>;
 }
 impl Table for Box<dyn Table> {
@@ -321,6 +349,27 @@ impl Table for Box<dyn Table> {
     }
     fn get_column(&self, c: &str) -> Result<Box<dyn Range>, ExcelError> {
         (**self).get_column(c)
+    }
+    fn columns(&self) -> Vec<String> {
+        (**self).columns()
+    }
+    fn data_height(&self) -> usize {
+        (**self).data_height()
+    }
+    fn has_headers(&self) -> bool {
+        (**self).has_headers()
+    }
+    fn has_totals(&self) -> bool {
+        (**self).has_totals()
+    }
+    fn headers_row(&self) -> Option<Box<dyn Range>> {
+        (**self).headers_row()
+    }
+    fn totals_row(&self) -> Option<Box<dyn Range>> {
+        (**self).totals_row()
+    }
+    fn data_body(&self) -> Option<Box<dyn Range>> {
+        (**self).data_body()
     }
     fn clone_box(&self) -> Box<dyn Table> {
         (**self).clone_box()
@@ -377,13 +426,120 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
             ),
             ReferenceType::Table(tref) => {
                 let t = self.resolve_table_reference(tref)?;
-                if let Some(TableSpecifier::Column(c)) = &tref.specifier {
-                    t.get_column(c)
-                } else {
-                    Err(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
-                        "Table specifier {:?} not supported",
-                        tref.specifier
-                    )))
+                match &tref.specifier {
+                    Some(TableSpecifier::Column(c)) => t.get_column(c),
+                    Some(TableSpecifier::ColumnRange(start, end)) => {
+                        // Build a rectangular range from start..=end columns in table order
+                        let cols = t.columns();
+                        let start_idx = cols.iter().position(|n| n.eq_ignore_ascii_case(start));
+                        let end_idx = cols.iter().position(|n| n.eq_ignore_ascii_case(end));
+                        if let (Some(mut si), Some(mut ei)) = (start_idx, end_idx) {
+                            if si > ei {
+                                std::mem::swap(&mut si, &mut ei);
+                            }
+                            // Materialize by stacking columns into a 2D array
+                            let h = t.data_height();
+                            let w = ei - si + 1;
+                            let mut rows = vec![vec![LiteralValue::Empty; w]; h];
+                            for (offset, ci) in (si..=ei).enumerate() {
+                                let cname = &cols[ci];
+                                let col_range = t.get_column(cname)?;
+                                let (rh, _) = col_range.dimensions();
+                                for r in 0..h.min(rh) {
+                                    rows[r][offset] = col_range.get(r, 0)?;
+                                }
+                            }
+                            Ok(Box::new(InMemoryRange::new(rows)))
+                        } else {
+                            Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                                "Column range refers to unknown column(s)".to_string(),
+                            ))
+                        }
+                    }
+                    Some(TableSpecifier::SpecialItem(
+                        formualizer_core::parser::SpecialItem::Headers,
+                    )) => {
+                        if let Some(h) = t.headers_row() {
+                            Ok(h)
+                        } else {
+                            Ok(Box::new(InMemoryRange::new(vec![])))
+                        }
+                    }
+                    Some(TableSpecifier::SpecialItem(
+                        formualizer_core::parser::SpecialItem::Totals,
+                    )) => {
+                        if let Some(tr) = t.totals_row() {
+                            Ok(tr)
+                        } else {
+                            Ok(Box::new(InMemoryRange::new(vec![])))
+                        }
+                    }
+                    Some(TableSpecifier::SpecialItem(
+                        formualizer_core::parser::SpecialItem::Data,
+                    )) => {
+                        if let Some(body) = t.data_body() {
+                            Ok(body)
+                        } else {
+                            Ok(Box::new(InMemoryRange::new(vec![])))
+                        }
+                    }
+                    Some(TableSpecifier::SpecialItem(
+                        formualizer_core::parser::SpecialItem::All,
+                    )) => {
+                        // Equivalent to TableSpecifier::All handling
+                        let mut out: Vec<Vec<LiteralValue>> = Vec::new();
+                        if let Some(h) = t.headers_row() {
+                            out.extend(h.iter_rows().map(|r| r));
+                        }
+                        if let Some(body) = t.data_body() {
+                            out.extend(body.iter_rows().map(|r| r));
+                        }
+                        if let Some(tr) = t.totals_row() {
+                            out.extend(tr.iter_rows().map(|r| r));
+                        }
+                        Ok(Box::new(InMemoryRange::new(out)))
+                    }
+                    Some(TableSpecifier::SpecialItem(
+                        formualizer_core::parser::SpecialItem::ThisRow,
+                    )) => Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                        "@ (This Row) requires table-aware context; not yet supported".to_string(),
+                    )),
+                    Some(TableSpecifier::All) => {
+                        // Concatenate headers (if any), data, totals (if any)
+                        let mut out: Vec<Vec<LiteralValue>> = Vec::new();
+                        if let Some(h) = t.headers_row() {
+                            out.extend(h.iter_rows().map(|r| r));
+                        }
+                        if let Some(body) = t.data_body() {
+                            out.extend(body.iter_rows().map(|r| r));
+                        }
+                        if let Some(tr) = t.totals_row() {
+                            out.extend(tr.iter_rows().map(|r| r));
+                        }
+                        Ok(Box::new(InMemoryRange::new(out)))
+                    }
+                    Some(TableSpecifier::Data) => {
+                        if let Some(body) = t.data_body() {
+                            Ok(body)
+                        } else {
+                            Ok(Box::new(InMemoryRange::new(vec![])))
+                        }
+                    }
+                    // Defer complex combinations and row selectors for tranche 1
+                    Some(TableSpecifier::Combination(_)) => Err(ExcelError::new(
+                        ExcelErrorKind::NImpl,
+                    )
+                    .with_message("Complex structured references not yet supported".to_string())),
+                    Some(TableSpecifier::Row(_)) => Err(ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message("Row selectors (@/index) not yet supported".to_string())),
+                    Some(TableSpecifier::Headers) | Some(TableSpecifier::Totals) => {
+                        Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                            "Legacy Headers/Totals variants not used; use SpecialItem".to_string(),
+                        ))
+                    }
+                    None => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                        "Table reference without specifier is unsupported".to_string(),
+                    )),
                 }
             }
             ReferenceType::NamedRange(n) => {

@@ -80,6 +80,95 @@ impl TestWorkbook {
         self
     }
 
+    /// Create a simple in-memory table with headers, optional totals, and data.
+    /// headers: column names in order; data: Vec of rows; totals: optional row of totals matching width
+    pub fn with_simple_table<S: Into<String>>(
+        mut self,
+        name: S,
+        headers: Vec<String>,
+        data: Vec<Vec<V>>,
+        totals: Option<Vec<V>>,
+    ) -> Self {
+        #[derive(Debug)]
+        struct SimpleTable {
+            headers: Vec<String>,
+            data: Vec<Vec<V>>, // HxW
+            totals: Option<Vec<V>>,
+        }
+        impl Table for SimpleTable {
+            fn get_cell(&self, row: usize, column: &str) -> Result<V, ExcelError> {
+                // row is 0-based within data body
+                let col_idx = self
+                    .headers
+                    .iter()
+                    .position(|h| h.eq_ignore_ascii_case(column))
+                    .ok_or_else(|| ExcelError::from(ExcelErrorKind::Ref))?;
+                self.data
+                    .get(row)
+                    .and_then(|r| r.get(col_idx))
+                    .cloned()
+                    .ok_or_else(|| ExcelError::from(ExcelErrorKind::Ref))
+            }
+            fn get_column(&self, column: &str) -> Result<Box<dyn Range>, ExcelError> {
+                let col_idx = self
+                    .headers
+                    .iter()
+                    .position(|h| h.eq_ignore_ascii_case(column))
+                    .ok_or_else(|| ExcelError::from(ExcelErrorKind::Ref))?;
+                let mut col: Vec<Vec<V>> = Vec::with_capacity(self.data.len());
+                for r in &self.data {
+                    col.push(vec![r.get(col_idx).cloned().unwrap_or(V::Empty)]);
+                }
+                Ok(Box::new(crate::traits::InMemoryRange::new(col)))
+            }
+            fn columns(&self) -> Vec<String> {
+                self.headers.clone()
+            }
+            fn data_height(&self) -> usize {
+                self.data.len()
+            }
+            fn has_headers(&self) -> bool {
+                true
+            }
+            fn has_totals(&self) -> bool {
+                self.totals.is_some()
+            }
+            fn headers_row(&self) -> Option<Box<dyn Range>> {
+                Some(Box::new(crate::traits::InMemoryRange::new(vec![
+                    self.headers
+                        .iter()
+                        .cloned()
+                        .map(LiteralValue::Text)
+                        .collect(),
+                ])))
+            }
+            fn totals_row(&self) -> Option<Box<dyn Range>> {
+                self.totals.as_ref().map(|t| {
+                    Box::new(crate::traits::InMemoryRange::new(vec![t.clone()])) as Box<dyn Range>
+                })
+            }
+            fn data_body(&self) -> Option<Box<dyn Range>> {
+                Some(Box::new(crate::traits::InMemoryRange::new(
+                    self.data.clone(),
+                )))
+            }
+            fn clone_box(&self) -> Box<dyn Table> {
+                Box::new(SimpleTable {
+                    headers: self.headers.clone(),
+                    data: self.data.clone(),
+                    totals: self.totals.clone(),
+                })
+            }
+        }
+        let table = SimpleTable {
+            headers,
+            data,
+            totals,
+        };
+        self.tables.insert(name.into(), Box::new(table));
+        self
+    }
+
     /* ─────────────── function helpers ─────────── */
     pub fn with_function(mut self, func: Arc<dyn Function>) -> Self {
         let ns = func.namespace().to_uppercase();

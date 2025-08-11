@@ -398,7 +398,18 @@ impl DataStore {
                 ref_type,
             } => {
                 let original = self.asts.resolve_string(*original_id).to_string();
-                let reference = self.reconstruct_reference_type(ref_type, sheet_registry);
+                // If this looks like a table reference, prefer reparsing the original string to
+                // preserve structured specifiers that CompactRefType::Table doesn't encode.
+                let reference = match ref_type {
+                    super::ast::CompactRefType::Table(_) => {
+                        formualizer_core::parser::ReferenceType::from_string(&original)
+                            .unwrap_or_else(|_| {
+                                // Fallback to name-only reconstruction if parse fails
+                                self.reconstruct_reference_type(ref_type, sheet_registry)
+                            })
+                    }
+                    _ => self.reconstruct_reference_type(ref_type, sheet_registry),
+                };
                 ASTNodeType::Reference {
                     original,
                     reference,

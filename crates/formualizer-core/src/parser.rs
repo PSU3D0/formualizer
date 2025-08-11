@@ -138,8 +138,9 @@ impl Display for TableSpecifier {
             TableSpecifier::ColumnRange(start, end) => write!(f, "{start}:{end}"),
             TableSpecifier::SpecialItem(item) => write!(f, "{item}"),
             TableSpecifier::Combination(specs) => {
-                // Handle combined specifiers
-                let parts: Vec<String> = specs.iter().map(|s| format!("{s}")).collect();
+                // Emit nested bracketed parts so the surrounding Table formatter prints
+                // canonical structured refs like Table[[#Headers],[Column1]:[Column2]]
+                let parts: Vec<String> = specs.iter().map(|s| format!("[{}]", s)).collect();
                 write!(f, "{}", parts.join(","))
             }
         }
@@ -660,6 +661,12 @@ impl ReferenceType {
             }
             if content.contains("[#Data]") {
                 specifiers.push(Box::new(TableSpecifier::SpecialItem(SpecialItem::Data)));
+            }
+            if content.contains("[#Totals]") {
+                specifiers.push(Box::new(TableSpecifier::SpecialItem(SpecialItem::Totals)));
+            }
+            if content.contains("[#All]") {
+                specifiers.push(Box::new(TableSpecifier::SpecialItem(SpecialItem::All)));
             }
 
             if !specifiers.is_empty() {

@@ -413,6 +413,52 @@ fn interpreter_evaluate_ast_as_reference_returns_reference_for_ast_reference() {
 }
 
 #[test]
+fn structured_ref_basic_specifiers() {
+    use crate::traits::Resolver;
+    type V = LiteralValue;
+    // Build a test workbook with a simple table
+    let wb = TestWorkbook::new().with_simple_table(
+        "Sales",
+        vec!["Region".into(), "Amount".into(), "Units".into()],
+        vec![
+            vec![V::Text("N".into()), V::Number(10.0), V::Int(2)],
+            vec![V::Text("S".into()), V::Number(20.0), V::Int(3)],
+        ],
+        Some(vec![V::Text("".into()), V::Number(30.0), V::Int(5)]),
+    );
+
+    // Column reference
+    let r = ReferenceType::from_string("Sales[Amount]").unwrap();
+    let range = wb.resolve_range_like(&r).unwrap();
+    assert_eq!(range.dimensions(), (2, 1));
+    assert_eq!(range.get(0, 0).unwrap(), V::Number(10.0));
+    assert_eq!(range.get(1, 0).unwrap(), V::Number(20.0));
+
+    // Column range
+    let r = ReferenceType::from_string("Sales[Amount:Units]").unwrap();
+    let range = wb.resolve_range_like(&r).unwrap();
+    assert_eq!(range.dimensions(), (2, 2));
+    assert_eq!(range.get(0, 0).unwrap(), V::Number(10.0));
+    assert_eq!(range.get(1, 1).unwrap(), V::Int(3));
+
+    // Headers
+    let r = ReferenceType::from_string("Sales[#Headers]").unwrap();
+    let range = wb.resolve_range_like(&r).unwrap();
+    assert_eq!(range.dimensions(), (1, 3));
+
+    // Totals
+    let r = ReferenceType::from_string("Sales[#Totals]").unwrap();
+    let range = wb.resolve_range_like(&r).unwrap();
+    assert_eq!(range.dimensions(), (1, 3));
+    assert_eq!(range.get(0, 1).unwrap(), V::Number(30.0));
+
+    // All = headers + data + totals
+    let r = ReferenceType::from_string("Sales[#All]").unwrap();
+    let range = wb.resolve_range_like(&r).unwrap();
+    assert_eq!(range.dimensions(), (1 + 2 + 1, 3));
+}
+
+#[test]
 fn interpreter_broadcasts_numeric_binary() {
     let wb = TestWorkbook::new();
     let ctx = interp(&wb);
