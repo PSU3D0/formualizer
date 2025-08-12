@@ -524,6 +524,7 @@ dependencies = [
  "formualizer-core",
  "formualizer-eval",
  "memmap2",
+ "once_cell",
  "parking_lot",
  "pyo3",
  "reqwest",

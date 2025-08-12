@@ -1,4 +1,5 @@
 pub mod backends;
+pub mod builtins;
 pub mod error;
 pub mod loader;
 pub mod resolver;
@@ -12,6 +13,7 @@ pub use backends::CalamineAdapter;
 pub use backends::JsonAdapter;
 #[cfg(feature = "umya")]
 pub use backends::UmyaAdapter;
+pub use builtins::{ensure_builtins_loaded, register_function_dynamic, try_load_builtins};
 pub use error::{with_cell_context, IoError};
 pub use loader::{LoaderStats, WorkbookLoader};
 pub use resolver::IoResolver;
