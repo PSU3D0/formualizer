@@ -8,6 +8,8 @@ pub mod transaction;
 
 #[cfg(feature = "calamine")]
 pub use backends::CalamineAdapter;
+#[cfg(feature = "json")]
+pub use backends::JsonAdapter;
 #[cfg(feature = "umya")]
 pub use backends::UmyaAdapter;
 pub use error::{with_cell_context, IoError};

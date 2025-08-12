@@ -1,4 +1,6 @@
 use formualizer_common::LiteralValue;
+#[cfg(feature = "json")]
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -110,6 +112,7 @@ pub struct SheetData {
     pub hidden: bool,
 }
 
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug)]
 pub struct NamedRange {
     pub name: String,
@@ -117,6 +120,7 @@ pub struct NamedRange {
     pub range: (u32, u32, u32, u32), // (start_row, start_col, end_row, end_col)
 }
 
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug)]
 pub struct TableDefinition {
     pub name: String,
@@ -125,6 +129,7 @@ pub struct TableDefinition {
     pub totals_row: bool,
 }
 
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug)]
 pub struct MergedRange {
     pub start_row: u32,
