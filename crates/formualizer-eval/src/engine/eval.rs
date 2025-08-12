@@ -455,6 +455,62 @@ where
         })
     }
 
+    /// Convenience: demand-driven evaluation of a single cell by sheet name and row/col.
+    ///
+    /// This will evaluate only the minimal set of dirty / volatile precedents required
+    /// to bring the target cell up-to-date (as if a user asked for that single value),
+    /// rather than scheduling a full workbook recalc. If the cell is already clean and
+    /// non-volatile, no vertices will be recomputed.
+    ///
+    /// Returns the (possibly newly computed) value stored for the cell afterwards.
+    /// Empty cells return None. Errors are surfaced via the Result type.
+    pub fn evaluate_cell(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> Result<Option<LiteralValue>, ExcelError> {
+        let addr = format!("{}!{}{}", sheet, Self::col_to_letters(col), row);
+        let _ = self.evaluate_until(&[addr.as_str()])?; // ignore detailed EvalResult here
+        Ok(self.get_cell_value(sheet, row, col))
+    }
+
+    /// Convenience: demand-driven evaluation of multiple cells; accepts a slice of
+    /// (sheet, row, col) triples. The union of required dirty / volatile precedents
+    /// is computed once and evaluated, which is typically faster than calling
+    /// `evaluate_cell` repeatedly for a related set of targets.
+    ///
+    /// Returns the resulting values for each requested target in the same order.
+    pub fn evaluate_cells(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+        let addresses: Vec<String> = targets
+            .iter()
+            .map(|(s, r, c)| format!("{}!{}{}", s, Self::col_to_letters(*c), r))
+            .collect();
+        let addr_refs: Vec<&str> = addresses.iter().map(|s| s.as_str()).collect();
+        let _ = self.evaluate_until(&addr_refs)?;
+        Ok(targets
+            .iter()
+            .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
+            .collect())
+    }
+
+    /// Helper: convert 1-based column index to Excel-style letters (1 -> A, 27 -> AA)
+    fn col_to_letters(mut col: u32) -> String {
+        let mut s = String::new();
+        while col > 0 {
+            let rem = ((col - 1) % 26) as u8;
+            s.push((b'A' + rem) as char);
+            col = (col - 1) / 26;
+        }
+        s.chars().rev().collect()
+    }
+
     /// Evaluate all dirty/volatile vertices with cancellation support
     pub fn evaluate_all_cancellable(
         &mut self,

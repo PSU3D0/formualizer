@@ -1352,6 +1352,29 @@ impl DependencyGraph {
         self.edges.end_batch();
     }
 
+    /// Public (crate) helper to add a single dependency edge (dependent -> dependency) used for restoration/undo.
+    pub fn add_dependency_edge(&mut self, dependent: VertexId, dependency: VertexId) {
+        if dependent == dependency {
+            return;
+        }
+        // If PK enabled attempt to add maintaining ordering; fallback to rebuild if cycle
+        if self.pk_order.is_some() {
+            if let Some(mut pk) = self.pk_order.take() {
+                pk.ensure_nodes(std::iter::once(dependent));
+                pk.ensure_nodes(std::iter::once(dependency));
+                let adapter = GraphAdapter { g: self };
+                if pk.try_add_edge(&adapter, dependency, dependent).is_err() {
+                    // Cycle: rebuild full (conservative)
+                    pk.rebuild_full(&adapter);
+                }
+                self.pk_order = Some(pk);
+            }
+        }
+        self.edges.add_edge(dependent, dependency);
+        self.store.set_dirty(dependent, true);
+        self.dirty_vertices.insert(dependent);
+    }
+
     fn add_range_dependent_edges(
         &mut self,
         dependent: VertexId,

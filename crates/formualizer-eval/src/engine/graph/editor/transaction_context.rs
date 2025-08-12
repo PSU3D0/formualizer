@@ -201,6 +201,11 @@ impl<'g> TransactionContext<'g> {
     /// Apply the inverse of a single change event
     fn apply_inverse(&mut self, change: ChangeEvent) -> Result<(), EditorError> {
         match change {
+            ChangeEvent::AddVertex { id, .. } => {
+                let mut editor = VertexEditor::new(self.graph);
+                let _ = editor.remove_vertex(id); // ignore failures
+                Ok(())
+            }
             ChangeEvent::SetValue { addr, old, .. } => {
                 if let Some(old_value) = old {
                     let mut editor = VertexEditor::new(self.graph);
@@ -236,9 +241,28 @@ impl<'g> TransactionContext<'g> {
                 old_value,
                 old_formula,
                 old_dependencies,
+                coord,
+                sheet_id,
+                kind,
+                ..
             } => {
-                // Recreate the vertex with its original state
-                self.restore_vertex(id, old_value, old_formula, old_dependencies)
+                // Basic recreation: allocate new vertex at coord+sheet if missing
+                if let (Some(coord), Some(sheet_id)) = (coord, sheet_id) {
+                    // If vertex id reused internally is not possible, we ignore id mismatch
+                    let cell_ref = crate::reference::CellRef::new(
+                        sheet_id,
+                        crate::reference::Coord::new(coord.row(), coord.col(), true, true),
+                    );
+                    let mut editor = VertexEditor::new(self.graph);
+                    if let Some(val) = old_value.clone() {
+                        editor.set_cell_value(cell_ref, val);
+                    }
+                    if let Some(formula) = old_formula {
+                        editor.set_cell_formula(cell_ref, formula);
+                    }
+                    // Dependencies restoration (skip for now – will be rebuilt on next formula set)
+                }
+                Ok(())
             }
 
             // Granular operations (these do the actual work for compound operations)
@@ -272,16 +296,6 @@ impl<'g> TransactionContext<'g> {
                 self.add_edge(from, to)
             }
 
-            // High-level operations (markers - actual rollback done by granular events)
-            ChangeEvent::InsertRows { .. }
-            | ChangeEvent::DeleteRows { .. }
-            | ChangeEvent::InsertColumns { .. }
-            | ChangeEvent::DeleteColumns { .. } => {
-                // These are markers - actual rollback is done by the granular events
-                // (VertexMoved, FormulaAdjusted, etc.) that follow
-                Ok(())
-            }
-
             // Named range operations
             ChangeEvent::DefineName { name, scope, .. } => {
                 // Remove the name that was defined
@@ -298,12 +312,16 @@ impl<'g> TransactionContext<'g> {
                 self.update_name(&name, scope, old_definition)
             }
 
-            ChangeEvent::DeleteName { name, scope } => {
-                // Re-define the name that was deleted
-                // Note: We need the old definition which should have been captured
-                // This is a limitation - we may need to enhance DeleteName event
-                // For now, we'll skip this as it's rarely used in transactions
-                Ok(())
+            ChangeEvent::DeleteName {
+                name,
+                scope,
+                old_definition,
+            } => {
+                if let Some(def) = old_definition {
+                    self.update_name(&name, scope, def)
+                } else {
+                    Ok(())
+                }
             }
 
             // Compound markers - already handled in apply_rollback

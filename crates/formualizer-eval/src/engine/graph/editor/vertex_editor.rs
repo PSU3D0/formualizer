@@ -278,45 +278,40 @@ impl<'g> VertexEditor<'g> {
                     }
                 }
             }
-            ChangeEvent::RemoveVertex { id, .. } => {
-                // Need to restore the vertex - this is complex and would require
-                // capturing more state. For now, we'll skip this.
-                // TODO: Implement vertex restoration
-                return Err(EditorError::TransactionFailed {
-                    reason: "Cannot rollback vertex removal yet".to_string(),
-                });
+            ChangeEvent::AddVertex { id, .. } => {
+                // Inverse of AddVertex is removal
+                let _ = self.remove_vertex(id); // ignore errors for now
             }
-            ChangeEvent::InsertRows {
+            ChangeEvent::RemoveVertex {
+                id: _,
+                old_value,
+                old_formula,
+                old_dependencies,
+                old_dependents,
+                coord,
                 sheet_id,
-                before,
-                count,
+                kind,
+                ..
             } => {
-                // Inverse of insert is delete
-                self.delete_rows(sheet_id, before, count)?;
-            }
-            ChangeEvent::DeleteRows {
-                sheet_id,
-                start,
-                count,
-            } => {
-                // Inverse of delete is insert
-                self.insert_rows(sheet_id, start, count)?;
-            }
-            ChangeEvent::InsertColumns {
-                sheet_id,
-                before,
-                count,
-            } => {
-                // Inverse of insert is delete
-                self.delete_columns(sheet_id, before, count)?;
-            }
-            ChangeEvent::DeleteColumns {
-                sheet_id,
-                start,
-                count,
-            } => {
-                // Inverse of delete is insert
-                self.insert_columns(sheet_id, start, count)?;
+                if let (Some(c), Some(sid)) = (coord, sheet_id) {
+                    let meta =
+                        VertexMeta::new(c.row(), c.col(), sid, kind.unwrap_or(VertexKind::Cell));
+                    let new_id = self.add_vertex(meta);
+                    if let Some(v) = old_value {
+                        let cell_ref = self.graph.make_cell_ref_internal(sid, c.row(), c.col());
+                        self.set_cell_value(cell_ref, v);
+                    }
+                    if let Some(f) = old_formula {
+                        let cell_ref = self.graph.make_cell_ref_internal(sid, c.row(), c.col());
+                        self.set_cell_formula(cell_ref, f);
+                    }
+                    for dep in old_dependencies {
+                        self.graph.add_dependency_edge(new_id, dep);
+                    }
+                    for parent in old_dependents {
+                        self.graph.add_dependency_edge(parent, new_id);
+                    }
+                }
             }
             ChangeEvent::DefineName { name, scope, .. } => {
                 // Inverse is delete name
@@ -331,12 +326,18 @@ impl<'g> VertexEditor<'g> {
                 // Restore old definition
                 self.graph.update_name(&name, old_definition, scope)?;
             }
-            ChangeEvent::DeleteName { name, scope } => {
-                // Cannot restore deleted name without more info
-                // TODO: Capture definition when deleting
-                return Err(EditorError::TransactionFailed {
-                    reason: "Cannot rollback name deletion yet".to_string(),
-                });
+            ChangeEvent::DeleteName {
+                name,
+                scope,
+                old_definition,
+            } => {
+                if let Some(def) = old_definition {
+                    self.graph.define_name(&name, def, scope)?;
+                } else {
+                    return Err(EditorError::TransactionFailed {
+                        reason: "Missing old definition for name deletion rollback".to_string(),
+                    });
+                }
             }
             // Granular events for compound operations
             ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => {
@@ -386,7 +387,7 @@ impl<'g> VertexEditor<'g> {
         // This is a simplified implementation that works with the current API
         let sheet_name = self.graph.sheet_name(meta.sheet_id).to_string();
 
-        match meta.kind {
+        let id = match meta.kind {
             VertexKind::Cell => {
                 // Create with empty value initially
                 match self.graph.set_cell_value(
@@ -420,7 +421,20 @@ impl<'g> VertexEditor<'g> {
                     Err(_) => VertexId::new(0),
                 }
             }
+        };
+
+        if self.has_logger() && id.0 != 0 {
+            self.log_change(ChangeEvent::AddVertex {
+                id,
+                coord: meta.coord,
+                sheet_id: meta.sheet_id,
+                value: Some(LiteralValue::Empty),
+                formula: None,
+                kind: Some(meta.kind),
+                flags: Some(meta.flags),
+            });
         }
+        id
     }
 
     /// Remove a vertex from the graph with proper cleanup
@@ -436,6 +450,36 @@ impl<'g> VertexEditor<'g> {
         // Note: get_dependents may require CSR rebuild if delta has changes
         let dependents = self.graph.get_dependents(id);
 
+        // Capture old state (dependencies & dependents) BEFORE edge removal
+        let (
+            old_value,
+            old_formula,
+            old_dependencies,
+            old_dependents,
+            coord,
+            sheet_id_opt,
+            kind,
+            flags,
+        ) = if self.has_logger() {
+            let coord = self.graph.get_coord(id);
+            let sheet_id = self.graph.get_sheet_id(id);
+            let kind = self.graph.get_vertex_kind(id);
+            // flags not publicly exposed; set to 0 for now (future: expose getter)
+            let flags = 0u8;
+            (
+                self.graph.get_value(id),
+                self.graph.get_formula(id),
+                self.graph.get_dependencies(id), // outgoing deps
+                dependents.clone(),              // captured earlier
+                Some(coord),
+                Some(sheet_id),
+                Some(kind),
+                Some(flags),
+            )
+        } else {
+            (None, None, vec![], vec![], None, None, None, None)
+        };
+
         // Remove from cell mapping if it exists
         if let Some(cell_ref) = self.graph.get_cell_ref_for_vertex(id) {
             self.graph.remove_cell_mapping(&cell_ref);
@@ -445,28 +489,9 @@ impl<'g> VertexEditor<'g> {
         self.graph.remove_all_edges(id);
 
         // Mark all dependents as having #REF! error
-        for dep_id in dependents {
-            self.graph.mark_as_ref_error(dep_id);
+        for dep_id in &dependents {
+            self.graph.mark_as_ref_error(*dep_id);
         }
-
-        // Capture old state before deletion for change log
-        let old_value = if self.has_logger() {
-            self.graph.get_value(id)
-        } else {
-            None
-        };
-
-        let old_formula = if self.has_logger() {
-            self.graph.get_formula(id)
-        } else {
-            None
-        };
-
-        let old_dependencies = if self.has_logger() {
-            self.graph.get_dependencies(id)
-        } else {
-            vec![]
-        };
 
         // Mark as deleted in store (tombstone)
         self.graph.mark_deleted(id, true);
@@ -477,9 +502,23 @@ impl<'g> VertexEditor<'g> {
             old_value,
             old_formula,
             old_dependencies,
+            old_dependents,
+            coord,
+            sheet_id: sheet_id_opt,
+            kind,
+            flags,
         });
 
         Ok(())
+    }
+
+    /// Convenience: remove vertex at a given cell ref if exists
+    pub fn remove_vertex_at(&mut self, cell: CellRef) -> Result<(), EditorError> {
+        if let Some(id) = self.graph.get_vertex_for_cell(&cell) {
+            self.remove_vertex(id)
+        } else {
+            Ok(())
+        }
     }
 
     /// Move a vertex to a new position
@@ -643,9 +682,21 @@ impl<'g> VertexEditor<'g> {
             })
             .collect();
 
-        // 2. Shift vertices down
+        if let Some(logger) = &mut self.change_logger {
+            logger.begin_compound(format!(
+                "InsertRows sheet={sheet_id} before={before} count={count}"
+            ));
+        }
+        // 2. Shift vertices down (emit VertexMoved)
         for (id, old_coord) in vertices_to_shift {
             let new_coord = PackedCoord::new(old_coord.row() + count, old_coord.col());
+            if self.has_logger() {
+                self.log_change(ChangeEvent::VertexMoved {
+                    id,
+                    old_coord,
+                    new_coord,
+                });
+            }
             self.move_vertex(id, new_coord)?;
             summary.vertices_moved.push(id);
         }
@@ -677,11 +728,9 @@ impl<'g> VertexEditor<'g> {
         self.graph.adjust_named_ranges(&op)?;
 
         // 5. Log change event
-        self.log_change(ChangeEvent::InsertRows {
-            sheet_id,
-            before,
-            count,
-        });
+        if let Some(logger) = &mut self.change_logger {
+            logger.end_compound();
+        }
 
         self.commit_batch();
 
@@ -718,7 +767,12 @@ impl<'g> VertexEditor<'g> {
             summary.vertices_deleted.push(id);
         }
 
-        // 2. Shift remaining vertices up
+        if let Some(logger) = &mut self.change_logger {
+            logger.begin_compound(format!(
+                "DeleteRows sheet={sheet_id} start={start} count={count}"
+            ));
+        }
+        // 2. Shift remaining vertices up (emit VertexMoved)
         let vertices_to_shift: Vec<(VertexId, PackedCoord)> = self
             .graph
             .vertices_in_sheet(sheet_id)
@@ -734,6 +788,13 @@ impl<'g> VertexEditor<'g> {
 
         for (id, old_coord) in vertices_to_shift {
             let new_coord = PackedCoord::new(old_coord.row() - count, old_coord.col());
+            if self.has_logger() {
+                self.log_change(ChangeEvent::VertexMoved {
+                    id,
+                    old_coord,
+                    new_coord,
+                });
+            }
             self.move_vertex(id, new_coord)?;
             summary.vertices_moved.push(id);
         }
@@ -763,11 +824,9 @@ impl<'g> VertexEditor<'g> {
         self.graph.adjust_named_ranges(&op)?;
 
         // 5. Log change event
-        self.log_change(ChangeEvent::DeleteRows {
-            sheet_id,
-            start,
-            count,
-        });
+        if let Some(logger) = &mut self.change_logger {
+            logger.end_compound();
+        }
 
         self.commit_batch();
 
@@ -804,9 +863,21 @@ impl<'g> VertexEditor<'g> {
             })
             .collect();
 
-        // 2. Shift vertices right
+        if let Some(logger) = &mut self.change_logger {
+            logger.begin_compound(format!(
+                "InsertColumns sheet={sheet_id} before={before} count={count}"
+            ));
+        }
+        // 2. Shift vertices right (emit VertexMoved)
         for (id, old_coord) in vertices_to_shift {
             let new_coord = PackedCoord::new(old_coord.row(), old_coord.col() + count);
+            if self.has_logger() {
+                self.log_change(ChangeEvent::VertexMoved {
+                    id,
+                    old_coord,
+                    new_coord,
+                });
+            }
             self.move_vertex(id, new_coord)?;
             summary.vertices_moved.push(id);
         }
@@ -838,11 +909,9 @@ impl<'g> VertexEditor<'g> {
         self.graph.adjust_named_ranges(&op)?;
 
         // 5. Log change event
-        self.log_change(ChangeEvent::InsertColumns {
-            sheet_id,
-            before,
-            count,
-        });
+        if let Some(logger) = &mut self.change_logger {
+            logger.end_compound();
+        }
 
         self.commit_batch();
 
@@ -879,7 +948,12 @@ impl<'g> VertexEditor<'g> {
             summary.vertices_deleted.push(id);
         }
 
-        // 2. Shift remaining vertices left
+        if let Some(logger) = &mut self.change_logger {
+            logger.begin_compound(format!(
+                "DeleteColumns sheet={sheet_id} start={start} count={count}"
+            ));
+        }
+        // 2. Shift remaining vertices left (emit VertexMoved)
         let vertices_to_shift: Vec<(VertexId, PackedCoord)> = self
             .graph
             .vertices_in_sheet(sheet_id)
@@ -895,6 +969,13 @@ impl<'g> VertexEditor<'g> {
 
         for (id, old_coord) in vertices_to_shift {
             let new_coord = PackedCoord::new(old_coord.row(), old_coord.col() - count);
+            if self.has_logger() {
+                self.log_change(ChangeEvent::VertexMoved {
+                    id,
+                    old_coord,
+                    new_coord,
+                });
+            }
             self.move_vertex(id, new_coord)?;
             summary.vertices_moved.push(id);
         }
@@ -924,11 +1005,9 @@ impl<'g> VertexEditor<'g> {
         self.graph.adjust_named_ranges(&op)?;
 
         // 5. Log change event
-        self.log_change(ChangeEvent::DeleteColumns {
-            sheet_id,
-            start,
-            count,
-        });
+        if let Some(logger) = &mut self.change_logger {
+            logger.end_compound();
+        }
 
         self.commit_batch();
 
@@ -1405,9 +1484,23 @@ impl<'g> VertexEditor<'g> {
     pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), EditorError> {
         self.graph.delete_name(name, scope)?;
 
+        let old_def = if self.has_logger() {
+            self.graph
+                .resolve_name(
+                    name,
+                    match scope {
+                        NameScope::Sheet(id) => id,
+                        NameScope::Workbook => 0,
+                    },
+                )
+                .cloned()
+        } else {
+            None
+        };
         self.log_change(ChangeEvent::DeleteName {
             name: name.to_string(),
             scope,
+            old_definition: old_def,
         });
 
         Ok(())

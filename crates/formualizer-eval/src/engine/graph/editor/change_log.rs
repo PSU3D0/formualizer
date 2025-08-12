@@ -27,12 +27,27 @@ pub enum ChangeEvent {
         old: Option<ASTNode>,
         new: ASTNode,
     },
+    /// Vertex creation snapshot (for undo). Minimal for now.
+    AddVertex {
+        id: VertexId,
+        coord: PackedCoord,
+        sheet_id: SheetId,
+        value: Option<LiteralValue>,
+        formula: Option<ASTNode>,
+        kind: Option<crate::engine::vertex::VertexKind>,
+        flags: Option<u8>,
+    },
     RemoveVertex {
         id: VertexId,
         // Need to capture more for rollback!
         old_value: Option<LiteralValue>,
         old_formula: Option<ASTNode>,
-        old_dependencies: Vec<VertexId>,
+        old_dependencies: Vec<VertexId>, // outgoing
+        old_dependents: Vec<VertexId>,   // incoming
+        coord: Option<PackedCoord>,
+        sheet_id: Option<SheetId>,
+        kind: Option<crate::engine::vertex::VertexKind>,
+        flags: Option<u8>,
     },
 
     // Compound operation markers
@@ -70,28 +85,6 @@ pub enum ChangeEvent {
         to: VertexId,
     },
 
-    // High-level operations (kept for clarity, but decomposed into granular events)
-    InsertRows {
-        sheet_id: SheetId,
-        before: u32,
-        count: u32,
-    },
-    DeleteRows {
-        sheet_id: SheetId,
-        start: u32,
-        count: u32,
-    },
-    InsertColumns {
-        sheet_id: SheetId,
-        before: u32,
-        count: u32,
-    },
-    DeleteColumns {
-        sheet_id: SheetId,
-        start: u32,
-        count: u32,
-    },
-
     // Named range operations
     DefineName {
         name: String,
@@ -107,6 +100,7 @@ pub enum ChangeEvent {
     DeleteName {
         name: String,
         scope: NameScope,
+        old_definition: Option<NamedDefinition>,
     },
 }
 
@@ -117,6 +111,14 @@ pub struct ChangeLog {
     enabled: bool,
     /// Track compound operations for atomic rollback
     compound_depth: usize,
+    /// Monotonic sequence number per event
+    seqs: Vec<u64>,
+    /// Optional group id (compound) per event
+    groups: Vec<Option<u64>>,
+    next_seq: u64,
+    /// Stack of active group ids for nested compounds
+    group_stack: Vec<u64>,
+    next_group_id: u64,
 }
 
 impl ChangeLog {
@@ -125,20 +127,41 @@ impl ChangeLog {
             events: Vec::new(),
             enabled: true,
             compound_depth: 0,
+            seqs: Vec::new(),
+            groups: Vec::new(),
+            next_seq: 0,
+            group_stack: Vec::new(),
+            next_group_id: 1,
         }
     }
 
     pub fn record(&mut self, event: ChangeEvent) {
         if self.enabled {
+            let seq = self.next_seq;
+            self.next_seq += 1;
+            let current_group = self.group_stack.last().copied();
             self.events.push(event);
+            self.seqs.push(seq);
+            self.groups.push(current_group);
         }
     }
 
     /// Begin a compound operation (multiple changes from single action)
     pub fn begin_compound(&mut self, description: String) {
         self.compound_depth += 1;
+        if self.compound_depth == 1 {
+            // allocate new group id
+            let gid = self.next_group_id;
+            self.next_group_id += 1;
+            self.group_stack.push(gid);
+        } else {
+            // nested: reuse top id
+            if let Some(&gid) = self.group_stack.last() {
+                self.group_stack.push(gid);
+            }
+        }
         if self.enabled {
-            self.events.push(ChangeEvent::CompoundStart {
+            self.record(ChangeEvent::CompoundStart {
                 description,
                 depth: self.compound_depth,
             });
@@ -149,11 +172,12 @@ impl ChangeLog {
     pub fn end_compound(&mut self) {
         if self.compound_depth > 0 {
             if self.enabled {
-                self.events.push(ChangeEvent::CompoundEnd {
+                self.record(ChangeEvent::CompoundEnd {
                     depth: self.compound_depth,
                 });
             }
             self.compound_depth -= 1;
+            self.group_stack.pop();
         }
     }
 
@@ -161,9 +185,19 @@ impl ChangeLog {
         &self.events
     }
 
+    /// Truncate log (and metadata) to len
+    pub fn truncate(&mut self, len: usize) {
+        self.events.truncate(len);
+        self.seqs.truncate(len);
+        self.groups.truncate(len);
+    }
+
     pub fn clear(&mut self) {
         self.events.clear();
+        self.seqs.clear();
+        self.groups.clear();
         self.compound_depth = 0;
+        self.group_stack.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -188,6 +222,31 @@ impl ChangeLog {
     pub fn compound_depth(&self) -> usize {
         self.compound_depth
     }
+
+    /// Return (sequence_number, group_id) metadata for event index
+    pub fn meta(&self, index: usize) -> Option<(u64, Option<u64>)> {
+        self.seqs
+            .get(index)
+            .copied()
+            .zip(self.groups.get(index).copied())
+            .map(|(s, g)| (s, g))
+    }
+
+    /// Collect indices belonging to the last (innermost) complete group. Fallback: last single event.
+    pub fn last_group_indices(&self) -> Vec<usize> {
+        if let Some(&last_gid) = self.groups.iter().rev().flatten().next() {
+            let idxs: Vec<usize> = self
+                .groups
+                .iter()
+                .enumerate()
+                .filter_map(|(i, g)| if *g == Some(last_gid) { Some(i) } else { None })
+                .collect();
+            if !idxs.is_empty() {
+                return idxs;
+            }
+        }
+        self.events.len().checked_sub(1).into_iter().collect()
+    }
 }
 
 /// Trait for pluggable logging strategies
@@ -200,7 +259,7 @@ pub trait ChangeLogger {
 
 impl ChangeLogger for ChangeLog {
     fn record(&mut self, event: ChangeEvent) {
-        self.record(event);
+        ChangeLog::record(self, event);
     }
 
     fn set_enabled(&mut self, enabled: bool) {
@@ -208,11 +267,11 @@ impl ChangeLogger for ChangeLog {
     }
 
     fn begin_compound(&mut self, description: String) {
-        self.begin_compound(description);
+        ChangeLog::begin_compound(self, description);
     }
 
     fn end_compound(&mut self) {
-        self.end_compound();
+        ChangeLog::end_compound(self);
     }
 }
 

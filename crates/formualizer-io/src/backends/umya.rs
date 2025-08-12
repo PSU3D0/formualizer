@@ -1,6 +1,8 @@
 #![cfg(feature = "umya")]
 
-use crate::traits::{AccessGranularity, BackendCaps, CellData, SheetData, SpreadsheetReader};
+use crate::traits::{
+    AccessGranularity, BackendCaps, CellData, SheetData, SpreadsheetReader, SpreadsheetWriter,
+};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
@@ -11,6 +13,7 @@ use umya_spreadsheet::{reader::xlsx, CellRawValue, CellValue, Spreadsheet};
 pub struct UmyaAdapter {
     workbook: RwLock<Spreadsheet>,
     lazy: bool,
+    original_path: Option<std::path::PathBuf>,
 }
 
 impl UmyaAdapter {
@@ -71,6 +74,7 @@ impl SpreadsheetReader for UmyaAdapter {
     fn capabilities(&self) -> BackendCaps {
         BackendCaps {
             read: true,
+            write: true,
             formulas: true,
             lazy_loading: self.lazy,
             random_access: false,
@@ -98,10 +102,12 @@ impl SpreadsheetReader for UmyaAdapter {
         Self: Sized,
     {
         // Prefer lazy read for large files; expose both later
-        let sheet = xlsx::lazy_read(path.as_ref())?; // workbook partially loaded
+        // Use full read (not lazy) so that save operations don't hit deserialization assertions
+        let sheet = xlsx::read(path.as_ref())?;
         Ok(Self {
             workbook: RwLock::new(sheet),
-            lazy: true,
+            lazy: false,
+            original_path: Some(path.as_ref().to_path_buf()),
         })
     }
 
@@ -225,5 +231,194 @@ impl SpreadsheetReader for UmyaAdapter {
         // In lazy mode, after first read_sheet call it's loaded; simplistic: if deserialized
         let wb = self.workbook.read();
         wb.get_sheet_by_name(sheet).is_some()
+    }
+}
+
+impl SpreadsheetWriter for UmyaAdapter {
+    type Error = umya_spreadsheet::XlsxError;
+
+    fn write_cell(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        data: CellData,
+    ) -> Result<(), Self::Error> {
+        let mut wb = self.workbook.write();
+        // If sheet missing create before any deserialize attempts
+        if wb.get_sheet_by_name(sheet).is_none() {
+            let _ = wb.new_sheet(sheet);
+            // Ensure it's marked deserialized for writer
+            wb.read_sheet_collection();
+        }
+        // Now safely attempt to access mut sheet
+        let ws = wb.get_sheet_by_name_mut(sheet).ok_or_else(|| {
+            umya_spreadsheet::XlsxError::CellError("sheet create/load failure".into())
+        })?;
+        // umya uses (col,row)
+        let cell = ws.get_cell_mut((col, row));
+        if let Some(v) = data.value {
+            match v {
+                LiteralValue::Number(n) => {
+                    cell.set_value_number(n);
+                }
+                LiteralValue::Int(i) => {
+                    cell.set_value_number(i as f64);
+                }
+                LiteralValue::Boolean(b) => {
+                    cell.set_value_bool(b);
+                }
+                LiteralValue::Text(s) => {
+                    cell.set_value(s);
+                }
+                LiteralValue::Error(e) => {
+                    cell.set_value(e.kind.to_string());
+                }
+                LiteralValue::Empty => {
+                    cell.set_blank();
+                }
+                LiteralValue::Array(_arr) => {
+                    // Flatten first element as placeholder (TODO: proper array spill to grid)
+                    cell.set_value("#ARRAY");
+                }
+                LiteralValue::Date(d) => {
+                    cell.set_value(d.to_string());
+                }
+                LiteralValue::DateTime(dt) => {
+                    cell.set_value(dt.to_string());
+                }
+                LiteralValue::Time(t) => {
+                    cell.set_value(t.format("%H:%M:%S").to_string());
+                }
+                LiteralValue::Duration(dur) => {
+                    cell.set_value(format!("PT{}S", dur.num_seconds()));
+                }
+                LiteralValue::Pending => {
+                    cell.set_value("#PENDING");
+                }
+            }
+        } else {
+            // Clear value if none provided
+            cell.set_blank();
+        }
+        if let Some(f) = data.formula {
+            if f.starts_with('=') {
+                cell.set_formula(&f[1..]); // umya stores formula without leading '='
+            } else {
+                cell.set_formula(f);
+            }
+        }
+        Ok(())
+    }
+
+    fn write_range(
+        &mut self,
+        sheet: &str,
+        cells: BTreeMap<(u32, u32), CellData>,
+    ) -> Result<(), Self::Error> {
+        for ((r, c), cd) in cells.into_iter() {
+            self.write_cell(sheet, r, c, cd)?;
+        }
+        Ok(())
+    }
+
+    fn clear_range(
+        &mut self,
+        sheet: &str,
+        start: (u32, u32),
+        end: (u32, u32),
+    ) -> Result<(), Self::Error> {
+        let mut wb = self.workbook.write();
+        wb.read_sheet_by_name(sheet);
+        let ws = match wb.get_sheet_by_name_mut(sheet) {
+            Some(s) => s,
+            None => return Ok(()), // nothing to clear
+        };
+        for r in start.0..=end.0 {
+            for c in start.1..=end.1 {
+                ws.get_cell_mut((c, r)).set_blank();
+            }
+        }
+        Ok(())
+    }
+
+    fn create_sheet(&mut self, name: &str) -> Result<(), Self::Error> {
+        let mut wb = self.workbook.write();
+        if wb.get_sheet_by_name(name).is_none() {
+            wb.new_sheet(name);
+        }
+        Ok(())
+    }
+
+    fn delete_sheet(&mut self, name: &str) -> Result<(), Self::Error> {
+        let mut wb = self.workbook.write();
+        let _ = wb.remove_sheet_by_name(name); // ignore error if sheet not present
+        Ok(())
+    }
+
+    fn rename_sheet(&mut self, old: &str, new: &str) -> Result<(), Self::Error> {
+        let mut wb = self.workbook.write();
+        if let Some(s) = wb.get_sheet_by_name_mut(old) {
+            s.set_name(new);
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        // No-op: writes are already in-memory. Keep for interface parity.
+        Ok(())
+    }
+
+    fn save_to<'a>(
+        &mut self,
+        dest: crate::traits::SaveDestination<'a>,
+    ) -> Result<Option<Vec<u8>>, Self::Error> {
+        use crate::traits::SaveDestination;
+        match dest {
+            SaveDestination::InPlace => {
+                let path = self.original_path.as_ref().ok_or_else(|| {
+                    umya_spreadsheet::XlsxError::Io(std::io::Error::new(
+                        std::io::ErrorKind::Unsupported,
+                        "InPlace save unavailable: no original path",
+                    ))
+                })?;
+                let mut wb = self.workbook.write();
+                // Force deserialize each sheet explicitly (more robust than collection helper alone)
+                let count = wb.get_sheet_count();
+                for i in 0..count {
+                    wb.read_sheet(i);
+                }
+                umya_spreadsheet::writer::xlsx::write(&*wb, path)?;
+                Ok(None)
+            }
+            SaveDestination::Path(p) => {
+                let mut wb = self.workbook.write();
+                let count = wb.get_sheet_count();
+                for i in 0..count {
+                    wb.read_sheet(i);
+                }
+                umya_spreadsheet::writer::xlsx::write(&*wb, p)?;
+                Ok(None)
+            }
+            SaveDestination::Writer(w) => {
+                let mut wb = self.workbook.write();
+                let count = wb.get_sheet_count();
+                for i in 0..count {
+                    wb.read_sheet(i);
+                }
+                umya_spreadsheet::writer::xlsx::write_writer(&*wb, w)?;
+                Ok(None)
+            }
+            SaveDestination::Bytes => {
+                let mut wb = self.workbook.write();
+                let count = wb.get_sheet_count();
+                for i in 0..count {
+                    wb.read_sheet(i);
+                }
+                let mut buf: Vec<u8> = Vec::new();
+                umya_spreadsheet::writer::xlsx::write_writer(&*wb, &mut buf)?;
+                Ok(Some(buf))
+            }
+        }
     }
 }

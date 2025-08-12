@@ -224,6 +224,11 @@ fn test_remove_vertex_event() {
         old_value: Some(LiteralValue::Number(42.0)),
         old_formula: Some(parse("=A1*2").unwrap()),
         old_dependencies: vec![VertexId(2), VertexId(3)],
+        old_dependents: vec![VertexId(4)],
+        coord: None,
+        sheet_id: None,
+        kind: None,
+        flags: None,
     };
 
     log.record(event);
@@ -235,6 +240,7 @@ fn test_remove_vertex_event() {
             old_value,
             old_formula,
             old_dependencies,
+            ..
         } => {
             assert_eq!(id, &VertexId(1));
             assert_eq!(old_value, &Some(LiteralValue::Number(42.0)));
@@ -243,43 +249,4 @@ fn test_remove_vertex_event() {
         }
         _ => panic!("Wrong event type"),
     }
-}
-
-#[test]
-fn test_high_level_operation_events() {
-    let mut log = ChangeLog::new();
-
-    // Test InsertRows event
-    log.record(ChangeEvent::InsertRows {
-        sheet_id: 0,
-        before: 5,
-        count: 2,
-    });
-
-    // Test DeleteRows event
-    log.record(ChangeEvent::DeleteRows {
-        sheet_id: 0,
-        start: 3,
-        count: 1,
-    });
-
-    // Test InsertColumns event
-    log.record(ChangeEvent::InsertColumns {
-        sheet_id: 0,
-        before: 2,
-        count: 3,
-    });
-
-    // Test DeleteColumns event
-    log.record(ChangeEvent::DeleteColumns {
-        sheet_id: 0,
-        start: 4,
-        count: 2,
-    });
-
-    assert_eq!(log.len(), 4);
-    assert!(matches!(log.events()[0], ChangeEvent::InsertRows { .. }));
-    assert!(matches!(log.events()[1], ChangeEvent::DeleteRows { .. }));
-    assert!(matches!(log.events()[2], ChangeEvent::InsertColumns { .. }));
-    assert!(matches!(log.events()[3], ChangeEvent::DeleteColumns { .. }));
 }

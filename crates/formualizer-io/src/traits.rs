@@ -1,6 +1,6 @@
 use formualizer_common::LiteralValue;
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 
 #[derive(Clone, Debug)]
@@ -238,7 +238,38 @@ pub trait SpreadsheetWriter: Send + Sync {
     fn rename_sheet(&mut self, old: &str, new: &str) -> Result<(), Self::Error>;
 
     fn flush(&mut self) -> Result<(), Self::Error>;
-    fn save(&mut self) -> Result<(), Self::Error>;
+    fn save(&mut self) -> Result<(), Self::Error> {
+        self.save_to(SaveDestination::InPlace).map(|_| ())
+    }
+
+    /// Advanced save: specify destination (in place, path, writer, or bytes in memory).
+    /// Returns Ok(Some(bytes)) only for Bytes destination, else Ok(None).
+    fn save_to<'a>(&mut self, dest: SaveDestination<'a>) -> Result<Option<Vec<u8>>, Self::Error> {
+        let _ = dest;
+        unreachable!("save_to must be implemented by writer backends that expose persistence");
+    }
+
+    fn save_as_path<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<(), Self::Error> {
+        self.save_to(SaveDestination::Path(path.as_ref()))
+            .map(|_| ())
+    }
+
+    fn save_to_bytes(&mut self) -> Result<Vec<u8>, Self::Error> {
+        self.save_to(SaveDestination::Bytes)
+            .map(|opt| opt.unwrap_or_default())
+    }
+
+    fn write_to<W: Write>(&mut self, writer: &mut W) -> Result<(), Self::Error> {
+        self.save_to(SaveDestination::Writer(writer)).map(|_| ())
+    }
+}
+
+/// Enum describing where a workbook should be saved.
+pub enum SaveDestination<'a> {
+    InPlace,                   // Use original path, if known
+    Path(&'a std::path::Path), // Write to provided filesystem path
+    Writer(&'a mut dyn Write), // Stream to arbitrary writer
+    Bytes,                     // Return bytes in memory
 }
 
 pub trait SpreadsheetIO: SpreadsheetReader + SpreadsheetWriter {}
