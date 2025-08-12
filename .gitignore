@@ -3,8 +3,3 @@ target/
 repomix-output.xml
 *.md
 !README.md
-!GRAPH_EDITING_IMPL_PLAN.md
-!NAMED_RANGE_SUPPORT.md
-!UNIFIED_EDITOR.md
-!IO_IMPL_PLAN.md
-!API_CONTRACT.md
