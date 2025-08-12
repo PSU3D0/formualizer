@@ -324,11 +324,11 @@ impl Function for XLookupFn {
             // Each row should have at least 1 col; use first column
             lookup_rows
                 .iter()
-                .map(|r| r.get(0).cloned().unwrap_or(LiteralValue::Empty))
+                .map(|r| r.first().cloned().unwrap_or(LiteralValue::Empty))
                 .collect()
         } else {
             // horizontal
-            lookup_rows.get(0).cloned().unwrap_or_default()
+            lookup_rows.first().cloned().unwrap_or_default()
         };
         if lookup_vals.is_empty() {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
@@ -821,9 +821,9 @@ impl Function for TransposeFn {
             return Ok(LiteralValue::Array(vec![]));
         }
         let mut out: Vec<Vec<LiteralValue>> = vec![Vec::with_capacity(rows.len()); width];
-        for r in 0..rows.len() {
-            for c in 0..width {
-                out[c].push(rows[r][c].clone());
+        for row in &rows {
+            for (c, cell) in row.iter().enumerate() {
+                out[c].push(cell.clone());
             }
         }
         if out.len() == 1 && out[0].len() == 1 {
@@ -938,9 +938,8 @@ impl Function for TakeFn {
             (0, width as usize)
         };
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_end - row_start);
-        for r in row_start..row_end {
-            let slice = &rows[r][col_start..col_end];
-            out.push(slice.to_vec());
+        for row in rows.iter().skip(row_start).take(row_end - row_start) {
+            out.push(row[col_start..col_end].to_vec());
         }
         if out.is_empty() {
             return Ok(LiteralValue::Array(vec![]));
@@ -1050,9 +1049,8 @@ impl Function for DropFn {
             return Ok(LiteralValue::Array(vec![]));
         }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_end - row_start);
-        for r in row_start..row_end {
-            let slice = &rows[r][col_start..col_end];
-            out.push(slice.to_vec());
+        for row in rows.iter().skip(row_start).take(row_end - row_start) {
+            out.push(row[col_start..col_end].to_vec());
         }
         if out.len() == 1 && out[0].len() == 1 {
             return Ok(out[0][0].clone());

@@ -128,11 +128,7 @@ impl Function for RightFn {
         }
         let chars: Vec<char> = s.chars().collect();
         let len = chars.len();
-        let start = if (n as usize) >= len {
-            0
-        } else {
-            len - n as usize
-        };
+        let start = len.saturating_sub(n as usize);
         Ok(LiteralValue::Text(chars[start..].iter().collect()))
     }
 }

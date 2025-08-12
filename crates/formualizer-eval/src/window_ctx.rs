@@ -93,12 +93,12 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                 iters.push(Box::new(storage.to_iterator().map(|c| c.into_owned())));
             } else if let Ok(v) = arg.value() {
                 let vv = v.into_owned();
-                iters.push(Box::new(std::iter::repeat(vv).take(total)));
+                iters.push(Box::new(std::iter::repeat_n(vv, total)));
             } else {
-                iters.push(Box::new(
-                    std::iter::repeat(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)))
-                        .take(total),
-                ));
+                iters.push(Box::new(std::iter::repeat_n(
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)),
+                    total,
+                )));
             }
         }
         // Create a vector to hold current window cells (one per arg)
@@ -151,12 +151,14 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
             if let Ok(storage) = arg.range_storage() {
                 flats.push(storage.to_iterator().map(|c| c.into_owned()).collect());
             } else if let Ok(v) = arg.value() {
-                flats.push(std::iter::repeat(v.into_owned()).take(total).collect());
+                flats.push(std::iter::repeat_n(v.into_owned(), total).collect());
             } else {
                 flats.push(
-                    std::iter::repeat(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)))
-                        .take(total)
-                        .collect(),
+                    std::iter::repeat_n(
+                        LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)),
+                        total,
+                    )
+                    .collect(),
                 );
             }
         }

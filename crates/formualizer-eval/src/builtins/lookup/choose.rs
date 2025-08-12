@@ -79,10 +79,7 @@ impl Function for ChooseFn {
         let index = match index_val.as_ref() {
             LiteralValue::Number(n) => *n as i64,
             LiteralValue::Int(i) => *i,
-            LiteralValue::Text(s) => s
-                .parse::<f64>()
-                .map(|n| n as i64)
-                .unwrap_or_else(|_| return -1),
+            LiteralValue::Text(s) => s.parse::<f64>().map(|n| n as i64).unwrap_or(-1),
             _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
         };
 
@@ -187,7 +184,7 @@ impl Function for ChooseColsFn {
                 return Ok(LiteralValue::Error(e.clone()));
             }
             let raw = match v.as_ref() {
-                LiteralValue::Int(i) => *i as i64,
+                LiteralValue::Int(i) => *i,
                 LiteralValue::Number(n) => *n as i64,
                 _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
             };
@@ -280,7 +277,7 @@ impl Function for ChooseRowsFn {
                 return Ok(LiteralValue::Error(e.clone()));
             }
             let raw = match v.as_ref() {
-                LiteralValue::Int(i) => *i as i64,
+                LiteralValue::Int(i) => *i,
                 LiteralValue::Number(n) => *n as i64,
                 _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
             };

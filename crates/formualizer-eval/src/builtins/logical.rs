@@ -83,8 +83,8 @@ impl Function for AndFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut first_error: Option<LiteralValue> = None;
         for h in args {
-            let mut it = h.lazy_values_owned()?;
-            while let Some(v) = it.next() {
+            let it = h.lazy_values_owned()?;
+            for v in it {
                 match v {
                     LiteralValue::Error(_) => {
                         if first_error.is_none() {
@@ -155,8 +155,8 @@ impl Function for OrFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut first_error: Option<LiteralValue> = None;
         for h in args {
-            let mut it = h.lazy_values_owned()?;
-            while let Some(v) = it.next() {
+            let it = h.lazy_values_owned()?;
+            for v in it {
                 match v {
                     LiteralValue::Error(_) => {
                         if first_error.is_none() {
@@ -218,10 +218,10 @@ impl Function for IfFn {
     }
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
-    use std::sync::LazyLock;
-    // Single variadic any schema so we can enforce precise 2 or 3 arity inside eval_scalar
-    static ONE: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| vec![ArgSchema::any()]);
-    &ONE[..]
+        use std::sync::LazyLock;
+        // Single variadic any schema so we can enforce precise 2 or 3 arity inside eval_scalar
+        static ONE: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| vec![ArgSchema::any()]);
+        &ONE[..]
     }
 
     fn eval_scalar<'a, 'b>(

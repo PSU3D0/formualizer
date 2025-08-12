@@ -207,19 +207,19 @@ impl<'g> RangeStorage<'g> {
                     .collect();
 
                 // Consume the stream row-major and distribute values into column buffers
-                for _r in 0..rows_usize {
-                    for j in 0..cols_usize {
+                for _ in 0..rows_usize {
+                    for (j, col) in columns.iter_mut().enumerate() {
                         let v = stream
                             .next()
                             .map(|c| c.into_owned())
                             .unwrap_or(LiteralValue::Empty);
-                        columns[j].push(v);
+                        col.push(v);
                     }
                 }
 
                 // Emit columns
-                for j in 0..cols_usize {
-                    f(&columns[j][..])?;
+                for col in &columns {
+                    f(&col[..])?;
                 }
             }
         }

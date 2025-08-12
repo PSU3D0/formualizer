@@ -445,8 +445,8 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                                 let cname = &cols[ci];
                                 let col_range = t.get_column(cname)?;
                                 let (rh, _) = col_range.dimensions();
-                                for r in 0..h.min(rh) {
-                                    rows[r][offset] = col_range.get(r, 0)?;
+                                for (r, row) in rows.iter_mut().enumerate().take(h.min(rh)) {
+                                    row[offset] = col_range.get(r, 0)?;
                                 }
                             }
                             Ok(Box::new(InMemoryRange::new(rows)))
@@ -489,13 +489,13 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                         // Equivalent to TableSpecifier::All handling
                         let mut out: Vec<Vec<LiteralValue>> = Vec::new();
                         if let Some(h) = t.headers_row() {
-                            out.extend(h.iter_rows().map(|r| r));
+                            out.extend(h.iter_rows());
                         }
                         if let Some(body) = t.data_body() {
-                            out.extend(body.iter_rows().map(|r| r));
+                            out.extend(body.iter_rows());
                         }
                         if let Some(tr) = t.totals_row() {
-                            out.extend(tr.iter_rows().map(|r| r));
+                            out.extend(tr.iter_rows());
                         }
                         Ok(Box::new(InMemoryRange::new(out)))
                     }
@@ -508,13 +508,13 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                         // Concatenate headers (if any), data, totals (if any)
                         let mut out: Vec<Vec<LiteralValue>> = Vec::new();
                         if let Some(h) = t.headers_row() {
-                            out.extend(h.iter_rows().map(|r| r));
+                            out.extend(h.iter_rows());
                         }
                         if let Some(body) = t.data_body() {
-                            out.extend(body.iter_rows().map(|r| r));
+                            out.extend(body.iter_rows());
                         }
                         if let Some(tr) = t.totals_row() {
-                            out.extend(tr.iter_rows().map(|r| r));
+                            out.extend(tr.iter_rows());
                         }
                         Ok(Box::new(InMemoryRange::new(out)))
                     }
@@ -597,7 +597,7 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
         // Static default to avoid allocation
         static DEFAULT_TZ: std::sync::OnceLock<crate::timezone::TimeZoneSpec> =
             std::sync::OnceLock::new();
-        DEFAULT_TZ.get_or_init(|| crate::timezone::TimeZoneSpec::default())
+        DEFAULT_TZ.get_or_init(crate::timezone::TimeZoneSpec::default)
     }
 
     /// Volatile granularity. Default Always for backwards compatibility.

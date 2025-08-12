@@ -1165,7 +1165,7 @@ mod tests_basic_stats {
     fn arr(vals: Vec<f64>) -> ASTNode {
         ASTNode::new(
             ASTNodeType::Literal(LiteralValue::Array(vec![
-                vals.into_iter().map(|n| LiteralValue::Number(n)).collect(),
+                vals.into_iter().map(LiteralValue::Number).collect(),
             ])),
             None,
         )

@@ -126,7 +126,7 @@ impl Function for AddressFn {
             _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
         };
 
-        if row < 1 || row > 1_048_576 {
+        if !(1..=1_048_576).contains(&row) {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }
 
@@ -141,7 +141,7 @@ impl Function for AddressFn {
             _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
         };
 
-        if col < 1 || col > 16384 {
+        if !(1..=16384).contains(&col) {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }
 
@@ -160,7 +160,7 @@ impl Function for AddressFn {
             1
         };
 
-        if abs_num < 1 || abs_num > 4 {
+        if !(1..=4).contains(&abs_num) {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }
 
@@ -205,18 +205,16 @@ impl Function for AddressFn {
             };
 
             let col_str = if col_abs {
-                format!("${}", col_letters)
+                format!("${col_letters}")
             } else {
                 col_letters
             };
-
             let row_str = if row_abs {
-                format!("${}", row)
+                format!("${row}")
             } else {
                 row.to_string()
             };
-
-            format!("{}{}", col_str, row_str)
+            format!("{col_str}{row_str}")
         } else {
             // R1C1 notation
             let (col_abs, row_abs) = match abs_num {
@@ -228,27 +226,25 @@ impl Function for AddressFn {
             };
 
             let row_str = if row_abs {
-                format!("R{}", row)
+                format!("R{row}")
             } else {
-                format!("R[{}]", row)
+                format!("R[{row}]")
             };
-
             let col_str = if col_abs {
-                format!("C{}", col)
+                format!("C{col}")
             } else {
-                format!("C[{}]", col)
+                format!("C[{col}]")
             };
-
-            format!("{}{}", row_str, col_str)
+            format!("{row_str}{col_str}")
         };
 
         // Add sheet name if provided
         let final_address = if let Some(sheet) = sheet_name {
             // Quote sheet name if it contains spaces or special characters
             if sheet.contains(' ') || sheet.contains('!') || sheet.contains('\'') {
-                format!("'{}'!{}", sheet.replace('\'', "''"), address)
+                format!("'{}'!{address}", sheet.replace('\'', "''"))
             } else {
-                format!("{}!{}", sheet, address)
+                format!("{sheet}!{address}")
             }
         } else {
             address

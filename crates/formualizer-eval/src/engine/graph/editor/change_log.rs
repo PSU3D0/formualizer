@@ -229,7 +229,6 @@ impl ChangeLog {
             .get(index)
             .copied()
             .zip(self.groups.get(index).copied())
-            .map(|(s, g)| (s, g))
     }
 
     /// Collect indices belonging to the last (innermost) complete group. Fallback: last single event.

@@ -90,14 +90,8 @@ impl SheetIndex {
             let mut row_map: FxHashMap<u32, HashSet<VertexId>> = FxHashMap::default();
             let mut col_map: FxHashMap<u32, HashSet<VertexId>> = FxHashMap::default();
             for (coord, vid) in items {
-                row_map
-                    .entry(coord.row())
-                    .or_insert_with(HashSet::new)
-                    .insert(*vid);
-                col_map
-                    .entry(coord.col())
-                    .or_insert_with(HashSet::new)
-                    .insert(*vid);
+                row_map.entry(coord.row()).or_default().insert(*vid);
+                col_map.entry(coord.col()).or_default().insert(*vid);
             }
             row_items.reserve(row_map.len());
             for (k, v) in row_map.into_iter() {

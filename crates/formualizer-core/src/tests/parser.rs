@@ -1265,10 +1265,7 @@ mod reference_tests {
         // We expect three dependencies: A1, B1, and C1:D2
         assert_eq!(dependencies.len(), 3);
 
-        let deps: Vec<ReferenceType> = dependencies
-            .into_iter()
-            .filter_map(|r| Some(r.clone()))
-            .collect();
+        let deps: Vec<ReferenceType> = dependencies.into_iter().cloned().collect();
 
         assert!(deps.contains(&ReferenceType::Cell {
             sheet: None,

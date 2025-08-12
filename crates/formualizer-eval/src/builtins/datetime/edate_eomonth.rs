@@ -1,8 +1,8 @@
 //! EDATE and EOMONTH functions for date arithmetic
 
 use super::serial::{date_to_serial, serial_to_date};
-use crate::function::Function;
 use crate::args::ArgSchema;
+use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use chrono::{Datelike, NaiveDate};
 use formualizer_common::{ExcelError, LiteralValue};

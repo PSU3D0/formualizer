@@ -48,7 +48,7 @@ impl Function for SumIfFn {
                 "#VALUE!",
             )));
         }
-        let pred = crate::args::parse_criteria(&args[1].value()?.into_owned())?;
+        let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
         let (mut crit_iter, dims) = materialize_iter(&args[0]);
         let (mut sum_iter, dims_sum) = if args.len() == 3 {
             materialize_iter(&args[2])
@@ -61,20 +61,12 @@ impl Function for SumIfFn {
             )));
         }
         let mut total = 0.0f64;
-        loop {
-            let cnext = crit_iter.next();
-            let snext = sum_iter.next();
-            match (cnext, snext) {
-                (Some(c), Some(s)) => {
-                    if criteria_match(&pred, &c) {
-                        if let Ok(n) = coerce_num(&s) {
-                            total += n;
-                        }
-                    }
+        while let (Some(c), Some(s)) = (crit_iter.next(), sum_iter.next()) {
+            if criteria_match(&pred, &c) {
+                if let Ok(n) = coerce_num(&s) {
+                    total += n;
                 }
-                (None, None) => break,
-                _ => break,
-            };
+            }
         }
         Ok(LiteralValue::Number(total))
     }
@@ -92,7 +84,7 @@ impl Function for SumIfFn {
         let criteria_is_range = args[1].range_storage().is_ok();
         let static_pred = if !criteria_is_range {
             match args[1].value() {
-                Ok(v) => crate::args::parse_criteria(&v.into_owned()).ok(),
+                Ok(v) => crate::args::parse_criteria(v.as_ref()).ok(),
                 Err(_) => None,
             }
         } else {
@@ -119,10 +111,8 @@ impl Function for SumIfFn {
                                     total += n;
                                 } else { /*ignore*/
                                 }
-                            } else {
-                                if let Ok(n) = coerce_num(&cells[0]) {
-                                    total += n;
-                                }
+                            } else if let Ok(n) = coerce_num(&cells[0]) {
+                                total += n;
                             }
                             Ok(())
                         } else {
@@ -185,10 +175,10 @@ impl Function for CountIfFn {
                 "#VALUE!",
             )));
         }
-        let pred = crate::args::parse_criteria(&args[1].value()?.into_owned())?;
-        let (mut it, _) = materialize_iter(&args[0]);
+        let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
+        let (it, _) = materialize_iter(&args[0]);
         let mut cnt = 0i64;
-        while let Some(v) = it.next() {
+        for v in it {
             if criteria_match(&pred, &v) {
                 cnt += 1;
             }
@@ -208,7 +198,7 @@ impl Function for CountIfFn {
         let criteria_is_range = args[1].range_storage().is_ok();
         let static_pred = if !criteria_is_range {
             match args[1].value() {
-                Ok(v) => crate::args::parse_criteria(&v.into_owned()).ok(),
+                Ok(v) => crate::args::parse_criteria(v.as_ref()).ok(),
                 Err(_) => None,
             }
         } else {
@@ -287,7 +277,7 @@ impl Function for SumIfsFn {
                 )));
             }
             crit_iters.push(iter);
-            let p = crate::args::parse_criteria(&args[i + 1].value()?.into_owned())?;
+            let p = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
             preds.push(p);
         }
         let crit_values: Vec<Vec<LiteralValue>> =
@@ -295,16 +285,13 @@ impl Function for SumIfsFn {
         let sum_values: Vec<LiteralValue> = sum_it.collect();
         let len = sum_values.len();
         let mut total = 0.0f64;
-        for idx in 0..len {
-            let mut ok = true;
-            for (j, pred) in preds.iter().enumerate() {
-                if !criteria_match(pred, &crit_values[j][idx]) {
-                    ok = false;
-                    break;
-                }
-            }
-            if ok {
-                if let Ok(n) = coerce_num(&sum_values[idx]) {
+        for (idx, val) in sum_values.iter().enumerate() {
+            if preds
+                .iter()
+                .enumerate()
+                .all(|(j, p)| criteria_match(p, &crit_values[j][idx]))
+            {
+                if let Ok(n) = coerce_num(val) {
                     total += n;
                 }
             }
@@ -327,7 +314,7 @@ impl Function for SumIfsFn {
             let is_range = args[i].range_storage().is_ok();
             if !is_range {
                 if let Ok(v) = args[i].value() {
-                    static_preds.push(crate::args::parse_criteria(&v.into_owned()).ok());
+                    static_preds.push(crate::args::parse_criteria(v.as_ref()).ok());
                 } else {
                     static_preds.push(None);
                 }
@@ -425,23 +412,18 @@ impl Function for CountIfsFn {
                 dims = Some(d);
             }
             crit_iters.push(iter);
-            preds.push(crate::args::parse_criteria(
-                &args[i + 1].value()?.into_owned(),
-            )?);
+            preds.push(crate::args::parse_criteria(args[i + 1].value()?.as_ref())?);
         }
         let crit_values: Vec<Vec<LiteralValue>> =
             crit_iters.into_iter().map(|it| it.collect()).collect();
         let len = crit_values[0].len();
         let mut cnt = 0i64;
-        for idx in 0..len {
-            let mut ok = true;
-            for (j, pred) in preds.iter().enumerate() {
-                if !criteria_match(pred, &crit_values[j][idx]) {
-                    ok = false;
-                    break;
-                }
-            }
-            if ok {
+        for (idx, _) in crit_values[0].iter().enumerate() {
+            if preds
+                .iter()
+                .enumerate()
+                .all(|(j, p)| criteria_match(p, &crit_values[j][idx]))
+            {
                 cnt += 1;
             }
         }
@@ -462,7 +444,7 @@ impl Function for CountIfsFn {
             let is_range = args[i].range_storage().is_ok();
             if !is_range {
                 if let Ok(v) = args[i].value() {
-                    static_preds.push(crate::args::parse_criteria(&v.into_owned()).ok());
+                    static_preds.push(crate::args::parse_criteria(v.as_ref()).ok());
                 } else {
                     static_preds.push(None);
                 }
@@ -552,9 +534,7 @@ impl Function for AverageIfsFn {
                 )));
             }
             crit_iters.push(iter);
-            preds.push(crate::args::parse_criteria(
-                &args[i + 1].value()?.into_owned(),
-            )?);
+            preds.push(crate::args::parse_criteria(args[i + 1].value()?.as_ref())?);
         }
         let crit_values: Vec<Vec<LiteralValue>> =
             crit_iters.into_iter().map(|it| it.collect()).collect();
@@ -562,16 +542,13 @@ impl Function for AverageIfsFn {
         let len = avg_values.len();
         let mut sum = 0.0f64;
         let mut cnt = 0i64;
-        for idx in 0..len {
-            let mut ok = true;
-            for (j, pred) in preds.iter().enumerate() {
-                if !criteria_match(pred, &crit_values[j][idx]) {
-                    ok = false;
-                    break;
-                }
-            }
-            if ok {
-                if let Ok(n) = coerce_num(&avg_values[idx]) {
+        for (idx, val) in avg_values.iter().enumerate() {
+            if preds
+                .iter()
+                .enumerate()
+                .all(|(j, p)| criteria_match(p, &crit_values[j][idx]))
+            {
+                if let Ok(n) = coerce_num(val) {
                     sum += n;
                     cnt += 1;
                 }
@@ -599,7 +576,7 @@ impl Function for AverageIfsFn {
             let is_range = args[i].range_storage().is_ok();
             if !is_range {
                 if let Ok(v) = args[i].value() {
-                    static_preds.push(crate::args::parse_criteria(&v.into_owned()).ok());
+                    static_preds.push(crate::args::parse_criteria(v.as_ref()).ok());
                 } else {
                     static_preds.push(None);
                 }
@@ -685,8 +662,8 @@ impl Function for CountAFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut cnt = 0i64;
         for a in args {
-            let (mut it, _) = materialize_iter(a);
-            while let Some(v) = it.next() {
+            let (it, _) = materialize_iter(a);
+            for v in it {
                 match v {
                     LiteralValue::Empty => {}
                     _ => cnt += 1,
@@ -738,8 +715,8 @@ impl Function for CountBlankFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut cnt = 0i64;
         for a in args {
-            let (mut it, _) = materialize_iter(a);
-            while let Some(v) = it.next() {
+            let (it, _) = materialize_iter(a);
+            for v in it {
                 match v {
                     LiteralValue::Empty => cnt += 1,
                     LiteralValue::Text(ref s) if s.is_empty() => cnt += 1,

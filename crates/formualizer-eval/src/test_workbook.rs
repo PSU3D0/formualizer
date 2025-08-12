@@ -228,7 +228,7 @@ impl EvaluationContext for TestWorkbook {
         let sh = self.sheets.get(sheet)?;
         let mut min_r: Option<u32> = None;
         let mut max_r: Option<u32> = None;
-        for (&(r, c), _) in &sh.cells {
+        for &(r, c) in sh.cells.keys() {
             if c >= start_col && c <= end_col {
                 min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
                 max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
@@ -244,7 +244,7 @@ impl EvaluationContext for TestWorkbook {
         let sh = self.sheets.get(sheet)?;
         let mut min_c: Option<u32> = None;
         let mut max_c: Option<u32> = None;
-        for (&(r, c), _) in &sh.cells {
+        for &(r, c) in sh.cells.keys() {
             if r >= start_row && r <= end_row {
                 min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
                 max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));

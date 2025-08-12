@@ -74,14 +74,14 @@ pub fn equals_maybe_wildcard(
 pub fn is_sorted_ascending(values: &[LiteralValue]) -> bool {
     values
         .windows(2)
-        .all(|w| cmp_for_lookup(&w[0], &w[1]).map_or(false, |c| c <= 0))
+        .all(|w| cmp_for_lookup(&w[0], &w[1]).is_some_and(|c| c <= 0))
 }
 
 /// Detect descending sort (strict or equal allowed).
 pub fn is_sorted_descending(values: &[LiteralValue]) -> bool {
     values
         .windows(2)
-        .all(|w| cmp_for_lookup(&w[0], &w[1]).map_or(false, |c| c >= 0))
+        .all(|w| cmp_for_lookup(&w[0], &w[1]).is_some_and(|c| c >= 0))
 }
 
 /// Approximate mode selection (ascending):
@@ -105,12 +105,12 @@ pub fn approximate_select_ascending(
                     return Some(i);
                 }
                 if let (Some(nn), Some(vv)) = (needle_num, value_to_f64_lenient(v)) {
-                    if vv <= nn {
-                        if best.map_or(true, |b| {
+                    if vv <= nn
+                        && best.is_none_or(|b| {
                             value_to_f64_lenient(&values[b]).unwrap_or(f64::NEG_INFINITY) < vv
-                        }) {
-                            best = Some(i);
-                        }
+                        })
+                    {
+                        best = Some(i);
                     }
                 }
             }
@@ -124,12 +124,12 @@ pub fn approximate_select_ascending(
                     return Some(i);
                 }
                 if let (Some(nn), Some(vv)) = (needle_num, value_to_f64_lenient(v)) {
-                    if vv >= nn {
-                        if best.map_or(true, |b| {
+                    if vv >= nn
+                        && best.is_none_or(|b| {
                             value_to_f64_lenient(&values[b]).unwrap_or(f64::INFINITY) > vv
-                        }) {
-                            best = Some(i);
-                        }
+                        })
+                    {
+                        best = Some(i);
                     }
                 }
             }

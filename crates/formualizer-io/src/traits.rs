@@ -71,7 +71,7 @@ impl IntoLiteral for String {
     }
 }
 
-impl<'a> IntoLiteral for &'a str {
+impl IntoLiteral for &str {
     fn into_literal(self) -> LiteralValue {
         LiteralValue::Text(self.to_string())
     }

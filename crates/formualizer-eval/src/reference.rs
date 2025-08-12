@@ -148,6 +148,8 @@ impl Coord {
     }
 }
 
+type SheetBounds = (Option<String>, (u32, u32, u32, u32));
+
 /// Combine two references with the range operator ':'
 /// Supports combining Cell:Cell, Cell:Range (and Range:Cell), and Range:Range on the same sheet.
 /// Returns #REF! for cross-sheet combinations or incompatible shapes.
@@ -156,7 +158,7 @@ pub fn combine_references(
     b: &ReferenceType,
 ) -> Result<ReferenceType, ExcelError> {
     // Extract sheet and bounds as (sheet, (sr, sc, er, ec))
-    fn to_bounds(r: &ReferenceType) -> Option<(Option<String>, (u32, u32, u32, u32))> {
+    fn to_bounds(r: &ReferenceType) -> Option<SheetBounds> {
         match r {
             ReferenceType::Cell { sheet, row, col } => {
                 Some((sheet.clone(), (*row, *col, *row, *col)))

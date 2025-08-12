@@ -288,8 +288,8 @@ where
                         }
                         // Anchor shows the top-left value, like Excel
                         let top_left = rows
-                            .get(0)
-                            .and_then(|r| r.get(0))
+                            .first()
+                            .and_then(|r| r.first())
                             .cloned()
                             .unwrap_or(LiteralValue::Empty);
                         self.graph.update_vertex_value(vertex_id, top_left.clone());
@@ -1143,7 +1143,7 @@ where
         // Use a simple heuristic from configuration (stripe width * height) as a default hint.
         let hint =
             (self.config.stripe_height as usize).saturating_mul(self.config.stripe_width as usize);
-        Some(hint.max(1024).min(1 << 20)) // clamp between 1K and ~1M
+        Some(hint.clamp(1024, 1 << 20)) // clamp between 1K and ~1M
     }
 
     fn volatile_level(&self) -> crate::traits::VolatileLevel {

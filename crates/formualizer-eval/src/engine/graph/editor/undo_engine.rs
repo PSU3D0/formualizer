@@ -16,9 +16,9 @@ impl UndoEngine {
     }
 
     /// Undo last group in the provided change log, applying inverses through a VertexEditor.
-    pub fn undo<'g>(
+    pub fn undo(
         &mut self,
-        graph: &'g mut DependencyGraph,
+        graph: &mut DependencyGraph,
         log: &mut ChangeLog,
     ) -> Result<(), EditorError> {
         let idxs = log.last_group_indices();
@@ -43,9 +43,9 @@ impl UndoEngine {
         Ok(())
     }
 
-    pub fn redo<'g>(
+    pub fn redo(
         &mut self,
-        graph: &'g mut DependencyGraph,
+        graph: &mut DependencyGraph,
         log: &mut ChangeLog,
     ) -> Result<(), EditorError> {
         if let Some(batch) = self.undone.pop() {
@@ -127,7 +127,7 @@ mod tests {
         assert_eq!(log.len(), 0); // event removed (simplified policy)
         // Redo
         undo.redo(&mut graph, &mut log).unwrap();
-        assert!(log.len() > 0);
+        assert!(!log.is_empty());
     }
 
     #[test]

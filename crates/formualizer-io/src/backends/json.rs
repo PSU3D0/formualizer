@@ -25,15 +25,11 @@ fn default_version() -> u32 {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 enum CompressionType {
+    #[default]
     None,
     Lz4,
-}
-
-impl Default for CompressionType {
-    fn default() -> Self {
-        CompressionType::None
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -145,38 +141,13 @@ impl JsonAdapter {
         }
     }
 
-    fn from_sheet_data(sd: &SheetData) -> JsonSheet {
-        let mut cells: Vec<JsonCell> = Vec::with_capacity(sd.cells.len());
-        for (&(r, c), d) in &sd.cells {
-            cells.push(JsonCell {
-                row: r,
-                col: c,
-                value: d.value.as_ref().map(literal_to_json),
-                formula: d.formula.clone(),
-                style: d.style,
-            });
-        }
-        JsonSheet {
-            cells,
-            dimensions: sd.dimensions,
-            hidden: sd.hidden,
-            date_system_1904: sd.date_system_1904,
-            merged_cells: sd.merged_cells.clone(),
-            tables: sd.tables.clone(),
-            named_ranges: sd.named_ranges.clone(),
-        }
-    }
-
     pub fn to_json_string(&self) -> Result<String, IoError> {
         Ok(serde_json::to_string_pretty(&self.data)?)
     }
 
     // Backend-specific helpers (not part of SpreadsheetWriter)
     fn ensure_sheet_mut(&mut self, name: &str) -> &mut JsonSheet {
-        self.data
-            .sheets
-            .entry(name.to_string())
-            .or_insert_with(JsonSheet::default)
+        self.data.sheets.entry(name.to_string()).or_default()
     }
 
     pub fn set_dimensions(&mut self, sheet: &str, dims: Option<(u32, u32)>) {
@@ -313,11 +284,7 @@ impl SpreadsheetWriter for JsonAdapter {
         col: u32,
         data: CellData,
     ) -> Result<(), Self::Error> {
-        let sheet_entry = self
-            .data
-            .sheets
-            .entry(sheet.to_string())
-            .or_insert_with(JsonSheet::default);
+        let sheet_entry = self.data.sheets.entry(sheet.to_string()).or_default();
         if let Some(cell) = sheet_entry
             .cells
             .iter_mut()
@@ -364,10 +331,7 @@ impl SpreadsheetWriter for JsonAdapter {
     }
 
     fn create_sheet(&mut self, name: &str) -> Result<(), Self::Error> {
-        self.data
-            .sheets
-            .entry(name.to_string())
-            .or_insert_with(JsonSheet::default);
+        self.data.sheets.entry(name.to_string()).or_default();
         Ok(())
     }
 

@@ -157,7 +157,7 @@ fn json_value_variants_roundtrip() {
         matches!(sheet.cells.get(&(4,1)).unwrap().value, Some(LiteralValue::Duration(d2)) if d2==dur)
     );
     assert!(
-        matches!(sheet.cells.get(&(6,1)).unwrap().value, Some(LiteralValue::Error(ref e)) if e == &"#DIV/0!")
+        matches!(sheet.cells.get(&(6,1)).unwrap().value, Some(LiteralValue::Error(ref e)) if e == "#DIV/0!")
     );
     assert!(matches!(
         sheet.cells.get(&(7, 1)).unwrap().value,

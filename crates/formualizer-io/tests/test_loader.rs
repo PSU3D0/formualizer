@@ -1,12 +1,10 @@
 use formualizer_eval::engine::Engine;
 use formualizer_eval::engine::EvalConfig;
-use formualizer_eval::traits::EvaluationContext;
 use formualizer_io::{
     AccessGranularity, BackendCaps, CellData, LiteralValue, LoadStrategy, SheetData,
     SpreadsheetReader, WorkbookLoader,
 };
 use std::collections::BTreeMap;
-use std::sync::Arc;
 // no std::time here
 
 // Mock backend for testing

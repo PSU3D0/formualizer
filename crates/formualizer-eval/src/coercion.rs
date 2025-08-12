@@ -1,11 +1,9 @@
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 
 /// Centralized coercion and error policy utilities (Milestone 7).
-///
 /// These functions implement invariant, Excel-compatible coercions and
 /// numeric sanitization. They should be used by the interpreter, builtins,
 /// and evaluation pipelines (map/fold/window) instead of ad-hoc parsing.
-
 /// Strict numeric coercion.
 /// - Accepts Number/Int/Boolean/Empty/Date-like serial-bearing variants
 /// - Rejects Text (returns #VALUE!)

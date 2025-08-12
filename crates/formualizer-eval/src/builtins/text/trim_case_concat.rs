@@ -250,8 +250,8 @@ impl Function for TextJoinFn {
 
         // Collect text values
         let mut parts = Vec::new();
-        for i in 2..args.len() {
-            match args[i].value()?.as_ref() {
+        for arg in args.iter().skip(2) {
+            match arg.value()?.as_ref() {
                 LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
                 LiteralValue::Empty => {
                     if !ignore_empty {

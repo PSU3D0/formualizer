@@ -99,10 +99,10 @@ impl Function for TextFn {
         let out = if fmt.contains('%') {
             format_percent(num)
         } else if fmt.contains("0.00") {
-            format!("{:.2}", num)
+            format!("{num:.2}")
         } else if fmt.contains("0") {
             if fmt.contains(".00") {
-                format!("{:.2}", num)
+                format!("{num:.2}")
             } else {
                 format_number_basic(num)
             }
@@ -123,7 +123,7 @@ fn format_percent(n: f64) -> String {
 }
 fn format_number_basic(n: f64) -> String {
     if n.fract() == 0.0 {
-        format!("{:.0}", n)
+        format!("{n:.0}")
     } else {
         n.to_string()
     }
@@ -146,7 +146,7 @@ fn format_serial_date(n: f64, fmt: &str) -> String {
         let total_minutes = (frac * 24.0 * 60.0).round() as i64;
         let hh = (total_minutes / 60) % 24;
         let mm = total_minutes % 60;
-        out = out.replace("hh:mm", &format!("{:02}:{:02}", hh, mm));
+        out = out.replace("hh:mm", &format!("{hh:02}:{mm:02}"));
     }
     out
 }

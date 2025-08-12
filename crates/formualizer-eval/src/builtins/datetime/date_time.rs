@@ -1,8 +1,8 @@
 //! DATE and TIME functions
 
 use super::serial::{create_date_normalized, date_to_serial, time_to_fraction};
-use crate::function::Function;
 use crate::args::ArgSchema;
+use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use chrono::NaiveTime;
 use formualizer_common::{ExcelError, LiteralValue};
@@ -62,7 +62,7 @@ impl Function for DateFn {
         let day = coerce_to_int(&args[2])?;
 
         // Excel interprets years 0-1899 as 1900-3799
-        let adjusted_year = if year >= 0 && year <= 1899 {
+        let adjusted_year = if (0..=1899).contains(&year) {
             year + 1900
         } else {
             year

@@ -214,7 +214,7 @@ impl Function for IfNaFn {
         }
         let v = args[0].value()?;
         match v.as_ref() {
-            LiteralValue::Error(e) if e.to_string() == "#N/A" => Ok(args[1].value()?.into_owned()),
+            LiteralValue::Error(e) if *e == "#N/A" => Ok(args[1].value()?.into_owned()),
             LiteralValue::Error(_) => Ok(v.into_owned()),
             other => Ok(other.clone()),
         }

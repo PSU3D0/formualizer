@@ -51,10 +51,8 @@ fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32)
                 if c == 0 {
                     return Some(i);
                 }
-                if c >= 0 {
-                    if best.map_or(true, |b| i < b) {
-                        best = Some(i);
-                    }
+                if c >= 0 && best.is_none_or(|b| i < b) {
+                    best = Some(i);
                 }
             }
         }
@@ -188,7 +186,7 @@ impl Function for MatchFn {
         } else if mt == -1 {
             values
                 .windows(2)
-                .all(|w| cmp_for_lookup(&w[0], &w[1]).map_or(false, |c| c >= 0))
+                .all(|w| cmp_for_lookup(&w[0], &w[1]).is_some_and(|c| c >= 0))
         } else {
             true
         };
@@ -203,17 +201,13 @@ impl Function for MatchFn {
                     // compare candidate to needle
                     if mt == 1 {
                         // v <= needle
-                        if c == 0 || c == -1 {
-                            if best.is_none() || i > best.unwrap().0 {
-                                best = Some((i, v));
-                            }
+                        if (c == 0 || c == -1) && (best.is_none() || i > best.unwrap().0) {
+                            best = Some((i, v));
                         }
                     } else {
                         // -1, v >= needle
-                        if c == 0 || c == 1 {
-                            if best.is_none() || i > best.unwrap().0 {
-                                best = Some((i, v));
-                            }
+                        if (c == 0 || c == 1) && (best.is_none() || i > best.unwrap().0) {
+                            best = Some((i, v));
                         }
                     }
                 }
@@ -308,7 +302,7 @@ impl Function for VLookupFn {
             Err(e) => return Ok(LiteralValue::Error(e)),
         };
         let col_index = match args[2].value()?.as_ref() {
-            LiteralValue::Int(i) => *i as i64,
+            LiteralValue::Int(i) => *i,
             LiteralValue::Number(n) => *n as i64,
             _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
         };
@@ -343,7 +337,7 @@ impl Function for VLookupFn {
             let mut rs =
                 ctx.resolve_range_storage(&table_ref, sheet.as_deref().unwrap_or("Sheet1"))?;
             // iterate rows; pick column sc (1-based indices provided) -> convert to zero-based index within row slice
-            let col_offset = (sc - sc) as usize; // first column of slice always 0 because we iterate over single-col extraction below
+            let col_offset = 0usize; // first column of slice always 0 because we iterate over single-col extraction below
             rs.for_each_row(&mut |row| {
                 // row corresponds to contiguous subset from sc..=ec; col_offset is 0 for first_col
                 let v = row.get(col_offset).cloned().unwrap_or(LiteralValue::Empty);
@@ -472,7 +466,7 @@ impl Function for HLookupFn {
             Err(e) => return Ok(LiteralValue::Error(e)),
         };
         let row_index = match args[2].value()?.as_ref() {
-            LiteralValue::Int(i) => *i as i64,
+            LiteralValue::Int(i) => *i,
             LiteralValue::Number(n) => *n as i64,
             _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
         };

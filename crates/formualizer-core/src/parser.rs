@@ -140,7 +140,7 @@ impl Display for TableSpecifier {
             TableSpecifier::Combination(specs) => {
                 // Emit nested bracketed parts so the surrounding Table formatter prints
                 // canonical structured refs like Table[[#Headers],[Column1]:[Column2]]
-                let parts: Vec<String> = specs.iter().map(|s| format!("[{}]", s)).collect();
+                let parts: Vec<String> = specs.iter().map(|s| format!("[{s}]")).collect();
                 write!(f, "{}", parts.join(","))
             }
         }

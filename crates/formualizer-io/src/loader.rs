@@ -135,7 +135,7 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
                 if let Some(value) = cell.value {
                     engine
                         .set_cell_value(sheet, row, col, value)
-                        .map_err(|e| IoError::Engine(e))?;
+                        .map_err(IoError::Engine)?;
                 }
                 if let Some(formula_str) = cell.formula {
                     if formula_str.is_empty() {

@@ -264,8 +264,7 @@ impl DependencyGraph {
         }
         let mut idx = SheetIndex::new();
         // Collect coords for this sheet
-        let mut batch: Vec<(PackedCoord, VertexId)> = Vec::new();
-        batch.reserve(self.cell_to_vertex.len());
+        let mut batch: Vec<(PackedCoord, VertexId)> = Vec::with_capacity(self.cell_to_vertex.len());
         for (cref, vid) in &self.cell_to_vertex {
             if cref.sheet_id == sheet_id {
                 batch.push((PackedCoord::new(cref.coord.row, cref.coord.col), *vid));
@@ -1860,12 +1859,9 @@ impl DependencyGraph {
         }
 
         // Apply with optional injected fault
-        let mut applied = 0usize;
-        for op in &ops {
-            // Inject fault after N operations
+        for (applied, op) in ops.iter().enumerate() {
             if let Some(n) = fault_after_ops {
                 if applied == n {
-                    // Roll back all applied ops
                     for idx in (0..applied).rev() {
                         let ((ref sheet, row, col), ref old) = old_values[idx];
                         let _ = self.set_cell_value(sheet, row, col, old.value.clone());
@@ -1874,9 +1870,7 @@ impl DependencyGraph {
                         .with_message("Injected persistence fault during spill commit"));
                 }
             }
-
             let _ = self.set_cell_value(&op.sheet, op.row, op.col, op.new_value.clone());
-            applied += 1;
         }
 
         // Update spill ownership maps only on success
