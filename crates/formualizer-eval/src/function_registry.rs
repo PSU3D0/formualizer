@@ -15,8 +15,19 @@ fn norm<S: AsRef<str>>(s: S) -> String {
 }
 
 pub fn register_function(f: Arc<dyn Function>) {
-    let key = (norm(f.namespace()), norm(f.name()));
-    REG.insert(key, f);
+    let ns = norm(f.namespace());
+    let name = norm(f.name());
+    let key = (ns.clone(), name.clone());
+    // Insert canonical
+    REG.insert(key.clone(), Arc::clone(&f));
+    // Register aliases
+    for &alias in f.aliases() {
+        if alias.eq_ignore_ascii_case(&name) {
+            continue;
+        }
+        let akey = (ns.clone(), norm(alias));
+        ALIASES.insert(akey, key.clone());
+    }
 }
 
 pub fn get(ns: &str, name: &str) -> Option<Arc<dyn Function>> {

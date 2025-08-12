@@ -443,7 +443,7 @@ mod tests {
 
     #[test]
     fn add_edge_forward_no_relabel() {
-        let mut g = SimpleGraph::default();
+        let g = SimpleGraph::default();
         let nodes = [1, 2, 3, 4];
         let mut pk = DynamicTopo::new(nodes, PkConfig::default());
         pk.rebuild_full(&g);

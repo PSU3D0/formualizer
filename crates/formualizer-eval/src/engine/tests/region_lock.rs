@@ -2,7 +2,6 @@
 mod region_lock_tests {
     use formualizer_core::{ExcelErrorKind, LiteralValue};
 
-    use super::*;
     use crate::engine::eval::ShimSpillManager;
     use crate::engine::spill::{Region, RegionLockManager, SpillMeta, SpillShape};
     use crate::engine::vertex::VertexId;

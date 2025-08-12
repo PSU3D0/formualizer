@@ -590,6 +590,16 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
         crate::locale::Locale::invariant()
     }
 
+    /// Timezone provider for date/time functions
+    /// Default: Local (Excel-compatible behavior)
+    /// Functions should use local timezone when this returns Local
+    fn timezone(&self) -> &crate::timezone::TimeZoneSpec {
+        // Static default to avoid allocation
+        static DEFAULT_TZ: std::sync::OnceLock<crate::timezone::TimeZoneSpec> =
+            std::sync::OnceLock::new();
+        DEFAULT_TZ.get_or_init(|| crate::timezone::TimeZoneSpec::default())
+    }
+
     /// Volatile granularity. Default Always for backwards compatibility.
     fn volatile_level(&self) -> VolatileLevel {
         VolatileLevel::Always
@@ -675,6 +685,7 @@ pub enum VolatileLevel {
 /// Minimal context exposed to functions (no engine/graph APIs)
 pub trait FunctionContext {
     fn locale(&self) -> crate::locale::Locale;
+    fn timezone(&self) -> &crate::timezone::TimeZoneSpec;
     fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>>;
     fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool>;
     fn chunk_hint(&self) -> Option<usize>;
@@ -723,6 +734,9 @@ impl<'a> DefaultFunctionContext<'a> {
 impl<'a> FunctionContext for DefaultFunctionContext<'a> {
     fn locale(&self) -> crate::locale::Locale {
         self.base.locale()
+    }
+    fn timezone(&self) -> &crate::timezone::TimeZoneSpec {
+        self.base.timezone()
     }
     fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>> {
         self.base.thread_pool()

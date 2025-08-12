@@ -173,6 +173,13 @@ impl TestWorkbook {
     pub fn with_function(mut self, func: Arc<dyn Function>) -> Self {
         let ns = func.namespace().to_uppercase();
         let name = func.name().to_uppercase();
+        for &alias in func.aliases() {
+            if !alias.eq_ignore_ascii_case(&name) {
+                // store alias mapping in workbook-scoped alias map
+                let akey = (ns.clone(), alias.to_uppercase());
+                self.aliases.insert(akey, (ns.clone(), name.clone()));
+            }
+        }
         self.fns.insert((ns, name), func);
         self
     }

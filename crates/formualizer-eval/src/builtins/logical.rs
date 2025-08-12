@@ -217,6 +217,13 @@ impl Function for IfFn {
         true
     }
 
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+    use std::sync::LazyLock;
+    // Single variadic any schema so we can enforce precise 2 or 3 arity inside eval_scalar
+    static ONE: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| vec![ArgSchema::any()]);
+    &ONE[..]
+    }
+
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],

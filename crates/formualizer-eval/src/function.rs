@@ -1,6 +1,8 @@
 //! formualizer-eval/src/function.rs
 // New home for the core `Function` trait and its capability flags.
 
+use core::panic;
+
 use crate::{args::ArgSchema, traits::ArgumentHandle};
 use formualizer_common::{ExcelError, LiteralValue};
 
@@ -84,6 +86,9 @@ pub trait FnFoldCtx {
 
     /// Return accumulated result (for two-pass folds like AVERAGE).
     fn write_result(&mut self, v: LiteralValue);
+
+    /// Access original argument handles (for functions needing parameter scalars like k in LARGE/SMALL)
+    fn args(&self) -> &[ArgumentHandle<'_, '_>];
 }
 
 /// Concrete implementation of FnFoldCtx that works with current RangeStorage
@@ -164,6 +169,10 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
     fn write_result(&mut self, v: LiteralValue) {
         self.result = Some(v);
     }
+
+    fn args(&self) -> &[ArgumentHandle<'_, '_>] {
+        self.args
+    }
 }
 
 /// Context for `eval_map` (Element-wise operations).
@@ -214,6 +223,17 @@ pub trait Function: Send + Sync + 'static {
         self.caps().contains(FnCaps::VOLATILE)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
+        if self.min_args() > 0 {
+            panic!("Non-zero min_args must have a valid arg_schema");
+        } else {
+            &[]
+        }
+    }
+
+    /// Optional list of additional alias names (case-insensitive) that should resolve to this
+    /// function. Default: empty slice. Implementors can override to expose legacy names.
+    /// Returned slice must have 'static lifetime (typically a static array reference).
+    fn aliases(&self) -> &'static [&'static str] {
         &[]
     }
 

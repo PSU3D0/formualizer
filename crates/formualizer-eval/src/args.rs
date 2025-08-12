@@ -176,8 +176,10 @@ pub fn validate_and_prepare<'a, 'b>(
         } else if idx < schema.len() {
             &schema[idx]
         } else {
-            // Extra args without repeating rule → error or warn
-            if options.warn_only {
+            // Attempt to find a repeating spec (e.g., variadic tail like CHOOSE, SUM, etc.)
+            if let Some(rep_spec) = schema.iter().find(|s| s.repeating.is_some()) {
+                rep_spec
+            } else if options.warn_only {
                 continue;
             } else {
                 return Err(

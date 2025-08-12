@@ -1,7 +1,7 @@
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind, ValidationOptions, validate_and_prepare};
 use crate::test_workbook::TestWorkbook;
 use crate::traits::ArgumentHandle;
-use formualizer_common::{ExcelErrorKind, LiteralValue};
+use formualizer_common::LiteralValue;
 
 fn lit(v: LiteralValue) -> formualizer_core::parser::ASTNode {
     formualizer_core::parser::ASTNode::new(formualizer_core::parser::ASTNodeType::Literal(v), None)

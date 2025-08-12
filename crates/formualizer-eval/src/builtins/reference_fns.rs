@@ -192,7 +192,8 @@ impl Function for IndexFn {
 pub struct OffsetFn;
 impl Function for OffsetFn {
     fn caps(&self) -> FnCaps {
-        FnCaps::PURE | FnCaps::RETURNS_REFERENCE
+        // OFFSET is volatile in Excel semantics
+        FnCaps::PURE | FnCaps::RETURNS_REFERENCE | FnCaps::VOLATILE
     }
     fn name(&self) -> &'static str {
         "OFFSET"

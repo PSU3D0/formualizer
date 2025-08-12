@@ -9,6 +9,7 @@ pub mod locale;
 pub mod map_ctx;
 pub mod rng;
 pub mod stripes;
+pub mod timezone;
 pub mod traits;
 pub mod window_ctx;
 
@@ -27,4 +28,5 @@ pub mod test_workbook;
 
 pub mod engine;
 
+#[cfg(test)]
 mod tests;
