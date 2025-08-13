@@ -297,6 +297,425 @@ impl Function for ModFn {
     }
 }
 
+/* ───────────────────── Additional Math / Rounding ───────────────────── */
+
+#[derive(Debug)]
+pub struct CeilingFn; // CEILING(number, [significance]) legacy semantics simplified
+impl Function for CeilingFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CEILING"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        if args.is_empty() || args.len() > 2 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#VALUE!",
+            )));
+        }
+        let n = match args[0].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        let mut sig = if args.len() == 2 {
+            match args[1].value()?.as_ref() {
+                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                other => coerce_num(other)?,
+            }
+        } else {
+            1.0
+        };
+        if sig == 0.0 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            )));
+        }
+        if sig < 0.0 {
+            sig = sig.abs(); /* Excel nuances: #NUM! when sign mismatch; simplified TODO */
+        }
+        let k = (n / sig).ceil();
+        Ok(LiteralValue::Number(k * sig))
+    }
+}
+
+#[derive(Debug)]
+pub struct CeilingMathFn; // CEILING.MATH(number,[significance],[mode])
+impl Function for CeilingMathFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CEILING.MATH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    } // allow up to 3 handled manually
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        if args.is_empty() || args.len() > 3 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#VALUE!",
+            )));
+        }
+        let n = match args[0].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        let sig = if args.len() >= 2 {
+            match args[1].value()?.as_ref() {
+                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                other => {
+                    let v = coerce_num(other)?;
+                    if v == 0.0 { 1.0 } else { v.abs() }
+                }
+            }
+        } else {
+            1.0
+        }; // significance default 1, use abs
+        let mode_nonzero = if args.len() == 3 {
+            match args[2].value()?.as_ref() {
+                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                other => coerce_num(other)? != 0.0,
+            }
+        } else {
+            false
+        };
+        let result = if n >= 0.0 {
+            (n / sig).ceil() * sig
+        } else {
+            if mode_nonzero {
+                (n / sig).floor() * sig /* away from zero */
+            } else {
+                (n / sig).ceil() * sig /* toward +inf (less negative) */
+            }
+        };
+        Ok(LiteralValue::Number(result))
+    }
+}
+
+#[derive(Debug)]
+pub struct FloorFn; // FLOOR(number,[significance])
+impl Function for FloorFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "FLOOR"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        if args.is_empty() || args.len() > 2 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#VALUE!",
+            )));
+        }
+        let n = match args[0].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        let mut sig = if args.len() == 2 {
+            match args[1].value()?.as_ref() {
+                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                other => coerce_num(other)?,
+            }
+        } else {
+            1.0
+        };
+        if sig == 0.0 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#DIV/0!",
+            )));
+        }
+        if sig < 0.0 {
+            sig = sig.abs();
+        }
+        let k = (n / sig).floor();
+        Ok(LiteralValue::Number(k * sig))
+    }
+}
+
+#[derive(Debug)]
+pub struct FloorMathFn; // FLOOR.MATH(number,[significance],[mode])
+impl Function for FloorMathFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "FLOOR.MATH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        if args.is_empty() || args.len() > 3 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#VALUE!",
+            )));
+        }
+        let n = match args[0].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        let sig = if args.len() >= 2 {
+            match args[1].value()?.as_ref() {
+                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                other => {
+                    let v = coerce_num(other)?;
+                    if v == 0.0 { 1.0 } else { v.abs() }
+                }
+            }
+        } else {
+            1.0
+        };
+        let mode_nonzero = if args.len() == 3 {
+            match args[2].value()?.as_ref() {
+                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                other => coerce_num(other)? != 0.0,
+            }
+        } else {
+            false
+        };
+        let result = if n >= 0.0 {
+            (n / sig).floor() * sig
+        } else {
+            if mode_nonzero {
+                (n / sig).ceil() * sig
+            } else {
+                (n / sig).floor() * sig
+            }
+        };
+        Ok(LiteralValue::Number(result))
+    }
+}
+
+#[derive(Debug)]
+pub struct SqrtFn; // SQRT(number)
+impl Function for SqrtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SQRT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        let n = match args[0].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        if n < 0.0 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+        }
+        Ok(LiteralValue::Number(n.sqrt()))
+    }
+}
+
+#[derive(Debug)]
+pub struct PowerFn; // POWER(number, power)
+impl Function for PowerFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "POWER"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        let base = match args[0].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        let expv = match args[1].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        if base < 0.0 && (expv.fract().abs() > 1e-12) {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+        }
+        Ok(LiteralValue::Number(base.powf(expv)))
+    }
+}
+
+#[derive(Debug)]
+pub struct ExpFn; // EXP(number)
+impl Function for ExpFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "EXP"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        let n = match args[0].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        Ok(LiteralValue::Number(n.exp()))
+    }
+}
+
+#[derive(Debug)]
+pub struct LnFn; // LN(number)
+impl Function for LnFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "LN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        let n = match args[0].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        if n <= 0.0 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+        }
+        Ok(LiteralValue::Number(n.ln()))
+    }
+}
+
+#[derive(Debug)]
+pub struct LogFn; // LOG(number,[base]) default base 10
+impl Function for LogFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "LOG"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        if args.is_empty() || args.len() > 2 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                "#VALUE!",
+            )));
+        }
+        let n = match args[0].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        let base = if args.len() == 2 {
+            match args[1].value()?.as_ref() {
+                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                other => coerce_num(other)?,
+            }
+        } else {
+            10.0
+        };
+        if n <= 0.0 || base <= 0.0 || (base - 1.0).abs() < 1e-12 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+        }
+        Ok(LiteralValue::Number(n.log(base)))
+    }
+}
+
+#[derive(Debug)]
+pub struct Log10Fn; // LOG10(number)
+impl Function for Log10Fn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "LOG10"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        let n = match args[0].value()?.as_ref() {
+            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            other => coerce_num(other)?,
+        };
+        if n <= 0.0 {
+            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+        }
+        Ok(LiteralValue::Number(n.log10()))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(AbsFn));
@@ -307,6 +726,16 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(RoundDownFn));
     crate::function_registry::register_function(Arc::new(RoundUpFn));
     crate::function_registry::register_function(Arc::new(ModFn));
+    crate::function_registry::register_function(Arc::new(CeilingFn));
+    crate::function_registry::register_function(Arc::new(CeilingMathFn));
+    crate::function_registry::register_function(Arc::new(FloorFn));
+    crate::function_registry::register_function(Arc::new(FloorMathFn));
+    crate::function_registry::register_function(Arc::new(SqrtFn));
+    crate::function_registry::register_function(Arc::new(PowerFn));
+    crate::function_registry::register_function(Arc::new(ExpFn));
+    crate::function_registry::register_function(Arc::new(LnFn));
+    crate::function_registry::register_function(Arc::new(LogFn));
+    crate::function_registry::register_function(Arc::new(Log10Fn));
 }
 
 #[cfg(test)]
@@ -659,5 +1088,125 @@ mod tests_numeric {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             _ => panic!(),
         }
+    }
+
+    // SQRT domain
+    #[test]
+    fn sqrt_basic_and_domain() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SqrtFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "SQRT").unwrap();
+        let n = lit(LiteralValue::Number(9.0));
+        let out = f
+            .dispatch(
+                &[ArgumentHandle::new(&n, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap();
+        assert_eq!(out, LiteralValue::Number(3.0));
+        let neg = lit(LiteralValue::Number(-1.0));
+        let out2 = f
+            .dispatch(
+                &[ArgumentHandle::new(&neg, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap();
+        assert!(matches!(out2, LiteralValue::Error(_)));
+    }
+
+    #[test]
+    fn power_fractional_negative_domain() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(PowerFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "POWER").unwrap();
+        let a = lit(LiteralValue::Number(-4.0));
+        let half = lit(LiteralValue::Number(0.5));
+        let out = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&a, &ctx),
+                    ArgumentHandle::new(&half, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap();
+        assert!(matches!(out, LiteralValue::Error(_))); // complex -> #NUM!
+    }
+
+    #[test]
+    fn log_variants() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(LogFn))
+            .with_function(std::sync::Arc::new(Log10Fn))
+            .with_function(std::sync::Arc::new(LnFn));
+        let ctx = interp(&wb);
+        let logf = ctx.context.get_function("", "LOG").unwrap();
+        let log10f = ctx.context.get_function("", "LOG10").unwrap();
+        let lnf = ctx.context.get_function("", "LN").unwrap();
+        let n = lit(LiteralValue::Number(100.0));
+        let base = lit(LiteralValue::Number(10.0));
+        assert_eq!(
+            logf.dispatch(
+                &[
+                    ArgumentHandle::new(&n, &ctx),
+                    ArgumentHandle::new(&base, &ctx)
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap(),
+            LiteralValue::Number(2.0)
+        );
+        assert_eq!(
+            log10f
+                .dispatch(
+                    &[ArgumentHandle::new(&n, &ctx)],
+                    &ctx.function_context(None)
+                )
+                .unwrap(),
+            LiteralValue::Number(2.0)
+        );
+        assert_eq!(
+            lnf.dispatch(
+                &[ArgumentHandle::new(&n, &ctx)],
+                &ctx.function_context(None)
+            )
+            .unwrap(),
+            LiteralValue::Number(100.0f64.ln())
+        );
+    }
+    #[test]
+    fn ceiling_floor_basic() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(CeilingFn))
+            .with_function(std::sync::Arc::new(FloorFn))
+            .with_function(std::sync::Arc::new(CeilingMathFn))
+            .with_function(std::sync::Arc::new(FloorMathFn));
+        let ctx = interp(&wb);
+        let c = ctx.context.get_function("", "CEILING").unwrap();
+        let f = ctx.context.get_function("", "FLOOR").unwrap();
+        let n = lit(LiteralValue::Number(5.1));
+        let sig = lit(LiteralValue::Number(2.0));
+        assert_eq!(
+            c.dispatch(
+                &[
+                    ArgumentHandle::new(&n, &ctx),
+                    ArgumentHandle::new(&sig, &ctx)
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap(),
+            LiteralValue::Number(6.0)
+        );
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&n, &ctx),
+                    ArgumentHandle::new(&sig, &ctx)
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap(),
+            LiteralValue::Number(4.0)
+        );
     }
 }
