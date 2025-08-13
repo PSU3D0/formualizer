@@ -2,12 +2,17 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::{define_stub_info_gatherer, derive::gen_stub_pyfunction};
 
 mod ast;
+mod engine;
 mod enums;
 mod errors;
 mod parser;
 mod reference;
+mod resolver;
+mod sheet;
 mod token;
 mod tokenizer;
+mod value;
+mod workbook;
 
 use ast::PyASTNode;
 use tokenizer::PyTokenizer;
@@ -37,6 +42,10 @@ fn formualizer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ast::register(m)?;
     parser::register(m)?;
     reference::register(m)?;
+    value::register(m)?;
+    engine::register(m)?;
+    workbook::register(m)?;
+    sheet::register(m)?;
 
     // Add convenience functions
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;

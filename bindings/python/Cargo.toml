@@ -11,10 +11,19 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "stub_gen"
 path = "src/bin/stub_gen.rs"
+required-features = ["stub_gen_bin"]
+
+[features]
+default = []
+stub_gen_bin = []
 
 [dependencies]
-pyo3 = { version = "0.24.0", features = ["extension-module"] }
+pyo3 = { version = "0.24.0", features = ["extension-module", "chrono"] }
 pyo3-stub-gen = "0.8.2"
 pyo3-stub-gen-derive = "0.8.2"
 formualizer-core = { path = "../../crates/formualizer-core" }
 formualizer-common = { path = "../../crates/formualizer-common" }
+formualizer-eval = { path = "../../crates/formualizer-eval" }
+formualizer-io = { path = "../../crates/formualizer-io" }
+chrono = "0.4"
+serde_json = "1.0"

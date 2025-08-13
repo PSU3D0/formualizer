@@ -422,6 +422,11 @@ impl DependencyGraph {
         self.sheet_reg.name(id)
     }
 
+    /// Access the sheet registry (read-only) for external bindings
+    pub fn sheet_reg(&self) -> &SheetRegistry {
+        &self.sheet_reg
+    }
+
     /// Converts a `CellRef` to a fully qualified A1-style string (e.g., "Sheet1!A1").
     pub fn to_a1(&self, cell_ref: CellRef) -> String {
         format!("{}!{}", self.sheet_name(cell_ref.sheet_id), cell_ref.coord)
@@ -501,6 +506,18 @@ impl DependencyGraph {
         }
 
         Ok(())
+    }
+
+    /// Iterate workbook-scoped named ranges (for bindings/testing)
+    pub fn named_ranges_iter(&self) -> impl Iterator<Item = (&String, &NamedRange)> {
+        self.named_ranges.iter()
+    }
+
+    /// Iterate sheet-scoped named ranges (for bindings/testing)
+    pub fn sheet_named_ranges_iter(
+        &self,
+    ) -> impl Iterator<Item = (&(SheetId, String), &NamedRange)> {
+        self.sheet_named_ranges.iter()
     }
 
     /// Resolve a named range to its definition
@@ -1924,14 +1941,14 @@ impl DependencyGraph {
     }
 
     /// Get the formula AST for a vertex
-    pub(crate) fn get_formula(&self, vertex_id: VertexId) -> Option<ASTNode> {
+    pub fn get_formula(&self, vertex_id: VertexId) -> Option<ASTNode> {
         self.vertex_formulas
             .get(&vertex_id)
             .and_then(|&ast_id| self.data_store.retrieve_ast(ast_id, &self.sheet_reg))
     }
 
     /// Get the value stored for a vertex
-    pub(crate) fn get_value(&self, vertex_id: VertexId) -> Option<LiteralValue> {
+    pub fn get_value(&self, vertex_id: VertexId) -> Option<LiteralValue> {
         self.vertex_values
             .get(&vertex_id)
             .map(|&value_ref| self.data_store.retrieve_value(value_ref))
@@ -2194,6 +2211,11 @@ impl DependencyGraph {
         self.store
             .all_vertices()
             .filter(move |&id| self.vertex_exists(id) && self.store.sheet_id(id) == sheet_id)
+    }
+
+    /// Does a vertex have a formula associated
+    pub fn vertex_has_formula(&self, id: VertexId) -> bool {
+        self.vertex_formulas.contains_key(&id)
     }
 
     /// Get all vertices with formulas
