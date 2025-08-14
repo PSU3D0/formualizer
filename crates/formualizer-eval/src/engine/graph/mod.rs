@@ -417,6 +417,13 @@ impl DependencyGraph {
         self.sheet_reg.get_id(name)
     }
 
+    /// Resolve a sheet name to an existing ID or return a #REF! error.
+    fn resolve_existing_sheet_id(&self, name: &str) -> Result<SheetId, ExcelError> {
+        self.sheet_id(name).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Ref).with_message(format!("Sheet not found: {name}"))
+        })
+    }
+
     /// Returns the name of a sheet given its ID.
     pub fn sheet_name(&self, id: SheetId) -> &str {
         self.sheet_reg.name(id)
@@ -1102,7 +1109,7 @@ impl DependencyGraph {
                             if size <= self.config.range_expansion_limit {
                                 // Expand to individual cells
                                 let sheet_id = match sheet {
-                                    Some(name) => self.sheet_id_mut(name),
+                                    Some(name) => self.resolve_existing_sheet_id(name)?,
                                     None => current_sheet_id,
                                 };
                                 for row in sr..=er {
@@ -1290,7 +1297,7 @@ impl DependencyGraph {
         match reference {
             ReferenceType::Cell { sheet, row, col } => {
                 let sheet_id = match sheet {
-                    Some(name) => self.sheet_id_mut(name),
+                    Some(name) => self.resolve_existing_sheet_id(name)?,
                     None => current_sheet_id,
                 };
                 let coord = Coord::new(*row, *col, true, true);

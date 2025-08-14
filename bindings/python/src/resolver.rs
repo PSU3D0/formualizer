@@ -57,11 +57,11 @@ impl formualizer_eval::traits::TableResolver for PyResolver {
 impl formualizer_eval::traits::FunctionProvider for PyResolver {
     fn get_function(
         &self,
-        _ns: &str,
-        _name: &str,
+        ns: &str,
+        name: &str,
     ) -> Option<std::sync::Arc<dyn formualizer_eval::function::Function>> {
-        // Defer to global registry via Engine fallback
-        None
+        // Look up function from the global registry
+        formualizer_eval::function_registry::get(ns, name)
     }
 }
 

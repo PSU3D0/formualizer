@@ -60,16 +60,23 @@ pub enum AstNodeData {
     },
 }
 
+/// Identifies a sheet either by stable registry id or by unresolved name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SheetKey {
+    Id(u16),
+    Name(StringId),
+}
+
 /// Compact representation of reference types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CompactRefType {
     Cell {
-        sheet_id: Option<u16>,
+        sheet: Option<SheetKey>,
         row: u32,
         col: u32,
     },
     Range {
-        sheet_id: Option<u16>,
+        sheet: Option<SheetKey>,
         start_row: u32,
         start_col: u32,
         end_row: u32,
@@ -416,7 +423,7 @@ mod tests {
         let a1_ref = arena.insert_reference(
             "A1",
             CompactRefType::Cell {
-                sheet_id: None,
+                sheet: None,
                 row: 1,
                 col: 1,
             },
@@ -437,7 +444,7 @@ mod tests {
         let a1_ref2 = arena.insert_reference(
             "A1",
             CompactRefType::Cell {
-                sheet_id: None,
+                sheet: None,
                 row: 1,
                 col: 1,
             },
@@ -480,7 +487,7 @@ mod tests {
         let range = arena.insert_reference(
             "A1:A10",
             CompactRefType::Range {
-                sheet_id: None,
+                sheet: None,
                 start_row: 1,
                 start_col: 1,
                 end_row: 10,
@@ -495,7 +502,7 @@ mod tests {
         let b1 = arena.insert_reference(
             "B1",
             CompactRefType::Cell {
-                sheet_id: None,
+                sheet: None,
                 row: 1,
                 col: 2,
             },
@@ -511,7 +518,7 @@ mod tests {
         let c1 = arena.insert_reference(
             "C1",
             CompactRefType::Cell {
-                sheet_id: None,
+                sheet: None,
                 row: 1,
                 col: 3,
             },
@@ -519,7 +526,7 @@ mod tests {
         let d1 = arena.insert_reference(
             "D1",
             CompactRefType::Cell {
-                sheet_id: None,
+                sheet: None,
                 row: 1,
                 col: 4,
             },

@@ -1,7 +1,7 @@
 /// Unified data storage for all value types using arenas
 /// Provides conversion between LiteralValue and ValueRef
 use super::array::ArrayArena;
-use super::ast::{AstArena, AstNodeId, CompactRefType};
+use super::ast::{AstArena, AstNodeId, CompactRefType, SheetKey};
 use super::error_arena::{ErrorArena, ErrorRef};
 use super::scalar::ScalarArena;
 use super::string_interner::{StringId, StringInterner};
@@ -330,13 +330,15 @@ impl DataStore {
     ) -> CompactRefType {
         match ref_type {
             ReferenceType::Cell { sheet, row, col } => {
-                let sheet_id = sheet.as_ref().map(|s| {
-                    sheet_registry.get_id(s).unwrap_or_else(|| {
-                        panic!("Sheet not found: {s}"); // Sheets should always be defined by the time we get here
-                    })
-                });
+                let sheet = match sheet.as_ref() {
+                    Some(s) => match sheet_registry.get_id(s) {
+                        Some(id) => Some(SheetKey::Id(id)),
+                        None => Some(SheetKey::Name(self.asts.strings_mut().intern(s))),
+                    },
+                    None => None,
+                };
                 CompactRefType::Cell {
-                    sheet_id,
+                    sheet,
                     row: *row,
                     col: *col,
                 }
@@ -349,14 +351,16 @@ impl DataStore {
                 end_row,
                 end_col,
             } => {
-                let sheet_id = sheet.as_ref().map(|s| {
-                    sheet_registry.get_id(s).unwrap_or_else(|| {
-                        panic!("Sheet not found: {s}"); // Sheets should always be defined by the time we get here
-                    })
-                });
-                // For optional range bounds, use 0 as sentinel for unbounded
+                let sheet = match sheet.as_ref() {
+                    Some(s) => match sheet_registry.get_id(s) {
+                        Some(id) => Some(SheetKey::Id(id)),
+                        None => Some(SheetKey::Name(self.asts.strings_mut().intern(s))),
+                    },
+                    None => None,
+                };
+                // For optional range bounds, use 0/u32::MAX as sentinels for unbounded
                 CompactRefType::Range {
-                    sheet_id,
+                    sheet,
                     start_row: start_row.unwrap_or(0),
                     start_col: start_col.unwrap_or(0),
                     end_row: end_row.unwrap_or(u32::MAX),
@@ -477,8 +481,14 @@ impl DataStore {
         sheet_registry: &SheetRegistry,
     ) -> ReferenceType {
         match ref_type {
-            CompactRefType::Cell { sheet_id, row, col } => {
-                let sheet = sheet_id.map(|id| sheet_registry.name(id).to_string());
+            CompactRefType::Cell { sheet, row, col } => {
+                let sheet = match sheet {
+                    Some(SheetKey::Id(id)) => Some(sheet_registry.name(*id).to_string()),
+                    Some(SheetKey::Name(name_id)) => {
+                        Some(self.asts.resolve_string(*name_id).to_string())
+                    }
+                    None => None,
+                };
                 ReferenceType::Cell {
                     sheet,
                     row: *row,
@@ -487,13 +497,19 @@ impl DataStore {
             }
 
             CompactRefType::Range {
-                sheet_id,
+                sheet,
                 start_row,
                 start_col,
                 end_row,
                 end_col,
             } => {
-                let sheet = sheet_id.map(|id| sheet_registry.name(id).to_string());
+                let sheet = match sheet {
+                    Some(SheetKey::Id(id)) => Some(sheet_registry.name(*id).to_string()),
+                    Some(SheetKey::Name(name_id)) => {
+                        Some(self.asts.resolve_string(*name_id).to_string())
+                    }
+                    None => None,
+                };
                 // Convert sentinel values back to None
                 ReferenceType::Range {
                     sheet,

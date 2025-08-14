@@ -3,3 +3,6 @@ target/
 repomix-output.xml
 *.md
 !README.md
+
+*coverage*
+*.xlsx

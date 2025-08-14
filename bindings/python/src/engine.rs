@@ -1,18 +1,18 @@
 use formualizer_eval::engine::{Engine as RustEngine, EvalConfig};
 use pyo3::prelude::*;
-use pyo3::types::PyList;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
-// use formualizer_common::value::LiteralValue;
 use std::sync::{Arc, RwLock};
 
 use crate::resolver::PyResolver;
 use crate::value::PyLiteralValue;
+use crate::workbook::{PyCell, PyWorkbook};
 
 /// Python wrapper for the evaluation engine
 #[gen_stub_pyclass]
 #[pyclass(name = "Engine")]
 pub struct PyEngine {
     inner: Arc<RwLock<RustEngine<PyResolver>>>,
+    workbook: Option<PyWorkbook>,
 }
 
 /// Configuration for the evaluation engine
@@ -139,18 +139,194 @@ impl PyEvaluationResult {
     }
 }
 
+/// Helper function to load workbook data into an engine
+fn load_workbook_into_engine(
+    workbook: &PyWorkbook,
+    engine: &mut RustEngine<PyResolver>,
+) -> PyResult<()> {
+    let sheets = workbook.sheets.read().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
+    })?;
+    // Defer CSR and scheduling rebuilds while bulk-loading
+    engine.begin_batch();
+    // Pass 1: ensure all sheets exist in the engine before loading any formulas.
+    // This avoids panics when parsing formulas that reference other sheets that
+    // would otherwise not be registered yet due to HashMap iteration order.
+    for sheet_name in sheets.keys() {
+        engine.graph.add_sheet(sheet_name).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("add_sheet: {e}"))
+        })?;
+    }
+
+    // Pass 2: load cell values and formulas for each sheet.
+    for (sheet_name, sheet_data) in sheets.iter() {
+        // Bulk-insert plain values first for efficiency
+        let mut values: Vec<(u32, u32, formualizer_common::LiteralValue)> = Vec::new();
+        let mut formulas: Vec<(u32, u32, &String)> = Vec::new();
+        for ((row, col), cell_data) in &sheet_data.cells {
+            if let Some(ref value) = cell_data.value {
+                values.push((*row, *col, value.clone()));
+            }
+            if let Some(ref formula) = cell_data.formula {
+                formulas.push((*row, *col, formula));
+            }
+        }
+        if !values.is_empty() {
+            engine.graph.bulk_insert_values(sheet_name, values);
+        }
+        // Now add formulas (dependency extraction needs ASTs)
+        for (row, col, formula) in formulas {
+            let ast = formualizer_core::parser::parse(formula)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+            engine
+                .set_cell_formula(sheet_name, row, col, ast)
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("set_formula: {e}"))
+                })?;
+        }
+    }
+    // Finalize batch operations
+    engine.end_batch();
+
+    Ok(())
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyEngine {
-    /// Create a new evaluation engine with a dependency graph
+    /// Create a new evaluation engine
     #[new]
-    pub fn new(config: Option<PyEvaluationConfig>) -> PyResult<Self> {
+    #[pyo3(signature = (workbook=None, config=None))]
+    pub fn new(workbook: Option<PyWorkbook>, config: Option<PyEvaluationConfig>) -> PyResult<Self> {
         let eval_config = config.map(|c| c.inner).unwrap_or_default();
-        let engine = RustEngine::new(PyResolver, eval_config);
+        let mut engine = RustEngine::new(PyResolver, eval_config);
+
+        // If a workbook is provided, load its data into the engine
+        if let Some(ref wb) = workbook {
+            load_workbook_into_engine(wb, &mut engine)?;
+        }
 
         Ok(PyEngine {
             inner: Arc::new(RwLock::new(engine)),
+            workbook,
         })
+    }
+
+    /// Create an engine from a workbook
+    #[classmethod]
+    #[pyo3(signature = (workbook, config=None))]
+    pub fn from_workbook(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        workbook: PyWorkbook,
+        config: Option<PyEvaluationConfig>,
+    ) -> PyResult<Self> {
+        let eval_config = config.map(|c| c.inner).unwrap_or_default();
+        let mut engine = RustEngine::new(PyResolver, eval_config);
+
+        // Load the workbook data into the engine
+        load_workbook_into_engine(&workbook, &mut engine)?;
+
+        Ok(PyEngine {
+            inner: Arc::new(RwLock::new(engine)),
+            workbook: Some(workbook),
+        })
+    }
+
+    /// Create an engine by streaming from a file path using a specific backend.
+    /// backend: "calamine" for now. strategy is backend-specific (optional).
+    #[classmethod]
+    #[pyo3(signature = (path, backend="calamine", strategy=None, config=None))]
+    pub fn from_path(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        path: &str,
+        backend: &str,
+        _strategy: Option<&str>,
+        config: Option<PyEvaluationConfig>,
+    ) -> PyResult<Self> {
+        let eval_config = config.map(|c| c.inner).unwrap_or_default();
+        let mut engine = RustEngine::new(PyResolver, eval_config);
+        match backend {
+            "calamine" => {
+                engine
+                    .load_workbook_from_path::<formualizer_io::backends::CalamineAdapter>(
+                        &std::path::Path::new(path),
+                    )
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {}", e))
+                    })?;
+            }
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Unsupported backend: {}",
+                    backend
+                )));
+            }
+        }
+        Ok(PyEngine {
+            inner: Arc::new(RwLock::new(engine)),
+            workbook: None,
+        })
+    }
+
+    /// Set a single cell value after load.
+    pub fn set_value(
+        &self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: PyLiteralValue,
+    ) -> PyResult<()> {
+        let mut engine = self.inner.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
+        })?;
+        engine
+            .set_cell_value(sheet, row, col, value.inner)
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("set_value: {e}"))
+            })?;
+        Ok(())
+    }
+
+    /// Set a single cell formula after load.
+    pub fn set_formula(&self, sheet: &str, row: u32, col: u32, formula: &str) -> PyResult<()> {
+        let mut engine = self.inner.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
+        })?;
+        let ast = formualizer_core::parser::parse(formula)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        engine.set_cell_formula(sheet, row, col, ast).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("set_formula: {e}"))
+        })?;
+        Ok(())
+    }
+
+    /// Get a single cell (value + formula string if present via AST pretty-print).
+    pub fn get_cell_after_load(&self, sheet: &str, row: u32, col: u32) -> PyResult<PyCell> {
+        let engine = self.inner.read().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
+        })?;
+        let (ast, value) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
+        let value = PyLiteralValue {
+            inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
+        };
+        let formula = ast.map(|a| a.to_string());
+        Ok(PyCell { value, formula })
+    }
+
+    /// Set or change the workbook
+    pub fn set_workbook(&mut self, workbook: PyWorkbook) -> PyResult<()> {
+        // Clear existing data and load new workbook
+        let mut engine = self.inner.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
+        })?;
+
+        // Clear existing sheets
+        // Note: There's no clear method in the engine, so we'd need to create a new one
+        // For now, we'll just load the new data on top
+
+        load_workbook_into_engine(&workbook, &mut engine)?;
+        self.workbook = Some(workbook);
+        Ok(())
     }
 
     /// Evaluate all cells in the workbook
@@ -173,16 +349,10 @@ impl PyEngine {
     }
 
     /// Evaluate a specific cell and return its value
-    pub fn evaluate_cell(
-        &self,
-        sheet: &str,
-        row: u32,
-        col: u32,
-    ) -> PyResult<Option<PyLiteralValue>> {
-        // Validate 1-based indexing
+    pub fn evaluate_cell(&self, sheet: &str, row: u32, col: u32) -> PyResult<PyLiteralValue> {
         if row == 0 || col == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Row and column indices must be 1-based (minimum value is 1)",
+                "Row/col are 1-based",
             ));
         }
 
@@ -201,29 +371,46 @@ impl PyEngine {
             ))
         })?;
 
-        Ok(value.map(PyLiteralValue::from))
+        Ok(PyLiteralValue {
+            inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
+        })
+    }
+
+    /// Get an evaluated cell (value + formula)
+    pub fn get_cell(&self, sheet: &str, row: u32, col: u32) -> PyResult<PyCell> {
+        if row == 0 || col == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Row/col are 1-based",
+            ));
+        }
+
+        // Evaluate the cell
+        let value = self.evaluate_cell(sheet, row, col)?;
+
+        // Get the formula if it exists from the workbook
+        let formula = if let Some(ref wb) = self.workbook {
+            let cell_data = wb.get_cell_data(sheet, row, col)?;
+            cell_data.and_then(|d| d.formula)
+        } else {
+            None
+        };
+
+        Ok(PyCell { value, formula })
     }
 
     /// Evaluate multiple cells and return their values in the same order
     pub fn evaluate_cells(
         &self,
         _py: Python,
-        cells: &Bound<'_, PyList>,
-    ) -> PyResult<Vec<Option<PyLiteralValue>>> {
-        let mut targets = Vec::new();
-
-        for item in cells.iter() {
-            let tuple = item.extract::<(String, u32, u32)>()?;
-            let (sheet, row, col) = tuple;
-
-            // Validate 1-based indexing
-            if row == 0 || col == 0 {
+        targets: Vec<(String, u32, u32)>,
+    ) -> PyResult<Vec<PyLiteralValue>> {
+        // Validate that all are 1-based
+        for (_, row, col) in &targets {
+            if *row == 0 || *col == 0 {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Row and column indices must be 1-based (minimum value is 1)",
+                    "Row/col are 1-based",
                 ));
             }
-
-            targets.push((sheet, row, col));
         }
 
         let mut engine = self.inner.write().map_err(|e| {
@@ -248,170 +435,22 @@ impl PyEngine {
 
         Ok(values
             .into_iter()
-            .map(|v| v.map(PyLiteralValue::from))
+            .map(|v| PyLiteralValue {
+                inner: v.unwrap_or(formualizer_common::LiteralValue::Empty),
+            })
             .collect())
     }
 
-    /// Get the value of a cell without evaluating
-    pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> PyResult<Option<PyLiteralValue>> {
-        // Validate 1-based indexing
-        if row == 0 || col == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Row and column indices must be 1-based (minimum value is 1)",
-            ));
-        }
-
-        let engine = self.inner.read().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
-            ))
-        })?;
-
-        // Engine already uses 1-based indexing
-        let value = engine.get_cell_value(sheet, row, col);
-        Ok(value.map(PyLiteralValue::from))
-    }
-
-    /// Set a cell value
-    pub fn set_value(
-        &self,
-        sheet: &str,
-        row: u32,
-        col: u32,
-        value: PyLiteralValue,
-    ) -> PyResult<()> {
-        // Validate 1-based indexing
-        if row == 0 || col == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Row and column indices must be 1-based (minimum value is 1)",
-            ));
-        }
-
-        let mut engine = self.inner.write().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
-            ))
-        })?;
-
-        // Engine already uses 1-based indexing
-        engine
-            .set_cell_value(sheet, row, col, value.inner)
-            .map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to set cell value: {:?}",
-                    e
-                ))
-            })?;
-
-        Ok(())
-    }
-
-    /// Set a cell formula
-    pub fn set_formula(&self, sheet: &str, row: u32, col: u32, formula: &str) -> PyResult<()> {
-        // Validate 1-based indexing
-        if row == 0 || col == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Row and column indices must be 1-based (minimum value is 1)",
-            ));
-        }
-
-        let mut engine = self.inner.write().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
-            ))
-        })?;
-
-        // Parse the formula
-        let ast = formualizer_core::parser::parse(formula).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Failed to parse formula: {:?}",
-                e
-            ))
-        })?;
-
-        // Engine already uses 1-based indexing
-        engine.set_cell_formula(sheet, row, col, ast).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to set cell formula: {:?}",
-                e
-            ))
-        })?;
-
-        Ok(())
-    }
-
-    /// Get the current recalculation epoch
-    pub fn recalc_epoch(&self) -> PyResult<u64> {
-        let engine = self.inner.read().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
-            ))
-        })?;
-
-        Ok(engine.recalc_epoch as u64)
-    }
-
-    /// Set the workbook seed for random functions
-    pub fn set_workbook_seed(&self, seed: u64) -> PyResult<()> {
-        let mut engine = self.inner.write().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
-            ))
-        })?;
-
-        engine.set_workbook_seed(seed);
-        Ok(())
-    }
-
-    /// Ensure builtin functions are loaded (no-op; builtins load at engine construction)
-    pub fn ensure_builtins_loaded(&self) -> PyResult<()> {
-        Ok(())
-    }
-
-    /// Get the default sheet name
-    pub fn default_sheet_name(&self) -> String {
-        let engine = self.inner.read().expect("engine lock");
-        engine.default_sheet_name().to_string()
-    }
-
-    /// Begin a batch mutation window
-    pub fn begin_batch(&self) -> PyResult<()> {
-        let mut engine = self.inner.write().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
-            ))
-        })?;
-        engine.begin_batch();
-        Ok(())
-    }
-
-    /// End a batch mutation window
-    pub fn end_batch(&self) -> PyResult<()> {
-        let mut engine = self.inner.write().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
-            ))
-        })?;
-        engine.end_batch();
-        Ok(())
-    }
-
     fn __repr__(&self) -> String {
-        "Engine(formualizer evaluation engine)".to_string()
+        let has_workbook = self.workbook.is_some();
+        format!("Engine(has_workbook={})", has_workbook)
     }
 }
 
 /// Register the engine module with Python
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyEngine>()?;
     m.add_class::<PyEvaluationConfig>()?;
     m.add_class::<PyEvaluationResult>()?;
+    m.add_class::<PyEngine>()?;
     Ok(())
 }
