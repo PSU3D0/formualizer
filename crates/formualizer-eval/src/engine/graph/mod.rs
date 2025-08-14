@@ -804,13 +804,64 @@ impl DependencyGraph {
         ast: ASTNode,
         volatile: bool,
     ) -> Result<OperationSummary, ExcelError> {
+        let dbg = std::env::var("FZ_DEBUG_LOAD")
+            .ok()
+            .map_or(false, |v| v != "0");
+        let dep_ms_thresh: u128 = std::env::var("FZ_DEBUG_DEP_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let sample_n: usize = std::env::var("FZ_DEBUG_SAMPLE_N")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let t0 = if dbg {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         let sheet_id = self.sheet_id_mut(sheet);
         let coord = Coord::new(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
 
         // Extract dependencies from AST, creating placeholders if needed
+        let t_dep0 = if dbg {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         let (new_dependencies, new_range_dependencies, mut created_placeholders) =
             self.extract_dependencies(&ast, sheet_id)?;
+        if let (true, Some(t)) = (dbg, t_dep0) {
+            let elapsed = t.elapsed().as_millis();
+            // Only log if over threshold or sampled
+            let do_log = (dep_ms_thresh > 0 && elapsed as u128 >= dep_ms_thresh)
+                || (sample_n > 0 && (row as usize % sample_n == 0));
+            if dep_ms_thresh == 0 && sample_n == 0 {
+                // default: very light sampling every 1000 rows
+                if (row % 1000) == 0 {
+                    eprintln!(
+                        "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={} in {} ms",
+                        self.sheet_name(sheet_id),
+                        crate::reference::Coord::new(row, col, true, true).to_string(),
+                        new_dependencies.len(),
+                        new_range_dependencies.len(),
+                        created_placeholders.len(),
+                        elapsed
+                    );
+                }
+            } else if do_log {
+                eprintln!(
+                    "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={} in {} ms",
+                    self.sheet_name(sheet_id),
+                    crate::reference::Coord::new(row, col, true, true).to_string(),
+                    new_dependencies.len(),
+                    new_range_dependencies.len(),
+                    created_placeholders.len(),
+                    elapsed
+                );
+            }
+        }
 
         // Check for self-reference (immediate cycle detection)
         let addr_vertex_id = self.get_or_create_vertex(&addr, &mut created_placeholders);
@@ -835,6 +886,19 @@ impl DependencyGraph {
 
         if volatile {
             self.store.set_volatile(addr_vertex_id, true);
+        }
+
+        if let (true, Some(t)) = (dbg, t0) {
+            let elapsed = t.elapsed().as_millis();
+            let log_set = dep_ms_thresh > 0 && elapsed as u128 >= dep_ms_thresh;
+            if log_set {
+                eprintln!(
+                    "[fz][set] {}!{} total {} ms",
+                    self.sheet_name(sheet_id),
+                    crate::reference::Coord::new(row, col, true, true).to_string(),
+                    elapsed
+                );
+            }
         }
 
         // Add new dependency edges
@@ -1309,25 +1373,10 @@ impl DependencyGraph {
         }
     }
 
+    #[inline]
     fn is_ast_volatile(&self, ast: &ASTNode) -> bool {
-        match &ast.node_type {
-            ASTNodeType::Function { name, args, .. } => {
-                if let Some(func) = crate::function_registry::get("", name) {
-                    if func.caps().contains(crate::function::FnCaps::VOLATILE) {
-                        return true;
-                    }
-                }
-                args.iter().any(|arg| self.is_ast_volatile(arg))
-            }
-            ASTNodeType::BinaryOp { left, right, .. } => {
-                self.is_ast_volatile(left) || self.is_ast_volatile(right)
-            }
-            ASTNodeType::UnaryOp { expr, .. } => self.is_ast_volatile(expr),
-            ASTNodeType::Array(rows) => rows
-                .iter()
-                .any(|row| row.iter().any(|cell| self.is_ast_volatile(cell))),
-            _ => false,
-        }
+        // Fast-path if the AST already carries volatility info from the parser.
+        ast.contains_volatile()
     }
 
     fn add_dependent_edges(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
@@ -1373,6 +1422,100 @@ impl DependencyGraph {
         }
 
         self.edges.end_batch();
+    }
+
+    /// Like add_dependent_edges, but assumes caller is managing edges.begin_batch/end_batch
+    fn add_dependent_edges_nobatch(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
+        // If PK enabled, update order using a short-lived adapter without holding &mut self
+        let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
+        if self.pk_order.is_some() {
+            if let Some(mut pk) = self.pk_order.take() {
+                pk.ensure_nodes(std::iter::once(dependent));
+                pk.ensure_nodes(dependencies.iter().copied());
+                {
+                    let adapter = GraphAdapter { g: self };
+                    for &dep_id in dependencies {
+                        match pk.try_add_edge(&adapter, dep_id, dependent) {
+                            Ok(_) => {}
+                            Err(_cycle) => {
+                                if self.config.pk_reject_cycle_edges {
+                                    skip_deps.insert(dep_id);
+                                } else {
+                                    pk.rebuild_full(&adapter);
+                                }
+                            }
+                        }
+                    }
+                }
+                self.pk_order = Some(pk);
+            }
+        }
+
+        for &dep_id in dependencies {
+            if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) {
+                continue;
+            }
+            self.edges.add_edge(dependent, dep_id);
+            #[cfg(test)]
+            {
+                self.instr.edges_added += 1;
+            }
+        }
+    }
+
+    /// Bulk set formulas for many cells on the same sheet. Optimized to avoid per-cell batching and unnecessary removals.
+    pub fn bulk_set_formulas<I>(&mut self, sheet: &str, items: I) -> Result<usize, ExcelError>
+    where
+        I: IntoIterator<Item = (u32, u32, ASTNode)>,
+    {
+        let sheet_id = self.sheet_id_mut(sheet);
+        let mut count = 0usize;
+        // Single edges batch across all items
+        self.edges.begin_batch();
+
+        for (row, col, ast) in items {
+            let coord = Coord::new(row, col, true, true);
+            let addr = CellRef::new(sheet_id, coord);
+
+            // Extract dependencies
+            let (new_dependencies, new_range_dependencies, mut created_placeholders) =
+                self.extract_dependencies(&ast, sheet_id)?;
+
+            // Create or get vertex
+            let addr_vertex_id = if let Some(&vid) = self.cell_to_vertex.get(&addr) {
+                vid
+            } else {
+                self.get_or_create_vertex(&addr, &mut created_placeholders)
+            };
+
+            // Only remove existing edges if this cell already had a formula
+            if self.vertex_formulas.contains_key(&addr_vertex_id) {
+                self.remove_dependent_edges(addr_vertex_id);
+            }
+
+            // Update vertex properties and store AST
+            self.store
+                .set_kind(addr_vertex_id, VertexKind::FormulaScalar);
+            let ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
+            self.vertex_formulas.insert(addr_vertex_id, ast_id);
+            self.store.set_dirty(addr_vertex_id, true);
+            self.vertex_values.remove(&addr_vertex_id);
+
+            // Volatile detection (kept simple; future: precomputed set)
+            if self.is_ast_volatile(&ast) {
+                self.store.set_volatile(addr_vertex_id, true);
+                self.volatile_vertices.insert(addr_vertex_id);
+            }
+
+            // Add dependency edges without per-cell batching
+            self.add_dependent_edges_nobatch(addr_vertex_id, &new_dependencies);
+            self.add_range_dependent_edges(addr_vertex_id, &new_range_dependencies, sheet_id);
+
+            count += 1;
+        }
+
+        self.edges.end_batch();
+        Ok(count)
     }
 
     /// Public (crate) helper to add a single dependency edge (dependent -> dependency) used for restoration/undo.
@@ -2737,6 +2880,7 @@ fn update_sheet_references_in_ast(ast: &ASTNode, old_name: &str, new_name: &str)
                     reference: updated_ref,
                 },
                 source_token: None,
+                contains_volatile: ast.contains_volatile,
             }
         }
         ASTNodeType::BinaryOp { op, left, right } => ASTNode {
@@ -2746,6 +2890,7 @@ fn update_sheet_references_in_ast(ast: &ASTNode, old_name: &str, new_name: &str)
                 right: Box::new(update_sheet_references_in_ast(right, old_name, new_name)),
             },
             source_token: None,
+            contains_volatile: ast.contains_volatile,
         },
         ASTNodeType::UnaryOp { op, expr } => ASTNode {
             node_type: ASTNodeType::UnaryOp {
@@ -2753,6 +2898,7 @@ fn update_sheet_references_in_ast(ast: &ASTNode, old_name: &str, new_name: &str)
                 expr: Box::new(update_sheet_references_in_ast(expr, old_name, new_name)),
             },
             source_token: None,
+            contains_volatile: ast.contains_volatile,
         },
         ASTNodeType::Function { name, args } => ASTNode {
             node_type: ASTNodeType::Function {
@@ -2763,6 +2909,7 @@ fn update_sheet_references_in_ast(ast: &ASTNode, old_name: &str, new_name: &str)
                     .collect(),
             },
             source_token: None,
+            contains_volatile: ast.contains_volatile,
         },
         ASTNodeType::Array(rows) => ASTNode {
             node_type: ASTNodeType::Array(
@@ -2775,6 +2922,7 @@ fn update_sheet_references_in_ast(ast: &ASTNode, old_name: &str, new_name: &str)
                     .collect(),
             ),
             source_token: None,
+            contains_volatile: ast.contains_volatile,
         },
         _ => ast.clone(),
     }
@@ -2831,6 +2979,7 @@ fn update_internal_sheet_references(
                     reference: updated_ref,
                 },
                 source_token: None,
+                contains_volatile: ast.contains_volatile,
             }
         }
         ASTNodeType::BinaryOp { op, left, right } => ASTNode {
@@ -2852,6 +3001,7 @@ fn update_internal_sheet_references(
                 )),
             },
             source_token: None,
+            contains_volatile: ast.contains_volatile,
         },
         ASTNodeType::UnaryOp { op, expr } => ASTNode {
             node_type: ASTNodeType::UnaryOp {
@@ -2865,6 +3015,7 @@ fn update_internal_sheet_references(
                 )),
             },
             source_token: None,
+            contains_volatile: ast.contains_volatile,
         },
         ASTNodeType::Function { name, args } => ASTNode {
             node_type: ASTNodeType::Function {
@@ -2883,6 +3034,7 @@ fn update_internal_sheet_references(
                     .collect(),
             },
             source_token: None,
+            contains_volatile: ast.contains_volatile,
         },
         ASTNodeType::Array(rows) => ASTNode {
             node_type: ASTNodeType::Array(
@@ -2903,6 +3055,7 @@ fn update_internal_sheet_references(
                     .collect(),
             ),
             source_token: None,
+            contains_volatile: ast.contains_volatile,
         },
         _ => ast.clone(),
     }

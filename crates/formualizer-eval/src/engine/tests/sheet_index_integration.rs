@@ -17,6 +17,7 @@ fn sum_formula(row1: u32, col1: u32, row2: u32, col2: u32) -> ASTNode {
                     },
                 },
                 source_token: None,
+                contains_volatile: false,
             }),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
@@ -28,9 +29,11 @@ fn sum_formula(row1: u32, col1: u32, row2: u32, col2: u32) -> ASTNode {
                     },
                 },
                 source_token: None,
+                contains_volatile: false,
             }),
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 

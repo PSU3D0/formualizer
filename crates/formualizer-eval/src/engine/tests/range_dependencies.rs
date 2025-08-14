@@ -17,6 +17,7 @@ fn range_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTN
             },
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 
@@ -28,6 +29,7 @@ fn sum_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTNod
             args: vec![range_ast(start_row, start_col, end_row, end_col)],
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 
@@ -319,9 +321,11 @@ fn test_duplicate_range_refs_in_formula() {
                     args: vec![range_ast(1, 1, 100, 1)],
                 },
                 source_token: None,
+                contains_volatile: false,
             }),
         },
         source_token: None,
+        contains_volatile: false,
     };
     graph.set_cell_formula("Sheet1", 1, 2, formula).unwrap();
 

@@ -30,7 +30,7 @@ maturin develop --release
 popd >/dev/null
 
 # Install test dependencies into the active venv
-uv pip install -q pytest openpyxl pytest-cov
+uv pip install -q pytest openpyxl pytest-cov ipython
 
 # Run pytest from the active venv so it can import the built extension
 pytest -q bindings/python/tests

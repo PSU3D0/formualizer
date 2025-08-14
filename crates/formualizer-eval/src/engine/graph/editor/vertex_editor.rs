@@ -1732,6 +1732,7 @@ mod tests {
         let formula = formualizer_core::parser::ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Number(100.0)),
             source_token: None,
+            contains_volatile: false,
         };
 
         let vertex_id = {

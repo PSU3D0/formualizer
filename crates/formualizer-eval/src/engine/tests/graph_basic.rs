@@ -113,6 +113,7 @@ fn test_vertex_kind_transitions() {
     let ast = formualizer_core::parser::ASTNode {
         node_type: formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Int(100)),
         source_token: None,
+        contains_volatile: false,
     };
 
     let summary = graph.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
@@ -200,5 +201,6 @@ fn create_cell_ref_ast(
             },
         },
         source_token: None,
+        contains_volatile: false,
     }
 }

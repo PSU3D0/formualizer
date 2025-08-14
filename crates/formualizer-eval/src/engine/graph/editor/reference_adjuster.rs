@@ -47,6 +47,7 @@ impl ReferenceAdjuster {
                         reference: adjusted,
                     },
                     source_token: ast.source_token.clone(),
+                    contains_volatile: ast.contains_volatile,
                 }
             }
             ASTNodeType::BinaryOp {
@@ -60,6 +61,7 @@ impl ReferenceAdjuster {
                     right: Box::new(self.adjust_ast(right, op)),
                 },
                 source_token: ast.source_token.clone(),
+                contains_volatile: ast.contains_volatile,
             },
             ASTNodeType::UnaryOp { op: un_op, expr } => ASTNode {
                 node_type: ASTNodeType::UnaryOp {
@@ -67,6 +69,7 @@ impl ReferenceAdjuster {
                     expr: Box::new(self.adjust_ast(expr, op)),
                 },
                 source_token: ast.source_token.clone(),
+                contains_volatile: ast.contains_volatile,
             },
             ASTNodeType::Function { name, args } => ASTNode {
                 node_type: ASTNodeType::Function {
@@ -74,6 +77,7 @@ impl ReferenceAdjuster {
                     args: args.iter().map(|arg| self.adjust_ast(arg, op)).collect(),
                 },
                 source_token: ast.source_token.clone(),
+                contains_volatile: ast.contains_volatile,
             },
             _ => ast.clone(),
         }
@@ -410,6 +414,7 @@ impl RelativeReferenceAdjuster {
                         reference: adjusted,
                     },
                     source_token: ast.source_token.clone(),
+                    contains_volatile: ast.contains_volatile,
                 }
             }
             ASTNodeType::BinaryOp { op, left, right } => ASTNode {
@@ -419,6 +424,7 @@ impl RelativeReferenceAdjuster {
                     right: Box::new(self.adjust_formula(right)),
                 },
                 source_token: ast.source_token.clone(),
+                contains_volatile: ast.contains_volatile,
             },
             ASTNodeType::UnaryOp { op, expr } => ASTNode {
                 node_type: ASTNodeType::UnaryOp {
@@ -426,6 +432,7 @@ impl RelativeReferenceAdjuster {
                     expr: Box::new(self.adjust_formula(expr)),
                 },
                 source_token: ast.source_token.clone(),
+                contains_volatile: ast.contains_volatile,
             },
             ASTNodeType::Function { name, args } => ASTNode {
                 node_type: ASTNodeType::Function {
@@ -433,6 +440,7 @@ impl RelativeReferenceAdjuster {
                     args: args.iter().map(|arg| self.adjust_formula(arg)).collect(),
                 },
                 source_token: ast.source_token.clone(),
+                contains_volatile: ast.contains_volatile,
             },
             _ => ast.clone(),
         }

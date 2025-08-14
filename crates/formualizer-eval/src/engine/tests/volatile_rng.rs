@@ -26,6 +26,7 @@ fn rand_reproducible_given_seed_and_cell_address() {
                         args: vec![],
                     },
                     source_token: None,
+                    contains_volatile: true,
                 },
             )
             .unwrap();
@@ -73,6 +74,7 @@ fn volatile_flags_propagate_through_graph_and_recalc_policy() {
                     args: vec![],
                 },
                 source_token: None,
+                contains_volatile: true,
             },
         )
         .unwrap();
@@ -127,10 +129,12 @@ fn randbetween_uses_context_rng_and_bounds() {
     let lo = ASTNode {
         node_type: ASTNodeType::Literal(LiteralValue::Int(1)),
         source_token: None,
+        contains_volatile: false,
     };
     let hi = ASTNode {
         node_type: ASTNodeType::Literal(LiteralValue::Int(1)),
         source_token: None,
+        contains_volatile: false,
     };
     let call = ASTNode {
         node_type: ASTNodeType::Function {
@@ -138,6 +142,7 @@ fn randbetween_uses_context_rng_and_bounds() {
             args: vec![lo, hi],
         },
         source_token: None,
+        contains_volatile: true,
     };
     engine.set_cell_formula("Sheet1", 1, 1, call).unwrap();
     engine.evaluate_all().unwrap();
@@ -187,6 +192,7 @@ fn context_scoped_volatility_detection() {
             args: vec![],
         },
         source_token: None,
+        contains_volatile: true,
     };
     engine.set_cell_formula("Sheet1", 1, 1, call).unwrap();
 

@@ -22,9 +22,11 @@ fn sum_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTNod
                     },
                 },
                 source_token: None,
+                contains_volatile: false,
             }],
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 

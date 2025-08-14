@@ -19,6 +19,7 @@ fn test_evaluate_until_single_clean_target() {
         ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Int(1)),
             source_token: None,
+            contains_volatile: false,
         },
         "+",
     );
@@ -53,6 +54,7 @@ fn test_evaluate_until_single_dirty_target() {
         ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Int(1)),
             source_token: None,
+            contains_volatile: false,
         },
         "+",
     );
@@ -137,6 +139,7 @@ fn test_evaluate_until_multiple_targets() {
         ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Int(1)),
             source_token: None,
+            contains_volatile: false,
         },
         "+",
     );
@@ -147,6 +150,7 @@ fn test_evaluate_until_multiple_targets() {
         ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Int(2)),
             source_token: None,
+            contains_volatile: false,
         },
         "+",
     );
@@ -164,6 +168,7 @@ fn test_evaluate_until_multiple_targets() {
         ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Int(5)),
             source_token: None,
+            contains_volatile: false,
         },
         "+",
     );
@@ -217,6 +222,7 @@ fn test_evaluate_until_volatile_precedent() {
             args: vec![],
         },
         source_token: None,
+        contains_volatile: true,
     };
     engine.set_cell_formula("Sheet1", 1, 1, rand_ast).unwrap();
 
@@ -225,6 +231,7 @@ fn test_evaluate_until_volatile_precedent() {
         ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Int(1)),
             source_token: None,
+            contains_volatile: false,
         },
         "+",
     );
@@ -254,6 +261,7 @@ fn test_evaluate_until_target_is_volatile() {
             args: vec![],
         },
         source_token: None,
+        contains_volatile: true,
     };
     engine.set_cell_formula("Sheet1", 1, 1, rand_ast).unwrap();
 
@@ -283,6 +291,7 @@ fn test_evaluate_until_precedents_include_a_cycle() {
         ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Int(1)),
             source_token: None,
+            contains_volatile: false,
         },
         "+",
     );

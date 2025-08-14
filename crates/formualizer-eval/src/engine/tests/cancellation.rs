@@ -30,6 +30,7 @@ fn test_cancellation_between_layers() {
     let one = ASTNode {
         node_type: ASTNodeType::Literal(LiteralValue::Int(1)),
         source_token: None,
+        contains_volatile: false,
     };
     let b1_formula = create_binary_op_ast(a1_ref, one.clone(), "+");
     engine.set_cell_formula("Sheet1", 1, 2, b1_formula).unwrap();
@@ -108,6 +109,7 @@ fn test_cancellation_within_large_layer() {
     let one = ASTNode {
         node_type: ASTNodeType::Literal(LiteralValue::Int(1)),
         source_token: None,
+        contains_volatile: false,
     };
 
     // Create 300 independent formulas (all will be in the same layer)
@@ -257,6 +259,7 @@ fn test_non_cancelled_evaluation_works_normally() {
     let five = ASTNode {
         node_type: ASTNodeType::Literal(LiteralValue::Int(5)),
         source_token: None,
+        contains_volatile: false,
     };
     let b1_formula = create_binary_op_ast(a1_ref, five, "+");
     engine.set_cell_formula("Sheet1", 1, 2, b1_formula).unwrap();
@@ -294,6 +297,7 @@ fn test_demand_driven_non_cancelled_works_normally() {
     let ten = ASTNode {
         node_type: ASTNodeType::Literal(LiteralValue::Int(10)),
         source_token: None,
+        contains_volatile: false,
     };
     let c1_formula = create_binary_op_ast(b1_ref, ten, "*");
     engine.set_cell_formula("Sheet1", 1, 3, c1_formula).unwrap();
@@ -325,6 +329,7 @@ fn test_cancellation_message_differentiation() {
     let one = ASTNode {
         node_type: ASTNodeType::Literal(LiteralValue::Int(1)),
         source_token: None,
+        contains_volatile: false,
     };
     engine.set_cell_formula("Sheet1", 1, 1, one).unwrap();
 

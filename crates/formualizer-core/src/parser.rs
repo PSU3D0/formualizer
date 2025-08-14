@@ -779,6 +779,11 @@ impl Display for ASTNodeType {
 pub struct ASTNode {
     pub node_type: ASTNodeType,
     pub source_token: Option<Token>,
+    /// True if this AST contains any volatile function calls.
+    ///
+    /// This is set by the parser when a volatility classifier is provided.
+    /// For ASTs constructed manually (e.g., in tests), this defaults to false.
+    pub contains_volatile: bool,
 }
 
 impl ASTNode {
@@ -786,7 +791,26 @@ impl ASTNode {
         ASTNode {
             node_type,
             source_token,
+            contains_volatile: false,
         }
+    }
+
+    /// Create an ASTNode while explicitly setting contains_volatile.
+    pub fn new_with_volatile(
+        node_type: ASTNodeType,
+        source_token: Option<Token>,
+        contains_volatile: bool,
+    ) -> Self {
+        ASTNode {
+            node_type,
+            source_token,
+            contains_volatile,
+        }
+    }
+
+    /// Whether this AST contains any volatile functions.
+    pub fn contains_volatile(&self) -> bool {
+        self.contains_volatile
     }
 
     pub fn fingerprint(&self) -> u64 {
@@ -903,6 +927,8 @@ impl std::hash::Hash for ASTNode {
 pub struct Parser {
     tokens: Vec<Token>,
     position: usize,
+    /// Optional classifier to determine whether a function name is volatile.
+    volatility_classifier: Option<Box<dyn Fn(&str) -> bool + Send + Sync + 'static>>,
 }
 
 impl<T> From<T> for Parser
@@ -928,7 +954,26 @@ impl Parser {
         Parser {
             tokens: filtered_tokens,
             position: 0,
+            volatility_classifier: None,
         }
+    }
+
+    /// Provide a function-volatility classifier for this parser.
+    /// If set, the parser will annotate ASTs with a contains_volatile bit.
+    pub fn with_volatility_classifier<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&str) -> bool + Send + Sync + 'static,
+    {
+        self.volatility_classifier = Some(Box::new(f));
+        self
+    }
+
+    /// Convenience constructor to set a classifier alongside other options.
+    pub fn new_with_classifier<F>(tokens: Vec<Token>, include_whitespace: bool, f: F) -> Self
+    where
+        F: Fn(&str) -> bool + Send + Sync + 'static,
+    {
+        Self::new(tokens, include_whitespace).with_volatility_classifier(f)
     }
 
     /// Parse the tokens into an AST.
@@ -991,13 +1036,15 @@ impl Parser {
             };
 
             let right = self.parse_binary_op(next_min_precedence)?;
-            left = ASTNode::new(
+            let contains_volatile = left.contains_volatile || right.contains_volatile;
+            left = ASTNode::new_with_volatile(
                 ASTNodeType::BinaryOp {
                     op: op_token.value.clone(),
                     left: Box::new(left),
                     right: Box::new(right),
                 },
                 Some(op_token),
+                contains_volatile,
             );
         }
 
@@ -1011,12 +1058,14 @@ impl Parser {
             let op_token = self.tokens[self.position].clone();
             self.position += 1;
             let expr = self.parse_unary_op()?;
-            return Ok(ASTNode::new(
+            let contains_volatile = expr.contains_volatile;
+            return Ok(ASTNode::new_with_volatile(
                 ASTNodeType::UnaryOp {
                     op: op_token.value.clone(),
                     expr: Box::new(expr),
                 },
                 Some(op_token),
+                contains_volatile,
             ));
         }
         self.parse_postfix_op()
@@ -1030,12 +1079,14 @@ impl Parser {
         {
             let op_token = self.tokens[self.position].clone();
             self.position += 1;
-            expr = ASTNode::new(
+            let contains_volatile = expr.contains_volatile;
+            expr = ASTNode::new_with_volatile(
                 ASTNodeType::UnaryOp {
                     op: op_token.value.clone(),
                     expr: Box::new(expr),
                 },
                 Some(op_token),
+                contains_volatile,
             );
         }
 
@@ -1151,10 +1202,18 @@ impl Parser {
     fn parse_function(&mut self, func_token: Token) -> Result<ASTNode, ParserError> {
         let name = func_token.value[..func_token.value.len() - 1].to_string();
         let args = self.parse_function_arguments()?;
+        // Determine volatility for this function
+        let this_is_volatile = self
+            .volatility_classifier
+            .as_ref()
+            .map(|f| f(name.as_str()))
+            .unwrap_or(false);
+        let args_volatile = args.iter().any(|a| a.contains_volatile);
 
-        Ok(ASTNode::new(
+        Ok(ASTNode::new_with_volatile(
             ASTNodeType::Function { name, args },
             Some(func_token),
+            this_is_volatile || args_volatile,
         ))
     }
 
@@ -1281,7 +1340,16 @@ impl Parser {
             }
         }
 
-        Ok(ASTNode::new(ASTNodeType::Array(rows), None))
+        // Array volatility is the OR of element volatility
+        let contains_volatile = rows
+            .iter()
+            .flat_map(|r| r.iter())
+            .any(|n| n.contains_volatile);
+        Ok(ASTNode::new_with_volatile(
+            ASTNodeType::Array(rows),
+            None,
+            contains_volatile,
+        ))
     }
 }
 
@@ -1302,4 +1370,89 @@ pub fn normalise_reference(reference: &str) -> Result<String, ParsingError> {
 
 pub fn parse<T: AsRef<str>>(formula: T) -> Result<ASTNode, ParserError> {
     Parser::from(formula.as_ref()).parse()
+}
+
+/// Parse a single formula and annotate volatility using the provided classifier.
+/// This is a convenience wrapper around `Parser::new_with_classifier`.
+pub fn parse_with_volatility_classifier<T, F>(
+    formula: T,
+    classifier: F,
+) -> Result<ASTNode, ParserError>
+where
+    T: AsRef<str>,
+    F: Fn(&str) -> bool + Send + Sync + 'static,
+{
+    let tokens = Tokenizer::new(formula.as_ref())?.items;
+    let mut parser = Parser::new_with_classifier(tokens, false, classifier);
+    parser.parse()
+}
+
+/// Efficient batch parser with an internal token cache and optional volatility classifier.
+///
+/// The cache is keyed by the original formula string; repeated formulas across a batch
+/// (very common in spreadsheets) will avoid re-tokenization and whitespace filtering.
+pub struct BatchParser {
+    include_whitespace: bool,
+    volatility_classifier: Option<std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync + 'static>>,
+    token_cache: std::collections::HashMap<String, Vec<Token>>, // filtered tokens
+}
+
+impl BatchParser {
+    pub fn builder() -> BatchParserBuilder {
+        BatchParserBuilder::default()
+    }
+
+    /// Parse a formula using the internal cache and configured classifier.
+    pub fn parse(&mut self, formula: &str) -> Result<ASTNode, ParserError> {
+        // Get or build filtered tokens
+        let filtered = if let Some(tokens) = self.token_cache.get(formula) {
+            tokens.clone()
+        } else {
+            let mut tokens = Tokenizer::new(formula)?.items;
+            if !self.include_whitespace {
+                tokens = tokens
+                    .into_iter()
+                    .filter(|t| t.token_type != TokenType::Whitespace)
+                    .collect();
+            }
+            self.token_cache.insert(formula.to_string(), tokens.clone());
+            tokens
+        };
+
+        let mut parser = Parser::new(filtered, true); // already filtered per include_whitespace
+        if let Some(classifier) = self.volatility_classifier.clone() {
+            let arc = classifier.clone();
+            parser = parser.with_volatility_classifier(move |name| arc(name));
+        }
+        parser.parse()
+    }
+}
+
+#[derive(Default)]
+pub struct BatchParserBuilder {
+    include_whitespace: bool,
+    volatility_classifier: Option<std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync + 'static>>,
+}
+
+impl BatchParserBuilder {
+    pub fn include_whitespace(mut self, include: bool) -> Self {
+        self.include_whitespace = include;
+        self
+    }
+
+    pub fn with_volatility_classifier<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&str) -> bool + Send + Sync + 'static,
+    {
+        self.volatility_classifier = Some(std::sync::Arc::new(f));
+        self
+    }
+
+    pub fn build(self) -> BatchParser {
+        BatchParser {
+            include_whitespace: self.include_whitespace,
+            volatility_classifier: self.volatility_classifier,
+            token_cache: std::collections::HashMap::new(),
+        }
+    }
 }

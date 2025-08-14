@@ -149,6 +149,18 @@ where
         Ok(())
     }
 
+    /// Bulk set many formulas on a sheet. Skips per-cell snapshot bumping and minimizes edge rebuilds.
+    pub fn bulk_set_formulas<I>(&mut self, sheet: &str, items: I) -> Result<usize, ExcelError>
+    where
+        I: IntoIterator<Item = (u32, u32, ASTNode)>,
+    {
+        let n = self.graph.bulk_set_formulas(sheet, items)?;
+        // Single snapshot bump after batch
+        self.snapshot_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(n)
+    }
+
     /// Get a cell value
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
         self.graph.get_cell_value(sheet, row, col)

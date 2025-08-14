@@ -14,6 +14,7 @@ fn simple_formula(row: u32, col: u32) -> ASTNode {
             },
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 
@@ -110,9 +111,11 @@ fn test_remove_all_edges() {
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Literal(LiteralValue::Number(2.0)),
                 source_token: None,
+                contains_volatile: false,
             }),
         },
         source_token: None,
+        contains_volatile: false,
     };
     let b1_result = graph.set_cell_formula("Sheet1", 0, 1, b1_formula).unwrap();
     let b1_vertex = b1_result.affected_vertices[0];
@@ -124,6 +127,7 @@ fn test_remove_all_edges() {
             right: Box::new(simple_formula(0, 0)), // A1
         },
         source_token: None,
+        contains_volatile: false,
     };
     graph.set_cell_formula("Sheet1", 0, 2, c1_formula).unwrap();
 
@@ -164,9 +168,11 @@ fn test_mark_dependents_dirty() {
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Literal(LiteralValue::Number(2.0)),
                 source_token: None,
+                contains_volatile: false,
             }),
         },
         source_token: None,
+        contains_volatile: false,
     };
     let b1_result = graph.set_cell_formula("Sheet1", 0, 1, b1_formula).unwrap();
     let b1_vertex = b1_result.affected_vertices[0];
@@ -179,9 +185,11 @@ fn test_mark_dependents_dirty() {
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Literal(LiteralValue::Number(1.0)),
                 source_token: None,
+                contains_volatile: false,
             }),
         },
         source_token: None,
+        contains_volatile: false,
     };
     let c1_result = graph.set_cell_formula("Sheet1", 0, 2, c1_formula).unwrap();
     let c1_vertex = c1_result.affected_vertices[0];
@@ -229,6 +237,7 @@ fn test_snapshot_preserves_all_state() {
             right: Box::new(simple_formula(1, 0)),
         },
         source_token: None,
+        contains_volatile: false,
     };
 
     // First create the dependencies

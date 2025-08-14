@@ -175,8 +175,20 @@ fn load_workbook_into_engine(
             engine.graph.bulk_insert_values(sheet_name, values);
         }
         // Now add formulas (dependency extraction needs ASTs)
+        // Use a batch parser with a volatility classifier so the ASTs carry contains_volatile.
+        let mut parser = formualizer_core::parser::BatchParser::builder()
+            .with_volatility_classifier(|name: &str| {
+                formualizer_eval::function_registry::get("", name)
+                    .map(|f| {
+                        f.caps()
+                            .contains(formualizer_eval::function::FnCaps::VOLATILE)
+                    })
+                    .unwrap_or(false)
+            })
+            .build();
         for (row, col, formula) in formulas {
-            let ast = formualizer_core::parser::parse(formula)
+            let ast = parser
+                .parse(formula)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
             engine
                 .set_cell_formula(sheet_name, row, col, ast)
@@ -296,7 +308,16 @@ impl PyEngine {
         let mut engine = self.inner.write().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
         })?;
-        let ast = formualizer_core::parser::parse(formula)
+        // Use single-shot parse with volatility classification
+        let ast =
+            formualizer_core::parser::parse_with_volatility_classifier(formula, |name: &str| {
+                formualizer_eval::function_registry::get("", name)
+                    .map(|f| {
+                        f.caps()
+                            .contains(formualizer_eval::function::FnCaps::VOLATILE)
+                    })
+                    .unwrap_or(false)
+            })
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         engine.set_cell_formula(sheet, row, col, ast).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("set_formula: {e}"))

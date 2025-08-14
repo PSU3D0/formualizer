@@ -21,6 +21,7 @@ fn range_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTN
             },
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 
@@ -32,6 +33,7 @@ fn sum_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTNod
             args: vec![range_ast(start_row, start_col, end_row, end_col)],
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 

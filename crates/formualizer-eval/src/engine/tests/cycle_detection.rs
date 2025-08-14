@@ -14,6 +14,7 @@ fn ref_ast(row: u32, col: u32) -> ASTNode {
             },
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 

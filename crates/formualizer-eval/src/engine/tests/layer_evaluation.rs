@@ -25,6 +25,7 @@ fn test_evaluate_linear_chain() {
                 ASTNode {
                     node_type: ASTNodeType::Literal(LiteralValue::Int(2)),
                     source_token: None,
+                    contains_volatile: false,
                 },
                 "*",
             ),
@@ -41,6 +42,7 @@ fn test_evaluate_linear_chain() {
                 ASTNode {
                     node_type: ASTNodeType::Literal(LiteralValue::Int(5)),
                     source_token: None,
+                    contains_volatile: false,
                 },
                 "+",
             ),
@@ -76,6 +78,7 @@ fn test_evaluate_diamond_dependency() {
                 ASTNode {
                     node_type: ASTNodeType::Literal(LiteralValue::Int(2)),
                     source_token: None,
+                    contains_volatile: false,
                 },
                 "*",
             ),
@@ -92,6 +95,7 @@ fn test_evaluate_diamond_dependency() {
                 ASTNode {
                     node_type: ASTNodeType::Literal(LiteralValue::Int(3)),
                     source_token: None,
+                    contains_volatile: false,
                 },
                 "+",
             ),
@@ -143,6 +147,7 @@ fn test_evaluation_with_cycles() {
             ASTNode {
                 node_type: ASTNodeType::Literal(LiteralValue::Int(5)),
                 source_token: None,
+                contains_volatile: false,
             },
         )
         .unwrap();
@@ -193,6 +198,7 @@ fn test_volatile_cells_are_always_evaluated() {
                     args: vec![],
                 },
                 source_token: None,
+                contains_volatile: true,
             },
         )
         .unwrap();

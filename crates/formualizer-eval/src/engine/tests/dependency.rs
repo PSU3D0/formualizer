@@ -28,6 +28,7 @@ fn test_dependency_extraction_from_ast() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
 
     graph
@@ -95,6 +96,7 @@ fn test_dependency_extraction_multiple_references() {
                     },
                 },
                 source_token: None,
+                contains_volatile: false,
             }),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
@@ -106,9 +108,11 @@ fn test_dependency_extraction_multiple_references() {
                     },
                 },
                 source_token: None,
+                contains_volatile: false,
             }),
         },
         source_token: None,
+        contains_volatile: false,
     };
 
     graph.set_cell_formula("Sheet1", 2, 1, ast_binary).unwrap();
@@ -155,6 +159,7 @@ fn test_dependency_edge_management() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
 
     graph.set_cell_formula("Sheet1", 2, 1, ast_ref_a1).unwrap();
@@ -185,6 +190,7 @@ fn test_dependency_edge_management() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
 
     graph.set_cell_formula("Sheet1", 2, 1, ast_ref_b1).unwrap();
@@ -233,6 +239,7 @@ fn test_circular_dependency_detection() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
 
     let result = graph.set_cell_formula("Sheet1", 1, 1, ast_self_ref);
@@ -275,6 +282,7 @@ fn test_complex_circular_dependency() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
 
     // Create A1 = B1 (B1 doesn't exist yet, so this should work)
@@ -291,6 +299,7 @@ fn test_complex_circular_dependency() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
 
     // For Milestone 1.2, creating this dependency is allowed.
@@ -345,6 +354,7 @@ fn test_cross_sheet_dependencies() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
 
     graph
@@ -404,6 +414,7 @@ fn test_relative_sheet_dependency() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
 
     graph

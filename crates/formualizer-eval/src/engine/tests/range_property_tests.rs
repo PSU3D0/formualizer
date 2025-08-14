@@ -36,6 +36,7 @@ fn range_ast(
             },
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 
@@ -53,6 +54,7 @@ fn sum_range_ast(
             args: vec![range_ast(sheet, start_row, start_col, end_row, end_col)],
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 

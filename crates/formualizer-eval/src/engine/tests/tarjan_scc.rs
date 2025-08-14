@@ -15,6 +15,7 @@ fn create_cell_ref_ast(sheet: Option<&str>, row: u32, col: u32, original: &str) 
             },
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 
@@ -26,6 +27,7 @@ fn create_binary_op_ast(left_ref: &str, right_ref: &str, op: &str) -> ASTNode {
         ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Int(num)),
             source_token: None,
+            contains_volatile: false,
         }
     } else {
         let (right_row, right_col) = parse_cell_ref(right_ref);
@@ -39,6 +41,7 @@ fn create_binary_op_ast(left_ref: &str, right_ref: &str, op: &str) -> ASTNode {
             right: Box::new(right_node),
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 

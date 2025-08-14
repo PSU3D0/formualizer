@@ -471,6 +471,7 @@ impl DataStore {
         Some(ASTNode {
             node_type,
             source_token: None, // Token information is not preserved in arena
+            contains_volatile: false,
         })
     }
 
@@ -711,6 +712,7 @@ mod tests {
         let ast = ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Number(42.0)),
             source_token: None,
+            contains_volatile: false,
         };
 
         let ast_id = store.store_ast(&ast, &sheet_registry);
@@ -734,13 +736,16 @@ mod tests {
                 left: Box::new(ASTNode {
                     node_type: ASTNodeType::Literal(LiteralValue::Number(1.0)),
                     source_token: None,
+                    contains_volatile: false,
                 }),
                 right: Box::new(ASTNode {
                     node_type: ASTNodeType::Literal(LiteralValue::Number(2.0)),
                     source_token: None,
+                    contains_volatile: false,
                 }),
             },
             source_token: None,
+            contains_volatile: false,
         };
 
         let ast_id = store.store_ast(&ast, &sheet_registry);
@@ -775,14 +780,17 @@ mod tests {
                     ASTNode {
                         node_type: ASTNodeType::Literal(LiteralValue::Number(1.0)),
                         source_token: None,
+                        contains_volatile: false,
                     },
                     ASTNode {
                         node_type: ASTNodeType::Literal(LiteralValue::Number(2.0)),
                         source_token: None,
+                        contains_volatile: false,
                     },
                 ],
             },
             source_token: None,
+            contains_volatile: false,
         };
 
         let ast_id = store.store_ast(&ast, &sheet_registry);

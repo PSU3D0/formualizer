@@ -39,9 +39,11 @@ fn sum_range_ast(
                     },
                 },
                 source_token: None,
+                contains_volatile: false,
             }],
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 

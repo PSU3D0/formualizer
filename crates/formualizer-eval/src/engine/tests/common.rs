@@ -13,6 +13,7 @@ pub fn create_cell_ref_ast(sheet: Option<&str>, row: u32, col: u32) -> ASTNode {
             },
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 
@@ -24,6 +25,7 @@ pub fn create_binary_op_ast(left: ASTNode, right: ASTNode, op: &str) -> ASTNode 
             right: Box::new(right),
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 

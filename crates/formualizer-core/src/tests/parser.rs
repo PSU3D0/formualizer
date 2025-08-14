@@ -27,6 +27,24 @@ mod tests {
     }
 
     #[test]
+    fn test_contains_volatile_with_classifier() {
+        let tokenizer = Tokenizer::new("=RAND()+A1").unwrap();
+        let mut parser = Parser::new(tokenizer.items, false).with_volatility_classifier(|name| {
+            name.eq_ignore_ascii_case("RAND")
+                || name.eq_ignore_ascii_case("NOW")
+                || name.eq_ignore_ascii_case("TODAY")
+        });
+        let ast = parser.parse().unwrap();
+        assert!(ast.contains_volatile());
+
+        let tokenizer = Tokenizer::new("=SUM(1,2,3)").unwrap();
+        let mut parser = Parser::new(tokenizer.items, false)
+            .with_volatility_classifier(|name| name.eq_ignore_ascii_case("RAND"));
+        let ast = parser.parse().unwrap();
+        assert!(!ast.contains_volatile());
+    }
+
+    #[test]
     fn test_parse_simple_formula() {
         let ast = parse_formula("=A1+B2").unwrap();
 

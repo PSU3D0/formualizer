@@ -23,6 +23,7 @@ fn test_mark_dirty_propagation() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
     graph.set_cell_formula("Sheet1", 2, 1, ast_ref_a1).unwrap();
 
@@ -37,6 +38,7 @@ fn test_mark_dirty_propagation() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
     graph.set_cell_formula("Sheet1", 3, 1, ast_ref_a2).unwrap();
 
@@ -51,6 +53,7 @@ fn test_mark_dirty_propagation() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
     graph.set_cell_formula("Sheet1", 4, 1, ast_ref_a3).unwrap();
 
@@ -132,6 +135,7 @@ fn test_mark_dirty_diamond_dependency() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
     graph
         .set_cell_formula("Sheet1", 2, 1, ast_ref_a1.clone())
@@ -154,6 +158,7 @@ fn test_mark_dirty_diamond_dependency() {
                     },
                 },
                 source_token: None,
+                contains_volatile: false,
             }),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
@@ -165,9 +170,11 @@ fn test_mark_dirty_diamond_dependency() {
                     },
                 },
                 source_token: None,
+                contains_volatile: false,
             }),
         },
         source_token: None,
+        contains_volatile: false,
     };
     graph.set_cell_formula("Sheet1", 4, 1, ast_sum).unwrap();
 
@@ -210,6 +217,7 @@ fn test_dirty_flag_clearing() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
     graph.set_cell_formula("Sheet1", 2, 1, ast_ref_a1).unwrap();
 
@@ -262,6 +270,7 @@ fn test_volatile_vertex_handling() {
             args: vec![],
         },
         source_token: None,
+        contains_volatile: true,
     };
 
     // Set A1 = RAND()
@@ -295,6 +304,7 @@ fn test_evaluation_vertices_combined() {
     let ast_literal = ASTNode {
         node_type: ASTNodeType::Literal(LiteralValue::Int(20)),
         source_token: None,
+        contains_volatile: false,
     };
     graph.set_cell_formula("Sheet1", 2, 1, ast_literal).unwrap(); // A2 - formula (dirty)
 
@@ -308,6 +318,7 @@ fn test_evaluation_vertices_combined() {
             },
         },
         source_token: None,
+        contains_volatile: false,
     };
     graph.set_cell_formula("Sheet1", 3, 1, ast_ref).unwrap(); // A3 - formula (dirty, depends on A1)
 
@@ -345,6 +356,7 @@ fn test_dirty_propagation_performance() {
                 },
             },
             source_token: None,
+            contains_volatile: false,
         };
         graph.set_cell_formula("Sheet1", i, 1, ast_ref).unwrap();
     }

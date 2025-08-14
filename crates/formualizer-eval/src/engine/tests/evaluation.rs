@@ -23,6 +23,7 @@ fn ref_ast(row: u32, col: u32) -> ASTNode {
             },
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 
@@ -35,6 +36,7 @@ fn op_ast(left: ASTNode, right: ASTNode, op: &str) -> ASTNode {
             right: Box::new(right),
         },
         source_token: None,
+        contains_volatile: false,
     }
 }
 

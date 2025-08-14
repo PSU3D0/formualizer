@@ -39,10 +39,12 @@ fn sum_range_ast(
                         end_col: Some(end_col),
                     },
                 },
-                source_token: None,
+        source_token: None,
+        contains_volatile: false,
             }],
         },
-        source_token: None,
+    source_token: None,
+    contains_volatile: false,
     }
 }
 

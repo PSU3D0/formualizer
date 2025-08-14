@@ -248,7 +248,14 @@ where
 
     fn stream_into_engine(&mut self, engine: &mut EvalEngine<R>) -> Result<(), Self::Error> {
         // Simple eager load: iterate sheets, add, bulk insert values, then formulas
+        let debug = std::env::var("FZ_DEBUG_LOAD")
+            .ok()
+            .map_or(false, |v| v != "0");
+        let t0 = std::time::Instant::now();
         let names = self.sheet_names()?;
+        if debug {
+            eprintln!("[fz][load] calamine: {} sheets", names.len());
+        }
         for n in &names {
             engine.graph.add_sheet(n.as_str()).map_err(|e| {
                 calamine::Error::Io(std::io::Error::new(
@@ -257,39 +264,112 @@ where
                 ))
             })?;
         }
+        // Speed up load: lazy sheet index + no range expansion during ingestion
+        let prev_index_mode = engine.config.sheet_index_mode;
+        engine.set_sheet_index_mode(formualizer_eval::engine::SheetIndexMode::Lazy);
+        let prev_range_limit = engine.config.range_expansion_limit;
+        engine.config.range_expansion_limit = 0; // keep ranges compressed while loading
+
         engine.begin_batch();
+        let mut total_values = 0usize;
+        let mut total_formulas = 0usize;
         for n in &names {
+            let t_sheet = std::time::Instant::now();
+            if debug {
+                eprintln!("[fz][load] >> sheet '{}'", n);
+            }
             let sheet = self.read_sheet(n)?;
+            if debug {
+                let dims = sheet.dimensions.unwrap_or((0, 0));
+                eprintln!(
+                    "[fz][load]    dims={}x{}, used_cells={}",
+                    dims.0,
+                    dims.1,
+                    sheet.cells.len()
+                );
+            }
             if !sheet.cells.is_empty() {
                 let values: Vec<(u32, u32, formualizer_common::LiteralValue)> = sheet
                     .cells
                     .iter()
                     .filter_map(|(&(r, c), cell)| cell.value.clone().map(|v| (r, c, v)))
                     .collect();
+                total_values += values.len();
                 if !values.is_empty() {
+                    let tv0 = std::time::Instant::now();
                     engine.graph.bulk_insert_values(n, values);
+                    if debug {
+                        eprintln!(
+                            "[fz][load]    bulk values in {} ms",
+                            tv0.elapsed().as_millis()
+                        );
+                    }
                 }
             }
+            let mut formulas = 0usize;
+            let mut cache: std::collections::HashMap<&str, formualizer_core::ASTNode> =
+                std::collections::HashMap::new();
+            let tf0 = std::time::Instant::now();
+            let mut batch: Vec<(u32, u32, formualizer_core::ASTNode)> = Vec::new();
+            batch.reserve(sheet.cells.len());
             for (&(r, c), cell) in &sheet.cells {
                 if let Some(ref f) = cell.formula {
-                    let ast = formualizer_core::parser::parse(f.as_str()).map_err(|e| {
-                        calamine::Error::Io(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            e.to_string(),
-                        ))
-                    })?;
-                    engine
-                        .set_cell_formula(n.as_str(), r, c, ast)
-                        .map_err(|e| {
+                    let key = f.as_str();
+                    let ast = if let Some(ast) = cache.get(key) {
+                        ast.clone()
+                    } else {
+                        let parsed = formualizer_core::parser::parse(key).map_err(|e| {
                             calamine::Error::Io(std::io::Error::new(
                                 std::io::ErrorKind::Other,
                                 e.to_string(),
                             ))
                         })?;
+                        cache.insert(key, parsed.clone());
+                        parsed
+                    };
+                    batch.push((r, c, ast));
+                    formulas += 1;
+                    if debug && (formulas % 5000 == 0) {
+                        eprintln!("[fz][load]    parsed formulas: {}", formulas);
+                    }
                 }
             }
+            if !batch.is_empty() {
+                engine.bulk_set_formulas(n.as_str(), batch).map_err(|e| {
+                    calamine::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        e.to_string(),
+                    ))
+                })?;
+            }
+            total_formulas += formulas;
+            if debug {
+                eprintln!(
+                    "[fz][load]    formulas={} in {} ms",
+                    formulas,
+                    tf0.elapsed().as_millis()
+                );
+                eprintln!(
+                    "[fz][load] << sheet '{}' done in {} ms",
+                    n,
+                    t_sheet.elapsed().as_millis()
+                );
+            }
         }
+        let tend0 = std::time::Instant::now();
         engine.end_batch();
+        // Restore config after load
+        engine.set_sheet_index_mode(prev_index_mode);
+        engine.config.range_expansion_limit = prev_range_limit;
+        if debug {
+            eprintln!(
+                "[fz][load] done: values={}, formulas={}, batch_close={} ms, total={} ms",
+                total_values,
+                total_formulas,
+                tend0.elapsed().as_millis(),
+                t0.elapsed().as_millis(),
+            );
+        }
         Ok(())
     }
 }
