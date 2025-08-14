@@ -11,6 +11,9 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 
 use calamine::{open_workbook, Data, Range, Reader, Xlsx};
+use formualizer_eval::engine::ingest::EngineLoadStream;
+use formualizer_eval::engine::Engine as EvalEngine;
+use formualizer_eval::traits::EvaluationContext;
 
 pub struct CalamineAdapter {
     workbook: RwLock<Xlsx<BufReader<File>>>,
@@ -234,5 +237,59 @@ impl SpreadsheetReader for CalamineAdapter {
 
     fn is_loaded(&self, sheet: &str, _row: Option<u32>, _col: Option<u32>) -> bool {
         self.loaded_sheets.contains(sheet)
+    }
+}
+
+impl<R> EngineLoadStream<R> for CalamineAdapter
+where
+    R: EvaluationContext,
+{
+    type Error = calamine::Error;
+
+    fn stream_into_engine(&mut self, engine: &mut EvalEngine<R>) -> Result<(), Self::Error> {
+        // Simple eager load: iterate sheets, add, bulk insert values, then formulas
+        let names = self.sheet_names()?;
+        for n in &names {
+            engine.graph.add_sheet(n.as_str()).map_err(|e| {
+                calamine::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?;
+        }
+        engine.begin_batch();
+        for n in &names {
+            let sheet = self.read_sheet(n)?;
+            if !sheet.cells.is_empty() {
+                let values: Vec<(u32, u32, formualizer_common::LiteralValue)> = sheet
+                    .cells
+                    .iter()
+                    .filter_map(|(&(r, c), cell)| cell.value.clone().map(|v| (r, c, v)))
+                    .collect();
+                if !values.is_empty() {
+                    engine.graph.bulk_insert_values(n, values);
+                }
+            }
+            for (&(r, c), cell) in &sheet.cells {
+                if let Some(ref f) = cell.formula {
+                    let ast = formualizer_core::parser::parse(f.as_str()).map_err(|e| {
+                        calamine::Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            e.to_string(),
+                        ))
+                    })?;
+                    engine
+                        .set_cell_formula(n.as_str(), r, c, ast)
+                        .map_err(|e| {
+                            calamine::Error::Io(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                e.to_string(),
+                            ))
+                        })?;
+                }
+            }
+        }
+        engine.end_batch();
+        Ok(())
     }
 }

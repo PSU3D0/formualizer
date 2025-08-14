@@ -4,6 +4,7 @@
 
 pub mod eval;
 pub mod graph;
+pub mod ingest;
 pub mod range_stream;
 pub mod scheduler;
 pub mod spill;

@@ -154,6 +154,22 @@ where
         self.graph.get_cell_value(sheet, row, col)
     }
 
+    /// Get formula AST (if any) and current stored value for a cell
+    pub fn get_cell(
+        &self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> Option<(Option<formualizer_core::ASTNode>, Option<LiteralValue>)> {
+        let v = self.get_cell_value(sheet, row, col);
+        let sheet_id = self.graph.sheet_id(sheet)?;
+        let coord = Coord::new(row, col, true, true);
+        let cell = CellRef::new(sheet_id, coord);
+        let vid = self.graph.get_vertex_for_cell(&cell)?;
+        let ast = self.graph.get_formula(vid);
+        Some((ast, v))
+    }
+
     /// Begin batch operations - defer CSR rebuilds for better performance
     pub fn begin_batch(&mut self) {
         self.graph.begin_batch();

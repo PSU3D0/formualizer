@@ -15,7 +15,6 @@ only_used_in_recursion = "allow"
 formualizer-core = { path = "../formualizer-core" }
 formualizer-macros  = { path = "../formualizer-macros" }
 formualizer-common = { path = "../formualizer-common" }
-formualizer-io = { path = "../formualizer-io" }
 once_cell = "1.21.3"
 rustc-hash = "1.1"
 rand = { version = "0.8.5", features = ["small_rng"] }

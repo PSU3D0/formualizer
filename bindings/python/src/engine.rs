@@ -191,7 +191,6 @@ fn load_workbook_into_engine(
     Ok(())
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyEngine {
     /// Create a new evaluation engine
@@ -235,25 +234,30 @@ impl PyEngine {
     /// Create an engine by streaming from a file path using a specific backend.
     /// backend: "calamine" for now. strategy is backend-specific (optional).
     #[classmethod]
-    #[pyo3(signature = (path, backend="calamine", strategy=None, config=None))]
+    #[pyo3(signature = (path, backend=None, _strategy=None, config=None))]
     pub fn from_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
-        backend: &str,
+        backend: Option<&str>,
         _strategy: Option<&str>,
         config: Option<PyEvaluationConfig>,
     ) -> PyResult<Self> {
         let eval_config = config.map(|c| c.inner).unwrap_or_default();
         let mut engine = RustEngine::new(PyResolver, eval_config);
+        let backend = backend.unwrap_or("calamine");
         match backend {
             "calamine" => {
-                engine
-                    .load_workbook_from_path::<formualizer_io::backends::CalamineAdapter>(
-                        &std::path::Path::new(path),
-                    )
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {}", e))
+                use formualizer_eval::engine::ingest::EngineLoadStream;
+                use formualizer_io::backends::CalamineAdapter;
+                use formualizer_io::traits::SpreadsheetReader;
+                let mut adapter =
+                    <CalamineAdapter as SpreadsheetReader>::open_path(std::path::Path::new(path))
+                        .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {}", e))
                     })?;
+                adapter.stream_into_engine(&mut engine).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {}", e))
+                })?;
             }
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
