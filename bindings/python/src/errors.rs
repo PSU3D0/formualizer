@@ -10,6 +10,8 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 pyo3::create_exception!(formualizer, TokenizerError, PyException);
 pyo3::create_exception!(formualizer, ParserError, PyException);
 pyo3::create_exception!(formualizer, FormualizerHostError, PyException);
+// Raised when evaluating a cell returns an Excel error value
+pyo3::create_exception!(formualizer, ExcelEvaluationError, PyException);
 
 // Helper functions to create errors with position information
 impl TokenizerError {
@@ -32,6 +34,36 @@ impl ParserError {
         };
         PyErr::new::<ParserError, _>(error_msg)
     }
+}
+
+/// Build a rich Python exception from a Rust ExcelError, including location if known.
+pub fn excel_eval_pyerr(
+    sheet: Option<&str>,
+    fallback_row: Option<u32>,
+    fallback_col: Option<u32>,
+    err: &RustExcelError,
+) -> PyErr {
+    // Prefer explicit error.context if present, otherwise fall back to provided location
+    let (row, col) = match &err.context {
+        Some(ErrorContext { row, col }) => (row.unwrap_or_default(), col.unwrap_or_default()),
+        None => (
+            fallback_row.unwrap_or_default(),
+            fallback_col.unwrap_or_default(),
+        ),
+    };
+
+    let location = match (sheet, row, col) {
+        (Some(s), r, c) if r > 0 && c > 0 => format!(" at {}!R{}C{}", s, r, c),
+        (None, r, c) if r > 0 && c > 0 => format!(" at R{}C{}", r, c),
+        _ => String::new(),
+    };
+
+    let msg = match &err.message {
+        Some(m) if !m.is_empty() => format!("{}: {}{}", err.kind, m, location),
+        _ => format!("{}{}", err.kind, location),
+    };
+
+    PyErr::new::<ExcelEvaluationError, _>(msg)
 }
 
 /// Python representation of Excel domain errors
@@ -142,7 +174,7 @@ impl PyExcelError {
                 let dict = PyDict::new(py);
                 let _ = dict.set_item("expected_rows", expected_rows);
                 let _ = dict.set_item("expected_cols", expected_cols);
-                Some(dict.to_object(py))
+                Some(dict.into_pyobject(py).unwrap().unbind().into())
             }
         }
     }
@@ -264,6 +296,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add(
         "FormualizerHostError",
         m.py().get_type::<FormualizerHostError>(),
+    )?;
+    m.add(
+        "ExcelEvaluationError",
+        m.py().get_type::<ExcelEvaluationError>(),
     )?;
     m.add_class::<PyExcelError>()?;
     Ok(())

@@ -6,6 +6,7 @@ use std::sync::{Arc, RwLock};
 use crate::resolver::PyResolver;
 use crate::value::PyLiteralValue;
 use crate::workbook::{PyCell, PyWorkbook};
+use crate::errors::excel_eval_pyerr;
 
 /// Python wrapper for the evaluation engine
 #[gen_stub_pyclass]
@@ -389,16 +390,39 @@ impl PyEngine {
         })?;
 
         // Engine already uses 1-based indexing
-        let value = engine.evaluate_cell(sheet, row, col).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to evaluate cell: {:?}",
-                e
-            ))
-        })?;
+        let value = engine
+            .evaluate_cell(sheet, row, col)
+            .map_err(|e| excel_eval_pyerr(Some(sheet), Some(row), Some(col), &e))?;
 
-        Ok(PyLiteralValue {
-            inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
-        })
+    use formualizer_common::{ErrorContext, LiteralValue};
+        let inner = match value {
+            Some(LiteralValue::Error(mut e)) => {
+                // Attach location if not already present
+                if e.context.is_none() || e.context.as_ref().map(|c| c.row.is_none() || c.col.is_none()).unwrap_or(true) {
+                    e.context = Some(ErrorContext { row: Some(row), col: Some(col) });
+                }
+                LiteralValue::Error(e)
+            }
+            Some(v) => v,
+            None => LiteralValue::Empty,
+        };
+        Ok(PyLiteralValue { inner })
+    }
+
+    /// Evaluate a cell and return a native Python value; raise if the result is an Excel error.
+    ///
+    /// Returns:
+    /// - int/float/bool/str for scalar values
+    /// - None for empty
+    /// - list[list[Any]] for arrays (nested lists)
+    #[pyo3(name = "evaluate_cell_value")]
+    pub fn evaluate_cell_value_py(&self, py: Python, sheet: &str, row: u32, col: u32) -> PyResult<PyObject> {
+        let v = self.evaluate_cell(sheet, row, col)?; // already performs engine call and basic checks
+        // If it is an error, raise a rich exception
+        if let formualizer_common::LiteralValue::Error(ref e) = v.inner {
+            return Err(excel_eval_pyerr(Some(sheet), Some(row), Some(col), e));
+        }
+        v.to_python(py)
     }
 
     /// Get an evaluated cell (value + formula)
@@ -451,12 +475,9 @@ impl PyEngine {
             .map(|(s, r, c)| (s.as_str(), *r, *c))
             .collect();
 
-        let values = engine.evaluate_cells(&target_refs).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to evaluate cells: {:?}",
-                e
-            ))
-        })?;
+        let values = engine
+            .evaluate_cells(&target_refs)
+            .map_err(|e| excel_eval_pyerr(None, None, None, &e))?;
 
         Ok(values
             .into_iter()

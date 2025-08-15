@@ -280,10 +280,10 @@ impl PyLiteralValue {
     /// Convert to a Python object
     pub fn to_python(&self, py: Python) -> PyResult<PyObject> {
         match &self.inner {
-            LiteralValue::Int(v) => Ok(v.to_object(py)),
-            LiteralValue::Number(v) => Ok(v.to_object(py)),
-            LiteralValue::Boolean(v) => Ok(v.to_object(py)),
-            LiteralValue::Text(v) => Ok(v.to_object(py)),
+            LiteralValue::Int(v) => Ok((*v).into_pyobject(py)?.into_any().to_object(py)),
+            LiteralValue::Number(v) => Ok((*v).into_pyobject(py)?.into_any().to_object(py)),
+            LiteralValue::Boolean(v) => Ok((*v).to_object(py)),
+            LiteralValue::Text(v) => Ok(v.clone().into_pyobject(py)?.into_any().to_object(py)),
             LiteralValue::Empty => Ok(py.None()),
             LiteralValue::Date(d) => {
                 let dict = PyDict::new(py);
@@ -291,7 +291,7 @@ impl PyLiteralValue {
                 dict.set_item("year", d.year())?;
                 dict.set_item("month", d.month())?;
                 dict.set_item("day", d.day())?;
-                Ok(dict.to_object(py))
+                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
             }
             LiteralValue::Time(t) => {
                 let dict = PyDict::new(py);
@@ -299,7 +299,7 @@ impl PyLiteralValue {
                 dict.set_item("hour", t.hour())?;
                 dict.set_item("minute", t.minute())?;
                 dict.set_item("second", t.second())?;
-                Ok(dict.to_object(py))
+                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
             }
             LiteralValue::DateTime(dt) => {
                 let dict = PyDict::new(py);
@@ -310,13 +310,13 @@ impl PyLiteralValue {
                 dict.set_item("hour", dt.hour())?;
                 dict.set_item("minute", dt.minute())?;
                 dict.set_item("second", dt.second())?;
-                Ok(dict.to_object(py))
+                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
             }
             LiteralValue::Duration(d) => {
                 let dict = PyDict::new(py);
                 dict.set_item("type", "Duration")?;
                 dict.set_item("seconds", d.num_seconds())?;
-                Ok(dict.to_object(py))
+                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
             }
             LiteralValue::Array(arr) => {
                 let py_list = PyList::empty(py);
@@ -328,7 +328,7 @@ impl PyLiteralValue {
                     }
                     py_list.append(py_row)?;
                 }
-                Ok(py_list.to_object(py))
+                Ok(py_list.into_pyobject(py)?.into_any().to_object(py))
             }
             LiteralValue::Error(e) => {
                 let dict = PyDict::new(py);
@@ -337,12 +337,16 @@ impl PyLiteralValue {
                 if let Some(msg) = &e.message {
                     dict.set_item("message", msg)?;
                 }
-                Ok(dict.to_object(py))
+                if let Some(ctx) = &e.context {
+                    if let Some(r) = ctx.row { dict.set_item("row", r)?; }
+                    if let Some(c) = ctx.col { dict.set_item("col", c)?; }
+                }
+                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
             }
             LiteralValue::Pending => {
                 let dict = PyDict::new(py);
                 dict.set_item("type", "Pending")?;
-                Ok(dict.to_object(py))
+                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
             }
         }
     }
@@ -391,7 +395,13 @@ impl PyLiteralValue {
                     arr.first().map_or(0, |r| r.len())
                 )
             }
-            LiteralValue::Error(e) => format!("LiteralValue.error({:?})", e.kind),
+            LiteralValue::Error(e) => {
+                if let Some(msg) = &e.message {
+                    format!("LiteralValue.error({:?}, {:?})", e.kind, msg)
+                } else {
+                    format!("LiteralValue.error({:?})", e.kind)
+                }
+            }
             LiteralValue::Pending => "LiteralValue.pending()".to_string(),
         }
     }
@@ -408,8 +418,41 @@ impl PyLiteralValue {
             LiteralValue::DateTime(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
             LiteralValue::Duration(d) => format!("{}s", d.num_seconds()),
             LiteralValue::Array(_) => "[Array]".to_string(),
-            LiteralValue::Error(e) => format!("#{:?}!", e.kind),
+            LiteralValue::Error(e) => match &e.message {
+                Some(m) if !m.is_empty() => format!("{}: {}", e.kind, m),
+                _ => format!("{}", e.kind),
+            },
             LiteralValue::Pending => "[Pending]".to_string(),
+        }
+    }
+
+    /// If this is an error, return the error kind string; otherwise None
+    #[getter]
+    pub fn error_kind(&self) -> Option<String> {
+        match &self.inner {
+            LiteralValue::Error(e) => Some(format!("{:?}", e.kind)),
+            _ => None,
+        }
+    }
+
+    /// If this is an error, return the error message; otherwise None
+    #[getter]
+    pub fn error_message(&self) -> Option<String> {
+        match &self.inner {
+            LiteralValue::Error(e) => e.message.clone(),
+            _ => None,
+        }
+    }
+
+    /// If this is an error and has location, return (row, col); otherwise None
+    #[getter]
+    pub fn error_location(&self) -> Option<(u32, u32)> {
+        match &self.inner {
+            LiteralValue::Error(e) => e
+                .context
+                .as_ref()
+                .and_then(|c| Some((c.row?, c.col?))),
+            _ => None,
         }
     }
 }
