@@ -5,11 +5,19 @@ use crate::{
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use rustc_hash::FxHashMap;
+use std::cell::RefCell;
+use std::sync::Arc;
 
 pub struct Interpreter<'a> {
     pub context: &'a dyn EvaluationContext,
     current_sheet: &'a str,
     current_cell: Option<crate::CellRef>,
+    // Per-evaluation caches (interior mutability for &self API)
+    subexpr_cache: RefCell<FxHashMap<u64, LiteralValue>>, // key: AST fingerprint
+    // Cache only fully-owned ranges to avoid re-resolving identical references within a cell
+    // Key: (effective_sheet, structural reference fingerprint)
+    owned_range_cache: RefCell<FxHashMap<(String, u64), Arc<[Vec<LiteralValue>]>>>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -18,6 +26,8 @@ impl<'a> Interpreter<'a> {
             context,
             current_sheet,
             current_cell: None,
+            subexpr_cache: RefCell::new(FxHashMap::default()),
+            owned_range_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -30,11 +40,68 @@ impl<'a> Interpreter<'a> {
             context,
             current_sheet,
             current_cell: Some(cell),
+            subexpr_cache: RefCell::new(FxHashMap::default()),
+            owned_range_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
     pub fn current_sheet(&self) -> &'a str {
         self.current_sheet
+    }
+
+    /// Resolve a reference with a small per-interpreter cache for fully-owned ranges.
+    /// Streaming ranges are returned as-is (not cached) to avoid materializing large data.
+    pub fn resolve_range_storage_cached<'c>(
+        &'c self,
+        reference: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<crate::engine::range_stream::RangeStorage<'c>, ExcelError> {
+        use crate::engine::range_stream::RangeStorage;
+        // Determine effective sheet key for cache
+        let sheet_key = match reference {
+            ReferenceType::Cell { sheet, .. } | ReferenceType::Range { sheet, .. } => {
+                sheet.clone().unwrap_or_else(|| current_sheet.to_string())
+            }
+            ReferenceType::Table(_) | ReferenceType::NamedRange(_) => current_sheet.to_string(),
+        };
+        let ref_fp = {
+            // Use a structural fingerprint of a synthetic AST node wrapping this reference
+            let ast = ASTNode::new(
+                ASTNodeType::Reference {
+                    original: String::new(),
+                    reference: reference.clone(),
+                },
+                None,
+            );
+            ast.fingerprint()
+        };
+
+        // Fast path: owned range present in cache
+        if let Some(arc_rows) = self
+            .owned_range_cache
+            .borrow()
+            .get(&(sheet_key.clone(), ref_fp))
+            .cloned()
+        {
+            // Return a fresh owned clone to avoid RefCell borrow/lifetime complexities
+            let data: Vec<Vec<LiteralValue>> = (*arc_rows).to_vec();
+            return Ok(RangeStorage::Owned(std::borrow::Cow::Owned(data)));
+        }
+
+        // Resolve via context
+        match self.context.resolve_range_storage(reference, current_sheet)? {
+            RangeStorage::Owned(rows) => {
+                // Materialize into Arc<[Vec<LiteralValue>]> and cache
+                let owned: Vec<Vec<LiteralValue>> = rows.into_owned();
+                let arc: Arc<[Vec<LiteralValue>]> = Arc::from(owned.into_boxed_slice());
+                self.owned_range_cache
+                    .borrow_mut()
+                    .insert((sheet_key, ref_fp), arc.clone());
+                let data: Vec<Vec<LiteralValue>> = (*arc).to_vec();
+                Ok(RangeStorage::Owned(std::borrow::Cow::Owned(data)))
+            }
+            other @ RangeStorage::Stream(_) => Ok(other),
+        }
     }
 
     /// Evaluate an AST node in a reference context and return a ReferenceType.
@@ -70,6 +137,19 @@ impl<'a> Interpreter<'a> {
 
     /* ===================  public  =================== */
     pub fn evaluate_ast(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
+        if !node.contains_volatile() {
+            let fp = node.fingerprint();
+            if let Some(v) = self.subexpr_cache.borrow().get(&fp) {
+                return Ok(v.clone());
+            }
+            let out = self.evaluate_ast_uncached(node)?;
+            self.subexpr_cache.borrow_mut().insert(fp, out.clone());
+            return Ok(out);
+        }
+        self.evaluate_ast_uncached(node)
+    }
+
+    fn evaluate_ast_uncached(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
         match &node.node_type {
             ASTNodeType::Literal(v) => Ok(v.clone()),
             ASTNodeType::Reference { reference, .. } => self.eval_reference(reference),
@@ -224,6 +304,16 @@ impl<'a> Interpreter<'a> {
 
     pub fn function_context(&self, cell_ref: Option<&CellRef>) -> DefaultFunctionContext<'_> {
         DefaultFunctionContext::new(self.context, cell_ref.cloned())
+    }
+
+    // Test-only helpers to introspect cache sizes
+    #[cfg(test)]
+    pub fn debug_subexpr_cache_len(&self) -> usize {
+        self.subexpr_cache.borrow().len()
+    }
+    #[cfg(test)]
+    pub fn debug_owned_range_cache_len(&self) -> usize {
+        self.owned_range_cache.borrow().len()
     }
 
     /* ===================  array literal  =================== */

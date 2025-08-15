@@ -133,8 +133,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         match &self.node.node_type {
             ASTNodeType::Reference { reference, .. } => self
                 .interp
-                .context
-                .resolve_range_storage(reference, self.interp.current_sheet()),
+                .resolve_range_storage_cached(reference, self.interp.current_sheet()),
             _ => {
                 // Fallback for non-reference types that might evaluate to a range (e.g. array literals)
                 let value = self.value()?;

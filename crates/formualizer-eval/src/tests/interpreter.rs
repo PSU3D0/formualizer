@@ -5,6 +5,7 @@ mod tests {
     use formualizer_core::LiteralValue;
     use formualizer_core::Tokenizer;
     use formualizer_core::parser::Parser;
+    use std::sync::Arc;
 
     /// Helper function to parse and evaluate a formula.
     fn evaluate_formula(formula: &str, wb: &TestWorkbook) -> Result<LiteralValue, ExcelError> {
@@ -27,6 +28,45 @@ mod tests {
             .with_function(Arc::new(crate::builtins::logical::AndFn))
             .with_function(Arc::new(crate::builtins::logical::TrueFn))
             .with_function(Arc::new(crate::builtins::logical::FalseFn))
+    }
+
+    #[test]
+    fn subexpr_cache_reuses_date_calls() {
+        let wb = create_workbook();
+        let tokenizer = Tokenizer::new("=DATE(2024,1,1)+DATE(2024,1,1)").unwrap();
+        let mut parser = Parser::new(tokenizer.items, false);
+        let ast = parser
+            .parse()
+            .map_err(|e| ExcelError::new(ExcelErrorKind::Error).with_message(e.message.clone()))
+            .unwrap();
+
+        let interp = wb.interpreter();
+        let res = interp.evaluate_ast(&ast).unwrap();
+        match res {
+            LiteralValue::Number(n) => assert!(n > 0.0),
+            _ => panic!("expected number"),
+        }
+        // Verify cache had at least one entry (DATE subtree)
+        assert!(interp.debug_subexpr_cache_len() >= 2);
+    }
+
+    #[test]
+    fn range_cache_reuses_identical_ranges_in_sum() {
+        // Prepare a small range and sum it twice
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(crate::builtins::math::SumFn))
+            .with_cell("Sheet1", 1, 1, LiteralValue::Int(1))
+            .with_cell("Sheet1", 1, 2, LiteralValue::Int(2))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Int(3))
+            .with_cell("Sheet1", 2, 2, LiteralValue::Int(4));
+        let tokenizer = Tokenizer::new("=SUM(A1:B2, A1:B2)").unwrap();
+        let mut parser = Parser::new(tokenizer.items, false);
+        let ast = parser.parse().unwrap();
+        let interp = wb.interpreter();
+        let res = interp.evaluate_ast(&ast).unwrap();
+        assert_eq!(res, LiteralValue::Number(20.0));
+        // We expect the owned range cache to have at least one entry
+        assert!(interp.debug_owned_range_cache_len() >= 1);
     }
 
     #[test]
