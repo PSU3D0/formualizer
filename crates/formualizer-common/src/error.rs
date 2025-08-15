@@ -209,7 +209,7 @@ impl fmt::Display for ExcelError {
             if let (Some(r), Some(c)) = (ctx.row, ctx.col) {
                 write!(f, " (row {r}, col {c})")?;
             }
-            
+
             // Show origin if different from the evaluation location
             if let (Some(or), Some(oc)) = (ctx.origin_row, ctx.origin_col) {
                 if ctx.origin_row != ctx.row || ctx.origin_col != ctx.col {

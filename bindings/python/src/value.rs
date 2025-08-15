@@ -461,9 +461,10 @@ impl PyLiteralValue {
     #[getter]
     pub fn error_origin(&self) -> Option<(Option<String>, u32, u32)> {
         match &self.inner {
-            LiteralValue::Error(e) => e.context.as_ref().and_then(|c| {
-                Some((c.origin_sheet.clone(), c.origin_row?, c.origin_col?))
-            }),
+            LiteralValue::Error(e) => e
+                .context
+                .as_ref()
+                .and_then(|c| Some((c.origin_sheet.clone(), c.origin_row?, c.origin_col?))),
             _ => None,
         }
     }

@@ -27,6 +27,7 @@ pub mod test_utils;
 pub mod test_workbook;
 
 pub mod engine;
+pub mod planner;
 
 #[cfg(test)]
 mod tests;

@@ -110,8 +110,8 @@ impl PyExcelError {
         };
 
         let context = if row.is_some() || col.is_some() {
-            Some(ErrorContext { 
-                row, 
+            Some(ErrorContext {
+                row,
                 col,
                 origin_row: None,
                 origin_col: None,

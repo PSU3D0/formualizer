@@ -224,7 +224,7 @@ impl Function for IfNaFn {
 #[derive(Debug)]
 pub struct IfsFn; // IFS(cond1, val1, cond2, val2, ...)
 impl Function for IfsFn {
-    func_caps!(PURE);
+    func_caps!(PURE, SHORT_CIRCUIT);
     fn name(&self) -> &'static str {
         "IFS"
     }

@@ -61,7 +61,7 @@ impl Function for FalseFn {
 pub struct AndFn;
 
 impl Function for AndFn {
-    func_caps!(PURE, REDUCTION, BOOL_ONLY);
+    func_caps!(PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT);
 
     fn name(&self) -> &'static str {
         "AND"
@@ -133,7 +133,7 @@ impl Function for AndFn {
 pub struct OrFn;
 
 impl Function for OrFn {
-    func_caps!(PURE, REDUCTION, BOOL_ONLY);
+    func_caps!(PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT);
 
     fn name(&self) -> &'static str {
         "OR"
@@ -205,7 +205,7 @@ impl Function for OrFn {
 pub struct IfFn;
 
 impl Function for IfFn {
-    func_caps!(PURE);
+    func_caps!(PURE, SHORT_CIRCUIT);
 
     fn name(&self) -> &'static str {
         "IF"

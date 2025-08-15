@@ -89,7 +89,10 @@ impl<'a> Interpreter<'a> {
         }
 
         // Resolve via context
-        match self.context.resolve_range_storage(reference, current_sheet)? {
+        match self
+            .context
+            .resolve_range_storage(reference, current_sheet)?
+        {
             RangeStorage::Owned(rows) => {
                 // Materialize into Arc<[Vec<LiteralValue>]> and cache
                 let owned: Vec<Vec<LiteralValue>> = rows.into_owned();
@@ -302,7 +305,7 @@ impl<'a> Interpreter<'a> {
             // Include the function name in the error message for better debugging
             Ok(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Name)
-                    .with_message(format!("Unknown function: {}", name))
+                    .with_message(format!("Unknown function: {}", name)),
             ))
         }
     }

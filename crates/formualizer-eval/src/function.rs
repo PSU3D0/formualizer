@@ -54,7 +54,17 @@ bitflags::bitflags! {
         /// The function can return a reference (to a cell/range/table) when
         /// evaluated in a reference context. When used in a value context,
         /// engines may materialize the reference to a `LiteralValue`.
-        const RETURNS_REFERENCE = 0b1000_0000_0000;
+    const RETURNS_REFERENCE = 0b1000_0000_0000;
+
+    // --- Planning / Interpreter parallelism hints ---
+    /// The function enforces left-to-right evaluation and early-exit semantics.
+    /// The planner must not evaluate arguments in parallel nor reorder them.
+    const SHORT_CIRCUIT  = 0b0001_0000_0000_0000;
+    /// It is safe and potentially profitable to evaluate arguments in parallel.
+    /// The engine should still fold results in argument order for determinism.
+    const PARALLEL_ARGS  = 0b0010_0000_0000_0000;
+    /// It is safe to chunk and process input windows in parallel (e.g., SUMIFS).
+    const PARALLEL_CHUNKS= 0b0100_0000_0000_0000;
     }
 }
 

@@ -35,26 +35,26 @@ const EXCEL_PREFIXES: &[&str] = &["_XLFN.", "_XLL.", "_XLWS."];
 
 pub fn get(ns: &str, name: &str) -> Option<Arc<dyn Function>> {
     let key = (norm(ns), norm(name));
-    
+
     // Try direct lookup
     if let Some(v) = REG.get(&key) {
         return Some(Arc::clone(v.value()));
     }
-    
+
     // Try existing alias
     if let Some(canon) = ALIASES.get(&key) {
         if let Some(v) = REG.get(canon.value()) {
             return Some(Arc::clone(v.value()));
         }
     }
-    
+
     // Try stripping known Excel prefixes and create runtime alias if found
     let normalized_name = norm(name);
     for prefix in EXCEL_PREFIXES {
         if normalized_name.starts_with(prefix) {
             let stripped = &normalized_name[prefix.len()..];
             let stripped_key = (norm(ns), stripped.to_string());
-            
+
             if let Some(v) = REG.get(&stripped_key) {
                 // Cache this discovery as an alias for future lookups
                 ALIASES.insert(key, stripped_key);
@@ -62,7 +62,7 @@ pub fn get(ns: &str, name: &str) -> Option<Arc<dyn Function>> {
             }
         }
     }
-    
+
     None
 }
 
