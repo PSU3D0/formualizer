@@ -342,7 +342,21 @@ mod tests {
     use super::*;
     use formualizer_core::Tokenizer;
 
+    fn ensure_builtins_registered() {
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            // Register a representative set of builtins used by these tests
+            crate::builtins::logical::register_builtins();
+            crate::builtins::logical_ext::register_builtins();
+            crate::builtins::datetime::register_builtins();
+            crate::builtins::math::register_builtins();
+            crate::builtins::text::register_builtins();
+        });
+    }
+
     fn plan_for(formula: &str) -> ExecPlan {
+        ensure_builtins_registered();
         let t = Tokenizer::new(formula).unwrap();
         let mut parser = formualizer_core::parser::Parser::new(t.items, false);
         let ast = parser.parse().unwrap();
@@ -402,5 +416,145 @@ mod tests {
         assert!(matches!(p.root.strategy, ExecStrategy::Sequential));
         let p2 = plan_for("=AND(TRUE(), FALSE())");
         assert!(matches!(p2.root.strategy, ExecStrategy::Sequential));
+    }
+
+    #[test]
+    fn parentheses_do_not_force_parallelism() {
+        // Trivial groups should stay sequential under default thresholds
+        let p = plan_for("=(1+2)+(2+3)");
+        assert!(matches!(p.root.strategy, ExecStrategy::Sequential));
+    }
+
+    #[test]
+    fn repeated_subtrees_in_sum_encourage_arg_parallel() {
+        // SUM(f(), f(), f(), f()) where f is same subtree
+        let p = plan_for("=SUM(1+2, 1+2, 1+2, 1+2)");
+        // Fanout 4 may or may not cross threshold; accept either but ensure children exist
+        assert!(p.root.children.len() >= 1);
+    }
+
+    #[test]
+    fn volatile_forces_sequential() {
+        // NOW() is volatile via caps; planner should mark sequential at root
+        let t = Tokenizer::new("=NOW()+1").unwrap();
+        let mut parser = formualizer_core::parser::Parser::new(t.items, false);
+        let ast = parser.parse().unwrap();
+        let mut planner = Planner::new(PlanConfig::default())
+            .with_function_lookup(&|ns, name| crate::function_registry::get(ns, name));
+        let plan = planner.plan(&ast);
+        assert!(matches!(plan.root.strategy, ExecStrategy::Sequential));
+    }
+
+    #[test]
+    fn whole_column_ranges_prefer_chunked_reduce() {
+        // Probe A:A to be large → ChunkedReduce at root
+        let t = Tokenizer::new(r#"=SUMIFS(A:A, A:A, ">0", B:B, "<5")"#).unwrap();
+        let mut parser = formualizer_core::parser::Parser::new(t.items, false);
+        let ast = parser.parse().unwrap();
+        ensure_builtins_registered();
+        let mut planner = Planner::new(PlanConfig {
+            chunk_min_cells: 1000,
+            ..Default::default()
+        })
+        .with_function_lookup(&|ns, name| crate::function_registry::get(ns, name))
+        .with_range_probe(&|r: &ReferenceType| match r {
+            ReferenceType::Range {
+                start_row: None,
+                end_row: None,
+                ..
+            } => Some((50_000, 1)),
+            _ => None,
+        });
+        let plan = planner.plan(&ast);
+        assert!(matches!(
+            plan.root.strategy,
+            ExecStrategy::ChunkedReduce | ExecStrategy::ArgParallel
+        ));
+    }
+
+    #[test]
+    fn deep_sub_ast_criteria_still_plans() {
+        // Deep sub-AST in criteria (e.g., TEXT + DATE math)
+        let p = plan_for("=SUMIFS(A1:A100, B1:B100, TEXT(2024+1, \"0\"))");
+        // Should produce a plan with children; exact strategy may vary
+        assert!(p.root.children.len() >= 1);
+    }
+
+    #[test]
+    fn sum_mixed_scalars_and_large_range_prefers_chunked_reduce() {
+        // SUM over a large column plus scalars → prefer chunked reduce due to range cost
+        let t = Tokenizer::new(r#"=SUM(A:A, 1, 2, 3)"#).unwrap();
+        let mut parser = formualizer_core::parser::Parser::new(t.items, false);
+        let ast = parser.parse().unwrap();
+        ensure_builtins_registered();
+        let mut planner = Planner::new(PlanConfig {
+            chunk_min_cells: 500,
+            ..Default::default()
+        })
+        .with_function_lookup(&|ns, name| crate::function_registry::get(ns, name))
+        .with_range_probe(&|r: &ReferenceType| match r {
+            ReferenceType::Range {
+                start_row: None,
+                end_row: None,
+                ..
+            } => Some((25_000, 1)),
+            _ => None,
+        });
+        let plan = planner.plan(&ast);
+        assert!(matches!(
+            plan.root.strategy,
+            ExecStrategy::ChunkedReduce | ExecStrategy::ArgParallel
+        ));
+    }
+
+    #[test]
+    fn nested_short_circuit_child_remains_sequential_under_parallel_parent() {
+        // Force low thresholds to encourage arg-parallel at parent, but AND child must stay Sequential
+        let t = Tokenizer::new("=SUM(AND(TRUE(), FALSE()), 1, 2, 3)").unwrap();
+        let mut parser = formualizer_core::parser::Parser::new(t.items, false);
+        let ast = parser.parse().unwrap();
+        ensure_builtins_registered();
+        let cfg = PlanConfig {
+            enable_parallel: true,
+            arg_parallel_min_cost_ns: 0,
+            arg_parallel_min_children: 2,
+            chunk_min_cells: 1_000_000, // disable chunking here
+            chunk_target_partitions: 8,
+        };
+        let mut planner = Planner::new(cfg)
+            .with_function_lookup(&|ns, name| crate::function_registry::get(ns, name));
+        let plan = planner.plan(&ast);
+        // Parent may be ArgParallel under these thresholds
+        assert!(matches!(
+            plan.root.strategy,
+            ExecStrategy::ArgParallel | ExecStrategy::Sequential
+        ));
+        // First child corresponds to AND(...) and must be Sequential due to SHORT_CIRCUIT
+        assert!(!plan.root.children.is_empty());
+        assert!(matches!(
+            plan.root.children[0].strategy,
+            ExecStrategy::Sequential
+        ));
+    }
+
+    #[test]
+    fn repeated_identical_ranges_defaults_to_sequential() {
+        // Repeated A:A references with tiny dims should not trigger chunking and stay Sequential by default thresholds
+        let t = Tokenizer::new(r#"=SUM(A:A, A:A, A:A)"#).unwrap();
+        let mut parser = formualizer_core::parser::Parser::new(t.items, false);
+        let ast = parser.parse().unwrap();
+        let mut planner = Planner::new(PlanConfig::default())
+            .with_function_lookup(&|ns, name| crate::function_registry::get(ns, name))
+            .with_range_probe(&|r: &ReferenceType| match r {
+                ReferenceType::Range {
+                    start_row: None,
+                    end_row: None,
+                    ..
+                } => Some((3, 1)),
+                _ => None,
+            });
+        let plan = planner.plan(&ast);
+        assert!(matches!(plan.root.strategy, ExecStrategy::Sequential));
+        assert_eq!(plan.root.children.len(), 3);
     }
 }

@@ -1155,7 +1155,7 @@ mod tests {
     }
 
     #[test]
-    fn sumifs_mismatched_non_empty_ranges_should_error() {
+    fn sumifs_mismatched_ranges_now_pad_with_empty() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfsFn));
         let ctx = interp(&wb);
         // sum_range: 2x2
@@ -1163,7 +1163,7 @@ mod tests {
             vec![LiteralValue::Int(1), LiteralValue::Int(2)],
             vec![LiteralValue::Int(3), LiteralValue::Int(4)],
         ]));
-        // criteria_range: 3x2 (different rows)
+        // criteria_range: 3x2 (different rows - extra row will match against padded empty values)
         let crit_range = lit(LiteralValue::Array(vec![
             vec![LiteralValue::Int(1), LiteralValue::Int(1)],
             vec![LiteralValue::Int(1), LiteralValue::Int(1)],
@@ -1177,10 +1177,13 @@ mod tests {
             ArgumentHandle::new(&crit, &ctx),
         ];
         let f = ctx.context.get_function("", "SUMIFS").unwrap();
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
-            LiteralValue::Error(_) => {}
-            other => panic!("Expected error on mismatched shapes, got {:?}", other),
-        }
+        // With padding, sum_range gets padded with empties for row 3
+        // Rows 1-2 match criteria (all 1s), row 3 has empties which don't match =1
+        // So we sum: 1 + 2 + 3 + 4 = 10
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            LiteralValue::Number(10.0)
+        );
     }
 
     #[test]

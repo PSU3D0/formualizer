@@ -43,3 +43,4 @@ mod spill_config_defaults;
 mod spill_edges;
 
 mod region_lock;
+mod whole_column_sumifs;
