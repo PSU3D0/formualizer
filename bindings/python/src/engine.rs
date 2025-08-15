@@ -147,58 +147,58 @@ fn load_workbook_into_engine(
     let sheets = workbook.sheets.read().map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
     })?;
-    // Defer CSR and scheduling rebuilds while bulk-loading
-    engine.begin_batch();
-    // Pass 1: ensure all sheets exist in the engine before loading any formulas.
-    // This avoids panics when parsing formulas that reference other sheets that
-    // would otherwise not be registered yet due to HashMap iteration order.
+    // Use bulk ingest builder to avoid per-cell graph mutations
+    let mut builder = engine.begin_bulk_ingest();
+
+    // Pre-add sheets and capture their SheetIds for staging
+    let mut sheet_ids: std::collections::HashMap<String, formualizer_eval::SheetId> =
+        std::collections::HashMap::new();
     for sheet_name in sheets.keys() {
-        engine.graph.add_sheet(sheet_name).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("add_sheet: {e}"))
-        })?;
+        let sid = builder.add_sheet(sheet_name);
+        sheet_ids.insert(sheet_name.clone(), sid);
     }
 
-    // Pass 2: load cell values and formulas for each sheet.
+    // Batch parser with volatility classifier so ASTs carry contains_volatile
+    let mut parser = formualizer_core::parser::BatchParser::builder()
+        .with_volatility_classifier(|name: &str| {
+            formualizer_eval::function_registry::get("", name)
+                .map(|f| {
+                    f.caps()
+                        .contains(formualizer_eval::function::FnCaps::VOLATILE)
+                })
+                .unwrap_or(false)
+        })
+        .build();
+
     for (sheet_name, sheet_data) in sheets.iter() {
-        // Bulk-insert plain values first for efficiency
-        let mut values: Vec<(u32, u32, formualizer_common::LiteralValue)> = Vec::new();
-        let mut formulas: Vec<(u32, u32, &String)> = Vec::new();
+        // find SheetId from pre-added map
+        let sid = *sheet_ids.get(sheet_name).expect("sheet id present");
+        // Values and formulas
+        let mut staged_values: Vec<(u32, u32, formualizer_common::LiteralValue)> = Vec::new();
+        let mut staged_asts: Vec<(u32, u32, formualizer_core::ASTNode)> = Vec::new();
         for ((row, col), cell_data) in &sheet_data.cells {
             if let Some(ref value) = cell_data.value {
-                values.push((*row, *col, value.clone()));
+                staged_values.push((*row, *col, value.clone()));
             }
             if let Some(ref formula) = cell_data.formula {
-                formulas.push((*row, *col, formula));
+                let ast = parser
+                    .parse(formula)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+                staged_asts.push((*row, *col, ast));
             }
         }
-        if !values.is_empty() {
-            engine.graph.bulk_insert_values(sheet_name, values);
+        if !staged_values.is_empty() {
+            builder.add_values(sid, staged_values);
         }
-        // Now add formulas (dependency extraction needs ASTs)
-        // Use a batch parser with a volatility classifier so the ASTs carry contains_volatile.
-        let mut parser = formualizer_core::parser::BatchParser::builder()
-            .with_volatility_classifier(|name: &str| {
-                formualizer_eval::function_registry::get("", name)
-                    .map(|f| {
-                        f.caps()
-                            .contains(formualizer_eval::function::FnCaps::VOLATILE)
-                    })
-                    .unwrap_or(false)
-            })
-            .build();
-        for (row, col, formula) in formulas {
-            let ast = parser
-                .parse(formula)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-            engine
-                .set_cell_formula(sheet_name, row, col, ast)
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("set_formula: {e}"))
-                })?;
+        if !staged_asts.is_empty() {
+            builder.add_formulas(sid, staged_asts);
         }
     }
-    // Finalize batch operations
-    engine.end_batch();
+
+    // Materialize in one go
+    builder.finish().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("bulk finish: {e}"))
+    })?;
 
     Ok(())
 }

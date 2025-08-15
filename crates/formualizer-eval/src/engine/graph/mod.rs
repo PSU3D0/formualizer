@@ -219,6 +219,10 @@ pub struct DependencyGraph {
     spill_anchor_to_cells: FxHashMap<VertexId, Vec<CellRef>>,
     spill_cell_to_anchor: FxHashMap<CellRef, VertexId>,
 
+    // Hint: during initial bulk load, many cells are guaranteed new; allow skipping existence checks per-sheet
+    first_load_assume_new: bool,
+    ensure_touched_sheets: FxHashSet<SheetId>,
+
     #[cfg(test)]
     instr: GraphInstrumentation,
 }
@@ -230,6 +234,170 @@ impl Default for DependencyGraph {
 }
 
 impl DependencyGraph {
+    /// Expose range expansion limit for planners
+    pub fn range_expansion_limit(&self) -> usize {
+        self.config.range_expansion_limit
+    }
+
+    pub fn get_config(&self) -> &super::EvalConfig {
+        &self.config
+    }
+
+    /// Build a dependency plan for a set of formulas on sheets
+    pub fn plan_dependencies<'a, I>(
+        &mut self,
+        items: I,
+        policy: &formualizer_core::parser::CollectPolicy,
+        volatile: Option<&[bool]>,
+    ) -> Result<crate::engine::plan::DependencyPlan, formualizer_common::ExcelError>
+    where
+        I: IntoIterator<Item = (&'a str, u32, u32, &'a formualizer_core::parser::ASTNode)>,
+    {
+        crate::engine::plan::build_dependency_plan(
+            &mut self.sheet_reg,
+            items.into_iter(),
+            policy,
+            volatile,
+        )
+    }
+
+    /// Ensure vertices exist for given coords; allocate missing in contiguous batches and add to edges/index.
+    /// Returns a list suitable for edges.add_vertices_batch.
+    pub fn ensure_vertices_batch(
+        &mut self,
+        coords: &[(SheetId, PackedCoord)],
+    ) -> Vec<(PackedCoord, u32)> {
+        use rustc_hash::FxHashMap;
+        let mut grouped: FxHashMap<SheetId, Vec<PackedCoord>> = FxHashMap::default();
+        for (sid, pc) in coords.iter().copied() {
+            let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+            if self.cell_to_vertex.contains_key(&addr) {
+                continue;
+            }
+            grouped.entry(sid).or_default().push(pc);
+        }
+        let mut add_batch: Vec<(PackedCoord, u32)> = Vec::new();
+        for (sid, pcs) in grouped {
+            if pcs.is_empty() {
+                continue;
+            }
+            // Mark sheet as touched by ensure to disable fast-path new allocations for its values
+            self.ensure_touched_sheets.insert(sid);
+            let vids = self.store.allocate_contiguous(sid, &pcs, 0x00);
+            for (i, pc) in pcs.iter().enumerate() {
+                let vid = vids[i];
+                add_batch.push((*pc, vid.0));
+                let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+                self.cell_to_vertex.insert(addr, vid);
+                // Respect sheet index mode: skip index updates in Lazy mode during bulk ensure
+                match self.config.sheet_index_mode {
+                    crate::engine::SheetIndexMode::Eager
+                    | crate::engine::SheetIndexMode::FastBatch => {
+                        self.sheet_index_mut(sid).add_vertex(*pc, vid);
+                    }
+                    crate::engine::SheetIndexMode::Lazy => {
+                        // defer index build
+                    }
+                }
+            }
+        }
+        if !add_batch.is_empty() {
+            self.edges.add_vertices_batch(&add_batch);
+        }
+        add_batch
+    }
+
+    /// Enable/disable the first-load fast path for value inserts.
+    pub fn set_first_load_assume_new(&mut self, enabled: bool) {
+        self.first_load_assume_new = enabled;
+    }
+
+    /// Reset the per-sheet ensure touch tracking.
+    pub fn reset_ensure_touched(&mut self) {
+        self.ensure_touched_sheets.clear();
+    }
+
+    /// Store ASTs in batch and return their arena ids
+    pub fn store_asts_batch<'a, I>(&mut self, asts: I) -> Vec<AstNodeId>
+    where
+        I: IntoIterator<Item = &'a formualizer_core::parser::ASTNode>,
+    {
+        self.data_store.store_asts_batch(asts, &self.sheet_reg)
+    }
+
+    /// Lookup VertexId for a (SheetId, PackedCoord)
+    pub fn vid_for_sid_pc(&self, sid: SheetId, pc: PackedCoord) -> Option<VertexId> {
+        let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+        self.cell_to_vertex.get(&addr).copied()
+    }
+
+    /// Helper to map a global cell index in a plan to a VertexId
+    pub fn vid_for_plan_idx(
+        &self,
+        plan: &crate::engine::plan::DependencyPlan,
+        idx: u32,
+    ) -> Option<VertexId> {
+        let (sid, pc) = plan.global_cells.get(idx as usize).copied()?;
+        self.vid_for_sid_pc(sid, pc)
+    }
+
+    /// Assign a formula to an existing vertex, removing prior edges and setting flags
+    pub fn assign_formula_vertex(&mut self, vid: VertexId, ast_id: AstNodeId, volatile: bool) {
+        if self.vertex_formulas.contains_key(&vid) {
+            self.remove_dependent_edges(vid);
+        }
+        self.store
+            .set_kind(vid, crate::engine::vertex::VertexKind::FormulaScalar);
+        self.vertex_values.remove(&vid);
+        self.vertex_formulas.insert(vid, ast_id);
+        if volatile {
+            self.store.set_volatile(vid, true);
+            self.volatile_vertices.insert(vid);
+        }
+        // schedule evaluation
+        self.mark_vertex_dirty(vid);
+    }
+
+    /// Public wrapper for adding edges without beginning a batch (caller manages batch)
+    pub fn add_edges_nobatch(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
+        self.add_dependent_edges_nobatch(dependent, dependencies);
+    }
+
+    /// Public wrapper to add range-dependent edges
+    pub fn add_range_edges(
+        &mut self,
+        dependent: VertexId,
+        ranges: &[ReferenceType],
+        current_sheet_id: SheetId,
+    ) {
+        self.add_range_dependent_edges(dependent, ranges, current_sheet_id);
+    }
+
+    /// Iterate all normal vertex ids
+    pub fn iter_vertex_ids(&self) -> impl Iterator<Item = VertexId> + '_ {
+        self.store.all_vertices()
+    }
+
+    /// Get current PackedCoord for a vertex
+    pub fn vertex_coord(&self, vid: VertexId) -> PackedCoord {
+        self.store.coord(vid)
+    }
+
+    /// Total number of allocated vertices (including deleted)
+    pub fn vertex_count(&self) -> usize {
+        self.store.len()
+    }
+
+    /// Replace CSR edges in one shot from adjacency and coords
+    pub fn build_edges_from_adjacency(
+        &mut self,
+        adjacency: Vec<(u32, Vec<u32>)>,
+        coords: Vec<PackedCoord>,
+        vertex_ids: Vec<u32>,
+    ) {
+        self.edges
+            .build_from_adjacency(adjacency, coords, vertex_ids);
+    }
     /// Compute min/max used row among vertices within [start_col..=end_col] on a sheet.
     pub fn used_row_bounds_for_columns(
         &self,
@@ -323,6 +491,8 @@ impl DependencyGraph {
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
             spill_cell_to_anchor: FxHashMap::default(),
+            first_load_assume_new: false,
+            ensure_touched_sheets: FxHashSet::default(),
             #[cfg(test)]
             instr: GraphInstrumentation::default(),
         }
@@ -741,22 +911,44 @@ impl DependencyGraph {
         let t_reserve = Instant::now();
         let mut new_vertices: Vec<(PackedCoord, u32)> = Vec::with_capacity(collected.len());
         let mut index_items: Vec<(PackedCoord, VertexId)> = Vec::with_capacity(collected.len());
+        // For new allocations, accumulate values and assign after a single batch store
+        let mut new_value_coords: Vec<(PackedCoord, VertexId)> =
+            Vec::with_capacity(collected.len());
+        let mut new_value_literals: Vec<LiteralValue> = Vec::with_capacity(collected.len());
+        // Detect fast path: during initial ingest, caller may guarantee most cells are new.
+        let assume_new = self.first_load_assume_new
+            && self
+                .sheet_id(sheet)
+                .map(|sid| !self.ensure_touched_sheets.contains(&sid))
+                .unwrap_or(false);
+
         for (row, col, value) in collected {
             let coord = Coord::new(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
-            if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
-                let value_ref = self.data_store.store_value(value);
-                self.vertex_values.insert(existing_id, value_ref);
-                self.store.set_kind(existing_id, VertexKind::Cell);
-            } else {
-                let packed = PackedCoord::new(row, col);
-                let vertex_id = self.store.allocate(packed, sheet_id, 0x00);
-                self.store.set_kind(vertex_id, VertexKind::Cell);
-                let value_ref = self.data_store.store_value(value);
-                self.vertex_values.insert(vertex_id, value_ref);
-                self.cell_to_vertex.insert(addr, vertex_id);
-                new_vertices.push((packed, vertex_id.0));
-                index_items.push((packed, vertex_id));
+            if !assume_new {
+                if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
+                    let value_ref = self.data_store.store_value(value);
+                    self.vertex_values.insert(existing_id, value_ref);
+                    self.store.set_kind(existing_id, VertexKind::Cell);
+                    continue;
+                }
+            }
+            let packed = PackedCoord::new(row, col);
+            let vertex_id = self.store.allocate(packed, sheet_id, 0x00);
+            self.store.set_kind(vertex_id, VertexKind::Cell);
+            // Defer value arena storage to a single batch
+            new_value_coords.push((packed, vertex_id));
+            new_value_literals.push(value);
+            self.cell_to_vertex.insert(addr, vertex_id);
+            new_vertices.push((packed, vertex_id.0));
+            index_items.push((packed, vertex_id));
+        }
+        // Perform a single batch store for newly allocated values
+        if !new_value_literals.is_empty() {
+            let vrefs = self.data_store.store_values_batch(new_value_literals);
+            debug_assert_eq!(vrefs.len(), new_value_coords.len());
+            for (i, (_pc, vid)) in new_value_coords.iter().enumerate() {
+                self.vertex_values.insert(*vid, vrefs[i]);
             }
         }
         let t_after_alloc = Instant::now();
@@ -1463,59 +1655,143 @@ impl DependencyGraph {
         }
     }
 
-    /// Bulk set formulas for many cells on the same sheet. Optimized to avoid per-cell batching and unnecessary removals.
+    /// Bulk set formulas on a sheet using a single dependency plan and batched edge updates.
     pub fn bulk_set_formulas<I>(&mut self, sheet: &str, items: I) -> Result<usize, ExcelError>
     where
         I: IntoIterator<Item = (u32, u32, ASTNode)>,
     {
+        use formualizer_core::parser::CollectPolicy;
         let sheet_id = self.sheet_id_mut(sheet);
-        let mut count = 0usize;
-        // Single edges batch across all items
-        self.edges.begin_batch();
 
-        for (row, col, ast) in items {
-            let coord = Coord::new(row, col, true, true);
-            let addr = CellRef::new(sheet_id, coord);
+        // 1) Collect items to allow a single plan build
+        let collected: Vec<(u32, u32, ASTNode)> = items.into_iter().collect();
+        if collected.is_empty() {
+            return Ok(0);
+        }
 
-            // Extract dependencies
-            let (new_dependencies, new_range_dependencies, mut created_placeholders) =
-                self.extract_dependencies(&ast, sheet_id)?;
+        // 2) Build plan across all formulas (read-only, no graph mutation)
+        let tiny_refs = collected.iter().map(|(r, c, ast)| (sheet, *r, *c, ast));
+        let vol_flags: Vec<bool> = collected
+            .iter()
+            .map(|(_, _, ast)| self.is_ast_volatile(ast))
+            .collect();
+        let policy = CollectPolicy {
+            expand_small_ranges: true,
+            range_expansion_limit: self.config.range_expansion_limit,
+            include_names: true,
+        };
+        let plan = crate::engine::plan::build_dependency_plan(
+            &mut self.sheet_reg,
+            tiny_refs,
+            &policy,
+            Some(&vol_flags),
+        )?;
 
-            // Create or get vertex
-            let addr_vertex_id = if let Some(&vid) = self.cell_to_vertex.get(&addr) {
-                vid
+        // 3) Ensure/create target vertices and referenced cells (placeholders) once
+        let mut created_placeholders: Vec<CellRef> = Vec::new();
+
+        // Targets
+        let mut target_vids: Vec<VertexId> = Vec::with_capacity(plan.formula_targets.len());
+        for (sid, pc) in &plan.formula_targets {
+            let addr = CellRef::new(*sid, Coord::new(pc.row(), pc.col(), true, true));
+            let vid = if let Some(&existing) = self.cell_to_vertex.get(&addr) {
+                existing
             } else {
                 self.get_or_create_vertex(&addr, &mut created_placeholders)
             };
-
-            // Only remove existing edges if this cell already had a formula
-            if self.vertex_formulas.contains_key(&addr_vertex_id) {
-                self.remove_dependent_edges(addr_vertex_id);
-            }
-
-            // Update vertex properties and store AST
-            self.store
-                .set_kind(addr_vertex_id, VertexKind::FormulaScalar);
-            let ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
-            self.vertex_formulas.insert(addr_vertex_id, ast_id);
-            self.store.set_dirty(addr_vertex_id, true);
-            self.vertex_values.remove(&addr_vertex_id);
-
-            // Volatile detection (kept simple; future: precomputed set)
-            if self.is_ast_volatile(&ast) {
-                self.store.set_volatile(addr_vertex_id, true);
-                self.volatile_vertices.insert(addr_vertex_id);
-            }
-
-            // Add dependency edges without per-cell batching
-            self.add_dependent_edges_nobatch(addr_vertex_id, &new_dependencies);
-            self.add_range_dependent_edges(addr_vertex_id, &new_range_dependencies, sheet_id);
-
-            count += 1;
+            target_vids.push(vid);
         }
 
+        // Global referenced cells
+        let mut dep_vids: Vec<VertexId> = Vec::with_capacity(plan.global_cells.len());
+        for (sid, pc) in &plan.global_cells {
+            let addr = CellRef::new(*sid, Coord::new(pc.row(), pc.col(), true, true));
+            let vid = if let Some(&existing) = self.cell_to_vertex.get(&addr) {
+                existing
+            } else {
+                self.get_or_create_vertex(&addr, &mut created_placeholders)
+            };
+            dep_vids.push(vid);
+        }
+
+        // 4) Store ASTs in batch and update kinds/flags/value map
+        let ast_ids = self
+            .data_store
+            .store_asts_batch(collected.iter().map(|(_, _, ast)| ast), &self.sheet_reg);
+
+        for (i, &tvid) in target_vids.iter().enumerate() {
+            // If this cell already had a formula, remove its edges once here
+            if self.vertex_formulas.contains_key(&tvid) {
+                self.remove_dependent_edges(tvid);
+            }
+            self.store.set_kind(tvid, VertexKind::FormulaScalar);
+            self.store.set_dirty(tvid, true);
+            self.vertex_values.remove(&tvid);
+            self.vertex_formulas.insert(tvid, ast_ids[i]);
+            if vol_flags.get(i).copied().unwrap_or(false) {
+                self.store.set_volatile(tvid, true);
+                self.volatile_vertices.insert(tvid);
+            }
+        }
+
+        // 5) Add edges in one batch
+        self.edges.begin_batch();
+        for (i, tvid) in target_vids.iter().copied().enumerate() {
+            // Map per-formula indices into dep_vids
+            if let Some(indices) = plan.per_formula_cells.get(i) {
+                let mut deps: Vec<VertexId> = Vec::with_capacity(indices.len());
+                for &idx in indices {
+                    if let Some(vid) = dep_vids.get(idx as usize) {
+                        deps.push(*vid);
+                    }
+                }
+                self.add_dependent_edges_nobatch(tvid, &deps);
+            }
+
+            // Rebuild ranges from RangeKey and add via existing helper
+            if let Some(rks) = plan.per_formula_ranges.get(i) {
+                let mut range_refs: Vec<ReferenceType> = Vec::with_capacity(rks.len());
+                use crate::engine::plan::RangeKey as RK;
+                for rk in rks {
+                    match rk {
+                        RK::Rect { sheet, start, end } => range_refs.push(ReferenceType::Range {
+                            sheet: Some(self.sheet_name(*sheet).to_string()),
+                            start_row: Some(start.row()),
+                            start_col: Some(start.col()),
+                            end_row: Some(end.row()),
+                            end_col: Some(end.col()),
+                        }),
+                        RK::WholeRow { sheet, row } => range_refs.push(ReferenceType::Range {
+                            sheet: Some(self.sheet_name(*sheet).to_string()),
+                            start_row: Some(*row),
+                            start_col: None,
+                            end_row: Some(*row),
+                            end_col: None,
+                        }),
+                        RK::WholeCol { sheet, col } => range_refs.push(ReferenceType::Range {
+                            sheet: Some(self.sheet_name(*sheet).to_string()),
+                            start_row: None,
+                            start_col: Some(*col),
+                            end_row: None,
+                            end_col: Some(*col),
+                        }),
+                        RK::OpenRect { sheet, start, end } => {
+                            range_refs.push(ReferenceType::Range {
+                                sheet: Some(self.sheet_name(*sheet).to_string()),
+                                start_row: start.map(|p| p.row()),
+                                start_col: start.map(|p| p.col()),
+                                end_row: end.map(|p| p.row()),
+                                end_col: end.map(|p| p.col()),
+                            })
+                        }
+                    }
+                }
+                self.add_range_dependent_edges(tvid, &range_refs, sheet_id);
+            }
+        }
         self.edges.end_batch();
-        Ok(count)
+
+        Ok(collected.len())
     }
 
     /// Public (crate) helper to add a single dependency edge (dependent -> dependency) used for restoration/undo.
@@ -1696,6 +1972,121 @@ impl DependencyGraph {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Fast-path: add range dependencies using compact RangeKey without string conversions.
+    pub fn add_range_deps_from_keys(
+        &mut self,
+        dependent: VertexId,
+        keys: &[crate::engine::plan::RangeKey],
+        current_sheet_id: SheetId,
+    ) {
+        use crate::engine::plan::RangeKey as RK;
+        if keys.is_empty() {
+            return;
+        }
+        // Mirror formula_to_range_deps with reconstructed ReferenceType but avoid sheet name lookups in the loop.
+        let mut ranges: Vec<ReferenceType> = Vec::with_capacity(keys.len());
+        for k in keys {
+            match k {
+                RK::Rect { sheet, start, end } => ranges.push(ReferenceType::Range {
+                    sheet: Some(self.sheet_name(*sheet).to_string()),
+                    start_row: Some(start.row()),
+                    start_col: Some(start.col()),
+                    end_row: Some(end.row()),
+                    end_col: Some(end.col()),
+                }),
+                RK::WholeRow { sheet, row } => ranges.push(ReferenceType::Range {
+                    sheet: Some(self.sheet_name(*sheet).to_string()),
+                    start_row: Some(*row),
+                    start_col: None,
+                    end_row: Some(*row),
+                    end_col: None,
+                }),
+                RK::WholeCol { sheet, col } => ranges.push(ReferenceType::Range {
+                    sheet: Some(self.sheet_name(*sheet).to_string()),
+                    start_row: None,
+                    start_col: Some(*col),
+                    end_row: None,
+                    end_col: Some(*col),
+                }),
+                RK::OpenRect { sheet, start, end } => ranges.push(ReferenceType::Range {
+                    sheet: Some(self.sheet_name(*sheet).to_string()),
+                    start_row: start.map(|p| p.row()),
+                    start_col: start.map(|p| p.col()),
+                    end_row: end.map(|p| p.row()),
+                    end_col: end.map(|p| p.col()),
+                }),
+            }
+        }
+        // Store ranges for formula
+        self.formula_to_range_deps.insert(dependent, ranges.clone());
+
+        // Batch stripe registration
+        for r in &ranges {
+            if let ReferenceType::Range {
+                sheet: _,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } = r
+            {
+                // Compute stripes as in add_range_dependent_edges but without sheet id mapping (assume current sheet implied)
+                let s_row = *start_row;
+                let e_row = *end_row;
+                let s_col = *start_col;
+                let e_col = *end_col;
+                let col_stripes = (s_row.is_none() && e_row.is_none())
+                    || (s_col.is_some() && e_col.is_some() && (s_row.is_none() || e_row.is_none()));
+                let row_stripes = (s_col.is_none() && e_col.is_none())
+                    || (s_row.is_some() && e_row.is_some() && (s_col.is_none() || e_col.is_none()));
+                if col_stripes && !row_stripes {
+                    let sc = s_col.unwrap_or(1);
+                    let ec = e_col.unwrap_or(sc);
+                    for col in sc..=ec {
+                        let key = StripeKey {
+                            sheet_id: current_sheet_id,
+                            stripe_type: StripeType::Column,
+                            index: col,
+                        };
+                        self.stripe_to_dependents
+                            .entry(key)
+                            .or_default()
+                            .insert(dependent);
+                    }
+                    continue;
+                }
+                if row_stripes && !col_stripes {
+                    let sr = s_row.unwrap_or(1);
+                    let er = e_row.unwrap_or(sr);
+                    for row in sr..=er {
+                        let key = StripeKey {
+                            sheet_id: current_sheet_id,
+                            stripe_type: StripeType::Row,
+                            index: row,
+                        };
+                        self.stripe_to_dependents
+                            .entry(key)
+                            .or_default()
+                            .insert(dependent);
+                    }
+                    continue;
+                }
+                // Block stripes for bounded rects
+                if let (Some(sr), Some(sc), Some(er), Some(ec)) = (s_row, s_col, e_row, e_col) {
+                    let key = StripeKey {
+                        sheet_id: current_sheet_id,
+                        stripe_type: StripeType::Block,
+                        index: 0,
+                    };
+                    self.stripe_to_dependents
+                        .entry(key)
+                        .or_default()
+                        .insert(dependent);
                 }
             }
         }
@@ -2377,6 +2768,27 @@ impl DependencyGraph {
     pub fn update_vertex_formula(&mut self, id: VertexId, ast: ASTNode) -> Result<(), ExcelError> {
         // Get the sheet_id for this vertex
         let sheet_id = self.store.sheet_id(id);
+
+        // If the adjusted AST contains special #REF markers (from structural edits),
+        // treat this as a REF error on the vertex instead of attempting to resolve.
+        // This prevents failures when reference_adjuster injected placeholder refs.
+        let has_ref_marker = ast.get_dependencies().into_iter().any(|r| match r {
+            ReferenceType::Cell { sheet: Some(s), .. }
+            | ReferenceType::Range { sheet: Some(s), .. }
+                if s == "#REF" =>
+            {
+                true
+            }
+            _ => false,
+        });
+        if has_ref_marker {
+            // Store the adjusted AST for round-tripping/display, but set value state to #REF!
+            let ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
+            self.vertex_formulas.insert(id, ast_id);
+            self.mark_as_ref_error(id);
+            self.store.set_kind(id, VertexKind::FormulaScalar);
+            return Ok(());
+        }
 
         // Extract dependencies from AST
         let (new_dependencies, new_range_dependencies, _) =

@@ -270,95 +270,158 @@ where
         let prev_range_limit = engine.config.range_expansion_limit;
         engine.config.range_expansion_limit = 0; // keep ranges compressed while loading
 
-        engine.begin_batch();
+        // Use bulk ingest builder; no outer engine batch needed here
+        // Hint the graph to assume new cells during this initial ingest
+        engine.graph.set_first_load_assume_new(true);
+        engine.graph.reset_ensure_touched();
         let mut total_values = 0usize;
         let mut total_formulas = 0usize;
+        // Route through the engine's bulk ingest builder for optimal edge construction
+        let mut builder = engine.begin_bulk_ingest();
         for n in &names {
             let t_sheet = std::time::Instant::now();
             if debug {
                 eprintln!("[fz][load] >> sheet '{}'", n);
             }
-            let sheet = self.read_sheet(n)?;
-            if debug {
-                let dims = sheet.dimensions.unwrap_or((0, 0));
-                eprintln!(
-                    "[fz][load]    dims={}x{}, used_cells={}",
-                    dims.0,
-                    dims.1,
-                    sheet.cells.len()
-                );
+            // Read directly from calamine ranges to avoid building a BTreeMap
+            let (range, formulas_range, dims);
+            {
+                let mut wb = self.workbook.write();
+                let r = wb.worksheet_range(n)?;
+                let f = wb.worksheet_formula(n).ok();
+                dims = (r.height() as u32, r.width() as u32);
+                range = r;
+                formulas_range = f;
             }
-            if !sheet.cells.is_empty() {
-                let values: Vec<(u32, u32, formualizer_common::LiteralValue)> = sheet
-                    .cells
-                    .iter()
-                    .filter_map(|(&(r, c), cell)| cell.value.clone().map(|v| (r, c, v)))
-                    .collect();
-                total_values += values.len();
-                if !values.is_empty() {
-                    let tv0 = std::time::Instant::now();
-                    engine.graph.bulk_insert_values(n, values);
-                    if debug {
-                        eprintln!(
-                            "[fz][load]    bulk values in {} ms",
-                            tv0.elapsed().as_millis()
-                        );
+            if debug {
+                eprintln!("[fz][load]    dims={}x{}", dims.0, dims.1);
+            }
+            let sheet_id = builder.add_sheet(n);
+
+            // Values: stream into a Vec and hand off to builder (single pass)
+            let tv0 = std::time::Instant::now();
+            let start_row = range.start().unwrap_or_default().0 as usize;
+            let start_col = range.start().unwrap_or_default().1 as usize;
+            let mut values: Vec<(u32, u32, formualizer_common::LiteralValue)> = Vec::new();
+            let mut used_count_logged = 0usize;
+            for (row, col, val) in range.used_cells() {
+                used_count_logged += 1;
+                let excel_row = (row + start_row + 1) as u32;
+                let excel_col = (col + start_col + 1) as u32;
+                let lit = match val {
+                    calamine::Data::Empty => None,
+                    calamine::Data::String(s) if s.is_empty() => None,
+                    _ => Some(Self::convert_value(val)),
+                };
+                if let Some(v) = lit {
+                    values.push((excel_row, excel_col, v));
+                }
+            }
+            total_values += values.len();
+            if !values.is_empty() {
+                // Chunk values to reduce peak allocations and smooth ingest
+                let chunk_size = 64 * 1024; // 64K tuples per chunk
+                if values.len() <= chunk_size {
+                    builder.add_values(sheet_id, values);
+                } else {
+                    for chunk in values.chunks(chunk_size) {
+                        builder.add_values(sheet_id, chunk.iter().cloned());
                     }
                 }
             }
-            let mut formulas = 0usize;
-            let mut cache: std::collections::HashMap<&str, formualizer_core::ASTNode> =
-                std::collections::HashMap::new();
+            if debug {
+                eprintln!(
+                    "[fz][load]    used_cells={}, bulk values in {} ms",
+                    used_count_logged,
+                    tv0.elapsed().as_millis()
+                );
+            }
+
+            // Formulas: iterate formulas_range and parse with caching
             let tf0 = std::time::Instant::now();
-            let mut batch: Vec<(u32, u32, formualizer_core::ASTNode)> = Vec::new();
-            batch.reserve(sheet.cells.len());
-            for (&(r, c), cell) in &sheet.cells {
-                if let Some(ref f) = cell.formula {
-                    let key = f.as_str();
-                    let ast = if let Some(ast) = cache.get(key) {
+            let mut parsed_n = 0usize;
+            if let Some(frm_range) = &formulas_range {
+                let start_row = frm_range.start().unwrap_or_default().0 as usize;
+                let start_col = frm_range.start().unwrap_or_default().1 as usize;
+                let mut batch: Vec<(u32, u32, formualizer_core::ASTNode)> = Vec::new();
+                // cache to reuse parsed AST for shared formulas text
+                let mut cache: rustc_hash::FxHashMap<String, formualizer_core::ASTNode> =
+                    rustc_hash::FxHashMap::default();
+                cache.reserve(4096);
+                for (row, col, formula) in frm_range.used_cells() {
+                    if formula.is_empty() {
+                        continue;
+                    }
+                    let excel_row = (row + start_row + 1) as u32;
+                    let excel_col = (col + start_col + 1) as u32;
+                    let key_owned: String = if formula.starts_with('=') {
+                        formula.clone()
+                    } else {
+                        format!("={}", formula)
+                    };
+                    let ast = if let Some(ast) = cache.get(&key_owned) {
                         ast.clone()
                     } else {
-                        let parsed = formualizer_core::parser::parse(key).map_err(|e| {
+                        let parsed = formualizer_core::parser::parse(&key_owned).map_err(|e| {
                             calamine::Error::Io(std::io::Error::new(
                                 std::io::ErrorKind::Other,
                                 e.to_string(),
                             ))
                         })?;
-                        cache.insert(key, parsed.clone());
+                        cache.insert(key_owned, parsed.clone());
                         parsed
                     };
-                    batch.push((r, c, ast));
-                    formulas += 1;
-                    if debug && (formulas % 5000 == 0) {
-                        eprintln!("[fz][load]    parsed formulas: {}", formulas);
+                    batch.push((excel_row, excel_col, ast));
+                    parsed_n += 1;
+                    if debug && (parsed_n % 5000 == 0) {
+                        eprintln!("[fz][load]    parsed formulas: {}", parsed_n);
                     }
                 }
+                if !batch.is_empty() {
+                    builder.add_formulas(sheet_id, batch);
+                }
             }
-            if !batch.is_empty() {
-                engine.bulk_set_formulas(n.as_str(), batch).map_err(|e| {
-                    calamine::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    ))
-                })?;
-            }
-            total_formulas += formulas;
+            total_formulas += parsed_n;
             if debug {
                 eprintln!(
                     "[fz][load]    formulas={} in {} ms",
-                    formulas,
+                    parsed_n,
                     tf0.elapsed().as_millis()
                 );
                 eprintln!(
-                    "[fz][load] << sheet '{}' done in {} ms",
+                    "[fz][load] << sheet '{}' staged in {} ms",
                     n,
                     t_sheet.elapsed().as_millis()
                 );
             }
+            // Mark as loaded for API parity
+            self.loaded_sheets.insert(n.to_string());
         }
         let tend0 = std::time::Instant::now();
-        engine.end_batch();
+        // Finish builder and finalize ingestion
+        let tcommit0 = std::time::Instant::now();
+        let _summary = builder.finish().map_err(|e| {
+            calamine::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })?;
+        if debug {
+            eprintln!(
+                "[fz][load] commit: builder finish in {} ms",
+                tcommit0.elapsed().as_millis()
+            );
+            eprintln!(
+                "[fz][load] done: values={}, formulas={}, batch_close={} ms, total={} ms",
+                total_values,
+                total_formulas,
+                tend0.elapsed().as_millis(),
+                t0.elapsed().as_millis(),
+            );
+        }
         // Restore config after load
+        engine.graph.set_first_load_assume_new(false);
+        engine.graph.reset_ensure_touched();
         engine.set_sheet_index_mode(prev_index_mode);
         engine.config.range_expansion_limit = prev_range_limit;
         if debug {

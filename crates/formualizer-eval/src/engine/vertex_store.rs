@@ -220,6 +220,25 @@ impl VertexStore {
         id
     }
 
+    /// Allocate many vertices contiguously in the current store order.
+    /// Returns the assigned VertexIds in the same order as input coords.
+    pub fn allocate_contiguous(
+        &mut self,
+        sheet: SheetId,
+        coords: &[PackedCoord],
+        flags: u8,
+    ) -> Vec<VertexId> {
+        if coords.is_empty() {
+            return Vec::new();
+        }
+        self.reserve(coords.len());
+        let mut ids = Vec::with_capacity(coords.len());
+        for &coord in coords {
+            ids.push(self.allocate(coord, sheet, flags));
+        }
+        ids
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.len

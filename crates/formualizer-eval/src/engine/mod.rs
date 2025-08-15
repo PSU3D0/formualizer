@@ -5,6 +5,8 @@
 pub mod eval;
 pub mod graph;
 pub mod ingest;
+pub mod ingest_builder;
+pub mod plan;
 pub mod range_stream;
 pub mod scheduler;
 pub mod spill;
@@ -50,6 +52,12 @@ pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 
 use crate::traits::EvaluationContext;
 use crate::traits::VolatileLevel;
+
+impl<R: EvaluationContext> Engine<R> {
+    pub fn begin_bulk_ingest(&mut self) -> ingest_builder::BulkIngestBuilder<'_> {
+        ingest_builder::BulkIngestBuilder::new(&mut self.graph)
+    }
+}
 
 /// 🔮 Scalability Hook: Performance monitoring trait for calculation observability
 pub trait CalcObserver: Send + Sync {

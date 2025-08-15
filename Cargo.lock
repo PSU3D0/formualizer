@@ -494,6 +494,7 @@ version = "0.1.0"
 dependencies = [
  "formualizer-common",
  "once_cell",
+ "smallvec",
 ]
 
 [[package]]
@@ -528,6 +529,7 @@ dependencies = [
  "parking_lot",
  "pyo3",
  "reqwest",
+ "rustc-hash 1.1.0",
  "serde",
  "serde_json",
  "tempfile",

@@ -4,6 +4,7 @@ use crate::{ParsingError, Tokenizer};
 
 use crate::hasher::FormulaHasher;
 use once_cell::sync::Lazy;
+use smallvec::SmallVec;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::hash::{Hash, Hasher};
@@ -906,6 +907,210 @@ impl ASTNode {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Lightweight borrowed view of a reference encountered during AST traversal.
+    /// This mirrors ReferenceType variants but borrows sheet/name strings to avoid allocation.
+    pub fn refs(&self) -> RefIter<'_> {
+        RefIter {
+            stack: smallvec::smallvec![self],
+        }
+    }
+
+    /// Visit all references in this AST without allocating intermediates.
+    pub fn visit_refs<V: FnMut(RefView<'_>)>(&self, mut visitor: V) {
+        let mut stack: Vec<&ASTNode> = Vec::with_capacity(8);
+        stack.push(self);
+        while let Some(node) = stack.pop() {
+            match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => visitor(RefView::from(reference)),
+                ASTNodeType::UnaryOp { expr, .. } => stack.push(expr),
+                ASTNodeType::BinaryOp { left, right, .. } => {
+                    // Push right first so left is visited first (stable-ish order)
+                    stack.push(right);
+                    stack.push(left);
+                }
+                ASTNodeType::Function { args, .. } => {
+                    for a in args.iter().rev() {
+                        stack.push(a);
+                    }
+                }
+                ASTNodeType::Array(rows) => {
+                    for r in rows.iter().rev() {
+                        for item in r.iter().rev() {
+                            stack.push(item);
+                        }
+                    }
+                }
+                ASTNodeType::Literal(_) => {}
+            }
+        }
+    }
+
+    /// Convenience: collect references into a small, inline vector based on a policy.
+    pub fn collect_references(&self, policy: &CollectPolicy) -> SmallVec<[ReferenceType; 4]> {
+        let mut out: SmallVec<[ReferenceType; 4]> = SmallVec::new();
+        self.visit_refs(|rv| match rv {
+            RefView::Cell { sheet, row, col } => out.push(ReferenceType::Cell {
+                sheet: sheet.map(|s| s.to_string()),
+                row,
+                col,
+            }),
+            RefView::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => {
+                // Optionally expand very small finite ranges into individual cells
+                if policy.expand_small_ranges {
+                    if let (Some(sr), Some(sc), Some(er), Some(ec)) =
+                        (start_row, start_col, end_row, end_col)
+                    {
+                        let rows = er.saturating_sub(sr) + 1;
+                        let cols = ec.saturating_sub(sc) + 1;
+                        let area = rows.saturating_mul(cols);
+                        if area as usize <= policy.range_expansion_limit {
+                            for r in sr..=er {
+                                for c in sc..=ec {
+                                    out.push(ReferenceType::Cell {
+                                        sheet: sheet.map(|s| s.to_string()),
+                                        row: r,
+                                        col: c,
+                                    });
+                                }
+                            }
+                            return; // handled
+                        }
+                    }
+                }
+                out.push(ReferenceType::Range {
+                    sheet: sheet.map(|s| s.to_string()),
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                });
+            }
+            RefView::Table { name, specifier } => out.push(ReferenceType::Table(TableReference {
+                name: name.to_string(),
+                specifier: specifier.cloned(),
+            })),
+            RefView::NamedRange { name } => {
+                if policy.include_names {
+                    out.push(ReferenceType::NamedRange(name.to_string()));
+                }
+            }
+        });
+        out
+    }
+}
+
+/// A borrowing view over a ReferenceType. Avoids cloning sheet/names while walking.
+#[derive(Clone, Copy, Debug)]
+pub enum RefView<'a> {
+    Cell {
+        sheet: Option<&'a str>,
+        row: u32,
+        col: u32,
+    },
+    Range {
+        sheet: Option<&'a str>,
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+    },
+    Table {
+        name: &'a str,
+        specifier: Option<&'a TableSpecifier>,
+    },
+    NamedRange {
+        name: &'a str,
+    },
+}
+
+impl<'a> From<&'a ReferenceType> for RefView<'a> {
+    fn from(r: &'a ReferenceType) -> Self {
+        match r {
+            ReferenceType::Cell { sheet, row, col } => RefView::Cell {
+                sheet: sheet.as_deref(),
+                row: *row,
+                col: *col,
+            },
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => RefView::Range {
+                sheet: sheet.as_deref(),
+                start_row: *start_row,
+                start_col: *start_col,
+                end_row: *end_row,
+                end_col: *end_col,
+            },
+            ReferenceType::Table(tr) => RefView::Table {
+                name: tr.name.as_str(),
+                specifier: tr.specifier.as_ref(),
+            },
+            ReferenceType::NamedRange(name) => RefView::NamedRange { name },
+        }
+    }
+}
+
+/// Iterator over RefView for an AST, implemented via an explicit stack to avoid recursion allocation.
+pub struct RefIter<'a> {
+    stack: smallvec::SmallVec<[&'a ASTNode; 8]>,
+}
+
+impl<'a> Iterator for RefIter<'a> {
+    type Item = RefView<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(node) = self.stack.pop() {
+            match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => return Some(RefView::from(reference)),
+                ASTNodeType::UnaryOp { expr, .. } => self.stack.push(expr),
+                ASTNodeType::BinaryOp { left, right, .. } => {
+                    self.stack.push(right);
+                    self.stack.push(left);
+                }
+                ASTNodeType::Function { args, .. } => {
+                    for a in args.iter().rev() {
+                        self.stack.push(a);
+                    }
+                }
+                ASTNodeType::Array(rows) => {
+                    for r in rows.iter().rev() {
+                        for item in r.iter().rev() {
+                            self.stack.push(item);
+                        }
+                    }
+                }
+                ASTNodeType::Literal(_) => {}
+            }
+        }
+        None
+    }
+}
+
+/// Policy controlling how references are collected.
+#[derive(Debug, Clone)]
+pub struct CollectPolicy {
+    pub expand_small_ranges: bool,
+    pub range_expansion_limit: usize,
+    pub include_names: bool,
+}
+
+impl Default for CollectPolicy {
+    fn default() -> Self {
+        Self {
+            expand_small_ranges: false,
+            range_expansion_limit: 0,
+            include_names: true,
         }
     }
 }

@@ -5,7 +5,7 @@
 /// [43:24] Row (20 bits) - 0 to 1,048,575 (zero-based)
 /// [23:10] Col (14 bits) - 0 to 16,383 (zero-based)
 /// [9:0]   Reserved (10 bits) - MUST BE ZERO
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct PackedCoord(u64);
 
 impl PackedCoord {

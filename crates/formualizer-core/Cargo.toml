@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 once_cell = "1.21.3"
 formualizer-common = { path = "../formualizer-common" }
+smallvec = "1.13"

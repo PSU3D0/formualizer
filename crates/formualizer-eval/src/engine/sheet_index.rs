@@ -54,6 +54,11 @@ impl SheetIndex {
         }
     }
 
+    /// Fast path build from sorted coordinates. Assumes items are row-major sorted.
+    pub fn build_from_sorted(&mut self, items: &[(PackedCoord, VertexId)]) {
+        self.add_vertices_batch(items);
+    }
+
     /// Add a vertex at the given coordinate to the index.
     ///
     /// ## Complexity

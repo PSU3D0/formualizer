@@ -551,6 +551,20 @@ impl CsrMutableEdges {
             self.delta.mark_dirty();
         }
     }
+
+    /// Build underlying CSR directly from adjacency and provided coords/ids.
+    /// This replaces the current base and clears the delta slab.
+    pub fn build_from_adjacency(
+        &mut self,
+        adjacency: Vec<(u32, Vec<u32>)>,
+        coords: Vec<PackedCoord>,
+        vertex_ids: Vec<u32>,
+    ) {
+        self.base = CsrEdges::from_adjacency(adjacency, &coords);
+        self.coords = coords;
+        self.vertex_ids = vertex_ids;
+        self.delta.clear();
+    }
 }
 
 impl Default for CsrMutableEdges {

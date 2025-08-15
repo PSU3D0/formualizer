@@ -18,6 +18,7 @@ mod range_property_tests;
 mod schedule_integration;
 mod sheet_index_integration;
 //mod streaming_evaluation;
+mod bulk_ingest;
 mod column_operations;
 mod debug_vertex_lifecycle;
 mod dynamic_topo;

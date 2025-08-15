@@ -40,6 +40,38 @@ impl DataStore {
         }
     }
 
+    /// Batch store literal values; returns ValueRefs in same order.
+    pub fn store_values_batch<I>(&mut self, values: I) -> Vec<ValueRef>
+    where
+        I: IntoIterator<Item = LiteralValue>,
+    {
+        let iter = values.into_iter();
+        let (lower, _) = iter.size_hint();
+        let mut out = Vec::with_capacity(lower);
+        for v in iter {
+            out.push(self.store_value(v));
+        }
+        out
+    }
+
+    /// Batch store ASTs; returns AstNodeIds in same order.
+    pub fn store_asts_batch<'a, I>(
+        &mut self,
+        asts: I,
+        sheet_registry: &SheetRegistry,
+    ) -> Vec<AstNodeId>
+    where
+        I: IntoIterator<Item = &'a ASTNode>,
+    {
+        let iter = asts.into_iter();
+        let (lower, _) = iter.size_hint();
+        let mut out = Vec::with_capacity(lower);
+        for ast in iter {
+            out.push(self.store_ast(ast, sheet_registry));
+        }
+        out
+    }
+
     pub fn with_capacity(estimated_cells: usize) -> Self {
         Self {
             scalars: ScalarArena::with_capacity(estimated_cells),

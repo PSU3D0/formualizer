@@ -4,6 +4,7 @@ mod tests {
     use formualizer_common::{ExcelError, LiteralValue};
 
     use crate::parser::{ASTNode, ASTNodeType, Parser, ParserError, ReferenceType};
+    use crate::parser::{CollectPolicy, RefView};
 
     // Helper function to parse a formula
     fn parse_formula(formula: &str) -> Result<ASTNode, ParserError> {
@@ -42,6 +43,97 @@ mod tests {
             .with_volatility_classifier(|name| name.eq_ignore_ascii_case("RAND"));
         let ast = parser.parse().unwrap();
         assert!(!ast.contains_volatile());
+    }
+
+    #[test]
+    fn test_refs_iterator_and_visitor_basic() {
+        let ast = parse_formula("=A1 + SUM(B2:C3, NamedRange, Table1[Col])").unwrap();
+
+        // Iterator should find references in stable order (left-to-right depth-first)
+        let refs: Vec<RefView> = ast.refs().collect();
+        assert!(!refs.is_empty());
+
+        // Expect first is A1 cell
+        match refs.get(0).unwrap() {
+            RefView::Cell { sheet, row, col } => {
+                assert!(sheet.is_none());
+                assert_eq!((*row, *col), (1, 1));
+            }
+            _ => panic!("expected first ref to be a Cell"),
+        }
+
+        // Visitor should hit same count
+        let mut count = 0;
+        ast.visit_refs(|_| count += 1);
+        assert_eq!(count, refs.len());
+    }
+
+    #[test]
+    fn test_collect_references_policy_no_expand() {
+        let ast = parse_formula("=SUM(B2:C3)").unwrap();
+        let policy = CollectPolicy {
+            expand_small_ranges: false,
+            range_expansion_limit: 0,
+            include_names: true,
+        };
+        let refs = ast.collect_references(&policy);
+        assert_eq!(refs.len(), 1);
+        match &refs[0] {
+            ReferenceType::Range {
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                ..
+            } => {
+                assert_eq!(
+                    (*start_row, *start_col, *end_row, *end_col),
+                    (Some(2), Some(2), Some(3), Some(3))
+                );
+            }
+            _ => panic!("expected a Range"),
+        }
+    }
+
+    #[test]
+    fn test_collect_references_policy_expand_small_range() {
+        let ast = parse_formula("=SUM(B2:C3)").unwrap();
+        let policy = CollectPolicy {
+            expand_small_ranges: true,
+            range_expansion_limit: 16,
+            include_names: true,
+        };
+        let refs = ast.collect_references(&policy);
+        // B2:C3 is 4 cells
+        assert_eq!(refs.len(), 4);
+        // Ensure cells include B2 and C3
+        let mut have_b2 = false;
+        let mut have_c3 = false;
+        for r in refs {
+            match r {
+                ReferenceType::Cell { row, col, .. } if row == 2 && col == 2 => have_b2 = true,
+                ReferenceType::Cell { row, col, .. } if row == 3 && col == 3 => have_c3 = true,
+                _ => {}
+            }
+        }
+        assert!(have_b2 && have_c3);
+    }
+
+    #[test]
+    fn test_collect_references_policy_exclude_names() {
+        let ast = parse_formula("=NamedRef + A1").unwrap();
+        let policy = CollectPolicy {
+            expand_small_ranges: false,
+            range_expansion_limit: 0,
+            include_names: false,
+        };
+        let refs = ast.collect_references(&policy);
+        // Should only include A1
+        assert_eq!(refs.len(), 1);
+        match &refs[0] {
+            ReferenceType::Cell { row, col, .. } => assert_eq!((*row, *col), (1, 1)),
+            _ => panic!("expected a Cell ref"),
+        }
     }
 
     #[test]
