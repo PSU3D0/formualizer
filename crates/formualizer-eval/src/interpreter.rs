@@ -124,7 +124,8 @@ impl<'a> Interpreter<'a> {
                             .with_message("Function does not return a reference"))
                     }
                 } else {
-                    Err(ExcelError::from(ExcelErrorKind::Name))
+                    Err(ExcelError::new(ExcelErrorKind::Name)
+                        .with_message(format!("Unknown function: {}", name)))
                 }
             }
             ASTNodeType::Array(_)
@@ -298,7 +299,11 @@ impl<'a> Interpreter<'a> {
             let fctx = DefaultFunctionContext::new(self.context, self.current_cell);
             fun.dispatch(&handles, &fctx)
         } else {
-            Ok(LiteralValue::Error(ExcelError::from_error_string("#NAME?")))
+            // Include the function name in the error message for better debugging
+            Ok(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("Unknown function: {}", name))
+            ))
         }
     }
 

@@ -407,6 +407,9 @@ impl PyEngine {
                     e.context = Some(ErrorContext {
                         row: Some(row),
                         col: Some(col),
+                        origin_row: None,
+                        origin_col: None,
+                        origin_sheet: None,
                     });
                 }
                 LiteralValue::Error(e)

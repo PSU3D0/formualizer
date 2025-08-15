@@ -83,7 +83,10 @@ impl ExcelErrorKind {
 pub struct ErrorContext {
     pub row: Option<u32>,
     pub col: Option<u32>,
-    // Add more sheet-wide coordinates here if ever required (sheet name, etc.)
+    // Origin location where the error first occurred (if different from row/col)
+    pub origin_row: Option<u32>,
+    pub origin_col: Option<u32>,
+    pub origin_sheet: Option<String>,
 }
 
 /// Kind-specific payloads (“extension slot”).
@@ -152,7 +155,28 @@ impl ExcelError {
         self.context = Some(ErrorContext {
             row: Some(row),
             col: Some(col),
+            origin_row: None,
+            origin_col: None,
+            origin_sheet: None,
         });
+        self
+    }
+
+    /// Attach origin location where the error first occurred.
+    pub fn with_origin(mut self, sheet: Option<String>, row: u32, col: u32) -> Self {
+        if let Some(ref mut ctx) = self.context {
+            ctx.origin_sheet = sheet;
+            ctx.origin_row = Some(row);
+            ctx.origin_col = Some(col);
+        } else {
+            self.context = Some(ErrorContext {
+                row: None,
+                col: None,
+                origin_row: Some(row),
+                origin_col: Some(col),
+                origin_sheet: sheet,
+            });
+        }
         self
     }
 
@@ -181,12 +205,21 @@ impl fmt::Display for ExcelError {
         }
 
         // Optional row/col context.
-        if let Some(ErrorContext {
-            row: Some(r),
-            col: Some(c),
-        }) = self.context
-        {
-            write!(f, " (row {r}, col {c})")?;
+        if let Some(ref ctx) = self.context {
+            if let (Some(r), Some(c)) = (ctx.row, ctx.col) {
+                write!(f, " (row {r}, col {c})")?;
+            }
+            
+            // Show origin if different from the evaluation location
+            if let (Some(or), Some(oc)) = (ctx.origin_row, ctx.origin_col) {
+                if ctx.origin_row != ctx.row || ctx.origin_col != ctx.col {
+                    if let Some(ref sheet) = ctx.origin_sheet {
+                        write!(f, " [origin: {sheet}!R{or}C{oc}]")?;
+                    } else {
+                        write!(f, " [origin: R{or}C{oc}]")?;
+                    }
+                }
+            }
         }
 
         // Optional kind-specific payload - keep it terse for logs.

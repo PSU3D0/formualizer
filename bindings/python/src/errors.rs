@@ -45,7 +45,7 @@ pub fn excel_eval_pyerr(
 ) -> PyErr {
     // Prefer explicit error.context if present, otherwise fall back to provided location
     let (row, col) = match &err.context {
-        Some(ErrorContext { row, col }) => (row.unwrap_or_default(), col.unwrap_or_default()),
+        Some(ErrorContext { row, col, .. }) => (row.unwrap_or_default(), col.unwrap_or_default()),
         None => (
             fallback_row.unwrap_or_default(),
             fallback_col.unwrap_or_default(),
@@ -110,7 +110,13 @@ impl PyExcelError {
         };
 
         let context = if row.is_some() || col.is_some() {
-            Some(ErrorContext { row, col })
+            Some(ErrorContext { 
+                row, 
+                col,
+                origin_row: None,
+                origin_col: None,
+                origin_sheet: None,
+            })
         } else {
             None
         };
