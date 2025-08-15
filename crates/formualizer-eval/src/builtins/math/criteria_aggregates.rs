@@ -308,16 +308,28 @@ impl Function for SumIfsFn {
                 "#VALUE!",
             ))));
         }
-        // Pre-parse static criteria (non-range) predicates
+        // Pre-parse static criteria (non-range or 1x1 range) predicates
         let mut static_preds: Vec<Option<crate::args::CriteriaPredicate>> = Vec::new();
         for i in (2..args.len()).step_by(2) {
-            let is_range = args[i].range_storage().is_ok();
-            if !is_range {
-                if let Ok(v) = args[i].value() {
-                    static_preds.push(crate::args::parse_criteria(v.as_ref()).ok());
-                } else {
-                    static_preds.push(None);
-                }
+            let is_static = match args[i].range_storage() {
+                Ok(rs) => rs.dims() == (1, 1),
+                Err(_) => true,
+            };
+            if is_static {
+                // Extract scalar: prefer top-left from range_storage when present
+                let crit_val = match args[i].range_storage() {
+                    Ok(rs) => {
+                        let mut it = rs.to_iterator();
+                        it.next()
+                            .map(|c| c.into_owned())
+                            .unwrap_or(LiteralValue::Empty)
+                    }
+                    Err(_) => match args[i].value() {
+                        Ok(v) => v.into_owned(),
+                        Err(_) => LiteralValue::Empty,
+                    },
+                };
+                static_preds.push(crate::args::parse_criteria(&crit_val).ok());
             } else {
                 static_preds.push(None);
             }
@@ -441,13 +453,24 @@ impl Function for CountIfsFn {
         }
         let mut static_preds: Vec<Option<crate::args::CriteriaPredicate>> = Vec::new();
         for i in (1..args.len()).step_by(2) {
-            let is_range = args[i].range_storage().is_ok();
-            if !is_range {
-                if let Ok(v) = args[i].value() {
-                    static_preds.push(crate::args::parse_criteria(v.as_ref()).ok());
-                } else {
-                    static_preds.push(None);
-                }
+            let is_static = match args[i].range_storage() {
+                Ok(rs) => rs.dims() == (1, 1),
+                Err(_) => true,
+            };
+            if is_static {
+                let crit_val = match args[i].range_storage() {
+                    Ok(rs) => {
+                        let mut it = rs.to_iterator();
+                        it.next()
+                            .map(|c| c.into_owned())
+                            .unwrap_or(LiteralValue::Empty)
+                    }
+                    Err(_) => match args[i].value() {
+                        Ok(v) => v.into_owned(),
+                        Err(_) => LiteralValue::Empty,
+                    },
+                };
+                static_preds.push(crate::args::parse_criteria(&crit_val).ok());
             } else {
                 static_preds.push(None);
             }
@@ -573,13 +596,24 @@ impl Function for AverageIfsFn {
         }
         let mut static_preds: Vec<Option<crate::args::CriteriaPredicate>> = Vec::new();
         for i in (2..args.len()).step_by(2) {
-            let is_range = args[i].range_storage().is_ok();
-            if !is_range {
-                if let Ok(v) = args[i].value() {
-                    static_preds.push(crate::args::parse_criteria(v.as_ref()).ok());
-                } else {
-                    static_preds.push(None);
-                }
+            let is_static = match args[i].range_storage() {
+                Ok(rs) => rs.dims() == (1, 1),
+                Err(_) => true,
+            };
+            if is_static {
+                let crit_val = match args[i].range_storage() {
+                    Ok(rs) => {
+                        let mut it = rs.to_iterator();
+                        it.next()
+                            .map(|c| c.into_owned())
+                            .unwrap_or(LiteralValue::Empty)
+                    }
+                    Err(_) => match args[i].value() {
+                        Ok(v) => v.into_owned(),
+                        Err(_) => LiteralValue::Empty,
+                    },
+                };
+                static_preds.push(crate::args::parse_criteria(&crit_val).ok());
             } else {
                 static_preds.push(None);
             }
@@ -1040,6 +1074,113 @@ mod tests {
         let window_val = f.eval_window(&mut wctx).expect("window path").unwrap();
         let scalar = f.eval_scalar(&args, &fctx).unwrap();
         assert_eq!(window_val, scalar);
+    }
+
+    #[test]
+    fn sumifs_broadcasts_1x1_criteria_over_range() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfsFn));
+        let ctx = interp(&wb);
+        // sum_range: column vector [10, 20]
+        let sum = lit(LiteralValue::Array(vec![
+            vec![LiteralValue::Int(10)],
+            vec![LiteralValue::Int(20)],
+        ]));
+        // criteria_range: column vector ["A", "B"]
+        let tags = lit(LiteralValue::Array(vec![
+            vec![LiteralValue::Text("A".into())],
+            vec![LiteralValue::Text("B".into())],
+        ]));
+        // criteria: 1x1 array acting as scalar "A"
+        let c_tag = lit(LiteralValue::Array(vec![vec![LiteralValue::Text(
+            "A".into(),
+        )]]));
+        let args = vec![
+            ArgumentHandle::new(&sum, &ctx),
+            ArgumentHandle::new(&tags, &ctx),
+            ArgumentHandle::new(&c_tag, &ctx),
+        ];
+        let f = ctx.context.get_function("", "SUMIFS").unwrap();
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            LiteralValue::Number(10.0)
+        );
+    }
+
+    #[test]
+    fn countifs_broadcasts_1x1_criteria_over_row() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountIfsFn));
+        let ctx = interp(&wb);
+        // criteria_range: row [1,2,3,4]
+        let nums = lit(LiteralValue::Array(vec![vec![
+            LiteralValue::Int(1),
+            LiteralValue::Int(2),
+            LiteralValue::Int(3),
+            LiteralValue::Int(4),
+        ]]));
+        // criteria: 1x1 array ">=3"
+        let crit = lit(LiteralValue::Array(vec![vec![LiteralValue::Text(
+            ">=3".into(),
+        )]]));
+        let args = vec![
+            ArgumentHandle::new(&nums, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+        ];
+        let f = ctx.context.get_function("", "COUNTIFS").unwrap();
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            LiteralValue::Number(2.0)
+        );
+    }
+
+    #[test]
+    fn sumifs_empty_ranges_with_1x1_criteria_produce_zero() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfsFn));
+        let ctx = interp(&wb);
+        // Empty ranges (0x0) simulate unused whole-column resolved empty
+        let empty = lit(LiteralValue::Array(Vec::new()));
+        // 1x1 criteria (array)
+        let crit = lit(LiteralValue::Array(vec![vec![LiteralValue::Text(
+            "X".into(),
+        )]]));
+        let args = vec![
+            ArgumentHandle::new(&empty, &ctx),
+            ArgumentHandle::new(&empty, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+        ];
+        let f = ctx.context.get_function("", "SUMIFS").unwrap();
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            LiteralValue::Number(0.0)
+        );
+    }
+
+    #[test]
+    fn sumifs_mismatched_non_empty_ranges_should_error() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfsFn));
+        let ctx = interp(&wb);
+        // sum_range: 2x2
+        let sum = lit(LiteralValue::Array(vec![
+            vec![LiteralValue::Int(1), LiteralValue::Int(2)],
+            vec![LiteralValue::Int(3), LiteralValue::Int(4)],
+        ]));
+        // criteria_range: 3x2 (different rows)
+        let crit_range = lit(LiteralValue::Array(vec![
+            vec![LiteralValue::Int(1), LiteralValue::Int(1)],
+            vec![LiteralValue::Int(1), LiteralValue::Int(1)],
+            vec![LiteralValue::Int(1), LiteralValue::Int(1)],
+        ]));
+        // scalar criterion
+        let crit = lit(LiteralValue::Text("=1".into()));
+        let args = vec![
+            ArgumentHandle::new(&sum, &ctx),
+            ArgumentHandle::new(&crit_range, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+        ];
+        let f = ctx.context.get_function("", "SUMIFS").unwrap();
+        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+            LiteralValue::Error(_) => {}
+            other => panic!("Expected error on mismatched shapes, got {:?}", other),
+        }
     }
 
     #[test]

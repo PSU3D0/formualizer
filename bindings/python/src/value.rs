@@ -338,8 +338,12 @@ impl PyLiteralValue {
                     dict.set_item("message", msg)?;
                 }
                 if let Some(ctx) = &e.context {
-                    if let Some(r) = ctx.row { dict.set_item("row", r)?; }
-                    if let Some(c) = ctx.col { dict.set_item("col", c)?; }
+                    if let Some(r) = ctx.row {
+                        dict.set_item("row", r)?;
+                    }
+                    if let Some(c) = ctx.col {
+                        dict.set_item("col", c)?;
+                    }
                 }
                 Ok(dict.into_pyobject(py)?.into_any().to_object(py))
             }
@@ -448,10 +452,7 @@ impl PyLiteralValue {
     #[getter]
     pub fn error_location(&self) -> Option<(u32, u32)> {
         match &self.inner {
-            LiteralValue::Error(e) => e
-                .context
-                .as_ref()
-                .and_then(|c| Some((c.row?, c.col?))),
+            LiteralValue::Error(e) => e.context.as_ref().and_then(|c| Some((c.row?, c.col?))),
             _ => None,
         }
     }

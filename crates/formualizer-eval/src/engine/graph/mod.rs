@@ -405,13 +405,34 @@ impl DependencyGraph {
         start_col: u32,
         end_col: u32,
     ) -> Option<(u32, u32)> {
-        let index = self.sheet_indexes.get(&sheet_id)?;
+        // Prefer sheet index when available
+        if let Some(index) = self.sheet_indexes.get(&sheet_id) {
+            if !index.is_empty() {
+                let mut min_r: Option<u32> = None;
+                let mut max_r: Option<u32> = None;
+                for vid in index.vertices_in_col_range(start_col, end_col) {
+                    let r = self.store.coord(vid).row();
+                    min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
+                    max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
+                }
+                return match (min_r, max_r) {
+                    (Some(a), Some(b)) => Some((a, b)),
+                    _ => None,
+                };
+            }
+        }
+        // Fallback: scan cell map for bounds on the fly
         let mut min_r: Option<u32> = None;
         let mut max_r: Option<u32> = None;
-        for vid in index.vertices_in_col_range(start_col, end_col) {
-            let r = self.store.coord(vid).row();
-            min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
-            max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
+        for (cref, _vid) in &self.cell_to_vertex {
+            if cref.sheet_id == sheet_id {
+                let c = cref.coord.col;
+                if c >= start_col && c <= end_col {
+                    let r = cref.coord.row;
+                    min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
+                    max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
+                }
+            }
         }
         match (min_r, max_r) {
             (Some(a), Some(b)) => Some((a, b)),
@@ -454,13 +475,33 @@ impl DependencyGraph {
         start_row: u32,
         end_row: u32,
     ) -> Option<(u32, u32)> {
-        let index = self.sheet_indexes.get(&sheet_id)?;
+        if let Some(index) = self.sheet_indexes.get(&sheet_id) {
+            if !index.is_empty() {
+                let mut min_c: Option<u32> = None;
+                let mut max_c: Option<u32> = None;
+                for vid in index.vertices_in_row_range(start_row, end_row) {
+                    let c = self.store.coord(vid).col();
+                    min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
+                    max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
+                }
+                return match (min_c, max_c) {
+                    (Some(a), Some(b)) => Some((a, b)),
+                    _ => None,
+                };
+            }
+        }
+        // Fallback: scan cell map on the fly
         let mut min_c: Option<u32> = None;
         let mut max_c: Option<u32> = None;
-        for vid in index.vertices_in_row_range(start_row, end_row) {
-            let c = self.store.coord(vid).col();
-            min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
-            max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
+        for (cref, _vid) in &self.cell_to_vertex {
+            if cref.sheet_id == sheet_id {
+                let r = cref.coord.row;
+                if r >= start_row && r <= end_row {
+                    let c = cref.coord.col;
+                    min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
+                    max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
+                }
+            }
         }
         match (min_c, max_c) {
             (Some(a), Some(b)) => Some((a, b)),

@@ -1262,10 +1262,9 @@ where
                         sr = Some(min_r);
                         er = Some(max_r);
                     } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                        // Empty used-region: produce empty window by setting er < sr
-                        // Represent as zero-height later.
+                        // Fallback to full sheet height when used-region is unavailable
                         sr = Some(1);
-                        er = Some(0);
+                        er = Some(max_rows);
                     }
                 }
 
@@ -1277,8 +1276,9 @@ where
                         sc = Some(min_c);
                         ec = Some(max_c);
                     } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
+                        // Fallback to full sheet width when used-region is unavailable
                         sc = Some(1);
-                        ec = Some(0);
+                        ec = Some(max_cols);
                     }
                 }
 

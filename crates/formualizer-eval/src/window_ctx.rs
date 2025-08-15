@@ -69,28 +69,68 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
             return Err(ExcelError::new(ExcelErrorKind::NImpl)
                 .with_message("window width>1 not yet supported"));
         }
-        // First pass: determine dims from any range arg and validate consistency
-        let mut dims: Option<(usize, usize)> = None;
+        // First pass: determine canonical dims from any non-empty, non-1x1 range arg and validate consistency.
+        // Treat 1x1 ranges as scalars for broadcasting; allow empty ranges to participate (they'll broadcast empties).
+        let mut canonical: Option<(usize, usize)> = None;
+        let mut saw_empty = false;
         for arg in self.args.iter() {
             if let Ok(storage) = arg.range_storage() {
                 let d = storage.dims();
-                if let Some(prev) = dims {
-                    if prev != d {
-                        return Err(ExcelError::new(ExcelErrorKind::Value)
-                            .with_message("range dims mismatch"));
+                match d {
+                    (0, 0) => {
+                        saw_empty = true;
                     }
-                } else {
-                    dims = Some(d);
+                    (1, 1) => {
+                        // scalar-like; ignore for canonical selection
+                    }
+                    other => {
+                        if let Some(prev) = canonical {
+                            if prev != other {
+                                return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                                    format!(
+                                        "range dims mismatch; expected {},{}, found {},{}",
+                                        prev.0, prev.1, other.0, other.1
+                                    ),
+                                ));
+                            }
+                        } else {
+                            canonical = Some(other);
+                        }
+                    }
                 }
             }
         }
-        let total = dims.map(|(r, c)| r * c).unwrap_or(1);
+        let total = if let Some((r, c)) = canonical {
+            r * c
+        } else if saw_empty {
+            0
+        } else {
+            1
+        };
         // Build iterators for each argument with broadcasting using computed dims
         let mut iters: Vec<Box<dyn Iterator<Item = LiteralValue>>> =
             Vec::with_capacity(self.args.len());
         for arg in self.args.iter() {
             if let Ok(storage) = arg.range_storage() {
-                iters.push(Box::new(storage.to_iterator().map(|c| c.into_owned())));
+                let d = storage.dims();
+                match d {
+                    (0, 0) => {
+                        // Empty range: broadcast empties to total (possibly 0)
+                        iters.push(Box::new(std::iter::repeat_n(LiteralValue::Empty, total)));
+                    }
+                    (1, 1) => {
+                        // Single cell: materialize one value and broadcast
+                        let mut it = storage.to_iterator();
+                        let v = it
+                            .next()
+                            .map(|c| c.into_owned())
+                            .unwrap_or(LiteralValue::Empty);
+                        iters.push(Box::new(std::iter::repeat_n(v, total)));
+                    }
+                    _ => {
+                        iters.push(Box::new(storage.to_iterator().map(|c| c.into_owned())));
+                    }
+                }
             } else if let Ok(v) = arg.value() {
                 let vv = v.into_owned();
                 iters.push(Box::new(std::iter::repeat_n(vv, total)));
@@ -127,29 +167,61 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
     ) -> Result<(), ExcelError> {
         let spec = self.spec;
         let width = spec.width.max(1);
-        // Determine dims from any range arg
-        let mut dims: Option<(usize, usize)> = None;
+        // Determine canonical dims from any non-empty, non-1x1 range arg; allow 1x1 as scalar and empty as compatible.
+        let mut canonical: Option<(usize, usize)> = None;
+        let mut saw_empty = false;
         for arg in self.args.iter() {
             if let Ok(storage) = arg.range_storage() {
                 let d = storage.dims();
-                if let Some(prev) = dims {
-                    if prev != d {
-                        return Err(ExcelError::new(ExcelErrorKind::Value)
-                            .with_message("range dims mismatch"));
+                match d {
+                    (0, 0) => saw_empty = true,
+                    (1, 1) => (),
+                    other => {
+                        if let Some(prev) = canonical {
+                            if prev != other {
+                                return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                                    format!(
+                                        "range dims mismatch; expected {},{}, found {},{}",
+                                        prev.0, prev.1, other.0, other.1
+                                    ),
+                                ));
+                            }
+                        } else {
+                            canonical = Some(other);
+                        }
                     }
-                } else {
-                    dims = Some(d);
                 }
             }
         }
-        let (rows, cols) = dims.unwrap_or((1, 1));
+        let (rows, cols) = if let Some(d) = canonical {
+            d
+        } else if saw_empty {
+            (0, 0)
+        } else {
+            (1, 1)
+        };
 
         // Materialize/broadcast each argument into a flat row-major Vec for indexed access
         let total = rows * cols;
         let mut flats: Vec<Vec<LiteralValue>> = Vec::with_capacity(self.args.len());
         for arg in self.args.iter() {
             if let Ok(storage) = arg.range_storage() {
-                flats.push(storage.to_iterator().map(|c| c.into_owned()).collect());
+                let d = storage.dims();
+                match d {
+                    (0, 0) => {
+                        // Broadcast empties to total (may be 0)
+                        flats.push(std::iter::repeat_n(LiteralValue::Empty, total).collect());
+                    }
+                    (1, 1) => {
+                        let mut it = storage.to_iterator();
+                        let v = it
+                            .next()
+                            .map(|c| c.into_owned())
+                            .unwrap_or(LiteralValue::Empty);
+                        flats.push(std::iter::repeat_n(v, total).collect());
+                    }
+                    _ => flats.push(storage.to_iterator().map(|c| c.into_owned()).collect()),
+                }
             } else if let Ok(v) = arg.value() {
                 flats.push(std::iter::repeat_n(v.into_owned(), total).collect());
             } else {
