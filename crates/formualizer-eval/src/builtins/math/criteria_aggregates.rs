@@ -25,7 +25,14 @@ Design notes:
 #[derive(Debug)]
 pub struct SumIfFn;
 impl Function for SumIfFn {
-    func_caps!(PURE, REDUCTION, WINDOWED, STREAM_OK);
+    func_caps!(
+        PURE,
+        REDUCTION,
+        WINDOWED,
+        STREAM_OK,
+        PARALLEL_ARGS,
+        PARALLEL_CHUNKS
+    );
     fn name(&self) -> &'static str {
         "SUMIF"
     }
@@ -152,7 +159,14 @@ impl Function for SumIfFn {
 #[derive(Debug)]
 pub struct CountIfFn;
 impl Function for CountIfFn {
-    func_caps!(PURE, REDUCTION, WINDOWED, STREAM_OK);
+    func_caps!(
+        PURE,
+        REDUCTION,
+        WINDOWED,
+        STREAM_OK,
+        PARALLEL_ARGS,
+        PARALLEL_CHUNKS
+    );
     fn name(&self) -> &'static str {
         "COUNTIF"
     }
@@ -243,7 +257,14 @@ impl Function for CountIfFn {
 #[derive(Debug)]
 pub struct SumIfsFn; // SUMIFS(sum_range, criteria_range1, criteria1, ...)
 impl Function for SumIfsFn {
-    func_caps!(PURE, REDUCTION, WINDOWED, STREAM_OK);
+    func_caps!(
+        PURE,
+        REDUCTION,
+        WINDOWED,
+        STREAM_OK,
+        PARALLEL_ARGS,
+        PARALLEL_CHUNKS
+    );
     fn name(&self) -> &'static str {
         "SUMIFS"
     }
@@ -334,51 +355,49 @@ impl Function for SumIfsFn {
                 static_preds.push(None);
             }
         }
-        let mut total = 0.0f64;
-        let mut first_err: Option<ExcelError> = None;
-        if let Err(e) = w.for_each_window(|cells| {
-            // cells layout mirrors args
-            let sum_cell = &cells[0];
-            let mut sp_idx = 0usize;
-            let mut ok = true; // iterate criteria pairs
-            let mut cell_index = 1usize;
-            while cell_index < cells.len() {
-                let range_cell = &cells[cell_index];
-                let crit_cell = &cells[cell_index + 1];
-                let pred_opt = &static_preds[sp_idx];
-                let matches = if let Some(pred) = pred_opt {
-                    criteria_match(pred, range_cell)
-                } else {
-                    match crate::args::parse_criteria(crit_cell) {
-                        Ok(p) => criteria_match(&p, range_cell),
-                        Err(e) => {
-                            if first_err.is_none() {
-                                first_err = Some(e);
-                            }
-                            false
+        // Parallel-aware reduction using window_ctx.reduce_windows
+        let total_res = w.reduce_windows(
+            || 0.0f64,
+            |windows, acc| -> Result<(), ExcelError> {
+                // windows: per-arg vectors of windowed cells; use the last cell by convention
+                let sum_cell = windows[0].last().unwrap_or(&LiteralValue::Empty);
+                let mut sp_idx = 0usize;
+                let mut ok = true;
+                let mut cell_index = 1usize;
+                while cell_index < windows.len() {
+                    let range_cell = windows[cell_index].last().unwrap_or(&LiteralValue::Empty);
+                    let crit_cell = windows[cell_index + 1]
+                        .last()
+                        .unwrap_or(&LiteralValue::Empty);
+                    let pred_opt = &static_preds[sp_idx];
+                    let matches = if let Some(pred) = pred_opt {
+                        criteria_match(pred, range_cell)
+                    } else {
+                        match crate::args::parse_criteria(crit_cell) {
+                            Ok(p) => criteria_match(&p, range_cell),
+                            Err(e) => return Err(e),
                         }
+                    };
+                    if !matches {
+                        ok = false;
+                        break;
                     }
-                };
-                if !matches {
-                    ok = false;
-                    break;
+                    sp_idx += 1;
+                    cell_index += 2;
                 }
-                sp_idx += 1;
-                cell_index += 2;
-            }
-            if ok {
-                if let Ok(n) = coerce_num(sum_cell) {
-                    total += n;
+                if ok {
+                    if let Ok(n) = coerce_num(sum_cell) {
+                        *acc += n;
+                    }
                 }
-            }
-            Ok(())
-        }) {
-            return Some(Ok(LiteralValue::Error(e)));
+                Ok(())
+            },
+            |a, b| a + b,
+        );
+        match total_res {
+            Ok(total) => Some(Ok(LiteralValue::Number(total))),
+            Err(e) => Some(Ok(LiteralValue::Error(e))),
         }
-        if let Some(e) = first_err {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        Some(Ok(LiteralValue::Number(total)))
     }
 }
 
@@ -386,7 +405,14 @@ impl Function for SumIfsFn {
 #[derive(Debug)]
 pub struct CountIfsFn; // COUNTIFS(criteria_range1, criteria1, ...)
 impl Function for CountIfsFn {
-    func_caps!(PURE, REDUCTION, WINDOWED, STREAM_OK);
+    func_caps!(
+        PURE,
+        REDUCTION,
+        WINDOWED,
+        STREAM_OK,
+        PARALLEL_ARGS,
+        PARALLEL_CHUNKS
+    );
     fn name(&self) -> &'static str {
         "COUNTIFS"
     }
@@ -523,7 +549,14 @@ impl Function for CountIfsFn {
 #[derive(Debug)]
 pub struct AverageIfsFn;
 impl Function for AverageIfsFn {
-    func_caps!(PURE, REDUCTION, WINDOWED, STREAM_OK);
+    func_caps!(
+        PURE,
+        REDUCTION,
+        WINDOWED,
+        STREAM_OK,
+        PARALLEL_ARGS,
+        PARALLEL_CHUNKS
+    );
     fn name(&self) -> &'static str {
         "AVERAGEIFS"
     }

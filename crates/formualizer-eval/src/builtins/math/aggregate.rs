@@ -11,7 +11,7 @@ use formualizer_macros::func_caps;
 pub struct SumFn;
 
 impl Function for SumFn {
-    func_caps!(PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
+    func_caps!(PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK, PARALLEL_ARGS);
 
     fn name(&self) -> &'static str {
         "SUM"

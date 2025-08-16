@@ -29,6 +29,25 @@ pub struct EvalResult {
     pub elapsed: std::time::Duration,
 }
 
+#[derive(Debug, Clone)]
+pub struct LayerInfo {
+    pub vertex_count: usize,
+    pub parallel_eligible: bool,
+    pub sample_cells: Vec<String>, // Sample of up to 5 cell addresses
+}
+
+#[derive(Debug, Clone)]
+pub struct EvalPlan {
+    pub total_vertices_to_evaluate: usize,
+    pub layers: Vec<LayerInfo>,
+    pub cycles_detected: usize,
+    pub dirty_count: usize,
+    pub volatile_count: usize,
+    pub parallel_enabled: bool,
+    pub estimated_parallel_layers: usize,
+    pub target_cells: Vec<String>,
+}
+
 impl<R> Engine<R>
 where
     R: EvaluationContext,
@@ -405,12 +424,13 @@ where
             }
         }
 
-        // Evaluate layers
+        // Evaluate layers (parallel when enabled, mirroring evaluate_all)
         let mut computed_vertices = 0;
         for layer in &schedule.layers {
-            for &vertex_id in &layer.vertices {
-                self.evaluate_vertex(vertex_id)?;
-                computed_vertices += 1;
+            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                computed_vertices += self.evaluate_layer_parallel(layer)?;
+            } else {
+                computed_vertices += self.evaluate_layer_sequential(layer)?;
             }
         }
 
@@ -526,6 +546,139 @@ where
             .iter()
             .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
             .collect())
+    }
+
+    /// Get the evaluation plan for target cells without actually evaluating them
+    pub fn get_eval_plan(&self, targets: &[(&str, u32, u32)]) -> Result<EvalPlan, ExcelError> {
+        if targets.is_empty() {
+            return Ok(EvalPlan {
+                total_vertices_to_evaluate: 0,
+                layers: Vec::new(),
+                cycles_detected: 0,
+                dirty_count: 0,
+                volatile_count: 0,
+                parallel_enabled: self.config.enable_parallel && self.thread_pool.is_some(),
+                estimated_parallel_layers: 0,
+                target_cells: Vec::new(),
+            });
+        }
+
+        // Convert targets to A1 notation for consistency
+        let addresses: Vec<String> = targets
+            .iter()
+            .map(|(s, r, c)| format!("{}!{}{}", s, Self::col_to_letters(*c), r))
+            .collect();
+
+        // Parse target cell addresses
+        let mut target_addrs = Vec::new();
+        for (sheet, row, col) in targets {
+            if let Some(sheet_id) = self.graph.sheet_id(sheet) {
+                let coord = Coord::new(*row, *col, true, true);
+                target_addrs.push(CellRef::new(sheet_id, coord));
+            }
+        }
+
+        // Find vertex IDs for targets
+        let mut target_vertex_ids = Vec::new();
+        for addr in &target_addrs {
+            if let Some(vertex_id) = self.graph.get_vertex_id_for_address(addr) {
+                target_vertex_ids.push(*vertex_id);
+            }
+        }
+
+        if target_vertex_ids.is_empty() {
+            return Ok(EvalPlan {
+                total_vertices_to_evaluate: 0,
+                layers: Vec::new(),
+                cycles_detected: 0,
+                dirty_count: 0,
+                volatile_count: 0,
+                parallel_enabled: self.config.enable_parallel && self.thread_pool.is_some(),
+                estimated_parallel_layers: 0,
+                target_cells: addresses,
+            });
+        }
+
+        // Find dirty precedents that need evaluation
+        let precedents_to_eval = self.find_dirty_precedents(&target_vertex_ids);
+
+        if precedents_to_eval.is_empty() {
+            return Ok(EvalPlan {
+                total_vertices_to_evaluate: 0,
+                layers: Vec::new(),
+                cycles_detected: 0,
+                dirty_count: 0,
+                volatile_count: 0,
+                parallel_enabled: self.config.enable_parallel && self.thread_pool.is_some(),
+                estimated_parallel_layers: 0,
+                target_cells: addresses,
+            });
+        }
+
+        // Count dirty and volatile vertices
+        let mut dirty_count = 0;
+        let mut volatile_count = 0;
+        for &vertex_id in &precedents_to_eval {
+            if self.graph.is_dirty(vertex_id) {
+                dirty_count += 1;
+            }
+            if self.graph.is_volatile(vertex_id) {
+                volatile_count += 1;
+            }
+        }
+
+        // Create schedule for the minimal subgraph
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = scheduler.create_schedule(&precedents_to_eval)?;
+
+        // Build layer information
+        let mut layers = Vec::new();
+        let mut estimated_parallel_layers = 0;
+        let parallel_enabled = self.config.enable_parallel && self.thread_pool.is_some();
+
+        for layer in &schedule.layers {
+            let parallel_eligible = parallel_enabled && layer.vertices.len() > 1;
+            if parallel_eligible {
+                estimated_parallel_layers += 1;
+            }
+
+            // Get sample cell addresses (up to 5)
+            let sample_cells: Vec<String> = layer
+                .vertices
+                .iter()
+                .take(5)
+                .filter_map(|&vertex_id| {
+                    self.graph
+                        .get_cell_ref_for_vertex(vertex_id)
+                        .map(|cell_ref| {
+                            let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
+                            format!(
+                                "{}!{}{}",
+                                sheet_name,
+                                Self::col_to_letters(cell_ref.coord.col),
+                                cell_ref.coord.row
+                            )
+                        })
+                })
+                .collect();
+
+            layers.push(LayerInfo {
+                vertex_count: layer.vertices.len(),
+                parallel_eligible,
+                sample_cells,
+            });
+        }
+
+        Ok(EvalPlan {
+            total_vertices_to_evaluate: precedents_to_eval.len(),
+            layers,
+            cycles_detected: schedule.cycles.len(),
+            dirty_count,
+            volatile_count,
+            parallel_enabled,
+            estimated_parallel_layers,
+            target_cells: addresses,
+        })
     }
 
     /// Helper: convert 1-based column index to Excel-style letters (1 -> A, 27 -> AA)

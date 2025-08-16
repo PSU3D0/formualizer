@@ -18,6 +18,8 @@ pub struct Interpreter<'a> {
     // Cache only fully-owned ranges to avoid re-resolving identical references within a cell
     // Key: (effective_sheet, structural reference fingerprint)
     owned_range_cache: RefCell<FxHashMap<(String, u64), Arc<[Vec<LiteralValue>]>>>,
+    // Execution plan cache per subtree fingerprint
+    plan_cache: RefCell<FxHashMap<u64, crate::planner::ExecPlan>>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -28,6 +30,7 @@ impl<'a> Interpreter<'a> {
             current_cell: None,
             subexpr_cache: RefCell::new(FxHashMap::default()),
             owned_range_cache: RefCell::new(FxHashMap::default()),
+            plan_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -42,6 +45,7 @@ impl<'a> Interpreter<'a> {
             current_cell: Some(cell),
             subexpr_cache: RefCell::new(FxHashMap::default()),
             owned_range_cache: RefCell::new(FxHashMap::default()),
+            plan_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -154,12 +158,212 @@ impl<'a> Interpreter<'a> {
     }
 
     fn evaluate_ast_uncached(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
+        // Plan-aware evaluation: build a plan for this node and execute accordingly.
+        // Provide the planner with a lightweight range-dimension probe and function lookup
+        // so it can select chunked reduction and arg-parallel strategies where appropriate.
+        let fp = node.fingerprint();
+        let root = if let Some(p) = self.plan_cache.borrow().get(&fp) {
+            p.root.clone()
+        } else {
+            let current_sheet = self.current_sheet.to_string();
+            let range_probe = |reference: &ReferenceType| -> Option<(u32, u32)> {
+                // Mirror Engine::resolve_range_storage bound normalization without materialising
+                use formualizer_core::parser::ReferenceType as RT;
+                match reference {
+                    RT::Range {
+                        sheet,
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                    } => {
+                        let sheet_name = sheet.as_deref().unwrap_or(&current_sheet);
+                        // Start with provided values, fill None from used-region or sheet bounds.
+                        let mut sr = *start_row;
+                        let mut sc = *start_col;
+                        let mut er = *end_row;
+                        let mut ec = *end_col;
+
+                        // Column-only: rows are None on both ends
+                        if sr.is_none() && er.is_none() {
+                            let scv = sc.unwrap_or(1);
+                            let ecv = ec.unwrap_or(scv);
+                            if let Some((min_r, max_r)) =
+                                self.context.used_rows_for_columns(sheet_name, scv, ecv)
+                            {
+                                sr = Some(min_r);
+                                er = Some(max_r);
+                            } else if let Some((max_rows, _)) =
+                                self.context.sheet_bounds(sheet_name)
+                            {
+                                sr = Some(1);
+                                er = Some(max_rows);
+                            }
+                        }
+
+                        // Row-only: cols are None on both ends
+                        if sc.is_none() && ec.is_none() {
+                            let srv = sr.unwrap_or(1);
+                            let erv = er.unwrap_or(srv);
+                            if let Some((min_c, max_c)) =
+                                self.context.used_cols_for_rows(sheet_name, srv, erv)
+                            {
+                                sc = Some(min_c);
+                                ec = Some(max_c);
+                            } else if let Some((_, max_cols)) =
+                                self.context.sheet_bounds(sheet_name)
+                            {
+                                sc = Some(1);
+                                ec = Some(max_cols);
+                            }
+                        }
+
+                        // Partially bounded (e.g., A1:A or A:A10)
+                        if sr.is_some() && er.is_none() {
+                            let scv = sc.unwrap_or(1);
+                            let ecv = ec.unwrap_or(scv);
+                            if let Some((_, max_r)) =
+                                self.context.used_rows_for_columns(sheet_name, scv, ecv)
+                            {
+                                er = Some(max_r);
+                            } else if let Some((max_rows, _)) =
+                                self.context.sheet_bounds(sheet_name)
+                            {
+                                er = Some(max_rows);
+                            }
+                        }
+                        if er.is_some() && sr.is_none() {
+                            let scv = sc.unwrap_or(1);
+                            let ecv = ec.unwrap_or(scv);
+                            if let Some((min_r, _)) =
+                                self.context.used_rows_for_columns(sheet_name, scv, ecv)
+                            {
+                                sr = Some(min_r);
+                            } else {
+                                sr = Some(1);
+                            }
+                        }
+                        if sc.is_some() && ec.is_none() {
+                            let srv = sr.unwrap_or(1);
+                            let erv = er.unwrap_or(srv);
+                            if let Some((_, max_c)) =
+                                self.context.used_cols_for_rows(sheet_name, srv, erv)
+                            {
+                                ec = Some(max_c);
+                            } else if let Some((_, max_cols)) =
+                                self.context.sheet_bounds(sheet_name)
+                            {
+                                ec = Some(max_cols);
+                            }
+                        }
+                        if ec.is_some() && sc.is_none() {
+                            let srv = sr.unwrap_or(1);
+                            let erv = er.unwrap_or(srv);
+                            if let Some((min_c, _)) =
+                                self.context.used_cols_for_rows(sheet_name, srv, erv)
+                            {
+                                sc = Some(min_c);
+                            } else {
+                                sc = Some(1);
+                            }
+                        }
+
+                        let sr = sr.unwrap_or(1);
+                        let sc = sc.unwrap_or(1);
+                        let er = er.unwrap_or(sr.saturating_sub(1));
+                        let ec = ec.unwrap_or(sc.saturating_sub(1));
+                        if er < sr || ec < sc {
+                            return Some((0, 0));
+                        }
+                        Some((er.saturating_sub(sr) + 1, ec.saturating_sub(sc) + 1))
+                    }
+                    RT::Cell { .. } => Some((1, 1)),
+                    _ => None,
+                }
+            };
+            let fn_lookup = |ns: &str, name: &str| self.context.get_function(ns, name);
+
+            let mut planner = crate::planner::Planner::new(crate::planner::PlanConfig::default())
+                .with_range_probe(&range_probe)
+                .with_function_lookup(&fn_lookup);
+            let plan = planner.plan(node);
+            self.plan_cache.borrow_mut().insert(fp, plan.clone());
+            self.plan_cache.borrow().get(&fp).unwrap().root.clone()
+        };
+        self.eval_with_plan(node, &root)
+    }
+
+    fn eval_with_plan(
+        &self,
+        node: &ASTNode,
+        plan_node: &crate::planner::PlanNode,
+    ) -> Result<LiteralValue, ExcelError> {
         match &node.node_type {
             ASTNodeType::Literal(v) => Ok(v.clone()),
             ASTNodeType::Reference { reference, .. } => self.eval_reference(reference),
-            ASTNodeType::UnaryOp { op, expr } => self.eval_unary(op, expr),
+            ASTNodeType::UnaryOp { op, expr } => {
+                // For now, reuse existing unary implementation (which recurses).
+                // In a later phase, we can map plan_node.children[0].
+                self.eval_unary(op, expr)
+            }
             ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(op, left, right),
-            ASTNodeType::Function { name, args } => self.eval_function(name, args),
+            ASTNodeType::Function { name, args } => {
+                let strategy = plan_node.strategy;
+                if let Some(fun) = self.context.get_function("", name) {
+                    use crate::function::FnCaps;
+                    use crate::planner::ExecStrategy;
+                    let caps = fun.caps();
+
+                    // Short-circuit or volatile: always sequential
+                    if caps.contains(FnCaps::SHORT_CIRCUIT) || caps.contains(FnCaps::VOLATILE) {
+                        return self.eval_function(name, args);
+                    }
+
+                    // Chunked reduce for windowed functions
+                    if matches!(strategy, ExecStrategy::ChunkedReduce)
+                        && caps.contains(FnCaps::WINDOWED)
+                    {
+                        let handles: Vec<ArgumentHandle> =
+                            args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
+                        let fctx = DefaultFunctionContext::new(self.context, self.current_cell);
+                        let mut w = crate::window_ctx::SimpleWindowCtx::new(
+                            &handles,
+                            &fctx,
+                            crate::window_ctx::WindowSpec::default(),
+                        );
+                        if let Some(res) = fun.eval_window(&mut w) {
+                            return res;
+                        }
+                        // Fallback to scalar/dispatch if window not implemented
+                        return self.eval_function(name, args);
+                    }
+
+                    // Arg-parallel: prewarm subexpressions and then dispatch
+                    if matches!(strategy, ExecStrategy::ArgParallel)
+                        && caps.contains(FnCaps::PARALLEL_ARGS)
+                    {
+                        // Sequential prewarm of subexpressions (safe without Sync bounds)
+                        for arg in args {
+                            match &arg.node_type {
+                                ASTNodeType::Reference { reference, .. } => {
+                                    let _ = self.resolve_range_storage_cached(
+                                        reference,
+                                        self.current_sheet,
+                                    );
+                                }
+                                _ => {
+                                    let _ = self.evaluate_ast(arg);
+                                }
+                            }
+                        }
+                        return self.eval_function(name, args);
+                    }
+
+                    // Default path
+                    return self.eval_function(name, args);
+                }
+                self.eval_function(name, args)
+            }
             ASTNodeType::Array(rows) => self.eval_array_literal(rows),
         }
     }

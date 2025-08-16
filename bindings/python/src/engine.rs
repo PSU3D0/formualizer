@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 use crate::errors::excel_eval_pyerr;
 use crate::resolver::PyResolver;
 use crate::value::PyLiteralValue;
-use crate::workbook::{PyCell, PyWorkbook};
+use crate::workbook::{CellData, PyCell, PyWorkbook};
 
 /// Python wrapper for the evaluation engine
 #[gen_stub_pyclass]
@@ -87,6 +87,114 @@ impl PyEvaluationConfig {
             self.inner.range_expansion_limit,
             self.inner.workbook_seed
         )
+    }
+}
+
+/// Information about a single evaluation layer
+#[gen_stub_pyclass]
+#[pyclass(name = "LayerInfo")]
+#[derive(Clone)]
+pub struct PyLayerInfo {
+    #[pyo3(get)]
+    pub vertex_count: usize,
+    #[pyo3(get)]
+    pub parallel_eligible: bool,
+    #[pyo3(get)]
+    pub sample_cells: Vec<String>,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyLayerInfo {
+    fn __repr__(&self) -> String {
+        format!(
+            "LayerInfo(vertices={}, parallel={}, samples={:?})",
+            self.vertex_count, self.parallel_eligible, self.sample_cells
+        )
+    }
+}
+
+/// Evaluation plan showing how cells would be evaluated
+#[gen_stub_pyclass]
+#[pyclass(name = "EvaluationPlan")]
+pub struct PyEvaluationPlan {
+    #[pyo3(get)]
+    pub total_vertices_to_evaluate: usize,
+    #[pyo3(get)]
+    pub layers: Vec<PyLayerInfo>,
+    #[pyo3(get)]
+    pub cycles_detected: usize,
+    #[pyo3(get)]
+    pub dirty_count: usize,
+    #[pyo3(get)]
+    pub volatile_count: usize,
+    #[pyo3(get)]
+    pub parallel_enabled: bool,
+    #[pyo3(get)]
+    pub estimated_parallel_layers: usize,
+    #[pyo3(get)]
+    pub target_cells: Vec<String>,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyEvaluationPlan {
+    fn __repr__(&self) -> String {
+        format!(
+            "EvaluationPlan(vertices={}, layers={}, parallel_layers={}, cycles={}, targets={})",
+            self.total_vertices_to_evaluate,
+            self.layers.len(),
+            self.estimated_parallel_layers,
+            self.cycles_detected,
+            self.target_cells.len()
+        )
+    }
+
+    fn __str__(&self) -> String {
+        let mut s = format!(
+            "Evaluation Plan for {} target(s):\n",
+            self.target_cells.len()
+        );
+        s.push_str(&format!(
+            "  Total vertices to evaluate: {}\n",
+            self.total_vertices_to_evaluate
+        ));
+        s.push_str(&format!("  Dirty vertices: {}\n", self.dirty_count));
+        s.push_str(&format!("  Volatile vertices: {}\n", self.volatile_count));
+        s.push_str(&format!("  Cycles detected: {}\n", self.cycles_detected));
+        s.push_str(&format!(
+            "  Parallel evaluation: {}\n",
+            if self.parallel_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ));
+        s.push_str(&format!(
+            "  Layers: {} (parallel: {})\n",
+            self.layers.len(),
+            self.estimated_parallel_layers
+        ));
+
+        for (i, layer) in self.layers.iter().enumerate() {
+            s.push_str(&format!(
+                "    Layer {}: {} vertices{}\n",
+                i + 1,
+                layer.vertex_count,
+                if layer.parallel_eligible {
+                    " (parallel)"
+                } else {
+                    ""
+                }
+            ));
+            if !layer.sample_cells.is_empty() {
+                s.push_str(&format!(
+                    "      Samples: {}\n",
+                    layer.sample_cells.join(", ")
+                ));
+            }
+        }
+        s
     }
 }
 
@@ -244,6 +352,16 @@ impl PyEngine {
         })
     }
 
+    #[getter]
+    pub fn config(&self) -> PyResult<PyEvaluationConfig> {
+        let engine = self.inner.read().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
+        })?;
+        Ok(PyEvaluationConfig {
+            inner: engine.config.clone(),
+        })
+    }
+
     /// Create an engine by streaming from a file path using a specific backend.
     /// backend: "calamine" for now. strategy is backend-specific (optional).
     #[classmethod]
@@ -285,7 +403,7 @@ impl PyEngine {
         })
     }
 
-    /// Set a single cell value after load.
+    /// Set a single cell value after load (clears any formula).
     pub fn set_value(
         &self,
         sheet: &str,
@@ -297,15 +415,37 @@ impl PyEngine {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
         })?;
         engine
-            .set_cell_value(sheet, row, col, value.inner)
+            .set_cell_value(sheet, row, col, value.inner.clone())
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("set_value: {e}"))
             })?;
+
+        // Update workbook if present to keep it in sync
+        if let Some(ref wb) = self.workbook {
+            wb.set_cell_data(
+                sheet,
+                row,
+                col,
+                CellData {
+                    value: Some(value.inner),
+                    formula: None, // Clear any formula when setting value
+                },
+            )?;
+        }
+
         Ok(())
     }
 
     /// Set a single cell formula after load.
+    /// Formula must start with '=' sign.
     pub fn set_formula(&self, sheet: &str, row: u32, col: u32, formula: &str) -> PyResult<()> {
+        // Validate formula starts with '='
+        if !formula.starts_with('=') {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Formula must start with '=' sign",
+            ));
+        }
+
         let mut engine = self.inner.write().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
         })?;
@@ -323,6 +463,20 @@ impl PyEngine {
         engine.set_cell_formula(sheet, row, col, ast).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("set_formula: {e}"))
         })?;
+
+        // Update workbook if present to keep it in sync
+        if let Some(ref wb) = self.workbook {
+            wb.set_cell_data(
+                sheet,
+                row,
+                col,
+                CellData {
+                    value: None,
+                    formula: Some(formula.to_string()),
+                },
+            )?;
+        }
+
         Ok(())
     }
 
@@ -335,7 +489,7 @@ impl PyEngine {
         let value = PyLiteralValue {
             inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
         };
-        let formula = ast.map(|a| a.to_string());
+        let formula = ast.map(|a| format!("={}", formualizer_core::pretty::pretty_print(&a)));
         Ok(PyCell { value, formula })
     }
 
@@ -356,43 +510,55 @@ impl PyEngine {
     }
 
     /// Evaluate all cells in the workbook
-    pub fn evaluate_all(&self) -> PyResult<PyEvaluationResult> {
-        let mut engine = self.inner.write().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
-            ))
-        })?;
+    pub fn evaluate_all(&self, py: Python) -> PyResult<PyEvaluationResult> {
+        // Drop GIL while Rust runs parallel work
+        py.allow_threads(|| {
+            let mut engine = self.inner.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to acquire engine lock: {}",
+                    e
+                ))
+            })?;
 
-        let result = engine.evaluate_all().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Evaluation failed: {:?}", e))
-        })?;
-        Ok(PyEvaluationResult {
-            computed_vertices: result.computed_vertices as u64,
-            cycle_errors: result.cycle_errors as u32,
-            elapsed_ms: result.elapsed.as_millis() as u64,
+            let result = engine.evaluate_all().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Evaluation failed: {:?}",
+                    e
+                ))
+            })?;
+            Ok(PyEvaluationResult {
+                computed_vertices: result.computed_vertices as u64,
+                cycle_errors: result.cycle_errors as u32,
+                elapsed_ms: result.elapsed.as_millis() as u64,
+            })
         })
     }
 
     /// Evaluate a specific cell and return its value
-    pub fn evaluate_cell(&self, sheet: &str, row: u32, col: u32) -> PyResult<PyLiteralValue> {
+    pub fn evaluate_cell(
+        &self,
+        py: Python,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> PyResult<PyLiteralValue> {
         if row == 0 || col == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Row/col are 1-based",
             ));
         }
 
-        let mut engine = self.inner.write().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
-            ))
+        let value = py.allow_threads(|| {
+            let mut engine = self.inner.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to acquire engine lock: {}",
+                    e
+                ))
+            })?;
+            engine
+                .evaluate_cell(sheet, row, col)
+                .map_err(|e| excel_eval_pyerr(Some(sheet), Some(row), Some(col), &e))
         })?;
-
-        // Engine already uses 1-based indexing
-        let value = engine
-            .evaluate_cell(sheet, row, col)
-            .map_err(|e| excel_eval_pyerr(Some(sheet), Some(row), Some(col), &e))?;
 
         use formualizer_common::{ErrorContext, LiteralValue};
         let inner = match value {
@@ -434,15 +600,15 @@ impl PyEngine {
         row: u32,
         col: u32,
     ) -> PyResult<PyObject> {
-        let v = self.evaluate_cell(sheet, row, col)?; // already performs engine call and basic checks
-                                                      // If it is an error, raise a rich exception
+        let v = self.evaluate_cell(py, sheet, row, col)?; // already performs engine call and basic checks
+                                                          // If it is an error, raise a rich exception
         if let formualizer_common::LiteralValue::Error(ref e) = v.inner {
             return Err(excel_eval_pyerr(Some(sheet), Some(row), Some(col), e));
         }
         v.to_python(py)
     }
 
-    /// Get an evaluated cell (value + formula)
+    /// Get a cell without evaluation (value from last evaluation + formula)
     pub fn get_cell(&self, sheet: &str, row: u32, col: u32) -> PyResult<PyCell> {
         if row == 0 || col == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -450,16 +616,77 @@ impl PyEngine {
             ));
         }
 
-        // Evaluate the cell
-        let value = self.evaluate_cell(sheet, row, col)?;
+        let engine = self.inner.read().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
+        })?;
 
-        // Get the formula if it exists from the workbook
-        let formula = if let Some(ref wb) = self.workbook {
-            let cell_data = wb.get_cell_data(sheet, row, col)?;
-            cell_data.and_then(|d| d.formula)
-        } else {
-            None
+        // Get formula and value from engine (without evaluation)
+        let (ast, value) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
+        let value = PyLiteralValue {
+            inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
         };
+        let formula = ast.map(|a| format!("={}", formualizer_core::pretty::pretty_print(&a)));
+
+        Ok(PyCell { value, formula })
+    }
+
+    /// Get only the formula for a cell (without evaluation)
+    pub fn get_formula(&self, sheet: &str, row: u32, col: u32) -> PyResult<Option<String>> {
+        if row == 0 || col == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Row/col are 1-based",
+            ));
+        }
+
+        let engine = self.inner.read().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
+        })?;
+
+        let (ast, _) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
+        Ok(ast.map(|a| format!("={}", formualizer_core::pretty::pretty_print(&a))))
+    }
+
+    /// Get only the value for a cell (without evaluation, returns last computed value)
+    pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> PyResult<PyLiteralValue> {
+        if row == 0 || col == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Row/col are 1-based",
+            ));
+        }
+
+        let engine = self.inner.read().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
+        })?;
+
+        let (_, value) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
+        Ok(PyLiteralValue {
+            inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
+        })
+    }
+
+    /// Get an evaluated cell (triggers evaluation + formula)
+    pub fn get_cell_evaluated(
+        &self,
+        py: Python,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> PyResult<PyCell> {
+        if row == 0 || col == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Row/col are 1-based",
+            ));
+        }
+
+        // Evaluate the cell
+        let value = self.evaluate_cell(py, sheet, row, col)?;
+
+        // Get the formula from the engine
+        let engine = self.inner.read().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
+        })?;
+        let (ast, _) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
+        let formula = ast.map(|a| format!("={}", formualizer_core::pretty::pretty_print(&a)));
 
         Ok(PyCell { value, formula })
     }
@@ -467,7 +694,7 @@ impl PyEngine {
     /// Evaluate multiple cells and return their values in the same order
     pub fn evaluate_cells(
         &self,
-        _py: Python,
+        py: Python,
         targets: Vec<(String, u32, u32)>,
     ) -> PyResult<Vec<PyLiteralValue>> {
         // Validate that all are 1-based
@@ -479,22 +706,22 @@ impl PyEngine {
             }
         }
 
-        let mut engine = self.inner.write().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
-            ))
+        let values = py.allow_threads(|| {
+            let mut engine = self.inner.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to acquire engine lock: {}",
+                    e
+                ))
+            })?;
+            // Convert targets to the format expected by evaluate_cells
+            let target_refs: Vec<(&str, u32, u32)> = targets
+                .iter()
+                .map(|(s, r, c)| (s.as_str(), *r, *c))
+                .collect();
+            engine
+                .evaluate_cells(&target_refs)
+                .map_err(|e| excel_eval_pyerr(None, None, None, &e))
         })?;
-
-        // Convert targets to the format expected by evaluate_cells
-        let target_refs: Vec<(&str, u32, u32)> = targets
-            .iter()
-            .map(|(s, r, c)| (s.as_str(), *r, *c))
-            .collect();
-
-        let values = engine
-            .evaluate_cells(&target_refs)
-            .map_err(|e| excel_eval_pyerr(None, None, None, &e))?;
 
         Ok(values
             .into_iter()
@@ -502,6 +729,61 @@ impl PyEngine {
                 inner: v.unwrap_or(formualizer_common::LiteralValue::Empty),
             })
             .collect())
+    }
+
+    /// Get the evaluation plan for cells without actually evaluating them
+    pub fn get_eval_plan(
+        &self,
+        _py: Python,
+        targets: Vec<(String, u32, u32)>,
+    ) -> PyResult<PyEvaluationPlan> {
+        // Validate that all are 1-based
+        for (_, row, col) in &targets {
+            if *row == 0 || *col == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Row/col are 1-based",
+                ));
+            }
+        }
+
+        let engine = self.inner.read().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to acquire engine lock: {}",
+                e
+            ))
+        })?;
+
+        // Convert targets to the format expected by get_eval_plan
+        let target_refs: Vec<(&str, u32, u32)> = targets
+            .iter()
+            .map(|(s, r, c)| (s.as_str(), *r, *c))
+            .collect();
+
+        let plan = engine
+            .get_eval_plan(&target_refs)
+            .map_err(|e| excel_eval_pyerr(None, None, None, &e))?;
+
+        // Convert Rust plan to Python plan
+        let py_layers: Vec<PyLayerInfo> = plan
+            .layers
+            .into_iter()
+            .map(|layer| PyLayerInfo {
+                vertex_count: layer.vertex_count,
+                parallel_eligible: layer.parallel_eligible,
+                sample_cells: layer.sample_cells,
+            })
+            .collect();
+
+        Ok(PyEvaluationPlan {
+            total_vertices_to_evaluate: plan.total_vertices_to_evaluate,
+            layers: py_layers,
+            cycles_detected: plan.cycles_detected,
+            dirty_count: plan.dirty_count,
+            volatile_count: plan.volatile_count,
+            parallel_enabled: plan.parallel_enabled,
+            estimated_parallel_layers: plan.estimated_parallel_layers,
+            target_cells: plan.target_cells,
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -514,6 +796,8 @@ impl PyEngine {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEvaluationConfig>()?;
     m.add_class::<PyEvaluationResult>()?;
+    m.add_class::<PyLayerInfo>()?;
+    m.add_class::<PyEvaluationPlan>()?;
     m.add_class::<PyEngine>()?;
     Ok(())
 }
