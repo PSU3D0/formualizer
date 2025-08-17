@@ -10,6 +10,9 @@ pub mod stats; // Phase 6 statistical basics
 pub mod text; // Phase 2 core text functions
 mod utils;
 
+#[cfg(test)]
+mod tests;
+
 pub fn load_builtins() {
     datetime::register_builtins();
     logical::register_builtins();

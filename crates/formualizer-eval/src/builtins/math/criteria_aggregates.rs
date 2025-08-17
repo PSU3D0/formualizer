@@ -331,6 +331,8 @@ impl Function for SumIfsFn {
         }
         // Pre-parse static criteria (non-range or 1x1 range) predicates
         let mut static_preds: Vec<Option<crate::args::CriteriaPredicate>> = Vec::new();
+        let mut criteria_indices: Vec<usize> = Vec::new(); // Track original positions
+
         for i in (2..args.len()).step_by(2) {
             let is_static = match args[i].range_storage() {
                 Ok(rs) => rs.dims() == (1, 1),
@@ -354,22 +356,73 @@ impl Function for SumIfsFn {
             } else {
                 static_preds.push(None);
             }
+            criteria_indices.push((i - 2) / 2); // Map to criteria pair index
         }
+
+        // Sort criteria indices by selectivity (more selective first)
+        // Priority: Eq/Ne > anchored wildcards > numeric ranges > general wildcards
+        criteria_indices.sort_by_key(|&idx| {
+            match &static_preds[idx] {
+                Some(pred) => {
+                    use crate::args::CriteriaPredicate as P;
+                    match pred {
+                        P::Eq(_) | P::Ne(_) => 0, // Most selective - exact match
+                        P::TextLike { pattern, .. } => {
+                            // Check if it's an anchored pattern
+                            if !pattern.contains('?')
+                                && !pattern.contains("~*")
+                                && !pattern.contains("~?")
+                            {
+                                if pattern.ends_with('*')
+                                    && !pattern[..pattern.len() - 1].contains('*')
+                                {
+                                    1 // Starts-with pattern
+                                } else if pattern.starts_with('*') && !pattern[1..].contains('*') {
+                                    1 // Ends-with pattern
+                                } else if pattern.starts_with('*')
+                                    && pattern.ends_with('*')
+                                    && !pattern[1..pattern.len() - 1].contains('*')
+                                {
+                                    2 // Contains pattern
+                                } else if !pattern.contains('*') {
+                                    0 // Exact match (no wildcards)
+                                } else {
+                                    4 // Complex pattern
+                                }
+                            } else {
+                                4 // Complex pattern with ? or escapes
+                            }
+                        }
+                        P::Gt(_) | P::Ge(_) | P::Lt(_) | P::Le(_) => 3, // Numeric ranges
+                        P::IsBlank | P::IsNumber | P::IsText | P::IsLogical => 5, // Type tests
+                    }
+                }
+                None => 6, // Dynamic criteria - evaluate last
+            }
+        });
         // Parallel-aware reduction using window_ctx.reduce_windows
+        let criteria_indices_ref = &criteria_indices;
+        let static_preds_ref = &static_preds;
         let total_res = w.reduce_windows(
             || 0.0f64,
             |windows, acc| -> Result<(), ExcelError> {
                 // windows: per-arg vectors of windowed cells; use the last cell by convention
                 let sum_cell = windows[0].last().unwrap_or(&LiteralValue::Empty);
-                let mut sp_idx = 0usize;
+
+                // Evaluate criteria in sorted order for early exit
                 let mut ok = true;
-                let mut cell_index = 1usize;
-                while cell_index < windows.len() {
-                    let range_cell = windows[cell_index].last().unwrap_or(&LiteralValue::Empty);
-                    let crit_cell = windows[cell_index + 1]
-                        .last()
-                        .unwrap_or(&LiteralValue::Empty);
-                    let pred_opt = &static_preds[sp_idx];
+                for &idx in criteria_indices_ref.iter() {
+                    let range_index = 1 + idx * 2;
+                    let crit_index = range_index + 1;
+
+                    if range_index >= windows.len() || crit_index >= windows.len() {
+                        break;
+                    }
+
+                    let range_cell = windows[range_index].last().unwrap_or(&LiteralValue::Empty);
+                    let crit_cell = windows[crit_index].last().unwrap_or(&LiteralValue::Empty);
+                    let pred_opt = &static_preds_ref[idx];
+
                     let matches = if let Some(pred) = pred_opt {
                         criteria_match(pred, range_cell)
                     } else {
@@ -378,13 +431,13 @@ impl Function for SumIfsFn {
                             Err(e) => return Err(e),
                         }
                     };
+
                     if !matches {
                         ok = false;
-                        break;
+                        break; // Early exit on first non-match
                     }
-                    sp_idx += 1;
-                    cell_index += 2;
                 }
+
                 if ok {
                     if let Ok(n) = coerce_num(sum_cell) {
                         *acc += n;

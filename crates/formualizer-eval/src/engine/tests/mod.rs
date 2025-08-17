@@ -44,3 +44,4 @@ mod spill_edges;
 
 mod region_lock;
 mod whole_column_sumifs;
+mod window_width1_fastpath;

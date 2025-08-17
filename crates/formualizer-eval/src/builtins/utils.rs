@@ -140,6 +140,28 @@ fn text_like_match(pattern: &str, case_insensitive: bool, v: &LiteralValue) -> b
     } else {
         (pattern.to_string(), s)
     };
+
+    // Fast-path for anchored patterns without '?' or escape sequences
+    if !pat.contains('?') && !pat.contains("~*") && !pat.contains("~?") {
+        // Pattern like "text*" - starts with
+        if pat.ends_with('*') && !pat[..pat.len() - 1].contains('*') {
+            return text.starts_with(&pat[..pat.len() - 1]);
+        }
+        // Pattern like "*text" - ends with
+        if pat.starts_with('*') && !pat[1..].contains('*') {
+            return text.ends_with(&pat[1..]);
+        }
+        // Pattern like "*text*" - contains
+        if pat.starts_with('*') && pat.ends_with('*') && !pat[1..pat.len() - 1].contains('*') {
+            return text.contains(&pat[1..pat.len() - 1]);
+        }
+        // Pattern with no wildcards - exact match
+        if !pat.contains('*') {
+            return text == pat;
+        }
+    }
+
+    // Fall back to general wildcard matching for complex patterns
     wildcard_match(&pat, &text)
 }
 

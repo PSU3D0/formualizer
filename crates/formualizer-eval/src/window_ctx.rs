@@ -579,11 +579,15 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
         let eff_cols = col_end.saturating_sub(col_start);
         let eff_total = eff_rows * eff_cols;
 
-    // Heuristics for parallelism
-    // Use context chunk_hint to decide when to switch to parallel; default (256x256)/4 = 16,384
-    let hint = self.fctx.chunk_hint().unwrap_or(65_536);
-    let min_cells: usize = if cfg!(test) { 2_000 } else { (hint / 4).max(8_192) };
-    let can_parallel = self.fctx.thread_pool().is_some() && eff_total >= min_cells;
+        // Heuristics for parallelism
+        // Use context chunk_hint to decide when to switch to parallel; default (256x256)/4 = 16,384
+        let hint = self.fctx.chunk_hint().unwrap_or(65_536);
+        let min_cells: usize = if cfg!(test) {
+            2_000
+        } else {
+            (hint / 4).max(8_192)
+        };
+        let can_parallel = self.fctx.thread_pool().is_some() && eff_total >= min_cells;
 
         // Local function to process a range of the major axis
         let flats_ref = &flats;
@@ -595,35 +599,66 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                 WindowAxis::Rows => {
                     let step = spec_copy.step.max(1);
                     let width = spec_copy.width.max(1);
-                    for r in (row_start + sr..row_start + er).step_by(step) {
-                        for c in col_start..col_end {
-                            // Build window vectors per argument of length width along rows
-                            let mut windows: Vec<Vec<LiteralValue>> =
-                                Vec::with_capacity(flats_ref.len());
-                            let mut skip = false;
-                            for flat in flats_ref.iter() {
-                                let mut win: Vec<LiteralValue> = Vec::with_capacity(width);
-                                for k in 0..width {
-                                    let rr = r as isize + k as isize;
-                                    match get_idx(rr, c as isize) {
-                                        Some(idx) => win.push(flat[idx].clone()),
-                                        None => {
-                                            if spec_copy.padding == PaddingPolicy::None {
-                                                skip = true;
-                                                break;
-                                            } else {
-                                                win.push(LiteralValue::Empty);
+
+                    // Fast-path for width==1: avoid per-row Vec allocations
+                    if width == 1 {
+                        for r in (row_start + sr..row_start + er).step_by(step) {
+                            for c in col_start..col_end {
+                                match get_idx(r as isize, c as isize) {
+                                    Some(idx) => {
+                                        // Create single-element windows without allocating new Vecs
+                                        let mut windows: Vec<Vec<LiteralValue>> =
+                                            Vec::with_capacity(flats_ref.len());
+                                        for flat in flats_ref.iter() {
+                                            windows.push(vec![flat[idx].clone()]);
+                                        }
+                                        fold(&windows[..], &mut acc)?;
+                                    }
+                                    None => {
+                                        if spec_copy.padding != PaddingPolicy::None {
+                                            let mut windows: Vec<Vec<LiteralValue>> =
+                                                Vec::with_capacity(flats_ref.len());
+                                            for _ in flats_ref.iter() {
+                                                windows.push(vec![LiteralValue::Empty]);
                                             }
+                                            fold(&windows[..], &mut acc)?;
                                         }
                                     }
                                 }
-                                if skip {
-                                    break;
-                                }
-                                windows.push(win);
                             }
-                            if !skip {
-                                fold(&windows[..], &mut acc)?;
+                        }
+                    } else {
+                        // Original multi-width path
+                        for r in (row_start + sr..row_start + er).step_by(step) {
+                            for c in col_start..col_end {
+                                // Build window vectors per argument of length width along rows
+                                let mut windows: Vec<Vec<LiteralValue>> =
+                                    Vec::with_capacity(flats_ref.len());
+                                let mut skip = false;
+                                for flat in flats_ref.iter() {
+                                    let mut win: Vec<LiteralValue> = Vec::with_capacity(width);
+                                    for k in 0..width {
+                                        let rr = r as isize + k as isize;
+                                        match get_idx(rr, c as isize) {
+                                            Some(idx) => win.push(flat[idx].clone()),
+                                            None => {
+                                                if spec_copy.padding == PaddingPolicy::None {
+                                                    skip = true;
+                                                    break;
+                                                } else {
+                                                    win.push(LiteralValue::Empty);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if skip {
+                                        break;
+                                    }
+                                    windows.push(win);
+                                }
+                                if !skip {
+                                    fold(&windows[..], &mut acc)?;
+                                }
                             }
                         }
                     }
@@ -631,34 +666,65 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                 WindowAxis::Cols => {
                     let step = spec_copy.step.max(1);
                     let width = spec_copy.width.max(1);
-                    for c in (col_start + sr..col_start + er).step_by(step) {
-                        for r in row_start..row_end {
-                            let mut windows: Vec<Vec<LiteralValue>> =
-                                Vec::with_capacity(flats_ref.len());
-                            let mut skip = false;
-                            for flat in flats_ref.iter() {
-                                let mut win: Vec<LiteralValue> = Vec::with_capacity(width);
-                                for k in 0..width {
-                                    let cc = c as isize + k as isize;
-                                    match get_idx(r as isize, cc) {
-                                        Some(idx) => win.push(flat[idx].clone()),
-                                        None => {
-                                            if spec_copy.padding == PaddingPolicy::None {
-                                                skip = true;
-                                                break;
-                                            } else {
-                                                win.push(LiteralValue::Empty);
+
+                    // Fast-path for width==1: avoid per-row Vec allocations
+                    if width == 1 {
+                        for c in (col_start + sr..col_start + er).step_by(step) {
+                            for r in row_start..row_end {
+                                match get_idx(r as isize, c as isize) {
+                                    Some(idx) => {
+                                        // Create single-element windows without allocating new Vecs
+                                        let mut windows: Vec<Vec<LiteralValue>> =
+                                            Vec::with_capacity(flats_ref.len());
+                                        for flat in flats_ref.iter() {
+                                            windows.push(vec![flat[idx].clone()]);
+                                        }
+                                        fold(&windows[..], &mut acc)?;
+                                    }
+                                    None => {
+                                        if spec_copy.padding != PaddingPolicy::None {
+                                            let mut windows: Vec<Vec<LiteralValue>> =
+                                                Vec::with_capacity(flats_ref.len());
+                                            for _ in flats_ref.iter() {
+                                                windows.push(vec![LiteralValue::Empty]);
                                             }
+                                            fold(&windows[..], &mut acc)?;
                                         }
                                     }
                                 }
-                                if skip {
-                                    break;
-                                }
-                                windows.push(win);
                             }
-                            if !skip {
-                                fold(&windows[..], &mut acc)?;
+                        }
+                    } else {
+                        // Original multi-width path
+                        for c in (col_start + sr..col_start + er).step_by(step) {
+                            for r in row_start..row_end {
+                                let mut windows: Vec<Vec<LiteralValue>> =
+                                    Vec::with_capacity(flats_ref.len());
+                                let mut skip = false;
+                                for flat in flats_ref.iter() {
+                                    let mut win: Vec<LiteralValue> = Vec::with_capacity(width);
+                                    for k in 0..width {
+                                        let cc = c as isize + k as isize;
+                                        match get_idx(r as isize, cc) {
+                                            Some(idx) => win.push(flat[idx].clone()),
+                                            None => {
+                                                if spec_copy.padding == PaddingPolicy::None {
+                                                    skip = true;
+                                                    break;
+                                                } else {
+                                                    win.push(LiteralValue::Empty);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if skip {
+                                        break;
+                                    }
+                                    windows.push(win);
+                                }
+                                if !skip {
+                                    fold(&windows[..], &mut acc)?;
+                                }
                             }
                         }
                     }
