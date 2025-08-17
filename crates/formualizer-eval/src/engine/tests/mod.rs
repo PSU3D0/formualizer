@@ -45,3 +45,13 @@ mod spill_edges;
 mod region_lock;
 mod whole_column_sumifs;
 mod window_width1_fastpath;
+
+// Phase 1 tests
+mod config_defaults;
+mod context_default_noops;
+mod pass_planner_noop;
+
+// Phase 2 tests
+mod pass_warmup_flatten;
+// mod sumifs_row_zip_parity;  // Requires more complex setup, will add later
+mod pass_lifetime;

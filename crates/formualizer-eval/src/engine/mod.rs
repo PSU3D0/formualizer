@@ -28,6 +28,15 @@ pub mod vertex_store;
 // Phase 1: Arena modules
 pub mod arena;
 
+// Phase 1: Warmup modules
+pub mod cache;
+pub mod masks;
+pub mod metrics;
+pub mod pass_planner;
+pub mod reference_fingerprint;
+pub mod tuning;
+pub mod warmup;
+
 #[cfg(test)]
 mod tests;
 
@@ -117,6 +126,9 @@ pub struct EvalConfig {
     pub pk_reject_cycle_edges: bool,
     /// Sheet index build strategy for bulk loads
     pub sheet_index_mode: SheetIndexMode,
+
+    /// Warmup configuration for global pass planning (Phase 1)
+    pub warmup: tuning::WarmupConfig,
 }
 
 impl Default for EvalConfig {
@@ -148,6 +160,7 @@ impl Default for EvalConfig {
             max_layer_width: None,
             pk_reject_cycle_edges: false,
             sheet_index_mode: SheetIndexMode::Eager,
+            warmup: tuning::WarmupConfig::default(),
         }
     }
 }

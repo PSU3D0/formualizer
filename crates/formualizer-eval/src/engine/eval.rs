@@ -1,6 +1,8 @@
 use crate::SheetId;
+use crate::engine::pass_planner::PassPlanner;
 use crate::engine::range_stream::{RangeStorage, RangeStream};
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
+use crate::engine::warmup::{PassContext, WarmupExecutor};
 use crate::engine::{DependencyGraph, EvalConfig, Scheduler, VertexId, VertexKind};
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord};
@@ -20,6 +22,8 @@ pub struct Engine<R> {
     pub recalc_epoch: u64,
     snapshot_id: std::sync::atomic::AtomicU64,
     spill_mgr: ShimSpillManager,
+    /// Optional pass-scoped warmup context (flats/masks) available during evaluation
+    warmup_pass_ctx: Option<PassContext>,
 }
 
 #[derive(Debug)]
@@ -81,6 +85,7 @@ where
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             spill_mgr: ShimSpillManager::default(),
+            warmup_pass_ctx: None,
         }
     }
 
@@ -99,6 +104,7 @@ where
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             spill_mgr: ShimSpillManager::default(),
+            warmup_pass_ctx: None,
         }
     }
 
@@ -395,6 +401,32 @@ where
             });
         }
 
+        // Phase 1: Global warmup planning (no-op by default)
+        if self.config.warmup.warmup_enabled {
+            let mut pass_ctx = PassContext::new(&self.config.warmup);
+            let planner = PassPlanner::new(self.config.warmup.clone());
+
+            // Collect ASTs from target vertices for analysis
+            let mut target_asts = Vec::new();
+            for &vid in &target_vertex_ids {
+                if let Some(ast) = self.graph.get_formula(vid) {
+                    target_asts.push(ast);
+                }
+            }
+
+            // Analyze and plan warmup
+            let target_refs: Vec<&ASTNode> = target_asts.iter().collect();
+            let plan = planner.analyze_targets(&target_refs);
+
+            // Execute warmup
+            let executor = WarmupExecutor::new(self.config.warmup.clone());
+            let fctx = crate::traits::DefaultFunctionContext::new(self, None);
+            let _ = executor.execute(&plan, &mut pass_ctx, &fctx);
+
+            // Store pass context for use during evaluation (read-only)
+            self.warmup_pass_ctx = Some(pass_ctx);
+        }
+
         // Find dirty precedents that need evaluation
         let precedents_to_eval = self.find_dirty_precedents(&target_vertex_ids);
 
@@ -433,6 +465,9 @@ where
                 computed_vertices += self.evaluate_layer_sequential(layer)?;
             }
         }
+
+        // Clear warmup context at end of evaluation
+        self.warmup_pass_ctx = None;
 
         // Clear dirty flags for evaluated vertices
         self.graph.clear_dirty_flags(&precedents_to_eval);
@@ -1375,6 +1410,18 @@ where
             tables: false,
             async_stream: false,
         }
+    }
+
+    fn get_or_flatten(
+        &self,
+        reference: &ReferenceType,
+        _prefer_numeric: bool,
+    ) -> Option<crate::engine::cache::FlatView> {
+        // Read-only access to pass-scoped flat cache built during warmup
+        let ctx = self.warmup_pass_ctx.as_ref()?;
+        use crate::engine::reference_fingerprint::ReferenceFingerprint;
+        let key = reference.fingerprint();
+        ctx.flat_cache.get(&key)
     }
 
     fn resolve_range_storage<'c>(

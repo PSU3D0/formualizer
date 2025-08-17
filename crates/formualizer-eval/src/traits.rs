@@ -652,6 +652,16 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
     fn backend_caps(&self) -> BackendCaps {
         BackendCaps::default()
     }
+
+    /// Optional: Retrieve a pre-flattened view for a reference if available (Phase 2).
+    /// Default: None (no warmup/cache available through this context).
+    fn get_or_flatten(
+        &self,
+        _reference: &ReferenceType,
+        _prefer_numeric: bool,
+    ) -> Option<crate::engine::cache::FlatView> {
+        None
+    }
 }
 
 /// Minimal backend capability descriptor for planning and adapters.
@@ -700,6 +710,22 @@ pub trait FunctionContext {
         reference: &ReferenceType,
         current_sheet: &str,
     ) -> Result<RangeStorage<'c>, ExcelError>;
+
+    /// Get a pre-flattened view of a range if available (Phase 2)
+    /// Returns None if not warmed up or not available
+    fn get_or_flatten(
+        &self,
+        _reference: &ReferenceType,
+        _prefer_numeric: bool,
+    ) -> Option<crate::engine::cache::FlatView> {
+        None
+    }
+
+    /// Get a pre-built criteria mask if available (Phase 3)
+    /// Returns None if not warmed up or not available
+    fn get_or_build_mask(&self, _key: &str) -> Option<crate::engine::masks::DenseMask> {
+        None
+    }
 
     /// Deterministic RNG seeded for the current evaluation site and function salt.
     fn rng_for_current(&self, fn_salt: u64) -> rand::rngs::SmallRng {
@@ -766,5 +792,13 @@ impl<'a> FunctionContext for DefaultFunctionContext<'a> {
         current_sheet: &str,
     ) -> Result<RangeStorage<'c>, ExcelError> {
         self.base.resolve_range_storage(reference, current_sheet)
+    }
+
+    fn get_or_flatten(
+        &self,
+        reference: &ReferenceType,
+        prefer_numeric: bool,
+    ) -> Option<crate::engine::cache::FlatView> {
+        self.base.get_or_flatten(reference, prefer_numeric)
     }
 }

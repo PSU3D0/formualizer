@@ -359,6 +359,134 @@ impl Function for SumIfsFn {
             criteria_indices.push((i - 2) / 2); // Map to criteria pair index
         }
 
+        // Attempt Phase 2 row-zip fast path using pre-flattened ranges from FunctionContext.
+        // Preconditions: sum_range is Hx1; each criteria range is 1x1 (scalar) or Hx1; criteria values are static.
+        // If any precondition fails or required flats are absent, fall back to windowed path below.
+        if let Ok((sum_rows, sum_cols)) = args[0].range_storage().map(|rs| rs.dims()) {
+            if sum_cols == 1 && sum_rows > 0 {
+                if let Ok(sum_ref) = args[0].as_reference_or_eval() {
+                    if let Some(sum_flat) = w.fctx.get_or_flatten(&sum_ref, true) {
+                        // Build sources for criteria ranges
+                        enum Source {
+                            Flat(crate::engine::cache::FlatView),
+                            Scalar(formualizer_common::LiteralValue),
+                        }
+                        let mut sources: Vec<Source> = Vec::new();
+                        let mut ok = true;
+                        for i in (2..args.len()).step_by(2) {
+                            // criteria range at i, criteria value at i+1
+                            if static_preds[(i - 2) / 2].is_none() {
+                                ok = false;
+                                break;
+                            }
+                            let dims = match args[i].range_storage() {
+                                Ok(rs) => rs.dims(),
+                                Err(_) => (1, 1),
+                            };
+                            match dims {
+                                (1, 1) => {
+                                    // Extract scalar
+                                    let v = match args[i].range_storage() {
+                                        Ok(rs) => {
+                                            let mut it = rs.to_iterator();
+                                            it.next()
+                                                .map(|c| c.into_owned())
+                                                .unwrap_or(LiteralValue::Empty)
+                                        }
+                                        Err(_) => match args[i].value() {
+                                            Ok(v) => v.into_owned(),
+                                            Err(_) => LiteralValue::Empty,
+                                        },
+                                    };
+                                    sources.push(Source::Scalar(v));
+                                }
+                                (h, 1) if h == sum_rows => {
+                                    if let Ok(rref) = args[i].as_reference_or_eval() {
+                                        if let Some(fv) = w.fctx.get_or_flatten(&rref, false) {
+                                            sources.push(Source::Flat(fv));
+                                        } else {
+                                            ok = false;
+                                            break;
+                                        }
+                                    } else {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                                _ => {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if ok {
+                            let mut total = 0.0f64;
+                            use crate::builtins::utils::criteria_match;
+                            for r in 0..sum_rows {
+                                let mut matches_all = true;
+                                for (j, src) in sources.iter().enumerate() {
+                                    let pred = match &static_preds[j] {
+                                        Some(p) => p,
+                                        None => {
+                                            matches_all = false;
+                                            break;
+                                        }
+                                    };
+                                    // Reconstruct a cell reference for predicate matching with minimal allocation
+                                    let tmp;
+                                    let cell: &LiteralValue = match src {
+                                        Source::Scalar(v) => v,
+                                        Source::Flat(fv) => match &fv.kind {
+                                            crate::engine::cache::FlatKind::Numeric {
+                                                values,
+                                                ..
+                                            } => {
+                                                tmp = LiteralValue::Number(values[r]);
+                                                &tmp
+                                            }
+                                            crate::engine::cache::FlatKind::Text {
+                                                values, ..
+                                            } => {
+                                                // allocate small; uncommon hot path
+                                                tmp = LiteralValue::Text((*values[r]).to_string());
+                                                &tmp
+                                            }
+                                            crate::engine::cache::FlatKind::Mixed { values } => {
+                                                &values[r]
+                                            }
+                                        },
+                                    };
+                                    if !criteria_match(pred, cell) {
+                                        matches_all = false;
+                                        break;
+                                    }
+                                }
+                                if matches_all {
+                                    match &sum_flat.kind {
+                                        crate::engine::cache::FlatKind::Numeric {
+                                            values,
+                                            valid,
+                                        } => {
+                                            if valid.as_ref().map(|bm| bm[r]).unwrap_or(true) {
+                                                total += values[r];
+                                            }
+                                        }
+                                        crate::engine::cache::FlatKind::Mixed { values } => {
+                                            if let Ok(n) = coerce_num(&values[r]) {
+                                                total += n;
+                                            }
+                                        }
+                                        crate::engine::cache::FlatKind::Text { .. } => {}
+                                    }
+                                }
+                            }
+                            return Some(Ok(LiteralValue::Number(total)));
+                        }
+                    }
+                }
+            }
+        }
+
         // Sort criteria indices by selectivity (more selective first)
         // Priority: Eq/Ne > anchored wildcards > numeric ranges > general wildcards
         criteria_indices.sort_by_key(|&idx| {

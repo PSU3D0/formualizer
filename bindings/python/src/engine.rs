@@ -88,6 +88,74 @@ impl PyEvaluationConfig {
             self.inner.workbook_seed
         )
     }
+
+    // ----- Warmup (global pass planning) configuration -----
+
+    /// Enable or disable global warmup (pre-build flats/masks/indexes before evaluation)
+    #[setter]
+    pub fn set_warmup_enabled(&mut self, value: bool) {
+        self.inner.warmup.warmup_enabled = value;
+    }
+
+    #[getter]
+    pub fn get_warmup_enabled(&self) -> bool {
+        self.inner.warmup.warmup_enabled
+    }
+
+    /// Warmup time budget in milliseconds per evaluation invocation
+    #[setter]
+    pub fn set_warmup_time_budget_ms(&mut self, value: u64) {
+        self.inner.warmup.warmup_time_budget_ms = value;
+    }
+
+    #[getter]
+    pub fn get_warmup_time_budget_ms(&self) -> u64 {
+        self.inner.warmup.warmup_time_budget_ms
+    }
+
+    /// Maximum parallelism for warmup building
+    #[setter]
+    pub fn set_warmup_parallelism_cap(&mut self, value: u32) {
+        self.inner.warmup.warmup_parallelism_cap = value as usize;
+    }
+
+    #[getter]
+    pub fn get_warmup_parallelism_cap(&self) -> u32 {
+        self.inner.warmup.warmup_parallelism_cap as u32
+    }
+
+    /// Maximum top-K references to consider for flattening during warmup
+    #[setter]
+    pub fn set_warmup_topk_refs(&mut self, value: u32) {
+        self.inner.warmup.warmup_topk_refs = value as usize;
+    }
+
+    #[getter]
+    pub fn get_warmup_topk_refs(&self) -> u32 {
+        self.inner.warmup.warmup_topk_refs as u32
+    }
+
+    /// Minimum number of cells in a range to consider flattening during warmup
+    #[setter]
+    pub fn set_min_flat_cells(&mut self, value: u32) {
+        self.inner.warmup.min_flat_cells = value as usize;
+    }
+
+    #[getter]
+    pub fn get_min_flat_cells(&self) -> u32 {
+        self.inner.warmup.min_flat_cells as u32
+    }
+
+    /// Memory budget (MB) for pass-scoped flat cache during warmup
+    #[setter]
+    pub fn set_flat_cache_mb_cap(&mut self, value: u32) {
+        self.inner.warmup.flat_cache_mb_cap = value as usize;
+    }
+
+    #[getter]
+    pub fn get_flat_cache_mb_cap(&self) -> u32 {
+        self.inner.warmup.flat_cache_mb_cap as u32
+    }
 }
 
 /// Information about a single evaluation layer
