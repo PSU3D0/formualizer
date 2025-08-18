@@ -1,10 +1,10 @@
 //! Global pass warmup planning
 
-use crate::engine::cache::RangeKey;
+use crate::engine::cache::{CriteriaKey, RangeKey};
 use crate::engine::reference_fingerprint::ReferenceFingerprint;
 use crate::engine::tuning::WarmupConfig;
 use formualizer_core::ASTNode;
-use formualizer_core::parser::{RefView, ReferenceType};
+use formualizer_core::parser::ReferenceType;
 use std::collections::HashMap;
 
 /// Plan for what to warm up before evaluation
@@ -23,8 +23,7 @@ pub struct PassWarmupPlan {
     pub range_indexes: Vec<IndexKey>,
 }
 
-/// Key for criteria mask (Phase 3)
-pub type CriteriaKey = String;
+// CriteriaKey is imported from cache module
 
 /// Key for column index (Phase 4/5)
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -178,7 +177,12 @@ impl PassPlanner {
                     entry.0 += 1; // Increment count
                 }
             }
-            ASTNodeType::Function { args, .. } => {
+            ASTNodeType::Function { name, args, .. } => {
+                // Detect criteria functions for Phase 3
+                if matches!(name.as_str(), "SUMIFS" | "COUNTIFS" | "AVERAGEIFS") {
+                    self.collect_criteria_from_ifs(args);
+                }
+
                 // Recurse into function arguments
                 for arg in args {
                     self.walk_ast(arg, counts);
@@ -202,6 +206,12 @@ impl PassPlanner {
                 // No references to collect
             }
         }
+    }
+
+    /// Collect criteria from IFS functions (Phase 3)
+    fn collect_criteria_from_ifs(&self, _args: &[ASTNode]) {
+        // TODO: Phase 3 - Extract (range, predicate) pairs
+        // For now, placeholder
     }
 
     /// Estimate the cell count for a reference

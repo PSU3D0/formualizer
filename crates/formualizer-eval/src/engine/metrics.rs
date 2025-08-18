@@ -74,6 +74,15 @@ impl WarmupMetrics {
         self.flat_cache_hits.fetch_add(1, Ordering::Relaxed);
     }
 
+    // Phase 3 additions for mask metrics
+    pub fn record_mask_reuse(&self) {
+        self.mask_cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_mask_build(&self, _row_count: usize, _build_time_ms: u64) {
+        self.masks_built.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn flats_built(&self) -> usize {
         self.flats_built.load(Ordering::Relaxed)
     }

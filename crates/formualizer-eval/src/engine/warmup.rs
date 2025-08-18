@@ -1,6 +1,7 @@
 //! Warmup executor for pre-building artifacts
 
-use crate::engine::cache::{CriteriaMaskCache, FlatKind, FlatView, RangeFlatCache};
+use crate::engine::cache::{CriteriaKey, CriteriaMaskCache, FlatKind, FlatView, RangeFlatCache};
+use crate::engine::masks::DenseMask;
 use crate::engine::metrics::{WarmupMetrics, WarmupTimer};
 use crate::engine::pass_planner::{HotReference, PassWarmupPlan};
 use crate::engine::range_stream::RangeStorage;
@@ -70,6 +71,8 @@ pub struct PassContext {
     pub metrics: Arc<WarmupMetrics>,
     /// Coordinator for in-flight builds
     build_coordinator: Arc<BuildCoordinator>,
+    /// Coordinator for mask builds
+    mask_coordinator: Arc<BuildCoordinator>,
 }
 
 impl PassContext {
@@ -79,13 +82,14 @@ impl PassContext {
             mask_cache: CriteriaMaskCache::new(config.mask_cache_entries_cap),
             metrics: Arc::new(WarmupMetrics::new()),
             build_coordinator: Arc::new(BuildCoordinator::default()),
+            mask_coordinator: Arc::new(BuildCoordinator::default()),
         }
     }
 
     /// Clear all pass-scoped caches
     pub fn clear(&mut self) {
         self.flat_cache.clear();
-        // mask_cache will be cleared in Phase 3
+        self.mask_cache.clear();
         self.metrics.reset();
     }
 
@@ -314,6 +318,24 @@ impl PassContext {
                 })
             }
         }
+    }
+
+    /// Try to get or build a mask for criteria (Phase 3)
+    pub fn get_or_build_mask<C: FunctionContext>(
+        &mut self,
+        key: &CriteriaKey,
+        _context: &C,
+        _config: &WarmupConfig,
+    ) -> Option<DenseMask> {
+        // Check cache first
+        if let Some(mask) = self.mask_cache.get(key) {
+            self.metrics.record_mask_reuse();
+            return Some(mask);
+        }
+
+        // Phase 3: Full mask building will be implemented here
+        // For now, return None to use fallback path
+        None
     }
 }
 

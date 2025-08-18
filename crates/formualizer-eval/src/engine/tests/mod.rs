@@ -55,3 +55,7 @@ mod pass_planner_noop;
 mod pass_warmup_flatten;
 // mod sumifs_row_zip_parity;  // Requires more complex setup, will add later
 mod pass_lifetime;
+
+// Phase 3 tests
+mod mask_cache_reuse;
+mod mask_density_paths;

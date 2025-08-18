@@ -106,19 +106,51 @@ impl RangeFlatCache {
     }
 }
 
-/// Key for criteria mask cache
-pub type CriteriaKey = String; // For Phase 1, simple string key
+use crate::engine::masks::DenseMask;
 
-/// Pass-scoped cache for criteria masks (placeholder for Phase 3)
+/// Key for criteria mask cache
+pub type CriteriaKey = String;
+
+/// Pass-scoped cache for criteria masks (Phase 3)
 pub struct CriteriaMaskCache {
-    // Will be implemented in Phase 3
-    _placeholder: std::marker::PhantomData<()>,
+    cache: HashMap<String, DenseMask>,
+    entries_cap: usize,
 }
 
 impl CriteriaMaskCache {
-    pub fn new(_entries_cap: usize) -> Self {
+    pub fn new(entries_cap: usize) -> Self {
         Self {
-            _placeholder: std::marker::PhantomData,
+            cache: HashMap::new(),
+            entries_cap,
         }
+    }
+
+    pub fn get(&self, key: &str) -> Option<DenseMask> {
+        self.cache.get(key).cloned()
+    }
+
+    pub fn insert(&mut self, key: String, mask: DenseMask) -> bool {
+        // Simple LRU-like behavior: if at capacity, remove oldest
+        if self.cache.len() >= self.entries_cap && !self.cache.contains_key(&key) {
+            // Remove first entry (not true LRU, but simple)
+            if let Some(first_key) = self.cache.keys().next().cloned() {
+                self.cache.remove(&first_key);
+            }
+        }
+
+        self.cache.insert(key, mask);
+        true
+    }
+
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.cache.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cache.is_empty()
     }
 }

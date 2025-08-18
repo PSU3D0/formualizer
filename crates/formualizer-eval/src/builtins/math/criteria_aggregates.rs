@@ -329,6 +329,79 @@ impl Function for SumIfsFn {
                 "#VALUE!",
             ))));
         }
+        // Phase 3: Try masked reduction first if mask is available
+        // Build criteria key for mask lookup
+        let mut all_static = true;
+        for i in (2..args.len()).step_by(2) {
+            // Check if criteria is static
+            let is_static = match args[i].range_storage() {
+                Ok(rs) => rs.dims() == (1, 1),
+                Err(_) => true,
+            };
+            if !is_static {
+                all_static = false;
+                break;
+            }
+        }
+
+        // If all criteria are static and we have column ranges, try mask lookup
+        if all_static && args.len() >= 3 {
+            // Build combined key for all criteria
+            let mut mask_key = String::new();
+            for i in (1..args.len()).step_by(2) {
+                if i > 1 {
+                    mask_key.push('|');
+                }
+                // Add range fingerprint and criteria
+                if let Ok(ref_type) = args[i].as_reference_or_eval() {
+                    use crate::engine::reference_fingerprint::ReferenceFingerprint;
+                    mask_key.push_str(&ref_type.fingerprint());
+                    mask_key.push(':');
+                    // Add criteria value
+                    if i + 1 < args.len() {
+                        if let Ok(crit_val) = args[i + 1].value() {
+                            // Normalize criteria for key
+                            mask_key.push_str(&format!("{:?}", crit_val.as_ref()));
+                        }
+                    }
+                }
+            }
+
+            // Try to get pre-built mask
+            if !mask_key.is_empty() {
+                if let Some(mask) = w.fctx.get_or_build_mask(&mask_key) {
+                    // Use mask for reduction
+                    if let Ok(sum_ref) = args[0].as_reference_or_eval() {
+                        if let Some(sum_flat) = w.fctx.get_or_flatten(&sum_ref, true) {
+                            // Perform masked sum
+                            let mut total = 0.0f64;
+                            if let crate::engine::cache::FlatKind::Numeric { values, .. } =
+                                &sum_flat.kind
+                            {
+                                // Use density-aware iteration
+                                if mask.density() < 0.1 {
+                                    // Sparse: iterate set bits
+                                    for idx in mask.iter_ones() {
+                                        if let Some(val) = values.get(idx as usize) {
+                                            total += val;
+                                        }
+                                    }
+                                } else {
+                                    // Dense: scan with mask check
+                                    for (i, val) in values.iter().enumerate() {
+                                        if mask.get(i) {
+                                            total += val;
+                                        }
+                                    }
+                                }
+                                return Some(Ok(LiteralValue::Number(total)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Pre-parse static criteria (non-range or 1x1 range) predicates
         let mut static_preds: Vec<Option<crate::args::CriteriaPredicate>> = Vec::new();
         let mut criteria_indices: Vec<usize> = Vec::new(); // Track original positions
