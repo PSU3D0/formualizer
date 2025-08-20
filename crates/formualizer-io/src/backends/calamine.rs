@@ -419,6 +419,10 @@ where
                 t0.elapsed().as_millis(),
             );
         }
+        // Build sheet indexes after load to accelerate used-region queries
+        for n in &names {
+            engine.graph.finalize_sheet_index(n);
+        }
         // Restore config after load
         engine.graph.set_first_load_assume_new(false);
         engine.graph.reset_ensure_touched();
