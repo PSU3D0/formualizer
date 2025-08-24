@@ -831,6 +831,16 @@ impl DependencyGraph {
         self.store.len()
     }
 
+    /// Return the compressed range dependencies recorded for a formula vertex, if any.
+    /// These are `ReferenceType::Range` entries that were not expanded into explicit
+    /// cell edges due to `range_expansion_limit` or due to infinite/partial bounds.
+    pub fn get_range_dependencies(
+        &self,
+        vertex: VertexId,
+    ) -> Option<&Vec<formualizer_core::parser::ReferenceType>> {
+        self.formula_to_range_deps.get(&vertex)
+    }
+
     /// Get mutable access to a sheet's index, creating it if it doesn't exist
     /// This is the primary way VertexEditor and internal operations access the index
     pub fn sheet_index_mut(&mut self, sheet_id: SheetId) -> &mut SheetIndex {

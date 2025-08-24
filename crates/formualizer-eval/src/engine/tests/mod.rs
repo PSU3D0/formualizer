@@ -42,6 +42,7 @@ mod spill_basic;
 mod spill_config_defaults;
 mod spill_edges;
 
+mod compressed_range_scheduler;
 mod region_lock;
 mod whole_column_sumifs;
 mod window_width1_fastpath;

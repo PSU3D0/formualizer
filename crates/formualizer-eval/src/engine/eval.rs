@@ -274,7 +274,7 @@ where
         let result = interpreter.evaluate_ast(&ast);
 
         // If array result, perform spill from the anchor cell
-        match &result {
+        match result {
             Ok(LiteralValue::Array(rows)) => {
                 // Update kind to FormulaArray for tracking
                 self.graph
@@ -361,11 +361,19 @@ where
                     }
                 }
             }
-            _ => {
+            Ok(other) => {
                 // Scalar result: store value and ensure any previous spill is cleared
                 self.graph.clear_spill_region(vertex_id);
-                self.graph.update_vertex_value(vertex_id, result.clone()?);
-                result
+                self.graph.update_vertex_value(vertex_id, other.clone());
+                Ok(other)
+            }
+            Err(e) => {
+                // Runtime Excel error: store as a cell value instead of propagating
+                // as an exception so bulk eval paths don't fail the whole pass.
+                self.graph.clear_spill_region(vertex_id);
+                let err_val = LiteralValue::Error(e.clone());
+                self.graph.update_vertex_value(vertex_id, err_val.clone());
+                Ok(err_val)
             }
         }
     }
@@ -427,8 +435,8 @@ where
             self.warmup_pass_ctx = Some(pass_ctx);
         }
 
-        // Find dirty precedents that need evaluation
-        let precedents_to_eval = self.find_dirty_precedents(&target_vertex_ids);
+        // Build demand subgraph with virtual edges for compressed ranges
+        let (precedents_to_eval, vdeps) = self.build_demand_subgraph(&target_vertex_ids);
 
         if precedents_to_eval.is_empty() {
             return Ok(EvalResult {
@@ -438,9 +446,9 @@ where
             });
         }
 
-        // Create schedule for the minimal subgraph
+        // Create schedule for the minimal subgraph, honoring virtual edges
         let scheduler = Scheduler::new(&self.graph);
-        let schedule = scheduler.create_schedule(&precedents_to_eval)?;
+        let schedule = scheduler.create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
 
         // Handle cycles first
         let mut cycle_errors = 0;
@@ -634,8 +642,8 @@ where
             });
         }
 
-        // Find dirty precedents that need evaluation
-        let precedents_to_eval = self.find_dirty_precedents(&target_vertex_ids);
+        // Build demand subgraph with virtual edges (same as evaluate_until)
+        let (precedents_to_eval, vdeps) = self.build_demand_subgraph(&target_vertex_ids);
 
         if precedents_to_eval.is_empty() {
             return Ok(EvalPlan {
@@ -662,9 +670,9 @@ where
             }
         }
 
-        // Create schedule for the minimal subgraph
+        // Create schedule for the minimal subgraph honoring virtual edges
         let scheduler = Scheduler::new(&self.graph);
-        let schedule = scheduler.create_schedule(&precedents_to_eval)?;
+        let schedule = scheduler.create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
 
         // Build layer information
         let mut layers = Vec::new();
@@ -714,6 +722,198 @@ where
             estimated_parallel_layers,
             target_cells: addresses,
         })
+    }
+
+    /// Build a demand-driven subgraph for the given targets, including ephemeral edges for
+    /// compressed ranges, and returning the set of dirty/volatile precedents and virtual deps.
+    fn build_demand_subgraph(
+        &self,
+        target_vertices: &[VertexId],
+    ) -> (
+        Vec<VertexId>,
+        rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
+    ) {
+        use formualizer_core::parser::ReferenceType;
+        use rustc_hash::{FxHashMap, FxHashSet};
+
+        let mut to_evaluate: FxHashSet<VertexId> = FxHashSet::default();
+        let mut visited: FxHashSet<VertexId> = FxHashSet::default();
+        let mut stack: Vec<VertexId> = Vec::new();
+        let mut vdeps: FxHashMap<VertexId, Vec<VertexId>> = FxHashMap::default(); // incoming deps per vertex
+
+        for &t in target_vertices {
+            stack.push(t);
+        }
+
+        while let Some(v) = stack.pop() {
+            if !visited.insert(v) {
+                continue;
+            }
+            if !self.graph.vertex_exists(v) {
+                continue;
+            }
+            // Only schedule dirty/volatile formulas
+            match self.graph.get_vertex_kind(v) {
+                VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                    if self.graph.is_dirty(v) || self.graph.is_volatile(v) {
+                        to_evaluate.insert(v);
+                    }
+                }
+                _ => {}
+            }
+
+            // Explicit dependencies (graph edges)
+            for dep in self.graph.get_dependencies(v) {
+                if self.graph.vertex_exists(dep) {
+                    match self.graph.get_vertex_kind(dep) {
+                        VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                            if !visited.contains(&dep) {
+                                stack.push(dep);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // Compressed range dependencies → discover formula precedents in used/bounded window
+            if let Some(ranges) = self.graph.get_range_dependencies(v) {
+                let current_sheet_id = self.graph.get_vertex_sheet_id(v);
+                for r in ranges {
+                    if let ReferenceType::Range {
+                        sheet,
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                    } = r
+                    {
+                        let sheet_id = sheet
+                            .as_ref()
+                            .and_then(|name| self.graph.sheet_id(name))
+                            .unwrap_or(current_sheet_id);
+                        let sheet_name = self.graph.sheet_name(sheet_id);
+
+                        // Infer bounds like resolve_range_view
+                        let mut sr = *start_row;
+                        let mut sc = *start_col;
+                        let mut er = *end_row;
+                        let mut ec = *end_col;
+
+                        if sr.is_none() && er.is_none() {
+                            let scv = sc.unwrap_or(1);
+                            let ecv = ec.unwrap_or(scv);
+                            if let Some((min_r, max_r)) =
+                                self.graph.used_row_bounds_for_columns(sheet_id, scv, ecv)
+                            {
+                                sr = Some(min_r);
+                                er = Some(max_r);
+                            } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
+                                sr = Some(1);
+                                er = Some(max_rows);
+                            }
+                        }
+                        if sc.is_none() && ec.is_none() {
+                            let srv = sr.unwrap_or(1);
+                            let erv = er.unwrap_or(srv);
+                            if let Some((min_c, max_c)) =
+                                self.graph.used_col_bounds_for_rows(sheet_id, srv, erv)
+                            {
+                                sc = Some(min_c);
+                                ec = Some(max_c);
+                            } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
+                                sc = Some(1);
+                                ec = Some(max_cols);
+                            }
+                        }
+                        if sr.is_some() && er.is_none() {
+                            let scv = sc.unwrap_or(1);
+                            let ecv = ec.unwrap_or(scv);
+                            if let Some((_, max_r)) =
+                                self.graph.used_row_bounds_for_columns(sheet_id, scv, ecv)
+                            {
+                                er = Some(max_r);
+                            } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
+                                er = Some(max_rows);
+                            }
+                        }
+                        if er.is_some() && sr.is_none() {
+                            let scv = sc.unwrap_or(1);
+                            let ecv = ec.unwrap_or(scv);
+                            if let Some((min_r, _)) =
+                                self.graph.used_row_bounds_for_columns(sheet_id, scv, ecv)
+                            {
+                                sr = Some(min_r);
+                            } else {
+                                sr = Some(1);
+                            }
+                        }
+                        if sc.is_some() && ec.is_none() {
+                            let srv = sr.unwrap_or(1);
+                            let erv = er.unwrap_or(srv);
+                            if let Some((_, max_c)) =
+                                self.graph.used_col_bounds_for_rows(sheet_id, srv, erv)
+                            {
+                                ec = Some(max_c);
+                            } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
+                                ec = Some(max_cols);
+                            }
+                        }
+                        if ec.is_some() && sc.is_none() {
+                            let srv = sr.unwrap_or(1);
+                            let erv = er.unwrap_or(srv);
+                            if let Some((min_c, _)) =
+                                self.graph.used_col_bounds_for_rows(sheet_id, srv, erv)
+                            {
+                                sc = Some(min_c);
+                            } else {
+                                sc = Some(1);
+                            }
+                        }
+
+                        let sr = sr.unwrap_or(1);
+                        let sc = sc.unwrap_or(1);
+                        let er = er.unwrap_or(sr.saturating_sub(1));
+                        let ec = ec.unwrap_or(sc.saturating_sub(1));
+                        if er < sr || ec < sc {
+                            continue;
+                        }
+
+                        if let Some(index) = self.graph.sheet_index(sheet_id) {
+                            // enumerate vertices in col range, filter row and kind
+                            for u in index.vertices_in_col_range(sc, ec) {
+                                let pc = self.graph.vertex_coord(u);
+                                let row = pc.row();
+                                if row < sr || row > er {
+                                    continue;
+                                }
+                                match self.graph.get_vertex_kind(u) {
+                                    VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                                        // only link and schedule if producer is dirty/volatile
+                                        if self.graph.is_dirty(u) || self.graph.is_volatile(u) {
+                                            vdeps.entry(v).or_default().push(u);
+                                            if !visited.contains(&u) {
+                                                stack.push(u);
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<VertexId> = to_evaluate.into_iter().collect();
+        result.sort_unstable();
+        // Dedup virtual deps
+        for deps in vdeps.values_mut() {
+            deps.sort_unstable();
+            deps.dedup();
+        }
+        (result, vdeps)
     }
 
     /// Helper: convert 1-based column index to Excel-style letters (1 -> A, 27 -> AA)
@@ -831,8 +1031,8 @@ where
             });
         }
 
-        // Find dirty precedents that need evaluation
-        let precedents_to_eval = self.find_dirty_precedents(&target_vertex_ids);
+        // Build demand subgraph with virtual edges
+        let (precedents_to_eval, vdeps) = self.build_demand_subgraph(&target_vertex_ids);
 
         if precedents_to_eval.is_empty() {
             return Ok(EvalResult {
@@ -842,9 +1042,9 @@ where
             });
         }
 
-        // Create schedule for the minimal subgraph
+        // Create schedule honoring virtual edges
         let scheduler = Scheduler::new(&self.graph);
-        let schedule = scheduler.create_schedule(&precedents_to_eval)?;
+        let schedule = scheduler.create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
 
         // Handle cycles first
         let mut cycle_errors = 0;
@@ -1071,10 +1271,12 @@ where
                 layer
                     .vertices
                     .par_iter()
-                    .map(|&vertex_id| {
-                        let result = self.evaluate_vertex_immutable(vertex_id)?;
-                        Ok((vertex_id, result))
-                    })
+                    .map(
+                        |&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
+                            Ok(v) => Ok((vertex_id, v)),
+                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
+                        },
+                    )
                     .collect()
             });
 
@@ -1119,9 +1321,10 @@ where
                                 "Parallel evaluation cancelled during execution".to_string(),
                             ));
                         }
-
-                        let result = self.evaluate_vertex_immutable(vertex_id)?;
-                        Ok((vertex_id, result))
+                        match self.evaluate_vertex_immutable(vertex_id) {
+                            Ok(v) => Ok((vertex_id, v)),
+                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
+                        }
                     })
                     .collect()
             });

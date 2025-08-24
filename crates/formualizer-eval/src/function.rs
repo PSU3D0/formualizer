@@ -345,13 +345,14 @@ pub trait Function: Send + Sync + 'static {
         }
 
         // Try fast paths based on capabilities
-        if caps.contains(FnCaps::REDUCTION) {
-            // Create fold context and try eval_fold
-            let mut fold_ctx = SimpleFoldCtx::new(args, ctx);
-            if let Some(result) = self.eval_fold(&mut fold_ctx) {
-                return result;
-            }
-        }
+        // Commented out for now until we get `eval_scalar robustly working in real-world tests`
+        // if caps.contains(FnCaps::REDUCTION) {
+        //     // Create fold context and try eval_fold
+        //     let mut fold_ctx = SimpleFoldCtx::new(args, ctx);
+        //     if let Some(result) = self.eval_fold(&mut fold_ctx) {
+        //         return result;
+        //     }
+        // }
 
         if caps.contains(FnCaps::ELEMENTWISE) {
             // Minimal unary elementwise path: construct a simple map ctx and call eval_map
