@@ -164,6 +164,44 @@ impl<'a> RangeView<'a> {
         None
     }
 
+    /// Get a specific cell by row and column index (0-based).
+    /// Returns Empty for out-of-bounds access.
+    pub fn get_cell(&self, row: usize, col: usize) -> LiteralValue {
+        if row >= self.rows || col >= self.cols {
+            return LiteralValue::Empty;
+        }
+
+        match &self.backing {
+            RangeBacking::Flat(fv) => {
+                let idx = row * self.cols + col;
+                match &fv.kind {
+                    FlatKind::Numeric { values, .. } => LiteralValue::Number(values[idx]),
+                    FlatKind::Text { values, .. } => {
+                        LiteralValue::Text((&*values[idx]).to_string())
+                    }
+                    FlatKind::Mixed { values } => values[idx].clone(),
+                }
+            }
+            RangeBacking::Borrowed2D(rows) => rows[row][col].clone(),
+            RangeBacking::GraphSlice {
+                graph,
+                sheet_id,
+                sr,
+                sc,
+                ..
+            } => {
+                let actual_row = sr + row as u32;
+                let actual_col = sc + col as u32;
+                let coord = crate::reference::Coord::new(actual_row, actual_col, true, true);
+                let addr = crate::reference::CellRef::new(*sheet_id, coord);
+                graph
+                    .get_vertex_id_for_address(&addr)
+                    .and_then(|id| graph.get_value(*id))
+                    .unwrap_or(LiteralValue::Empty)
+            }
+        }
+    }
+
     /// Row-major cell traversal. For borrowable backings, passes borrowed slices/values.
     pub fn for_each_cell(
         &self,
@@ -416,6 +454,31 @@ impl<'a> RangeView<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Get a numeric value at a specific cell, with coercion.
+    /// Returns None for empty cells or non-coercible values.
+    pub fn get_cell_numeric(&self, row: usize, col: usize, policy: CoercionPolicy) -> Option<f64> {
+        if row >= self.rows || col >= self.cols {
+            return None;
+        }
+
+        match &self.backing {
+            RangeBacking::Flat(fv) => {
+                let idx = row * self.cols + col;
+                match &fv.kind {
+                    FlatKind::Numeric { values, .. } => Some(values[idx]),
+                    _ => {
+                        let val = self.get_cell(row, col);
+                        pack_numeric(&val, policy).ok().flatten()
+                    }
+                }
+            }
+            _ => {
+                let val = self.get_cell(row, col);
+                pack_numeric(&val, policy).ok().flatten()
+            }
+        }
     }
 
     /// Numeric chunk iteration with coercion policy

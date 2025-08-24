@@ -154,41 +154,157 @@ impl Function for SumIfsFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::info_span!("SUMIFS").entered();
         if args.len() < 3 || (args.len() - 1) % 2 != 0 {
             return Ok(LiteralValue::Error(ExcelError::from_error_string(
                 "#VALUE!",
             )));
         }
-        let (sum_it, dims) = materialize_iter(&args[0]);
-        let mut crit_iters = Vec::new();
+
+        // Get the sum range as a RangeView
+        let sum_view = match args[0].range_view() {
+            Ok(v) => v,
+            Err(_) => {
+                // Scalar fallback
+                let val = args[0].value()?;
+                let mut total = 0.0f64;
+                // For scalar, we need all criteria to be scalar and match
+                for i in (1..args.len()).step_by(2) {
+                    let crit_val = args[i].value()?;
+                    let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
+                    if !criteria_match(&pred, crit_val.as_ref()) {
+                        return Ok(LiteralValue::Number(0.0));
+                    }
+                }
+                if let Ok(n) = coerce_num(val.as_ref()) {
+                    total = n;
+                }
+                return Ok(LiteralValue::Number(total));
+            }
+        };
+
+        let dims = sum_view.dims();
+
+        // Collect criteria ranges and predicates
+        let mut crit_views = Vec::new();
         let mut preds = Vec::new();
         for i in (1..args.len()).step_by(2) {
-            let (iter, d) = materialize_iter(&args[i]);
-            if d != dims {
+            let crit_view = match args[i].range_view() {
+                Ok(v) => {
+                    // Check if it's a 1x1 range (should be treated as scalar)
+                    if v.dims() == (1, 1) {
+                        // Treat 1x1 as scalar - broadcast it
+                        let scalar_val = v.get_cell(0, 0);
+                        crit_views.push(None);
+                        let p = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
+                        preds.push((p, Some(scalar_val)));
+                        continue;
+                    }
+                    v
+                }
+                Err(_) => {
+                    // Scalar criteria - we'll handle this specially
+                    let val = args[i].value()?;
+                    // Create a pseudo-view that will broadcast the scalar
+                    // For now, we'll just store a marker and handle it in the loop
+                    crit_views.push(None);
+                    let p = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
+                    preds.push((p, Some(val.into_owned())));
+                    continue;
+                }
+            };
+
+            if crit_view.dims() != dims {
                 return Ok(LiteralValue::Error(ExcelError::from_error_string(
                     "#VALUE!",
                 )));
             }
-            crit_iters.push(iter);
+            crit_views.push(Some(crit_view));
             let p = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
-            preds.push(p);
+            preds.push((p, None));
         }
-        let crit_values: Vec<Vec<LiteralValue>> =
-            crit_iters.into_iter().map(|it| it.collect()).collect();
-        let sum_values: Vec<LiteralValue> = sum_it.collect();
-        let len = sum_values.len();
+
+        #[cfg(feature = "tracing")]
+        tracing::debug!(
+            rows = dims.0,
+            cols = dims.1,
+            criteria = preds.len(),
+            "sumifs_dims"
+        );
+
+        // Check if we can use the optimized numeric path
+        if sum_view.kind_probe() == crate::engine::range_view::RangeKind::NumericOnly {
+            // Optimized path for numeric-only sum range
+            let mut total = 0.0f64;
+
+            // We'll iterate by rows for better cache locality
+            for row in 0..dims.0 {
+                for col in 0..dims.1 {
+                    // Check all criteria
+                    let mut all_match = true;
+                    for (j, (pred, scalar_val)) in preds.iter().enumerate() {
+                        let crit_val = if let Some(ref view) = crit_views[j] {
+                            view.get_cell(row, col)
+                        } else if let Some(scalar) = scalar_val {
+                            scalar.clone()
+                        } else {
+                            LiteralValue::Empty
+                        };
+
+                        if !criteria_match(pred, &crit_val) {
+                            all_match = false;
+                            break;
+                        }
+                    }
+
+                    if all_match {
+                        // For numeric-only ranges, get_cell returns Number
+                        if let LiteralValue::Number(n) = sum_view.get_cell(row, col) {
+                            total += n;
+                        }
+                    }
+                }
+            }
+
+            return Ok(LiteralValue::Number(total));
+        }
+
+        // General path for mixed or non-numeric ranges
         let mut total = 0.0f64;
-        for (idx, val) in sum_values.iter().enumerate() {
-            if preds
-                .iter()
-                .enumerate()
-                .all(|(j, p)| criteria_match(p, &crit_values[j][idx]))
-            {
-                if let Ok(n) = coerce_num(val) {
+        let mut idx = 0usize;
+
+        sum_view.for_each_cell(&mut |sum_val| {
+            let row = idx / dims.1;
+            let col = idx % dims.1;
+
+            // Check all criteria
+            let mut all_match = true;
+            for (j, (pred, scalar_val)) in preds.iter().enumerate() {
+                let crit_val = if let Some(ref view) = crit_views[j] {
+                    view.get_cell(row, col)
+                } else if let Some(scalar) = scalar_val {
+                    scalar.clone()
+                } else {
+                    LiteralValue::Empty
+                };
+
+                if !criteria_match(pred, &crit_val) {
+                    all_match = false;
+                    break;
+                }
+            }
+
+            if all_match {
+                if let Ok(n) = coerce_num(sum_val) {
                     total += n;
                 }
             }
-        }
+
+            idx += 1;
+            Ok(())
+        })?;
+
         Ok(LiteralValue::Number(total))
     }
 }
@@ -222,6 +338,8 @@ impl Function for CountIfsFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::info_span!("COUNTIFS").entered();
         if args.len() < 2 || args.len() % 2 != 0 {
             return Ok(LiteralValue::Error(ExcelError::from_error_string(
                 "#VALUE!",
@@ -247,6 +365,8 @@ impl Function for CountIfsFn {
         let crit_values: Vec<Vec<LiteralValue>> =
             crit_iters.into_iter().map(|it| it.collect()).collect();
         let len = crit_values[0].len();
+        #[cfg(feature = "tracing")]
+        tracing::debug!(rows = len, criteria = preds.len(), "countifs_dims");
         let mut cnt = 0i64;
         for (idx, _) in crit_values[0].iter().enumerate() {
             if preds

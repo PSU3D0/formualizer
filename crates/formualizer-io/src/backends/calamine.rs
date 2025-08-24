@@ -247,6 +247,9 @@ where
     type Error = calamine::Error;
 
     fn stream_into_engine(&mut self, engine: &mut EvalEngine<R>) -> Result<(), Self::Error> {
+        #[cfg(feature = "tracing")]
+        let _span_load =
+            tracing::info_span!("io_stream_into_engine", backend = "calamine").entered();
         // Simple eager load: iterate sheets, add, bulk insert values, then formulas
         let debug = std::env::var("FZ_DEBUG_LOAD")
             .ok()
@@ -257,6 +260,8 @@ where
             eprintln!("[fz][load] calamine: {} sheets", names.len());
         }
         for n in &names {
+            #[cfg(feature = "tracing")]
+            let _span_sheet = tracing::info_span!("io_load_sheet", sheet = n.as_str()).entered();
             engine.graph.add_sheet(n.as_str()).map_err(|e| {
                 calamine::Error::Io(std::io::Error::new(
                     std::io::ErrorKind::Other,
@@ -283,6 +288,9 @@ where
             if debug {
                 eprintln!("[fz][load] >> sheet '{}'", n);
             }
+            #[cfg(feature = "tracing")]
+            let _span_sheet =
+                tracing::info_span!("io_populate_sheet", sheet = n.as_str()).entered();
             // Read directly from calamine ranges to avoid building a BTreeMap
             let (range, formulas_range, dims);
             {

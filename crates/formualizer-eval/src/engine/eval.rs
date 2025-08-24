@@ -380,6 +380,8 @@ where
 
     /// Evaluate only the necessary precedents for specific target cells (demand-driven)
     pub fn evaluate_until(&mut self, targets: &[&str]) -> Result<EvalResult, ExcelError> {
+        #[cfg(feature = "tracing")]
+        let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = std::time::Instant::now();
 
         // Parse target cell addresses
@@ -436,7 +438,11 @@ where
         }
 
         // Build demand subgraph with virtual edges for compressed ranges
+        #[cfg(feature = "tracing")]
+        let _span_sub = tracing::info_span!("demand_subgraph_build").entered();
         let (precedents_to_eval, vdeps) = self.build_demand_subgraph(&target_vertex_ids);
+        #[cfg(feature = "tracing")]
+        drop(_span_sub);
 
         if precedents_to_eval.is_empty() {
             return Ok(EvalResult {
@@ -448,7 +454,12 @@ where
 
         // Create schedule for the minimal subgraph, honoring virtual edges
         let scheduler = Scheduler::new(&self.graph);
+        #[cfg(feature = "tracing")]
+        let _span_sched =
+            tracing::info_span!("schedule_build", vertices = precedents_to_eval.len()).entered();
         let schedule = scheduler.create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
+        #[cfg(feature = "tracing")]
+        drop(_span_sched);
 
         // Handle cycles first
         let mut cycle_errors = 0;
@@ -492,6 +503,8 @@ where
 
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
+        #[cfg(feature = "tracing")]
+        let _span_eval = tracing::info_span!("evaluate_all").entered();
         let start = std::time::Instant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
@@ -733,6 +746,9 @@ where
         Vec<VertexId>,
         rustc_hash::FxHashMap<VertexId, Vec<VertexId>>,
     ) {
+        #[cfg(feature = "tracing")]
+        let _span =
+            tracing::info_span!("demand_subgraph", targets = target_vertices.len()).entered();
         use formualizer_core::parser::ReferenceType;
         use rustc_hash::{FxHashMap, FxHashSet};
 

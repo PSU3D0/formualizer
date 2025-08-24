@@ -24,3 +24,24 @@ chrono = "0.4.41"
 bitflags = "2.9.1"
 bumpalo = { version = "3.16", features = ["collections"] }
 smallvec = "1.13"
+
+[dependencies.tracing]
+version = "0.1"
+optional = true
+default-features = false
+features = ["std", "attributes"]
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+optional = true
+default-features = false
+features = ["std", "fmt", "env-filter"]
+
+[dependencies.tracing-chrome]
+version = "0.7"
+optional = true
+
+[features]
+default = []
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
+tracing_chrome = ["tracing", "dep:tracing-chrome"]

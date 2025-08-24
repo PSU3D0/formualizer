@@ -408,6 +408,8 @@ impl PyEngine {
         workbook: PyWorkbook,
         config: Option<PyEvaluationConfig>,
     ) -> PyResult<Self> {
+        // Initialize tracing subscriber if requested via env (no-op when disabled)
+        let _ = formualizer_eval::telemetry::init_tracing_from_env();
         let eval_config = config.map(|c| c.inner).unwrap_or_default();
         let mut engine = RustEngine::new(PyResolver, eval_config);
 
@@ -441,6 +443,8 @@ impl PyEngine {
         _strategy: Option<&str>,
         config: Option<PyEvaluationConfig>,
     ) -> PyResult<Self> {
+        // Initialize tracing subscriber if requested via env (no-op when disabled)
+        let _ = formualizer_eval::telemetry::init_tracing_from_env();
         let eval_config = config.map(|c| c.inner).unwrap_or_default();
         let mut engine = RustEngine::new(PyResolver, eval_config);
         let backend = backend.unwrap_or("calamine");

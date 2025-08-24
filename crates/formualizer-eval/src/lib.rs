@@ -28,6 +28,7 @@ pub mod test_workbook;
 
 pub mod engine;
 pub mod planner;
+pub mod telemetry;
 
 #[cfg(test)]
 mod tests;
