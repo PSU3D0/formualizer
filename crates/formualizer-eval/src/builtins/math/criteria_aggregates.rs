@@ -77,82 +77,6 @@ impl Function for SumIfFn {
         }
         Ok(LiteralValue::Number(total))
     }
-    fn eval_window<'a, 'b>(
-        &self,
-        w: &mut crate::window_ctx::SimpleWindowCtx<'a, 'b>,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let args = w.args;
-        if args.len() < 2 || args.len() > 3 {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            ))));
-        }
-        // Pre-parse criteria if scalar
-        let criteria_is_range = args[1].range_view().is_ok();
-        let static_pred = if !criteria_is_range {
-            match args[1].value() {
-                Ok(v) => crate::args::parse_criteria(v.as_ref()).ok(),
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
-        let mut total = 0.0f64;
-        let mut first_err: Option<ExcelError> = None;
-        if let Err(e) = w.for_each_window(|cells| {
-            // cells: [criteria_range, criteria, (optional sum_range)]
-            if cells.len() < 2 {
-                return Ok(());
-            }
-            let pred = if let Some(p) = static_pred.as_ref() {
-                p
-            } else {
-                match crate::args::parse_criteria(&cells[1]) {
-                    Ok(p) => {
-                        // store nowhere, ephemeral
-                        // Need owned predicate; allocate on stack
-                        return if criteria_match(&p, &cells[0]) {
-                            // ephemeral path replaced below
-                            if cells.len() == 3 {
-                                if let Ok(n) = coerce_num(&cells[2]) {
-                                    total += n;
-                                } else { /*ignore*/
-                                }
-                            } else if let Ok(n) = coerce_num(&cells[0]) {
-                                total += n;
-                            }
-                            Ok(())
-                        } else {
-                            Ok(())
-                        };
-                    }
-                    Err(e) => {
-                        if first_err.is_none() {
-                            first_err = Some(e);
-                        }
-                        return Ok(());
-                    }
-                }
-            };
-            if criteria_match(pred, &cells[0]) {
-                let sum_cell = if cells.len() == 3 {
-                    &cells[2]
-                } else {
-                    &cells[0]
-                };
-                if let Ok(n) = coerce_num(sum_cell) {
-                    total += n;
-                }
-            }
-            Ok(())
-        }) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        if let Some(e) = first_err {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        Some(Ok(LiteralValue::Number(total)))
-    }
 }
 
 /* ─────────────────────────── COUNTIF() ──────────────────────────── */
@@ -198,58 +122,6 @@ impl Function for CountIfFn {
             }
         }
         Ok(LiteralValue::Number(cnt as f64))
-    }
-    fn eval_window<'a, 'b>(
-        &self,
-        w: &mut crate::window_ctx::SimpleWindowCtx<'a, 'b>,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let args = w.args;
-        if args.len() != 2 {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            ))));
-        }
-        let criteria_is_range = args[1].range_view().is_ok();
-        let static_pred = if !criteria_is_range {
-            match args[1].value() {
-                Ok(v) => crate::args::parse_criteria(v.as_ref()).ok(),
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
-        let mut cnt = 0i64;
-        let mut first_err: Option<ExcelError> = None;
-        if let Err(e) = w.for_each_window(|cells| {
-            if cells.len() != 2 {
-                return Ok(());
-            }
-            if let Some(p) = static_pred.as_ref() {
-                if criteria_match(p, &cells[0]) {
-                    cnt += 1;
-                }
-            } else {
-                match crate::args::parse_criteria(&cells[1]) {
-                    Ok(p) => {
-                        if criteria_match(&p, &cells[0]) {
-                            cnt += 1;
-                        }
-                    }
-                    Err(e) => {
-                        if first_err.is_none() {
-                            first_err = Some(e);
-                        }
-                    }
-                }
-            }
-            Ok(())
-        }) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        if let Some(e) = first_err {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        Some(Ok(LiteralValue::Number(cnt as f64)))
     }
 }
 
@@ -319,330 +191,6 @@ impl Function for SumIfsFn {
         }
         Ok(LiteralValue::Number(total))
     }
-    fn eval_window<'a, 'b>(
-        &self,
-        w: &mut crate::window_ctx::SimpleWindowCtx<'a, 'b>,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let args = w.args;
-        if args.len() < 3 || (args.len() - 1) % 2 != 0 {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            ))));
-        }
-        // Phase 3: Try masked reduction first if mask is available
-        // Build criteria key for mask lookup
-        let mut all_static = true;
-        for i in (2..args.len()).step_by(2) {
-            // Check if criteria is static
-            let is_static = match args[i].range_view() {
-                Ok(rv) => rv.dims() == (1, 1),
-                Err(_) => true,
-            };
-            if !is_static {
-                all_static = false;
-                break;
-            }
-        }
-
-        // If all criteria are static and we have column ranges, try mask lookup
-        if all_static && args.len() >= 3 {
-            // Build combined key for all criteria
-            let mut mask_key = String::new();
-            for i in (1..args.len()).step_by(2) {
-                if i > 1 {
-                    mask_key.push('|');
-                }
-                // Add range fingerprint and criteria
-                if let Ok(ref_type) = args[i].as_reference_or_eval() {
-                    use crate::engine::reference_fingerprint::ReferenceFingerprint;
-                    mask_key.push_str(&ref_type.fingerprint());
-                    mask_key.push(':');
-                    // Add criteria value
-                    if i + 1 < args.len() {
-                        if let Ok(crit_val) = args[i + 1].value() {
-                            // Normalize criteria for key
-                            mask_key.push_str(&format!("{:?}", crit_val.as_ref()));
-                        }
-                    }
-                }
-            }
-
-            // Try to get pre-built mask
-            if !mask_key.is_empty() {
-                if let Some(mask) = w.fctx.get_or_build_mask(&mask_key) {
-                    // Use mask for reduction
-                    if let Ok(sum_ref) = args[0].as_reference_or_eval() {
-                        if let Some(sum_flat) = w.fctx.get_or_flatten(&sum_ref, true) {
-                            // Perform masked sum
-                            let mut total = 0.0f64;
-                            if let crate::engine::cache::FlatKind::Numeric { values, .. } =
-                                &sum_flat.kind
-                            {
-                                // Use density-aware iteration
-                                if mask.density() < 0.1 {
-                                    // Sparse: iterate set bits
-                                    for idx in mask.iter_ones() {
-                                        if let Some(val) = values.get(idx as usize) {
-                                            total += val;
-                                        }
-                                    }
-                                } else {
-                                    // Dense: scan with mask check
-                                    for (i, val) in values.iter().enumerate() {
-                                        if mask.get(i) {
-                                            total += val;
-                                        }
-                                    }
-                                }
-                                return Some(Ok(LiteralValue::Number(total)));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Pre-parse static criteria (non-range or 1x1 range) predicates
-        let mut static_preds: Vec<Option<crate::args::CriteriaPredicate>> = Vec::new();
-        let mut criteria_indices: Vec<usize> = Vec::new(); // Track original positions
-
-        for i in (2..args.len()).step_by(2) {
-            let is_static = match args[i].range_view() {
-                Ok(rv) => rv.dims() == (1, 1),
-                Err(_) => true,
-            };
-            if is_static {
-                // Extract scalar: prefer top-left from range_storage when present
-                let crit_val = match args[i].range_view() {
-                    Ok(rv) => rv.as_1x1().unwrap_or(LiteralValue::Empty),
-                    Err(_) => match args[i].value() {
-                        Ok(v) => v.into_owned(),
-                        Err(_) => LiteralValue::Empty,
-                    },
-                };
-                static_preds.push(crate::args::parse_criteria(&crit_val).ok());
-            } else {
-                static_preds.push(None);
-            }
-            criteria_indices.push((i - 2) / 2); // Map to criteria pair index
-        }
-
-        // Attempt Phase 2 row-zip fast path using pre-flattened ranges from FunctionContext.
-        // Preconditions: sum_range is Hx1; each criteria range is 1x1 (scalar) or Hx1; criteria values are static.
-        // If any precondition fails or required flats are absent, fall back to windowed path below.
-        if let Ok((sum_rows, sum_cols)) = args[0].range_view().map(|rv| rv.dims()) {
-            if sum_cols == 1 && sum_rows > 0 {
-                if let Ok(sum_ref) = args[0].as_reference_or_eval() {
-                    if let Some(sum_flat) = w.fctx.get_or_flatten(&sum_ref, true) {
-                        // Build sources for criteria ranges
-                        enum Source {
-                            Flat(crate::engine::cache::FlatView),
-                            Scalar(formualizer_common::LiteralValue),
-                        }
-                        let mut sources: Vec<Source> = Vec::new();
-                        let mut ok = true;
-                        for i in (2..args.len()).step_by(2) {
-                            // criteria range at i, criteria value at i+1
-                            if static_preds[(i - 2) / 2].is_none() {
-                                ok = false;
-                                break;
-                            }
-                            let dims = match args[i].range_view() {
-                                Ok(rv) => rv.dims(),
-                                Err(_) => (1, 1),
-                            };
-                            match dims {
-                                (1, 1) => {
-                                    // Extract scalar
-                                    let v = match args[i].range_view() {
-                                        Ok(rv) => rv.as_1x1().unwrap_or(LiteralValue::Empty),
-                                        Err(_) => match args[i].value() {
-                                            Ok(v) => v.into_owned(),
-                                            Err(_) => LiteralValue::Empty,
-                                        },
-                                    };
-                                    sources.push(Source::Scalar(v));
-                                }
-                                (h, 1) if h == sum_rows => {
-                                    if let Ok(rref) = args[i].as_reference_or_eval() {
-                                        if let Some(fv) = w.fctx.get_or_flatten(&rref, false) {
-                                            sources.push(Source::Flat(fv));
-                                        } else {
-                                            ok = false;
-                                            break;
-                                        }
-                                    } else {
-                                        ok = false;
-                                        break;
-                                    }
-                                }
-                                _ => {
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                        }
-                        if ok {
-                            let mut total = 0.0f64;
-                            use crate::builtins::utils::criteria_match;
-                            for r in 0..sum_rows {
-                                let mut matches_all = true;
-                                for (j, src) in sources.iter().enumerate() {
-                                    let pred = match &static_preds[j] {
-                                        Some(p) => p,
-                                        None => {
-                                            matches_all = false;
-                                            break;
-                                        }
-                                    };
-                                    // Reconstruct a cell reference for predicate matching with minimal allocation
-                                    let tmp;
-                                    let cell: &LiteralValue = match src {
-                                        Source::Scalar(v) => v,
-                                        Source::Flat(fv) => match &fv.kind {
-                                            crate::engine::cache::FlatKind::Numeric {
-                                                values,
-                                                ..
-                                            } => {
-                                                tmp = LiteralValue::Number(values[r]);
-                                                &tmp
-                                            }
-                                            crate::engine::cache::FlatKind::Text {
-                                                values, ..
-                                            } => {
-                                                // allocate small; uncommon hot path
-                                                tmp = LiteralValue::Text((*values[r]).to_string());
-                                                &tmp
-                                            }
-                                            crate::engine::cache::FlatKind::Mixed { values } => {
-                                                &values[r]
-                                            }
-                                        },
-                                    };
-                                    if !criteria_match(pred, cell) {
-                                        matches_all = false;
-                                        break;
-                                    }
-                                }
-                                if matches_all {
-                                    match &sum_flat.kind {
-                                        crate::engine::cache::FlatKind::Numeric {
-                                            values,
-                                            valid,
-                                        } => {
-                                            if valid.as_ref().map(|bm| bm[r]).unwrap_or(true) {
-                                                total += values[r];
-                                            }
-                                        }
-                                        crate::engine::cache::FlatKind::Mixed { values } => {
-                                            if let Ok(n) = coerce_num(&values[r]) {
-                                                total += n;
-                                            }
-                                        }
-                                        crate::engine::cache::FlatKind::Text { .. } => {}
-                                    }
-                                }
-                            }
-                            return Some(Ok(LiteralValue::Number(total)));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sort criteria indices by selectivity (more selective first)
-        // Priority: Eq/Ne > anchored wildcards > numeric ranges > general wildcards
-        criteria_indices.sort_by_key(|&idx| {
-            match &static_preds[idx] {
-                Some(pred) => {
-                    use crate::args::CriteriaPredicate as P;
-                    match pred {
-                        P::Eq(_) | P::Ne(_) => 0, // Most selective - exact match
-                        P::TextLike { pattern, .. } => {
-                            // Check if it's an anchored pattern
-                            if !pattern.contains('?')
-                                && !pattern.contains("~*")
-                                && !pattern.contains("~?")
-                            {
-                                if pattern.ends_with('*')
-                                    && !pattern[..pattern.len() - 1].contains('*')
-                                {
-                                    1 // Starts-with pattern
-                                } else if pattern.starts_with('*') && !pattern[1..].contains('*') {
-                                    1 // Ends-with pattern
-                                } else if pattern.starts_with('*')
-                                    && pattern.ends_with('*')
-                                    && !pattern[1..pattern.len() - 1].contains('*')
-                                {
-                                    2 // Contains pattern
-                                } else if !pattern.contains('*') {
-                                    0 // Exact match (no wildcards)
-                                } else {
-                                    4 // Complex pattern
-                                }
-                            } else {
-                                4 // Complex pattern with ? or escapes
-                            }
-                        }
-                        P::Gt(_) | P::Ge(_) | P::Lt(_) | P::Le(_) => 3, // Numeric ranges
-                        P::IsBlank | P::IsNumber | P::IsText | P::IsLogical => 5, // Type tests
-                    }
-                }
-                None => 6, // Dynamic criteria - evaluate last
-            }
-        });
-        // Parallel-aware reduction using window_ctx.reduce_windows
-        let criteria_indices_ref = &criteria_indices;
-        let static_preds_ref = &static_preds;
-        let total_res = w.reduce_windows(
-            || 0.0f64,
-            |windows, acc| -> Result<(), ExcelError> {
-                // windows: per-arg vectors of windowed cells; use the last cell by convention
-                let sum_cell = windows[0].last().unwrap_or(&LiteralValue::Empty);
-
-                // Evaluate criteria in sorted order for early exit
-                let mut ok = true;
-                for &idx in criteria_indices_ref.iter() {
-                    let range_index = 1 + idx * 2;
-                    let crit_index = range_index + 1;
-
-                    if range_index >= windows.len() || crit_index >= windows.len() {
-                        break;
-                    }
-
-                    let range_cell = windows[range_index].last().unwrap_or(&LiteralValue::Empty);
-                    let crit_cell = windows[crit_index].last().unwrap_or(&LiteralValue::Empty);
-                    let pred_opt = &static_preds_ref[idx];
-
-                    let matches = if let Some(pred) = pred_opt {
-                        criteria_match(pred, range_cell)
-                    } else {
-                        match crate::args::parse_criteria(crit_cell) {
-                            Ok(p) => criteria_match(&p, range_cell),
-                            Err(e) => return Err(e),
-                        }
-                    };
-
-                    if !matches {
-                        ok = false;
-                        break; // Early exit on first non-match
-                    }
-                }
-
-                if ok {
-                    if let Ok(n) = coerce_num(sum_cell) {
-                        *acc += n;
-                    }
-                }
-                Ok(())
-            },
-            |a, b| a + b,
-        );
-        match total_res {
-            Ok(total) => Some(Ok(LiteralValue::Number(total))),
-            Err(e) => Some(Ok(LiteralValue::Error(e))),
-        }
-    }
 }
 
 /* ─────────────────────────── COUNTIFS() ──────────────────────────── */
@@ -710,77 +258,6 @@ impl Function for CountIfsFn {
             }
         }
         Ok(LiteralValue::Number(cnt as f64))
-    }
-    fn eval_window<'a, 'b>(
-        &self,
-        w: &mut crate::window_ctx::SimpleWindowCtx<'a, 'b>,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let args = w.args;
-        if args.len() < 2 || args.len() % 2 != 0 {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            ))));
-        }
-        let mut static_preds: Vec<Option<crate::args::CriteriaPredicate>> = Vec::new();
-        for i in (1..args.len()).step_by(2) {
-            let is_static = match args[i].range_view() {
-                Ok(rv) => rv.dims() == (1, 1),
-                Err(_) => true,
-            };
-            if is_static {
-                let crit_val = match args[i].range_view() {
-                    Ok(rv) => rv.as_1x1().unwrap_or(LiteralValue::Empty),
-                    Err(_) => match args[i].value() {
-                        Ok(v) => v.into_owned(),
-                        Err(_) => LiteralValue::Empty,
-                    },
-                };
-                static_preds.push(crate::args::parse_criteria(&crit_val).ok());
-            } else {
-                static_preds.push(None);
-            }
-        }
-        let mut count = 0i64;
-        let mut first_err: Option<ExcelError> = None;
-        if let Err(e) = w.for_each_window(|cells| {
-            let mut ok = true;
-            let mut sp_idx = 0usize;
-            let mut cell_index = 0usize;
-            while cell_index < cells.len() {
-                let range_cell = &cells[cell_index];
-                let crit_cell = &cells[cell_index + 1];
-                let pred_opt = &static_preds[sp_idx];
-                let matches = if let Some(pred) = pred_opt {
-                    criteria_match(pred, range_cell)
-                } else {
-                    match crate::args::parse_criteria(crit_cell) {
-                        Ok(p) => criteria_match(&p, range_cell),
-                        Err(e) => {
-                            if first_err.is_none() {
-                                first_err = Some(e);
-                            }
-                            false
-                        }
-                    }
-                };
-                if !matches {
-                    ok = false;
-                    break;
-                }
-                sp_idx += 1;
-                cell_index += 2;
-            }
-            if ok {
-                count += 1;
-            }
-            Ok(())
-        }) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        if let Some(e) = first_err {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        Some(Ok(LiteralValue::Number(count as f64)))
     }
 }
 
@@ -856,87 +333,6 @@ impl Function for AverageIfsFn {
         }
         Ok(LiteralValue::Number(sum / cnt as f64))
     }
-    fn eval_window<'a, 'b>(
-        &self,
-        w: &mut crate::window_ctx::SimpleWindowCtx<'a, 'b>,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let args = w.args;
-        if args.len() < 3 || (args.len() - 1) % 2 != 0 {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            ))));
-        }
-        let mut static_preds: Vec<Option<crate::args::CriteriaPredicate>> = Vec::new();
-        for i in (2..args.len()).step_by(2) {
-            let is_static = match args[i].range_view() {
-                Ok(rv) => rv.dims() == (1, 1),
-                Err(_) => true,
-            };
-            if is_static {
-                let crit_val = match args[i].range_view() {
-                    Ok(rv) => rv.as_1x1().unwrap_or(LiteralValue::Empty),
-                    Err(_) => match args[i].value() {
-                        Ok(v) => v.into_owned(),
-                        Err(_) => LiteralValue::Empty,
-                    },
-                };
-                static_preds.push(crate::args::parse_criteria(&crit_val).ok());
-            } else {
-                static_preds.push(None);
-            }
-        }
-        let mut sum = 0.0f64;
-        let mut cnt = 0i64;
-        let mut first_err: Option<ExcelError> = None;
-        if let Err(e) = w.for_each_window(|cells| {
-            let avg_cell = &cells[0];
-            let mut ok = true;
-            let mut sp_idx = 0usize;
-            let mut cell_index = 1usize;
-            while cell_index < cells.len() {
-                let range_cell = &cells[cell_index];
-                let crit_cell = &cells[cell_index + 1];
-                let pred_opt = &static_preds[sp_idx];
-                let matches = if let Some(pred) = pred_opt {
-                    criteria_match(pred, range_cell)
-                } else {
-                    match crate::args::parse_criteria(crit_cell) {
-                        Ok(p) => criteria_match(&p, range_cell),
-                        Err(e) => {
-                            if first_err.is_none() {
-                                first_err = Some(e);
-                            }
-                            false
-                        }
-                    }
-                };
-                if !matches {
-                    ok = false;
-                    break;
-                }
-                sp_idx += 1;
-                cell_index += 2;
-            }
-            if ok {
-                if let Ok(n) = coerce_num(avg_cell) {
-                    sum += n;
-                    cnt += 1;
-                }
-            }
-            Ok(())
-        }) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        if let Some(e) = first_err {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        if cnt == 0 {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
-            ))));
-        }
-        Some(Ok(LiteralValue::Number(sum / cnt as f64)))
-    }
 }
 
 /* ─────────────────────────── COUNTA() ──────────────────────────── */
@@ -972,23 +368,6 @@ impl Function for CountAFn {
             }
         }
         Ok(LiteralValue::Number(cnt as f64))
-    }
-    fn eval_window<'a, 'b>(
-        &self,
-        w: &mut crate::window_ctx::SimpleWindowCtx<'a, 'b>,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let mut cnt = 0i64;
-        if let Err(e) = w.for_each_window(|cells| {
-            for c in cells {
-                if !matches!(c, LiteralValue::Empty) {
-                    cnt += 1;
-                }
-            }
-            Ok(())
-        }) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        Some(Ok(LiteralValue::Number(cnt as f64)))
     }
 }
 
@@ -1026,25 +405,6 @@ impl Function for CountBlankFn {
             }
         }
         Ok(LiteralValue::Number(cnt as f64))
-    }
-    fn eval_window<'a, 'b>(
-        &self,
-        w: &mut crate::window_ctx::SimpleWindowCtx<'a, 'b>,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let mut cnt = 0i64;
-        if let Err(e) = w.for_each_window(|cells| {
-            for c in cells {
-                match c {
-                    LiteralValue::Empty => cnt += 1,
-                    LiteralValue::Text(s) if s.is_empty() => cnt += 1,
-                    _ => {}
-                }
-            }
-            Ok(())
-        }) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        Some(Ok(LiteralValue::Number(cnt as f64)))
     }
 }
 
@@ -1284,6 +644,7 @@ mod tests {
 
     // ───────── Parity tests (window vs scalar) ─────────
     #[test]
+    #[ignore]
     fn sumif_window_parity() {
         let f = SumIfFn; // direct instance
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfFn));
@@ -1310,6 +671,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn sumifs_window_parity() {
         let f = SumIfsFn;
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfsFn));
@@ -1463,6 +825,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn countifs_window_parity() {
         let f = CountIfsFn;
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountIfsFn));
@@ -1497,6 +860,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn averageifs_window_parity() {
         let f = AverageIfsFn;
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
@@ -1528,6 +892,7 @@ mod tests {
         assert_eq!(window_val, scalar);
     }
     #[test]
+    #[ignore]
     fn counta_window_parity() {
         let f = CountAFn;
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountAFn));
@@ -1549,6 +914,7 @@ mod tests {
         assert_eq!(window_val, scalar);
     }
     #[test]
+    #[ignore]
     fn countblank_window_parity() {
         let f = CountBlankFn;
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountBlankFn));
