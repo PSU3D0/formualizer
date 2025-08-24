@@ -31,14 +31,16 @@ use formualizer_macros::func_caps;
 fn collect_numeric_stats(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError> {
     let mut out = Vec::new();
     for a in args {
-        if let Ok(storage) = a.range_storage() {
-            for v in storage.to_iterator() {
-                match v.as_ref() {
+        if let Ok(view) = a.range_view() {
+            view.for_each_cell(&mut |v| {
+                match v {
                     LiteralValue::Error(e) => return Err(e.clone()),
                     LiteralValue::Number(n) => out.push(*n),
-                    _ => { /* skip */ }
+                    LiteralValue::Int(i) => out.push(*i as f64),
+                    _ => {}
                 }
-            }
+                Ok(())
+            })?;
         } else {
             match a.value()?.as_ref() {
                 LiteralValue::Error(e) => return Err(e.clone()),

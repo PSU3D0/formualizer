@@ -1,7 +1,5 @@
-use crate::engine::range_stream::RangeStorage;
 use crate::reference::CellRef;
 use crate::traits::FunctionContext;
-use formualizer_common::ExcelError;
 use formualizer_core::parser::ReferenceType;
 
 #[cfg(test)]
@@ -47,14 +45,6 @@ mod tests {
 
         fn current_cell(&self) -> Option<CellRef> {
             None
-        }
-
-        fn resolve_range_storage<'c>(
-            &'c self,
-            _reference: &ReferenceType,
-            _current_sheet: &str,
-        ) -> Result<RangeStorage<'c>, ExcelError> {
-            Err(ExcelError::from_error_string("#REF!"))
         }
 
         // The optional methods we're testing default to None

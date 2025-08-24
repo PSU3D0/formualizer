@@ -4,7 +4,6 @@ use crate::engine::cache::{CriteriaKey, CriteriaMaskCache, FlatKind, FlatView, R
 use crate::engine::masks::DenseMask;
 use crate::engine::metrics::{WarmupMetrics, WarmupTimer};
 use crate::engine::pass_planner::{HotReference, PassWarmupPlan};
-use crate::engine::range_stream::RangeStorage;
 use crate::engine::reference_fingerprint::ReferenceFingerprint;
 use crate::engine::tuning::WarmupConfig;
 use crate::traits::FunctionContext;
@@ -147,177 +146,84 @@ impl PassContext {
         reference: &ReferenceType,
         context: &C,
     ) -> Option<FlatView> {
-        // Resolve the range to get storage
+        // Resolve the range to get a view
         // TODO: Need to pass the current sheet properly
-        let storage = context.resolve_range_storage(reference, "").ok()?;
+        let view = context.resolve_range_view(reference, "").ok()?;
 
-        match storage {
-            RangeStorage::Stream(mut stream) => {
-                // Get dimensions
-                let (rows, cols) = stream.dimensions();
-                let row_count = rows as usize;
-                let col_count = cols as usize;
-
-                if row_count == 0 || col_count == 0 {
-                    return None;
-                }
-
-                // Collect values from stream
-                let mut numeric_values: Vec<f64> = Vec::new();
-                let mut text_values: Vec<String> = Vec::new();
-                let mut mixed_values: Vec<LiteralValue> = Vec::new();
-                let mut is_numeric = true;
-                let mut is_text = true;
-
-                for value in &mut stream {
-                    mixed_values.push(value.as_ref().clone());
-
-                    match value.as_ref() {
-                        LiteralValue::Number(n) => {
-                            if is_numeric {
-                                numeric_values.push(*n);
-                            }
-                            is_text = false;
-                        }
-                        LiteralValue::Int(i) => {
-                            if is_numeric {
-                                numeric_values.push(*i as f64);
-                            }
-                            is_text = false;
-                        }
-                        LiteralValue::Text(s) => {
-                            if is_text {
-                                text_values.push(s.clone());
-                            }
-                            is_numeric = false;
-                        }
-                        LiteralValue::Empty => {
-                            if is_numeric {
-                                numeric_values.push(0.0);
-                            }
-                            if is_text {
-                                text_values.push(String::new());
-                            }
-                        }
-                        _ => {
-                            is_numeric = false;
-                            is_text = false;
-                        }
-                    }
-                }
-
-                // Build the appropriate flat type
-                let kind = if is_numeric && !numeric_values.is_empty() {
-                    FlatKind::Numeric {
-                        values: Arc::from(numeric_values.into_boxed_slice()),
-                        valid: None, // TODO: track validity in Phase 3
-                    }
-                } else if is_text && !text_values.is_empty() {
-                    let text_arc: Vec<Arc<str>> = text_values
-                        .into_iter()
-                        .map(|s| Arc::<str>::from(s))
-                        .collect();
-                    FlatKind::Text {
-                        values: Arc::from(text_arc.into_boxed_slice()),
-                        empties: None,
-                    }
-                } else {
-                    FlatKind::Mixed {
-                        values: Arc::from(mixed_values.into_boxed_slice()),
-                    }
-                };
-
-                Some(FlatView {
-                    kind,
-                    row_count,
-                    col_count,
-                })
-            }
-            RangeStorage::Owned(rows) => {
-                // Handle owned storage
-                let row_count = rows.len();
-                if row_count == 0 {
-                    return None;
-                }
-
-                let col_count = rows.get(0).map_or(0, |r| r.len());
-                if col_count == 0 {
-                    return None;
-                }
-
-                let mut numeric_values: Vec<f64> = Vec::new();
-                let mut text_values: Vec<String> = Vec::new();
-                let mut mixed_values: Vec<LiteralValue> = Vec::new();
-                let mut is_numeric = true;
-                let mut is_text = true;
-
-                for row in rows.iter() {
-                    for value in row {
-                        mixed_values.push(value.clone());
-
-                        match value {
-                            LiteralValue::Number(n) => {
-                                if is_numeric {
-                                    numeric_values.push(*n);
-                                }
-                                is_text = false;
-                            }
-                            LiteralValue::Int(i) => {
-                                if is_numeric {
-                                    numeric_values.push(*i as f64);
-                                }
-                                is_text = false;
-                            }
-                            LiteralValue::Text(s) => {
-                                if is_text {
-                                    text_values.push(s.clone());
-                                }
-                                is_numeric = false;
-                            }
-                            LiteralValue::Empty => {
-                                if is_numeric {
-                                    numeric_values.push(0.0);
-                                }
-                                if is_text {
-                                    text_values.push(String::new());
-                                }
-                            }
-                            _ => {
-                                is_numeric = false;
-                                is_text = false;
-                            }
-                        }
-                    }
-                }
-
-                // Build the appropriate flat type
-                let kind = if is_numeric && !numeric_values.is_empty() {
-                    FlatKind::Numeric {
-                        values: Arc::from(numeric_values.into_boxed_slice()),
-                        valid: None,
-                    }
-                } else if is_text && !text_values.is_empty() {
-                    let text_arc: Vec<Arc<str>> = text_values
-                        .into_iter()
-                        .map(|s| Arc::<str>::from(s))
-                        .collect();
-                    FlatKind::Text {
-                        values: Arc::from(text_arc.into_boxed_slice()),
-                        empties: None,
-                    }
-                } else {
-                    FlatKind::Mixed {
-                        values: Arc::from(mixed_values.into_boxed_slice()),
-                    }
-                };
-
-                Some(FlatView {
-                    kind,
-                    row_count,
-                    col_count,
-                })
-            }
+        // Get dimensions
+        let (row_count, col_count) = view.dims();
+        if row_count == 0 || col_count == 0 {
+            return None;
         }
+
+        // Collect values
+        let mut numeric_values: Vec<f64> = Vec::new();
+        let mut text_values: Vec<String> = Vec::new();
+        let mut mixed_values: Vec<LiteralValue> = Vec::new();
+        let mut is_numeric = true;
+        let mut is_text = true;
+        let _ = view.for_each_cell(&mut |value| {
+            mixed_values.push(value.clone());
+            match value {
+                LiteralValue::Number(n) => {
+                    if is_numeric {
+                        numeric_values.push(*n);
+                    }
+                    is_text = false;
+                }
+                LiteralValue::Int(i) => {
+                    if is_numeric {
+                        numeric_values.push(*i as f64);
+                    }
+                    is_text = false;
+                }
+                LiteralValue::Text(s) => {
+                    if is_text {
+                        text_values.push(s.clone());
+                    }
+                    is_numeric = false;
+                }
+                LiteralValue::Empty => {
+                    if is_numeric {
+                        numeric_values.push(0.0);
+                    }
+                    if is_text {
+                        text_values.push(String::new());
+                    }
+                }
+                _ => {
+                    is_numeric = false;
+                    is_text = false;
+                }
+            }
+            Ok(())
+        });
+
+        let kind = if is_numeric && !numeric_values.is_empty() {
+            FlatKind::Numeric {
+                values: Arc::from(numeric_values.into_boxed_slice()),
+                valid: None,
+            }
+        } else if is_text && !text_values.is_empty() {
+            let text_arc: Vec<Arc<str>> = text_values
+                .into_iter()
+                .map(|s| Arc::<str>::from(s))
+                .collect();
+            FlatKind::Text {
+                values: Arc::from(text_arc.into_boxed_slice()),
+                empties: None,
+            }
+        } else {
+            FlatKind::Mixed {
+                values: Arc::from(mixed_values.into_boxed_slice()),
+            }
+        };
+
+        Some(FlatView {
+            kind,
+            row_count,
+            col_count,
+        })
     }
 
     /// Try to get or build a mask for criteria (Phase 3)

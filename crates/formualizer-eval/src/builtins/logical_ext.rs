@@ -71,9 +71,10 @@ impl Function for XorFn {
         let mut true_count = 0usize;
         let mut first_error: Option<LiteralValue> = None;
         for a in args {
-            if let Ok(storage) = a.range_storage() {
-                for v in storage.to_iterator() {
-                    match v.as_ref() {
+            if let Ok(view) = a.range_view() {
+                let mut err: Option<LiteralValue> = None;
+                view.for_each_cell(&mut |val| {
+                    match val {
                         LiteralValue::Boolean(b) => {
                             if *b {
                                 true_count += 1;
@@ -92,17 +93,21 @@ impl Function for XorFn {
                         LiteralValue::Empty => {}
                         LiteralValue::Error(_) => {
                             if first_error.is_none() {
-                                first_error = Some(v.into_owned());
+                                err = Some(val.clone());
                             }
                         }
                         _ => {
                             if first_error.is_none() {
-                                first_error = Some(LiteralValue::Error(
-                                    ExcelError::from_error_string("#VALUE!"),
-                                ));
+                                err = Some(LiteralValue::Error(ExcelError::from_error_string(
+                                    "#VALUE!",
+                                )));
                             }
                         }
                     }
+                    Ok(())
+                })?;
+                if first_error.is_none() {
+                    first_error = err;
                 }
             } else {
                 let v = a.value()?;

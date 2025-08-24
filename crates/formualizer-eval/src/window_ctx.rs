@@ -77,8 +77,8 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
         let mut range_dims: Vec<Option<(usize, usize)>> = Vec::with_capacity(self.args.len());
 
         for arg in self.args.iter() {
-            if let Ok(storage) = arg.range_storage() {
-                let d = storage.dims();
+            if let Ok(view) = arg.range_view() {
+                let d = view.dims();
                 match d {
                     (0, 0) => {
                         saw_empty = true;
@@ -136,8 +136,8 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
         let mut iters: Vec<Box<dyn Iterator<Item = LiteralValue>>> =
             Vec::with_capacity(self.args.len());
         for (i, arg) in self.args.iter().enumerate() {
-            if let Ok(storage) = arg.range_storage() {
-                let d = storage.dims();
+            if let Ok(view) = arg.range_view() {
+                let d = view.dims();
                 match d {
                     (0, 0) => {
                         // Empty range: broadcast empties to total (possibly 0)
@@ -145,25 +145,25 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                     }
                     (1, 1) => {
                         // Single cell: materialize one value and broadcast
-                        let mut it = storage.to_iterator();
-                        let v = it
-                            .next()
-                            .map(|c| c.into_owned())
-                            .unwrap_or(LiteralValue::Empty);
+                        let v = view.as_1x1().unwrap_or(LiteralValue::Empty);
                         iters.push(Box::new(std::iter::repeat_n(v, total)));
                     }
                     (rows, cols) => {
                         // For non-scalar ranges, pad to match max_dims if necessary
                         let range_total = rows * cols;
+                        let mut values: Vec<LiteralValue> = Vec::with_capacity(range_total);
+                        view.for_each_cell(&mut |v| {
+                            values.push(v.clone());
+                            Ok(())
+                        })?;
                         if range_total < total {
                             // Need to pad this range with Empty values
-                            let base_iter = storage.to_iterator().map(|c| c.into_owned());
                             let padding =
                                 std::iter::repeat(LiteralValue::Empty).take(total - range_total);
-                            iters.push(Box::new(base_iter.chain(padding)));
+                            iters.push(Box::new(values.into_iter().chain(padding)));
                         } else {
                             // No padding needed
-                            iters.push(Box::new(storage.to_iterator().map(|c| c.into_owned())));
+                            iters.push(Box::new(values.into_iter()));
                         }
                     }
                 }
@@ -207,8 +207,8 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
         let mut max_dims: Option<(usize, usize)> = None;
         let mut saw_empty = false;
         for arg in self.args.iter() {
-            if let Ok(storage) = arg.range_storage() {
-                let d = storage.dims();
+            if let Ok(view) = arg.range_view() {
+                let d = view.dims();
                 match d {
                     (0, 0) => saw_empty = true,
                     (1, 1) => (),
@@ -251,25 +251,24 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
         let total = rows * cols;
         let mut flats: Vec<Vec<LiteralValue>> = Vec::with_capacity(self.args.len());
         for arg in self.args.iter() {
-            if let Ok(storage) = arg.range_storage() {
-                let d = storage.dims();
+            if let Ok(view) = arg.range_view() {
+                let d = view.dims();
                 match d {
                     (0, 0) => {
                         // Broadcast empties to total (may be 0)
                         flats.push(std::iter::repeat_n(LiteralValue::Empty, total).collect());
                     }
                     (1, 1) => {
-                        let mut it = storage.to_iterator();
-                        let v = it
-                            .next()
-                            .map(|c| c.into_owned())
-                            .unwrap_or(LiteralValue::Empty);
+                        let v = view.as_1x1().unwrap_or(LiteralValue::Empty);
                         flats.push(std::iter::repeat_n(v, total).collect());
                     }
                     (r, c) => {
                         // Collect values and pad if necessary
-                        let mut values: Vec<LiteralValue> =
-                            storage.to_iterator().map(|c| c.into_owned()).collect();
+                        let mut values: Vec<LiteralValue> = Vec::with_capacity(r * c);
+                        view.for_each_cell(&mut |v| {
+                            values.push(v.clone());
+                            Ok(())
+                        })?;
                         let range_total = r * c;
                         if range_total < total {
                             // Pad with Empty values to match total
@@ -414,8 +413,8 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
         let mut max_dims: Option<(usize, usize)> = None;
         let mut saw_empty = false;
         for arg in self.args.iter() {
-            if let Ok(storage) = arg.range_storage() {
-                let d = storage.dims();
+            if let Ok(view) = arg.range_view() {
+                let d = view.dims();
                 match d {
                     (0, 0) => saw_empty = true,
                     (1, 1) => (),
@@ -456,21 +455,20 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
         let total = rows * cols;
         let mut flats: Vec<Vec<LiteralValue>> = Vec::with_capacity(self.args.len());
         for arg in self.args.iter() {
-            if let Ok(storage) = arg.range_storage() {
-                let d = storage.dims();
+            if let Ok(view) = arg.range_view() {
+                let d = view.dims();
                 match d {
                     (0, 0) => flats.push(std::iter::repeat_n(LiteralValue::Empty, total).collect()),
                     (1, 1) => {
-                        let mut it = storage.to_iterator();
-                        let v = it
-                            .next()
-                            .map(|c| c.into_owned())
-                            .unwrap_or(LiteralValue::Empty);
+                        let v = view.as_1x1().unwrap_or(LiteralValue::Empty);
                         flats.push(std::iter::repeat_n(v, total).collect());
                     }
                     (r, c) => {
-                        let mut values: Vec<LiteralValue> =
-                            storage.to_iterator().map(|c| c.into_owned()).collect();
+                        let mut values: Vec<LiteralValue> = Vec::with_capacity(r * c);
+                        view.for_each_cell(&mut |v| {
+                            values.push(v.clone());
+                            Ok(())
+                        })?;
                         let range_total = r * c;
                         if range_total < total {
                             values.extend(

@@ -28,17 +28,18 @@ impl Function for MinFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut mv: Option<f64> = None;
         for a in args {
-            if let Ok(storage) = a.range_storage() {
-                for v in storage.to_iterator() {
-                    match v.as_ref() {
-                        LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            if let Ok(view) = a.range_view() {
+                view.for_each_cell(&mut |v| {
+                    match v {
+                        LiteralValue::Error(e) => return Err(e.clone()),
                         other => {
                             if let Ok(n) = coerce_num(other) {
                                 mv = Some(mv.map(|m| m.min(n)).unwrap_or(n));
                             }
                         }
                     }
-                }
+                    Ok(())
+                })?;
             } else {
                 let v = a.value()?;
                 match v.as_ref() {
@@ -78,17 +79,18 @@ impl Function for MaxFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut mv: Option<f64> = None;
         for a in args {
-            if let Ok(storage) = a.range_storage() {
-                for v in storage.to_iterator() {
-                    match v.as_ref() {
-                        LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            if let Ok(view) = a.range_view() {
+                view.for_each_cell(&mut |v| {
+                    match v {
+                        LiteralValue::Error(e) => return Err(e.clone()),
                         other => {
                             if let Ok(n) = coerce_num(other) {
                                 mv = Some(mv.map(|m| m.max(n)).unwrap_or(n));
                             }
                         }
                     }
-                }
+                    Ok(())
+                })?;
             } else {
                 let v = a.value()?;
                 match v.as_ref() {

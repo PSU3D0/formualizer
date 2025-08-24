@@ -101,7 +101,7 @@ pub trait FnFoldCtx {
     fn args(&self) -> &[ArgumentHandle<'_, '_>];
 }
 
-/// Concrete implementation of FnFoldCtx that works with current RangeStorage
+/// Concrete implementation of FnFoldCtx
 pub struct SimpleFoldCtx<'a, 'b> {
     args: &'a [ArgumentHandle<'a, 'b>],
     _ctx: &'a dyn FunctionContext,
@@ -132,30 +132,41 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
         f: &mut dyn FnMut(crate::stripes::NumericChunk) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
         for arg in self.args {
-            if let Ok(mut storage) = arg.range_storage() {
-                storage.for_each_numeric_chunk(
-                    crate::args::CoercionPolicy::NumberLenientText,
-                    min_chunk,
-                    f,
-                )?;
-            } else if let Ok(value) = arg.value() {
-                // Pack single scalar if numeric/coercible per policy
-                let as_num = match value.as_ref() {
-                    LiteralValue::Error(e) => {
-                        return Err(e.clone());
+            match arg.range_view() {
+                Ok(view) => {
+                    view.numbers_chunked(
+                        crate::args::CoercionPolicy::NumberLenientText,
+                        min_chunk,
+                        f,
+                    )?;
+                }
+                Err(_e_rv) => {
+                    // Fall back to scalar value; propagate errors
+                    match arg.value() {
+                        Ok(value) => {
+                            let as_num = match value.as_ref() {
+                                LiteralValue::Error(e) => {
+                                    return Err(e.clone());
+                                }
+                                other => crate::coercion::to_number_lenient_with_locale(
+                                    other,
+                                    &self._ctx.locale(),
+                                )
+                                .ok(),
+                            };
+                            if let Some(n) = as_num {
+                                let one = [n];
+                                f(crate::stripes::NumericChunk {
+                                    data: &one,
+                                    validity: None,
+                                })?;
+                            }
+                        }
+                        Err(e_val) => {
+                            // Both range_view and value resolution failed → propagate error
+                            return Err(e_val);
+                        }
                     }
-                    other => {
-                        crate::coercion::to_number_lenient_with_locale(other, &self._ctx.locale())
-                            .ok()
-                    }
-                };
-                if let Some(n) = as_num {
-                    // provide a tiny chunk
-                    let one = [n];
-                    f(crate::stripes::NumericChunk {
-                        data: &one,
-                        validity: None,
-                    })?;
                 }
             }
         }
@@ -167,8 +178,8 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
         f: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
         for arg in self.args {
-            if let Ok(mut storage) = arg.range_storage() {
-                storage.for_each_cell_flat(f)?;
+            if let Ok(view) = arg.range_view() {
+                view.for_each_cell(f)?;
             } else if let Ok(value) = arg.value() {
                 f(value.as_ref())?;
             }

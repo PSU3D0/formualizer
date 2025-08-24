@@ -1,6 +1,6 @@
 use crate::SheetId;
 use crate::engine::pass_planner::PassPlanner;
-use crate::engine::range_stream::{RangeStorage, RangeStream};
+use crate::engine::range_view::RangeView;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::warmup::{PassContext, WarmupExecutor};
 use crate::engine::{DependencyGraph, EvalConfig, Scheduler, VertexId, VertexKind};
@@ -1423,12 +1423,12 @@ where
         let key = reference.fingerprint();
         ctx.flat_cache.get(&key)
     }
-
-    fn resolve_range_storage<'c>(
+    /// New: resolve a reference into a RangeView (Phase 2 API)
+    fn resolve_range_view<'c>(
         &'c self,
         reference: &ReferenceType,
         current_sheet: &str,
-    ) -> Result<RangeStorage<'c>, ExcelError> {
+    ) -> Result<RangeView<'c>, ExcelError> {
         match reference {
             ReferenceType::Range {
                 sheet,
@@ -1442,19 +1442,16 @@ where
                     .graph
                     .sheet_id(sheet_name)
                     .ok_or(ExcelError::new(ExcelErrorKind::Ref))?;
-                // Detect if this was an unbounded (infinite/partial) range at the reference level
+
                 let is_unbounded = start_row.is_none()
                     || end_row.is_none()
                     || start_col.is_none()
                     || end_col.is_none();
-                // Resolve infinite/partial bounds via used-region + sheet bounds
-                // Start with provided values, fill None from used-region or sheet bounds.
                 let mut sr = *start_row;
                 let mut sc = *start_col;
                 let mut er = *end_row;
                 let mut ec = *end_col;
 
-                // Column-only: rows are None on both ends
                 if sr.is_none() && er.is_none() {
                     let scv = sc.unwrap_or(1);
                     let ecv = ec.unwrap_or(scv);
@@ -1462,13 +1459,10 @@ where
                         sr = Some(min_r);
                         er = Some(max_r);
                     } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                        // Fallback to full sheet height when used-region is unavailable
                         sr = Some(1);
                         er = Some(max_rows);
                     }
                 }
-
-                // Row-only: cols are None on both ends
                 if sc.is_none() && ec.is_none() {
                     let srv = sr.unwrap_or(1);
                     let erv = er.unwrap_or(srv);
@@ -1476,13 +1470,10 @@ where
                         sc = Some(min_c);
                         ec = Some(max_c);
                     } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                        // Fallback to full sheet width when used-region is unavailable
                         sc = Some(1);
                         ec = Some(max_cols);
                     }
                 }
-
-                // Partially bounded (e.g., A1:A or A:A10)
                 if sr.is_some() && er.is_none() {
                     let scv = sc.unwrap_or(1);
                     let ecv = ec.unwrap_or(scv);
@@ -1522,73 +1513,30 @@ where
 
                 let sr = sr.unwrap_or(1);
                 let sc = sc.unwrap_or(1);
-                let er = er.unwrap_or(sr.saturating_sub(1)); // may produce empty
-                let ec = ec.unwrap_or(sc.saturating_sub(1)); // may produce empty
+                let er = er.unwrap_or(sr.saturating_sub(1));
+                let ec = ec.unwrap_or(sc.saturating_sub(1));
 
-                let size = (er.saturating_sub(sr) + 1) as u64 * (ec.saturating_sub(sc) + 1) as u64;
-
-                // Stream-only for unbounded (infinite/partial) ranges, regardless of final size
-                if is_unbounded {
-                    return Ok(RangeStorage::Stream(RangeStream::new(
-                        &self.graph,
-                        sheet_id,
-                        sr,
-                        sc,
-                        er,
-                        ec,
-                    )));
-                }
-
-                if size > self.config.range_expansion_limit as u64 {
-                    Ok(RangeStorage::Stream(RangeStream::new(
-                        &self.graph,
-                        sheet_id,
-                        sr,
-                        sc,
-                        er,
-                        ec,
-                    )))
-                } else {
-                    // Materialize small bounded ranges
-                    let mut data = Vec::new();
-                    if er < sr || ec < sc {
-                        // Empty window
-                        return Ok(RangeStorage::Owned(std::borrow::Cow::Owned(Vec::new())));
-                    }
-                    for r in sr..=er {
-                        let mut row_data = Vec::new();
-                        for c in sc..=ec {
-                            row_data.push(
-                                self.graph
-                                    .get_cell_value(sheet_name, r, c)
-                                    .unwrap_or(LiteralValue::Empty),
-                            );
-                        }
-                        data.push(row_data);
-                    }
-                    Ok(RangeStorage::Owned(std::borrow::Cow::Owned(data)))
-                }
+                Ok(RangeView::from_graph(&self.graph, sheet_id, sr, sc, er, ec))
             }
             ReferenceType::Cell { sheet, row, col } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-                let value = self
+                let v = self
                     .graph
                     .get_cell_value(sheet_name, *row, *col)
                     .unwrap_or(LiteralValue::Empty);
-                Ok(RangeStorage::Owned(std::borrow::Cow::Owned(vec![vec![
-                    value,
-                ]])))
+                Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))))
             }
             ReferenceType::NamedRange(name) => {
                 let data = self.resolver.resolve_named_range_reference(name)?;
-                Ok(RangeStorage::Owned(std::borrow::Cow::Owned(data)))
+                Ok(RangeView::from_borrowed(Box::leak(Box::new(data))))
             }
             ReferenceType::Table(tref) => {
-                // Materialize via Resolver::resolve_range_like for tranche 1
+                // Materialize via Resolver::resolve_range_like tranche 1
                 let boxed = self.resolve_range_like(&ReferenceType::Table(tref.clone()))?;
-                Ok(RangeStorage::Owned(std::borrow::Cow::Owned(
-                    boxed.materialise().into_owned(),
-                )))
+                {
+                    let owned = boxed.materialise().into_owned();
+                    Ok(RangeView::from_borrowed(Box::leak(Box::new(owned))))
+                }
             }
         }
     }

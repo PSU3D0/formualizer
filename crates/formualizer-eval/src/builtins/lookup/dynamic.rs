@@ -38,8 +38,8 @@ fn to_values_flat(
     if let Ok(r) = arg.as_reference_or_eval() {
         let mut out = Vec::new();
         let sheet = "Sheet1"; // TODO: propagate actual sheet if present in reference
-        let mut rs = ctx.resolve_range_storage(&r, sheet)?;
-        rs.for_each_cell_flat(&mut |v| {
+        let rv = ctx.resolve_range_view(&r, sheet)?;
+        rv.for_each_cell(&mut |v| {
             out.push(v.clone());
             Ok(())
         })?;
@@ -56,8 +56,8 @@ fn to_rows_2d(
     if let Ok(r) = arg.as_reference_or_eval() {
         let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
         let sheet = "Sheet1";
-        let mut rs = ctx.resolve_range_storage(&r, sheet)?;
-        rs.for_each_row(&mut |row| {
+        let rv = ctx.resolve_range_view(&r, sheet)?;
+        rv.for_each_row(&mut |row| {
             rows.push(row.to_vec());
             Ok(())
         })?;

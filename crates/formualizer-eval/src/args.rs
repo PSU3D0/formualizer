@@ -82,7 +82,7 @@ pub enum CriteriaPredicate {
 #[derive(Debug)]
 pub enum PreparedArg<'a> {
     Value(Cow<'a, LiteralValue>),
-    Range(crate::engine::range_stream::RangeStorage<'a>),
+    Range(crate::engine::range_view::RangeView<'a>),
     Reference(formualizer_core::parser::ReferenceType),
     Predicate(CriteriaPredicate),
 }
@@ -299,7 +299,7 @@ pub fn validate_and_prepare<'a, 'b>(
                 }
             }
             ShapeKind::Range | ShapeKind::Array => {
-                match arg.range_storage() {
+                match arg.range_view() {
                     Ok(r) => items.push(PreparedArg::Range(r)),
                     Err(_e) => {
                         // Excel-compatible: functions that accept ranges typically also accept scalars.

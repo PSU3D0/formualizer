@@ -1,7 +1,7 @@
 //! Tests for infinite and partial ranges resolved to used-region (Milestone 10)
 
 use crate::engine::graph::editor::vertex_editor::VertexEditor;
-use crate::engine::range_stream::RangeStorage;
+use crate::engine::range_view::RangeView;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
@@ -263,7 +263,7 @@ fn invalidation_on_shrink_via_empty() {
 }
 
 #[test]
-fn unbounded_ranges_are_stream_only() {
+fn unbounded_ranges_resolve_with_expected_dims() {
     let engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     let sheet = "Sheet1";
     // A:A
@@ -274,8 +274,10 @@ fn unbounded_ranges_are_stream_only() {
         end_row: None,
         end_col: Some(1),
     };
-    let rs1 = engine.resolve_range_storage(&r1, sheet).unwrap();
-    assert!(matches!(rs1, RangeStorage::Stream(_)));
+    let rv1 = engine.resolve_range_view(&r1, sheet).unwrap();
+    let (r1_rows, r1_cols) = rv1.dims();
+    assert_eq!(r1_cols, 1);
+    assert!(r1_rows >= 1_000_000, "expected full column height");
     // 1:1
     let r2 = ReferenceType::Range {
         sheet: Some(sheet.into()),
@@ -284,8 +286,10 @@ fn unbounded_ranges_are_stream_only() {
         end_row: Some(1),
         end_col: None,
     };
-    let rs2 = engine.resolve_range_storage(&r2, sheet).unwrap();
-    assert!(matches!(rs2, RangeStorage::Stream(_)));
+    let rv2 = engine.resolve_range_view(&r2, sheet).unwrap();
+    let (r2_rows, r2_cols) = rv2.dims();
+    assert_eq!(r2_rows, 1);
+    assert!(r2_cols >= 10_000, "expected wide row");
     // A1:A (partial)
     let r3 = ReferenceType::Range {
         sheet: Some(sheet.into()),
@@ -294,8 +298,10 @@ fn unbounded_ranges_are_stream_only() {
         end_row: None,
         end_col: Some(1),
     };
-    let rs3 = engine.resolve_range_storage(&r3, sheet).unwrap();
-    assert!(matches!(rs3, RangeStorage::Stream(_)));
+    let rv3 = engine.resolve_range_view(&r3, sheet).unwrap();
+    let (r3_rows, r3_cols) = rv3.dims();
+    assert_eq!(r3_cols, 1);
+    assert!(r3_rows >= 1_000_000);
     // A:A10 (partial)
     let r4 = ReferenceType::Range {
         sheet: Some(sheet.into()),
@@ -304,8 +310,10 @@ fn unbounded_ranges_are_stream_only() {
         end_row: Some(10),
         end_col: Some(1),
     };
-    let rs4 = engine.resolve_range_storage(&r4, sheet).unwrap();
-    assert!(matches!(rs4, RangeStorage::Stream(_)));
+    let rv4 = engine.resolve_range_view(&r4, sheet).unwrap();
+    let (r4_rows, r4_cols) = rv4.dims();
+    assert_eq!(r4_cols, 1);
+    assert_eq!(r4_rows, 10);
 }
 
 #[test]

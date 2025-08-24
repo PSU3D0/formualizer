@@ -33,11 +33,12 @@ impl Function for SumFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut total = 0.0;
         for arg in args {
-            // Try to get a range/stream first. If that fails, fall back to a single value.
-            if let Ok(storage) = arg.range_storage() {
-                for value_cow in storage.to_iterator() {
-                    total += coerce_num(value_cow.as_ref())?;
-                }
+            // Try to get a range/view first. If that fails, fall back to a single value.
+            if let Ok(view) = arg.range_view() {
+                view.for_each_cell(&mut |v| {
+                    total += coerce_num(v)?;
+                    Ok(())
+                })?;
             } else {
                 // Fallback for arguments that are not ranges but might be single values or errors.
                 match arg.value()?.as_ref() {
@@ -95,16 +96,13 @@ impl Function for CountFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut count: i64 = 0;
         for arg in args {
-            if let Ok(storage) = arg.range_storage() {
-                for value_cow in storage.to_iterator() {
-                    let v = value_cow.as_ref();
-                    if matches!(v, LiteralValue::Empty) {
-                        continue;
-                    }
-                    if coerce_num(v).is_ok() {
+            if let Ok(view) = arg.range_view() {
+                view.for_each_cell(&mut |v| {
+                    if !matches!(v, LiteralValue::Empty) && coerce_num(v).is_ok() {
                         count += 1;
                     }
-                }
+                    Ok(())
+                })?;
             } else {
                 match arg.value()?.as_ref() {
                     LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
@@ -164,13 +162,14 @@ impl Function for AverageFn {
         let mut sum = 0.0f64;
         let mut cnt: i64 = 0;
         for arg in args {
-            if let Ok(storage) = arg.range_storage() {
-                for value_cow in storage.to_iterator() {
-                    if let Ok(n) = coerce_num(value_cow.as_ref()) {
+            if let Ok(view) = arg.range_view() {
+                view.for_each_cell(&mut |v| {
+                    if let Ok(n) = coerce_num(v) {
                         sum += n;
                         cnt += 1;
                     }
-                }
+                    Ok(())
+                })?;
             } else {
                 match arg.value()?.as_ref() {
                     LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
@@ -251,9 +250,9 @@ impl Function for SumProductFn {
 
         // Helper: materialize an argument to a 2D array of LiteralValue
         let to_array = |ah: &ArgumentHandle| -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
-            if let Ok(mut rs) = ah.range_storage() {
+            if let Ok(rv) = ah.range_view() {
                 let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
-                rs.for_each_row(&mut |row| {
+                rv.for_each_row(&mut |row| {
                     rows.push(row.to_vec());
                     Ok(())
                 })?;

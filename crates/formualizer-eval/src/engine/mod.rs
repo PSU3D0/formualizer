@@ -7,7 +7,7 @@ pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
 pub mod plan;
-pub mod range_stream;
+pub mod range_view;
 pub mod scheduler;
 pub mod spill;
 pub mod vertex;

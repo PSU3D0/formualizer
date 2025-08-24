@@ -244,7 +244,6 @@ fn sum_large_stream_does_not_materialize_entire_range() {
     // Register SUM
     wb = wb.with_function(std::sync::Arc::new(crate::builtins::math::SumFn));
 
-    // Engine config with low expansion limit to force RangeStorage::Stream
     let mut config = EvalConfig::default();
     config.range_expansion_limit = 16; // 16 cells
     let mut engine = Engine::new(wb.clone(), config);

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::engine::range_stream::RangeStorage;
+use crate::engine::range_view::RangeView;
 use crate::function::Function;
 use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
@@ -209,14 +209,34 @@ impl TestWorkbook {
 
 /* ─────────────────────── trait impls ─────────────────────── */
 impl EvaluationContext for TestWorkbook {
-    fn resolve_range_storage<'c>(
+    fn resolve_range_view<'c>(
         &'c self,
         reference: &ReferenceType,
         _current_sheet: &str,
-    ) -> Result<RangeStorage<'c>, ExcelError> {
-        let range_box = self.resolve_range_like(reference)?;
-        let data = range_box.materialise().into_owned();
-        Ok(RangeStorage::Owned(Cow::Owned(data)))
+    ) -> Result<RangeView<'c>, ExcelError> {
+        use formualizer_core::parser::ReferenceType as RT;
+        match reference {
+            // Preserve #REF! for invalid single-cell references by embedding as a 1x1 value
+            RT::Cell { sheet, row, col } => {
+                let v = match self.resolve_cell_reference(sheet.as_deref(), *row, *col) {
+                    Ok(val) => val,
+                    Err(e) => V::Error(e),
+                };
+                let owned = vec![vec![v]];
+                Ok(RangeView::from_borrowed(Box::leak(Box::new(owned))))
+            }
+            // Named range: delegate to resolver so missing names become #NAME?
+            RT::NamedRange(name) => {
+                let rows = self.resolve_named_range_reference(name)?;
+                Ok(RangeView::from_borrowed(Box::leak(Box::new(rows))))
+            }
+            // Tables and rectangular ranges: materialize via generic path
+            _ => {
+                let range_box = self.resolve_range_like(reference)?;
+                let owned: Vec<Vec<V>> = range_box.materialise().into_owned();
+                Ok(RangeView::from_borrowed(Box::leak(Box::new(owned))))
+            }
+        }
     }
 
     fn used_rows_for_columns(

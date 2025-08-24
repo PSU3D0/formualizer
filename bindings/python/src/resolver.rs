@@ -67,12 +67,4 @@ impl formualizer_eval::traits::FunctionProvider for PyResolver {
 
 impl formualizer_eval::traits::Resolver for PyResolver {}
 
-impl formualizer_eval::traits::EvaluationContext for PyResolver {
-    fn resolve_range_storage<'c>(
-        &'c self,
-        _reference: &ReferenceType,
-        _current_sheet: &str,
-    ) -> Result<formualizer_eval::engine::range_stream::RangeStorage<'c>, ExcelError> {
-        Err(ExcelError::from(ExcelErrorKind::NImpl))
-    }
-}
+impl formualizer_eval::traits::EvaluationContext for PyResolver {}

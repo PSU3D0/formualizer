@@ -7,19 +7,12 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::sync::Arc;
+// no Arc needed here after cache removal
 
 pub struct Interpreter<'a> {
     pub context: &'a dyn EvaluationContext,
     current_sheet: &'a str,
     current_cell: Option<crate::CellRef>,
-    // Per-evaluation caches (interior mutability for &self API)
-    subexpr_cache: RefCell<FxHashMap<u64, LiteralValue>>, // key: AST fingerprint
-    // Cache only fully-owned ranges to avoid re-resolving identical references within a cell
-    // Key: (effective_sheet, structural reference fingerprint)
-    owned_range_cache: RefCell<FxHashMap<(String, u64), Arc<[Vec<LiteralValue>]>>>,
-    // Execution plan cache per subtree fingerprint
-    plan_cache: RefCell<FxHashMap<u64, crate::planner::ExecPlan>>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -28,9 +21,6 @@ impl<'a> Interpreter<'a> {
             context,
             current_sheet,
             current_cell: None,
-            subexpr_cache: RefCell::new(FxHashMap::default()),
-            owned_range_cache: RefCell::new(FxHashMap::default()),
-            plan_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -43,9 +33,6 @@ impl<'a> Interpreter<'a> {
             context,
             current_sheet,
             current_cell: Some(cell),
-            subexpr_cache: RefCell::new(FxHashMap::default()),
-            owned_range_cache: RefCell::new(FxHashMap::default()),
-            plan_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -53,62 +40,12 @@ impl<'a> Interpreter<'a> {
         self.current_sheet
     }
 
-    /// Resolve a reference with a small per-interpreter cache for fully-owned ranges.
-    /// Streaming ranges are returned as-is (not cached) to avoid materializing large data.
-    pub fn resolve_range_storage_cached<'c>(
+    pub fn resolve_range_view<'c>(
         &'c self,
         reference: &ReferenceType,
         current_sheet: &str,
-    ) -> Result<crate::engine::range_stream::RangeStorage<'c>, ExcelError> {
-        use crate::engine::range_stream::RangeStorage;
-        // Determine effective sheet key for cache
-        let sheet_key = match reference {
-            ReferenceType::Cell { sheet, .. } | ReferenceType::Range { sheet, .. } => {
-                sheet.clone().unwrap_or_else(|| current_sheet.to_string())
-            }
-            ReferenceType::Table(_) | ReferenceType::NamedRange(_) => current_sheet.to_string(),
-        };
-        let ref_fp = {
-            // Use a structural fingerprint of a synthetic AST node wrapping this reference
-            let ast = ASTNode::new(
-                ASTNodeType::Reference {
-                    original: String::new(),
-                    reference: reference.clone(),
-                },
-                None,
-            );
-            ast.fingerprint()
-        };
-
-        // Fast path: owned range present in cache
-        if let Some(arc_rows) = self
-            .owned_range_cache
-            .borrow()
-            .get(&(sheet_key.clone(), ref_fp))
-            .cloned()
-        {
-            // Return a fresh owned clone to avoid RefCell borrow/lifetime complexities
-            let data: Vec<Vec<LiteralValue>> = (*arc_rows).to_vec();
-            return Ok(RangeStorage::Owned(std::borrow::Cow::Owned(data)));
-        }
-
-        // Resolve via context
-        match self
-            .context
-            .resolve_range_storage(reference, current_sheet)?
-        {
-            RangeStorage::Owned(rows) => {
-                // Materialize into Arc<[Vec<LiteralValue>]> and cache
-                let owned: Vec<Vec<LiteralValue>> = rows.into_owned();
-                let arc: Arc<[Vec<LiteralValue>]> = Arc::from(owned.into_boxed_slice());
-                self.owned_range_cache
-                    .borrow_mut()
-                    .insert((sheet_key, ref_fp), arc.clone());
-                let data: Vec<Vec<LiteralValue>> = (*arc).to_vec();
-                Ok(RangeStorage::Owned(std::borrow::Cow::Owned(data)))
-            }
-            other @ RangeStorage::Stream(_) => Ok(other),
-        }
+    ) -> Result<crate::engine::range_view::RangeView<'c>, ExcelError> {
+        self.context.resolve_range_view(reference, current_sheet)
     }
 
     /// Evaluate an AST node in a reference context and return a ReferenceType.
@@ -145,15 +82,6 @@ impl<'a> Interpreter<'a> {
 
     /* ===================  public  =================== */
     pub fn evaluate_ast(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
-        if !node.contains_volatile() {
-            let fp = node.fingerprint();
-            if let Some(v) = self.subexpr_cache.borrow().get(&fp) {
-                return Ok(v.clone());
-            }
-            let out = self.evaluate_ast_uncached(node)?;
-            self.subexpr_cache.borrow_mut().insert(fp, out.clone());
-            return Ok(out);
-        }
         self.evaluate_ast_uncached(node)
     }
 
@@ -161,136 +89,121 @@ impl<'a> Interpreter<'a> {
         // Plan-aware evaluation: build a plan for this node and execute accordingly.
         // Provide the planner with a lightweight range-dimension probe and function lookup
         // so it can select chunked reduction and arg-parallel strategies where appropriate.
-        let fp = node.fingerprint();
-        let root = if let Some(p) = self.plan_cache.borrow().get(&fp) {
-            p.root.clone()
-        } else {
-            let current_sheet = self.current_sheet.to_string();
-            let range_probe = |reference: &ReferenceType| -> Option<(u32, u32)> {
-                // Mirror Engine::resolve_range_storage bound normalization without materialising
-                use formualizer_core::parser::ReferenceType as RT;
-                match reference {
-                    RT::Range {
-                        sheet,
-                        start_row,
-                        start_col,
-                        end_row,
-                        end_col,
-                    } => {
-                        let sheet_name = sheet.as_deref().unwrap_or(&current_sheet);
-                        // Start with provided values, fill None from used-region or sheet bounds.
-                        let mut sr = *start_row;
-                        let mut sc = *start_col;
-                        let mut er = *end_row;
-                        let mut ec = *end_col;
+        let current_sheet = self.current_sheet.to_string();
+        let range_probe = |reference: &ReferenceType| -> Option<(u32, u32)> {
+            // Mirror Engine::resolve_range_storage bound normalization without materialising
+            use formualizer_core::parser::ReferenceType as RT;
+            match reference {
+                RT::Range {
+                    sheet,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                } => {
+                    let sheet_name = sheet.as_deref().unwrap_or(&current_sheet);
+                    // Start with provided values, fill None from used-region or sheet bounds.
+                    let mut sr = *start_row;
+                    let mut sc = *start_col;
+                    let mut er = *end_row;
+                    let mut ec = *end_col;
 
-                        // Column-only: rows are None on both ends
-                        if sr.is_none() && er.is_none() {
-                            let scv = sc.unwrap_or(1);
-                            let ecv = ec.unwrap_or(scv);
-                            if let Some((min_r, max_r)) =
-                                self.context.used_rows_for_columns(sheet_name, scv, ecv)
-                            {
-                                sr = Some(min_r);
-                                er = Some(max_r);
-                            } else if let Some((max_rows, _)) =
-                                self.context.sheet_bounds(sheet_name)
-                            {
-                                sr = Some(1);
-                                er = Some(max_rows);
-                            }
+                    // Column-only: rows are None on both ends
+                    if sr.is_none() && er.is_none() {
+                        let scv = sc.unwrap_or(1);
+                        let ecv = ec.unwrap_or(scv);
+                        if let Some((min_r, max_r)) =
+                            self.context.used_rows_for_columns(sheet_name, scv, ecv)
+                        {
+                            sr = Some(min_r);
+                            er = Some(max_r);
+                        } else if let Some((max_rows, _)) = self.context.sheet_bounds(sheet_name) {
+                            sr = Some(1);
+                            er = Some(max_rows);
                         }
-
-                        // Row-only: cols are None on both ends
-                        if sc.is_none() && ec.is_none() {
-                            let srv = sr.unwrap_or(1);
-                            let erv = er.unwrap_or(srv);
-                            if let Some((min_c, max_c)) =
-                                self.context.used_cols_for_rows(sheet_name, srv, erv)
-                            {
-                                sc = Some(min_c);
-                                ec = Some(max_c);
-                            } else if let Some((_, max_cols)) =
-                                self.context.sheet_bounds(sheet_name)
-                            {
-                                sc = Some(1);
-                                ec = Some(max_cols);
-                            }
-                        }
-
-                        // Partially bounded (e.g., A1:A or A:A10)
-                        if sr.is_some() && er.is_none() {
-                            let scv = sc.unwrap_or(1);
-                            let ecv = ec.unwrap_or(scv);
-                            if let Some((_, max_r)) =
-                                self.context.used_rows_for_columns(sheet_name, scv, ecv)
-                            {
-                                er = Some(max_r);
-                            } else if let Some((max_rows, _)) =
-                                self.context.sheet_bounds(sheet_name)
-                            {
-                                er = Some(max_rows);
-                            }
-                        }
-                        if er.is_some() && sr.is_none() {
-                            let scv = sc.unwrap_or(1);
-                            let ecv = ec.unwrap_or(scv);
-                            if let Some((min_r, _)) =
-                                self.context.used_rows_for_columns(sheet_name, scv, ecv)
-                            {
-                                sr = Some(min_r);
-                            } else {
-                                sr = Some(1);
-                            }
-                        }
-                        if sc.is_some() && ec.is_none() {
-                            let srv = sr.unwrap_or(1);
-                            let erv = er.unwrap_or(srv);
-                            if let Some((_, max_c)) =
-                                self.context.used_cols_for_rows(sheet_name, srv, erv)
-                            {
-                                ec = Some(max_c);
-                            } else if let Some((_, max_cols)) =
-                                self.context.sheet_bounds(sheet_name)
-                            {
-                                ec = Some(max_cols);
-                            }
-                        }
-                        if ec.is_some() && sc.is_none() {
-                            let srv = sr.unwrap_or(1);
-                            let erv = er.unwrap_or(srv);
-                            if let Some((min_c, _)) =
-                                self.context.used_cols_for_rows(sheet_name, srv, erv)
-                            {
-                                sc = Some(min_c);
-                            } else {
-                                sc = Some(1);
-                            }
-                        }
-
-                        let sr = sr.unwrap_or(1);
-                        let sc = sc.unwrap_or(1);
-                        let er = er.unwrap_or(sr.saturating_sub(1));
-                        let ec = ec.unwrap_or(sc.saturating_sub(1));
-                        if er < sr || ec < sc {
-                            return Some((0, 0));
-                        }
-                        Some((er.saturating_sub(sr) + 1, ec.saturating_sub(sc) + 1))
                     }
-                    RT::Cell { .. } => Some((1, 1)),
-                    _ => None,
-                }
-            };
-            let fn_lookup = |ns: &str, name: &str| self.context.get_function(ns, name);
 
-            let mut planner = crate::planner::Planner::new(crate::planner::PlanConfig::default())
-                .with_range_probe(&range_probe)
-                .with_function_lookup(&fn_lookup);
-            let plan = planner.plan(node);
-            self.plan_cache.borrow_mut().insert(fp, plan.clone());
-            self.plan_cache.borrow().get(&fp).unwrap().root.clone()
+                    // Row-only: cols are None on both ends
+                    if sc.is_none() && ec.is_none() {
+                        let srv = sr.unwrap_or(1);
+                        let erv = er.unwrap_or(srv);
+                        if let Some((min_c, max_c)) =
+                            self.context.used_cols_for_rows(sheet_name, srv, erv)
+                        {
+                            sc = Some(min_c);
+                            ec = Some(max_c);
+                        } else if let Some((_, max_cols)) = self.context.sheet_bounds(sheet_name) {
+                            sc = Some(1);
+                            ec = Some(max_cols);
+                        }
+                    }
+
+                    // Partially bounded (e.g., A1:A or A:A10)
+                    if sr.is_some() && er.is_none() {
+                        let scv = sc.unwrap_or(1);
+                        let ecv = ec.unwrap_or(scv);
+                        if let Some((_, max_r)) =
+                            self.context.used_rows_for_columns(sheet_name, scv, ecv)
+                        {
+                            er = Some(max_r);
+                        } else if let Some((max_rows, _)) = self.context.sheet_bounds(sheet_name) {
+                            er = Some(max_rows);
+                        }
+                    }
+                    if er.is_some() && sr.is_none() {
+                        let scv = sc.unwrap_or(1);
+                        let ecv = ec.unwrap_or(scv);
+                        if let Some((min_r, _)) =
+                            self.context.used_rows_for_columns(sheet_name, scv, ecv)
+                        {
+                            sr = Some(min_r);
+                        } else {
+                            sr = Some(1);
+                        }
+                    }
+                    if sc.is_some() && ec.is_none() {
+                        let srv = sr.unwrap_or(1);
+                        let erv = er.unwrap_or(srv);
+                        if let Some((_, max_c)) =
+                            self.context.used_cols_for_rows(sheet_name, srv, erv)
+                        {
+                            ec = Some(max_c);
+                        } else if let Some((_, max_cols)) = self.context.sheet_bounds(sheet_name) {
+                            ec = Some(max_cols);
+                        }
+                    }
+                    if ec.is_some() && sc.is_none() {
+                        let srv = sr.unwrap_or(1);
+                        let erv = er.unwrap_or(srv);
+                        if let Some((min_c, _)) =
+                            self.context.used_cols_for_rows(sheet_name, srv, erv)
+                        {
+                            sc = Some(min_c);
+                        } else {
+                            sc = Some(1);
+                        }
+                    }
+
+                    let sr = sr.unwrap_or(1);
+                    let sc = sc.unwrap_or(1);
+                    let er = er.unwrap_or(sr.saturating_sub(1));
+                    let ec = ec.unwrap_or(sc.saturating_sub(1));
+                    if er < sr || ec < sc {
+                        return Some((0, 0));
+                    }
+                    Some((er.saturating_sub(sr) + 1, ec.saturating_sub(sc) + 1))
+                }
+                RT::Cell { .. } => Some((1, 1)),
+                _ => None,
+            }
         };
-        self.eval_with_plan(node, &root)
+        let fn_lookup = |ns: &str, name: &str| self.context.get_function(ns, name);
+
+        let mut planner = crate::planner::Planner::new(crate::planner::PlanConfig::default())
+            .with_range_probe(&range_probe)
+            .with_function_lookup(&fn_lookup);
+        let plan = planner.plan(node);
+        self.eval_with_plan(node, &plan.root)
     }
 
     fn eval_with_plan(
@@ -346,10 +259,9 @@ impl<'a> Interpreter<'a> {
                         for arg in args {
                             match &arg.node_type {
                                 ASTNodeType::Reference { reference, .. } => {
-                                    let _ = self.resolve_range_storage_cached(
-                                        reference,
-                                        self.current_sheet,
-                                    );
+                                    let _ = self
+                                        .context
+                                        .resolve_range_view(reference, self.current_sheet);
                                 }
                                 _ => {
                                     let _ = self.evaluate_ast(arg);
@@ -370,41 +282,27 @@ impl<'a> Interpreter<'a> {
 
     /* ===================  reference  =================== */
     fn eval_reference(&self, reference: &ReferenceType) -> Result<LiteralValue, ExcelError> {
-        match self
+        let view = self
             .context
-            .resolve_range_storage(reference, self.current_sheet)
-        {
-            Ok(storage) => {
-                // For a single cell reference, just return the value.
-                if let ReferenceType::Cell { .. } = reference {
-                    return Ok(storage
-                        .to_iterator()
-                        .next()
-                        .map(|cow| cow.into_owned())
-                        .unwrap_or(LiteralValue::Empty));
-                }
+            .resolve_range_view(reference, self.current_sheet)?;
 
+        match reference {
+            ReferenceType::Cell { .. } => {
+                // For a single cell reference, just return the value.
+                Ok(view.as_1x1().unwrap_or(LiteralValue::Empty))
+            }
+            _ => {
                 // For ranges, materialize into an array.
-                let data: Vec<Vec<LiteralValue>> = match storage {
-                    crate::engine::range_stream::RangeStorage::Owned(cow) => cow.into_owned(),
-                    crate::engine::range_stream::RangeStorage::Stream(mut stream) => {
-                        let (rows, cols) = stream.dimensions();
-                        let mut data = Vec::with_capacity(rows as usize);
-                        for _ in 0..rows {
-                            let mut row_data = Vec::with_capacity(cols as usize);
-                            for _ in 0..cols {
-                                row_data.push(
-                                    stream
-                                        .next()
-                                        .map(|c| c.into_owned())
-                                        .unwrap_or(LiteralValue::Empty),
-                                );
-                            }
-                            data.push(row_data);
-                        }
-                        data
-                    }
-                };
+                let (rows, cols) = view.dims();
+                let mut data = Vec::with_capacity(rows);
+
+                view.for_each_row(&mut |row| {
+                    let row_data: Vec<LiteralValue> = (0..cols)
+                        .map(|c| row.get(c).cloned().unwrap_or(LiteralValue::Empty))
+                        .collect();
+                    data.push(row_data);
+                    Ok(())
+                })?;
 
                 if data.len() == 1 && data[0].len() == 1 {
                     Ok(data[0][0].clone())
@@ -412,7 +310,6 @@ impl<'a> Interpreter<'a> {
                     Ok(LiteralValue::Array(data))
                 }
             }
-            Err(e) => Ok(LiteralValue::Error(e)),
         }
     }
 
@@ -518,15 +415,8 @@ impl<'a> Interpreter<'a> {
         DefaultFunctionContext::new(self.context, cell_ref.cloned())
     }
 
-    // Test-only helpers to introspect cache sizes
-    #[cfg(test)]
-    pub fn debug_subexpr_cache_len(&self) -> usize {
-        self.subexpr_cache.borrow().len()
-    }
-    #[cfg(test)]
-    pub fn debug_owned_range_cache_len(&self) -> usize {
-        self.owned_range_cache.borrow().len()
-    }
+    // Test-only helpers removed: interpreter no longer maintains subexpression cache
+    // owned range cache removed in RangeView migration
 
     /* ===================  array literal  =================== */
     fn eval_array_literal(&self, rows: &[Vec<ASTNode>]) -> Result<LiteralValue, ExcelError> {

@@ -29,8 +29,8 @@ fn materialize_arg(
     if let Ok(r) = arg.as_reference_or_eval() {
         let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
         let sheet = "Sheet1"; // TODO propagate sheet
-        let mut rs = ctx.resolve_range_storage(&r, sheet)?;
-        rs.for_each_row(&mut |row| {
+        let rv = ctx.resolve_range_view(&r, sheet)?;
+        rv.for_each_row(&mut |row| {
             rows.push(row.to_vec());
             Ok(())
         })?;

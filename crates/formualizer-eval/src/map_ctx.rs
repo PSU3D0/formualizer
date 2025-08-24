@@ -25,8 +25,8 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
             shapes.push((1, 1));
         } else {
             for a in args.iter() {
-                if let Ok(rs) = a.range_storage() {
-                    shapes.push(rs.dims());
+                if let Ok(rv) = a.range_view() {
+                    shapes.push(rv.dims());
                 } else if let Ok(v) = a.value() {
                     if let LiteralValue::Array(arr) = v.as_ref() {
                         let rows = arr.len();
@@ -72,14 +72,14 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
                 .with_message("No arguments provided to elementwise function"));
         }
 
-        // Determine input as RangeStorage or Array or Scalar
-        // Prefer range_storage streaming path when available
+        // Determine input as RangeView or Array or Scalar
+        // Prefer range_view streaming path when available
         let first = &self.args[0];
-        if let Ok(mut storage) = first.range_storage() {
+        if let Ok(view) = first.range_view() {
             let (rows, _cols) = self.shape;
             let mut row_idx = 0usize;
             self.output_rows.clear();
-            storage.for_each_row(&mut |row| {
+            view.for_each_row(&mut |row| {
                 let mut out_row: Vec<LiteralValue> = Vec::with_capacity(row.len());
                 for cell in row.iter() {
                     let num_opt = match cell {
@@ -171,9 +171,9 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
 
         // Materialize both inputs as arrays of LiteralValue for now (future: streaming stripes)
         let to_array = |ah: &ArgumentHandle| -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
-            if let Ok(mut rs) = ah.range_storage() {
+            if let Ok(rv) = ah.range_view() {
                 let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
-                rs.for_each_row(&mut |row| {
+                rv.for_each_row(&mut |row| {
                     rows.push(row.to_vec());
                     Ok(())
                 })?;

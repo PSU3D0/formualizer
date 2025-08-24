@@ -161,19 +161,14 @@ impl Function for IndexFn {
     ) -> Result<LiteralValue, ExcelError> {
         if let Some(Ok(r)) = self.eval_reference(args, ctx) {
             // Materialize to value
-            match ctx.resolve_range_storage(&r, "Sheet1") {
-                Ok(mut rs) => {
-                    let (rows, cols) = rs.dims();
+            match ctx.resolve_range_view(&r, "Sheet1") {
+                Ok(rv) => {
+                    let (rows, cols) = rv.dims();
                     if rows == 1 && cols == 1 {
-                        let mut out = LiteralValue::Empty;
-                        rs.for_each_cell_flat(&mut |v| {
-                            out = v.clone();
-                            Ok(())
-                        })?;
-                        Ok(out)
+                        Ok(rv.as_1x1().unwrap_or(LiteralValue::Empty))
                     } else {
                         let mut rows_out: Vec<Vec<LiteralValue>> = Vec::new();
-                        rs.for_each_row(&mut |row| {
+                        rv.for_each_row(&mut |row| {
                             rows_out.push(row.to_vec());
                             Ok(())
                         })?;
@@ -307,19 +302,14 @@ impl Function for OffsetFn {
         ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if let Some(Ok(r)) = self.eval_reference(args, ctx) {
-            match ctx.resolve_range_storage(&r, "Sheet1") {
-                Ok(mut rs) => {
-                    let (rows, cols) = rs.dims();
+            match ctx.resolve_range_view(&r, "Sheet1") {
+                Ok(rv) => {
+                    let (rows, cols) = rv.dims();
                     if rows == 1 && cols == 1 {
-                        let mut out = LiteralValue::Empty;
-                        rs.for_each_cell_flat(&mut |v| {
-                            out = v.clone();
-                            Ok(())
-                        })?;
-                        Ok(out)
+                        Ok(rv.as_1x1().unwrap_or(LiteralValue::Empty))
                     } else {
                         let mut rows_out: Vec<Vec<LiteralValue>> = Vec::new();
-                        rs.for_each_row(&mut |row| {
+                        rv.for_each_row(&mut |row| {
                             rows_out.push(row.to_vec());
                             Ok(())
                         })?;

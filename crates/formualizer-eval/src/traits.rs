@@ -1,8 +1,4 @@
-//! formualizer-eval – core traits (object-safe)
-//!
-//! Save/replace as `src/traits.rs`
-
-use crate::engine::range_stream::RangeStorage;
+use crate::engine::range_view::RangeView;
 pub use crate::function::Function;
 use crate::interpreter::Interpreter;
 use crate::reference::CellRef;
@@ -129,21 +125,32 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
-    pub fn range_storage(&self) -> Result<RangeStorage<'_>, ExcelError> {
+    /// Resolve as a RangeView (Phase 2 API). Only supports reference arguments.
+    pub fn range_view(&self) -> Result<RangeView<'_>, ExcelError> {
         match &self.node.node_type {
             ASTNodeType::Reference { reference, .. } => self
                 .interp
-                .resolve_range_storage_cached(reference, self.interp.current_sheet()),
-            _ => {
-                // Fallback for non-reference types that might evaluate to a range (e.g. array literals)
-                let value = self.value()?;
-                if let LiteralValue::Array(data) = value.into_owned() {
-                    Ok(RangeStorage::Owned(Cow::Owned(data)))
-                } else {
-                    Err(ExcelError::new(ExcelErrorKind::Value)
-                        .with_message("Argument cannot be interpreted as a range."))
-                }
+                .context
+                .resolve_range_view(reference, self.interp.current_sheet()),
+            // Treat array literals (LiteralValue::Array) as ranges for RangeView APIs
+            ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => {
+                // Borrow the rows directly from the AST literal
+                Ok(RangeView::from_borrowed(&arr[..]))
             }
+            ASTNodeType::Array(rows) => {
+                // Materialize AST array to values, then return a borrowed view
+                let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows.len());
+                for r in rows {
+                    let mut row_vals = Vec::with_capacity(r.len());
+                    for cell in r {
+                        row_vals.push(self.interp.evaluate_ast(cell)?);
+                    }
+                    out.push(row_vals);
+                }
+                Ok(RangeView::from_borrowed(Box::leak(Box::new(out))))
+            }
+            _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Argument cannot be interpreted as a range.")),
         }
     }
 
@@ -154,7 +161,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     }
 
     /// Lazily iterate values for this argument in row-major expansion order.
-    /// - Reference: stream via RangeStorage iterator (row-major)
+    /// - Reference: stream via RangeView (row-major)
     /// - Array literal: evaluate each element lazily per cell
     /// - Scalar/other expressions: a single value
     pub fn lazy_values_owned(
@@ -162,10 +169,13 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     ) -> Result<Box<dyn Iterator<Item = LiteralValue> + 'a>, ExcelError> {
         match &self.node.node_type {
             ASTNodeType::Reference { .. } => {
-                // Use RangeStorage iterator and materialize each item on demand
-                let storage = self.range_storage()?;
-                let iter = storage.to_iterator().map(|c| c.into_owned());
-                Ok(Box::new(iter))
+                let view = self.range_view()?;
+                let mut values: Vec<LiteralValue> = Vec::new();
+                view.for_each_cell(&mut |v| {
+                    values.push(v.clone());
+                    Ok(())
+                })?;
+                Ok(Box::new(values.into_iter()))
             }
             ASTNodeType::Array(rows) => {
                 struct ArrayEvalIter<'a, 'b> {
@@ -576,13 +586,15 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
         None
     }
 
-    /// Resolves a reference into a `RangeStorage` object, which can be either
-    /// a materialized vector or a lazy stream, depending on the range size.
-    fn resolve_range_storage<'c>(
+    /// Resolve a reference into a `RangeView` with clear bounds.
+    /// Implementations should resolve un/partially bounded references using used-region.
+    fn resolve_range_view<'c>(
         &'c self,
-        reference: &ReferenceType,
-        current_sheet: &str,
-    ) -> Result<RangeStorage<'c>, ExcelError>;
+        _reference: &ReferenceType,
+        _current_sheet: &str,
+    ) -> Result<RangeView<'c>, ExcelError> {
+        Err(ExcelError::new(ExcelErrorKind::NImpl))
+    }
 
     /// Locale provider: invariant by default
     fn locale(&self) -> crate::locale::Locale {
@@ -667,7 +679,7 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
 /// Minimal backend capability descriptor for planning and adapters.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct BackendCaps {
-    /// Provides RangeStorage::Stream (not just Owned), or equivalent lazy access
+    /// Provides lazy access (// TODO REMOVE?)
     pub streaming: bool,
     /// Can compute used-region for rows/columns
     pub used_region: bool,
@@ -704,12 +716,14 @@ pub trait FunctionContext {
     fn recalc_epoch(&self) -> u64;
     fn current_cell(&self) -> Option<CellRef>;
 
-    /// Resolve a reference into a RangeStorage using the underlying engine context.
-    fn resolve_range_storage<'c>(
+    /// Resolve a reference into a RangeView using the underlying engine context.
+    fn resolve_range_view<'c>(
         &'c self,
-        reference: &ReferenceType,
-        current_sheet: &str,
-    ) -> Result<RangeStorage<'c>, ExcelError>;
+        _reference: &ReferenceType,
+        _current_sheet: &str,
+    ) -> Result<RangeView<'c>, ExcelError> {
+        Err(ExcelError::new(ExcelErrorKind::NImpl))
+    }
 
     /// Get a pre-flattened view of a range if available (Phase 2)
     /// Returns None if not warmed up or not available
@@ -786,12 +800,12 @@ impl<'a> FunctionContext for DefaultFunctionContext<'a> {
         self.current
     }
 
-    fn resolve_range_storage<'c>(
+    fn resolve_range_view<'c>(
         &'c self,
         reference: &ReferenceType,
         current_sheet: &str,
-    ) -> Result<RangeStorage<'c>, ExcelError> {
-        self.base.resolve_range_storage(reference, current_sheet)
+    ) -> Result<RangeView<'c>, ExcelError> {
+        self.base.resolve_range_view(reference, current_sheet)
     }
 
     fn get_or_flatten(

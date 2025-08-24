@@ -88,7 +88,7 @@ impl Function for SumIfFn {
             ))));
         }
         // Pre-parse criteria if scalar
-        let criteria_is_range = args[1].range_storage().is_ok();
+        let criteria_is_range = args[1].range_view().is_ok();
         let static_pred = if !criteria_is_range {
             match args[1].value() {
                 Ok(v) => crate::args::parse_criteria(v.as_ref()).ok(),
@@ -209,7 +209,7 @@ impl Function for CountIfFn {
                 "#VALUE!",
             ))));
         }
-        let criteria_is_range = args[1].range_storage().is_ok();
+        let criteria_is_range = args[1].range_view().is_ok();
         let static_pred = if !criteria_is_range {
             match args[1].value() {
                 Ok(v) => crate::args::parse_criteria(v.as_ref()).ok(),
@@ -334,8 +334,8 @@ impl Function for SumIfsFn {
         let mut all_static = true;
         for i in (2..args.len()).step_by(2) {
             // Check if criteria is static
-            let is_static = match args[i].range_storage() {
-                Ok(rs) => rs.dims() == (1, 1),
+            let is_static = match args[i].range_view() {
+                Ok(rv) => rv.dims() == (1, 1),
                 Err(_) => true,
             };
             if !is_static {
@@ -407,19 +407,14 @@ impl Function for SumIfsFn {
         let mut criteria_indices: Vec<usize> = Vec::new(); // Track original positions
 
         for i in (2..args.len()).step_by(2) {
-            let is_static = match args[i].range_storage() {
-                Ok(rs) => rs.dims() == (1, 1),
+            let is_static = match args[i].range_view() {
+                Ok(rv) => rv.dims() == (1, 1),
                 Err(_) => true,
             };
             if is_static {
                 // Extract scalar: prefer top-left from range_storage when present
-                let crit_val = match args[i].range_storage() {
-                    Ok(rs) => {
-                        let mut it = rs.to_iterator();
-                        it.next()
-                            .map(|c| c.into_owned())
-                            .unwrap_or(LiteralValue::Empty)
-                    }
+                let crit_val = match args[i].range_view() {
+                    Ok(rv) => rv.as_1x1().unwrap_or(LiteralValue::Empty),
                     Err(_) => match args[i].value() {
                         Ok(v) => v.into_owned(),
                         Err(_) => LiteralValue::Empty,
@@ -435,7 +430,7 @@ impl Function for SumIfsFn {
         // Attempt Phase 2 row-zip fast path using pre-flattened ranges from FunctionContext.
         // Preconditions: sum_range is Hx1; each criteria range is 1x1 (scalar) or Hx1; criteria values are static.
         // If any precondition fails or required flats are absent, fall back to windowed path below.
-        if let Ok((sum_rows, sum_cols)) = args[0].range_storage().map(|rs| rs.dims()) {
+        if let Ok((sum_rows, sum_cols)) = args[0].range_view().map(|rv| rv.dims()) {
             if sum_cols == 1 && sum_rows > 0 {
                 if let Ok(sum_ref) = args[0].as_reference_or_eval() {
                     if let Some(sum_flat) = w.fctx.get_or_flatten(&sum_ref, true) {
@@ -452,20 +447,15 @@ impl Function for SumIfsFn {
                                 ok = false;
                                 break;
                             }
-                            let dims = match args[i].range_storage() {
-                                Ok(rs) => rs.dims(),
+                            let dims = match args[i].range_view() {
+                                Ok(rv) => rv.dims(),
                                 Err(_) => (1, 1),
                             };
                             match dims {
                                 (1, 1) => {
                                     // Extract scalar
-                                    let v = match args[i].range_storage() {
-                                        Ok(rs) => {
-                                            let mut it = rs.to_iterator();
-                                            it.next()
-                                                .map(|c| c.into_owned())
-                                                .unwrap_or(LiteralValue::Empty)
-                                        }
+                                    let v = match args[i].range_view() {
+                                        Ok(rv) => rv.as_1x1().unwrap_or(LiteralValue::Empty),
                                         Err(_) => match args[i].value() {
                                             Ok(v) => v.into_owned(),
                                             Err(_) => LiteralValue::Empty,
@@ -733,18 +723,13 @@ impl Function for CountIfsFn {
         }
         let mut static_preds: Vec<Option<crate::args::CriteriaPredicate>> = Vec::new();
         for i in (1..args.len()).step_by(2) {
-            let is_static = match args[i].range_storage() {
-                Ok(rs) => rs.dims() == (1, 1),
+            let is_static = match args[i].range_view() {
+                Ok(rv) => rv.dims() == (1, 1),
                 Err(_) => true,
             };
             if is_static {
-                let crit_val = match args[i].range_storage() {
-                    Ok(rs) => {
-                        let mut it = rs.to_iterator();
-                        it.next()
-                            .map(|c| c.into_owned())
-                            .unwrap_or(LiteralValue::Empty)
-                    }
+                let crit_val = match args[i].range_view() {
+                    Ok(rv) => rv.as_1x1().unwrap_or(LiteralValue::Empty),
                     Err(_) => match args[i].value() {
                         Ok(v) => v.into_owned(),
                         Err(_) => LiteralValue::Empty,
@@ -883,18 +868,13 @@ impl Function for AverageIfsFn {
         }
         let mut static_preds: Vec<Option<crate::args::CriteriaPredicate>> = Vec::new();
         for i in (2..args.len()).step_by(2) {
-            let is_static = match args[i].range_storage() {
-                Ok(rs) => rs.dims() == (1, 1),
+            let is_static = match args[i].range_view() {
+                Ok(rv) => rv.dims() == (1, 1),
                 Err(_) => true,
             };
             if is_static {
-                let crit_val = match args[i].range_storage() {
-                    Ok(rs) => {
-                        let mut it = rs.to_iterator();
-                        it.next()
-                            .map(|c| c.into_owned())
-                            .unwrap_or(LiteralValue::Empty)
-                    }
+                let crit_val = match args[i].range_view() {
+                    Ok(rv) => rv.as_1x1().unwrap_or(LiteralValue::Empty),
                     Err(_) => match args[i].value() {
                         Ok(v) => v.into_owned(),
                         Err(_) => LiteralValue::Empty,
@@ -1072,9 +1052,18 @@ impl Function for CountBlankFn {
 fn materialize_iter<'a, 'b>(
     arg: &'a ArgumentHandle<'a, 'b>,
 ) -> (Box<dyn Iterator<Item = LiteralValue> + 'a>, (usize, usize)) {
-    if let Ok(storage) = arg.range_storage() {
-        let d = storage.dims();
-        (Box::new(storage.to_iterator().map(|c| c.into_owned())), d)
+    if let Ok(view) = arg.range_view() {
+        let d = view.dims();
+        let mut values: Vec<LiteralValue> = Vec::with_capacity(d.0 * d.1);
+        // Re-resolve for borrow: the previous `view` is moved; get a fresh one
+        if let Ok(rv2) = arg.range_view() {
+            rv2.for_each_cell(&mut |cell| {
+                values.push(cell.clone());
+                Ok(())
+            })
+            .ok();
+        }
+        (Box::new(values.into_iter()), d)
     } else {
         let v = arg.value().unwrap().into_owned();
         (Box::new(std::iter::once(v)), (1, 1))
