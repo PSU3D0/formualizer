@@ -561,7 +561,7 @@ impl PyEngine {
         let value = PyLiteralValue {
             inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
         };
-        let formula = ast.map(|a| format!("={}", formualizer_core::pretty::pretty_print(&a)));
+        let formula = ast.map(|a| formualizer_core::pretty::canonical_formula(&a));
         Ok(PyCell { value, formula })
     }
 
@@ -679,7 +679,7 @@ impl PyEngine {
         let value = PyLiteralValue {
             inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
         };
-        let formula = ast.map(|a| format!("={}", formualizer_core::pretty::pretty_print(&a)));
+        let formula = ast.map(|a| formualizer_core::pretty::canonical_formula(&a));
 
         Ok(PyCell { value, formula })
     }
@@ -697,7 +697,7 @@ impl PyEngine {
         })?;
 
         let (ast, _) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
-        Ok(ast.map(|a| format!("={}", formualizer_core::pretty::pretty_print(&a))))
+        Ok(ast.map(|a| formualizer_core::pretty::canonical_formula(&a)))
     }
 
     /// Get only the value for a cell (without evaluation, returns last computed value)
@@ -740,7 +740,7 @@ impl PyEngine {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
         })?;
         let (ast, _) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
-        let formula = ast.map(|a| format!("={}", formualizer_core::pretty::pretty_print(&a)));
+        let formula = ast.map(|a| formualizer_core::pretty::canonical_formula(&a));
 
         Ok(PyCell { value, formula })
     }

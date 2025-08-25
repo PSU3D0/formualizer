@@ -12,9 +12,14 @@ use crate::tokenizer::Tokenizer;
 /// - Array literals: {1, 2; 3, 4}
 pub fn pretty_print(ast: &ASTNode) -> String {
     match &ast.node_type {
-        ASTNodeType::Literal(value) => {
-            format!("{value}")
-        }
+        ASTNodeType::Literal(value) => match value {
+            // Quote and escape text literals to preserve Excel semantics
+            crate::LiteralValue::Text(s) => {
+                let escaped = s.replace('"', "\"\"");
+                format!("\"{}\"", escaped)
+            }
+            _ => format!("{value}"),
+        },
         ASTNodeType::Reference { reference, .. } => reference.normalise(),
         ASTNodeType::UnaryOp { op, expr } => {
             format!("{}{}", op, pretty_print(expr))
@@ -51,6 +56,14 @@ pub fn pretty_print(ast: &ASTNode) -> String {
             format!("{{{rows_str}}}")
         }
     }
+}
+
+/// Produce a canonical Excel formula string for an AST, prefixed with '='.
+///
+/// This is the single entry-point that UI layers should use when displaying
+/// a formula reconstructed from an AST.
+pub fn canonical_formula(ast: &ASTNode) -> String {
+    format!("={}", pretty_print(ast))
 }
 
 /// Tokenizes and parses a formula, then pretty-prints it.
@@ -161,5 +174,33 @@ mod tests {
         let formula = "='My Sheet'!a1";
         let pretty = pretty_parse_render(formula).unwrap();
         assert_eq!(pretty, "='My Sheet'!A1");
+    }
+
+    #[test]
+    fn test_pretty_print_text_literals_in_functions() {
+        // Should preserve quotes around text literals
+        let formula = "=SUMIFS(A:A, B:B, \"*Parking*\")";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "=SUMIFS(A:A, B:B, \"*Parking*\")");
+    }
+
+    #[test]
+    fn test_pretty_print_text_concatenation_and_escaping() {
+        // Operators as text must stay quoted, and spacing around '&' is canonical
+        let formula = "=\">=\"&DATE(2024,1,1)";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "=\">=\" & DATE(2024, 1, 1)");
+
+        // Embedded quotes should be doubled
+        let formula = "=\"He said \"\"Hi\"\"\"";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "=\"He said \"\"Hi\"\"\"");
+    }
+
+    #[test]
+    fn test_pretty_print_text_in_arrays() {
+        let formula = "={\"A\", \"B\"; \"C\", \"D\"}";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "={\"A\", \"B\"; \"C\", \"D\"}");
     }
 }

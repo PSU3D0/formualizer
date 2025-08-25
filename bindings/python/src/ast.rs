@@ -29,14 +29,7 @@ impl PyASTNode {
 
     /// Round-trips the node back to canonical Excel formula (with leading '=').
     pub fn to_formula(&self) -> String {
-        let formula = formualizer_core::pretty::pretty_print(&self.inner);
-        if formula.starts_with('=') {
-            formula
-        } else if !matches!(self.inner.node_type, ASTNodeType::Literal(_)) {
-            format!("={}", formula)
-        } else {
-            formula
-        }
+        formualizer_core::pretty::canonical_formula(&self.inner)
     }
 
     /// Get a stable fingerprint hash of this AST structure
