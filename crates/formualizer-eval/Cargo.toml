@@ -25,6 +25,14 @@ bitflags = "2.9.1"
 bumpalo = { version = "3.16", features = ["collections"] }
 smallvec = "1.13"
 
+# Arrow (per-crate) — pinned to 56.x series
+arrow-array = "56"
+arrow-buffer = "56"
+arrow-schema = "56"
+arrow-select = "56"
+arrow-cast = "56"
+arrow = "56"
+
 [dependencies.tracing]
 version = "0.1"
 optional = true

@@ -30,5 +30,10 @@ pub mod engine;
 pub mod planner;
 pub mod telemetry;
 
+// Arrow-backed storage (Phase A)
+pub mod arrow_store;
+// Arrow compute affordances (Phase B ready)
+pub mod compute_prelude;
+
 #[cfg(test)]
 mod tests;

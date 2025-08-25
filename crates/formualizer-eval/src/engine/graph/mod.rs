@@ -171,7 +171,7 @@ pub struct DependencyGraph {
     // Edge storage with delta slab
     edges: CsrMutableEdges,
 
-    // Arena-based value and formula storage (Phase 1 complete)
+    // Arena-based value and formula storage 
     data_store: DataStore,
     vertex_values: FxHashMap<VertexId, ValueRef>,
     vertex_formulas: FxHashMap<VertexId, AstNodeId>,
