@@ -34,7 +34,9 @@ fn sumifs_fidelity_with_warmup_flats() {
     cfg_a.warmup.warmup_enabled = false;
     cfg_a.range_expansion_limit = 100_000;
     let mut eng_a = Engine::new(base_wb, cfg_a);
-    eng_a.set_cell_formula("Sheet1", 10, 10, ast.clone()).unwrap();
+    eng_a
+        .set_cell_formula("Sheet1", 10, 10, ast.clone())
+        .unwrap();
     let _ = eng_a.evaluate_cell("Sheet1", 10, 10).expect("eval A");
     let val_a = eng_a.get_cell_value("Sheet1", 10, 10).unwrap();
 
@@ -63,5 +65,8 @@ fn sumifs_fidelity_with_warmup_flats() {
     let val_b = eng_b.get_cell_value("Sheet1", 10, 10).unwrap();
 
     // Both evaluations should succeed and have identical values
-    assert_eq!(val_a, val_b, "SUMIFS result should be identical with/without warmup flats");
+    assert_eq!(
+        val_a, val_b,
+        "SUMIFS result should be identical with/without warmup flats"
+    );
 }

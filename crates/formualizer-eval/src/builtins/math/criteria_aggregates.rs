@@ -646,20 +646,20 @@ impl Function for AverageIfsFn {
             match args[0].range_view() {
                 Ok(v) => v,
                 Err(_) => {
-                // Scalar fallback: require scalar criteria and match; else #DIV/0!
-                let val = args[0].value()?;
-                for i in (1..args.len()).step_by(2) {
-                    let cval = args[i].value()?;
-                    let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
-                    if !criteria_match(&pred, cval.as_ref()) {
+                    // Scalar fallback: require scalar criteria and match; else #DIV/0!
+                    let val = args[0].value()?;
+                    for i in (1..args.len()).step_by(2) {
+                        let cval = args[i].value()?;
+                        let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
+                        if !criteria_match(&pred, cval.as_ref()) {
+                            return Ok(ExcelError::new_div().into());
+                        }
+                    }
+                    if let Ok(n) = coerce_num(val.as_ref()) {
+                        return Ok(LiteralValue::Number(n));
+                    } else {
                         return Ok(ExcelError::new_div().into());
                     }
-                }
-                if let Ok(n) = coerce_num(val.as_ref()) {
-                    return Ok(LiteralValue::Number(n));
-                } else {
-                    return Ok(ExcelError::new_div().into());
-                }
                 }
             }
         };

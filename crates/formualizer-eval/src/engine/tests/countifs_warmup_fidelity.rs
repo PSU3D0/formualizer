@@ -18,7 +18,9 @@ fn countifs_fidelity_with_warmup_flats() {
         .with_cell("Sheet1", 2, 22, LiteralValue::Number(1.0))
         .with_cell("Sheet1", 3, 22, LiteralValue::Number(2.0));
 
-    let ast = Parser::from("=COUNTIFS(Z:Z, \"A\", V:V, 1)").parse().unwrap();
+    let ast = Parser::from("=COUNTIFS(Z:Z, \"A\", V:V, 1)")
+        .parse()
+        .unwrap();
 
     // Engine A: warmup disabled
     let mut cfg_a = EvalConfig::default();
@@ -49,6 +51,8 @@ fn countifs_fidelity_with_warmup_flats() {
     let _ = eng_b.evaluate_cell("Sheet1", 5, 5).unwrap();
     let val_b = eng_b.get_cell_value("Sheet1", 5, 5).unwrap();
 
-    assert_eq!(val_a, val_b, "COUNTIFS result should match with/without criteria flats");
+    assert_eq!(
+        val_a, val_b,
+        "COUNTIFS result should match with/without criteria flats"
+    );
 }
-

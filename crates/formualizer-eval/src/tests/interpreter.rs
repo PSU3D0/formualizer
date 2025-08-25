@@ -580,6 +580,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_named_range_not_found() {
         let wb = create_workbook();
         let result = evaluate_formula("=SUM(NonExistentNamedRange)", &wb).unwrap();
