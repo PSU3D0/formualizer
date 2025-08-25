@@ -38,7 +38,10 @@ impl Function for DateValueFn {
         let date_text = match args[0].value()?.as_ref() {
             LiteralValue::Text(s) => s.clone(),
             LiteralValue::Error(e) => return Err(e.clone()),
-            _ => return Err(ExcelError::from_error_string("#VALUE!")),
+            other => {
+                return Err(ExcelError::new_value()
+                    .with_message(format!("DATEVALUE expects text, got {:?}", other)));
+            }
         };
 
         // Try common date formats
@@ -60,7 +63,8 @@ impl Function for DateValueFn {
             }
         }
 
-        Err(ExcelError::from_error_string("#VALUE!"))
+        Err(ExcelError::new_value()
+            .with_message("DATEVALUE could not parse date text in supported formats"))
     }
 }
 
@@ -93,7 +97,10 @@ impl Function for TimeValueFn {
         let time_text = match args[0].value()?.as_ref() {
             LiteralValue::Text(s) => s.clone(),
             LiteralValue::Error(e) => return Err(e.clone()),
-            _ => return Err(ExcelError::from_error_string("#VALUE!")),
+            other => {
+                return Err(ExcelError::new_value()
+                    .with_message(format!("TIMEVALUE expects text, got {:?}", other)));
+            }
         };
 
         // Try common time formats
@@ -110,7 +117,8 @@ impl Function for TimeValueFn {
             }
         }
 
-        Err(ExcelError::from_error_string("#VALUE!"))
+        Err(ExcelError::new_value()
+            .with_message("TIMEVALUE could not parse time text in supported formats"))
     }
 }
 

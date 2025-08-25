@@ -204,7 +204,7 @@ impl Function for AverageFn {
             return Some(Ok(LiteralValue::Error(e)));
         }
         if cnt == 0 {
-            let e = ExcelError::from_error_string("#DIV/0!");
+            let e = ExcelError::new_div();
             f.write_result(LiteralValue::Error(e.clone()));
             return Some(Ok(LiteralValue::Error(e)));
         }
@@ -280,9 +280,7 @@ impl Function for SumProductFn {
         let target = match broadcast_shape(&shapes) {
             Ok(s) => s,
             Err(_) => {
-                return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#VALUE!",
-                )));
+                return Ok(LiteralValue::Error(ExcelError::new_value()));
             }
         };
 
@@ -449,7 +447,7 @@ mod tests_sumproduct {
         let ctx = interp(&wb);
         let a = arr(vec![vec![LiteralValue::Int(1), LiteralValue::Int(2)]]);
         let e = ASTNode::new(
-            ASTNodeType::Literal(LiteralValue::Error(ExcelError::from_error_string("#N/A"))),
+            ASTNodeType::Literal(LiteralValue::Error(ExcelError::new_na())),
             None,
         );
         let args = vec![ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&e, &ctx)];

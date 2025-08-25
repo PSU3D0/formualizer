@@ -92,8 +92,10 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
                     };
                     match num_opt {
                         Some(n) => out_row.push(f(n)?),
-                        None => out_row
-                            .push(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
+                        None => out_row.push(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Value)
+                                .with_message("Element is not coercible to number"),
+                        )),
                     }
                 }
                 self.output_rows.push(out_row);
@@ -124,8 +126,10 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
                         };
                         match num_opt {
                             Some(n) => out_row.push(f(n)?),
-                            None => out_row
-                                .push(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
+                            None => out_row.push(LiteralValue::Error(
+                                ExcelError::new(ExcelErrorKind::Value)
+                                    .with_message("Element is not coercible to number"),
+                            )),
                         }
                     }
                     self.output_rows.push(out_row);
@@ -141,7 +145,10 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
                             .ok();
                     let out = match as_num {
                         Some(n) => f(n)?,
-                        None => LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)),
+                        None => LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Value)
+                                .with_message("Value is not coercible to number"),
+                        ),
                     };
                     self.output_rows.clear();
                     self.output_rows.push(vec![out]);
@@ -152,7 +159,8 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
         }
 
         // If we reach here, there is no array/range; treat as #VALUE!
-        Err(ExcelError::new(ExcelErrorKind::Value))
+        Err(ExcelError::new(ExcelErrorKind::Value)
+            .with_message("No array or scalar value provided for elementwise map"))
     }
 
     /// Binary numeric map with broadcasting across two inputs (args[0], args[1]).
@@ -229,7 +237,10 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
                 };
                 let out_cell = match (n0, n1) {
                     (Some(a), Some(b)) => f(a, b)?,
-                    _ => LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)),
+                    _ => LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Value)
+                            .with_message("Elements are not coercible to numbers"),
+                    ),
                 };
                 out_row.push(out_cell);
             }

@@ -110,11 +110,12 @@ impl Function for AndFn {
                         }
                     }
                     _ => {
-                        // Non-coercible (e.g., Text) → #VALUE! candidate
+                        // Non-coercible (e.g., Text) → #VALUE! candidate with message
                         if first_error.is_none() {
-                            first_error = Some(LiteralValue::Error(ExcelError::from_error_string(
-                                "#VALUE!",
-                            )));
+                            first_error =
+                                Some(LiteralValue::Error(ExcelError::new_value().with_message(
+                                    "AND expects logical/numeric inputs; text is not coercible",
+                                )));
                         }
                     }
                 }
@@ -182,11 +183,12 @@ impl Function for OrFn {
                         }
                     }
                     _ => {
-                        // Non-coercible → #VALUE! candidate
+                        // Non-coercible → #VALUE! candidate with message
                         if first_error.is_none() {
-                            first_error = Some(LiteralValue::Error(ExcelError::from_error_string(
-                                "#VALUE!",
-                            )));
+                            first_error =
+                                Some(LiteralValue::Error(ExcelError::new_value().with_message(
+                                    "OR expects logical/numeric inputs; text is not coercible",
+                                )));
                         }
                     }
                 }
@@ -230,10 +232,9 @@ impl Function for IfFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 || args.len() > 3 {
-            return Ok(LiteralValue::Error(
-                ExcelError::from_error_string("#VALUE!")
-                    .with_message(format!("IF expects 2 or 3 arguments, got {}", args.len())),
-            ));
+            return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
+                format!("IF expects 2 or 3 arguments, got {}", args.len()),
+            )));
         }
 
         let condition = args[0].value()?;
@@ -242,9 +243,9 @@ impl Function for IfFn {
             LiteralValue::Number(n) => *n != 0.0,
             LiteralValue::Int(i) => *i != 0,
             _ => {
-                return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#VALUE!",
-                )));
+                return Ok(LiteralValue::Error(
+                    ExcelError::new_value().with_message("IF condition must be boolean or number"),
+                ));
             }
         };
 
@@ -315,9 +316,7 @@ mod tests {
             _ctx: &dyn FunctionContext,
         ) -> Result<LiteralValue, ExcelError> {
             self.0.fetch_add(1, Ordering::SeqCst);
-            Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )))
+            Ok(LiteralValue::Error(ExcelError::new_value()))
         }
     }
 

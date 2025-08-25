@@ -47,18 +47,14 @@ impl Function for FindFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 || args.len() > 3 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let needle = to_text(&args[0])?;
         let hay = to_text(&args[1])?;
         let start = if args.len() == 3 {
             let n = number_like(&args[2])?;
             if n < 1 {
-                return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#VALUE!",
-                )));
+                return Ok(LiteralValue::Error(ExcelError::new_value()));
             }
             (n - 1) as usize
         } else {
@@ -68,16 +64,12 @@ impl Function for FindFn {
             return Ok(LiteralValue::Int(1));
         }
         if start > hay.len() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         if let Some(pos) = hay[start..].find(&needle) {
             Ok(LiteralValue::Int((start + pos + 1) as i64))
         } else {
-            Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )))
+            Ok(LiteralValue::Error(ExcelError::new_value()))
         }
     }
 }
@@ -105,9 +97,7 @@ impl Function for SearchFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 || args.len() > 3 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let needle = to_text(&args[0])?.to_ascii_lowercase();
         let hay_raw = to_text(&args[1])?;
@@ -115,9 +105,7 @@ impl Function for SearchFn {
         let start = if args.len() == 3 {
             let n = number_like(&args[2])?;
             if n < 1 {
-                return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#VALUE!",
-                )));
+                return Ok(LiteralValue::Error(ExcelError::new_value()));
             }
             (n - 1) as usize
         } else {
@@ -127,9 +115,7 @@ impl Function for SearchFn {
             return Ok(LiteralValue::Int(1));
         }
         if start > hay.len() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         // Convert wildcard to regex-like simple pattern
         // We'll implement manual scanning.
@@ -138,9 +124,7 @@ impl Function for SearchFn {
             if let Some(pos) = hay[start..].find(&needle) {
                 return Ok(LiteralValue::Int((start + pos + 1) as i64));
             } else {
-                return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#VALUE!",
-                )));
+                return Ok(LiteralValue::Error(ExcelError::new_value()));
             }
         }
         // Wildcard scan

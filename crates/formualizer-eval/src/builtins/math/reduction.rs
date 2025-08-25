@@ -177,7 +177,7 @@ mod tests_min_max {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(MinFn));
         let ctx = interp(&wb);
         let err = ASTNode::new(
-            ASTNodeType::Literal(LiteralValue::Error(ExcelError::from_error_string("#N/A"))),
+            ASTNodeType::Literal(LiteralValue::Error(ExcelError::new_na())),
             None,
         );
         let one = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(1)), None);

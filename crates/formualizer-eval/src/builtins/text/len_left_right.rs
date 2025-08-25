@@ -56,9 +56,7 @@ impl Function for LeftFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.is_empty() || args.len() > 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let s_val = args[0].value()?;
         let s = match s_val.as_ref() {
@@ -73,9 +71,7 @@ impl Function for LeftFn {
             1
         };
         if n < 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let chars: Vec<char> = s.chars().collect();
         let take = (n as usize).min(chars.len());
@@ -105,9 +101,7 @@ impl Function for RightFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.is_empty() || args.len() > 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let s_val = args[0].value()?;
         let s = match s_val.as_ref() {
@@ -122,9 +116,7 @@ impl Function for RightFn {
             1
         };
         if n < 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let chars: Vec<char> = s.chars().collect();
         let len = chars.len();

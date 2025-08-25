@@ -26,9 +26,7 @@ impl Function for NotFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         let b = match v.as_ref() {
@@ -38,9 +36,7 @@ impl Function for NotFn {
             LiteralValue::Empty => true,
             LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
             _ => {
-                return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#VALUE!",
-                )));
+                return Ok(LiteralValue::Error(ExcelError::new_value()));
             }
         };
         Ok(LiteralValue::Boolean(b))
@@ -176,9 +172,7 @@ impl Function for IfErrorFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         match v.as_ref() {
@@ -213,9 +207,7 @@ impl Function for IfNaFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         match v.as_ref() {
@@ -248,9 +240,7 @@ impl Function for IfsFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 || args.len() % 2 != 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         for pair in args.chunks(2) {
             let cond = pair[0].value()?;
@@ -270,7 +260,7 @@ impl Function for IfsFn {
                 return pair[1].value().map(|c| c.into_owned());
             }
         }
-        Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")))
+        Ok(LiteralValue::Error(ExcelError::new_na()))
     }
 }
 
@@ -377,13 +367,11 @@ mod tests {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IfNaFn));
         let ctx = interp(&wb);
         let na = ASTNode::new(
-            ASTNodeType::Literal(LiteralValue::Error(ExcelError::from_error_string("#N/A"))),
+            ASTNodeType::Literal(LiteralValue::Error(ExcelError::new_na())),
             None,
         );
         let other_err = ASTNode::new(
-            ASTNodeType::Literal(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            ))),
+            ASTNodeType::Literal(LiteralValue::Error(ExcelError::new_value())),
             None,
         );
         let fb = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(7)), None);
@@ -495,9 +483,7 @@ mod tests {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(XorFn));
         let ctx = interp(&wb);
         let err = ASTNode::new(
-            ASTNodeType::Literal(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            ))),
+            ASTNodeType::Literal(LiteralValue::Error(ExcelError::new_value())),
             None,
         );
         let one = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(1)), None);

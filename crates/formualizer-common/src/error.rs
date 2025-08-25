@@ -190,6 +190,34 @@ impl ExcelError {
         let kind = ExcelErrorKind::parse(s);
         Self::new(kind)
     }
+
+    pub fn new_value() -> Self {
+        Self::new(ExcelErrorKind::Value)
+    }
+
+    pub fn new_name() -> Self {
+        Self::new(ExcelErrorKind::Name)
+    }
+
+    pub fn new_div() -> Self {
+        Self::new(ExcelErrorKind::Div)
+    }
+
+    pub fn new_ref() -> Self {
+        Self::new(ExcelErrorKind::Ref)
+    }
+
+    pub fn new_circ() -> Self {
+        Self::new(ExcelErrorKind::Circ)
+    }
+
+    pub fn new_num() -> Self {
+        Self::new(ExcelErrorKind::Num)
+    }
+
+    pub fn new_na() -> Self {
+        Self::new(ExcelErrorKind::Na)
+    }
 }
 
 /* ───────────────────────── Display / Error ────────────────────────── */

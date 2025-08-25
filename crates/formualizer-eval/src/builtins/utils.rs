@@ -19,7 +19,7 @@ pub fn unary_numeric_arg<'a, 'b>(
     args: &'a [crate::traits::ArgumentHandle<'a, 'b>],
 ) -> Result<f64, ExcelError> {
     if args.len() != 1 {
-        return Err(ExcelError::from_error_string("#VALUE!")
+        return Err(ExcelError::new_value()
             .with_message(format!("Expected 1 argument, got {}", args.len())));
     }
     let v = args[0].value()?;
@@ -34,7 +34,7 @@ pub fn binary_numeric_args<'a, 'b>(
     args: &'a [crate::traits::ArgumentHandle<'a, 'b>],
 ) -> Result<(f64, f64), ExcelError> {
     if args.len() != 2 {
-        return Err(ExcelError::from_error_string("#VALUE!")
+        return Err(ExcelError::new_value()
             .with_message(format!("Expected 2 arguments, got {}", args.len())));
     }
     let a = args[0].value()?;

@@ -13,14 +13,14 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
     match v.as_ref() {
         LiteralValue::Int(i) => Ok(*i as i32),
         LiteralValue::Number(f) => Ok(f.trunc() as i32),
-        LiteralValue::Text(s) => s
-            .parse::<f64>()
-            .map(|f| f.trunc() as i32)
-            .map_err(|_| ExcelError::from_error_string("#VALUE!")),
+        LiteralValue::Text(s) => s.parse::<f64>().map(|f| f.trunc() as i32).map_err(|_| {
+            ExcelError::new_value().with_message("DATE/TIME argument is not a valid number")
+        }),
         LiteralValue::Boolean(b) => Ok(if *b { 1 } else { 0 }),
         LiteralValue::Empty => Ok(0),
         LiteralValue::Error(e) => Err(e.clone()),
-        _ => Err(ExcelError::from_error_string("#VALUE!")),
+        _ => Err(ExcelError::new_value()
+            .with_message("DATE/TIME expects numeric or text-numeric arguments")),
     }
 }
 
@@ -134,7 +134,7 @@ impl Function for TimeFn {
                 let fraction = time_to_fraction(&time);
                 Ok(LiteralValue::Number(fraction))
             }
-            None => Err(ExcelError::from_error_string("#NUM!")),
+            None => Err(ExcelError::new_num()),
         }
     }
 }

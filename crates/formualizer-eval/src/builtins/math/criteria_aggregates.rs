@@ -51,8 +51,8 @@ impl Function for SumIfFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 || args.len() > 3 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
+            return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
+                format!("SUMIF expects 2 or 3 arguments, got {}", args.len()),
             )));
         }
         let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
@@ -63,8 +63,11 @@ impl Function for SumIfFn {
             materialize_iter(&args[0])
         };
         if dims != dims_sum {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
+            return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
+                format!(
+                    "SUMIF range size mismatch: criteria range is {}x{}, sum range is {}x{}",
+                    dims.0, dims.1, dims_sum.0, dims_sum.1
+                ),
             )));
         }
         let mut total = 0.0f64;
@@ -109,8 +112,8 @@ impl Function for CountIfFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
+            return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
+                format!("COUNTIF expects 2 arguments, got {}", args.len()),
             )));
         }
         let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
@@ -157,9 +160,12 @@ impl Function for SumIfsFn {
         #[cfg(feature = "tracing")]
         let _span = tracing::info_span!("SUMIFS").entered();
         if args.len() < 3 || (args.len() - 1) % 2 != 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(
+                ExcelError::new_value().with_message(format!(
+                    "SUMIFS expects 1 sum_range followed by N pairs (criteria_range, criteria); got {} args",
+                    args.len()
+                )),
+            ));
         }
 
         // Get the sum range as a RangeView
@@ -216,8 +222,12 @@ impl Function for SumIfsFn {
             };
 
             if crit_view.dims() != dims {
-                return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#VALUE!",
+                let (cr, cc) = crit_view.dims();
+                return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
+                    format!(
+                        "SUMIFS range size mismatch: criteria range is {}x{}, sum range is {}x{}",
+                        cr, cc, dims.0, dims.1
+                    ),
                 )));
             }
             crit_views.push(Some(crit_view));
@@ -341,8 +351,11 @@ impl Function for CountIfsFn {
         #[cfg(feature = "tracing")]
         let _span = tracing::info_span!("COUNTIFS").entered();
         if args.len() < 2 || args.len() % 2 != 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
+            return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
+                format!(
+                    "COUNTIFS expects N pairs (criteria_range, criteria); got {} args",
+                    args.len()
+                ),
             )));
         }
         let mut crit_iters = Vec::new();
@@ -352,9 +365,12 @@ impl Function for CountIfsFn {
             let (iter, d) = materialize_iter(&args[i]);
             if let Some(dd) = dims {
                 if dd != d {
-                    return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                        "#VALUE!",
-                    )));
+                    return Ok(LiteralValue::Error(
+                        ExcelError::new_value().with_message(format!(
+                            "COUNTIFS range size mismatch: criteria range is {}x{}, first criteria range is {}x{}",
+                            d.0, d.1, dd.0, dd.1
+                        )),
+                    ));
                 }
             } else {
                 dims = Some(d);
@@ -411,9 +427,12 @@ impl Function for AverageIfsFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 3 || (args.len() - 1) % 2 != 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(
+                ExcelError::new_value().with_message(format!(
+                    "AVERAGEIFS expects 1 avg_range followed by N pairs (criteria_range, criteria); got {} args",
+                    args.len()
+                )),
+            ));
         }
         let (avg_it, dims) = materialize_iter(&args[0]);
         let mut crit_iters = Vec::new();
@@ -421,9 +440,12 @@ impl Function for AverageIfsFn {
         for i in (1..args.len()).step_by(2) {
             let (iter, d) = materialize_iter(&args[i]);
             if d != dims {
-                return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#VALUE!",
-                )));
+                return Ok(LiteralValue::Error(
+                    ExcelError::new_value().with_message(format!(
+                        "AVERAGEIFS range size mismatch: criteria range is {}x{}, avg_range is {}x{}",
+                        d.0, d.1, dims.0, dims.1
+                    )),
+                ));
             }
             crit_iters.push(iter);
             preds.push(crate::args::parse_criteria(args[i + 1].value()?.as_ref())?);

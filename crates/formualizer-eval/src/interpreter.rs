@@ -484,7 +484,7 @@ impl<'a> Interpreter<'a> {
             };
             // Excel domain: negative base with non-integer exponent -> #NUM!
             if a < 0.0 && b.fract() != 0.0 {
-                return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+                return Ok(LiteralValue::Error(ExcelError::new_num()));
             }
             match crate::coercion::sanitize_numeric(a.powf(b)) {
                 Ok(n) => Ok(LiteralValue::Number(n)),

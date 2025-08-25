@@ -51,9 +51,7 @@ impl Function for IsNumberFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         let is_num = matches!(
@@ -88,9 +86,7 @@ impl Function for IsTextFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         Ok(LiteralValue::Boolean(matches!(
@@ -119,9 +115,7 @@ impl Function for IsLogicalFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         Ok(LiteralValue::Boolean(matches!(
@@ -150,9 +144,7 @@ impl Function for IsBlankFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         Ok(LiteralValue::Boolean(matches!(
@@ -181,9 +173,7 @@ impl Function for IsErrorFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         Ok(LiteralValue::Boolean(matches!(
@@ -212,9 +202,7 @@ impl Function for IsErrFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         let is_err = match v.as_ref() {
@@ -244,9 +232,7 @@ impl Function for IsNaFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         let is_na = matches!(v.as_ref(), LiteralValue::Error(e) if e.kind==ExcelErrorKind::Na);
@@ -273,9 +259,7 @@ impl Function for IsFormulaFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         // TODO(excel-nuance): formula provenance once AST metadata is plumbed.
         Ok(LiteralValue::Boolean(false))
@@ -301,9 +285,7 @@ impl Function for TypeFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?; // Propagate errors directly
         if let LiteralValue::Error(e) = v.as_ref() {
@@ -365,9 +347,7 @@ impl Function for NFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         match v.as_ref() {
@@ -416,9 +396,7 @@ impl Function for TFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let v = args[0].value()?;
         match v.as_ref() {

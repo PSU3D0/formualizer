@@ -800,7 +800,7 @@ mod tests {
         let ast = parse_formula("=#DIV/0!").unwrap();
 
         if let ASTNodeType::Literal(LiteralValue::Error(error)) = ast.node_type {
-            assert_eq!(error, ExcelError::from_error_string("#DIV/0!"));
+            assert_eq!(error, ExcelError::new_div());
         } else {
             panic!("Expected Error literal");
         }

@@ -13,13 +13,14 @@ fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     match v.as_ref() {
         LiteralValue::Number(f) => Ok(*f),
         LiteralValue::Int(i) => Ok(*i as f64),
-        LiteralValue::Text(s) => s
-            .parse::<f64>()
-            .map_err(|_| ExcelError::from_error_string("#VALUE!")),
+        LiteralValue::Text(s) => s.parse::<f64>().map_err(|_| {
+            ExcelError::new_value().with_message("Date/time serial is not a valid number")
+        }),
         LiteralValue::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
         LiteralValue::Empty => Ok(0.0),
         LiteralValue::Error(e) => Err(e.clone()),
-        _ => Err(ExcelError::from_error_string("#VALUE!")),
+        _ => Err(ExcelError::new_value()
+            .with_message("Date/time functions expect numeric or text-numeric serials")),
     }
 }
 

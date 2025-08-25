@@ -193,7 +193,7 @@ mod tests {
 
         let values = vec![
             LiteralValue::Number(1.0),
-            LiteralValue::Error(ExcelError::from_error_string("#VALUE!")),
+            LiteralValue::Error(ExcelError::new_value()),
             LiteralValue::Number(2.0),
         ];
 

@@ -84,7 +84,7 @@ pub fn to_text_invariant(value: &LiteralValue) -> String {
 /// Numeric sanitization: NaN/Inf → #NUM!
 pub fn sanitize_numeric(n: f64) -> Result<f64, ExcelError> {
     if n.is_nan() || n.is_infinite() {
-        return Err(ExcelError::from_error_string("#NUM!"));
+        return Err(ExcelError::new_num());
     }
     Ok(n)
 }

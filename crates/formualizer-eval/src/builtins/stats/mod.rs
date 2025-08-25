@@ -57,10 +57,10 @@ fn collect_numeric_stats(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError
 
 fn percentile_inc(sorted: &[f64], p: f64) -> Result<f64, ExcelError> {
     if sorted.is_empty() {
-        return Err(ExcelError::from_error_string("#NUM!"));
+        return Err(ExcelError::new_num());
     }
     if !(0.0..=1.0).contains(&p) {
-        return Err(ExcelError::from_error_string("#NUM!"));
+        return Err(ExcelError::new_num());
     }
     if sorted.len() == 1 {
         return Ok(sorted[0]);
@@ -79,15 +79,15 @@ fn percentile_inc(sorted: &[f64], p: f64) -> Result<f64, ExcelError> {
 fn percentile_exc(sorted: &[f64], p: f64) -> Result<f64, ExcelError> {
     // Excel PERCENTILE.EXC requires 0 < p < 1 and uses (n+1) basis; invalid if rank<1 or >n
     if sorted.is_empty() {
-        return Err(ExcelError::from_error_string("#NUM!"));
+        return Err(ExcelError::new_num());
     }
     if !(0.0..=1.0).contains(&p) || p <= 0.0 || p >= 1.0 {
-        return Err(ExcelError::from_error_string("#NUM!"));
+        return Err(ExcelError::new_num());
     }
     let n = sorted.len() as f64;
     let rank = p * (n + 1.0); // 1..n domain
     if rank < 1.0 || rank > n {
-        return Err(ExcelError::from_error_string("#NUM!"));
+        return Err(ExcelError::new_num());
     }
     let lo = rank.floor();
     let hi = rank.ceil();
@@ -129,11 +129,11 @@ impl Function for RankEqFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")));
+            return Ok(LiteralValue::Error(ExcelError::new_na()));
         }
         let target = match coerce_num(args[0].value()?.as_ref()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A"))),
+            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_na())),
         };
         // optional order arg at end if 3 args
         let order = if args.len() >= 3 {
@@ -143,7 +143,7 @@ impl Function for RankEqFn {
         };
         let nums = collect_numeric_stats(&args[1..2])?; // only one ref range per Excel spec
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")));
+            return Ok(LiteralValue::Error(ExcelError::new_na()));
         }
         let mut sorted = nums; // copy
         if order.abs() < 1e-12 {
@@ -158,7 +158,7 @@ impl Function for RankEqFn {
                 return Ok(LiteralValue::Number((i + 1) as f64));
             }
         }
-        Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")))
+        Ok(LiteralValue::Error(ExcelError::new_na()))
     }
 }
 
@@ -185,11 +185,11 @@ impl Function for RankAvgFn {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")));
+            return Ok(LiteralValue::Error(ExcelError::new_na()));
         }
         let target = match coerce_num(args[0].value()?.as_ref()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A"))),
+            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_na())),
         };
         let order = if args.len() >= 3 {
             coerce_num(args[2].value()?.as_ref()).unwrap_or(0.0)
@@ -198,7 +198,7 @@ impl Function for RankAvgFn {
         };
         let nums = collect_numeric_stats(&args[1..2])?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")));
+            return Ok(LiteralValue::Error(ExcelError::new_na()));
         }
         let mut sorted = nums;
         if order.abs() < 1e-12 {
@@ -213,7 +213,7 @@ impl Function for RankAvgFn {
             }
         }
         if positions.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")));
+            return Ok(LiteralValue::Error(ExcelError::new_na()));
         }
         let avg = positions.iter().copied().sum::<usize>() as f64 / positions.len() as f64;
         Ok(LiteralValue::Number(avg))
@@ -242,19 +242,19 @@ impl Function for LARGE {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         let k = match coerce_num(args.last().unwrap().value()?.as_ref()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!"))),
+            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
         };
         let k = k as i64;
         if k < 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.is_empty() || k as usize > nums.len() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         nums.sort_by(|a, b| b.partial_cmp(a).unwrap());
         Ok(LiteralValue::Number(nums[(k as usize) - 1]))
@@ -265,9 +265,7 @@ impl Function for LARGE {
     ) -> Option<Result<LiteralValue, ExcelError>> {
         let args = f.args();
         if args.len() < 2 {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#NUM!",
-            ))));
+            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
         }
         let k = match coerce_num(args.last().unwrap().value().ok()?.as_ref()) {
             Ok(n) => n as i64,
@@ -278,18 +276,14 @@ impl Function for LARGE {
             }
         };
         if k < 1 {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#NUM!",
-            ))));
+            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
         }
         let mut nums = match collect_numeric_stats(&args[..args.len() - 1]) {
             Ok(v) => v,
             Err(e) => return Some(Ok(LiteralValue::Error(e))),
         };
         if nums.is_empty() || k as usize > nums.len() {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#NUM!",
-            ))));
+            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
         }
         // partial selection nth_element style
         let idx = (k as usize) - 1;
@@ -325,19 +319,19 @@ impl Function for SMALL {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         let k = match coerce_num(args.last().unwrap().value()?.as_ref()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!"))),
+            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
         };
         let k = k as i64;
         if k < 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.is_empty() || k as usize > nums.len() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         Ok(LiteralValue::Number(nums[(k as usize) - 1]))
@@ -348,9 +342,7 @@ impl Function for SMALL {
     ) -> Option<Result<LiteralValue, ExcelError>> {
         let args = f.args();
         if args.len() < 2 {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#NUM!",
-            ))));
+            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
         }
         let k = match coerce_num(args.last().unwrap().value().ok()?.as_ref()) {
             Ok(n) => n as i64,
@@ -361,18 +353,14 @@ impl Function for SMALL {
             }
         };
         if k < 1 {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#NUM!",
-            ))));
+            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
         }
         let mut nums = match collect_numeric_stats(&args[..args.len() - 1]) {
             Ok(v) => v,
             Err(e) => return Some(Ok(LiteralValue::Error(e))),
         };
         if nums.is_empty() || k as usize > nums.len() {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#NUM!",
-            ))));
+            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
         }
         let idx = (k as usize) - 1;
         let (left, nth, _right) =
@@ -406,7 +394,7 @@ impl Function for MEDIAN {
     ) -> Result<LiteralValue, ExcelError> {
         let mut nums = collect_numeric_stats(args)?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let n = nums.len();
@@ -428,9 +416,7 @@ impl Function for MEDIAN {
             Err(e) => return Some(Ok(LiteralValue::Error(e))),
         };
         if nums.is_empty() {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#NUM!",
-            ))));
+            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
         }
         let n = nums.len();
         let mid = n / 2;
@@ -526,7 +512,7 @@ impl Function for StdevSample {
         let out = if let Some(e) = err {
             LiteralValue::Error(e)
         } else if n < 2.0 {
-            LiteralValue::Error(ExcelError::from_error_string("#DIV/0!"))
+            LiteralValue::Error(ExcelError::new_div())
         } else {
             LiteralValue::Number((m2 / (n - 1.0)).sqrt())
         };
@@ -598,7 +584,7 @@ impl Function for StdevPop {
         let out = if let Some(e) = err {
             LiteralValue::Error(e)
         } else if n == 0.0 {
-            LiteralValue::Error(ExcelError::from_error_string("#DIV/0!"))
+            LiteralValue::Error(ExcelError::new_div())
         } else {
             LiteralValue::Number((m2 / n).sqrt())
         };
@@ -670,7 +656,7 @@ impl Function for VarSample {
         let out = if let Some(e) = err {
             LiteralValue::Error(e)
         } else if n < 2.0 {
-            LiteralValue::Error(ExcelError::from_error_string("#DIV/0!"))
+            LiteralValue::Error(ExcelError::new_div())
         } else {
             LiteralValue::Number(m2 / (n - 1.0))
         };
@@ -742,7 +728,7 @@ impl Function for VarPop {
         let out = if let Some(e) = err {
             LiteralValue::Error(e)
         } else if n == 0.0 {
-            LiteralValue::Error(ExcelError::from_error_string("#DIV/0!"))
+            LiteralValue::Error(ExcelError::new_div())
         } else {
             LiteralValue::Number(m2 / n)
         };
@@ -778,7 +764,7 @@ impl Function for ModeSingleFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut nums = collect_numeric_stats(args)?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")));
+            return Ok(LiteralValue::Error(ExcelError::new_na()));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let mut best_val = nums[0];
@@ -802,7 +788,7 @@ impl Function for ModeSingleFn {
             best_val = cur_val;
         }
         if best_cnt <= 1 {
-            Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")))
+            Ok(LiteralValue::Error(ExcelError::new_na()))
         } else {
             Ok(LiteralValue::Number(best_val))
         }
@@ -843,7 +829,7 @@ impl Function for ModeSingleFn {
             best_val = cur_val;
         }
         let out = if best_cnt <= 1 {
-            LiteralValue::Error(ExcelError::from_error_string("#N/A"))
+            LiteralValue::Error(ExcelError::new_na())
         } else {
             LiteralValue::Number(best_val)
         };
@@ -875,7 +861,7 @@ impl Function for ModeMultiFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut nums = collect_numeric_stats(args)?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")));
+            return Ok(LiteralValue::Error(ExcelError::new_na()));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let mut runs: Vec<(f64, usize)> = Vec::new();
@@ -893,7 +879,7 @@ impl Function for ModeMultiFn {
         runs.push((cur_val, cur_cnt));
         let max_freq = runs.iter().map(|r| r.1).max().unwrap_or(0);
         if max_freq <= 1 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#N/A")));
+            return Ok(LiteralValue::Error(ExcelError::new_na()));
         }
         let rows: Vec<Vec<LiteralValue>> = runs
             .into_iter()
@@ -932,7 +918,7 @@ impl Function for ModeMultiFn {
         runs.push((cur, cnt));
         let max_freq = runs.iter().map(|r| r.1).max().unwrap_or(0);
         if max_freq <= 1 {
-            let out = LiteralValue::Error(ExcelError::from_error_string("#N/A"));
+            let out = LiteralValue::Error(ExcelError::new_na());
             f.write_result(out.clone());
             return Some(Ok(out));
         }
@@ -972,15 +958,15 @@ impl Function for PercentileInc {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         let p = match coerce_num(args.last().unwrap().value()?.as_ref()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!"))),
+            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
         };
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         match percentile_inc(&nums, p) {
@@ -1012,15 +998,15 @@ impl Function for PercentileExc {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         let p = match coerce_num(args.last().unwrap().value()?.as_ref()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!"))),
+            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
         };
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         match percentile_exc(&nums, p) {
@@ -1055,19 +1041,19 @@ impl Function for QuartileInc {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         let q = match coerce_num(args.last().unwrap().value()?.as_ref()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!"))),
+            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
         };
         let q_i = q as i64;
         if !(0..=4).contains(&q_i) {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = match q_i {
@@ -1076,7 +1062,7 @@ impl Function for QuartileInc {
             1 => 0.25,
             2 => 0.5,
             3 => 0.75,
-            _ => return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!"))),
+            _ => return Ok(LiteralValue::Error(ExcelError::new_num())),
         };
         match percentile_inc(&nums, p) {
             Ok(v) => Ok(LiteralValue::Number(v)),
@@ -1107,26 +1093,26 @@ impl Function for QuartileExc {
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         let q = match coerce_num(args.last().unwrap().value()?.as_ref()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!"))),
+            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
         };
         let q_i = q as i64;
         if !(1..=3).contains(&q_i) {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = match q_i {
             1 => 0.25,
             2 => 0.5,
             3 => 0.75,
-            _ => return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!"))),
+            _ => return Ok(LiteralValue::Error(ExcelError::new_num())),
         };
         match percentile_exc(&nums, p) {
             Ok(v) => Ok(LiteralValue::Number(v)),

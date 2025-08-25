@@ -13,13 +13,14 @@ fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     match v.as_ref() {
         LiteralValue::Number(f) => Ok(*f),
         LiteralValue::Int(i) => Ok(*i as f64),
-        LiteralValue::Text(s) => s
-            .parse::<f64>()
-            .map_err(|_| ExcelError::from_error_string("#VALUE!")),
+        LiteralValue::Text(s) => s.parse::<f64>().map_err(|_| {
+            ExcelError::new_value().with_message("EDATE/EOMONTH start_date is not a valid number")
+        }),
         LiteralValue::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
         LiteralValue::Empty => Ok(0.0),
         LiteralValue::Error(e) => Err(e.clone()),
-        _ => Err(ExcelError::from_error_string("#VALUE!")),
+        _ => Err(ExcelError::new_value()
+            .with_message("EDATE/EOMONTH expects numeric or text-numeric arguments")),
     }
 }
 
@@ -28,14 +29,14 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
     match v.as_ref() {
         LiteralValue::Int(i) => Ok(*i as i32),
         LiteralValue::Number(f) => Ok(f.trunc() as i32),
-        LiteralValue::Text(s) => s
-            .parse::<f64>()
-            .map(|f| f.trunc() as i32)
-            .map_err(|_| ExcelError::from_error_string("#VALUE!")),
+        LiteralValue::Text(s) => s.parse::<f64>().map(|f| f.trunc() as i32).map_err(|_| {
+            ExcelError::new_value().with_message("EDATE/EOMONTH months is not a valid number")
+        }),
         LiteralValue::Boolean(b) => Ok(if *b { 1 } else { 0 }),
         LiteralValue::Empty => Ok(0),
         LiteralValue::Error(e) => Err(e.clone()),
-        _ => Err(ExcelError::from_error_string("#VALUE!")),
+        _ => Err(ExcelError::new_value()
+            .with_message("EDATE/EOMONTH expects numeric or text-numeric arguments")),
     }
 }
 
@@ -88,7 +89,7 @@ impl Function for EdateFn {
         let target_day = start_date.day().min(max_day);
 
         let target_date = NaiveDate::from_ymd_opt(target_year, target_month as u32, target_day)
-            .ok_or_else(|| ExcelError::from_error_string("#NUM!"))?;
+            .ok_or_else(|| ExcelError::new_num())?;
 
         Ok(LiteralValue::Number(date_to_serial(&target_date)))
     }
@@ -140,7 +141,7 @@ impl Function for EomonthFn {
         let last_day = last_day_of_month(target_year, target_month as u32);
 
         let target_date = NaiveDate::from_ymd_opt(target_year, target_month as u32, last_day)
-            .ok_or_else(|| ExcelError::from_error_string("#NUM!"))?;
+            .ok_or_else(|| ExcelError::new_num())?;
 
         Ok(LiteralValue::Number(date_to_serial(&target_date)))
     }

@@ -25,17 +25,13 @@ impl Function for MidFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 3 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let s = to_text(&args[0])?;
         let start = number_like(&args[1])?;
         let count = number_like(&args[2])?;
         if start < 1 || count < 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let chars: Vec<char> = s.chars().collect();
         if (start as usize) > chars.len() {
@@ -72,9 +68,7 @@ impl Function for SubstituteFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 3 || args.len() > 4 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let text = to_text(&args[0])?;
         let old = to_text(&args[1])?;
@@ -85,9 +79,7 @@ impl Function for SubstituteFn {
         if args.len() == 4 {
             let instance = number_like(&args[3])?;
             if instance <= 0 {
-                return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#VALUE!",
-                )));
+                return Ok(LiteralValue::Error(ExcelError::new_value()));
             }
             let mut idx = 0;
             let mut count = 0;
@@ -131,18 +123,14 @@ impl Function for ReplaceFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() != 4 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let text = to_text(&args[0])?;
         let start = number_like(&args[1])?;
         let num = number_like(&args[2])?;
         let new = to_text(&args[3])?;
         if start < 1 || num < 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let mut chars: Vec<char> = text.chars().collect();
         let len = chars.len();

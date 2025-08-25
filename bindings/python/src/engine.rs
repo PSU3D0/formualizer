@@ -634,24 +634,6 @@ impl PyEngine {
 
         use formualizer_common::{ErrorContext, LiteralValue};
         let inner = match value {
-            Some(LiteralValue::Error(mut e)) => {
-                // Attach location if not already present
-                if e.context.is_none()
-                    || e.context
-                        .as_ref()
-                        .map(|c| c.row.is_none() || c.col.is_none())
-                        .unwrap_or(true)
-                {
-                    e.context = Some(ErrorContext {
-                        row: Some(row),
-                        col: Some(col),
-                        origin_row: None,
-                        origin_col: None,
-                        origin_sheet: None,
-                    });
-                }
-                LiteralValue::Error(e)
-            }
             Some(v) => v,
             None => LiteralValue::Empty,
         };

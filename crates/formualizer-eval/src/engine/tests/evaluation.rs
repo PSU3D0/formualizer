@@ -104,10 +104,7 @@ fn test_evaluation_error_handling() {
     let a1_id = vertex_ids[0];
     let result = engine.evaluate_vertex(a1_id).unwrap();
 
-    assert_eq!(
-        result,
-        LiteralValue::Error(ExcelError::from_error_string("#DIV/0!"))
-    );
+    assert_eq!(result, LiteralValue::Error(ExcelError::new_div()));
 }
 
 #[test]
@@ -141,10 +138,7 @@ fn test_error_propagation_through_dependencies() {
     let a2_result = engine.evaluate_vertex(a2_id).unwrap();
 
     assert_eq!(a2_result, a1_result);
-    assert_eq!(
-        a2_result,
-        LiteralValue::Error(ExcelError::from_error_string("#DIV/0!"))
-    );
+    assert_eq!(a2_result, LiteralValue::Error(ExcelError::new_div()));
 }
 
 #[test]

@@ -240,7 +240,7 @@ impl Function for AsinFn {
     ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if !(-1.0..=1.0).contains(&x) {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         Ok(LiteralValue::Number(x.asin()))
     }
@@ -306,7 +306,7 @@ impl Function for AcosFn {
     ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if !(-1.0..=1.0).contains(&x) {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         Ok(LiteralValue::Number(x.acos()))
     }
@@ -1010,7 +1010,7 @@ impl Function for AcoshFn {
     ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if x < 1.0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         Ok(LiteralValue::Number(x.acosh()))
     }
@@ -1071,7 +1071,7 @@ impl Function for AtanhFn {
     ) -> Result<LiteralValue, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if x <= -1.0 || x >= 1.0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         Ok(LiteralValue::Number(x.atanh()))
     }

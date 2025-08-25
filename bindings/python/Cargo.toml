@@ -16,6 +16,12 @@ required-features = ["stub_gen_bin"]
 [features]
 default = []
 stub_gen_bin = []
+# Enable engine/IO tracing spans from the Python wheel/venv build.
+# Usage:
+#  - maturin develop --release --features tracing
+#  - maturin develop --release --features tracing,tracing_chrome
+tracing = ["formualizer-eval/tracing", "formualizer-io/tracing"]
+tracing_chrome = ["tracing", "formualizer-eval/tracing_chrome"]
 
 [dependencies]
 pyo3 = { version = "0.24.0", features = ["extension-module", "chrono"] }

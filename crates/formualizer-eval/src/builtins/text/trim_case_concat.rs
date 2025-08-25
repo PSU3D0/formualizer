@@ -229,9 +229,7 @@ impl Function for TextJoinFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 3 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
 
         // Get delimiter

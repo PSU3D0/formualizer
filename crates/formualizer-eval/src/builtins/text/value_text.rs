@@ -46,9 +46,7 @@ impl Function for ValueFn {
         let s = to_text(&a[0])?;
         match s.trim().parse::<f64>() {
             Ok(n) => Ok(LiteralValue::Number(n)),
-            Err(_) => Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            ))),
+            Err(_) => Ok(LiteralValue::Error(ExcelError::new_value())),
         }
     }
 }
@@ -73,9 +71,7 @@ impl Function for TextFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if a.len() != 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let val = a[0].value()?;
         if let LiteralValue::Error(e) = val.as_ref() {

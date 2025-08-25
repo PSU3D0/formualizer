@@ -114,9 +114,7 @@ impl Function for TruncFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.is_empty() || args.len() > 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let mut n = match args[0].value()?.as_ref() {
             LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
@@ -321,9 +319,7 @@ impl Function for CeilingFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.is_empty() || args.len() > 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let n = match args[0].value()?.as_ref() {
             LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
@@ -372,9 +368,7 @@ impl Function for CeilingMathFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.is_empty() || args.len() > 3 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let n = match args[0].value()?.as_ref() {
             LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
@@ -434,9 +428,7 @@ impl Function for FloorFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.is_empty() || args.len() > 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let n = match args[0].value()?.as_ref() {
             LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
@@ -485,9 +477,7 @@ impl Function for FloorMathFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.is_empty() || args.len() > 3 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let n = match args[0].value()?.as_ref() {
             LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
@@ -548,7 +538,7 @@ impl Function for SqrtFn {
             other => coerce_num(other)?,
         };
         if n < 0.0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         Ok(LiteralValue::Number(n.sqrt()))
     }
@@ -581,7 +571,7 @@ impl Function for PowerFn {
             other => coerce_num(other)?,
         };
         if base < 0.0 && (expv.fract().abs() > 1e-12) {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         Ok(LiteralValue::Number(base.powf(expv)))
     }
@@ -636,7 +626,7 @@ impl Function for LnFn {
             other => coerce_num(other)?,
         };
         if n <= 0.0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         Ok(LiteralValue::Number(n.ln()))
     }
@@ -664,9 +654,7 @@ impl Function for LogFn {
         _: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.is_empty() || args.len() > 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#VALUE!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         let n = match args[0].value()?.as_ref() {
             LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
@@ -681,7 +669,7 @@ impl Function for LogFn {
             10.0
         };
         if n <= 0.0 || base <= 0.0 || (base - 1.0).abs() < 1e-12 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         Ok(LiteralValue::Number(n.log(base)))
     }
@@ -710,7 +698,7 @@ impl Function for Log10Fn {
             other => coerce_num(other)?,
         };
         if n <= 0.0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string("#NUM!")));
+            return Ok(LiteralValue::Error(ExcelError::new_num()));
         }
         Ok(LiteralValue::Number(n.log10()))
     }
