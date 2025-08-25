@@ -33,7 +33,7 @@ impl Default for WarmupConfig {
         Self {
             // Enabled by default: warmup executes at evaluation time with conservative budgets
             warmup_enabled: true,
-            warmup_time_budget_ms: 100,
+            warmup_time_budget_ms: 250,
             warmup_parallelism_cap: 4,
 
             // Conservative selection limits
