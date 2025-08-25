@@ -155,6 +155,14 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
         LiteralValue::Int(i) => Ok(CriteriaPredicate::Eq(LiteralValue::Int(*i))),
         LiteralValue::Boolean(b) => Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(*b))),
         LiteralValue::Error(e) => Err(e.clone()),
+        LiteralValue::Array(arr) => {
+            // Treat 1x1 array literals as scalars for criteria parsing
+            if arr.len() == 1 && arr.first().map(|r| r.len()).unwrap_or(0) == 1 {
+                parse_criteria(&arr[0][0])
+            } else {
+                Ok(CriteriaPredicate::Eq(LiteralValue::Array(arr.clone())))
+            }
+        }
         other => Ok(CriteriaPredicate::Eq(other.clone())),
     }
 }

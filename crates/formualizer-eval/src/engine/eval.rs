@@ -906,7 +906,9 @@ where
                                 match self.graph.get_vertex_kind(u) {
                                     VertexKind::FormulaScalar | VertexKind::FormulaArray => {
                                         // only link and schedule if producer is dirty/volatile
-                                        if self.graph.is_dirty(u) || self.graph.is_volatile(u) {
+                                        if (self.graph.is_dirty(u) || self.graph.is_volatile(u))
+                                            && u != v
+                                        {
                                             vdeps.entry(v).or_default().push(u);
                                             if !visited.contains(&u) {
                                                 stack.push(u);
