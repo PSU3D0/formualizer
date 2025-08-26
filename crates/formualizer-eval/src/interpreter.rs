@@ -1,5 +1,8 @@
 use crate::{
-    broadcast::{broadcast_shape, project_index}, coercion, traits::{ArgumentHandle, DefaultFunctionContext, EvaluationContext}, CellRef
+    CellRef,
+    broadcast::{broadcast_shape, project_index},
+    coercion,
+    traits::{ArgumentHandle, DefaultFunctionContext, EvaluationContext},
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};

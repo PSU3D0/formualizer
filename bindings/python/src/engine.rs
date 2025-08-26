@@ -164,14 +164,15 @@ impl PyEvaluationConfig {
 
     #[setter]
     pub fn set_date_system(&mut self, value: String) -> PyResult<()> {
-
         let date_system: DateSystem = match value.as_str() {
             "1900" => DateSystem::Excel1900,
             "1904" => DateSystem::Excel1904,
-            _ => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid date system: {}. Use '1900' or '1904'.",
-                value
-            ))),
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Invalid date system: {}. Use '1900' or '1904'.",
+                    value
+                )))
+            }
         };
         self.inner.date_system = date_system;
         Ok(())

@@ -44,6 +44,64 @@ fn whole_col_ref(sheet: &str, col: u32) -> ASTNode {
 }
 
 #[test]
+fn countifs_hybrid_formula_and_base_text() {
+    // Ensure COUNTIFS sees both Arrow base values and graph formula values in a single column
+    let mut cfg = EvalConfig::default();
+    cfg.arrow_storage_enabled = true;
+    cfg.arrow_fastpath_enabled = true;
+    cfg.write_formula_overlay_enabled = true; // ensure used-region includes formula row via overlay
+    let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
+
+    // Build Arrow sheet with 3 rows, 2 columns
+    let sheet = "SheetCF";
+    let mut ab = engine.begin_bulk_ingest_arrow();
+    ab.add_sheet(sheet, 2, 8);
+
+    // Row1: header text in col2
+    ab.append_row(
+        sheet,
+        &[LiteralValue::Empty, LiteralValue::Text("Header".into())],
+    )
+    .unwrap();
+    // Row2: base value match in col2
+    ab.append_row(
+        sheet,
+        &[LiteralValue::Empty, LiteralValue::Text("BDM021".into())],
+    )
+    .unwrap();
+    // Row3: placeholder; will be replaced by a formula later
+    ab.append_row(sheet, &[LiteralValue::Empty, LiteralValue::Empty])
+        .unwrap();
+    ab.finish().unwrap();
+
+    // Set formula in row3 col2 producing text "BDM021"
+    let ast = formualizer_core::parser::Parser::from("=\"BDM021\"")
+        .parse()
+        .unwrap();
+    engine
+        .set_cell_formula(sheet, 3, 2, ast)
+        .expect("set formula");
+    engine.evaluate_all().unwrap();
+
+    // COUNTIFS over whole column 2 where value == "BDM021" should see 2 matches (row2 base + row3 formula)
+    let col_ref = whole_col_ref(sheet, 2);
+    let crit = lit_text("BDM021");
+    let fun = engine
+        .get_function("", "COUNTIFS")
+        .expect("COUNTIFS available");
+    let got = {
+        let interp = crate::interpreter::Interpreter::new(&engine, sheet);
+        let args = vec![
+            ArgumentHandle::new(&col_ref, &interp),
+            ArgumentHandle::new(&crit, &interp),
+        ];
+        let fctx = DefaultFunctionContext::new(&engine, None);
+        fun.dispatch(&args, &fctx).unwrap()
+    };
+    assert_eq!(got, LiteralValue::Number(2.0));
+}
+
+#[test]
 fn sumifs_arrow_fastpath_parity_small() {
     // Engine with Arrow enabled + fastpath
     let mut cfg = EvalConfig::default();

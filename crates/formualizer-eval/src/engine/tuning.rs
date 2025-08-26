@@ -32,7 +32,7 @@ impl Default for WarmupConfig {
     fn default() -> Self {
         Self {
             // Enabled by default: warmup executes at evaluation time with conservative budgets
-            warmup_enabled: true,
+            warmup_enabled: false,
             warmup_time_budget_ms: 250,
             warmup_parallelism_cap: 4,
 

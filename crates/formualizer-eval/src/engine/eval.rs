@@ -750,6 +750,88 @@ where
                 // Scalar result: store value and ensure any previous spill is cleared
                 self.graph.clear_spill_region(vertex_id);
                 self.graph.update_vertex_value(vertex_id, other.clone());
+                // Optionally mirror into Arrow overlay for Arrow-backed reads
+                if self.config.arrow_storage_enabled
+                    && self.config.delta_overlay_enabled
+                    && self.config.write_formula_overlay_enabled
+                {
+                    let anchor = self
+                        .graph
+                        .get_cell_ref(vertex_id)
+                        .expect("cell ref for vertex");
+                    let sheet_name = self.graph.sheet_name(anchor.sheet_id);
+                    // Reuse overlay logic from set_cell_value
+                    if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet_name) {
+                        let row0 = anchor.coord.row.saturating_sub(1) as usize;
+                        let col0 = anchor.coord.col.saturating_sub(1) as usize;
+                        if col0 < asheet.columns.len() {
+                            if row0 >= asheet.nrows as usize {
+                                asheet.ensure_row_capacity(row0 + 1);
+                            }
+                            if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
+                                let colref = &mut asheet.columns[col0];
+                                let ch = &mut colref.chunks[ch_idx];
+                                let ov = match &other {
+                                    LiteralValue::Empty => crate::arrow_store::OverlayValue::Empty,
+                                    LiteralValue::Int(i) => {
+                                        crate::arrow_store::OverlayValue::Number(*i as f64)
+                                    }
+                                    LiteralValue::Number(n) => {
+                                        crate::arrow_store::OverlayValue::Number(*n)
+                                    }
+                                    LiteralValue::Boolean(b) => {
+                                        crate::arrow_store::OverlayValue::Boolean(*b)
+                                    }
+                                    LiteralValue::Text(s) => {
+                                        crate::arrow_store::OverlayValue::Text(Arc::from(s.clone()))
+                                    }
+                                    LiteralValue::Error(e) => {
+                                        crate::arrow_store::OverlayValue::Error(
+                                            crate::arrow_store::map_error_code(e.kind),
+                                        )
+                                    }
+                                    LiteralValue::Date(d) => {
+                                        let dt = d.and_hms_opt(0, 0, 0).unwrap();
+                                        let serial =
+                                            crate::builtins::datetime::datetime_to_serial_for(
+                                                self.config.date_system,
+                                                &dt,
+                                            );
+                                        crate::arrow_store::OverlayValue::Number(serial)
+                                    }
+                                    LiteralValue::DateTime(dt) => {
+                                        let serial =
+                                            crate::builtins::datetime::datetime_to_serial_for(
+                                                self.config.date_system,
+                                                dt,
+                                            );
+                                        crate::arrow_store::OverlayValue::Number(serial)
+                                    }
+                                    LiteralValue::Time(t) => {
+                                        let serial =
+                                            t.num_seconds_from_midnight() as f64 / 86_400.0;
+                                        crate::arrow_store::OverlayValue::Number(serial)
+                                    }
+                                    LiteralValue::Duration(d) => {
+                                        let serial = d.num_seconds() as f64 / 86_400.0;
+                                        crate::arrow_store::OverlayValue::Number(serial)
+                                    }
+                                    LiteralValue::Pending => {
+                                        crate::arrow_store::OverlayValue::Pending
+                                    }
+                                    LiteralValue::Array(_) => {
+                                        crate::arrow_store::OverlayValue::Error(
+                                            crate::arrow_store::map_error_code(
+                                                formualizer_common::ExcelErrorKind::Value,
+                                            ),
+                                        )
+                                    }
+                                };
+                                ch.overlay.set(in_off, ov);
+                            }
+                        }
+                    }
+                }
                 Ok(other)
             }
             Err(e) => {
