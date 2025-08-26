@@ -62,5 +62,7 @@ mod sumifs_warmup_fidelity;
 mod pass_lifetime;
 
 // Phase 3 tests
+mod arrow_bulk_update;
 mod mask_cache_reuse;
 mod mask_density_paths;
+mod overlay_compaction;

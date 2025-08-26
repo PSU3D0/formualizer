@@ -448,3 +448,112 @@ fn json_to_literal(v: &JsonValue) -> formualizer_common::LiteralValue {
         JsonValue::Pending => L::Pending,
     }
 }
+
+// Stream JSON workbook contents into the evaluation engine (values + formulas),
+// and propagate the workbook date system to the engine config.
+impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for JsonAdapter
+where
+    R: formualizer_eval::traits::EvaluationContext,
+{
+    type Error = IoError;
+
+    fn stream_into_engine(
+        &mut self,
+        engine: &mut formualizer_eval::engine::Engine<R>,
+    ) -> Result<(), Self::Error> {
+        // Propagate date system: if any sheet declares 1904, treat workbook as 1904
+        let any_1904 = self.data.sheets.values().any(|s| s.date_system_1904);
+        engine.config.date_system = if any_1904 {
+            formualizer_eval::engine::DateSystem::Excel1904
+        } else {
+            formualizer_eval::engine::DateSystem::Excel1900
+        };
+
+        // Ensure all sheets exist in the graph first
+        for name in self.data.sheets.keys() {
+            engine
+                .graph
+                .add_sheet(name)
+                .map_err(|e| IoError::from_backend("json", e))?;
+        }
+
+        // Ingest values via Arrow IngestBuilder per sheet
+        let chunk_rows: usize = 32 * 1024;
+        for (name, sheet) in self.data.sheets.iter() {
+            let dims = sheet.dimensions.unwrap_or_else(|| {
+                let mut max_r = 0u32;
+                let mut max_c = 0u32;
+                for c in &sheet.cells {
+                    if c.row > max_r {
+                        max_r = c.row;
+                    }
+                    if c.col > max_c {
+                        max_c = c.col;
+                    }
+                }
+                (max_r, max_c)
+            });
+            let rows = dims.0 as usize;
+            let cols = dims.1 as usize;
+
+            let mut aib = formualizer_eval::arrow_store::IngestBuilder::new(
+                name,
+                cols,
+                chunk_rows,
+                engine.config.date_system,
+            );
+            // Build a map for quick lookup
+            let mut cell_map: BTreeMap<(u32, u32), &JsonCell> = BTreeMap::new();
+            for c in &sheet.cells {
+                cell_map.insert((c.row, c.col), c);
+            }
+            for r in 1..=rows {
+                let mut row_vals: Vec<formualizer_common::LiteralValue> =
+                    vec![formualizer_common::LiteralValue::Empty; cols];
+                for c in 1..=cols {
+                    if let Some(cell) = cell_map.get(&(r as u32, c as u32)) {
+                        if let Some(v) = &cell.value {
+                            row_vals[c - 1] = json_to_literal(v);
+                        }
+                    }
+                }
+                aib.append_row(&row_vals)
+                    .map_err(|e| IoError::from_backend("json", e))?;
+            }
+            let asheet = aib.finish();
+            let store = engine.sheet_store_mut();
+            if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == name) {
+                store.sheets[pos] = asheet;
+            } else {
+                store.sheets.push(asheet);
+            }
+
+            // Formulas: stage into graph
+            let mut builder = engine.begin_bulk_ingest();
+            let sid = builder.add_sheet(name);
+            for c in &sheet.cells {
+                if let Some(f) = &c.formula {
+                    if f.is_empty() {
+                        continue;
+                    }
+                    let with_eq = if f.starts_with('=') {
+                        f.clone()
+                    } else {
+                        format!("={}", f)
+                    };
+                    let parsed = formualizer_core::parser::parse(&with_eq)
+                        .map_err(|e| IoError::from_backend("json", e))?;
+                    builder.add_formulas(sid, std::iter::once((c.row, c.col, parsed)));
+                }
+            }
+            let _ = builder.finish();
+        }
+        // Finalize sheet indexes after load
+        for name in self.data.sheets.keys() {
+            engine.graph.finalize_sheet_index(name);
+        }
+        engine.graph.set_first_load_assume_new(false);
+        engine.graph.reset_ensure_touched();
+        Ok(())
+    }
+}

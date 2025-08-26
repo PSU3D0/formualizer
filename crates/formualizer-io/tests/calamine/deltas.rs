@@ -1,11 +1,9 @@
-#![cfg(feature = "calamine")]
-
-mod test_utils;
+// Integration test for Calamine backend; run with `--features calamine,umya`.
+use crate::common::build_workbook;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_io::{
     CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookLoader,
 };
-use test_utils::build_workbook;
 
 // 1. Error propagation after evaluation (#DIV/0!)
 #[test]

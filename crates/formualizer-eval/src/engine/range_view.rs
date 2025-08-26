@@ -29,6 +29,14 @@ enum RangeBacking<'a> {
     },
     /// Arrow-backed range view
     Arrow(arrow_store::ArrowRangeView<'a>),
+    /// Hybrid view: prefers graph values (formulas/edits) and falls back to Arrow base values
+    Hybrid {
+        graph: &'a DependencyGraph,
+        sheet_id: EngineSheetId,
+        sr: u32,
+        sc: u32,
+        arrow: arrow_store::ArrowRangeView<'a>,
+    },
 }
 
 impl<'a> core::fmt::Debug for RangeView<'a> {
@@ -158,6 +166,7 @@ impl<'a> RangeView<'a> {
             }
             RangeBacking::GraphSlice { .. } => RangeKind::Mixed, // unknown a priori
             RangeBacking::Arrow(_) => RangeKind::Mixed, // probe conservatively; mixed possible
+            RangeBacking::Hybrid { .. } => RangeKind::Mixed,
         }
     }
 
@@ -212,6 +221,25 @@ impl<'a> RangeView<'a> {
                     .unwrap_or(LiteralValue::Empty)
             }
             RangeBacking::Arrow(av) => av.get_cell(row, col),
+            RangeBacking::Hybrid {
+                graph,
+                sheet_id,
+                sr,
+                sc,
+                arrow,
+            } => {
+                // Compute absolute address
+                let abs_row = sr.saturating_add(row as u32);
+                let abs_col = sc.saturating_add(col as u32);
+                let coord = crate::reference::Coord::new(abs_row, abs_col, true, true);
+                let addr = crate::reference::CellRef::new(*sheet_id, coord);
+                if let Some(vid) = graph.get_vertex_id_for_address(&addr) {
+                    if let Some(v) = graph.get_value(*vid) {
+                        return v;
+                    }
+                }
+                arrow.get_cell(row, col)
+            }
         }
     }
 
@@ -280,6 +308,14 @@ impl<'a> RangeView<'a> {
                     for c in 0..self.cols {
                         let tmp = av.get_cell(r, c);
                         f(&tmp)?;
+                    }
+                }
+            }
+            RangeBacking::Hybrid { .. } => {
+                for r in 0..self.rows {
+                    for c in 0..self.cols {
+                        let v = self.get_cell(r, c);
+                        f(&v)?;
                     }
                 }
             }
@@ -382,6 +418,16 @@ impl<'a> RangeView<'a> {
                     buf.clear();
                     for c in 0..self.cols {
                         buf.push(av.get_cell(r, c));
+                    }
+                    f(&buf[..])?;
+                }
+            }
+            RangeBacking::Hybrid { .. } => {
+                let mut buf: Vec<LiteralValue> = Vec::with_capacity(self.cols);
+                for r in 0..self.rows {
+                    buf.clear();
+                    for c in 0..self.cols {
+                        buf.push(self.get_cell(r, c));
                     }
                     f(&buf[..])?;
                 }
@@ -493,6 +539,16 @@ impl<'a> RangeView<'a> {
                     f(&col_buf[..])?;
                 }
             }
+            RangeBacking::Hybrid { .. } => {
+                let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(self.rows);
+                for c in 0..self.cols {
+                    col_buf.clear();
+                    for r in 0..self.rows {
+                        col_buf.push(self.get_cell(r, c));
+                    }
+                    f(&col_buf[..])?;
+                }
+            }
         }
         Ok(())
     }
@@ -501,6 +557,7 @@ impl<'a> RangeView<'a> {
     pub fn as_arrow(&self) -> Option<&arrow_store::ArrowRangeView<'a>> {
         match &self.backing {
             RangeBacking::Arrow(av) => Some(av),
+            // Do not expose Arrow fast-path for Hybrid — would miss formula overlays
             _ => None,
         }
     }
@@ -625,9 +682,44 @@ impl<'a> RangeView<'a> {
                 })?;
                 flush(&mut buf)?;
             }
+            RangeBacking::Hybrid { .. } => {
+                self.for_each_cell(&mut |v| {
+                    if let Some(n) = pack_numeric(v, policy)? {
+                        buf.push(n);
+                        if buf.len() >= min_chunk {
+                            flush(&mut buf)?;
+                        }
+                    }
+                    Ok(())
+                })?;
+                flush(&mut buf)?;
+            }
         }
 
         Ok(())
+    }
+}
+
+impl<'a> RangeView<'a> {
+    pub fn from_hybrid(
+        graph: &'a DependencyGraph,
+        sheet_id: EngineSheetId,
+        sr: u32,
+        sc: u32,
+        arrow: arrow_store::ArrowRangeView<'a>,
+    ) -> Self {
+        let (rows, cols) = arrow.dims();
+        Self {
+            backing: RangeBacking::Hybrid {
+                graph,
+                sheet_id,
+                sr,
+                sc,
+                arrow,
+            },
+            rows,
+            cols,
+        }
     }
 }
 

@@ -9,6 +9,7 @@ use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, Resolver};
+use chrono::Timelike;
 use formualizer_core::parser::ReferenceType;
 use formualizer_core::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
@@ -29,6 +30,8 @@ pub struct Engine<R> {
     arrow_sheets: SheetStore,
     /// True if any edit after bulk load; disables Arrow reads for parity
     has_edited: bool,
+    /// Overlay compaction counter (Phase C instrumentation)
+    overlay_compactions: u64,
 }
 
 #[derive(Debug)]
@@ -93,6 +96,7 @@ where
             warmup_pass_ctx: None,
             arrow_sheets: SheetStore::default(),
             has_edited: false,
+            overlay_compactions: 0,
         }
     }
 
@@ -114,6 +118,7 @@ where
             warmup_pass_ctx: None,
             arrow_sheets: SheetStore::default(),
             has_edited: false,
+            overlay_compactions: 0,
         }
     }
 
@@ -151,6 +156,13 @@ where
         self.graph.set_sheet_index_mode(mode);
     }
 
+    /// Mark data edited: bump snapshot and set edited flag
+    pub fn mark_data_edited(&mut self) {
+        self.snapshot_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.has_edited = true;
+    }
+
     /// Access Arrow sheet store (read-only)
     pub fn sheet_store(&self) -> &SheetStore {
         &self.arrow_sheets
@@ -168,6 +180,120 @@ where
         crate::engine::arrow_ingest::ArrowBulkIngestBuilder::new(self)
     }
 
+    /// Begin bulk updates to Arrow store (Phase C)
+    pub fn begin_bulk_update_arrow(
+        &mut self,
+    ) -> crate::engine::arrow_ingest::ArrowBulkUpdateBuilder<'_, R> {
+        crate::engine::arrow_ingest::ArrowBulkUpdateBuilder::new(self)
+    }
+
+    /// Insert rows (1-based) and mirror into Arrow store when enabled
+    pub fn insert_rows(
+        &mut self,
+        sheet: &str,
+        before: u32,
+        count: u32,
+    ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
+    {
+        use crate::engine::graph::editor::vertex_editor::VertexEditor;
+        let sheet_id = self.graph.sheet_id(sheet).ok_or(
+            crate::engine::graph::editor::vertex_editor::EditorError::InvalidName {
+                name: sheet.to_string(),
+                reason: "Unknown sheet".to_string(),
+            },
+        )?;
+        let mut editor = VertexEditor::new(&mut self.graph);
+        let summary = editor.insert_rows(sheet_id, before, count)?;
+        if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
+            let before0 = before.saturating_sub(1) as usize;
+            asheet.insert_rows(before0, count as usize);
+        }
+        self.snapshot_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.has_edited = true;
+        Ok(summary)
+    }
+
+    /// Delete rows (1-based) and mirror into Arrow store when enabled
+    pub fn delete_rows(
+        &mut self,
+        sheet: &str,
+        start: u32,
+        count: u32,
+    ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
+    {
+        use crate::engine::graph::editor::vertex_editor::VertexEditor;
+        let sheet_id = self.graph.sheet_id(sheet).ok_or(
+            crate::engine::graph::editor::vertex_editor::EditorError::InvalidName {
+                name: sheet.to_string(),
+                reason: "Unknown sheet".to_string(),
+            },
+        )?;
+        let mut editor = VertexEditor::new(&mut self.graph);
+        let summary = editor.delete_rows(sheet_id, start, count)?;
+        if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
+            let start0 = start.saturating_sub(1) as usize;
+            asheet.delete_rows(start0, count as usize);
+        }
+        self.snapshot_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.has_edited = true;
+        Ok(summary)
+    }
+
+    /// Insert columns (1-based) and mirror into Arrow store when enabled
+    pub fn insert_columns(
+        &mut self,
+        sheet: &str,
+        before: u32,
+        count: u32,
+    ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
+    {
+        use crate::engine::graph::editor::vertex_editor::VertexEditor;
+        let sheet_id = self.graph.sheet_id(sheet).ok_or(
+            crate::engine::graph::editor::vertex_editor::EditorError::InvalidName {
+                name: sheet.to_string(),
+                reason: "Unknown sheet".to_string(),
+            },
+        )?;
+        let mut editor = VertexEditor::new(&mut self.graph);
+        let summary = editor.insert_columns(sheet_id, before, count)?;
+        if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
+            let before0 = before.saturating_sub(1) as usize;
+            asheet.insert_columns(before0, count as usize);
+        }
+        self.snapshot_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.has_edited = true;
+        Ok(summary)
+    }
+
+    /// Delete columns (1-based) and mirror into Arrow store when enabled
+    pub fn delete_columns(
+        &mut self,
+        sheet: &str,
+        start: u32,
+        count: u32,
+    ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
+    {
+        use crate::engine::graph::editor::vertex_editor::VertexEditor;
+        let sheet_id = self.graph.sheet_id(sheet).ok_or(
+            crate::engine::graph::editor::vertex_editor::EditorError::InvalidName {
+                name: sheet.to_string(),
+                reason: "Unknown sheet".to_string(),
+            },
+        )?;
+        let mut editor = VertexEditor::new(&mut self.graph);
+        let summary = editor.delete_columns(sheet_id, start, count)?;
+        if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
+            let start0 = start.saturating_sub(1) as usize;
+            asheet.delete_columns(start0, count as usize);
+        }
+        self.snapshot_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.has_edited = true;
+        Ok(summary)
+    }
     /// Arrow-backed used row bounds across a column span (1-based inclusive cols).
     fn arrow_used_row_bounds(
         &self,
@@ -186,14 +312,19 @@ where
             return None;
         }
         let ec0 = ec0.min(col_hi);
-        // Scan for first non-empty row across requested columns
+        // Scan for first non-empty row across requested columns (consider overlay)
         let mut min_r0: Option<usize> = None;
         for ci in sc0..=ec0 {
             let col = &a.columns[ci];
             for (chunk_idx, chunk) in col.chunks.iter().enumerate() {
                 let tags = chunk.type_tag.values();
                 for (off, &t) in tags.iter().enumerate() {
-                    if t != crate::arrow_store::TypeTag::Empty as u8 {
+                    let overlay_non_empty = chunk
+                        .overlay
+                        .get(off)
+                        .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
+                        .unwrap_or(false);
+                    if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
                         let row0 = a.chunk_starts[chunk_idx] + off;
                         min_r0 = Some(min_r0.map(|m| m.min(row0)).unwrap_or(row0));
                         break;
@@ -207,7 +338,7 @@ where
         if min_r0.is_none() {
             return None;
         }
-        // Scan for last non-empty row across requested columns
+        // Scan for last non-empty row across requested columns (consider overlay)
         let mut max_r0: Option<usize> = None;
         for ci in sc0..=ec0 {
             let col = &a.columns[ci];
@@ -215,7 +346,12 @@ where
                 let chunk_idx = chunk_rel; // same index
                 let tags = chunk.type_tag.values();
                 for (rev_idx, &t) in tags.iter().enumerate().rev() {
-                    if t != crate::arrow_store::TypeTag::Empty as u8 {
+                    let overlay_non_empty = chunk
+                        .overlay
+                        .get(rev_idx)
+                        .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
+                        .unwrap_or(false);
+                    if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
                         let row0 = a.chunk_starts[chunk_idx] + rev_idx;
                         max_r0 = Some(max_r0.map(|m| m.max(row0)).unwrap_or(row0));
                         break;
@@ -271,7 +407,12 @@ where
                 let end_off = er0.min(chunk_end) - chunk_start;
                 let tags = chunk.type_tag.values();
                 for off in start_off..=end_off {
-                    if tags[off] != crate::arrow_store::TypeTag::Empty as u8 {
+                    let overlay_non_empty = chunk
+                        .overlay
+                        .get(off)
+                        .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
+                        .unwrap_or(false);
+                    if overlay_non_empty || tags[off] != crate::arrow_store::TypeTag::Empty as u8 {
                         any_in_range = true;
                         break;
                     }
@@ -299,7 +440,76 @@ where
         col: u32,
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
-        self.graph.set_cell_value(sheet, row, col, value)?;
+        self.graph.set_cell_value(sheet, row, col, value.clone())?;
+        // Mirror into Arrow overlay when enabled
+        if self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
+            if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
+                let row0 = row.saturating_sub(1) as usize;
+                let col0 = col.saturating_sub(1) as usize;
+                if col0 < asheet.columns.len() {
+                    if row0 >= asheet.nrows as usize {
+                        asheet.ensure_row_capacity(row0 + 1);
+                    }
+                    if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
+                        let colref = &mut asheet.columns[col0];
+                        let ch = &mut colref.chunks[ch_idx];
+                        let ov = match value {
+                            LiteralValue::Empty => crate::arrow_store::OverlayValue::Empty,
+                            LiteralValue::Int(i) => {
+                                crate::arrow_store::OverlayValue::Number(i as f64)
+                            }
+                            LiteralValue::Number(n) => crate::arrow_store::OverlayValue::Number(n),
+                            LiteralValue::Boolean(b) => {
+                                crate::arrow_store::OverlayValue::Boolean(b)
+                            }
+                            LiteralValue::Text(ref s) => {
+                                crate::arrow_store::OverlayValue::Text(Arc::from(s.clone()))
+                            }
+                            LiteralValue::Error(ref e) => crate::arrow_store::OverlayValue::Error(
+                                crate::arrow_store::map_error_code(e.kind),
+                            ),
+                            LiteralValue::Date(d) => {
+                                let dt = d.and_hms_opt(0, 0, 0).unwrap();
+                                let serial = crate::builtins::datetime::datetime_to_serial_for(
+                                    self.config.date_system,
+                                    &dt,
+                                );
+                                crate::arrow_store::OverlayValue::Number(serial)
+                            }
+                            LiteralValue::DateTime(dt) => {
+                                let serial = crate::builtins::datetime::datetime_to_serial_for(
+                                    self.config.date_system,
+                                    &dt,
+                                );
+                                crate::arrow_store::OverlayValue::Number(serial)
+                            }
+                            LiteralValue::Time(t) => {
+                                let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
+                                crate::arrow_store::OverlayValue::Number(serial)
+                            }
+                            LiteralValue::Duration(d) => {
+                                let serial = d.num_seconds() as f64 / 86_400.0;
+                                crate::arrow_store::OverlayValue::Number(serial)
+                            }
+                            LiteralValue::Pending => crate::arrow_store::OverlayValue::Pending,
+                            LiteralValue::Array(_) => crate::arrow_store::OverlayValue::Error(
+                                crate::arrow_store::map_error_code(
+                                    formualizer_common::ExcelErrorKind::Value,
+                                ),
+                            ),
+                        };
+                        ch.overlay.set(in_off, ov);
+                        // Compact if overlay grows dense for this chunk
+                        // Heuristic mirrors bulk-update thresholds: > len/50 or > 1024
+                        let abs_threshold = 1024usize;
+                        let frac_den = 50usize;
+                        if asheet.maybe_compact_chunk(col0, ch_idx, abs_threshold, frac_den) {
+                            self.overlay_compactions = self.overlay_compactions.saturating_add(1);
+                        }
+                    }
+                }
+            }
+        }
         // Advance snapshot to reflect external mutation
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -342,6 +552,27 @@ where
 
     /// Get a cell value
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
+        // Prefer Arrow for non-formula cells. For formula cells, use graph value.
+        if let Some(sheet_id) = self.graph.sheet_id(sheet) {
+            // If a formula exists at this address, return graph value
+            let coord = Coord::new(row, col, true, true);
+            let addr = CellRef::new(sheet_id, coord);
+            if let Some(vid) = self.graph.get_vertex_id_for_address(&addr) {
+                match self.graph.get_vertex_kind(*vid) {
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                        return self.graph.get_cell_value(sheet, row, col);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(asheet) = self.sheet_store().sheet(sheet) {
+            let r0 = row.saturating_sub(1) as usize;
+            let c0 = col.saturating_sub(1) as usize;
+            let av = asheet.range_view(r0, c0, r0, c0);
+            let v = av.get_cell(0, 0);
+            return Some(v);
+        }
         self.graph.get_cell_value(sheet, row, col)
     }
 
@@ -1650,10 +1881,14 @@ where
         col: u32,
     ) -> Result<LiteralValue, ExcelError> {
         let sheet_name = sheet.unwrap_or("Sheet1"); // FIXME: This should use the current sheet context
-        Ok(self
-            .graph
-            .get_cell_value(sheet_name, row, col)
-            .unwrap_or(LiteralValue::Int(0))) // Empty cells are 0
+        // Prefer engine's unified accessor which consults Arrow store for base values
+        // and falls back to graph for formulas and stored values.
+        if let Some(v) = self.get_cell_value(sheet_name, row, col) {
+            Ok(v)
+        } else {
+            // Excel semantics: empty cell coerces to 0 in numeric contexts
+            Ok(LiteralValue::Int(0))
+        }
     }
 }
 
@@ -1755,12 +1990,9 @@ where
         start_col: u32,
         end_col: u32,
     ) -> Option<(u32, u32)> {
-        // Prefer Arrow-backed used-region only when Arrow reads are safe/active
+        // Prefer Arrow-backed used-region; fallback to graph if formulas intersect region
         let sheet_id = self.graph.sheet_id(sheet)?;
-        let arrow_ok = self.config.arrow_storage_enabled
-            && !self.has_edited
-            && self.sheet_store().sheet(sheet).is_some()
-            && !self.graph.sheet_has_formulas(sheet_id);
+        let mut arrow_ok = self.sheet_store().sheet(sheet).is_some();
         if arrow_ok {
             if let Some(bounds) = self.arrow_used_row_bounds(sheet, start_col, end_col) {
                 return Some(bounds);
@@ -1771,12 +2003,9 @@ where
     }
 
     fn used_cols_for_rows(&self, sheet: &str, start_row: u32, end_row: u32) -> Option<(u32, u32)> {
-        // Prefer Arrow-backed used-region only when Arrow reads are safe/active
+        // Prefer Arrow-backed used-region; fallback to graph if formulas intersect region
         let sheet_id = self.graph.sheet_id(sheet)?;
-        let arrow_ok = self.config.arrow_storage_enabled
-            && !self.has_edited
-            && self.sheet_store().sheet(sheet).is_some()
-            && !self.graph.sheet_has_formulas(sheet_id);
+        let mut arrow_ok = self.sheet_store().sheet(sheet).is_some();
         if arrow_ok {
             if let Some(bounds) = self.arrow_used_col_bounds(sheet, start_row, end_row) {
                 return Some(bounds);
@@ -1822,6 +2051,10 @@ where
     fn arrow_fastpath_enabled(&self) -> bool {
         self.config.arrow_fastpath_enabled
     }
+
+    fn date_system(&self) -> crate::engine::DateSystem {
+        self.config.date_system
+    }
     /// New: resolve a reference into a RangeView (Phase 2 API)
     fn resolve_range_view<'c>(
         &'c self,
@@ -1852,24 +2085,24 @@ where
                 let mut ec = *end_col;
 
                 if sr.is_none() && er.is_none() {
+                    // Full-column reference: anchor at row 1
                     let scv = sc.unwrap_or(1);
                     let ecv = ec.unwrap_or(scv);
-                    if let Some((min_r, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
-                        sr = Some(min_r);
+                    sr = Some(1);
+                    if let Some((_, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
                         er = Some(max_r);
                     } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                        sr = Some(1);
                         er = Some(max_rows);
                     }
                 }
                 if sc.is_none() && ec.is_none() {
+                    // Full-row reference: anchor at column 1
                     let srv = sr.unwrap_or(1);
                     let erv = er.unwrap_or(srv);
-                    if let Some((min_c, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
-                        sc = Some(min_c);
+                    sc = Some(1);
+                    if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
                         ec = Some(max_c);
                     } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                        sc = Some(1);
                         ec = Some(max_cols);
                     }
                 }
@@ -1883,13 +2116,8 @@ where
                     }
                 }
                 if er.is_some() && sr.is_none() {
-                    let scv = sc.unwrap_or(1);
-                    let ecv = ec.unwrap_or(scv);
-                    if let Some((min_r, _)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
-                        sr = Some(min_r);
-                    } else {
-                        sr = Some(1);
-                    }
+                    // Open start: anchor at row 1
+                    sr = Some(1);
                 }
                 if sc.is_some() && ec.is_none() {
                     let srv = sr.unwrap_or(1);
@@ -1901,13 +2129,8 @@ where
                     }
                 }
                 if ec.is_some() && sc.is_none() {
-                    let srv = sr.unwrap_or(1);
-                    let erv = er.unwrap_or(srv);
-                    if let Some((min_c, _)) = self.used_cols_for_rows(sheet_name, srv, erv) {
-                        sc = Some(min_c);
-                    } else {
-                        sc = Some(1);
-                    }
+                    // Open start: anchor at column 1
+                    sc = Some(1);
                 }
 
                 let sr = sr.unwrap_or(1);
@@ -1915,30 +2138,36 @@ where
                 let er = er.unwrap_or(sr.saturating_sub(1));
                 let ec = ec.unwrap_or(sc.saturating_sub(1));
 
-                // Prefer Arrow-backed RangeView when enabled and safe
-                let use_arrow = self.config.arrow_storage_enabled
-                    && !self.has_edited
-                    && self.sheet_store().sheet(sheet_name).is_some()
-                    && !self.graph.sheet_has_formulas(sheet_id);
-                if use_arrow {
-                    if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
-                        let sr0 = sr.saturating_sub(1) as usize;
-                        let sc0 = sc.saturating_sub(1) as usize;
-                        let er0 = er.saturating_sub(1) as usize;
-                        let ec0 = ec.saturating_sub(1) as usize;
-                        let av = asheet.range_view(sr0, sc0, er0, ec0);
-                        return Ok(RangeView::from_arrow(av));
-                    }
+                // Prefer a hybrid RangeView when an Arrow sheet exists: pull formula/edited cell values
+                // from the graph and base values from Arrow. This preserves correctness across mixed
+                // columns instead of falling back wholly to graph (which would miss base values).
+                if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
+                    let sr0 = sr.saturating_sub(1) as usize;
+                    let sc0 = sc.saturating_sub(1) as usize;
+                    let er0 = er.saturating_sub(1) as usize;
+                    let ec0 = ec.saturating_sub(1) as usize;
+                    let av = asheet.range_view(sr0, sc0, er0, ec0);
+                    return Ok(RangeView::from_hybrid(&self.graph, sheet_id, sr, sc, av));
                 }
                 Ok(RangeView::from_graph(&self.graph, sheet_id, sr, sc, er, ec))
             }
             ReferenceType::Cell { sheet, row, col } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-                let v = self
-                    .graph
-                    .get_cell_value(sheet_name, *row, *col)
-                    .unwrap_or(LiteralValue::Empty);
-                Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))))
+                // Prefer graph value when present (covers formula results and edited values)
+                if let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col) {
+                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
+                }
+                // Fallback to Arrow store for base values when available and storage enabled
+                if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
+                    let r0 = row.saturating_sub(1) as usize;
+                    let c0 = col.saturating_sub(1) as usize;
+                    let av = asheet.range_view(r0, c0, r0, c0);
+                    let v = av.get_cell(0, 0);
+                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
+                }
+                Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![
+                    LiteralValue::Empty,
+                ]]))))
             }
             ReferenceType::NamedRange(name) => {
                 let data = self.resolver.resolve_named_range_reference(name)?;

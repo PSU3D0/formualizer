@@ -1,9 +1,8 @@
-#![cfg(feature = "umya")]
+// Integration test for Umya backend; run with `--features umya`.
 
-mod test_utils; // reuse workbook builder
+use crate::common::build_workbook;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_io::{LiteralValue, LoadStrategy, SpreadsheetReader, UmyaAdapter, WorkbookLoader};
-use test_utils::build_workbook;
 
 #[test]
 fn umya_extracts_formulas_and_normalizes_equals() {

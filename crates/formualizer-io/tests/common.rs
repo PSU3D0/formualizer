@@ -1,11 +1,8 @@
-//! Test utilities for formualizer-io integration tests.
+//! Shared test utilities for formualizer-io integration tests.
 //!
 //! NOTE: umya-spreadsheet uses (col, row) ordering for tuple coordinates, i.e. (column, row),
 //! which is the reverse of the conventional (row, col) used in much of the rest of the codebase.
 //! Be careful when translating between engine (row, col) and umya (col, row).
-//!
-//! These helpers centralize workbook creation to reduce duplication.
-#![cfg(any(feature = "calamine", feature = "umya"))]
 
 use std::path::PathBuf;
 use tempfile::tempdir;

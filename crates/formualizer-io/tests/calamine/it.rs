@@ -1,11 +1,10 @@
-#![cfg(feature = "calamine")]
+// Integration test for Calamine backend; run with `--features calamine,umya`.
 
-mod test_utils;
+use crate::common::build_workbook;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_io::{
     CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookLoader,
-};
-use test_utils::build_workbook; // umya coordinate order (col,row)
+}; // umya coordinate order (col,row)
 
 #[test]
 fn calamine_reads_values_and_formulas_from_generated_xlsx() {
@@ -61,7 +60,7 @@ fn calamine_reads_values_and_formulas_from_generated_xlsx() {
     );
 
     // Debug: check what's in the graph
-    let cell_value = engine.get_cell_value(&sheet_name, 1, 1);
+    let _cell_value = engine.get_cell_value(&sheet_name, 1, 1);
 
     // Check raw values: allow either Int or Number or Text("41") depending on writer/reader typing
     match engine.get_cell_value(&sheet_name, 1, 1) {
@@ -71,7 +70,7 @@ fn calamine_reads_values_and_formulas_from_generated_xlsx() {
         other => panic!("Unexpected A1 value: {:?}", other),
     }
     // B1 has formula; before evaluation, its value is not computed; evaluate all
-    let eval_result = engine.evaluate_all().expect("eval");
+    let _eval_result = engine.evaluate_all().expect("eval");
 
     // B1 should be 42
     match engine.get_cell_value(&sheet_name, 1, 2) {

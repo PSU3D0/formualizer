@@ -1,6 +1,6 @@
 //! TODAY and NOW volatile functions
 
-use super::serial::{date_to_serial, datetime_to_serial};
+use super::serial::{date_to_serial_for, datetime_to_serial_for};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
@@ -27,7 +27,7 @@ impl Function for TodayFn {
         ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         let today = ctx.timezone().today();
-        let serial = date_to_serial(&today);
+        let serial = date_to_serial_for(ctx.date_system(), &today);
         Ok(LiteralValue::Number(serial))
     }
 }
@@ -53,7 +53,7 @@ impl Function for NowFn {
         ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         let now = ctx.timezone().now();
-        let serial = datetime_to_serial(&now);
+        let serial = datetime_to_serial_for(ctx.date_system(), &now);
         Ok(LiteralValue::Number(serial))
     }
 }

@@ -36,7 +36,14 @@ impl Function for SumFn {
             // Try to get a range/view first. If that fails, fall back to a single value.
             if let Ok(view) = arg.range_view() {
                 view.for_each_cell(&mut |v| {
-                    total += coerce_num(v)?;
+                    match v {
+                        LiteralValue::Error(e) => return Err(e.clone()),
+                        _ => {
+                            if let Ok(n) = coerce_num(v) {
+                                total += n;
+                            }
+                        }
+                    }
                     Ok(())
                 })?;
             } else {

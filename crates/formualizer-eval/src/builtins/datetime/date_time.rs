@@ -55,7 +55,7 @@ impl Function for DateFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
+        ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         let year = coerce_to_int(&args[0])?;
         let month = coerce_to_int(&args[1])?;
@@ -69,7 +69,7 @@ impl Function for DateFn {
         };
 
         let date = create_date_normalized(adjusted_year, month, day)?;
-        let serial = date_to_serial(&date);
+        let serial = super::serial::date_to_serial_for(ctx.date_system(), &date);
 
         Ok(LiteralValue::Number(serial))
     }
@@ -213,6 +213,55 @@ mod tests {
 
         // Just verify it returns a valid number
         assert!(matches!(result, LiteralValue::Number(_)));
+    }
+
+    #[test]
+    fn test_date_system_1900_vs_1904() {
+        use crate::engine::{Engine, EvalConfig};
+        use crate::interpreter::Interpreter;
+        use formualizer_core::parser::ASTNode;
+        use std::sync::Arc as SyncArc;
+
+        // Engine with default 1900 system
+        let mut cfg_1900 = EvalConfig::default();
+        let eng_1900 = Engine::new(TestWorkbook::new(), cfg_1900.clone());
+        let interp_1900 = Interpreter::new(&eng_1900, "Sheet1");
+        let f = interp_1900.context.get_function("", "DATE").unwrap();
+        let y = lit(LiteralValue::Int(1904));
+        let m = lit(LiteralValue::Int(1));
+        let d = lit(LiteralValue::Int(1));
+        let args = [
+            crate::traits::ArgumentHandle::new(&y, &interp_1900),
+            crate::traits::ArgumentHandle::new(&m, &interp_1900),
+            crate::traits::ArgumentHandle::new(&d, &interp_1900),
+        ];
+        let v1900 = f
+            .dispatch(&args, &interp_1900.function_context(None))
+            .unwrap();
+
+        // Engine with 1904 system
+        let mut cfg_1904 = EvalConfig::default();
+        cfg_1904.date_system = crate::engine::DateSystem::Excel1904;
+        let eng_1904 = Engine::new(TestWorkbook::new(), cfg_1904);
+        let interp_1904 = Interpreter::new(&eng_1904, "Sheet1");
+        let f2 = interp_1904.context.get_function("", "DATE").unwrap();
+        let args2 = [
+            crate::traits::ArgumentHandle::new(&y, &interp_1904),
+            crate::traits::ArgumentHandle::new(&m, &interp_1904),
+            crate::traits::ArgumentHandle::new(&d, &interp_1904),
+        ];
+        let v1904 = f2
+            .dispatch(&args2, &interp_1904.function_context(None))
+            .unwrap();
+
+        match (v1900, v1904) {
+            (LiteralValue::Number(a), LiteralValue::Number(b)) => {
+                // 1904-01-01 is 1462 in 1900 system, 0 in 1904 system
+                assert!((a - 1462.0).abs() < 1e-9, "expected 1462, got {}", a);
+                assert!(b.abs() < 1e-9, "expected 0, got {}", b);
+            }
+            other => panic!("Unexpected results: {:?}", other),
+        }
     }
 
     #[test]

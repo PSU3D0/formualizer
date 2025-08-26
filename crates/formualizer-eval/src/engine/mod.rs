@@ -41,6 +41,9 @@ pub mod warmup;
 #[cfg(test)]
 mod tests;
 
+use std::fmt::{Display, Formatter};
+
+use arrow::ipc::Date;
 pub use eval::{Engine, EvalResult};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;
@@ -135,6 +138,11 @@ pub struct EvalConfig {
     pub arrow_storage_enabled: bool,
     /// Enable Arrow fast paths in builtins (Phase B)
     pub arrow_fastpath_enabled: bool,
+    /// Enable delta overlay for Arrow sheets (Phase C)
+    pub delta_overlay_enabled: bool,
+
+    /// Workbook date system: Excel 1900 (default) or 1904.
+    pub date_system: DateSystem,
 }
 
 impl Default for EvalConfig {
@@ -169,6 +177,8 @@ impl Default for EvalConfig {
             warmup: tuning::WarmupConfig::default(),
             arrow_storage_enabled: true,
             arrow_fastpath_enabled: true,
+            delta_overlay_enabled: true,
+            date_system: DateSystem::Excel1900,
         }
     }
 }
@@ -181,6 +191,24 @@ pub enum SheetIndexMode {
     Lazy,
     /// Use fast batch building (sorted arrays -> tree) when bulk loading, otherwise incremental
     FastBatch,
+}
+
+/// Excel workbook date system selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateSystem {
+    /// Excel 1900 date system with the historical 1900-02-29 compatibility gap.
+    Excel1900,
+    /// Excel 1904 date system (epoch 1904-01-01), no 1900 leap-year bug offset.
+    Excel1904,
+}
+
+impl Display for DateSystem {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DateSystem::Excel1900 => write!(f, "1900"),
+            DateSystem::Excel1904 => write!(f, "1904"),
+        }
+    }
 }
 
 /// Construct a new engine with the given resolver and configuration

@@ -11,6 +11,7 @@ use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt8Array,
 use once_cell::sync::OnceCell;
 
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use std::collections::HashMap;
 
 /// Compact type tag per row (UInt8 backing)
 #[repr(u8)]
@@ -46,7 +47,7 @@ impl TypeTag {
 
 impl TypeTag {
     #[inline]
-    fn from_u8(b: u8) -> Self {
+    pub fn from_u8(b: u8) -> Self {
         match b {
             x if x == TypeTag::Empty as u8 => TypeTag::Empty,
             x if x == TypeTag::Number as u8 => TypeTag::Number,
@@ -84,6 +85,8 @@ pub struct ColumnChunk {
     lazy_null_booleans: OnceCell<Arc<BooleanArray>>,
     lazy_null_text: OnceCell<ArrayRef>,
     lazy_null_errors: OnceCell<Arc<UInt8Array>>,
+    // Phase C: per-chunk overlay (delta edits since last compaction)
+    pub overlay: Overlay,
 }
 
 impl ColumnChunk {
@@ -161,6 +164,9 @@ impl SheetStore {
     pub fn sheet(&self, name: &str) -> Option<&ArrowSheet> {
         self.sheets.iter().find(|s| s.name.as_ref() == name)
     }
+    pub fn sheet_mut(&mut self, name: &str) -> Option<&mut ArrowSheet> {
+        self.sheets.iter_mut().find(|s| s.name.as_ref() == name)
+    }
 }
 
 /// Ingestion builder that writes per-column Arrow arrays with a lane/tag design.
@@ -168,6 +174,7 @@ pub struct IngestBuilder {
     name: Arc<str>,
     ncols: usize,
     chunk_rows: usize,
+    date_system: crate::engine::DateSystem,
 
     // Per-column active builders for current chunk
     num_builders: Vec<Float64Builder>,
@@ -194,13 +201,19 @@ struct LaneCounts {
 }
 
 impl IngestBuilder {
-    pub fn new(sheet_name: &str, ncols: usize, chunk_rows: usize) -> Self {
+    pub fn new(
+        sheet_name: &str,
+        ncols: usize,
+        chunk_rows: usize,
+        date_system: crate::engine::DateSystem,
+    ) -> Self {
         let mut chunks = Vec::with_capacity(ncols);
         chunks.resize_with(ncols, Vec::new);
         Self {
             name: Arc::from(sheet_name.to_string()),
             ncols,
             chunk_rows: chunk_rows.max(1),
+            date_system,
             num_builders: (0..ncols)
                 .map(|_| Float64Builder::with_capacity(chunk_rows))
                 .collect(),
@@ -221,6 +234,149 @@ impl IngestBuilder {
             row_in_chunk: 0,
             total_rows: 0,
         }
+    }
+
+    /// Zero-allocation row append from typed cell tokens (no LiteralValue).
+    /// Text borrows are copied into the internal StringBuilder.
+    pub fn append_row_cells<'a>(&mut self, row: &[CellIngest<'a>]) -> Result<(), ExcelError> {
+        assert_eq!(row.len(), self.ncols, "row width mismatch");
+        for (c, cell) in row.iter().enumerate() {
+            match cell {
+                CellIngest::Empty => {
+                    self.tag_builders[c].append_value(TypeTag::Empty as u8);
+                    self.num_builders[c].append_null();
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_null();
+                }
+                CellIngest::Number(n) => {
+                    self.tag_builders[c].append_value(TypeTag::Number as u8);
+                    self.num_builders[c].append_value(*n);
+                    self.lane_counts[c].n_num += 1;
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_null();
+                }
+                CellIngest::Boolean(b) => {
+                    self.tag_builders[c].append_value(TypeTag::Boolean as u8);
+                    self.num_builders[c].append_null();
+                    self.bool_builders[c].append_value(*b);
+                    self.lane_counts[c].n_bool += 1;
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_null();
+                }
+                CellIngest::Text(s) => {
+                    self.tag_builders[c].append_value(TypeTag::Text as u8);
+                    self.num_builders[c].append_null();
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_value(s);
+                    self.lane_counts[c].n_text += 1;
+                    self.err_builders[c].append_null();
+                }
+                CellIngest::ErrorCode(code) => {
+                    self.tag_builders[c].append_value(TypeTag::Error as u8);
+                    self.num_builders[c].append_null();
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_value(*code);
+                    self.lane_counts[c].n_err += 1;
+                }
+                CellIngest::DateSerial(serial) => {
+                    self.tag_builders[c].append_value(TypeTag::DateTime as u8);
+                    self.num_builders[c].append_value(*serial);
+                    self.lane_counts[c].n_num += 1;
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_null();
+                }
+                CellIngest::Pending => {
+                    self.tag_builders[c].append_value(TypeTag::Pending as u8);
+                    self.num_builders[c].append_null();
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_null();
+                }
+            }
+        }
+        self.row_in_chunk += 1;
+        self.total_rows += 1;
+        if self.row_in_chunk >= self.chunk_rows {
+            self.finish_chunk();
+        }
+        Ok(())
+    }
+
+    /// Streaming row append from an iterator of typed cell tokens.
+    /// Requires an `ExactSizeIterator` to validate row width without materializing a Vec.
+    pub fn append_row_cells_iter<'a, I>(&mut self, iter: I) -> Result<(), ExcelError>
+    where
+        I: ExactSizeIterator<Item = CellIngest<'a>>,
+    {
+        assert_eq!(iter.len(), self.ncols, "row width mismatch");
+        for (c, cell) in iter.enumerate() {
+            match cell {
+                CellIngest::Empty => {
+                    self.tag_builders[c].append_value(TypeTag::Empty as u8);
+                    self.num_builders[c].append_null();
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_null();
+                }
+                CellIngest::Number(n) => {
+                    self.tag_builders[c].append_value(TypeTag::Number as u8);
+                    self.num_builders[c].append_value(n);
+                    self.lane_counts[c].n_num += 1;
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_null();
+                }
+                CellIngest::Boolean(b) => {
+                    self.tag_builders[c].append_value(TypeTag::Boolean as u8);
+                    self.num_builders[c].append_null();
+                    self.bool_builders[c].append_value(b);
+                    self.lane_counts[c].n_bool += 1;
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_null();
+                }
+                CellIngest::Text(s) => {
+                    self.tag_builders[c].append_value(TypeTag::Text as u8);
+                    self.num_builders[c].append_null();
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_value(s);
+                    self.lane_counts[c].n_text += 1;
+                    self.err_builders[c].append_null();
+                }
+                CellIngest::ErrorCode(code) => {
+                    self.tag_builders[c].append_value(TypeTag::Error as u8);
+                    self.num_builders[c].append_null();
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_value(code);
+                    self.lane_counts[c].n_err += 1;
+                }
+                CellIngest::DateSerial(serial) => {
+                    self.tag_builders[c].append_value(TypeTag::DateTime as u8);
+                    self.num_builders[c].append_value(serial);
+                    self.lane_counts[c].n_num += 1;
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_null();
+                }
+                CellIngest::Pending => {
+                    self.tag_builders[c].append_value(TypeTag::Pending as u8);
+                    self.num_builders[c].append_null();
+                    self.bool_builders[c].append_null();
+                    self.text_builders[c].append_null();
+                    self.err_builders[c].append_null();
+                }
+            }
+        }
+        self.row_in_chunk += 1;
+        self.total_rows += 1;
+        if self.row_in_chunk >= self.chunk_rows {
+            self.finish_chunk();
+        }
+        Ok(())
     }
 
     /// Append a single row of values. Length must match `ncols`.
@@ -276,14 +432,18 @@ impl IngestBuilder {
                 // Phase A: coerce temporal to serials in numeric lane with DateTime tag
                 LiteralValue::Date(d) => {
                     let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                    self.num_builders[c].append_value(formualizer_common::datetime_to_serial(&dt));
+                    let serial =
+                        crate::builtins::datetime::datetime_to_serial_for(self.date_system, &dt);
+                    self.num_builders[c].append_value(serial);
                     self.lane_counts[c].n_num += 1;
                     self.bool_builders[c].append_null();
                     self.text_builders[c].append_null();
                     self.err_builders[c].append_null();
                 }
                 LiteralValue::DateTime(dt) => {
-                    self.num_builders[c].append_value(formualizer_common::datetime_to_serial(dt));
+                    let serial =
+                        crate::builtins::datetime::datetime_to_serial_for(self.date_system, dt);
+                    self.num_builders[c].append_value(serial);
                     self.lane_counts[c].n_num += 1;
                     self.bool_builders[c].append_null();
                     self.text_builders[c].append_null();
@@ -379,6 +539,7 @@ impl IngestBuilder {
                 lazy_null_booleans: OnceCell::new(),
                 lazy_null_text: OnceCell::new(),
                 lazy_null_errors: OnceCell::new(),
+                overlay: Overlay::new(),
             };
             self.chunks[c].push(chunk);
 
@@ -446,7 +607,7 @@ impl IngestBuilder {
     }
 }
 
-fn map_error_code(kind: ExcelErrorKind) -> u8 {
+pub fn map_error_code(kind: ExcelErrorKind) -> u8 {
     match kind {
         ExcelErrorKind::Null => 1,
         ExcelErrorKind::Ref => 2,
@@ -464,7 +625,7 @@ fn map_error_code(kind: ExcelErrorKind) -> u8 {
     }
 }
 
-fn unmap_error_code(code: u8) -> ExcelErrorKind {
+pub fn unmap_error_code(code: u8) -> ExcelErrorKind {
     match code {
         1 => ExcelErrorKind::Null,
         2 => ExcelErrorKind::Ref,
@@ -480,6 +641,62 @@ fn unmap_error_code(code: u8) -> ExcelErrorKind {
         12 => ExcelErrorKind::Circ,
         13 => ExcelErrorKind::Cancelled,
         _ => ExcelErrorKind::Error,
+    }
+}
+
+// ─────────────────────────── Overlay (Phase C) ────────────────────────────
+
+/// Zero-allocation cell token for ingestion.
+pub enum CellIngest<'a> {
+    Empty,
+    Number(f64),
+    Boolean(bool),
+    Text(&'a str),
+    ErrorCode(u8),
+    DateSerial(f64),
+    Pending,
+}
+
+#[derive(Debug, Clone)]
+pub enum OverlayValue {
+    Empty,
+    Number(f64),
+    Boolean(bool),
+    Text(Arc<str>),
+    Error(u8),
+    Pending,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Overlay {
+    map: HashMap<usize, OverlayValue>,
+}
+
+impl Overlay {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+    #[inline]
+    pub fn get(&self, off: usize) -> Option<&OverlayValue> {
+        self.map.get(&off)
+    }
+    #[inline]
+    pub fn set(&mut self, off: usize, v: OverlayValue) {
+        self.map.insert(off, v);
+    }
+    #[inline]
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+    #[inline]
+    pub fn any_in_range(&self, range: core::ops::Range<usize>) -> bool {
+        self.map.keys().any(|k| range.contains(k))
     }
 }
 
@@ -535,6 +752,546 @@ impl ArrowSheet {
             chunk_starts: &self.chunk_starts,
         }
     }
+
+    /// Ensure capacity to address at least target_rows rows by appending empty chunks.
+    pub fn ensure_row_capacity(&mut self, target_rows: usize) {
+        if target_rows as u32 <= self.nrows {
+            return;
+        }
+        // Determine chunk size from last chunk, fallback to 32k
+        let mut chunk_size = 32 * 1024;
+        if let Some(c0) = self.columns.first() {
+            if let Some(last) = c0.chunks.last() {
+                chunk_size = last.type_tag.len().max(1);
+            }
+        }
+        let mut cur_rows = self.nrows as usize;
+        while cur_rows < target_rows {
+            let len = (target_rows - cur_rows).min(chunk_size);
+            // Append chunk_starts entry
+            self.chunk_starts.push(cur_rows);
+            for col in &mut self.columns {
+                let tags = UInt8Array::from(vec![TypeTag::Empty as u8; len]);
+                col.chunks.push(ColumnChunk {
+                    numbers: None,
+                    booleans: None,
+                    text: None,
+                    errors: None,
+                    type_tag: Arc::new(tags),
+                    formula_id: None,
+                    meta: ColumnChunkMeta {
+                        len,
+                        non_null_num: 0,
+                        non_null_bool: 0,
+                        non_null_text: 0,
+                        non_null_err: 0,
+                    },
+                    lazy_null_numbers: OnceCell::new(),
+                    lazy_null_booleans: OnceCell::new(),
+                    lazy_null_text: OnceCell::new(),
+                    lazy_null_errors: OnceCell::new(),
+                    overlay: Overlay::new(),
+                });
+            }
+            cur_rows += len;
+            self.nrows = cur_rows as u32;
+        }
+    }
+
+    /// Return (chunk_idx, in_chunk_offset) for absolute 0-based row.
+    pub fn chunk_of_row(&self, abs_row: usize) -> Option<(usize, usize)> {
+        if abs_row >= self.nrows as usize {
+            return None;
+        }
+        let ch_idx = match self.chunk_starts.binary_search(&abs_row) {
+            Ok(i) => i,
+            Err(0) => 0,
+            Err(i) => i - 1,
+        };
+        let start = self.chunk_starts[ch_idx];
+        Some((ch_idx, abs_row - start))
+    }
+
+    fn recompute_chunk_starts(&mut self) {
+        self.chunk_starts.clear();
+        if let Some(col0) = self.columns.first() {
+            let mut cur = 0usize;
+            for ch in &col0.chunks {
+                self.chunk_starts.push(cur);
+                cur += ch.type_tag.len();
+            }
+        }
+    }
+
+    fn make_empty_chunk(len: usize) -> ColumnChunk {
+        ColumnChunk {
+            numbers: None,
+            booleans: None,
+            text: None,
+            errors: None,
+            type_tag: Arc::new(UInt8Array::from(vec![TypeTag::Empty as u8; len])),
+            formula_id: None,
+            meta: ColumnChunkMeta {
+                len,
+                non_null_num: 0,
+                non_null_bool: 0,
+                non_null_text: 0,
+                non_null_err: 0,
+            },
+            lazy_null_numbers: OnceCell::new(),
+            lazy_null_booleans: OnceCell::new(),
+            lazy_null_text: OnceCell::new(),
+            lazy_null_errors: OnceCell::new(),
+            overlay: Overlay::new(),
+        }
+    }
+
+    fn slice_chunk(ch: &ColumnChunk, off: usize, len: usize) -> ColumnChunk {
+        // Slice type tags
+        use arrow_array::Array;
+        let type_tag: Arc<UInt8Array> = Arc::new(
+            Array::slice(ch.type_tag.as_ref(), off, len)
+                .as_any()
+                .downcast_ref::<UInt8Array>()
+                .unwrap()
+                .clone(),
+        );
+        // Slice numbers if present and keep only if any non-null
+        let numbers: Option<Arc<Float64Array>> = ch.numbers.as_ref().and_then(|a| {
+            let sl = Array::slice(a.as_ref(), off, len);
+            let fa = sl.as_any().downcast_ref::<Float64Array>().unwrap().clone();
+            let nn = len.saturating_sub(fa.null_count());
+            if nn == 0 { None } else { Some(Arc::new(fa)) }
+        });
+        let booleans: Option<Arc<BooleanArray>> = ch.booleans.as_ref().and_then(|a| {
+            let sl = Array::slice(a.as_ref(), off, len);
+            let ba = sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone();
+            let nn = len.saturating_sub(ba.null_count());
+            if nn == 0 { None } else { Some(Arc::new(ba)) }
+        });
+        let text: Option<ArrayRef> = ch.text.as_ref().and_then(|a| {
+            let sl = Array::slice(a.as_ref(), off, len);
+            let sa = sl.as_any().downcast_ref::<StringArray>().unwrap().clone();
+            let nn = len.saturating_sub(sa.null_count());
+            if nn == 0 {
+                None
+            } else {
+                Some(Arc::new(sa) as ArrayRef)
+            }
+        });
+        let errors: Option<Arc<UInt8Array>> = ch.errors.as_ref().and_then(|a| {
+            let sl = Array::slice(a.as_ref(), off, len);
+            let ea = sl.as_any().downcast_ref::<UInt8Array>().unwrap().clone();
+            let nn = len.saturating_sub(ea.null_count());
+            if nn == 0 { None } else { Some(Arc::new(ea)) }
+        });
+        // Split overlays for this slice
+        let mut overlay = Overlay::new();
+        for (k, v) in ch.overlay.map.iter() {
+            if *k >= off && *k < off + len {
+                overlay.set(*k - off, v.clone());
+            }
+        }
+        let non_null_num = numbers.as_ref().map(|a| len - a.null_count()).unwrap_or(0);
+        let non_null_bool = booleans.as_ref().map(|a| len - a.null_count()).unwrap_or(0);
+        let non_null_text = text.as_ref().map(|a| len - a.null_count()).unwrap_or(0);
+        let non_null_err = errors.as_ref().map(|a| len - a.null_count()).unwrap_or(0);
+        ColumnChunk {
+            numbers: numbers.clone(),
+            booleans: booleans.clone(),
+            text: text.clone(),
+            errors: errors.clone(),
+            type_tag,
+            formula_id: None,
+            meta: ColumnChunkMeta {
+                len,
+                non_null_num,
+                non_null_bool,
+                non_null_text,
+                non_null_err,
+            },
+            lazy_null_numbers: OnceCell::new(),
+            lazy_null_booleans: OnceCell::new(),
+            lazy_null_text: OnceCell::new(),
+            lazy_null_errors: OnceCell::new(),
+            overlay,
+        }
+    }
+
+    /// Heuristic compaction: rebuilds a chunk's base arrays by applying its overlay when
+    /// overlay density crosses thresholds. Returns true if a rebuild occurred.
+    pub fn maybe_compact_chunk(
+        &mut self,
+        col_idx: usize,
+        ch_idx: usize,
+        abs_threshold: usize,
+        frac_den: usize,
+    ) -> bool {
+        if col_idx >= self.columns.len() || self.columns[col_idx].chunks.len() <= ch_idx {
+            return false;
+        }
+        let ch = &self.columns[col_idx].chunks[ch_idx];
+        let len = ch.type_tag.len();
+        if len == 0 {
+            return false;
+        }
+        let ov_len = ch.overlay.len();
+        let den = if frac_den.max(1) == 0 {
+            1
+        } else {
+            frac_den.max(1)
+        };
+        let trig = ov_len > (len / den) || ov_len > abs_threshold;
+        if !trig {
+            return false;
+        }
+        // Rebuild: merge base lanes with overlays row-by-row
+        let mut tag_b = UInt8Builder::with_capacity(len);
+        let mut nb = Float64Builder::with_capacity(len);
+        let mut bb = BooleanBuilder::with_capacity(len);
+        let mut sb = StringBuilder::with_capacity(len, len * 8);
+        let mut eb = UInt8Builder::with_capacity(len);
+        let mut non_num = 0usize;
+        let mut non_bool = 0usize;
+        let mut non_text = 0usize;
+        let mut non_err = 0usize;
+
+        let ch_ref = &self.columns[col_idx].chunks[ch_idx];
+        for i in 0..len {
+            // If overlay present, use it. Otherwise, use base tag+lane
+            if let Some(ov) = ch_ref.overlay.get(i) {
+                match ov {
+                    OverlayValue::Empty => {
+                        tag_b.append_value(TypeTag::Empty as u8);
+                        nb.append_null();
+                        bb.append_null();
+                        sb.append_null();
+                        eb.append_null();
+                    }
+                    OverlayValue::Number(n) => {
+                        tag_b.append_value(TypeTag::Number as u8);
+                        nb.append_value(*n);
+                        non_num += 1;
+                        bb.append_null();
+                        sb.append_null();
+                        eb.append_null();
+                    }
+                    OverlayValue::Boolean(b) => {
+                        tag_b.append_value(TypeTag::Boolean as u8);
+                        nb.append_null();
+                        bb.append_value(*b);
+                        non_bool += 1;
+                        sb.append_null();
+                        eb.append_null();
+                    }
+                    OverlayValue::Text(s) => {
+                        tag_b.append_value(TypeTag::Text as u8);
+                        nb.append_null();
+                        bb.append_null();
+                        sb.append_value(&s);
+                        non_text += 1;
+                        eb.append_null();
+                    }
+                    OverlayValue::Error(code) => {
+                        tag_b.append_value(TypeTag::Error as u8);
+                        nb.append_null();
+                        bb.append_null();
+                        sb.append_null();
+                        eb.append_value(*code);
+                        non_err += 1;
+                    }
+                    OverlayValue::Pending => {
+                        tag_b.append_value(TypeTag::Pending as u8);
+                        nb.append_null();
+                        bb.append_null();
+                        sb.append_null();
+                        eb.append_null();
+                    }
+                }
+            } else {
+                let tag = TypeTag::from_u8(ch_ref.type_tag.value(i));
+                match tag {
+                    TypeTag::Empty => {
+                        tag_b.append_value(TypeTag::Empty as u8);
+                        nb.append_null();
+                        bb.append_null();
+                        sb.append_null();
+                        eb.append_null();
+                    }
+                    TypeTag::Number | TypeTag::DateTime | TypeTag::Duration => {
+                        tag_b.append_value(TypeTag::Number as u8);
+                        if let Some(a) = &ch_ref.numbers {
+                            let fa = a.as_any().downcast_ref::<Float64Array>().unwrap();
+                            if fa.is_null(i) {
+                                nb.append_null();
+                            } else {
+                                nb.append_value(fa.value(i));
+                                non_num += 1;
+                            }
+                        } else {
+                            nb.append_null();
+                        }
+                        bb.append_null();
+                        sb.append_null();
+                        eb.append_null();
+                    }
+                    TypeTag::Boolean => {
+                        tag_b.append_value(TypeTag::Boolean as u8);
+                        nb.append_null();
+                        if let Some(a) = &ch_ref.booleans {
+                            let ba = a.as_any().downcast_ref::<BooleanArray>().unwrap();
+                            if ba.is_null(i) {
+                                bb.append_null();
+                            } else {
+                                bb.append_value(ba.value(i));
+                                non_bool += 1;
+                            }
+                        } else {
+                            bb.append_null();
+                        }
+                        sb.append_null();
+                        eb.append_null();
+                    }
+                    TypeTag::Text => {
+                        tag_b.append_value(TypeTag::Text as u8);
+                        nb.append_null();
+                        bb.append_null();
+                        if let Some(a) = &ch_ref.text {
+                            let sa = a.as_any().downcast_ref::<StringArray>().unwrap();
+                            if sa.is_null(i) {
+                                sb.append_null();
+                            } else {
+                                sb.append_value(sa.value(i));
+                                non_text += 1;
+                            }
+                        } else {
+                            sb.append_null();
+                        }
+                        eb.append_null();
+                    }
+                    TypeTag::Error => {
+                        tag_b.append_value(TypeTag::Error as u8);
+                        nb.append_null();
+                        bb.append_null();
+                        sb.append_null();
+                        if let Some(a) = &ch_ref.errors {
+                            let ea = a.as_any().downcast_ref::<UInt8Array>().unwrap();
+                            if ea.is_null(i) {
+                                eb.append_null();
+                            } else {
+                                eb.append_value(ea.value(i));
+                                non_err += 1;
+                            }
+                        } else {
+                            eb.append_null();
+                        }
+                    }
+                    TypeTag::Pending => {
+                        tag_b.append_value(TypeTag::Pending as u8);
+                        nb.append_null();
+                        bb.append_null();
+                        sb.append_null();
+                        eb.append_null();
+                    }
+                }
+            }
+        }
+        let tags = Arc::new(tag_b.finish());
+        let numbers = {
+            let a = nb.finish();
+            if non_num == 0 {
+                None
+            } else {
+                Some(Arc::new(a))
+            }
+        };
+        let booleans = {
+            let a = bb.finish();
+            if non_bool == 0 {
+                None
+            } else {
+                Some(Arc::new(a))
+            }
+        };
+        let text = {
+            let a = sb.finish();
+            if non_text == 0 {
+                None
+            } else {
+                Some(Arc::new(a) as ArrayRef)
+            }
+        };
+        let errors = {
+            let a = eb.finish();
+            if non_err == 0 {
+                None
+            } else {
+                Some(Arc::new(a))
+            }
+        };
+        // Swap in rebuilt chunk and clear overlay
+        let ch_mut = &mut self.columns[col_idx].chunks[ch_idx];
+        ch_mut.type_tag = tags;
+        ch_mut.numbers = numbers;
+        ch_mut.booleans = booleans;
+        ch_mut.text = text;
+        ch_mut.errors = errors;
+        ch_mut.overlay.clear();
+        ch_mut.meta.len = len;
+        ch_mut.meta.non_null_num = non_num;
+        ch_mut.meta.non_null_bool = non_bool;
+        ch_mut.meta.non_null_text = non_text;
+        ch_mut.meta.non_null_err = non_err;
+        true
+    }
+
+    /// Insert `count` rows before absolute 0-based row `before`.
+    pub fn insert_rows(&mut self, before: usize, count: usize) {
+        if count == 0 {
+            return;
+        }
+        if self.columns.is_empty() {
+            // No columns: just extend nrows
+            self.nrows = self.nrows.saturating_add(count as u32);
+            return;
+        }
+        let total_rows = self.nrows as usize;
+        let insert_at = before.min(total_rows);
+        // Locate split chunk and offset
+        let (ch_idx, in_off) = if insert_at == total_rows && !self.chunk_starts.is_empty() {
+            // Append after last row: split after last chunk
+            let last_idx = self.chunk_starts.len() - 1;
+            let last_len = self.columns[0].chunks[last_idx].type_tag.len();
+            (last_idx, last_len)
+        } else {
+            self.chunk_of_row(insert_at).unwrap_or((0, 0))
+        };
+        // Rebuild chunks for each column
+        for col in &mut self.columns {
+            let mut new_chunks: Vec<ColumnChunk> = Vec::with_capacity(col.chunks.len() + 1);
+            for i in 0..col.chunks.len() {
+                if i != ch_idx {
+                    new_chunks.push(col.chunks[i].clone());
+                } else {
+                    let orig = &col.chunks[i];
+                    let len = orig.type_tag.len();
+                    if in_off > 0 {
+                        new_chunks.push(Self::slice_chunk(orig, 0, in_off));
+                    }
+                    new_chunks.push(Self::make_empty_chunk(count));
+                    if in_off < len {
+                        new_chunks.push(Self::slice_chunk(orig, in_off, len - in_off));
+                    }
+                }
+            }
+            col.chunks = new_chunks;
+        }
+        self.nrows = (total_rows + count) as u32;
+        self.recompute_chunk_starts();
+    }
+
+    /// Delete `count` rows starting from absolute 0-based row `start`.
+    pub fn delete_rows(&mut self, start: usize, count: usize) {
+        if count == 0 || self.columns.is_empty() || self.nrows == 0 {
+            return;
+        }
+        let total_rows = self.nrows as usize;
+        if start >= total_rows {
+            return;
+        }
+        let end = (start + count).min(total_rows);
+        // For each column rebuild chunk list by slicing out deleted window
+        for col in &mut self.columns {
+            let mut new_chunks: Vec<ColumnChunk> = Vec::new();
+            let mut cur_start = 0usize;
+            for ch in &col.chunks {
+                let len = ch.type_tag.len();
+                let ch_end = cur_start + len;
+                // No overlap
+                if ch_end <= start || cur_start >= end {
+                    new_chunks.push(ch.clone());
+                } else {
+                    // Overlap exists
+                    let del_start = start.max(cur_start);
+                    let del_end = end.min(ch_end);
+                    let left_len = del_start.saturating_sub(cur_start);
+                    let right_len = ch_end.saturating_sub(del_end);
+                    if left_len > 0 {
+                        new_chunks.push(Self::slice_chunk(ch, 0, left_len));
+                    }
+                    if right_len > 0 {
+                        let off = len - right_len;
+                        new_chunks.push(Self::slice_chunk(ch, off, right_len));
+                    }
+                }
+                cur_start = ch_end;
+            }
+            col.chunks = new_chunks;
+        }
+        self.nrows = (total_rows - (end - start)) as u32;
+        self.recompute_chunk_starts();
+    }
+
+    /// Insert `count` columns before absolute 0-based column `before` with empty chunks.
+    pub fn insert_columns(&mut self, before: usize, count: usize) {
+        if count == 0 {
+            return;
+        }
+        // Determine chunk schema from first column if present
+        let mut empty_col = |lens: &[usize]| -> ArrowColumn {
+            let mut chunks = Vec::with_capacity(lens.len());
+            for &l in lens {
+                chunks.push(Self::make_empty_chunk(l));
+            }
+            ArrowColumn { chunks, index: 0 }
+        };
+        let lens: Vec<usize> = if let Some(col0) = self.columns.first() {
+            col0.chunks.iter().map(|c| c.type_tag.len()).collect()
+        } else {
+            // No columns: single chunk matching nrows if any
+            if self.nrows > 0 {
+                vec![self.nrows as usize]
+            } else {
+                Vec::new()
+            }
+        };
+        let mut cols_new: Vec<ArrowColumn> = Vec::with_capacity(self.columns.len() + count);
+        let before_idx = before.min(self.columns.len());
+        for (i, col) in self.columns.iter_mut().enumerate() {
+            if i == before_idx {
+                for _ in 0..count {
+                    cols_new.push(empty_col(&lens));
+                }
+            }
+            cols_new.push(col.clone());
+        }
+        if before_idx == self.columns.len() {
+            for _ in 0..count {
+                cols_new.push(empty_col(&lens));
+            }
+        }
+        // Fix column indices
+        for (idx, col) in cols_new.iter_mut().enumerate() {
+            col.index = idx as u32;
+        }
+        self.columns = cols_new;
+        // chunk_starts unchanged; lens were matched
+    }
+
+    /// Delete `count` columns starting at absolute 0-based column `start`.
+    pub fn delete_columns(&mut self, start: usize, count: usize) {
+        if count == 0 || self.columns.is_empty() {
+            return;
+        }
+        let end = (start + count).min(self.columns.len());
+        if start >= end {
+            return;
+        }
+        self.columns.drain(start..end);
+        for (idx, col) in self.columns.iter_mut().enumerate() {
+            col.index = idx as u32;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -583,42 +1340,68 @@ impl<'a> ArrowRangeView<'a> {
         let ch = &col_ref.chunks[ch_idx];
         let row_start = self.chunk_starts[ch_idx];
         let in_off = abs_row - row_start;
+        // Overlay takes precedence
+        if let Some(ov) = ch.overlay.get(in_off) {
+            return match ov {
+                OverlayValue::Empty => LiteralValue::Empty,
+                OverlayValue::Number(n) => LiteralValue::Number(*n),
+                OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
+                OverlayValue::Text(s) => LiteralValue::Text((&**s).to_string()),
+                OverlayValue::Error(code) => {
+                    let kind = unmap_error_code(*code);
+                    LiteralValue::Error(ExcelError::new(kind))
+                }
+                OverlayValue::Pending => LiteralValue::Pending,
+            };
+        }
         // Read tag and route to lane
         let tag_u8 = ch.type_tag.value(in_off);
         match TypeTag::from_u8(tag_u8) {
             TypeTag::Empty => LiteralValue::Empty,
             TypeTag::Number | TypeTag::DateTime | TypeTag::Duration => {
-                let arr = ch.numbers.as_ref().unwrap();
-                if arr.is_null(in_off) {
-                    return LiteralValue::Empty;
+                if let Some(arr) = &ch.numbers {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    let nums = arr.as_any().downcast_ref::<Float64Array>().unwrap();
+                    LiteralValue::Number(nums.value(in_off))
+                } else {
+                    LiteralValue::Empty
                 }
-                let nums = arr.as_any().downcast_ref::<Float64Array>().unwrap();
-                LiteralValue::Number(nums.value(in_off))
             }
             TypeTag::Boolean => {
-                let arr = ch.booleans.as_ref().unwrap();
-                if arr.is_null(in_off) {
-                    return LiteralValue::Empty;
+                if let Some(arr) = &ch.booleans {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    let ba = arr.as_any().downcast_ref::<BooleanArray>().unwrap();
+                    LiteralValue::Boolean(ba.value(in_off))
+                } else {
+                    LiteralValue::Empty
                 }
-                let ba = arr.as_any().downcast_ref::<BooleanArray>().unwrap();
-                LiteralValue::Boolean(ba.value(in_off))
             }
             TypeTag::Text => {
-                let arr = ch.text.as_ref().unwrap();
-                if arr.is_null(in_off) {
-                    return LiteralValue::Empty;
+                if let Some(arr) = &ch.text {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    let sa = arr.as_any().downcast_ref::<StringArray>().unwrap();
+                    LiteralValue::Text(sa.value(in_off).to_string())
+                } else {
+                    LiteralValue::Empty
                 }
-                let sa = arr.as_any().downcast_ref::<StringArray>().unwrap();
-                LiteralValue::Text(sa.value(in_off).to_string())
             }
             TypeTag::Error => {
-                let arr = ch.errors.as_ref().unwrap();
-                if arr.is_null(in_off) {
-                    return LiteralValue::Empty;
+                if let Some(arr) = &ch.errors {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    let ea = arr.as_any().downcast_ref::<UInt8Array>().unwrap();
+                    let kind = unmap_error_code(ea.value(in_off));
+                    LiteralValue::Error(ExcelError::new(kind))
+                } else {
+                    LiteralValue::Empty
                 }
-                let ea = arr.as_any().downcast_ref::<UInt8Array>().unwrap();
-                let kind = unmap_error_code(ea.value(in_off));
-                LiteralValue::Error(ExcelError::new(kind))
             }
             TypeTag::Pending => LiteralValue::Pending,
         }
@@ -735,47 +1518,189 @@ impl<'a> ArrowRangeView<'a> {
     pub fn numbers_slices(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize, Vec<Arc<Float64Array>>)> + 'a {
-        self.iter_row_chunks().map(|cs| {
-            let cols = cs
-                .cols
-                .iter()
-                .map(|cc| {
-                    let a = cc.numbers.as_ref().expect("numbers lane exists");
-                    let fa = a.as_any().downcast_ref::<Float64Array>().unwrap().clone();
-                    Arc::new(fa)
-                })
-                .collect();
-            (cs.row_start, cs.row_len, cols)
+        use crate::compute_prelude::zip_select;
+        self.iter_row_chunks().map(move |cs| {
+            let mut out_cols: Vec<Arc<Float64Array>> = Vec::with_capacity(cs.cols.len());
+            for (local_c, col_idx) in (self.sc..=self.ec).enumerate() {
+                let base = cs.cols[local_c]
+                    .numbers
+                    .as_ref()
+                    .expect("numbers lane exists")
+                    .clone();
+                let base_fa = base
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap()
+                    .clone();
+                let base_arc = Arc::new(base_fa);
+
+                // Identify chunk and overlay segment
+                let abs_seg_start = self.sr + cs.row_start;
+                let ch_idx = match self.chunk_starts.binary_search(&abs_seg_start) {
+                    Ok(i) => i,
+                    Err(0) => 0,
+                    Err(i) => i - 1,
+                };
+                if col_idx >= self.sheet.columns.len() {
+                    out_cols.push(base_arc);
+                    continue;
+                }
+                let col = &self.sheet.columns[col_idx];
+                let ch = &col.chunks[ch_idx];
+                let rel_off = (self.sr + cs.row_start) - self.chunk_starts[ch_idx];
+                let seg_range = rel_off..(rel_off + cs.row_len);
+                if ch.overlay.any_in_range(seg_range.clone()) {
+                    let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
+                    let mut ob = Float64Builder::with_capacity(cs.row_len);
+                    for i in 0..cs.row_len {
+                        if let Some(ov) = ch.overlay.get(rel_off + i) {
+                            mask_b.append_value(true);
+                            match ov {
+                                OverlayValue::Number(n) => ob.append_value(*n),
+                                _ => ob.append_null(),
+                            }
+                        } else {
+                            mask_b.append_value(false);
+                            ob.append_null();
+                        }
+                    }
+                    let mask = mask_b.finish();
+                    let overlay_vals = ob.finish();
+                    let base_fa = base.as_any().downcast_ref::<Float64Array>().unwrap();
+                    let zipped = zip_select(&mask, &overlay_vals, base_fa).expect("zip overlay");
+                    let fa = zipped
+                        .as_any()
+                        .downcast_ref::<Float64Array>()
+                        .unwrap()
+                        .clone();
+                    out_cols.push(Arc::new(fa));
+                } else {
+                    out_cols.push(base_arc);
+                }
+            }
+            (cs.row_start, cs.row_len, out_cols)
         })
     }
 
-    /// Typed boolean slices per row-segment.
+    /// Typed boolean slices per row-segment, overlay-aware via zip.
     pub fn booleans_slices(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize, Vec<Arc<BooleanArray>>)> + 'a {
-        self.iter_row_chunks().map(|cs| {
-            let cols = cs
-                .cols
-                .iter()
-                .map(|cc| {
-                    let a = cc.booleans.as_ref().expect("booleans lane exists");
-                    let ba = a.as_any().downcast_ref::<BooleanArray>().unwrap().clone();
-                    Arc::new(ba)
-                })
-                .collect();
-            (cs.row_start, cs.row_len, cols)
+        use crate::compute_prelude::zip_select;
+        self.iter_row_chunks().map(move |cs| {
+            let mut out_cols: Vec<Arc<BooleanArray>> = Vec::with_capacity(cs.cols.len());
+            for (local_c, col_idx) in (self.sc..=self.ec).enumerate() {
+                let base = cs.cols[local_c]
+                    .booleans
+                    .as_ref()
+                    .expect("booleans lane exists")
+                    .clone();
+                let base_ba = base
+                    .as_any()
+                    .downcast_ref::<BooleanArray>()
+                    .unwrap()
+                    .clone();
+                let base_arc: Arc<BooleanArray> = Arc::new(base_ba);
+
+                let abs_seg_start = self.sr + cs.row_start;
+                let ch_idx = match self.chunk_starts.binary_search(&abs_seg_start) {
+                    Ok(i) => i,
+                    Err(0) => 0,
+                    Err(i) => i - 1,
+                };
+                if col_idx >= self.sheet.columns.len() {
+                    out_cols.push(base_arc);
+                    continue;
+                }
+                let col = &self.sheet.columns[col_idx];
+                let ch = &col.chunks[ch_idx];
+                let rel_off = (self.sr + cs.row_start) - self.chunk_starts[ch_idx];
+                let seg_range = rel_off..(rel_off + cs.row_len);
+                if ch.overlay.any_in_range(seg_range.clone()) {
+                    let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
+                    let mut bb = BooleanBuilder::with_capacity(cs.row_len);
+                    for i in 0..cs.row_len {
+                        if let Some(ov) = ch.overlay.get(rel_off + i) {
+                            mask_b.append_value(true);
+                            match ov {
+                                OverlayValue::Boolean(b) => bb.append_value(*b),
+                                _ => bb.append_null(),
+                            }
+                        } else {
+                            mask_b.append_value(false);
+                            bb.append_null();
+                        }
+                    }
+                    let mask = mask_b.finish();
+                    let overlay_vals = bb.finish();
+                    let base_ba = base.as_any().downcast_ref::<BooleanArray>().unwrap();
+                    let zipped =
+                        zip_select(&mask, &overlay_vals, base_ba).expect("zip boolean overlay");
+                    let ba = zipped
+                        .as_any()
+                        .downcast_ref::<BooleanArray>()
+                        .unwrap()
+                        .clone();
+                    out_cols.push(Arc::new(ba));
+                } else {
+                    out_cols.push(base_arc);
+                }
+            }
+            (cs.row_start, cs.row_len, out_cols)
         })
     }
 
     /// Text slices per row-segment (erased as ArrayRef for Utf8 today; future Dict/View support).
     pub fn text_slices(&'a self) -> impl Iterator<Item = (usize, usize, Vec<ArrayRef>)> + 'a {
-        self.iter_row_chunks().map(|cs| {
-            let cols = cs
-                .cols
-                .iter()
-                .map(|cc| cc.text.as_ref().expect("text lane exists").clone())
-                .collect();
-            (cs.row_start, cs.row_len, cols)
+        use crate::compute_prelude::zip_select;
+        self.iter_row_chunks().map(move |cs| {
+            let mut out_cols: Vec<ArrayRef> = Vec::with_capacity(cs.cols.len());
+            for (local_c, col_idx) in (self.sc..=self.ec).enumerate() {
+                let base = cs.cols[local_c]
+                    .text
+                    .as_ref()
+                    .expect("text lane exists")
+                    .clone();
+                let abs_seg_start = self.sr + cs.row_start;
+                let ch_idx = match self.chunk_starts.binary_search(&abs_seg_start) {
+                    Ok(i) => i,
+                    Err(0) => 0,
+                    Err(i) => i - 1,
+                };
+                if col_idx >= self.sheet.columns.len() {
+                    out_cols.push(base.clone());
+                    continue;
+                }
+                let col = &self.sheet.columns[col_idx];
+                let ch = &col.chunks[ch_idx];
+                let rel_off = (self.sr + cs.row_start) - self.chunk_starts[ch_idx];
+                let seg_range = rel_off..(rel_off + cs.row_len);
+                if ch.overlay.any_in_range(seg_range.clone()) {
+                    let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
+                    let mut sb = StringBuilder::with_capacity(cs.row_len, cs.row_len * 8);
+                    for i in 0..cs.row_len {
+                        if let Some(ov) = ch.overlay.get(rel_off + i) {
+                            mask_b.append_value(true);
+                            match ov {
+                                OverlayValue::Text(s) => sb.append_value(&s),
+                                _ => sb.append_null(),
+                            }
+                        } else {
+                            mask_b.append_value(false);
+                            sb.append_null();
+                        }
+                    }
+                    let mask = mask_b.finish();
+                    let overlay_vals = sb.finish();
+                    let base_sa = base.as_any().downcast_ref::<StringArray>().unwrap();
+                    let zipped =
+                        zip_select(&mask, &overlay_vals, base_sa).expect("zip text overlay");
+                    out_cols.push(zipped);
+                } else {
+                    out_cols.push(base.clone());
+                }
+            }
+            (cs.row_start, cs.row_len, out_cols)
         })
     }
 
@@ -783,17 +1708,62 @@ impl<'a> ArrowRangeView<'a> {
     pub fn errors_slices(
         &'a self,
     ) -> impl Iterator<Item = (usize, usize, Vec<Arc<UInt8Array>>)> + 'a {
-        self.iter_row_chunks().map(|cs| {
-            let cols = cs
-                .cols
-                .iter()
-                .map(|cc| {
-                    let a = cc.errors.as_ref().expect("errors lane exists");
-                    let ea = a.as_any().downcast_ref::<UInt8Array>().unwrap().clone();
-                    Arc::new(ea)
-                })
-                .collect();
-            (cs.row_start, cs.row_len, cols)
+        use crate::compute_prelude::zip_select;
+        self.iter_row_chunks().map(move |cs| {
+            let mut out_cols: Vec<Arc<UInt8Array>> = Vec::with_capacity(cs.cols.len());
+            for (local_c, col_idx) in (self.sc..=self.ec).enumerate() {
+                let base = cs.cols[local_c]
+                    .errors
+                    .as_ref()
+                    .expect("errors lane exists")
+                    .clone();
+                let base_e = base.as_any().downcast_ref::<UInt8Array>().unwrap().clone();
+                let base_arc: Arc<UInt8Array> = Arc::new(base_e);
+                let abs_seg_start = self.sr + cs.row_start;
+                let ch_idx = match self.chunk_starts.binary_search(&abs_seg_start) {
+                    Ok(i) => i,
+                    Err(0) => 0,
+                    Err(i) => i - 1,
+                };
+                if col_idx >= self.sheet.columns.len() {
+                    out_cols.push(base_arc);
+                    continue;
+                }
+                let col = &self.sheet.columns[col_idx];
+                let ch = &col.chunks[ch_idx];
+                let rel_off = (self.sr + cs.row_start) - self.chunk_starts[ch_idx];
+                let seg_range = rel_off..(rel_off + cs.row_len);
+                if ch.overlay.any_in_range(seg_range.clone()) {
+                    let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
+                    let mut eb = UInt8Builder::with_capacity(cs.row_len);
+                    for i in 0..cs.row_len {
+                        if let Some(ov) = ch.overlay.get(rel_off + i) {
+                            mask_b.append_value(true);
+                            match ov {
+                                OverlayValue::Error(code) => eb.append_value(*code),
+                                _ => eb.append_null(),
+                            }
+                        } else {
+                            mask_b.append_value(false);
+                            eb.append_null();
+                        }
+                    }
+                    let mask = mask_b.finish();
+                    let overlay_vals = eb.finish();
+                    let base_ea = base.as_any().downcast_ref::<UInt8Array>().unwrap();
+                    let zipped =
+                        zip_select(&mask, &overlay_vals, base_ea).expect("zip err overlay");
+                    let ea = zipped
+                        .as_any()
+                        .downcast_ref::<UInt8Array>()
+                        .unwrap()
+                        .clone();
+                    out_cols.push(Arc::new(ea));
+                } else {
+                    out_cols.push(base_arc);
+                }
+            }
+            (cs.row_start, cs.row_len, out_cols)
         })
     }
 }
@@ -820,7 +1790,7 @@ mod tests {
 
     #[test]
     fn ingest_mixed_rows_into_lanes_and_tags() {
-        let mut b = IngestBuilder::new("Sheet1", 1, 1024);
+        let mut b = IngestBuilder::new("Sheet1", 1, 1024, crate::engine::DateSystem::Excel1900);
         let data = vec![
             LiteralValue::Number(42.5),                   // Number
             LiteralValue::Empty,                          // Empty
@@ -873,7 +1843,7 @@ mod tests {
 
     #[test]
     fn range_view_get_cell_and_padding() {
-        let mut b = IngestBuilder::new("S", 2, 2);
+        let mut b = IngestBuilder::new("S", 2, 2, crate::engine::DateSystem::Excel1900);
         b.append_row(&[LiteralValue::Number(1.0), LiteralValue::Text("".into())])
             .unwrap();
         b.append_row(&[LiteralValue::Empty, LiteralValue::Text("x".into())])
@@ -904,7 +1874,7 @@ mod tests {
     #[test]
     fn row_chunk_slices_shape() {
         // chunk_rows=2 leads to two slices for 3 rows
-        let mut b = IngestBuilder::new("S", 2, 2);
+        let mut b = IngestBuilder::new("S", 2, 2, crate::engine::DateSystem::Excel1900);
         b.append_row(&[LiteralValue::Text("a".into()), LiteralValue::Number(1.0)])
             .unwrap();
         b.append_row(&[LiteralValue::Text("b".into()), LiteralValue::Number(2.0)])
@@ -926,7 +1896,7 @@ mod tests {
     #[test]
     fn oob_columns_are_padded() {
         // Build with 2 columns; request 3 columns (ec beyond last col)
-        let mut b = IngestBuilder::new("S", 2, 2);
+        let mut b = IngestBuilder::new("S", 2, 2, crate::engine::DateSystem::Excel1900);
         b.append_row(&[LiteralValue::Number(1.0), LiteralValue::Text("a".into())])
             .unwrap();
         b.append_row(&[LiteralValue::Number(2.0), LiteralValue::Text("b".into())])
@@ -957,7 +1927,7 @@ mod tests {
 
     #[test]
     fn reversed_range_is_empty() {
-        let mut b = IngestBuilder::new("S", 1, 4);
+        let mut b = IngestBuilder::new("S", 1, 4, crate::engine::DateSystem::Excel1900);
         b.append_row(&[LiteralValue::Number(1.0)]).unwrap();
         b.append_row(&[LiteralValue::Number(2.0)]).unwrap();
         let sheet = b.finish();
@@ -969,7 +1939,7 @@ mod tests {
 
     #[test]
     fn chunk_alignment_invariant() {
-        let mut b = IngestBuilder::new("S", 3, 2);
+        let mut b = IngestBuilder::new("S", 3, 2, crate::engine::DateSystem::Excel1900);
         // 5 rows, 2-row chunks => 3 chunks (2,2,1)
         for r in 0..5 {
             b.append_row(&[
@@ -1001,7 +1971,7 @@ mod tests {
     #[test]
     fn chunking_splits_rows() {
         // Two columns, chunk size 2 → expect two chunks
-        let mut b = IngestBuilder::new("S", 2, 2);
+        let mut b = IngestBuilder::new("S", 2, 2, crate::engine::DateSystem::Excel1900);
         let rows = vec![
             vec![LiteralValue::Number(1.0), LiteralValue::Text("a".into())],
             vec![LiteralValue::Empty, LiteralValue::Text("b".into())],
@@ -1019,7 +1989,7 @@ mod tests {
 
     #[test]
     fn pending_is_not_error() {
-        let mut b = IngestBuilder::new("S", 1, 8);
+        let mut b = IngestBuilder::new("S", 1, 8, crate::engine::DateSystem::Excel1900);
         b.append_row(&[LiteralValue::Pending]).unwrap();
         let sheet = b.finish();
         let ch = &sheet.columns[0].chunks[0];
@@ -1033,7 +2003,7 @@ mod tests {
     #[test]
     fn all_null_numeric_lane_uses_null_array() {
         // Only text values in first column → numbers lane should be all null with correct dtype
-        let mut b = IngestBuilder::new("S", 1, 16);
+        let mut b = IngestBuilder::new("S", 1, 16, crate::engine::DateSystem::Excel1900);
         b.append_row(&[LiteralValue::Text("a".into())]).unwrap();
         b.append_row(&[LiteralValue::Text("".into())]).unwrap();
         b.append_row(&[LiteralValue::Text("b".into())]).unwrap();
@@ -1043,5 +2013,403 @@ mod tests {
         assert_eq!(nums.len(), 3);
         assert_eq!(nums.null_count(), 3);
         assert_eq!(nums.data_type(), &DataType::Float64);
+    }
+
+    #[test]
+    fn row_insert_delete_across_chunk_boundaries_with_overlays() {
+        // Build 1 column, chunk size 4, 10 rows -> chunks at [0..4],[4..8],[8..10]
+        let mut b = IngestBuilder::new("S", 1, 4, crate::engine::DateSystem::Excel1900);
+        for _ in 0..10 {
+            b.append_row(&[LiteralValue::Empty]).unwrap();
+        }
+        let mut sheet = b.finish();
+        // Add overlays at row 3 and row 4
+        {
+            let (c0, o0) = sheet.chunk_of_row(3).unwrap();
+            sheet.columns[0].chunks[c0]
+                .overlay
+                .set(o0, OverlayValue::Number(30.0));
+            let (c1, o1) = sheet.chunk_of_row(4).unwrap();
+            sheet.columns[0].chunks[c1]
+                .overlay
+                .set(o1, OverlayValue::Number(40.0));
+        }
+        // Insert 2 rows before row 4 (at chunk boundary)
+        sheet.insert_rows(4, 2);
+        assert_eq!(sheet.nrows, 12);
+        // Validate overlays moved correctly: 3 stays, 4 becomes Empty, 6 has 40
+        let av = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 0);
+        assert_eq!(av.get_cell(3, 0), LiteralValue::Number(30.0));
+        assert_eq!(av.get_cell(4, 0), LiteralValue::Empty);
+        assert_eq!(av.get_cell(6, 0), LiteralValue::Number(40.0));
+
+        // Now delete 3 rows starting at 3: removes rows 3,4,5 → moves 40.0 from 6 → 3
+        sheet.delete_rows(3, 3);
+        assert_eq!(sheet.nrows, 9);
+        let av2 = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 0);
+        assert_eq!(av2.get_cell(3, 0), LiteralValue::Number(40.0));
+        // All columns share chunk lengths; chunk_starts monotonic and cover nrows
+        let lens0: Vec<usize> = sheet.columns[0]
+            .chunks
+            .iter()
+            .map(|ch| ch.type_tag.len())
+            .collect();
+        for col in &sheet.columns {
+            let lens: Vec<usize> = col.chunks.iter().map(|ch| ch.type_tag.len()).collect();
+            assert_eq!(lens, lens0);
+        }
+        // chunk_starts should be monotonic and final chunk end == nrows
+        assert!(sheet.chunk_starts.windows(2).all(|w| w[0] < w[1]));
+        let last_start = *sheet.chunk_starts.last().unwrap_or(&0);
+        let last_len = sheet.columns[0]
+            .chunks
+            .last()
+            .map(|c| c.type_tag.len())
+            .unwrap_or(0);
+        assert_eq!(last_start + last_len, sheet.nrows as usize);
+    }
+
+    #[test]
+    fn column_insert_delete_retains_chunk_alignment() {
+        let mut b = IngestBuilder::new("S", 3, 3, crate::engine::DateSystem::Excel1900);
+        for _ in 0..5 {
+            b.append_row(&[
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+            ])
+            .unwrap();
+        }
+        let mut sheet = b.finish();
+        // Record reference chunk lengths of first column
+        let ref_lens: Vec<usize> = sheet.columns[0]
+            .chunks
+            .iter()
+            .map(|ch| ch.type_tag.len())
+            .collect();
+        // Insert 2 columns before index 1
+        sheet.insert_columns(1, 2);
+        assert_eq!(sheet.columns.len(), 5);
+        for col in &sheet.columns {
+            let lens: Vec<usize> = col.chunks.iter().map(|ch| ch.type_tag.len()).collect();
+            assert_eq!(lens, ref_lens);
+        }
+        let starts_before = sheet.chunk_starts.clone();
+        // Delete 2 columns starting at index 2 → back to 3 columns
+        sheet.delete_columns(2, 2);
+        assert_eq!(sheet.columns.len(), 3);
+        for col in &sheet.columns {
+            let lens: Vec<usize> = col.chunks.iter().map(|ch| ch.type_tag.len()).collect();
+            assert_eq!(lens, ref_lens);
+        }
+        // chunk_starts unchanged by column operations
+        assert_eq!(sheet.chunk_starts, starts_before);
+    }
+
+    #[test]
+    fn multiple_adjacent_row_ops_overlay_mixed_types() {
+        use formualizer_common::ExcelErrorKind;
+        // Two columns to ensure alignment preserved across columns
+        let mut b = IngestBuilder::new("S", 2, 3, crate::engine::DateSystem::Excel1900);
+        for _ in 0..9 {
+            b.append_row(&[LiteralValue::Empty, LiteralValue::Empty])
+                .unwrap();
+        }
+        let mut sheet = b.finish();
+        // Overlays at rows (0-based): 2->Number, 3->Text, 5->Boolean, 6->Error, 8->Empty
+        // Column 0 only
+        let set_ov = |sh: &mut ArrowSheet, row: usize, ov: OverlayValue| {
+            let (ch_i, off) = sh.chunk_of_row(row).unwrap();
+            sh.columns[0].chunks[ch_i].overlay.set(off, ov);
+        };
+        set_ov(&mut sheet, 2, OverlayValue::Number(12.5));
+        set_ov(&mut sheet, 3, OverlayValue::Text(Arc::from("hello")));
+        set_ov(&mut sheet, 5, OverlayValue::Boolean(true));
+        set_ov(
+            &mut sheet,
+            6,
+            OverlayValue::Error(map_error_code(ExcelErrorKind::Div)),
+        );
+        set_ov(&mut sheet, 8, OverlayValue::Empty);
+
+        // Insert 1 row before index 3
+        sheet.insert_rows(3, 1);
+        // Expected new positions: 2->2 (unchanged), 3->4, 5->6, 6->7, 8->9
+        let av1 = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 0);
+        assert_eq!(av1.get_cell(2, 0), LiteralValue::Number(12.5));
+        assert_eq!(av1.get_cell(4, 0), LiteralValue::Text("hello".into()));
+        assert_eq!(av1.get_cell(6, 0), LiteralValue::Boolean(true));
+        match av1.get_cell(7, 0) {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Div),
+            other => panic!("expected error at row 7, got {:?}", other),
+        }
+        assert_eq!(av1.get_cell(9, 0), LiteralValue::Empty);
+
+        // Insert 2 rows before index 4 (adjacent to previous region)
+        sheet.insert_rows(4, 2);
+        // Now positions: 2->2, 4->6, 6->8, 7->9, 9->11
+        let av2 = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 0);
+        assert_eq!(av2.get_cell(2, 0), LiteralValue::Number(12.5));
+        assert_eq!(av2.get_cell(6, 0), LiteralValue::Text("hello".into()));
+        assert_eq!(av2.get_cell(8, 0), LiteralValue::Boolean(true));
+        match av2.get_cell(9, 0) {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Div),
+            other => panic!("expected error at row 9, got {:?}", other),
+        }
+        assert_eq!(av2.get_cell(11, 0), LiteralValue::Empty);
+
+        // Delete 2 rows starting at index 6 → removes the text at 6 and one empty row
+        sheet.delete_rows(6, 2);
+        let av3 = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 0);
+        // Remaining expected: 2->Number 12.5, 6 (was 8)->true, 7 (was 9)->#DIV/0!, 9 (was 11)->Empty
+        assert_eq!(av3.get_cell(2, 0), LiteralValue::Number(12.5));
+        assert_eq!(av3.get_cell(6, 0), LiteralValue::Boolean(true));
+        match av3.get_cell(7, 0) {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Div),
+            other => panic!("expected error at row 8, got {:?}", other),
+        }
+        assert_eq!(av3.get_cell(9, 0), LiteralValue::Empty);
+
+        // Alignment checks
+        let lens0: Vec<usize> = sheet.columns[0]
+            .chunks
+            .iter()
+            .map(|ch| ch.type_tag.len())
+            .collect();
+        for col in &sheet.columns {
+            let lens: Vec<usize> = col.chunks.iter().map(|ch| ch.type_tag.len()).collect();
+            assert_eq!(lens, lens0);
+        }
+        // chunk_starts monotonically increasing and cover nrows
+        assert!(sheet.chunk_starts.windows(2).all(|w| w[0] < w[1]));
+        let last_start = *sheet.chunk_starts.last().unwrap_or(&0);
+        let last_len = sheet.columns[0]
+            .chunks
+            .last()
+            .map(|c| c.type_tag.len())
+            .unwrap_or(0);
+        assert_eq!(last_start + last_len, sheet.nrows as usize);
+    }
+
+    #[test]
+    fn multiple_adjacent_column_ops_alignment() {
+        // Start with 2 columns, chunk_rows=2, rows=5
+        let mut b = IngestBuilder::new("S", 2, 2, crate::engine::DateSystem::Excel1900);
+        for _ in 0..5 {
+            b.append_row(&[LiteralValue::Empty, LiteralValue::Empty])
+                .unwrap();
+        }
+        let mut sheet = b.finish();
+        let ref_lens: Vec<usize> = sheet.columns[0]
+            .chunks
+            .iter()
+            .map(|ch| ch.type_tag.len())
+            .collect();
+        // Insert 1 at start, then 2 at index 2 → columns = 5
+        sheet.insert_columns(0, 1);
+        sheet.insert_columns(2, 2);
+        assert_eq!(sheet.columns.len(), 5);
+        for col in &sheet.columns {
+            let lens: Vec<usize> = col.chunks.iter().map(|ch| ch.type_tag.len()).collect();
+            assert_eq!(lens, ref_lens);
+        }
+        let starts_before = sheet.chunk_starts.clone();
+        // Delete 1 at index 1, then 2 at the end if available
+        sheet.delete_columns(1, 1);
+        let remain = sheet.columns.len();
+        if remain >= 3 {
+            sheet.delete_columns(remain - 2, 2);
+        }
+        for col in &sheet.columns {
+            let lens: Vec<usize> = col.chunks.iter().map(|ch| ch.type_tag.len()).collect();
+            assert_eq!(lens, ref_lens);
+        }
+        assert_eq!(sheet.chunk_starts, starts_before);
+    }
+
+    #[test]
+    fn overlays_on_multiple_columns_row_col_ops() {
+        // 3 columns, chunk_rows=3, rows=6 → chunks [0..3), [3..6)
+        let mut b = IngestBuilder::new("S", 3, 3, crate::engine::DateSystem::Excel1900);
+        for _ in 0..6 {
+            b.append_row(&[
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+            ])
+            .unwrap();
+        }
+        let mut sheet = b.finish();
+        // Overlays at row2 and row3 across columns with different types
+        let set_ov = |sh: &mut ArrowSheet, col: usize, row: usize, ov: OverlayValue| {
+            let (ch_i, off) = sh.chunk_of_row(row).unwrap();
+            sh.columns[col].chunks[ch_i].overlay.set(off, ov);
+        };
+        set_ov(&mut sheet, 0, 2, OverlayValue::Number(12.0));
+        set_ov(&mut sheet, 1, 2, OverlayValue::Text(Arc::from("xx")));
+        set_ov(&mut sheet, 2, 2, OverlayValue::Boolean(true));
+        set_ov(&mut sheet, 0, 3, OverlayValue::Number(33.0));
+        set_ov(&mut sheet, 1, 3, OverlayValue::Text(Arc::from("yy")));
+        set_ov(&mut sheet, 2, 3, OverlayValue::Boolean(false));
+
+        // Insert a row at boundary (before row index 3)
+        sheet.insert_rows(3, 1);
+        // Now original row>=3 shift down by 1
+        let av = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 2);
+        // Row 2 values unchanged
+        assert_eq!(av.get_cell(2, 0), LiteralValue::Number(12.0));
+        assert_eq!(av.get_cell(2, 1), LiteralValue::Text("xx".into()));
+        assert_eq!(av.get_cell(2, 2), LiteralValue::Boolean(true));
+        // Row 3 became Empty (inserted)
+        assert_eq!(av.get_cell(3, 0), LiteralValue::Empty);
+        // Row 4 holds old row 3 overlays
+        assert_eq!(av.get_cell(4, 0), LiteralValue::Number(33.0));
+        assert_eq!(av.get_cell(4, 1), LiteralValue::Text("yy".into()));
+        assert_eq!(av.get_cell(4, 2), LiteralValue::Boolean(false));
+
+        // Delete column 1 (middle), values shift left
+        sheet.delete_columns(1, 1);
+        let av2 = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 1);
+        assert_eq!(av2.get_cell(2, 0), LiteralValue::Number(12.0));
+        // Column 1 now was old column 2
+        assert_eq!(av2.get_cell(2, 1), LiteralValue::Boolean(true));
+        assert_eq!(av2.get_cell(4, 0), LiteralValue::Number(33.0));
+        assert_eq!(av2.get_cell(4, 1), LiteralValue::Boolean(false));
+
+        // Alignment preserved
+        let lens0: Vec<usize> = sheet.columns[0]
+            .chunks
+            .iter()
+            .map(|ch| ch.type_tag.len())
+            .collect();
+        for col in &sheet.columns {
+            let lens: Vec<usize> = col.chunks.iter().map(|ch| ch.type_tag.len()).collect();
+            assert_eq!(lens, lens0);
+        }
+    }
+
+    #[test]
+    fn effective_slices_overlay_precedence_numbers_text() {
+        // 1 column, chunk_rows=3, rows=6. Base numbers in lane; overlays include text on row1 and number on row4.
+        let mut b = IngestBuilder::new("S", 1, 3, crate::engine::DateSystem::Excel1900);
+        for i in 0..6 {
+            b.append_row(&[LiteralValue::Number((i + 1) as f64)])
+                .unwrap();
+        }
+        let mut sheet = b.finish();
+        // Overlays: row1 -> Text("X"), row4 -> Number(99)
+        let (c1, o1) = sheet.chunk_of_row(1).unwrap();
+        sheet.columns[0].chunks[c1]
+            .overlay
+            .set(o1, OverlayValue::Text(Arc::from("X")));
+        let (c4, o4) = sheet.chunk_of_row(4).unwrap();
+        sheet.columns[0].chunks[c4]
+            .overlay
+            .set(o4, OverlayValue::Number(99.0));
+
+        let av = sheet.range_view(0, 0, 5, 0);
+        // Validate numbers_slices: row1 should be null (text overlay), row4 should be 99.0, others base
+        let mut numeric: Vec<Option<f64>> = vec![None; 6];
+        for (row_start, row_len, cols) in av.numbers_slices() {
+            let a = &cols[0];
+            for i in 0..row_len {
+                let idx = row_start + i;
+                numeric[idx] = if a.is_null(i) { None } else { Some(a.value(i)) };
+            }
+        }
+        assert_eq!(numeric[0], Some(1.0));
+        assert_eq!(numeric[1], None); // overshadowed by text overlay
+        assert_eq!(numeric[2], Some(3.0));
+        assert_eq!(numeric[3], Some(4.0));
+        assert_eq!(numeric[4], Some(99.0));
+        assert_eq!(numeric[5], Some(6.0));
+
+        // Validate text_slices: row1 has "X", others null
+        let mut texts: Vec<Option<String>> = vec![None; 6];
+        for (row_start, row_len, cols) in av.text_slices() {
+            let a = cols[0].as_any().downcast_ref::<StringArray>().unwrap();
+            for i in 0..row_len {
+                let idx = row_start + i;
+                texts[idx] = if a.is_null(i) {
+                    None
+                } else {
+                    Some(a.value(i).to_string())
+                };
+            }
+        }
+        assert_eq!(texts[1].as_deref(), Some("X"));
+        assert!(texts[0].is_none());
+        assert!(texts[2].is_none());
+        assert!(texts[3].is_none());
+        assert!(texts[4].is_none());
+        assert!(texts[5].is_none());
+    }
+
+    #[test]
+    fn effective_slices_overlay_precedence_booleans() {
+        // Base booleans over 1 column; overlays include boolean and non-boolean types.
+        let mut b = IngestBuilder::new("S", 1, 4, crate::engine::DateSystem::Excel1900);
+        for i in 0..6 {
+            let v = if i % 2 == 0 {
+                LiteralValue::Boolean(true)
+            } else {
+                LiteralValue::Boolean(false)
+            };
+            b.append_row(&[v]).unwrap();
+        }
+        let mut sheet = b.finish();
+        // Overlays: row1 -> Boolean(true), row2 -> Text("T")
+        let (c1, o1) = sheet.chunk_of_row(1).unwrap();
+        sheet.columns[0].chunks[c1]
+            .overlay
+            .set(o1, OverlayValue::Boolean(true));
+        let (c2, o2) = sheet.chunk_of_row(2).unwrap();
+        sheet.columns[0].chunks[c2]
+            .overlay
+            .set(o2, OverlayValue::Text(Arc::from("T")));
+
+        let av = sheet.range_view(0, 0, 5, 0);
+        // Validate booleans_slices: row1 should be true (overlay), row2 should be null (text overlay), others base
+        let mut bools: Vec<Option<bool>> = vec![None; 6];
+        for (row_start, row_len, cols) in av.booleans_slices() {
+            let a = &cols[0];
+            for i in 0..row_len {
+                let idx = row_start + i;
+                bools[idx] = if a.is_null(i) { None } else { Some(a.value(i)) };
+            }
+        }
+        assert_eq!(bools[0], Some(true));
+        assert_eq!(bools[1], Some(true)); // overlay to true
+        assert_eq!(bools[2], None); // overshadowed by text overlay
+        // spot-check others remain base
+        assert_eq!(bools[3], Some(false));
+    }
+
+    #[test]
+    fn effective_slices_overlay_precedence_errors() {
+        // Base numbers; overlay an error at one row and ensure errors_slices reflect it.
+        let mut b = IngestBuilder::new("S", 1, 3, crate::engine::DateSystem::Excel1900);
+        for i in 0..6 {
+            b.append_row(&[LiteralValue::Number((i + 1) as f64)])
+                .unwrap();
+        }
+        let mut sheet = b.finish();
+        // Overlay error at row 4
+        let (c4, o4) = sheet.chunk_of_row(4).unwrap();
+        sheet.columns[0].chunks[c4]
+            .overlay
+            .set(o4, OverlayValue::Error(map_error_code(ExcelErrorKind::Div)));
+
+        let av = sheet.range_view(0, 0, 5, 0);
+        let mut errs: Vec<Option<u8>> = vec![None; 6];
+        for (row_start, row_len, cols) in av.errors_slices() {
+            let a = &cols[0];
+            for i in 0..row_len {
+                let idx = row_start + i;
+                errs[idx] = if a.is_null(i) { None } else { Some(a.value(i)) };
+            }
+        }
+        assert_eq!(errs[4], Some(map_error_code(ExcelErrorKind::Div)));
+        assert!(errs[3].is_none());
     }
 }

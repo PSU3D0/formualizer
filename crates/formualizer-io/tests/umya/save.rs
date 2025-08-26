@@ -1,4 +1,4 @@
-#![cfg(feature = "umya")]
+// Integration test for Umya backend; run with `--features umya`.
 use formualizer_io::{CellData, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter};
 
 #[test]

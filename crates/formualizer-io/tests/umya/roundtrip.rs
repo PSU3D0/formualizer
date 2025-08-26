@@ -1,4 +1,4 @@
-#![cfg(feature = "umya")]
+// Integration test for Umya backend; run with `--features umya`.
 
 use formualizer_eval::engine::{Engine, EvalConfig, SheetIndexMode};
 use formualizer_io::{

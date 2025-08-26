@@ -1,11 +1,9 @@
-#![cfg(feature = "calamine")]
-
-mod test_utils; // pulls in tests/test_utils.rs
+// Integration test for Calamine backend; run with `--features calamine,umya`.
+use crate::common::build_workbook;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_io::{
     CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookLoader,
-};
-use test_utils::build_workbook; // centralized helper (umya uses (col,row))
+}; // centralized helper (umya uses (col,row))
 
 #[test]
 fn calamine_extracts_formulas_and_normalizes_equals() {

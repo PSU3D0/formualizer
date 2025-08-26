@@ -680,6 +680,12 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
     fn arrow_fastpath_enabled(&self) -> bool {
         false
     }
+
+    /// Workbook date system selection (1900 vs 1904).
+    /// Defaults to 1900 for compatibility.
+    fn date_system(&self) -> crate::engine::DateSystem {
+        crate::engine::DateSystem::Excel1900
+    }
 }
 
 /// Minimal backend capability descriptor for planning and adapters.
@@ -767,6 +773,11 @@ pub trait FunctionContext {
     fn arrow_fastpath_enabled(&self) -> bool {
         false
     }
+
+    /// Workbook date system selection (1900 vs 1904).
+    fn date_system(&self) -> crate::engine::DateSystem {
+        crate::engine::DateSystem::Excel1900
+    }
 }
 
 /// Default adapter that wraps an EvaluationContext and provides the narrow FunctionContext.
@@ -829,5 +840,9 @@ impl<'a> FunctionContext for DefaultFunctionContext<'a> {
 
     fn arrow_fastpath_enabled(&self) -> bool {
         self.base.arrow_fastpath_enabled()
+    }
+
+    fn date_system(&self) -> crate::engine::DateSystem {
+        self.base.date_system()
     }
 }

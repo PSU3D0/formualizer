@@ -1,12 +1,8 @@
 use crate::{
-    CellRef,
-    broadcast::{broadcast_shape, project_index},
-    traits::{ArgumentHandle, DefaultFunctionContext, EvaluationContext},
+    broadcast::{broadcast_shape, project_index}, coercion, traits::{ArgumentHandle, DefaultFunctionContext, EvaluationContext}, CellRef
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
-use rustc_hash::FxHashMap;
-use std::cell::RefCell;
 // no Arc needed here after cache removal
 
 pub struct Interpreter<'a> {
@@ -110,30 +106,30 @@ impl<'a> Interpreter<'a> {
 
                     // Column-only: rows are None on both ends
                     if sr.is_none() && er.is_none() {
+                        // Full-column reference: anchor at row 1 for alignment across columns
                         let scv = sc.unwrap_or(1);
                         let ecv = ec.unwrap_or(scv);
-                        if let Some((min_r, max_r)) =
+                        sr = Some(1);
+                        if let Some((_, max_r)) =
                             self.context.used_rows_for_columns(sheet_name, scv, ecv)
                         {
-                            sr = Some(min_r);
                             er = Some(max_r);
                         } else if let Some((max_rows, _)) = self.context.sheet_bounds(sheet_name) {
-                            sr = Some(1);
                             er = Some(max_rows);
                         }
                     }
 
                     // Row-only: cols are None on both ends
                     if sc.is_none() && ec.is_none() {
+                        // Full-row reference: anchor at column 1 for alignment across rows
                         let srv = sr.unwrap_or(1);
                         let erv = er.unwrap_or(srv);
-                        if let Some((min_c, max_c)) =
+                        sc = Some(1);
+                        if let Some((_, max_c)) =
                             self.context.used_cols_for_rows(sheet_name, srv, erv)
                         {
-                            sc = Some(min_c);
                             ec = Some(max_c);
                         } else if let Some((_, max_cols)) = self.context.sheet_bounds(sheet_name) {
-                            sc = Some(1);
                             ec = Some(max_cols);
                         }
                     }
@@ -151,15 +147,8 @@ impl<'a> Interpreter<'a> {
                         }
                     }
                     if er.is_some() && sr.is_none() {
-                        let scv = sc.unwrap_or(1);
-                        let ecv = ec.unwrap_or(scv);
-                        if let Some((min_r, _)) =
-                            self.context.used_rows_for_columns(sheet_name, scv, ecv)
-                        {
-                            sr = Some(min_r);
-                        } else {
-                            sr = Some(1);
-                        }
+                        // Open start: anchor at row 1
+                        sr = Some(1);
                     }
                     if sc.is_some() && ec.is_none() {
                         let srv = sr.unwrap_or(1);
@@ -173,15 +162,8 @@ impl<'a> Interpreter<'a> {
                         }
                     }
                     if ec.is_some() && sc.is_none() {
-                        let srv = sr.unwrap_or(1);
-                        let erv = er.unwrap_or(srv);
-                        if let Some((min_c, _)) =
-                            self.context.used_cols_for_rows(sheet_name, srv, erv)
-                        {
-                            sc = Some(min_c);
-                        } else {
-                            sc = Some(1);
-                        }
+                        // Open start: anchor at column 1
+                        sc = Some(1);
                     }
 
                     let sr = sr.unwrap_or(1);
@@ -624,33 +606,11 @@ impl<'a> Interpreter<'a> {
 
     /* ---------- coercion helpers ---------- */
     fn coerce_number(&self, v: &LiteralValue) -> Result<f64, ExcelError> {
-        use LiteralValue::*;
-        match v {
-            Number(n) => Ok(*n),
-            Int(i) => Ok(*i as f64),
-            Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
-            Text(s) => s.trim().parse::<f64>().map_err(|_| {
-                ExcelError::new(ExcelErrorKind::Value)
-                    .with_message(format!("Cannot convert '{s}' to number"))
-            }),
-            Empty => Ok(0.0),
-            _ if v.as_serial_number().is_some() => Ok(v.as_serial_number().unwrap()),
-            Error(_) => Err(ExcelError::new(ExcelErrorKind::Value)),
-            _ => Err(ExcelError::new(ExcelErrorKind::Value)),
-        }
+        coercion::to_number_lenient(v)
     }
 
     fn coerce_text(&self, v: &LiteralValue) -> String {
-        use LiteralValue::*;
-        match v {
-            Text(s) => s.clone(),
-            Number(n) => n.to_string(),
-            Int(i) => i.to_string(),
-            Boolean(b) => if *b { "TRUE" } else { "FALSE" }.into(),
-            Error(e) => e.to_string(),
-            Empty => "".into(),
-            _ => format!("{v:?}"),
-        }
+        coercion::to_text_invariant(v)
     }
 
     /* ---------- comparison ---------- */

@@ -1,10 +1,9 @@
-#![cfg(feature = "umya")]
+// Integration test for Umya backend; run with `--features umya`.
 
-mod test_utils;
+use crate::common::build_standard_grid;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_io::{LoadStrategy, SpreadsheetReader, UmyaAdapter, WorkbookLoader};
 use std::time::Instant;
-use test_utils::build_standard_grid;
 
 #[test]
 #[ignore]

@@ -1,4 +1,4 @@
-use formualizer_eval::engine::{Engine as RustEngine, EvalConfig};
+use formualizer_eval::engine::{DateSystem, Engine as RustEngine, EvalConfig};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::sync::{Arc, RwLock};
@@ -155,6 +155,26 @@ impl PyEvaluationConfig {
     #[getter]
     pub fn get_flat_cache_mb_cap(&self) -> u32 {
         self.inner.warmup.flat_cache_mb_cap as u32
+    }
+
+    #[getter]
+    pub fn get_date_system(&self) -> String {
+        self.inner.date_system.to_string()
+    }
+
+    #[setter]
+    pub fn set_date_system(&mut self, value: String) -> PyResult<()> {
+
+        let date_system: DateSystem = match value.as_str() {
+            "1900" => DateSystem::Excel1900,
+            "1904" => DateSystem::Excel1904,
+            _ => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Invalid date system: {}. Use '1900' or '1904'.",
+                value
+            ))),
+        };
+        self.inner.date_system = date_system;
+        Ok(())
     }
 }
 

@@ -69,6 +69,17 @@ optional = true
 
 [dev-dependencies]
 tempfile = "3.8"
+umya-spreadsheet = "2.3.2"
+
+[[test]]
+name = "calamine"
+path = "tests/calamine/mod.rs"
+required-features = ["calamine"]
+
+[[test]]
+name = "umya"
+path = "tests/umya/mod.rs"
+required-features = ["umya"]
 
 [dependencies.umya-spreadsheet]
 version = "2.3.2"

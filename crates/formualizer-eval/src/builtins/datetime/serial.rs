@@ -3,6 +3,8 @@
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use formualizer_common::ExcelError;
 
+use crate::engine::DateSystem;
+
 // Excel's serial date system:
 // Serial 1 = 1900-01-01
 // Serial 60 = 1900-02-29 (doesn't exist, but Excel thinks it does - leap year bug)
@@ -87,6 +89,57 @@ pub fn datetime_to_serial(datetime: &NaiveDateTime) -> f64 {
     let date_serial = date_to_serial(&datetime.date());
     let time_fraction = time_to_fraction(&datetime.time());
     date_serial + time_fraction
+}
+
+// ───────── Date-system aware variants (1900 vs 1904) ─────────
+
+const EXCEL_1904_EPOCH: NaiveDate = NaiveDate::from_ymd_opt(1904, 1, 1).unwrap();
+
+/// Convert a date to Excel serial according to the provided date system.
+pub fn date_to_serial_for(system: DateSystem, date: &NaiveDate) -> f64 {
+    match system {
+        DateSystem::Excel1900 => date_to_serial(date),
+        DateSystem::Excel1904 => (*date - EXCEL_1904_EPOCH).num_days() as f64,
+    }
+}
+
+/// Convert a datetime to Excel serial according to the provided date system.
+pub fn datetime_to_serial_for(system: DateSystem, dt: &NaiveDateTime) -> f64 {
+    match system {
+        DateSystem::Excel1900 => datetime_to_serial(dt),
+        DateSystem::Excel1904 => {
+            let days = (dt.date() - EXCEL_1904_EPOCH).num_days() as f64;
+            let frac = time_to_fraction(&dt.time());
+            days + frac
+        }
+    }
+}
+
+/// Convert a serial to datetime according to the provided date system.
+pub fn serial_to_datetime_for(
+    system: DateSystem,
+    serial: f64,
+) -> Result<NaiveDateTime, ExcelError> {
+    match system {
+        DateSystem::Excel1900 => serial_to_datetime(serial),
+        DateSystem::Excel1904 => {
+            if serial.is_nan() || serial.is_infinite() {
+                return Err(ExcelError::new_num());
+            }
+            let days = serial.trunc() as i64;
+            let date = EXCEL_1904_EPOCH
+                .checked_add_signed(chrono::TimeDelta::days(days))
+                .ok_or_else(|| ExcelError::new_num())?;
+            let time_fraction = serial.fract();
+            let total_seconds = (time_fraction * 86400.0).round() as u32;
+            let hours = total_seconds / 3600;
+            let minutes = (total_seconds % 3600) / 60;
+            let seconds = total_seconds % 60;
+            let time = NaiveTime::from_hms_opt(hours.min(23), minutes.min(59), seconds.min(59))
+                .ok_or_else(|| ExcelError::new_num())?;
+            Ok(NaiveDateTime::new(date, time))
+        }
+    }
 }
 
 /// Convert time to fractional day (0.0 to 0.999...)
