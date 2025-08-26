@@ -385,6 +385,287 @@ impl Function for SumIfsFn {
             "sumifs_dims"
         );
 
+        // Arrow fast path (guarded by config): numeric comparators and basic text (eq/neq, wildcard) over Arrow-backed views.
+        // Supports N-criteria with array/scalar comparisons.
+        if ctx.arrow_fastpath_enabled() {
+            if let Some(sum_av) = sum_view.as_arrow() {
+                use crate::compute_prelude::{boolean, cmp, concat_arrays, filter_array};
+                use arrow::compute::kernels::aggregate::sum_array;
+                use arrow::compute::kernels::comparison::{ilike, nilike};
+                use arrow_array::types::Float64Type;
+                use arrow_array::{Array as _, ArrayRef, BooleanArray, Float64Array, StringArray};
+                // Validate criteria are supported and Arrow-backed when range-like, with identical dims
+                let mut ok = true;
+                for (j, (pred, scalar_val)) in preds.iter().enumerate() {
+                    match pred {
+                        // Numeric support
+                        crate::args::CriteriaPredicate::Gt(_)
+                        | crate::args::CriteriaPredicate::Ge(_)
+                        | crate::args::CriteriaPredicate::Lt(_)
+                        | crate::args::CriteriaPredicate::Le(_) => {}
+                        crate::args::CriteriaPredicate::Eq(v)
+                        | crate::args::CriteriaPredicate::Ne(v) => match v {
+                            LiteralValue::Number(_) | LiteralValue::Int(_) => {}
+                            LiteralValue::Text(_) => {}
+                            _ => {
+                                ok = false;
+                            }
+                        },
+                        crate::args::CriteriaPredicate::TextLike { .. } => {}
+                        _ => {
+                            ok = false;
+                        }
+                    }
+                    if !ok {
+                        break;
+                    }
+                    if let Some(ref v) = crit_views[j] {
+                        if v.as_arrow().is_none() || v.dims() != dims {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+
+                if ok {
+                    // Helper: materialize per-column Float64 arrays by concatenating row-slices
+                    let build_cols = |av: &crate::arrow_store::ArrowRangeView<'_>| -> Vec<std::sync::Arc<Float64Array>> {
+                        let cols = dims.1;
+                        let mut segs: Vec<Vec<std::sync::Arc<Float64Array>>> = vec![Vec::new(); cols];
+                        for (_rs, _rl, cols_seg) in av.numbers_slices() {
+                            for c in 0..cols {
+                                segs[c].push(cols_seg[c].clone());
+                            }
+                        }
+                        let mut out: Vec<std::sync::Arc<Float64Array>> = Vec::with_capacity(cols);
+                        for mut parts in segs.into_iter() {
+                            if parts.is_empty() {
+                                out.push(std::sync::Arc::new(Float64Array::new_null(dims.0)));
+                            } else if parts.len() == 1 {
+                                out.push(parts.remove(0));
+                            } else {
+                                let anys: Vec<&dyn arrow_array::Array> =
+                                    parts.iter().map(|a| a.as_ref() as &dyn arrow_array::Array).collect();
+                                let conc: ArrayRef = concat_arrays(&anys).expect("concat");
+                                let fa = conc.as_any().downcast_ref::<Float64Array>().unwrap().clone();
+                                out.push(std::sync::Arc::new(fa));
+                            }
+                        }
+                        out
+                    };
+
+                    let sum_cols = build_cols(sum_av);
+                    // Pre-build criterion columns when range-like
+                    let mut crit_cols: Vec<Option<Vec<std::sync::Arc<Float64Array>>>> =
+                        Vec::with_capacity(preds.len());
+                    let mut crit_text_cols: Vec<Option<Vec<std::sync::Arc<StringArray>>>> =
+                        Vec::with_capacity(preds.len());
+                    for (j, (_pred, scalar_val)) in preds.iter().enumerate() {
+                        // Numeric lane
+                        if let Some(ref v) = crit_views[j] {
+                            let av = v.as_arrow().unwrap();
+                            crit_cols.push(Some(build_cols(av)));
+                        } else {
+                            crit_cols.push(None);
+                        }
+                        // Text lane
+                        if let Some(ref v) = crit_views[j] {
+                            let av = v.as_arrow().unwrap();
+                            // Build text columns by concatenating text slices per column
+                            let cols = dims.1;
+                            let mut segs: Vec<Vec<ArrayRef>> = vec![Vec::new(); cols];
+                            for (_rs, _rl, cols_seg) in av.text_slices() {
+                                for c in 0..cols {
+                                    segs[c].push(cols_seg[c].clone());
+                                }
+                            }
+                            let mut out: Vec<std::sync::Arc<StringArray>> =
+                                Vec::with_capacity(cols);
+                            for parts in segs.into_iter() {
+                                if parts.is_empty() {
+                                    out.push(std::sync::Arc::new(StringArray::new_null(dims.0)));
+                                } else if parts.len() == 1 {
+                                    let a = parts[0]
+                                        .as_any()
+                                        .downcast_ref::<StringArray>()
+                                        .unwrap()
+                                        .clone();
+                                    out.push(std::sync::Arc::new(a));
+                                } else {
+                                    let anys: Vec<&dyn arrow_array::Array> = parts
+                                        .iter()
+                                        .map(|a| a.as_ref() as &dyn arrow_array::Array)
+                                        .collect();
+                                    let conc: ArrayRef = concat_arrays(&anys).expect("concat");
+                                    let sa = conc
+                                        .as_any()
+                                        .downcast_ref::<StringArray>()
+                                        .unwrap()
+                                        .clone();
+                                    out.push(std::sync::Arc::new(sa));
+                                }
+                            }
+                            crit_text_cols.push(Some(out));
+                        } else {
+                            crit_text_cols.push(None);
+                        }
+                    }
+
+                    // Helper: lowercase a StringArray (preserve nulls)
+                    fn lower_string_array(a: &StringArray) -> StringArray {
+                        let mut b = arrow_array::builder::StringBuilder::with_capacity(
+                            a.len(),
+                            a.len() * 8,
+                        );
+                        for i in 0..a.len() {
+                            if a.is_null(i) {
+                                b.append_null();
+                            } else {
+                                b.append_value(a.value(i).to_ascii_lowercase());
+                            }
+                        }
+                        b.finish()
+                    }
+
+                    let mut total = 0.0f64;
+                    // Process per column; build combined mask and sum filtered values
+                    for c in 0..dims.1 {
+                        let values = &sum_cols[c];
+                        // Build mask per criterion for this column
+                        let mut mask_opt: Option<BooleanArray> = None;
+                        for (j, (pred, scalar_val)) in preds.iter().enumerate() {
+                            // Determine the criterion column data or scalar
+                            let col_arr: Option<&Float64Array> =
+                                crit_cols[j].as_ref().map(|cols| cols[c].as_ref());
+                            let col_text: Option<&StringArray> =
+                                crit_text_cols[j].as_ref().map(|cols| cols[c].as_ref());
+
+                            let cur = match pred {
+                                crate::args::CriteriaPredicate::Gt(n) => Some(
+                                    cmp::gt(col_arr.unwrap(), &Float64Array::new_scalar(*n))
+                                        .unwrap(),
+                                ),
+                                crate::args::CriteriaPredicate::Ge(n) => Some(
+                                    cmp::gt_eq(col_arr.unwrap(), &Float64Array::new_scalar(*n))
+                                        .unwrap(),
+                                ),
+                                crate::args::CriteriaPredicate::Lt(n) => Some(
+                                    cmp::lt(col_arr.unwrap(), &Float64Array::new_scalar(*n))
+                                        .unwrap(),
+                                ),
+                                crate::args::CriteriaPredicate::Le(n) => Some(
+                                    cmp::lt_eq(col_arr.unwrap(), &Float64Array::new_scalar(*n))
+                                        .unwrap(),
+                                ),
+                                crate::args::CriteriaPredicate::Eq(v) => {
+                                    match v {
+                                        LiteralValue::Number(x) => Some(
+                                            cmp::eq(
+                                                col_arr.unwrap(),
+                                                &Float64Array::new_scalar(*x),
+                                            )
+                                            .unwrap(),
+                                        ),
+                                        LiteralValue::Int(i) => Some(
+                                            cmp::eq(
+                                                col_arr.unwrap(),
+                                                &Float64Array::new_scalar(*i as f64),
+                                            )
+                                            .unwrap(),
+                                        ),
+                                        LiteralValue::Text(t) => {
+                                            let lt = t.to_ascii_lowercase();
+                                            let lowered = lower_string_array(col_text.unwrap());
+                                            let pat = StringArray::new_scalar(lt);
+                                            // Special case: equality to empty string treats nulls as equal in Excel
+                                            let mut m = ilike(&lowered, &pat).unwrap();
+                                            if t.is_empty() {
+                                                // Build nulls mask and OR it
+                                                let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(lowered.len());
+                                                for i in 0..lowered.len() {
+                                                    bb.append_value(lowered.is_null(i));
+                                                }
+                                                let add = bb.finish();
+                                                m = boolean::or_kleene(&m, &add).unwrap();
+                                            }
+                                            Some(m)
+                                        }
+                                        _ => {
+                                            ok = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                                crate::args::CriteriaPredicate::Ne(v) => match v {
+                                    LiteralValue::Number(x) => Some(
+                                        cmp::neq(col_arr.unwrap(), &Float64Array::new_scalar(*x))
+                                            .unwrap(),
+                                    ),
+                                    LiteralValue::Int(i) => Some(
+                                        cmp::neq(
+                                            col_arr.unwrap(),
+                                            &Float64Array::new_scalar(*i as f64),
+                                        )
+                                        .unwrap(),
+                                    ),
+                                    LiteralValue::Text(t) => {
+                                        let lt = t.to_ascii_lowercase();
+                                        let lowered = lower_string_array(col_text.unwrap());
+                                        let pat = StringArray::new_scalar(lt);
+                                        Some(nilike(&lowered, &pat).unwrap())
+                                    }
+                                    _ => {
+                                        ok = false;
+                                        break;
+                                    }
+                                },
+                                crate::args::CriteriaPredicate::TextLike { pattern, .. } => {
+                                    let lp = pattern
+                                        .replace('*', "%")
+                                        .replace('?', "_")
+                                        .to_ascii_lowercase();
+                                    let lowered = lower_string_array(col_text.unwrap());
+                                    let pat = StringArray::new_scalar(lp);
+                                    Some(ilike(&lowered, &pat).unwrap())
+                                }
+                                _ => {
+                                    ok = false;
+                                    break;
+                                }
+                            };
+
+                            if !ok {
+                                break;
+                            }
+
+                            if let Some(cur_mask) = cur {
+                                mask_opt = Some(match mask_opt {
+                                    None => cur_mask,
+                                    Some(prev) => boolean::and_kleene(&prev, &cur_mask).unwrap(),
+                                });
+                            }
+                        }
+
+                        if !ok {
+                            break;
+                        }
+
+                        if let Some(mask) = mask_opt {
+                            let filtered = filter_array(values.as_ref(), &mask).unwrap();
+                            let f64_arr = filtered.as_any().downcast_ref::<Float64Array>().unwrap();
+                            if let Some(part) = sum_array::<Float64Type, _>(f64_arr) {
+                                total += part;
+                            }
+                        }
+                    }
+
+                    if ok {
+                        return Ok(LiteralValue::Number(total));
+                    }
+                }
+            }
+        }
+
         // Check if we can use the optimized numeric path
         if sum_view.kind_probe() == crate::engine::range_view::RangeKind::NumericOnly {
             // Optimized path for numeric-only sum range

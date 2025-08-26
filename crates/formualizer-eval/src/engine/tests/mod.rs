@@ -44,6 +44,8 @@ mod spill_edges;
 
 mod compressed_range_scheduler;
 mod region_lock;
+mod sumif_arrow_used_bounds;
+mod sumifs_arrow_fastpath;
 mod whole_column_sumifs;
 mod window_width1_fastpath;
 

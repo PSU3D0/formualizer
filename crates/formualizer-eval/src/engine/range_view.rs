@@ -1,5 +1,6 @@
 use crate::SheetId as EngineSheetId;
 use crate::args::CoercionPolicy;
+use crate::arrow_store;
 use crate::engine::cache::{FlatKind, FlatView};
 use crate::engine::{DependencyGraph, SheetIndexMode};
 use crate::stripes::{NumericChunk, ValidityMask};
@@ -26,6 +27,8 @@ enum RangeBacking<'a> {
         er: u32,
         ec: u32,
     },
+    /// Arrow-backed range view
+    Arrow(arrow_store::ArrowRangeView<'a>),
 }
 
 impl<'a> core::fmt::Debug for RangeView<'a> {
@@ -63,6 +66,14 @@ impl<'a> RangeView<'a> {
             backing: RangeBacking::Borrowed2D(rows),
             rows: r,
             cols: c,
+        }
+    }
+    pub fn from_arrow(av: arrow_store::ArrowRangeView<'a>) -> Self {
+        let (rows, cols) = av.dims();
+        Self {
+            backing: RangeBacking::Arrow(av),
+            rows,
+            cols,
         }
     }
 
@@ -105,7 +116,7 @@ impl<'a> RangeView<'a> {
     }
 
     pub fn kind_probe(&self) -> RangeKind {
-        match self.backing {
+        match &self.backing {
             RangeBacking::Flat(fv) => match fv.kind {
                 FlatKind::Numeric { .. } => RangeKind::NumericOnly,
                 FlatKind::Text { .. } => RangeKind::TextOnly,
@@ -146,6 +157,7 @@ impl<'a> RangeView<'a> {
                 }
             }
             RangeBacking::GraphSlice { .. } => RangeKind::Mixed, // unknown a priori
+            RangeBacking::Arrow(_) => RangeKind::Mixed, // probe conservatively; mixed possible
         }
     }
 
@@ -199,6 +211,7 @@ impl<'a> RangeView<'a> {
                     .and_then(|id| graph.get_value(*id))
                     .unwrap_or(LiteralValue::Empty)
             }
+            RangeBacking::Arrow(av) => av.get_cell(row, col),
         }
     }
 
@@ -207,7 +220,7 @@ impl<'a> RangeView<'a> {
         &self,
         f: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
-        match self.backing {
+        match &self.backing {
             RangeBacking::Flat(fv) => match &fv.kind {
                 FlatKind::Numeric { values, .. } => {
                     // Iterate as numbers converted to LiteralValue lazily
@@ -243,15 +256,15 @@ impl<'a> RangeView<'a> {
                 er,
                 ec,
             } => {
-                if er < sr || ec < sc {
+                if *er < *sr || *ec < *sc {
                     return Ok(());
                 }
-                let mut row = sr;
-                while row <= er {
-                    let mut col = sc;
-                    while col <= ec {
+                let mut row = *sr;
+                while row <= *er {
+                    let mut col = *sc;
+                    while col <= *ec {
                         let coord = crate::reference::Coord::new(row, col, true, true);
-                        let addr = crate::reference::CellRef::new(sheet_id, coord);
+                        let addr = crate::reference::CellRef::new(*sheet_id, coord);
                         let v = graph
                             .get_vertex_id_for_address(&addr)
                             .and_then(|id| graph.get_value(*id))
@@ -260,6 +273,14 @@ impl<'a> RangeView<'a> {
                         col += 1;
                     }
                     row += 1;
+                }
+            }
+            RangeBacking::Arrow(av) => {
+                for r in 0..self.rows {
+                    for c in 0..self.cols {
+                        let tmp = av.get_cell(r, c);
+                        f(&tmp)?;
+                    }
                 }
             }
         }
@@ -271,7 +292,7 @@ impl<'a> RangeView<'a> {
         &self,
         f: &mut dyn FnMut(&[LiteralValue]) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
-        match self.backing {
+        match &self.backing {
             RangeBacking::Flat(fv) => match &fv.kind {
                 FlatKind::Mixed { values } => {
                     // values are row-major contiguous; iterate in row chunks
@@ -332,18 +353,18 @@ impl<'a> RangeView<'a> {
                 er,
                 ec,
             } => {
-                if er < sr || ec < sc {
+                if *er < *sr || *ec < *sc {
                     return Ok(());
                 }
-                let cols = (ec - sc + 1) as usize;
+                let cols = (*ec - *sc + 1) as usize;
                 let mut buf: Vec<LiteralValue> = Vec::with_capacity(cols);
-                let mut row = sr;
-                while row <= er {
+                let mut row = *sr;
+                while row <= *er {
                     buf.clear();
-                    let mut col = sc;
-                    while col <= ec {
+                    let mut col = *sc;
+                    while col <= *ec {
                         let coord = crate::reference::Coord::new(row, col, true, true);
-                        let addr = crate::reference::CellRef::new(sheet_id, coord);
+                        let addr = crate::reference::CellRef::new(*sheet_id, coord);
                         let v = graph
                             .get_vertex_id_for_address(&addr)
                             .and_then(|id| graph.get_value(*id))
@@ -355,6 +376,16 @@ impl<'a> RangeView<'a> {
                     row += 1;
                 }
             }
+            RangeBacking::Arrow(av) => {
+                let mut buf: Vec<LiteralValue> = Vec::with_capacity(self.cols);
+                for r in 0..self.rows {
+                    buf.clear();
+                    for c in 0..self.cols {
+                        buf.push(av.get_cell(r, c));
+                    }
+                    f(&buf[..])?;
+                }
+            }
         }
         Ok(())
     }
@@ -364,7 +395,7 @@ impl<'a> RangeView<'a> {
         &self,
         f: &mut dyn FnMut(&[LiteralValue]) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
-        match self.backing {
+        match &self.backing {
             RangeBacking::Flat(fv) => match &fv.kind {
                 FlatKind::Mixed { values } => {
                     if self.cols == 0 {
@@ -429,18 +460,18 @@ impl<'a> RangeView<'a> {
                 er,
                 ec,
             } => {
-                if er < sr || ec < sc {
+                if *er < *sr || *ec < *sc {
                     return Ok(());
                 }
-                let rows = (er - sr + 1) as usize;
+                let rows = (*er - *sr + 1) as usize;
                 let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(rows);
-                let mut col = sc;
-                while col <= ec {
+                let mut col = *sc;
+                while col <= *ec {
                     col_buf.clear();
-                    let mut row = sr;
-                    while row <= er {
+                    let mut row = *sr;
+                    while row <= *er {
                         let coord = crate::reference::Coord::new(row, col, true, true);
-                        let addr = crate::reference::CellRef::new(sheet_id, coord);
+                        let addr = crate::reference::CellRef::new(*sheet_id, coord);
                         let v = graph
                             .get_vertex_id_for_address(&addr)
                             .and_then(|id| graph.get_value(*id))
@@ -452,8 +483,26 @@ impl<'a> RangeView<'a> {
                     col += 1;
                 }
             }
+            RangeBacking::Arrow(av) => {
+                let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(self.rows);
+                for c in 0..self.cols {
+                    col_buf.clear();
+                    for r in 0..self.rows {
+                        col_buf.push(av.get_cell(r, c));
+                    }
+                    f(&col_buf[..])?;
+                }
+            }
         }
         Ok(())
+    }
+
+    /// If Arrow-backed, return the underlying ArrowRangeView for vectorized fast paths.
+    pub fn as_arrow(&self) -> Option<&arrow_store::ArrowRangeView<'a>> {
+        match &self.backing {
+            RangeBacking::Arrow(av) => Some(av),
+            _ => None,
+        }
     }
 
     /// Get a numeric value at a specific cell, with coercion.
@@ -553,6 +602,18 @@ impl<'a> RangeView<'a> {
                 flush(&mut buf)?;
             }
             RangeBacking::GraphSlice { .. } => {
+                self.for_each_cell(&mut |v| {
+                    if let Some(n) = pack_numeric(v, policy)? {
+                        buf.push(n);
+                        if buf.len() >= min_chunk {
+                            flush(&mut buf)?;
+                        }
+                    }
+                    Ok(())
+                })?;
+                flush(&mut buf)?;
+            }
+            RangeBacking::Arrow(_) => {
                 self.for_each_cell(&mut |v| {
                     if let Some(n) = pack_numeric(v, policy)? {
                         buf.push(n);

@@ -674,6 +674,12 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
     ) -> Option<crate::engine::cache::FlatView> {
         None
     }
+
+    /// Feature gate: enable Arrow fast paths in builtins (e.g., SUMIFS).
+    /// Default is false; engines that wish to enable must override.
+    fn arrow_fastpath_enabled(&self) -> bool {
+        false
+    }
 }
 
 /// Minimal backend capability descriptor for planning and adapters.
@@ -756,6 +762,11 @@ pub trait FunctionContext {
         let (l0, l1) = compose_seed(self.workbook_seed(), sheet_id, row, col, fn_salt, epoch);
         small_rng_from_lanes(l0, l1)
     }
+
+    /// Feature gate: enable Arrow fast paths in builtins (e.g., SUMIFS)
+    fn arrow_fastpath_enabled(&self) -> bool {
+        false
+    }
 }
 
 /// Default adapter that wraps an EvaluationContext and provides the narrow FunctionContext.
@@ -814,5 +825,9 @@ impl<'a> FunctionContext for DefaultFunctionContext<'a> {
         prefer_numeric: bool,
     ) -> Option<crate::engine::cache::FlatView> {
         self.base.get_or_flatten(reference, prefer_numeric)
+    }
+
+    fn arrow_fastpath_enabled(&self) -> bool {
+        self.base.arrow_fastpath_enabled()
     }
 }

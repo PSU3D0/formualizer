@@ -171,7 +171,7 @@ pub struct DependencyGraph {
     // Edge storage with delta slab
     edges: CsrMutableEdges,
 
-    // Arena-based value and formula storage 
+    // Arena-based value and formula storage
     data_store: DataStore,
     vertex_values: FxHashMap<VertexId, ValueRef>,
     vertex_formulas: FxHashMap<VertexId, AstNodeId>,
@@ -507,6 +507,17 @@ impl DependencyGraph {
             (Some(a), Some(b)) => Some((a, b)),
             _ => None,
         }
+    }
+
+    /// Returns true if the given sheet currently contains any formula vertices.
+    pub fn sheet_has_formulas(&self, sheet_id: SheetId) -> bool {
+        // Check vertex_formulas keys; they represent formula vertices
+        for (&vid, _) in &self.vertex_formulas {
+            if self.store.sheet_id(vid) == sheet_id {
+                return true;
+            }
+        }
+        false
     }
     pub fn new() -> Self {
         let mut sheet_reg = SheetRegistry::new();

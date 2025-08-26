@@ -2,6 +2,7 @@
 //!
 //! Provides incremental formula evaluation with dependency tracking.
 
+pub mod arrow_ingest;
 pub mod eval;
 pub mod graph;
 pub mod ingest;
@@ -129,6 +130,11 @@ pub struct EvalConfig {
 
     /// Warmup configuration for global pass planning (Phase 1)
     pub warmup: tuning::WarmupConfig,
+
+    /// Enable Arrow-backed storage reads (Phase A)
+    pub arrow_storage_enabled: bool,
+    /// Enable Arrow fast paths in builtins (Phase B)
+    pub arrow_fastpath_enabled: bool,
 }
 
 impl Default for EvalConfig {
@@ -161,6 +167,8 @@ impl Default for EvalConfig {
             pk_reject_cycle_edges: false,
             sheet_index_mode: SheetIndexMode::Eager,
             warmup: tuning::WarmupConfig::default(),
+            arrow_storage_enabled: true,
+            arrow_fastpath_enabled: true,
         }
     }
 }

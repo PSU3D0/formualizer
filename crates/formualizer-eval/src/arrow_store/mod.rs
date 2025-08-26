@@ -1,13 +1,13 @@
-use arrow_array::new_null_array;
 use arrow_array::Array;
+use arrow_array::new_null_array;
 use arrow_schema::DataType;
 use chrono::Timelike;
 use std::sync::Arc;
 
 use arrow_array::builder::{
-    BooleanBuilder, Float64Builder, StringBuilder, UInt32Builder, UInt8Builder,
+    BooleanBuilder, Float64Builder, StringBuilder, UInt8Builder, UInt32Builder,
 };
-use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt32Array, UInt8Array};
+use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt8Array, UInt32Array};
 use once_cell::sync::OnceCell;
 
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -74,7 +74,7 @@ pub struct ColumnChunkMeta {
 pub struct ColumnChunk {
     pub numbers: Option<Arc<Float64Array>>,
     pub booleans: Option<Arc<BooleanArray>>,
-    pub text: Option<ArrayRef>,   // Utf8 for Phase A
+    pub text: Option<ArrayRef>,          // Utf8 for Phase A
     pub errors: Option<Arc<UInt8Array>>, // compact error code (UInt8)
     pub type_tag: Arc<UInt8Array>,
     pub formula_id: Option<Arc<UInt32Array>>, // reserved for Phase A+
@@ -88,10 +88,14 @@ pub struct ColumnChunk {
 
 impl ColumnChunk {
     #[inline]
-    pub fn len(&self) -> usize { self.type_tag.len() }
+    pub fn len(&self) -> usize {
+        self.type_tag.len()
+    }
     #[inline]
     pub fn numbers_or_null(&self) -> Arc<Float64Array> {
-        if let Some(a) = &self.numbers { return a.clone(); }
+        if let Some(a) = &self.numbers {
+            return a.clone();
+        }
         self.lazy_null_numbers
             .get_or_init(|| {
                 let arr = new_null_array(&DataType::Float64, self.len());
@@ -101,7 +105,9 @@ impl ColumnChunk {
     }
     #[inline]
     pub fn booleans_or_null(&self) -> Arc<BooleanArray> {
-        if let Some(a) = &self.booleans { return a.clone(); }
+        if let Some(a) = &self.booleans {
+            return a.clone();
+        }
         self.lazy_null_booleans
             .get_or_init(|| {
                 let arr = new_null_array(&DataType::Boolean, self.len());
@@ -111,7 +117,9 @@ impl ColumnChunk {
     }
     #[inline]
     pub fn errors_or_null(&self) -> Arc<UInt8Array> {
-        if let Some(a) = &self.errors { return a.clone(); }
+        if let Some(a) = &self.errors {
+            return a.clone();
+        }
         self.lazy_null_errors
             .get_or_init(|| {
                 let arr = new_null_array(&DataType::UInt8, self.len());
@@ -121,7 +129,9 @@ impl ColumnChunk {
     }
     #[inline]
     pub fn text_or_null(&self) -> ArrayRef {
-        if let Some(a) = &self.text { return a.clone(); }
+        if let Some(a) = &self.text {
+            return a.clone();
+        }
         self.lazy_null_text
             .get_or_init(|| new_null_array(&DataType::Utf8, self.len()))
             .clone()
@@ -405,7 +415,9 @@ impl IngestBuilder {
                 if col.chunks.len() != chunks_len0 {
                     panic!(
                         "ArrowSheet chunk misalignment: column {} chunks={} != {}",
-                        ci, col.chunks.len(), chunks_len0
+                        ci,
+                        col.chunks.len(),
+                        chunks_len0
                     );
                 }
             }
@@ -425,7 +437,12 @@ impl IngestBuilder {
                 cur += len_i;
             }
         }
-        ArrowSheet { name: self.name, columns, nrows: self.total_rows, chunk_starts }
+        ArrowSheet {
+            name: self.name,
+            columns,
+            nrows: self.total_rows,
+            chunk_starts,
+        }
     }
 }
 
@@ -491,7 +508,15 @@ impl ArrowSheet {
                 let has_bool = c.chunks.iter().any(|ch| ch.meta.non_null_bool > 0);
                 let has_text = c.chunks.iter().any(|ch| ch.meta.non_null_text > 0);
                 let has_err = c.chunks.iter().any(|ch| ch.meta.non_null_err > 0);
-                ColumnShape { index: c.index, chunks, rows, has_num, has_bool, has_text, has_err }
+                ColumnShape {
+                    index: c.index,
+                    chunks,
+                    rows,
+                    has_num,
+                    has_bool,
+                    has_text,
+                    has_err,
+                }
             })
             .collect()
     }
@@ -499,7 +524,16 @@ impl ArrowSheet {
         let r0 = er.checked_sub(sr).map(|d| d + 1).unwrap_or(0);
         let c0 = ec.checked_sub(sc).map(|d| d + 1).unwrap_or(0);
         let (rows, cols) = if r0 == 0 || c0 == 0 { (0, 0) } else { (r0, c0) };
-        ArrowRangeView { sheet: self, sr, sc, er, ec, rows, cols, chunk_starts: &self.chunk_starts }
+        ArrowRangeView {
+            sheet: self,
+            sr,
+            sc,
+            er,
+            ec,
+            rows,
+            cols,
+            chunk_starts: &self.chunk_starts,
+        }
     }
 }
 
@@ -633,18 +667,34 @@ impl<'a> ArrowRangeView<'a> {
                     let booleans = Some(new_null_array(&DataType::Boolean, seg_len));
                     let text = Some(new_null_array(&DataType::Utf8, seg_len));
                     let errors = Some(new_null_array(&DataType::UInt8, seg_len));
-                    let type_tag: ArrayRef = Arc::new(UInt8Array::from(vec![TypeTag::Empty as u8; seg_len]));
-                    cols.push(ChunkCol { numbers, booleans, text, errors, type_tag });
+                    let type_tag: ArrayRef =
+                        Arc::new(UInt8Array::from(vec![TypeTag::Empty as u8; seg_len]));
+                    cols.push(ChunkCol {
+                        numbers,
+                        booleans,
+                        text,
+                        errors,
+                        type_tag,
+                    });
                 } else {
                     let col = &self.sheet.columns[col_idx];
-                    let ch = if ci < col.chunks.len() { &col.chunks[ci] } else { 
+                    let ch = if ci < col.chunks.len() {
+                        &col.chunks[ci]
+                    } else {
                         // Should not happen with enforced alignment; pad as OOB if it does
                         let numbers = Some(new_null_array(&DataType::Float64, seg_len));
                         let booleans = Some(new_null_array(&DataType::Boolean, seg_len));
                         let text = Some(new_null_array(&DataType::Utf8, seg_len));
                         let errors = Some(new_null_array(&DataType::UInt8, seg_len));
-                        let type_tag: ArrayRef = Arc::new(UInt8Array::from(vec![TypeTag::Empty as u8; seg_len]));
-                        cols.push(ChunkCol { numbers, booleans, text, errors, type_tag });
+                        let type_tag: ArrayRef =
+                            Arc::new(UInt8Array::from(vec![TypeTag::Empty as u8; seg_len]));
+                        cols.push(ChunkCol {
+                            numbers,
+                            booleans,
+                            text,
+                            errors,
+                            type_tag,
+                        });
                         continue;
                     };
                     use arrow_array::Array;
@@ -658,7 +708,13 @@ impl<'a> ArrowRangeView<'a> {
                     let text = Some(Array::slice(text_base.as_ref(), rel_off, seg_len));
                     let errors = Some(Array::slice(errors_base.as_ref(), rel_off, seg_len));
                     let type_tag: ArrayRef = Array::slice(ch.type_tag.as_ref(), rel_off, seg_len);
-                    cols.push(ChunkCol { numbers, booleans, text, errors, type_tag });
+                    cols.push(ChunkCol {
+                        numbers,
+                        booleans,
+                        text,
+                        errors,
+                        type_tag,
+                    });
                 }
             }
             out.push(ChunkSlice {
@@ -919,7 +975,11 @@ mod tests {
             b.append_row(&[
                 LiteralValue::Number(r as f64),
                 LiteralValue::Text(format!("{r}")),
-                if r % 2 == 0 { LiteralValue::Empty } else { LiteralValue::Boolean(true) },
+                if r % 2 == 0 {
+                    LiteralValue::Empty
+                } else {
+                    LiteralValue::Boolean(true)
+                },
             ])
             .unwrap();
         }

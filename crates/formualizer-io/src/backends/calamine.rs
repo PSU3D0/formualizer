@@ -275,14 +275,16 @@ where
         let prev_range_limit = engine.config.range_expansion_limit;
         engine.config.range_expansion_limit = 0; // keep ranges compressed while loading
 
-        // Use bulk ingest builder; no outer engine batch needed here
+        // Use builders: Arrow for base values; graph builder for formulas/edges
         // Hint the graph to assume new cells during this initial ingest
         engine.graph.set_first_load_assume_new(true);
         engine.graph.reset_ensure_touched();
         let mut total_values = 0usize;
         let mut total_formulas = 0usize;
-        // Route through the engine's bulk ingest builder for optimal edge construction
-        let mut builder = engine.begin_bulk_ingest();
+        // Route formula ingest through the engine's bulk ingest builder for optimal edge construction
+        // Arrow bulk ingest for base values (Phase A) is built per-sheet without borrowing the engine
+        // Default Arrow chunk rows
+        let chunk_rows: usize = 32 * 1024;
         for n in &names {
             let t_sheet = std::time::Instant::now();
             if debug {
@@ -304,43 +306,58 @@ where
             if debug {
                 eprintln!("[fz][load]    dims={}x{}", dims.0, dims.1);
             }
-            let sheet_id = builder.add_sheet(n);
-
-            // Values: stream into a Vec and hand off to builder (single pass)
+            // Local Arrow ingest builder for this sheet
+            let mut aib =
+                formualizer_eval::arrow_store::IngestBuilder::new(n, dims.1 as usize, chunk_rows);
+            // Values: iterate rows and append to Arrow builder (full rectangular iteration)
             let tv0 = std::time::Instant::now();
+            let mut row_count = 0usize;
             let start_row = range.start().unwrap_or_default().0 as usize;
             let start_col = range.start().unwrap_or_default().1 as usize;
-            let mut values: Vec<(u32, u32, formualizer_common::LiteralValue)> = Vec::new();
-            let mut used_count_logged = 0usize;
-            for (row, col, val) in range.used_cells() {
-                used_count_logged += 1;
-                let excel_row = (row + start_row + 1) as u32;
-                let excel_col = (col + start_col + 1) as u32;
-                let lit = match val {
-                    calamine::Data::Empty => None,
-                    calamine::Data::String(s) if s.is_empty() => None,
-                    _ => Some(Self::convert_value(val)),
-                };
-                if let Some(v) = lit {
-                    values.push((excel_row, excel_col, v));
-                }
-            }
-            total_values += values.len();
-            if !values.is_empty() {
-                // Chunk values to reduce peak allocations and smooth ingest
-                let chunk_size = 64 * 1024; // 64K tuples per chunk
-                if values.len() <= chunk_size {
-                    builder.add_values(sheet_id, values);
-                } else {
-                    for chunk in values.chunks(chunk_size) {
-                        builder.add_values(sheet_id, chunk.iter().cloned());
+            // Stage all values for later graph ingest after Arrow ingest completes
+            let mut values_all: Vec<(u32, u32, formualizer_common::LiteralValue)> =
+                Vec::with_capacity((dims.0 as usize).saturating_mul(dims.1 as usize));
+            for row_vals in range.rows() {
+                let mut row_buf: Vec<LiteralValue> = Vec::with_capacity(row_vals.len());
+                for (ci, v) in row_vals.iter().enumerate() {
+                    let lit = Self::convert_value(v);
+                    row_buf.push(lit.clone());
+                    // Also stage value for graph builder if non-empty and not empty-string
+                    let is_non_empty = match &lit {
+                        LiteralValue::Empty => false,
+                        LiteralValue::Text(s) if s.is_empty() => false,
+                        _ => true,
+                    };
+                    if is_non_empty {
+                        let excel_row = (start_row + row_count + 1) as u32;
+                        let excel_col = (start_col + ci + 1) as u32;
+                        values_all.push((excel_row, excel_col, lit));
                     }
                 }
+                aib.append_row(&row_buf).map_err(|e| {
+                    calamine::Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        e.to_string(),
+                    ))
+                })?;
+                row_count += 1;
             }
+            // Install Arrow sheet into the engine store now
+            {
+                let asheet = aib.finish();
+                let store = engine.sheet_store_mut();
+                if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == n) {
+                    store.sheets[pos] = asheet;
+                } else {
+                    store.sheets.push(asheet);
+                }
+            }
+            // Defer adding values until after formulas staging below
+            total_values += (row_count as usize) * (dims.1 as usize);
             if debug {
                 eprintln!(
-                    "[fz][load]    used_cells={}, bulk values in {} ms",
-                    used_count_logged,
+                    "[fz][load]    rows={} → arrow in {} ms",
+                    row_count,
                     tv0.elapsed().as_millis()
                 );
             }
@@ -351,7 +368,7 @@ where
             if let Some(frm_range) = &formulas_range {
                 let start_row = frm_range.start().unwrap_or_default().0 as usize;
                 let start_col = frm_range.start().unwrap_or_default().1 as usize;
-                let mut batch: Vec<(u32, u32, formualizer_core::ASTNode)> = Vec::new();
+                let mut formulas_all: Vec<(u32, u32, formualizer_core::ASTNode)> = Vec::new();
                 // cache to reuse parsed AST for shared formulas text
                 let mut cache: rustc_hash::FxHashMap<String, formualizer_core::ASTNode> =
                     rustc_hash::FxHashMap::default();
@@ -379,14 +396,23 @@ where
                         cache.insert(key_owned, parsed.clone());
                         parsed
                     };
-                    batch.push((excel_row, excel_col, ast));
+                    formulas_all.push((excel_row, excel_col, ast));
                     parsed_n += 1;
                     if debug && (parsed_n % 5000 == 0) {
                         eprintln!("[fz][load]    parsed formulas: {}", parsed_n);
                     }
                 }
-                if !batch.is_empty() {
-                    builder.add_formulas(sheet_id, batch);
+                // After staging Arrow ingest and collecting values/formulas, perform graph ingest
+                if !values_all.is_empty() || !formulas_all.is_empty() {
+                    let mut builder = engine.begin_bulk_ingest();
+                    let sid = builder.add_sheet(n);
+                    if !values_all.is_empty() {
+                        builder.add_values(sid, values_all.drain(..));
+                    }
+                    if !formulas_all.is_empty() {
+                        builder.add_formulas(sid, formulas_all);
+                    }
+                    let _ = builder.finish();
                 }
             }
             total_formulas += parsed_n;
@@ -408,12 +434,9 @@ where
         let tend0 = std::time::Instant::now();
         // Finish builder and finalize ingestion
         let tcommit0 = std::time::Instant::now();
-        let _summary = builder.finish().map_err(|e| {
-            calamine::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))
-        })?;
+        // (graph ingest finished per-sheet above)
+        // Finish Arrow ingest after formulas are staged (stores ArrowSheets into engine)
+        // (Arrow sheets are installed per-sheet above)
         if debug {
             eprintln!(
                 "[fz][load] commit: builder finish in {} ms",
