@@ -75,3 +75,6 @@ mod mask_cache_invalidation;
 mod mask_cache_parity_reuse;
 
 mod mask_cache_windows;
+
+mod formula_edit_propagation;
+mod formula_overlay_writeback;

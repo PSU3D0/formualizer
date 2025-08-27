@@ -2,6 +2,7 @@
 use crate::common::build_workbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_eval::engine::ingest::EngineLoadStream;
+use formualizer_core::parser::Parser;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_io::{CalamineAdapter, SpreadsheetReader};
 
@@ -197,6 +198,63 @@ fn stream_mixed_types_in_column() {
     let (ast_d7, val_d7) = engine.get_cell("Sheet1", 7, 4).expect("D7 present");
     assert!(ast_d7.is_none());
     assert_eq!(val_d7, engine.get_cell_value("Sheet1", 7, 4));
+}
+
+#[test]
+fn stream_edit_propagation_chain() {
+    // Build a simple dependent chain: A1 (value) <- B1 (formula) <- C1 (formula)
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        sh.get_cell_mut((1, 1)).set_value_number(10.0); // A1 = 10
+        sh.get_cell_mut((2, 1)).set_formula("=A1"); // B1 = A1
+        sh.get_cell_mut((3, 1)).set_formula("=B1"); // C1 = B1
+    });
+
+    let mut backend = CalamineAdapter::open_path(&path).unwrap();
+    let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
+    let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
+    backend.stream_into_engine(&mut engine).unwrap();
+
+    // Initial evaluation brings all three up-to-date
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 2) {
+        // B1
+        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 10.0).abs() < 1e-9),
+        other => panic!("Unexpected B1 initial: {:?}", other),
+    }
+    match engine.get_cell_value("Sheet1", 1, 3) {
+        // C1
+        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 10.0).abs() < 1e-9),
+        other => panic!("Unexpected C1 initial: {:?}", other),
+    }
+
+    // Edit A1's formula via engine; B1 and C1 should reflect the change
+    engine
+        .set_cell_formula("Sheet1", 1, 1, Parser::from("=20").parse().unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 2) {
+        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 20.0).abs() < 1e-9),
+        other => panic!("Unexpected B1 after A1 edit: {:?}", other),
+    }
+    match engine.get_cell_value("Sheet1", 1, 3) {
+        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 20.0).abs() < 1e-9),
+        other => panic!("Unexpected C1 after A1 edit: {:?}", other),
+    }
+
+    // Edit B1's formula; only C1 should change accordingly
+    engine
+        .set_cell_formula("Sheet1", 1, 2, Parser::from("=A1*3").parse().unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 2) {
+        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 60.0).abs() < 1e-9),
+        other => panic!("Unexpected B1 after B1 edit: {:?}", other),
+    }
+    match engine.get_cell_value("Sheet1", 1, 3) {
+        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 60.0).abs() < 1e-9),
+        other => panic!("Unexpected C1 after B1 edit: {:?}", other),
+    }
 }
 
 #[test]
