@@ -678,6 +678,17 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
     fn date_system(&self) -> crate::engine::DateSystem {
         crate::engine::DateSystem::Excel1900
     }
+
+    /// Optional: Build or fetch a cached boolean mask for a criterion over an Arrow-backed view.
+    /// Implementations should return None if not supported.
+    fn build_criteria_mask(
+        &self,
+        _view: &crate::arrow_store::ArrowRangeView<'_>,
+        _col_in_view: usize,
+        _pred: &crate::args::CriteriaPredicate,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        None
+    }
 }
 
 /// Minimal backend capability descriptor for planning and adapters.
@@ -762,6 +773,17 @@ pub trait FunctionContext {
     fn date_system(&self) -> crate::engine::DateSystem {
         crate::engine::DateSystem::Excel1900
     }
+
+    /// Optional: Build or fetch a cached boolean mask for a criterion over an Arrow-backed view.
+    /// Returns None if not supported by the underlying context.
+    fn get_criteria_mask(
+        &self,
+        _view: &crate::arrow_store::ArrowRangeView<'_>,
+        _col_in_view: usize,
+        _pred: &crate::args::CriteriaPredicate,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        None
+    }
 }
 
 /// Default adapter that wraps an EvaluationContext and provides the narrow FunctionContext.
@@ -822,5 +844,14 @@ impl<'a> FunctionContext for DefaultFunctionContext<'a> {
 
     fn date_system(&self) -> crate::engine::DateSystem {
         self.base.date_system()
+    }
+
+    fn get_criteria_mask(
+        &self,
+        view: &crate::arrow_store::ArrowRangeView<'_>,
+        col_in_view: usize,
+        pred: &crate::args::CriteriaPredicate,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        self.base.build_criteria_mask(view, col_in_view, pred)
     }
 }

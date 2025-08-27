@@ -435,8 +435,16 @@ impl Function for SumIfsFn {
                                 crit_cols[j].as_ref().map(|cols| cols[c].as_ref());
                             let col_text: Option<&StringArray> =
                                 crit_text_cols[j].as_ref().map(|cols| cols[c].as_ref());
+                            // Try cached mask if criterion range is Arrow-backed
+                            let cur_cached: Option<BooleanArray> = if let Some(ref view) = crit_views[j] {
+                                if let Some(av) = view.as_arrow() {
+                                    if let Some(m) = ctx.get_criteria_mask(av, c, pred) {
+                                        Some((*m).clone())
+                                    } else { None }
+                                } else { None }
+                            } else { None };
 
-                            let cur = match pred {
+                            let cur = if let Some(cm) = cur_cached { Some(cm) } else { match pred {
                                 crate::args::CriteriaPredicate::Gt(n) => Some(
                                     cmp::gt(col_arr.unwrap(), &Float64Array::new_scalar(*n))
                                         .unwrap(),
@@ -528,7 +536,7 @@ impl Function for SumIfsFn {
                                     ok = false;
                                     break;
                                 }
-                            };
+                            }};
 
                             if !ok {
                                 break;
@@ -709,6 +717,39 @@ impl Function for CountIfsFn {
                 }
             }
             arg_i += 2;
+        }
+        // Arrow fast path: require all criteria ranges to be Arrow-backed with equal dims
+        if ctx.arrow_fastpath_enabled() {
+            let mut all_arrow = true;
+            for v in &crit_views {
+                if let Some(rv) = v {
+                    if rv.as_arrow().is_none() || rv.dims() != dims { all_arrow = false; break; }
+                } else { all_arrow = false; break; }
+            }
+            if all_arrow {
+                use crate::compute_prelude::boolean;
+                use arrow_array::BooleanArray;
+                let mut total: i64 = 0;
+                for c in 0..dims.1 {
+                    let mut mask_opt: Option<BooleanArray> = None;
+                    let mut ok = true;
+                    for (j, (pred, _)) in preds.iter().enumerate() {
+                        let av = crit_views[j].as_ref().unwrap().as_arrow().unwrap();
+                        if let Some(m) = ctx.get_criteria_mask(av, c, pred) {
+                            let cur = (*m).clone();
+                            mask_opt = Some(match mask_opt { None => cur, Some(prev) => boolean::and_kleene(&prev, &cur).unwrap() });
+                        } else {
+                            ok = false; break;
+                        }
+                    }
+                    if !ok { break; }
+                    if let Some(mask) = mask_opt {
+                        use arrow_array::Array as _;
+                        total += (0..mask.len()).filter(|&i| mask.is_valid(i) && mask.value(i)).count() as i64;
+                    }
+                }
+                return Ok(LiteralValue::Number(total as f64));
+            }
         }
         let mut cnt = 0i64;
         for row in 0..dims.0 {

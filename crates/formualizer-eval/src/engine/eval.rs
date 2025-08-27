@@ -34,6 +34,8 @@ pub struct Engine<R> {
     overlay_compactions: u64,
     // Pass-scoped cache for Arrow used-row bounds per column
     row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
+    // Pass-scoped criteria mask cache (Arrow-only)
+    mask_cache: std::sync::RwLock<Option<MaskCache>>,
 }
 
 #[derive(Debug)]
@@ -100,6 +102,7 @@ where
             has_edited: false,
             overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
+            mask_cache: std::sync::RwLock::new(None),
         }
     }
 
@@ -123,6 +126,7 @@ where
             has_edited: false,
             overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
+            mask_cache: std::sync::RwLock::new(None),
         }
     }
 
@@ -1904,6 +1908,232 @@ impl RowBoundsCache {
     }
 }
 
+// ───────────── Criteria Mask Cache (Arrow) ─────────────
+#[derive(Default)]
+struct MaskCache {
+    snapshot: u64,
+    cap: usize,
+    // Simple FIFO map for now; key -> mask
+    map: rustc_hash::FxHashMap<String, std::sync::Arc<arrow_array::BooleanArray>>,
+    order: std::collections::VecDeque<String>,
+    hits: u64,
+    misses: u64,
+}
+
+impl MaskCache {
+    fn new(snapshot: u64, cap: usize) -> Self {
+        Self { snapshot, cap, map: Default::default(), order: Default::default(), hits: 0, misses: 0 }
+    }
+    fn clear_and_set_snapshot(&mut self, snap: u64) {
+        self.snapshot = snap;
+        self.map.clear();
+        self.order.clear();
+        self.hits = 0;
+        self.misses = 0;
+    }
+
+    fn key_for(
+        &self,
+        engine: &Engine<impl crate::traits::EvaluationContext>,
+        view: &crate::arrow_store::ArrowRangeView<'_>,
+        col_in_view: usize,
+        pred: &crate::args::CriteriaPredicate,
+    ) -> Option<String> {
+        let sheet_id = engine.graph.sheet_id(view.sheet_name())? as u32;
+        let abs_col = view.start_col().saturating_add(col_in_view);
+        let sr = view.start_row();
+        let er = view.end_row();
+        use crate::args::CriteriaPredicate as CP;
+        let sig = match pred {
+            CP::Gt(n) => format!("GT:{n}"),
+            CP::Ge(n) => format!("GE:{n}"),
+            CP::Lt(n) => format!("LT:{n}"),
+            CP::Le(n) => format!("LE:{n}"),
+            CP::Eq(v) => format!("EQ:{}", Self::fmt_lit(v)),
+            CP::Ne(v) => format!("NE:{}", Self::fmt_lit(v)),
+            CP::TextLike { pattern, case_insensitive } => {
+                let mut lp = pattern.replace('*', "%").replace('?', "_");
+                if *case_insensitive { lp = lp.to_ascii_lowercase(); }
+                format!("LIKE:{}:{}", if *case_insensitive { 'i' } else { 's' }, lp)
+            }
+            CP::IsBlank | CP::IsNumber | CP::IsText | CP::IsLogical => return None,
+        };
+        Some(format!("s{sheet_id}:c{abs_col}:r{sr}-{er}:{sig}"))
+    }
+
+    fn fmt_lit(v: &formualizer_common::LiteralValue) -> String {
+        use formualizer_common::LiteralValue as LV;
+        match v {
+            LV::Number(n) => format!("N:{n}"),
+            LV::Int(i) => format!("I:{i}"),
+            LV::Text(s) => format!("T:{}", s.to_ascii_lowercase()),
+            LV::Boolean(b) => format!("B:{}", if *b { 1 } else { 0 }),
+            LV::Empty => "E".to_string(),
+            LV::Error(_) => "ERR".to_string(),
+            LV::Date(_) | LV::DateTime(_) | LV::Time(_) | LV::Duration(_) | LV::Array(_) | LV::Pending => "UNSUP".to_string(),
+        }
+    }
+
+    fn get_or_compute(
+        &mut self,
+        engine: &Engine<impl crate::traits::EvaluationContext>,
+        view: &crate::arrow_store::ArrowRangeView<'_>,
+        col_in_view: usize,
+        pred: &crate::args::CriteriaPredicate,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        let key = self.key_for(engine, view, col_in_view, pred)?;
+        if let Some(m) = self.map.get(&key) {
+            self.hits = self.hits.saturating_add(1);
+            return Some(m.clone());
+        }
+        self.misses = self.misses.saturating_add(1);
+        let mask = Self::compute_mask(engine, view, col_in_view, pred)?;
+        // Insert with FIFO eviction
+        if self.map.len() >= self.cap && !self.map.contains_key(&key) {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+        self.order.push_back(key.clone());
+        self.map.insert(key, mask.clone());
+        Some(mask)
+    }
+
+    fn compute_mask(
+        engine: &Engine<impl crate::traits::EvaluationContext>,
+        view: &crate::arrow_store::ArrowRangeView<'_>,
+        col_in_view: usize,
+        pred: &crate::args::CriteriaPredicate,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        use crate::compute_prelude::{boolean, cmp, concat_arrays};
+        use arrow::compute::kernels::comparison::{ilike, nilike};
+        use arrow_array::{Array as _, ArrayRef, BooleanArray, Float64Array, StringArray, builder::BooleanBuilder};
+
+        let (rows, _cols) = view.dims();
+        // Build the criterion column arrays by concatenating slices for the single column
+        let mut num_parts: Vec<std::sync::Arc<Float64Array>> = Vec::new();
+        for (_rs, _rl, cols_seg) in view.numbers_slices() {
+            if col_in_view < cols_seg.len() {
+                num_parts.push(cols_seg[col_in_view].clone());
+            }
+        }
+        let num_col: Option<std::sync::Arc<Float64Array>> = if num_parts.is_empty() {
+            None
+        } else if num_parts.len() == 1 {
+            Some(num_parts.remove(0))
+        } else {
+            let anys: Vec<&dyn arrow_array::Array> =
+                num_parts.iter().map(|a| a.as_ref() as &dyn arrow_array::Array).collect();
+            let conc: ArrayRef = concat_arrays(&anys).ok()?;
+            let fa = conc.as_any().downcast_ref::<Float64Array>()?.clone();
+            Some(std::sync::Arc::new(fa))
+        };
+
+        // Lowered text column for this view/column
+        let lowered_texts: Option<std::sync::Arc<StringArray>> = {
+            let cols = view.lowered_text_columns();
+            if col_in_view >= cols.len() { None } else {
+                let sa = cols[col_in_view].as_any().downcast_ref::<StringArray>()?.clone();
+                Some(std::sync::Arc::new(sa))
+            }
+        };
+
+        let out = match pred {
+            crate::args::CriteriaPredicate::Gt(n) => {
+                let col = num_col?;
+                cmp::gt(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
+            }
+            crate::args::CriteriaPredicate::Ge(n) => {
+                let col = num_col?;
+                cmp::gt_eq(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
+            }
+            crate::args::CriteriaPredicate::Lt(n) => {
+                let col = num_col?;
+                cmp::lt(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
+            }
+            crate::args::CriteriaPredicate::Le(n) => {
+                let col = num_col?;
+                cmp::lt_eq(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
+            }
+            crate::args::CriteriaPredicate::Eq(v) => match v {
+                formualizer_common::LiteralValue::Number(x) => {
+                    let col = num_col?;
+                    cmp::eq(col.as_ref(), &Float64Array::new_scalar(*x)).ok()?
+                }
+                formualizer_common::LiteralValue::Int(i) => {
+                    let col = num_col?;
+                    cmp::eq(col.as_ref(), &Float64Array::new_scalar(*i as f64)).ok()?
+                }
+                formualizer_common::LiteralValue::Text(t) => {
+                    let col = lowered_texts?;
+                    let pat = StringArray::new_scalar(t.to_ascii_lowercase());
+                    let mut m = ilike(col.as_ref(), &pat).ok()?;
+                    if t.is_empty() {
+                        // Treat nulls as equal to empty string
+                        let mut bb = BooleanBuilder::with_capacity(col.len());
+                        for i in 0..col.len() { bb.append_value(col.is_null(i)); }
+                        let nulls = bb.finish();
+                        m = boolean::or_kleene(&m, &nulls).ok()?;
+                    }
+                    m
+                }
+                _ => return None,
+            },
+            crate::args::CriteriaPredicate::Ne(v) => match v {
+                formualizer_common::LiteralValue::Number(x) => {
+                    let col = num_col?;
+                    cmp::neq(col.as_ref(), &Float64Array::new_scalar(*x)).ok()?
+                }
+                formualizer_common::LiteralValue::Int(i) => {
+                    let col = num_col?;
+                    cmp::neq(col.as_ref(), &Float64Array::new_scalar(*i as f64)).ok()?
+                }
+                formualizer_common::LiteralValue::Text(t) => {
+                    let col = lowered_texts?;
+                    let pat = StringArray::new_scalar(t.to_ascii_lowercase());
+                    nilike(col.as_ref(), &pat).ok()?
+                }
+                _ => return None,
+            },
+            crate::args::CriteriaPredicate::TextLike { pattern, case_insensitive } => {
+                let col = lowered_texts?;
+                let p = if *case_insensitive { pattern.to_ascii_lowercase() } else { pattern.clone() };
+                let lp = p.replace('*', "%").replace('?', "_");
+                let pat = StringArray::new_scalar(lp);
+                ilike(col.as_ref(), &pat).ok()?
+            }
+            _ => return None,
+        };
+        Some(std::sync::Arc::new(out))
+    }
+}
+
+#[cfg(test)]
+impl<R> Engine<R>
+where
+    R: EvaluationContext,
+{
+    pub fn __mask_cache_stats(&self) -> (u64, u64, usize) {
+        if let Ok(g) = self.mask_cache.read() {
+            if let Some(c) = g.as_ref() {
+                return (c.hits, c.misses, c.map.len());
+            }
+        }
+        (0, 0, 0)
+    }
+    pub fn __mask_cache_clear(&self) {
+        if let Ok(mut g) = self.mask_cache.write() {
+            *g = None;
+        }
+    }
+    pub fn __mask_cache_set_cap(&mut self, cap: usize) {
+        if let Ok(mut g) = self.mask_cache.write() {
+            let snap = self.data_snapshot_id();
+            *g = Some(MaskCache::new(snap, cap));
+        }
+    }
+}
+
 // Phase 2 shim: in-process spill manager delegating to current graph methods.
 #[derive(Default)]
 pub struct ShimSpillManager {
@@ -2052,6 +2282,7 @@ where
             Ok(LiteralValue::Int(0))
         }
     }
+
 }
 
 impl<R> crate::traits::RangeResolver for Engine<R>
@@ -2377,6 +2608,25 @@ where
                 }
             }
         }
+    }
+
+    fn build_criteria_mask(
+        &self,
+        view: &crate::arrow_store::ArrowRangeView<'_>,
+        col_in_view: usize,
+        pred: &crate::args::CriteriaPredicate,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        if view.dims().0 == 0 || view.dims().1 == 0 {
+            return None;
+        }
+        let snap = self.data_snapshot_id();
+        let mut guard = self.mask_cache.write().ok()?;
+        let cap = self.config.warmup.mask_cache_entries_cap;
+        let cache = guard.get_or_insert_with(|| MaskCache::new(snap, cap));
+        if cache.snapshot != snap {
+            cache.clear_and_set_snapshot(snap);
+        }
+        cache.get_or_compute(self, view, col_in_view, pred)
     }
 }
 
