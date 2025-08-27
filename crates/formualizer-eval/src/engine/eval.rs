@@ -2118,17 +2118,7 @@ where
         }
     }
 
-    fn get_or_flatten(
-        &self,
-        reference: &ReferenceType,
-        _prefer_numeric: bool,
-    ) -> Option<crate::engine::cache::FlatView> {
-        // Read-only access to pass-scoped flat cache built during warmup
-        let ctx = self.warmup_pass_ctx.as_ref()?;
-        use crate::engine::reference_fingerprint::ReferenceFingerprint;
-        let key = reference.fingerprint();
-        ctx.flat_cache.get(&key)
-    }
+    // Flats removed
 
     fn arrow_fastpath_enabled(&self) -> bool {
         self.config.arrow_fastpath_enabled

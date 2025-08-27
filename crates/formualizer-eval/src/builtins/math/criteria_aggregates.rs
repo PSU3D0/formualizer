@@ -58,18 +58,8 @@ impl Function for SumIfFn {
 
         let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
 
-        // Resolve criteria source: prefer warmup flat if available
-        let mut crit_flat: Option<crate::engine::cache::FlatView> = None;
-        if let Ok(rref) = args[0].as_reference() {
-            if let Some(fv) = ctx.get_or_flatten(rref, false) {
-                crit_flat = Some(fv);
-            }
-        }
-        let crit_view = if let Some(ref fv) = crit_flat {
-            Some(crate::engine::range_view::RangeView::from_flat(fv))
-        } else {
-            args[0].range_view().ok()
-        };
+        // Resolve criteria source via RangeView or scalar
+        let crit_view = args[0].range_view().ok();
         let crit_scalar = if crit_view.is_none() {
             Some(args[0].value()?.into_owned())
         } else {
@@ -81,21 +71,8 @@ impl Function for SumIfFn {
         let mut sum_scalar_opt: Option<LiteralValue> = None;
         let mut dims: (usize, usize) = (1, 1);
 
-        // Hold flat across the remainder of the function to satisfy borrows
-        let mut sum_flat: Option<crate::engine::cache::FlatView> = None;
-
         if args.len() == 3 {
-            // Prefer flattened sum range
-            if let Ok(rref) = args[2].as_reference() {
-                if let Some(fv) = ctx.get_or_flatten(&rref, true) {
-                    sum_flat = Some(fv);
-                }
-            }
-            if let Some(ref fv) = sum_flat {
-                let v = crate::engine::range_view::RangeView::from_flat(fv);
-                dims = v.dims();
-                sum_view_opt = Some(v);
-            } else if let Ok(v) = args[2].range_view() {
+            if let Ok(v) = args[2].range_view() {
                 dims = v.dims();
                 sum_view_opt = Some(v);
             } else {
@@ -106,11 +83,7 @@ impl Function for SumIfFn {
             }
         } else {
             // No sum_range: sum over the criteria range itself or scalar
-            if let Some(ref fv) = crit_flat {
-                let v = crate::engine::range_view::RangeView::from_flat(fv);
-                dims = v.dims();
-                sum_view_opt = Some(v);
-            } else if let Ok(v) = args[0].range_view() {
+            if let Ok(v) = args[0].range_view() {
                 dims = v.dims();
                 sum_view_opt = Some(v);
             } else {
@@ -213,21 +186,7 @@ impl Function for CountIfFn {
             )));
         }
         let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
-        // Prefer flat-backed view for criteria range if available
-        if let Ok(rref) = args[0].as_reference() {
-            if let Some(fv) = ctx.get_or_flatten(rref, false) {
-                let view = crate::engine::range_view::RangeView::from_flat(&fv);
-                let mut cnt = 0i64;
-                let _ = view.for_each_cell(&mut |cell| {
-                    if criteria_match(&pred, cell) {
-                        cnt += 1;
-                    }
-                    Ok(())
-                });
-                return Ok(LiteralValue::Number(cnt as f64));
-            }
-        }
-        // Fallback to RangeView if possible
+        // Use RangeView if possible
         if let Ok(view) = args[0].range_view() {
             let mut cnt = 0i64;
             let _ = view.for_each_cell(&mut |cell| {
@@ -285,93 +244,56 @@ impl Function for SumIfsFn {
             ));
         }
 
-        // Get the sum range as a RangeView (prefer warmup flat if available)
-        let mut sum_flat: Option<crate::engine::cache::FlatView> = None;
-        if let Ok(rref) = args[0].as_reference() {
-            if let Some(fv) = ctx.get_or_flatten(rref, true) {
-                sum_flat = Some(fv);
-            }
-        }
-        let sum_view = if let Some(ref fv) = sum_flat {
-            crate::engine::range_view::RangeView::from_flat(fv)
-        } else {
-            match args[0].range_view() {
-                Ok(v) => v,
-                Err(_) => {
-                    // Scalar fallback
-                    let val = args[0].value()?;
-                    let mut total = 0.0f64;
-                    // For scalar, we need all criteria to be scalar and match
-                    for i in (1..args.len()).step_by(2) {
-                        let crit_val = args[i].value()?;
-                        let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
-                        if !criteria_match(&pred, crit_val.as_ref()) {
-                            return Ok(LiteralValue::Number(0.0));
-                        }
+        // Get the sum range as a RangeView
+        let sum_view = match args[0].range_view() {
+            Ok(v) => v,
+            Err(_) => {
+                // Scalar fallback
+                let val = args[0].value()?;
+                let mut total = 0.0f64;
+                // For scalar, we need all criteria to be scalar and match
+                for i in (1..args.len()).step_by(2) {
+                    let crit_val = args[i].value()?;
+                    let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
+                    if !criteria_match(&pred, crit_val.as_ref()) {
+                        return Ok(LiteralValue::Number(0.0));
                     }
-                    if let Ok(n) = coerce_num(val.as_ref()) {
-                        total = n;
-                    }
-                    return Ok(LiteralValue::Number(total));
                 }
+                if let Ok(n) = coerce_num(val.as_ref()) {
+                    total = n;
+                }
+                return Ok(LiteralValue::Number(total));
             }
         };
 
         let mut dims = sum_view.dims();
 
-        // Collect criteria ranges and predicates (prefer flats for criteria ranges)
+        // Collect criteria ranges and predicates
         let mut crit_views = Vec::new();
         let mut preds = Vec::new();
-        let mut crit_owned_flats: Vec<crate::engine::cache::FlatView> = Vec::new();
-        let mut use_flat: Vec<Option<usize>> = Vec::new();
-        // First pass: record which criteria can use flats
-        for i in (1..args.len()).step_by(2) {
-            if let Ok(rref) = args[i].as_reference() {
-                if let Some(fv) = ctx.get_or_flatten(&rref, false) {
-                    crit_owned_flats.push(fv);
-                    use_flat.push(Some(crit_owned_flats.len() - 1));
-                    continue;
-                }
-            }
-            use_flat.push(None);
-        }
-        // Second pass: build views/preds
+        // Build views/preds
         let mut arg_i = 1usize;
-        for flat_idx in use_flat.into_iter() {
+        while arg_i + 1 < args.len() {
             let crit_arg = arg_i;
             let pred_arg = arg_i + 1;
-            if let Some(fi) = flat_idx {
-                let v = crate::engine::range_view::RangeView::from_flat(&crit_owned_flats[fi]);
-                if v.dims() == (1, 1) {
-                    let scalar_val = v.get_cell(0, 0);
-                    crit_views.push(None);
-                    let p = crate::args::parse_criteria(args[pred_arg].value()?.as_ref())?;
-                    preds.push((p, Some(scalar_val)));
-                } else {
-                    crit_views.push(Some(v));
-                    let p = crate::args::parse_criteria(args[pred_arg].value()?.as_ref())?;
-                    preds.push((p, None));
-                }
-            } else {
-                match args[crit_arg].range_view() {
-                    Ok(v) => {
-                        if v.dims() == (1, 1) {
-                            let scalar_val = v.get_cell(0, 0);
-                            crit_views.push(None);
-                            let p = crate::args::parse_criteria(args[pred_arg].value()?.as_ref())?;
-                            preds.push((p, Some(scalar_val)));
-                        } else {
-                            crit_views.push(Some(v));
-                            let p = crate::args::parse_criteria(args[pred_arg].value()?.as_ref())?;
-                            preds.push((p, None));
-                        }
-                    }
-                    Err(_) => {
-                        let val = args[crit_arg].value()?.into_owned();
+            match args[crit_arg].range_view() {
+                Ok(v) => {
+                    if v.dims() == (1, 1) {
+                        let scalar_val = v.get_cell(0, 0);
                         crit_views.push(None);
                         let p = crate::args::parse_criteria(args[pred_arg].value()?.as_ref())?;
-                        preds.push((p, Some(val)));
+                        preds.push((p, Some(scalar_val)));
+                    } else {
+                        crit_views.push(Some(v));
+                        let p = crate::args::parse_criteria(args[pred_arg].value()?.as_ref())?;
+                        preds.push((p, None));
                     }
+                }
+                Err(_) => {
+                    let val = args[crit_arg].value()?.into_owned();
+                    crit_views.push(None);
+                    let p = crate::args::parse_criteria(args[pred_arg].value()?.as_ref())?;
+                    preds.push((p, Some(val)));
                 }
             }
             arg_i += 2;
@@ -774,79 +696,42 @@ impl Function for CountIfsFn {
                 ),
             )));
         }
-        // Collect criteria as views or scalars; compute union dims (prefer flats)
+        // Collect criteria as views or scalars; compute union dims
         let mut crit_views: Vec<Option<crate::engine::range_view::RangeView<'_>>> = Vec::new();
         let mut preds = Vec::new();
         let mut dims = (1usize, 1usize);
         let mut seen_any_view = false;
-        let mut crit_owned_flats: Vec<crate::engine::cache::FlatView> = Vec::new();
-        let mut use_flat: Vec<Option<usize>> = Vec::new();
-        // First pass: gather flats
-        for i in (0..args.len()).step_by(2) {
-            if let Ok(rref) = args[i].as_reference() {
-                if let Some(fv) = ctx.get_or_flatten(&rref, false) {
-                    crit_owned_flats.push(fv);
-                    use_flat.push(Some(crit_owned_flats.len() - 1));
-                    continue;
-                }
-            }
-            use_flat.push(None);
-        }
-        // Second pass: build views/preds and union dims
+        // Build views/preds and union dims
         let mut arg_i = 0usize;
-        for flat_idx in use_flat.into_iter() {
+        while arg_i + 1 < args.len() {
             let pred = crate::args::parse_criteria(args[arg_i + 1].value()?.as_ref())?;
-            if let Some(fi) = flat_idx {
-                let v = crate::engine::range_view::RangeView::from_flat(&crit_owned_flats[fi]);
-                if v.dims() == (1, 1) {
-                    let scalar = v.get_cell(0, 0);
-                    crit_views.push(None);
-                    preds.push((pred, Some(scalar)));
-                } else {
-                    let vd = v.dims();
-                    if !seen_any_view {
-                        dims = vd;
-                        seen_any_view = true;
-                    } else {
-                        if vd.0 > dims.0 {
-                            dims.0 = vd.0;
-                        }
-                        if vd.1 > dims.1 {
-                            dims.1 = vd.1;
-                        }
-                    }
-                    crit_views.push(Some(v));
-                    preds.push((pred, None));
-                }
-            } else {
-                match args[arg_i].range_view() {
-                    Ok(v) => {
-                        if v.dims() == (1, 1) {
-                            let scalar = v.get_cell(0, 0);
-                            crit_views.push(None);
-                            preds.push((pred, Some(scalar)));
-                        } else {
-                            let vd = v.dims();
-                            if !seen_any_view {
-                                dims = vd;
-                                seen_any_view = true;
-                            } else {
-                                if vd.0 > dims.0 {
-                                    dims.0 = vd.0;
-                                }
-                                if vd.1 > dims.1 {
-                                    dims.1 = vd.1;
-                                }
-                            }
-                            crit_views.push(Some(v));
-                            preds.push((pred, None));
-                        }
-                    }
-                    Err(_) => {
-                        let scalar = args[arg_i].value()?.into_owned();
+            match args[arg_i].range_view() {
+                Ok(v) => {
+                    if v.dims() == (1, 1) {
+                        let scalar = v.get_cell(0, 0);
                         crit_views.push(None);
                         preds.push((pred, Some(scalar)));
+                    } else {
+                        let vd = v.dims();
+                        if !seen_any_view {
+                            dims = vd;
+                            seen_any_view = true;
+                        } else {
+                            if vd.0 > dims.0 {
+                                dims.0 = vd.0;
+                            }
+                            if vd.1 > dims.1 {
+                                dims.1 = vd.1;
+                            }
+                        }
+                        crit_views.push(Some(v));
+                        preds.push((pred, None));
                     }
+                }
+                Err(_) => {
+                    let scalar = args[arg_i].value()?.into_owned();
+                    crit_views.push(None);
+                    preds.push((pred, Some(scalar)));
                 }
             }
             arg_i += 2;
@@ -915,32 +800,22 @@ impl Function for AverageIfsFn {
             ));
         }
         // Resolve avg range
-        let mut avg_flat: Option<crate::engine::cache::FlatView> = None;
-        if let Ok(rref) = args[0].as_reference() {
-            if let Some(fv) = ctx.get_or_flatten(rref, true) {
-                avg_flat = Some(fv);
-            }
-        }
-        let avg_view = if let Some(ref fv) = avg_flat {
-            crate::engine::range_view::RangeView::from_flat(fv)
-        } else {
-            match args[0].range_view() {
-                Ok(v) => v,
-                Err(_) => {
-                    // Scalar fallback: require scalar criteria and match; else #DIV/0!
-                    let val = args[0].value()?;
-                    for i in (1..args.len()).step_by(2) {
-                        let cval = args[i].value()?;
-                        let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
-                        if !criteria_match(&pred, cval.as_ref()) {
-                            return Ok(ExcelError::new_div().into());
-                        }
-                    }
-                    if let Ok(n) = coerce_num(val.as_ref()) {
-                        return Ok(LiteralValue::Number(n));
-                    } else {
+        let avg_view = match args[0].range_view() {
+            Ok(v) => v,
+            Err(_) => {
+                // Scalar fallback: require scalar criteria and match; else #DIV/0!
+                let val = args[0].value()?;
+                for i in (1..args.len()).step_by(2) {
+                    let cval = args[i].value()?;
+                    let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
+                    if !criteria_match(&pred, cval.as_ref()) {
                         return Ok(ExcelError::new_div().into());
                     }
+                }
+                if let Ok(n) = coerce_num(val.as_ref()) {
+                    return Ok(LiteralValue::Number(n));
+                } else {
+                    return Ok(ExcelError::new_div().into());
                 }
             }
         };
@@ -949,51 +824,26 @@ impl Function for AverageIfsFn {
         let mut dims = avg_view.dims();
         let mut crit_views: Vec<Option<crate::engine::range_view::RangeView<'_>>> = Vec::new();
         let mut preds = Vec::new();
-        let mut crit_owned_flats: Vec<crate::engine::cache::FlatView> = Vec::new();
-        let mut use_flat: Vec<Option<usize>> = Vec::new();
-        // First pass: gather flats
-        for i in (1..args.len()).step_by(2) {
-            if let Ok(rref) = args[i].as_reference() {
-                if let Some(fv) = ctx.get_or_flatten(&rref, false) {
-                    crit_owned_flats.push(fv);
-                    use_flat.push(Some(crit_owned_flats.len() - 1));
-                    continue;
-                }
-            }
-            use_flat.push(None);
-        }
-        // Second pass: build views/preds
+        // Build views/preds
         let mut arg_i = 1usize;
-        for flat_idx in use_flat.into_iter() {
+        while arg_i + 1 < args.len() {
             let pred = crate::args::parse_criteria(args[arg_i + 1].value()?.as_ref())?;
-            if let Some(fi) = flat_idx {
-                let v = crate::engine::range_view::RangeView::from_flat(&crit_owned_flats[fi]);
-                if v.dims() == (1, 1) {
-                    let scalar = v.get_cell(0, 0);
-                    crit_views.push(None);
-                    preds.push((pred, Some(scalar)));
-                } else {
-                    // Do not expand avg_range dimensions; pad criteria to avg_range dims
-                    crit_views.push(Some(v));
-                    preds.push((pred, None));
-                }
-            } else {
-                match args[arg_i].range_view() {
-                    Ok(v) => {
-                        if v.dims() == (1, 1) {
-                            let scalar = v.get_cell(0, 0);
-                            crit_views.push(None);
-                            preds.push((pred, Some(scalar)));
-                        } else {
-                            crit_views.push(Some(v));
-                            preds.push((pred, None));
-                        }
-                    }
-                    Err(_) => {
-                        let scalar = args[arg_i].value()?.into_owned();
+            match args[arg_i].range_view() {
+                Ok(v) => {
+                    if v.dims() == (1, 1) {
+                        let scalar = v.get_cell(0, 0);
                         crit_views.push(None);
                         preds.push((pred, Some(scalar)));
+                    } else {
+                        // Do not expand avg_range dimensions; pad criteria to avg_range dims
+                        crit_views.push(Some(v));
+                        preds.push((pred, None));
                     }
+                }
+                Err(_) => {
+                    let scalar = args[arg_i].value()?.into_owned();
+                    crit_views.push(None);
+                    preds.push((pred, Some(scalar)));
                 }
             }
             arg_i += 2;

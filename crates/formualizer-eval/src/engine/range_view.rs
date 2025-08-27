@@ -1,7 +1,6 @@
 use crate::SheetId as EngineSheetId;
 use crate::args::CoercionPolicy;
 use crate::arrow_store;
-use crate::engine::cache::{FlatKind, FlatView};
 use crate::engine::{DependencyGraph, SheetIndexMode};
 use crate::stripes::{NumericChunk, ValidityMask};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -14,8 +13,6 @@ pub struct RangeView<'a> {
 }
 
 enum RangeBacking<'a> {
-    /// Typed or mixed flattened view from warmup cache
-    Flat(&'a FlatView),
     /// Borrowed 2D rows without cloning
     Borrowed2D(&'a [Vec<LiteralValue>]),
     /// Slice over the graph (values fetched on demand)
@@ -58,15 +55,6 @@ pub enum RangeKind {
 }
 
 impl<'a> RangeView<'a> {
-    pub fn from_flat(fv: &'a FlatView) -> Self {
-        let (rows, cols) = (fv.row_count, fv.col_count);
-        Self {
-            backing: RangeBacking::Flat(fv),
-            rows,
-            cols,
-        }
-    }
-
     pub fn from_borrowed(rows: &'a [Vec<LiteralValue>]) -> Self {
         let r = rows.len();
         let c = rows.first().map(|r| r.len()).unwrap_or(0);
@@ -125,11 +113,6 @@ impl<'a> RangeView<'a> {
 
     pub fn kind_probe(&self) -> RangeKind {
         match &self.backing {
-            RangeBacking::Flat(fv) => match fv.kind {
-                FlatKind::Numeric { .. } => RangeKind::NumericOnly,
-                FlatKind::Text { .. } => RangeKind::TextOnly,
-                FlatKind::Mixed { .. } => RangeKind::Mixed,
-            },
             RangeBacking::Borrowed2D(rows) => {
                 if rows.is_empty() || self.is_empty() {
                     RangeKind::Empty
@@ -193,16 +176,6 @@ impl<'a> RangeView<'a> {
         }
 
         match &self.backing {
-            RangeBacking::Flat(fv) => {
-                let idx = row * self.cols + col;
-                match &fv.kind {
-                    FlatKind::Numeric { values, .. } => LiteralValue::Number(values[idx]),
-                    FlatKind::Text { values, .. } => {
-                        LiteralValue::Text((&*values[idx]).to_string())
-                    }
-                    FlatKind::Mixed { values } => values[idx].clone(),
-                }
-            }
             RangeBacking::Borrowed2D(rows) => rows[row][col].clone(),
             RangeBacking::GraphSlice {
                 graph,
@@ -249,26 +222,6 @@ impl<'a> RangeView<'a> {
         f: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
         match &self.backing {
-            RangeBacking::Flat(fv) => match &fv.kind {
-                FlatKind::Numeric { values, .. } => {
-                    // Iterate as numbers converted to LiteralValue lazily
-                    for n in values.iter() {
-                        let tmp = LiteralValue::Number(*n);
-                        f(&tmp)?; // ephemeral; callback must not hold reference
-                    }
-                }
-                FlatKind::Text { values, .. } => {
-                    for s in values.iter() {
-                        let tmp = LiteralValue::Text((&**s).to_string());
-                        f(&tmp)?;
-                    }
-                }
-                FlatKind::Mixed { values } => {
-                    for v in values.iter() {
-                        f(v)?;
-                    }
-                }
-            },
             RangeBacking::Borrowed2D(rows) => {
                 for r in rows.iter() {
                     for v in r.iter() {
@@ -329,53 +282,6 @@ impl<'a> RangeView<'a> {
         f: &mut dyn FnMut(&[LiteralValue]) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
         match &self.backing {
-            RangeBacking::Flat(fv) => match &fv.kind {
-                FlatKind::Mixed { values } => {
-                    // values are row-major contiguous; iterate in row chunks
-                    if self.cols == 0 {
-                        return Ok(());
-                    }
-                    let mut offset = 0usize;
-                    for _ in 0..self.rows {
-                        let end = offset + self.cols;
-                        f(&values[offset..end])?;
-                        offset = end;
-                    }
-                }
-                FlatKind::Numeric { values, .. } => {
-                    // Convert per-row into a temporary buffer (avoid allocating whole 2D)
-                    if self.cols == 0 {
-                        return Ok(());
-                    }
-                    let mut buf: Vec<LiteralValue> = Vec::with_capacity(self.cols);
-                    let mut offset = 0usize;
-                    for _ in 0..self.rows {
-                        buf.clear();
-                        let end = offset + self.cols;
-                        for &n in &values[offset..end] {
-                            buf.push(LiteralValue::Number(n));
-                        }
-                        f(&buf[..])?;
-                        offset = end;
-                    }
-                }
-                FlatKind::Text { values, .. } => {
-                    if self.cols == 0 {
-                        return Ok(());
-                    }
-                    let mut buf: Vec<LiteralValue> = Vec::with_capacity(self.cols);
-                    let mut offset = 0usize;
-                    for _ in 0..self.rows {
-                        buf.clear();
-                        let end = offset + self.cols;
-                        for s in &values[offset..end] {
-                            buf.push(LiteralValue::Text((&**s).to_string()));
-                        }
-                        f(&buf[..])?;
-                        offset = end;
-                    }
-                }
-            },
             RangeBacking::Borrowed2D(rows) => {
                 for r in rows.iter() {
                     f(&r[..])?;
@@ -442,49 +348,6 @@ impl<'a> RangeView<'a> {
         f: &mut dyn FnMut(&[LiteralValue]) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
         match &self.backing {
-            RangeBacking::Flat(fv) => match &fv.kind {
-                FlatKind::Mixed { values } => {
-                    if self.cols == 0 {
-                        return Ok(());
-                    }
-                    let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(self.rows);
-                    for c in 0..self.cols {
-                        col_buf.clear();
-                        for r in 0..self.rows {
-                            col_buf.push(values[r * self.cols + c].clone());
-                        }
-                        f(&col_buf[..])?;
-                    }
-                }
-                FlatKind::Numeric { values, .. } => {
-                    if self.cols == 0 {
-                        return Ok(());
-                    }
-                    let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(self.rows);
-                    for c in 0..self.cols {
-                        col_buf.clear();
-                        for r in 0..self.rows {
-                            let idx = r * self.cols + c;
-                            col_buf.push(LiteralValue::Number(values[idx]));
-                        }
-                        f(&col_buf[..])?;
-                    }
-                }
-                FlatKind::Text { values, .. } => {
-                    if self.cols == 0 {
-                        return Ok(());
-                    }
-                    let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(self.rows);
-                    for c in 0..self.cols {
-                        col_buf.clear();
-                        for r in 0..self.rows {
-                            let idx = r * self.cols + c;
-                            col_buf.push(LiteralValue::Text((&*values[idx]).to_string()));
-                        }
-                        f(&col_buf[..])?;
-                    }
-                }
-            },
             RangeBacking::Borrowed2D(rows) => {
                 if self.cols == 0 {
                     return Ok(());
@@ -569,22 +432,8 @@ impl<'a> RangeView<'a> {
             return None;
         }
 
-        match &self.backing {
-            RangeBacking::Flat(fv) => {
-                let idx = row * self.cols + col;
-                match &fv.kind {
-                    FlatKind::Numeric { values, .. } => Some(values[idx]),
-                    _ => {
-                        let val = self.get_cell(row, col);
-                        pack_numeric(&val, policy).ok().flatten()
-                    }
-                }
-            }
-            _ => {
-                let val = self.get_cell(row, col);
-                pack_numeric(&val, policy).ok().flatten()
-            }
-        }
+        let val = self.get_cell(row, col);
+        pack_numeric(&val, policy).ok().flatten()
     }
 
     /// Numeric chunk iteration with coercion policy
@@ -614,37 +463,6 @@ impl<'a> RangeView<'a> {
         };
 
         match self.backing {
-            RangeBacking::Flat(fv) => match &fv.kind {
-                FlatKind::Numeric { values, .. } => {
-                    // Emit in slices of size >= min_chunk
-                    let mut offset = 0usize;
-                    while offset < values.len() {
-                        let end = (offset + min_chunk).min(values.len());
-                        let slice = &values[offset..end];
-                        let chunk = NumericChunk {
-                            data: slice,
-                            validity: None,
-                        };
-                        f(chunk)?;
-                        offset = end;
-                    }
-                }
-                FlatKind::Text { .. } => { /* no numbers */ }
-                FlatKind::Mixed { values } => {
-                    for v in values.iter() {
-                        match pack_numeric(v, policy)? {
-                            Some(n) => {
-                                buf.push(n);
-                                if buf.len() >= min_chunk {
-                                    flush(&mut buf)?;
-                                }
-                            }
-                            None => {}
-                        }
-                    }
-                    flush(&mut buf)?;
-                }
-            },
             RangeBacking::Borrowed2D(rows) => {
                 for r in rows.iter() {
                     for v in r.iter() {
@@ -794,17 +612,13 @@ mod tests {
     }
 
     #[test]
-    fn flat_numeric_numbers_chunked() {
-        let values: Arc<[f64]> = Arc::from(vec![1.0, 2.0, 3.0, 4.0].into_boxed_slice());
-        let flat = FlatView {
-            kind: FlatKind::Numeric {
-                values,
-                valid: None,
-            },
-            row_count: 2,
-            col_count: 2,
-        };
-        let view = RangeView::from_flat(&flat);
+    fn flat_numeric_numbers_chunked_removed() {
+        // Flats removed: ensure borrowed path still works for chunking
+        let data: Vec<Vec<LiteralValue>> = vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ];
+        let view = RangeView::from_borrowed(&data);
         assert_eq!(view.dims(), (2, 2));
         let mut collected = Vec::new();
         view.numbers_chunked(CoercionPolicy::NumberLenientText, 3, &mut |chunk| {

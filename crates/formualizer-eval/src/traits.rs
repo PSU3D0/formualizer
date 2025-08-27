@@ -665,15 +665,7 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
         BackendCaps::default()
     }
 
-    /// Optional: Retrieve a pre-flattened view for a reference if available (Phase 2).
-    /// Default: None (no warmup/cache available through this context).
-    fn get_or_flatten(
-        &self,
-        _reference: &ReferenceType,
-        _prefer_numeric: bool,
-    ) -> Option<crate::engine::cache::FlatView> {
-        None
-    }
+    // Flats removed
 
     /// Feature gate: enable Arrow fast paths in builtins (e.g., SUMIFS).
     /// Default is false; engines that wish to enable must override.
@@ -737,15 +729,7 @@ pub trait FunctionContext {
         Err(ExcelError::new(ExcelErrorKind::NImpl))
     }
 
-    /// Get a pre-flattened view of a range if available (Phase 2)
-    /// Returns None if not warmed up or not available
-    fn get_or_flatten(
-        &self,
-        _reference: &ReferenceType,
-        _prefer_numeric: bool,
-    ) -> Option<crate::engine::cache::FlatView> {
-        None
-    }
+    // Flats removed
 
     /// Get a pre-built criteria mask if available (Phase 3)
     /// Returns None if not warmed up or not available
@@ -830,13 +814,7 @@ impl<'a> FunctionContext for DefaultFunctionContext<'a> {
         self.base.resolve_range_view(reference, current_sheet)
     }
 
-    fn get_or_flatten(
-        &self,
-        reference: &ReferenceType,
-        prefer_numeric: bool,
-    ) -> Option<crate::engine::cache::FlatView> {
-        self.base.get_or_flatten(reference, prefer_numeric)
-    }
+    // Flats removed
 
     fn arrow_fastpath_enabled(&self) -> bool {
         self.base.arrow_fastpath_enabled()

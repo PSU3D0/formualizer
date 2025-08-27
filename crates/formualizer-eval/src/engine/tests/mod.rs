@@ -55,11 +55,9 @@ mod context_default_noops;
 mod pass_planner_noop;
 
 // Phase 2 tests
-mod countifs_warmup_fidelity;
-mod pass_warmup_flatten;
-mod sumifs_warmup_fidelity;
+// flats removed: retire flatten/warmup fidelity tests
 // mod sumifs_row_zip_parity;  // Requires more complex setup, will add later
-mod pass_lifetime;
+// mod pass_lifetime;
 
 // Phase 3 tests
 mod arrow_bulk_update;

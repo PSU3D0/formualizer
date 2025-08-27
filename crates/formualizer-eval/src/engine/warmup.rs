@@ -1,14 +1,11 @@
-//! Warmup executor for pre-building artifacts
+//! Warmup executor for pre-building artifacts (flats removed; masks scaffold only)
 
-use crate::engine::cache::{CriteriaKey, CriteriaMaskCache, FlatKind, FlatView, RangeFlatCache};
+use crate::engine::cache::{CriteriaKey, CriteriaMaskCache};
 use crate::engine::masks::DenseMask;
 use crate::engine::metrics::{WarmupMetrics, WarmupTimer};
-use crate::engine::pass_planner::{HotReference, PassWarmupPlan};
-use crate::engine::reference_fingerprint::ReferenceFingerprint;
+use crate::engine::pass_planner::PassWarmupPlan;
 use crate::engine::tuning::WarmupConfig;
 use crate::traits::FunctionContext;
-use formualizer_common::LiteralValue;
-use formualizer_core::parser::ReferenceType;
 use std::collections::HashSet;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -65,165 +62,25 @@ impl BuildCoordinator {
 
 /// Context for a single evaluation pass
 pub struct PassContext {
-    pub flat_cache: RangeFlatCache,
     pub mask_cache: CriteriaMaskCache,
     pub metrics: Arc<WarmupMetrics>,
     /// Coordinator for in-flight builds
-    build_coordinator: Arc<BuildCoordinator>,
-    /// Coordinator for mask builds
     mask_coordinator: Arc<BuildCoordinator>,
 }
 
 impl PassContext {
     pub fn new(config: &WarmupConfig) -> Self {
         Self {
-            flat_cache: RangeFlatCache::new(config.flat_cache_mb_cap),
             mask_cache: CriteriaMaskCache::new(config.mask_cache_entries_cap),
             metrics: Arc::new(WarmupMetrics::new()),
-            build_coordinator: Arc::new(BuildCoordinator::default()),
             mask_coordinator: Arc::new(BuildCoordinator::default()),
         }
     }
 
     /// Clear all pass-scoped caches
     pub fn clear(&mut self) {
-        self.flat_cache.clear();
         self.mask_cache.clear();
         self.metrics.reset();
-    }
-
-    /// Try to get or build a flat for a reference
-    pub fn get_or_build_flat<C: FunctionContext>(
-        &mut self,
-        reference: &ReferenceType,
-        context: &C,
-        config: &WarmupConfig,
-    ) -> Option<FlatView> {
-        let key = reference.fingerprint();
-
-        // Check cache first
-        if let Some(flat) = self.flat_cache.get(&key) {
-            self.metrics.record_flat_reuse();
-            return Some(flat);
-        }
-
-        // Try to claim the build
-        if !self.build_coordinator.try_claim(&key) {
-            // Someone else is building, wait for them
-            let timeout = Duration::from_millis(config.warmup_time_budget_ms.min(5000));
-            if self.build_coordinator.wait_for(&key, timeout) {
-                // Try cache again after waiting
-                if let Some(flat) = self.flat_cache.get(&key) {
-                    self.metrics.record_flat_reuse();
-                    return Some(flat);
-                }
-            }
-            return None;
-        }
-
-        // We have the claim, build it
-        let start = Instant::now();
-        let result = self.build_flat(reference, context);
-        let build_time_ms = start.elapsed().as_millis() as u64;
-
-        // Release the claim
-        self.build_coordinator.release(&key);
-
-        if let Some(ref flat) = result {
-            // Try to insert into cache
-            if self.flat_cache.insert(key.clone(), flat.clone()) {
-                let cell_count = flat.row_count * flat.col_count;
-                self.metrics.record_flat_build(cell_count, build_time_ms);
-            }
-        }
-
-        result
-    }
-
-    /// Build a flat view from a reference
-    fn build_flat<C: FunctionContext>(
-        &self,
-        reference: &ReferenceType,
-        context: &C,
-    ) -> Option<FlatView> {
-        // Resolve the range to get a view
-        // TODO: Need to pass the current sheet properly
-        let view = context.resolve_range_view(reference, "").ok()?;
-
-        // Get dimensions
-        let (row_count, col_count) = view.dims();
-        if row_count == 0 || col_count == 0 {
-            return None;
-        }
-
-        // Collect values
-        let mut numeric_values: Vec<f64> = Vec::new();
-        let mut text_values: Vec<String> = Vec::new();
-        let mut mixed_values: Vec<LiteralValue> = Vec::new();
-        let mut is_numeric = true;
-        let mut is_text = true;
-        let _ = view.for_each_cell(&mut |value| {
-            mixed_values.push(value.clone());
-            match value {
-                LiteralValue::Number(n) => {
-                    if is_numeric {
-                        numeric_values.push(*n);
-                    }
-                    is_text = false;
-                }
-                LiteralValue::Int(i) => {
-                    if is_numeric {
-                        numeric_values.push(*i as f64);
-                    }
-                    is_text = false;
-                }
-                LiteralValue::Text(s) => {
-                    if is_text {
-                        text_values.push(s.clone());
-                    }
-                    is_numeric = false;
-                }
-                LiteralValue::Empty => {
-                    if is_numeric {
-                        numeric_values.push(0.0);
-                    }
-                    if is_text {
-                        text_values.push(String::new());
-                    }
-                }
-                _ => {
-                    is_numeric = false;
-                    is_text = false;
-                }
-            }
-            Ok(())
-        });
-
-        let kind = if is_numeric && !numeric_values.is_empty() {
-            FlatKind::Numeric {
-                values: Arc::from(numeric_values.into_boxed_slice()),
-                valid: None,
-            }
-        } else if is_text && !text_values.is_empty() {
-            let text_arc: Vec<Arc<str>> = text_values
-                .into_iter()
-                .map(|s| Arc::<str>::from(s))
-                .collect();
-            FlatKind::Text {
-                values: Arc::from(text_arc.into_boxed_slice()),
-                empties: None,
-            }
-        } else {
-            FlatKind::Mixed {
-                values: Arc::from(mixed_values.into_boxed_slice()),
-            }
-        };
-
-        Some(FlatView {
-            kind,
-            row_count,
-            col_count,
-        })
     }
 
     /// Try to get or build a mask for criteria (Phase 3)
@@ -267,32 +124,7 @@ impl WarmupExecutor {
         }
 
         let timer = WarmupTimer::start();
-        let time_budget = Duration::from_millis(self.config.warmup_time_budget_ms);
-        let start = Instant::now();
-
-        // Track what we've selected
-        pass_ctx
-            .metrics
-            .inc_candidates_refs_considered(plan.flatten.len());
-
-        // Process references with time budget enforcement
-        for reference_info in &plan.flatten {
-            // Check time budget
-            if start.elapsed() >= time_budget {
-                break;
-            }
-
-            // Build the flat
-            if let Some(reference) = reference_info.to_reference() {
-                pass_ctx.get_or_build_flat(&reference, context, &self.config);
-            }
-        }
-
-        // Record selected count
-        let selected_count = pass_ctx.flat_cache.len();
-        pass_ctx
-            .metrics
-            .inc_candidates_refs_selected(selected_count);
+        // No-op for flats (removed). Mask warmup to be implemented later.
 
         // Record timing
         pass_ctx.metrics.record_warmup_time(timer.elapsed());
@@ -301,40 +133,4 @@ impl WarmupExecutor {
     }
 }
 
-/// Extension for HotReference to convert back to ReferenceType
-trait HotReferenceExt {
-    fn to_reference(&self) -> Option<ReferenceType>;
-}
-
-impl HotReferenceExt for HotReference {
-    fn to_reference(&self) -> Option<ReferenceType> {
-        // Parse the fingerprint back to a reference
-        // This is a simplified version - in production, store the actual reference
-        if self.key.starts_with("range:") {
-            let parts: Vec<&str> = self.key.split(':').collect();
-            if parts.len() >= 6 {
-                let sheet = if parts[1] == "_" {
-                    None
-                } else {
-                    Some(parts[1].to_string())
-                };
-                let start_row = parts[2].parse().ok();
-                let start_col = parts[3].parse().ok();
-                let end_row = parts[4].parse().ok();
-                let end_col = parts[5].parse().ok();
-
-                Some(ReferenceType::Range {
-                    sheet,
-                    start_row,
-                    start_col,
-                    end_row,
-                    end_col,
-                })
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-}
+// Flats removed: no HotReference reconstruction required

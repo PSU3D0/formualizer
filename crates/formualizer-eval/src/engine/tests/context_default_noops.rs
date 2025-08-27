@@ -62,8 +62,7 @@ mod tests {
         };
 
         // Default implementation should return None
-        assert!(ctx.get_or_flatten(&cell_ref, true).is_none());
-        assert!(ctx.get_or_flatten(&cell_ref, false).is_none());
+        // flats removed
 
         // Test with a range reference
         let range_ref = ReferenceType::Range {
@@ -74,8 +73,7 @@ mod tests {
             end_col: Some(5),
         };
 
-        assert!(ctx.get_or_flatten(&range_ref, true).is_none());
-        assert!(ctx.get_or_flatten(&range_ref, false).is_none());
+        // flats removed
     }
 
     #[test]
@@ -113,7 +111,7 @@ mod tests {
                 row: 1,
                 col: 1,
             };
-            assert!(ctx.get_or_flatten(&cell_ref, true).is_none());
+            // flats removed
             assert!(ctx.get_or_build_mask("key").is_none());
         }
     }

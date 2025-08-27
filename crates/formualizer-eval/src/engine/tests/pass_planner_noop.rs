@@ -22,10 +22,7 @@ mod tests {
         // Should produce empty plan when disabled
         let plan = planner.analyze_targets(&targets);
 
-        assert!(
-            plan.flatten.is_empty(),
-            "Should have no flatten tasks when disabled"
-        );
+        // Flats removed: plan has no flatten tasks
         assert!(
             plan.masks.is_empty(),
             "Should have no mask tasks when disabled"
@@ -44,7 +41,7 @@ mod tests {
     fn test_pass_planner_respects_thresholds() {
         let mut config = WarmupConfig::default();
         config.warmup_enabled = true;
-        config.min_flat_cells = 10000; // High threshold
+        config.min_flat_cells = 10000; // Unused after flats removal
 
         let planner = PassPlanner::new(config);
 
@@ -55,17 +52,14 @@ mod tests {
         let plan = planner.analyze_targets(&targets);
 
         // Should not plan flattening for small ranges
-        assert!(
-            plan.flatten.is_empty(),
-            "Should not flatten small ranges below threshold"
-        );
+        // Flats removed; nothing to assert for flattening
     }
 
     #[test]
     fn test_pass_planner_respects_reuse_thresholds() {
         let mut config = WarmupConfig::default();
         config.warmup_enabled = true;
-        config.flat_reuse_threshold = 5; // Require 5 references
+        config.flat_reuse_threshold = 5; // Unused after flats removal
 
         let planner = PassPlanner::new(config);
 
@@ -78,10 +72,7 @@ mod tests {
         let plan = planner.analyze_targets(&targets);
 
         // Should not plan flattening since reuse count (3) < threshold (5)
-        assert!(
-            plan.flatten.is_empty(),
-            "Should not flatten with insufficient reuse"
-        );
+        // Flats removed; nothing to assert for flattening
     }
 
     #[test]
@@ -94,7 +85,7 @@ mod tests {
 
         let plan = planner.analyze_targets(&targets);
 
-        assert!(plan.flatten.is_empty());
+        // Flats removed; nothing to assert for flattening
         assert!(plan.masks.is_empty());
         assert!(plan.eq_indexes.is_empty());
         assert!(plan.range_indexes.is_empty());
@@ -112,10 +103,7 @@ mod tests {
         let plan = planner.analyze_single(&ast);
 
         // For a simple SUM, should not trigger warmup
-        assert!(
-            plan.flatten.is_empty(),
-            "Simple SUM should not trigger warmup"
-        );
+        // Flats removed; nothing to assert for flattening
     }
 
     #[test]
