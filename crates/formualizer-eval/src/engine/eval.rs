@@ -432,6 +432,81 @@ where
         }
     }
 
+    /// Mirror a single cell value into the Arrow overlay if enabled.
+    /// Handles capacity growth, per-chunk overlay set, and heuristic compaction.
+    fn mirror_value_to_overlay(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: &LiteralValue,
+    ) {
+        if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
+            return;
+        }
+        let asheet = match self.arrow_sheets.sheet_mut(sheet) {
+            Some(s) => s,
+            None => return,
+        };
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        if col0 >= asheet.columns.len() {
+            return;
+        }
+        if row0 >= asheet.nrows as usize {
+            asheet.ensure_row_capacity(row0 + 1);
+        }
+        if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
+            use crate::arrow_store::OverlayValue;
+            let ov = match value {
+                LiteralValue::Empty => OverlayValue::Empty,
+                LiteralValue::Int(i) => OverlayValue::Number(*i as f64),
+                LiteralValue::Number(n) => OverlayValue::Number(*n),
+                LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
+                LiteralValue::Text(s) => OverlayValue::Text(std::sync::Arc::from(s.clone())),
+                LiteralValue::Error(e) => {
+                    OverlayValue::Error(crate::arrow_store::map_error_code(e.kind))
+                }
+                LiteralValue::Date(d) => {
+                    let dt = d.and_hms_opt(0, 0, 0).unwrap();
+                    let serial = crate::builtins::datetime::datetime_to_serial_for(
+                        self.config.date_system,
+                        &dt,
+                    );
+                    OverlayValue::Number(serial)
+                }
+                LiteralValue::DateTime(dt) => {
+                    let serial = crate::builtins::datetime::datetime_to_serial_for(
+                        self.config.date_system,
+                        dt,
+                    );
+                    OverlayValue::Number(serial)
+                }
+                LiteralValue::Time(t) => {
+                    let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
+                    OverlayValue::Number(serial)
+                }
+                LiteralValue::Duration(d) => {
+                    let serial = d.num_seconds() as f64 / 86_400.0;
+                    OverlayValue::Number(serial)
+                }
+                LiteralValue::Pending => OverlayValue::Pending,
+                LiteralValue::Array(_) => OverlayValue::Error(
+                    crate::arrow_store::map_error_code(formualizer_common::ExcelErrorKind::Value),
+                ),
+            };
+            let colref = &mut asheet.columns[col0];
+            let ch = &mut colref.chunks[ch_idx];
+            ch.overlay.set(in_off, ov);
+            // Heuristic compaction: > len/50 or > 1024
+            let abs_threshold = 1024usize;
+            let frac_den = 50usize;
+            if asheet.maybe_compact_chunk(col0, ch_idx, abs_threshold, frac_den) {
+                self.overlay_compactions = self.overlay_compactions.saturating_add(1);
+            }
+        }
+    }
+
     /// Set a cell value
     pub fn set_cell_value(
         &mut self,
@@ -442,74 +517,7 @@ where
     ) -> Result<(), ExcelError> {
         self.graph.set_cell_value(sheet, row, col, value.clone())?;
         // Mirror into Arrow overlay when enabled
-        if self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
-            if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
-                let row0 = row.saturating_sub(1) as usize;
-                let col0 = col.saturating_sub(1) as usize;
-                if col0 < asheet.columns.len() {
-                    if row0 >= asheet.nrows as usize {
-                        asheet.ensure_row_capacity(row0 + 1);
-                    }
-                    if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
-                        let colref = &mut asheet.columns[col0];
-                        let ch = &mut colref.chunks[ch_idx];
-                        let ov = match value {
-                            LiteralValue::Empty => crate::arrow_store::OverlayValue::Empty,
-                            LiteralValue::Int(i) => {
-                                crate::arrow_store::OverlayValue::Number(i as f64)
-                            }
-                            LiteralValue::Number(n) => crate::arrow_store::OverlayValue::Number(n),
-                            LiteralValue::Boolean(b) => {
-                                crate::arrow_store::OverlayValue::Boolean(b)
-                            }
-                            LiteralValue::Text(ref s) => {
-                                crate::arrow_store::OverlayValue::Text(Arc::from(s.clone()))
-                            }
-                            LiteralValue::Error(ref e) => crate::arrow_store::OverlayValue::Error(
-                                crate::arrow_store::map_error_code(e.kind),
-                            ),
-                            LiteralValue::Date(d) => {
-                                let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                                let serial = crate::builtins::datetime::datetime_to_serial_for(
-                                    self.config.date_system,
-                                    &dt,
-                                );
-                                crate::arrow_store::OverlayValue::Number(serial)
-                            }
-                            LiteralValue::DateTime(dt) => {
-                                let serial = crate::builtins::datetime::datetime_to_serial_for(
-                                    self.config.date_system,
-                                    &dt,
-                                );
-                                crate::arrow_store::OverlayValue::Number(serial)
-                            }
-                            LiteralValue::Time(t) => {
-                                let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                                crate::arrow_store::OverlayValue::Number(serial)
-                            }
-                            LiteralValue::Duration(d) => {
-                                let serial = d.num_seconds() as f64 / 86_400.0;
-                                crate::arrow_store::OverlayValue::Number(serial)
-                            }
-                            LiteralValue::Pending => crate::arrow_store::OverlayValue::Pending,
-                            LiteralValue::Array(_) => crate::arrow_store::OverlayValue::Error(
-                                crate::arrow_store::map_error_code(
-                                    formualizer_common::ExcelErrorKind::Value,
-                                ),
-                            ),
-                        };
-                        ch.overlay.set(in_off, ov);
-                        // Compact if overlay grows dense for this chunk
-                        // Heuristic mirrors bulk-update thresholds: > len/50 or > 1024
-                        let abs_threshold = 1024usize;
-                        let frac_den = 50usize;
-                        if asheet.maybe_compact_chunk(col0, ch_idx, abs_threshold, frac_den) {
-                            self.overlay_compactions = self.overlay_compactions.saturating_add(1);
-                        }
-                    }
-                }
-            }
-        }
+        self.mirror_value_to_overlay(sheet, row, col, &value);
         // Advance snapshot to reflect external mutation
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -713,8 +721,7 @@ where
                         // Commit: write values to grid
                         // Default conflict policy is Error + FirstWins; reserve() enforces in-flight locks
                         // and plan_spill_region enforces overlap with committed formulas/spills/values.
-                        if let Err(e) = self.spill_mgr.commit_array(
-                            &mut self.graph,
+                        if let Err(e) = self.commit_spill_and_mirror(
                             vertex_id,
                             &targets,
                             rows.clone(),
@@ -759,78 +766,8 @@ where
                         .graph
                         .get_cell_ref(vertex_id)
                         .expect("cell ref for vertex");
-                    let sheet_name = self.graph.sheet_name(anchor.sheet_id);
-                    // Reuse overlay logic from set_cell_value
-                    if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet_name) {
-                        let row0 = anchor.coord.row.saturating_sub(1) as usize;
-                        let col0 = anchor.coord.col.saturating_sub(1) as usize;
-                        if col0 < asheet.columns.len() {
-                            if row0 >= asheet.nrows as usize {
-                                asheet.ensure_row_capacity(row0 + 1);
-                            }
-                            if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
-                                let colref = &mut asheet.columns[col0];
-                                let ch = &mut colref.chunks[ch_idx];
-                                let ov = match &other {
-                                    LiteralValue::Empty => crate::arrow_store::OverlayValue::Empty,
-                                    LiteralValue::Int(i) => {
-                                        crate::arrow_store::OverlayValue::Number(*i as f64)
-                                    }
-                                    LiteralValue::Number(n) => {
-                                        crate::arrow_store::OverlayValue::Number(*n)
-                                    }
-                                    LiteralValue::Boolean(b) => {
-                                        crate::arrow_store::OverlayValue::Boolean(*b)
-                                    }
-                                    LiteralValue::Text(s) => {
-                                        crate::arrow_store::OverlayValue::Text(Arc::from(s.clone()))
-                                    }
-                                    LiteralValue::Error(e) => {
-                                        crate::arrow_store::OverlayValue::Error(
-                                            crate::arrow_store::map_error_code(e.kind),
-                                        )
-                                    }
-                                    LiteralValue::Date(d) => {
-                                        let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                                        let serial =
-                                            crate::builtins::datetime::datetime_to_serial_for(
-                                                self.config.date_system,
-                                                &dt,
-                                            );
-                                        crate::arrow_store::OverlayValue::Number(serial)
-                                    }
-                                    LiteralValue::DateTime(dt) => {
-                                        let serial =
-                                            crate::builtins::datetime::datetime_to_serial_for(
-                                                self.config.date_system,
-                                                dt,
-                                            );
-                                        crate::arrow_store::OverlayValue::Number(serial)
-                                    }
-                                    LiteralValue::Time(t) => {
-                                        let serial =
-                                            t.num_seconds_from_midnight() as f64 / 86_400.0;
-                                        crate::arrow_store::OverlayValue::Number(serial)
-                                    }
-                                    LiteralValue::Duration(d) => {
-                                        let serial = d.num_seconds() as f64 / 86_400.0;
-                                        crate::arrow_store::OverlayValue::Number(serial)
-                                    }
-                                    LiteralValue::Pending => {
-                                        crate::arrow_store::OverlayValue::Pending
-                                    }
-                                    LiteralValue::Array(_) => {
-                                        crate::arrow_store::OverlayValue::Error(
-                                            crate::arrow_store::map_error_code(
-                                                formualizer_common::ExcelErrorKind::Value,
-                                            ),
-                                        )
-                                    }
-                                };
-                                ch.overlay.set(in_off, ov);
-                            }
-                        }
-                    }
+                    let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
+                    self.mirror_value_to_overlay(&sheet_name, anchor.coord.row, anchor.coord.col, &other);
                 }
                 Ok(other)
             }
@@ -1948,6 +1885,58 @@ impl ShimSpillManager {
         }
         commit_res.map(|_| ())
     }
+
+    /// Commit a spill and mirror all written cells into Arrow overlay via the owning engine.
+    pub(crate) fn commit_array_with_overlay<R: EvaluationContext>(
+        &mut self,
+        engine: &mut Engine<R>,
+        anchor_vertex: VertexId,
+        targets: &[CellRef],
+        rows: Vec<Vec<LiteralValue>>,
+    ) -> Result<(), ExcelError> {
+        // Re-run plan on concrete targets before committing to respect blockers.
+        let plan_res = engine.graph.plan_spill_region(anchor_vertex, targets);
+        if let Err(e) = plan_res {
+            if let Some(id) = self.active_locks.remove(&anchor_vertex) {
+                self.region_locks.release(id);
+            }
+            return Err(e);
+        }
+
+        let commit_res = engine
+            .graph
+            .commit_spill_region_atomic_with_fault(anchor_vertex, targets.to_vec(), rows.clone(), None);
+        if let Some(id) = self.active_locks.remove(&anchor_vertex) {
+            self.region_locks.release(id);
+        }
+        commit_res.map(|_| ())?;
+
+        // Mirror into Arrow overlay when enabled
+        if engine.config.arrow_storage_enabled
+            && engine.config.delta_overlay_enabled
+            && engine.config.write_formula_overlay_enabled
+        {
+            // Expect targets to be a contiguous rectangle row-major starting at some anchor
+            for (idx, cell) in targets.iter().enumerate() {
+                let (r_off, c_off) = {
+                    if rows.is_empty() || rows[0].is_empty() {
+                        (0usize, 0usize)
+                    } else {
+                        let width = rows[0].len();
+                        (idx / width, idx % width)
+                    }
+                };
+                let v = rows
+                    .get(r_off)
+                    .and_then(|r| r.get(c_off))
+                    .cloned()
+                    .unwrap_or(LiteralValue::Empty);
+                let sheet_name = engine.graph.sheet_name(cell.sheet_id).to_string();
+                engine.mirror_value_to_overlay(&sheet_name, cell.coord.row, cell.coord.col, &v);
+            }
+        }
+        Ok(())
+    }
 }
 
 // Implement the resolver traits for the Engine.
@@ -2254,5 +2243,40 @@ where
                 }
             }
         }
+    }
+}
+
+impl<R> Engine<R>
+where
+    R: EvaluationContext,
+{
+    /// Helper: commit spill via shim and mirror resulting cells into Arrow overlay when enabled.
+    fn commit_spill_and_mirror(
+        &mut self,
+        anchor_vertex: VertexId,
+        targets: &[CellRef],
+        rows: Vec<Vec<LiteralValue>>,
+    ) -> Result<(), ExcelError> {
+        // Commit via shim (releases locks)
+        self.spill_mgr
+            .commit_array(&mut self.graph, anchor_vertex, targets, rows.clone())?;
+
+        if self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled
+        {
+            for (idx, cell) in targets.iter().enumerate() {
+                if rows.is_empty() || rows[0].is_empty() {
+                    break;
+                }
+                let width = rows[0].len();
+                let r_off = idx / width;
+                let c_off = idx % width;
+                let v = rows[r_off][c_off].clone();
+                let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+                self.mirror_value_to_overlay(&sheet_name, cell.coord.row, cell.coord.col, &v);
+            }
+        }
+        Ok(())
     }
 }
