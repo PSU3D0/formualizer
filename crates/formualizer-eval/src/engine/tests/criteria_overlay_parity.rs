@@ -1,6 +1,6 @@
 use crate::engine::{Engine, EvalConfig};
-use crate::traits::FunctionProvider;
 use crate::test_workbook::TestWorkbook;
+use crate::traits::FunctionProvider;
 use crate::traits::{ArgumentHandle, DefaultFunctionContext};
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
@@ -50,10 +50,18 @@ fn sumif_overlay_and_fastpath_parity() {
 
     // Overlay updates: change criteria in some rows and adjust sums
     // Row2: crit="y", sum=200; Row5: crit="y", sum=500
-    engine.set_cell_value(sheet, 2, 2, LiteralValue::Text("y".into())).unwrap();
-    engine.set_cell_value(sheet, 2, 1, LiteralValue::Int(200)).unwrap();
-    engine.set_cell_value(sheet, 5, 2, LiteralValue::Text("y".into())).unwrap();
-    engine.set_cell_value(sheet, 5, 1, LiteralValue::Int(500)).unwrap();
+    engine
+        .set_cell_value(sheet, 2, 2, LiteralValue::Text("y".into()))
+        .unwrap();
+    engine
+        .set_cell_value(sheet, 2, 1, LiteralValue::Int(200))
+        .unwrap();
+    engine
+        .set_cell_value(sheet, 5, 2, LiteralValue::Text("y".into()))
+        .unwrap();
+    engine
+        .set_cell_value(sheet, 5, 1, LiteralValue::Int(500))
+        .unwrap();
 
     let sum_rng = range_ref(sheet, 1, 1, 6, 1);
     let crit_rng = range_ref(sheet, 1, 2, 6, 2);
@@ -102,10 +110,18 @@ fn sumifs_overlay_and_fastpath_parity() {
     }
 
     // Overlay two rows to match c1=1 and c2="aa": rows 5 and 7 become matches
-    engine.set_cell_value(sheet, 5, 2, LiteralValue::Int(1)).unwrap();
-    engine.set_cell_value(sheet, 5, 3, LiteralValue::Text("aa".into())).unwrap();
-    engine.set_cell_value(sheet, 7, 2, LiteralValue::Int(1)).unwrap();
-    engine.set_cell_value(sheet, 7, 3, LiteralValue::Text("aa".into())).unwrap();
+    engine
+        .set_cell_value(sheet, 5, 2, LiteralValue::Int(1))
+        .unwrap();
+    engine
+        .set_cell_value(sheet, 5, 3, LiteralValue::Text("aa".into()))
+        .unwrap();
+    engine
+        .set_cell_value(sheet, 7, 2, LiteralValue::Int(1))
+        .unwrap();
+    engine
+        .set_cell_value(sheet, 7, 3, LiteralValue::Text("aa".into()))
+        .unwrap();
 
     let sum_rng = range_ref(sheet, 1, 1, 8, 1);
     let c1_rng = range_ref(sheet, 1, 2, 8, 2);

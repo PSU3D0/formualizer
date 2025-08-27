@@ -420,7 +420,7 @@ impl<'a> RangeView<'a> {
     pub fn as_arrow(&self) -> Option<&arrow_store::ArrowRangeView<'a>> {
         match &self.backing {
             RangeBacking::Arrow(av) => Some(av),
-            // Do not expose Arrow fast-path for Hybrid — would miss formula overlays
+            RangeBacking::Hybrid { arrow, .. } => Some(arrow),
             _ => None,
         }
     }

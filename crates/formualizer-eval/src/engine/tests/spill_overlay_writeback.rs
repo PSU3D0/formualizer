@@ -16,14 +16,17 @@ fn spill_overlay_writeback_visible_via_arrow() {
         let mut ab = engine.begin_bulk_ingest_arrow();
         ab.add_sheet(sheet, 2, 8);
         for _ in 0..4 {
-            ab.append_row(sheet, &[LiteralValue::Empty, LiteralValue::Empty]).unwrap();
+            ab.append_row(sheet, &[LiteralValue::Empty, LiteralValue::Empty])
+                .unwrap();
         }
         ab.finish().unwrap();
     }
 
     // Place a VSTACK that spills 2x1 into column 1 starting at A2
     // =VSTACK(1,2)
-    let ast = formualizer_core::parser::Parser::from("=VSTACK(1,2)").parse().unwrap();
+    let ast = formualizer_core::parser::Parser::from("=VSTACK(1,2)")
+        .parse()
+        .unwrap();
     engine.set_cell_formula(sheet, 2, 1, ast).unwrap();
     let _ = engine.evaluate_all().unwrap();
 
@@ -40,4 +43,3 @@ fn spill_overlay_writeback_visible_via_arrow() {
         other => panic!("expected 2.0 at (3,1) from overlay, got {:?}", other),
     }
 }
-

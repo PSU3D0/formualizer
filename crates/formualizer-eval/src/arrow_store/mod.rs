@@ -1,3 +1,4 @@
+use crate::compute_prelude::{concat_arrays, zip_select};
 use arrow_array::Array;
 use arrow_array::new_null_array;
 use arrow_schema::DataType;
@@ -85,6 +86,8 @@ pub struct ColumnChunk {
     lazy_null_booleans: OnceCell<Arc<BooleanArray>>,
     lazy_null_text: OnceCell<ArrayRef>,
     lazy_null_errors: OnceCell<Arc<UInt8Array>>,
+    // Cache: lowered text lane (ASCII lower), nulls preserved
+    lowered_text: OnceCell<ArrayRef>,
     // Phase C: per-chunk overlay (delta edits since last compaction)
     pub overlay: Overlay,
 }
@@ -138,6 +141,31 @@ impl ColumnChunk {
         self.lazy_null_text
             .get_or_init(|| new_null_array(&DataType::Utf8, self.len()))
             .clone()
+    }
+
+    /// Lowercased text lane (ASCII lower), with nulls preserved. Cached per chunk.
+    pub fn text_lower_or_null(&self) -> ArrayRef {
+        if let Some(a) = self.lowered_text.get() {
+            return a.clone();
+        }
+        // Lowercase when text present; else return null Utf8
+        let out: ArrayRef = if let Some(txt) = &self.text {
+            let sa = txt.as_any().downcast_ref::<StringArray>().unwrap();
+            let mut b = arrow_array::builder::StringBuilder::with_capacity(sa.len(), sa.len() * 8);
+            for i in 0..sa.len() {
+                if sa.is_null(i) {
+                    b.append_null();
+                } else {
+                    b.append_value(sa.value(i).to_ascii_lowercase());
+                }
+            }
+            let lowered = b.finish();
+            Arc::new(lowered)
+        } else {
+            new_null_array(&DataType::Utf8, self.len())
+        };
+        self.lowered_text.get_or_init(|| out.clone());
+        out
     }
 }
 
@@ -539,6 +567,7 @@ impl IngestBuilder {
                 lazy_null_booleans: OnceCell::new(),
                 lazy_null_text: OnceCell::new(),
                 lazy_null_errors: OnceCell::new(),
+                lowered_text: OnceCell::new(),
                 overlay: Overlay::new(),
             };
             self.chunks[c].push(chunk);
@@ -790,6 +819,7 @@ impl ArrowSheet {
                     lazy_null_booleans: OnceCell::new(),
                     lazy_null_text: OnceCell::new(),
                     lazy_null_errors: OnceCell::new(),
+                    lowered_text: OnceCell::new(),
                     overlay: Overlay::new(),
                 });
             }
@@ -842,6 +872,7 @@ impl ArrowSheet {
             lazy_null_booleans: OnceCell::new(),
             lazy_null_text: OnceCell::new(),
             lazy_null_errors: OnceCell::new(),
+            lowered_text: OnceCell::new(),
             overlay: Overlay::new(),
         }
     }
@@ -914,6 +945,7 @@ impl ArrowSheet {
             lazy_null_booleans: OnceCell::new(),
             lazy_null_text: OnceCell::new(),
             lazy_null_errors: OnceCell::new(),
+            lowered_text: OnceCell::new(),
             overlay,
         }
     }
@@ -1765,6 +1797,109 @@ impl<'a> ArrowRangeView<'a> {
             }
             (cs.row_start, cs.row_len, out_cols)
         })
+    }
+
+    /// Build per-column concatenated lowered text arrays for this view.
+    /// Uses per-chunk lowered cache for base text and merges overlays via zip_select.
+    pub fn lowered_text_columns(&self) -> Vec<ArrayRef> {
+        use arrow_array::Array;
+        let mut out: Vec<ArrayRef> = Vec::with_capacity(self.cols);
+        if self.rows == 0 || self.cols == 0 {
+            return out;
+        }
+        let row_end = self.er.min(self.sheet.nrows.saturating_sub(1) as usize);
+        for col_idx in self.sc..=self.ec {
+            let mut segs: Vec<ArrayRef> = Vec::new();
+            if col_idx >= self.sheet.columns.len() {
+                // OOB: nulls across rows
+                segs.push(new_null_array(&DataType::Utf8, self.rows));
+            } else {
+                let col_ref = &self.sheet.columns[col_idx];
+                for (ci, &start) in self.chunk_starts.iter().enumerate() {
+                    // length of this chunk
+                    let len = col_ref
+                        .chunks
+                        .get(ci)
+                        .map(|c| c.type_tag.len())
+                        .unwrap_or(0);
+                    if len == 0 {
+                        continue;
+                    }
+                    let end = start + len - 1;
+                    let is = start.max(self.sr);
+                    let ie = end.min(row_end);
+                    if is > ie {
+                        continue;
+                    }
+                    let seg_len = ie - is + 1;
+                    let rel_off = is - start;
+                    if let Some(ch) = col_ref.chunks.get(ci) {
+                        // Overlay-aware lowered segment
+                        if ch.overlay.any_in_range(rel_off..(rel_off + seg_len)) {
+                            // Build lowered overlay values builder
+                            let mut sb = arrow_array::builder::StringBuilder::with_capacity(
+                                seg_len,
+                                seg_len * 8,
+                            );
+                            // mask overlaid rows
+                            let mut mb =
+                                arrow_array::builder::BooleanBuilder::with_capacity(seg_len);
+                            for i in 0..seg_len {
+                                if let Some(ov) = ch.overlay.get(rel_off + i) {
+                                    match ov {
+                                        OverlayValue::Text(s) => {
+                                            sb.append_value(s.to_ascii_lowercase());
+                                            mb.append_value(true);
+                                        }
+                                        OverlayValue::Empty => {
+                                            sb.append_null();
+                                            mb.append_value(true);
+                                        }
+                                        OverlayValue::Number(n) => {
+                                            sb.append_value(n.to_string().to_ascii_lowercase());
+                                            mb.append_value(true);
+                                        }
+                                        OverlayValue::Boolean(b) => {
+                                            sb.append_value(if *b { "true" } else { "false" });
+                                            mb.append_value(true);
+                                        }
+                                        OverlayValue::Error(_) | OverlayValue::Pending => {
+                                            sb.append_null();
+                                            mb.append_value(true);
+                                        }
+                                    }
+                                } else {
+                                    // not overlaid
+                                    sb.append_null();
+                                    mb.append_value(false);
+                                }
+                            }
+                            let overlay_vals = sb.finish();
+                            let mask = mb.finish();
+                            // base lowered segment
+                            let base_lowered = ch.text_lower_or_null();
+                            let base_seg = Array::slice(&base_lowered, rel_off, seg_len);
+                            let base_sa = base_seg
+                                .as_any()
+                                .downcast_ref::<StringArray>()
+                                .expect("lowered slice downcast");
+                            let zipped = zip_select(&mask, &overlay_vals, base_sa)
+                                .expect("zip lowered text overlay");
+                            segs.push(zipped);
+                        } else {
+                            // No overlay: slice from lowered base
+                            let lowered = ch.text_lower_or_null();
+                            segs.push(Array::slice(&lowered, rel_off, seg_len));
+                        }
+                    }
+                }
+            }
+            // Concat segments for this column
+            let anys: Vec<&dyn Array> = segs.iter().map(|a| a.as_ref() as &dyn Array).collect();
+            let conc = concat_arrays(&anys).expect("concat lowered segments");
+            out.push(conc);
+        }
+        out
     }
 }
 

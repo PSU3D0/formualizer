@@ -393,39 +393,13 @@ impl Function for SumIfsFn {
                         // Text lane
                         if let Some(ref v) = crit_views[j] {
                             let av = v.as_arrow().unwrap();
-                            // Build text columns by concatenating text slices per column
-                            let cols = dims.1;
-                            let mut segs: Vec<Vec<ArrayRef>> = vec![Vec::new(); cols];
-                            for (_rs, _rl, cols_seg) in av.text_slices() {
-                                for c in 0..cols {
-                                    segs[c].push(cols_seg[c].clone());
-                                }
-                            }
+                            // Build lowered text columns using ArrowRangeView cache-aware path
+                            let arrays = av.lowered_text_columns();
                             let mut out: Vec<std::sync::Arc<StringArray>> =
-                                Vec::with_capacity(cols);
-                            for parts in segs.into_iter() {
-                                if parts.is_empty() {
-                                    out.push(std::sync::Arc::new(StringArray::new_null(dims.0)));
-                                } else if parts.len() == 1 {
-                                    let a = parts[0]
-                                        .as_any()
-                                        .downcast_ref::<StringArray>()
-                                        .unwrap()
-                                        .clone();
-                                    out.push(std::sync::Arc::new(a));
-                                } else {
-                                    let anys: Vec<&dyn arrow_array::Array> = parts
-                                        .iter()
-                                        .map(|a| a.as_ref() as &dyn arrow_array::Array)
-                                        .collect();
-                                    let conc: ArrayRef = concat_arrays(&anys).expect("concat");
-                                    let sa = conc
-                                        .as_any()
-                                        .downcast_ref::<StringArray>()
-                                        .unwrap()
-                                        .clone();
-                                    out.push(std::sync::Arc::new(sa));
-                                }
+                                Vec::with_capacity(dims.1);
+                            for a in arrays.into_iter() {
+                                let sa = a.as_any().downcast_ref::<StringArray>().unwrap().clone();
+                                out.push(std::sync::Arc::new(sa));
                             }
                             crit_text_cols.push(Some(out));
                         } else {
@@ -497,7 +471,7 @@ impl Function for SumIfsFn {
                                         ),
                                         LiteralValue::Text(t) => {
                                             let lt = t.to_ascii_lowercase();
-                                            let lowered = lower_string_array(col_text.unwrap());
+                                            let lowered = col_text.unwrap();
                                             let pat = StringArray::new_scalar(lt);
                                             // Special case: equality to empty string treats nulls as equal in Excel
                                             let mut m = ilike(&lowered, &pat).unwrap();
@@ -532,7 +506,7 @@ impl Function for SumIfsFn {
                                     ),
                                     LiteralValue::Text(t) => {
                                         let lt = t.to_ascii_lowercase();
-                                        let lowered = lower_string_array(col_text.unwrap());
+                                        let lowered = col_text.unwrap();
                                         let pat = StringArray::new_scalar(lt);
                                         Some(nilike(&lowered, &pat).unwrap())
                                     }
@@ -546,7 +520,7 @@ impl Function for SumIfsFn {
                                         .replace('*', "%")
                                         .replace('?', "_")
                                         .to_ascii_lowercase();
-                                    let lowered = lower_string_array(col_text.unwrap());
+                                    let lowered = col_text.unwrap();
                                     let pat = StringArray::new_scalar(lp);
                                     Some(ilike(&lowered, &pat).unwrap())
                                 }

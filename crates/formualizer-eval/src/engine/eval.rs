@@ -32,6 +32,8 @@ pub struct Engine<R> {
     has_edited: bool,
     /// Overlay compaction counter (Phase C instrumentation)
     overlay_compactions: u64,
+    // Pass-scoped cache for Arrow used-row bounds per column
+    row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
 }
 
 #[derive(Debug)]
@@ -97,6 +99,7 @@ where
             arrow_sheets: SheetStore::default(),
             has_edited: false,
             overlay_compactions: 0,
+            row_bounds_cache: std::sync::RwLock::new(None),
         }
     }
 
@@ -119,6 +122,7 @@ where
             arrow_sheets: SheetStore::default(),
             has_edited: false,
             overlay_compactions: 0,
+            row_bounds_cache: std::sync::RwLock::new(None),
         }
     }
 
@@ -312,60 +316,107 @@ where
             return None;
         }
         let ec0 = ec0.min(col_hi);
-        // Scan for first non-empty row across requested columns (consider overlay)
+        // Pass-scoped cache with snapshot guard
+        let snap = self.data_snapshot_id();
         let mut min_r0: Option<usize> = None;
         for ci in sc0..=ec0 {
-            let col = &a.columns[ci];
-            for (chunk_idx, chunk) in col.chunks.iter().enumerate() {
-                let tags = chunk.type_tag.values();
-                for (off, &t) in tags.iter().enumerate() {
-                    let overlay_non_empty = chunk
-                        .overlay
-                        .get(off)
-                        .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
-                        .unwrap_or(false);
-                    if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
-                        let row0 = a.chunk_starts[chunk_idx] + off;
-                        min_r0 = Some(min_r0.map(|m| m.min(row0)).unwrap_or(row0));
-                        break;
-                    }
+            let sheet_id = self.graph.sheet_id(sheet)?;
+            if let Some((min1, _)) = self.row_bounds_cache.read().ok().and_then(|g| {
+                g.as_ref()
+                    .and_then(|c| c.get_row_bounds(sheet_id, ci, snap))
+            }) {
+                if let Some(mv) = min1 {
+                    min_r0 = Some(min_r0.map(|m| m.min(mv as usize)).unwrap_or(mv as usize));
+                    continue;
                 }
-                if min_r0.is_some() {
-                    break;
-                }
+            }
+            // Compute and store
+            let (min_c, max_c) = Self::scan_column_used_bounds(a, ci);
+            if let Ok(mut g) = self.row_bounds_cache.write() {
+                g.get_or_insert_with(|| RowBoundsCache::new(snap))
+                    .put_row_bounds(sheet_id, ci, snap, (min_c, max_c));
+            }
+            if let Some(m) = min_c {
+                min_r0 = Some(min_r0.map(|mm| mm.min(m as usize)).unwrap_or(m as usize));
             }
         }
         if min_r0.is_none() {
             return None;
         }
-        // Scan for last non-empty row across requested columns (consider overlay)
         let mut max_r0: Option<usize> = None;
         for ci in sc0..=ec0 {
-            let col = &a.columns[ci];
-            for (chunk_rel, chunk) in col.chunks.iter().enumerate().rev() {
-                let chunk_idx = chunk_rel; // same index
-                let tags = chunk.type_tag.values();
-                for (rev_idx, &t) in tags.iter().enumerate().rev() {
-                    let overlay_non_empty = chunk
-                        .overlay
-                        .get(rev_idx)
-                        .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
-                        .unwrap_or(false);
-                    if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
-                        let row0 = a.chunk_starts[chunk_idx] + rev_idx;
-                        max_r0 = Some(max_r0.map(|m| m.max(row0)).unwrap_or(row0));
-                        break;
-                    }
+            let sheet_id = self.graph.sheet_id(sheet)?;
+            if let Some((_, max1)) = self.row_bounds_cache.read().ok().and_then(|g| {
+                g.as_ref()
+                    .and_then(|c| c.get_row_bounds(sheet_id, ci, snap))
+            }) {
+                if let Some(mv) = max1 {
+                    max_r0 = Some(max_r0.map(|m| m.max(mv as usize)).unwrap_or(mv as usize));
+                    continue;
                 }
-                if max_r0.is_some() {
-                    break;
-                }
+            }
+            let (_min_c, max_c) = Self::scan_column_used_bounds(a, ci);
+            if let Ok(mut g) = self.row_bounds_cache.write() {
+                g.get_or_insert_with(|| RowBoundsCache::new(snap))
+                    .put_row_bounds(sheet_id, ci, snap, (_min_c, max_c));
+            }
+            if let Some(m) = max_c {
+                max_r0 = Some(max_r0.map(|mm| mm.max(m as usize)).unwrap_or(m as usize));
             }
         }
         match (min_r0, max_r0) {
             (Some(a0), Some(b0)) => Some(((a0 as u32) + 1, (b0 as u32) + 1)),
             _ => None,
         }
+    }
+
+    fn scan_column_used_bounds(
+        a: &crate::arrow_store::ArrowSheet,
+        ci: usize,
+    ) -> (Option<u32>, Option<u32>) {
+        let col = &a.columns[ci];
+        // Min
+        let mut min_r0: Option<u32> = None;
+        for (chunk_idx, chunk) in col.chunks.iter().enumerate() {
+            let tags = chunk.type_tag.values();
+            for (off, &t) in tags.iter().enumerate() {
+                let overlay_non_empty = chunk
+                    .overlay
+                    .get(off)
+                    .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
+                    .unwrap_or(false);
+                if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
+                    let row0 = a.chunk_starts[chunk_idx] + off;
+                    min_r0 = Some(row0 as u32);
+                    break;
+                }
+            }
+            if min_r0.is_some() {
+                break;
+            }
+        }
+        // Max
+        let mut max_r0: Option<u32> = None;
+        for (chunk_rel, chunk) in col.chunks.iter().enumerate().rev() {
+            let chunk_idx = chunk_rel;
+            let tags = chunk.type_tag.values();
+            for (rev_idx, &t) in tags.iter().enumerate().rev() {
+                let overlay_non_empty = chunk
+                    .overlay
+                    .get(rev_idx)
+                    .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
+                    .unwrap_or(false);
+                if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
+                    let row0 = a.chunk_starts[chunk_idx] + rev_idx;
+                    max_r0 = Some(row0 as u32);
+                    break;
+                }
+            }
+            if max_r0.is_some() {
+                break;
+            }
+        }
+        (min_r0, max_r0)
     }
 
     /// Arrow-backed used column bounds across a row span (1-based inclusive rows).
@@ -434,13 +485,7 @@ where
 
     /// Mirror a single cell value into the Arrow overlay if enabled.
     /// Handles capacity growth, per-chunk overlay set, and heuristic compaction.
-    fn mirror_value_to_overlay(
-        &mut self,
-        sheet: &str,
-        row: u32,
-        col: u32,
-        value: &LiteralValue,
-    ) {
+    fn mirror_value_to_overlay(&mut self, sheet: &str, row: u32, col: u32, value: &LiteralValue) {
         if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
             return;
         }
@@ -491,9 +536,9 @@ where
                     OverlayValue::Number(serial)
                 }
                 LiteralValue::Pending => OverlayValue::Pending,
-                LiteralValue::Array(_) => OverlayValue::Error(
-                    crate::arrow_store::map_error_code(formualizer_common::ExcelErrorKind::Value),
-                ),
+                LiteralValue::Array(_) => OverlayValue::Error(crate::arrow_store::map_error_code(
+                    formualizer_common::ExcelErrorKind::Value,
+                )),
             };
             let colref = &mut asheet.columns[col0];
             let ch = &mut colref.chunks[ch_idx];
@@ -721,11 +766,9 @@ where
                         // Commit: write values to grid
                         // Default conflict policy is Error + FirstWins; reserve() enforces in-flight locks
                         // and plan_spill_region enforces overlap with committed formulas/spills/values.
-                        if let Err(e) = self.commit_spill_and_mirror(
-                            vertex_id,
-                            &targets,
-                            rows.clone(),
-                        ) {
+                        if let Err(e) =
+                            self.commit_spill_and_mirror(vertex_id, &targets, rows.clone())
+                        {
                             // If commit fails, mark as error
                             self.graph
                                 .update_vertex_value(vertex_id, LiteralValue::Error(e.clone()));
@@ -767,7 +810,12 @@ where
                         .get_cell_ref(vertex_id)
                         .expect("cell ref for vertex");
                     let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
-                    self.mirror_value_to_overlay(&sheet_name, anchor.coord.row, anchor.coord.col, &other);
+                    self.mirror_value_to_overlay(
+                        &sheet_name,
+                        anchor.coord.row,
+                        anchor.coord.col,
+                        &other,
+                    );
                 }
                 Ok(other)
             }
@@ -1816,6 +1864,46 @@ where
     }
 }
 
+#[derive(Default)]
+struct RowBoundsCache {
+    snapshot: u64,
+    // key: (sheet_id, col_idx)
+    map: rustc_hash::FxHashMap<(u32, usize), (Option<u32>, Option<u32>)>,
+}
+
+impl RowBoundsCache {
+    fn new(snapshot: u64) -> Self {
+        Self {
+            snapshot,
+            map: Default::default(),
+        }
+    }
+    fn get_row_bounds(
+        &self,
+        sheet_id: SheetId,
+        col_idx: usize,
+        snapshot: u64,
+    ) -> Option<(Option<u32>, Option<u32>)> {
+        if self.snapshot != snapshot {
+            return None;
+        }
+        self.map.get(&(sheet_id as u32, col_idx)).copied()
+    }
+    fn put_row_bounds(
+        &mut self,
+        sheet_id: SheetId,
+        col_idx: usize,
+        snapshot: u64,
+        bounds: (Option<u32>, Option<u32>),
+    ) {
+        if self.snapshot != snapshot {
+            self.snapshot = snapshot;
+            self.map.clear();
+        }
+        self.map.insert((sheet_id as u32, col_idx), bounds);
+    }
+}
+
 // Phase 2 shim: in-process spill manager delegating to current graph methods.
 #[derive(Default)]
 pub struct ShimSpillManager {
@@ -1903,9 +1991,12 @@ impl ShimSpillManager {
             return Err(e);
         }
 
-        let commit_res = engine
-            .graph
-            .commit_spill_region_atomic_with_fault(anchor_vertex, targets.to_vec(), rows.clone(), None);
+        let commit_res = engine.graph.commit_spill_region_atomic_with_fault(
+            anchor_vertex,
+            targets.to_vec(),
+            rows.clone(),
+            None,
+        );
         if let Some(id) = self.active_locks.remove(&anchor_vertex) {
             self.region_locks.release(id);
         }
@@ -2199,9 +2290,37 @@ where
                 let er = er.unwrap_or(sr.saturating_sub(1));
                 let ec = ec.unwrap_or(sc.saturating_sub(1));
 
-                // Prefer a hybrid RangeView when an Arrow sheet exists: pull formula/edited cell values
-                // from the graph and base values from Arrow. This preserves correctness across mixed
-                // columns instead of falling back wholly to graph (which would miss base values).
+                // Feature: Arrow-only RangeView resolution (no Hybrid/GraphSlice).
+                // If an Arrow sheet exists, return a pure Arrow-backed RangeView.
+                // Otherwise, materialize values from the graph and return a Borrowed2D view.
+                {
+                    if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
+                        let sr0 = sr.saturating_sub(1) as usize;
+                        let sc0 = sc.saturating_sub(1) as usize;
+                        let er0 = er.saturating_sub(1) as usize;
+                        let ec0 = ec.saturating_sub(1) as usize;
+                        let av = asheet.range_view(sr0, sc0, er0, ec0);
+                        return Ok(RangeView::from_arrow(av));
+                    }
+                    // Materialize via graph
+                    let rows = (sr..=er)
+                        .map(|r| {
+                            (sc..=ec)
+                                .map(|c| {
+                                    let coord = Coord::new(r, c, true, true);
+                                    let addr = CellRef::new(sheet_id, coord);
+                                    self.graph
+                                        .get_vertex_id_for_address(&addr)
+                                        .and_then(|id| self.graph.get_value(*id))
+                                        .unwrap_or(LiteralValue::Empty)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
+                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(rows))));
+                }
+
+                // Default behavior (no feature): prefer Hybrid when Arrow exists, otherwise GraphSlice
                 if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
                     let sr0 = sr.saturating_sub(1) as usize;
                     let sc0 = sc.saturating_sub(1) as usize;
@@ -2214,11 +2333,26 @@ where
             }
             ReferenceType::Cell { sheet, row, col } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-                // Prefer graph value when present (covers formula results and edited values)
+                {
+                    if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
+                        let r0 = row.saturating_sub(1) as usize;
+                        let c0 = col.saturating_sub(1) as usize;
+                        let av = asheet.range_view(r0, c0, r0, c0);
+                        let v = av.get_cell(0, 0);
+                        return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
+                    }
+                    // No Arrow: use graph value if present
+                    let v = self
+                        .graph
+                        .get_cell_value(sheet_name, *row, *col)
+                        .unwrap_or(LiteralValue::Empty);
+                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
+                }
+
+                // Default behavior
                 if let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col) {
                     return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
                 }
-                // Fallback to Arrow store for base values when available and storage enabled
                 if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
                     let r0 = row.saturating_sub(1) as usize;
                     let c0 = col.saturating_sub(1) as usize;

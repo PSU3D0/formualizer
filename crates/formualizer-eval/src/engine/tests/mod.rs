@@ -61,9 +61,10 @@ mod pass_planner_noop;
 
 // Phase 3 tests
 mod arrow_bulk_update;
+mod countifs_arrow_overlay;
+mod criteria_overlay_parity;
 mod mask_cache_reuse;
 mod mask_density_paths;
 mod overlay_compaction;
 mod spill_overlay_writeback;
-mod criteria_overlay_parity;
-mod countifs_arrow_overlay;
+mod used_bounds_cache;

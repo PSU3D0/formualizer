@@ -1,6 +1,6 @@
 use crate::engine::{Engine, EvalConfig};
-use crate::traits::FunctionProvider;
 use crate::test_workbook::TestWorkbook;
+use crate::traits::FunctionProvider;
 use crate::traits::{ArgumentHandle, DefaultFunctionContext};
 use formualizer_common::LiteralValue;
 use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
@@ -48,8 +48,12 @@ fn countifs_arrow_overlay_only_values() {
     }
 
     // Inject two overlay values via set_cell_value (no formulas)
-    engine.set_cell_value(sheet, 2, 1, LiteralValue::Text("BDM021".into())).unwrap();
-    engine.set_cell_value(sheet, 5, 1, LiteralValue::Text("BDM021".into())).unwrap();
+    engine
+        .set_cell_value(sheet, 2, 1, LiteralValue::Text("BDM021".into()))
+        .unwrap();
+    engine
+        .set_cell_value(sheet, 5, 1, LiteralValue::Text("BDM021".into()))
+        .unwrap();
 
     // Direct Arrow check
     let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
@@ -63,7 +67,10 @@ fn countifs_arrow_overlay_only_values() {
     let fun = engine.get_function("", "COUNTIFS").expect("COUNTIFS");
     let got = {
         let interp = crate::interpreter::Interpreter::new(&engine, sheet);
-        let args = vec![ArgumentHandle::new(&col_ref, &interp), ArgumentHandle::new(&crit, &interp)];
+        let args = vec![
+            ArgumentHandle::new(&col_ref, &interp),
+            ArgumentHandle::new(&crit, &interp),
+        ];
         let fctx = DefaultFunctionContext::new(&engine, None);
         fun.dispatch(&args, &fctx).unwrap()
     };
