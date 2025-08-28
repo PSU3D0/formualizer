@@ -6,7 +6,7 @@ mod tests {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_common::LiteralValue;
-    use formualizer_core::parser::{ASTNode, ASTNodeType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
     use std::sync::Arc;
 
     fn lit(v: LiteralValue) -> ASTNode {

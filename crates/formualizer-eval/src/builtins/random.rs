@@ -39,7 +39,7 @@ mod tests {
     use super::*;
     use crate::traits::DefaultFunctionContext;
     use crate::{interpreter::Interpreter, test_workbook::TestWorkbook};
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
 
     fn interp(wb: &TestWorkbook) -> Interpreter<'_> {
         wb.interpreter()
@@ -78,12 +78,12 @@ mod tests {
         let f = ctx.context.get_function("", "RANDBETWEEN").unwrap();
         let fctx = DefaultFunctionContext::new(ctx.context, None);
         // Build two scalar args 1 and 3
-        let lo = formualizer_core::ASTNode::new(
-            formualizer_core::ASTNodeType::Literal(LiteralValue::Int(1)),
+        let lo = formualizer_parse::ASTNode::new(
+            formualizer_parse::ASTNodeType::Literal(LiteralValue::Int(1)),
             None,
         );
-        let hi = formualizer_core::ASTNode::new(
-            formualizer_core::ASTNodeType::Literal(LiteralValue::Int(3)),
+        let hi = formualizer_parse::ASTNode::new(
+            formualizer_parse::ASTNodeType::Literal(LiteralValue::Int(3)),
             None,
         );
         let args = vec![

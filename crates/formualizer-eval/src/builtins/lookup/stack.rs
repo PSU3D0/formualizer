@@ -206,7 +206,7 @@ mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
     use std::sync::Arc;
 
     fn ref_range(r: &str, sr: i32, sc: i32, er: i32, ec: i32) -> ASTNode {

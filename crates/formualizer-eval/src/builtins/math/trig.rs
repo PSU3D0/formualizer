@@ -53,14 +53,14 @@ mod tests_sin {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
 
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -124,13 +124,13 @@ mod tests_cos {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -193,13 +193,13 @@ mod tests_tan {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -251,13 +251,13 @@ mod tests_asin {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -317,13 +317,13 @@ mod tests_acos {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -378,13 +378,13 @@ mod tests_atan {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -460,13 +460,13 @@ mod tests_atan2 {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -537,13 +537,13 @@ mod tests_sec {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -605,13 +605,13 @@ mod tests_csc {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -672,13 +672,13 @@ mod tests_cot {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -740,13 +740,13 @@ mod tests_acot {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -797,13 +797,13 @@ mod tests_sinh {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -853,13 +853,13 @@ mod tests_cosh {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -908,13 +908,13 @@ mod tests_tanh {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -963,13 +963,13 @@ mod tests_asinh {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -1021,13 +1021,13 @@ mod tests_acosh {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -1082,13 +1082,13 @@ mod tests_atanh {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -1143,13 +1143,13 @@ mod tests_sech {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -1204,13 +1204,13 @@ mod tests_csch {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -1262,13 +1262,13 @@ mod tests_coth {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -1316,13 +1316,13 @@ mod tests_radians {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -1371,13 +1371,13 @@ mod tests_degrees {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }
-    fn make_num_ast(n: f64) -> formualizer_core::parser::ASTNode {
-        formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
             None,
         )
     }
@@ -1421,7 +1421,7 @@ impl Function for PiFn {
 mod tests_pi {
     use super::*;
     use crate::test_workbook::TestWorkbook;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     #[test]
     fn test_pi_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(PiFn));

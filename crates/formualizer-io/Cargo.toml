@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-formualizer-core = { path = "../formualizer-core" }
+formualizer-parse = { path = "../formualizer-parse" }
 formualizer-common = { path = "../formualizer-common" }
 formualizer-eval = { path = "../formualizer-eval" }
 thiserror = "1.0"

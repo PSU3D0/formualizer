@@ -3,7 +3,7 @@ use crate::test_workbook::TestWorkbook;
 use crate::traits::{ArgumentHandle, DefaultFunctionContext, FunctionProvider};
 use chrono::NaiveDate;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 fn range_ref(sheet: &str, sr: u32, sc: u32, er: u32, ec: u32) -> ASTNode {
     let r = ReferenceType::Range {
@@ -75,7 +75,7 @@ fn countifs_hybrid_formula_and_base_text() {
     ab.finish().unwrap();
 
     // Set formula in row3 col2 producing text "BDM021"
-    let ast = formualizer_core::parser::Parser::from("=\"BDM021\"")
+    let ast = formualizer_parse::parser::Parser::from("=\"BDM021\"")
         .parse()
         .unwrap();
     engine

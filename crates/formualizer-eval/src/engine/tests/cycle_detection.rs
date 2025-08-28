@@ -1,6 +1,6 @@
 //! Tests for cycle detection using the Scheduler.
 use crate::engine::{DependencyGraph, Scheduler, VertexId};
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 /// Helper to create a cell reference AST node
 fn ref_ast(row: u32, col: u32) -> ASTNode {

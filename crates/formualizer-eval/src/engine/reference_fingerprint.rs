@@ -1,4 +1,4 @@
-use formualizer_core::parser::ReferenceType;
+use formualizer_parse::parser::ReferenceType;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 

@@ -8,7 +8,7 @@ use super::string_interner::{StringId, StringInterner};
 use super::value_ref::ValueRef;
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType, TableReference};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, TableReference};
 
 /// Centralized data storage using arenas
 #[derive(Debug)]
@@ -438,7 +438,7 @@ impl DataStore {
                 // preserve structured specifiers that CompactRefType::Table doesn't encode.
                 let reference = match ref_type {
                     super::ast::CompactRefType::Table(_) => {
-                        formualizer_core::parser::ReferenceType::from_string(&original)
+                        formualizer_parse::parser::ReferenceType::from_string(&original)
                             .unwrap_or_else(|_| {
                                 // Fallback to name-only reconstruction if parse fails
                                 self.reconstruct_reference_type(ref_type, sheet_registry)

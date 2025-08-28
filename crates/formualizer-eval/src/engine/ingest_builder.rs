@@ -4,7 +4,7 @@ use crate::engine::packed_coord::PackedCoord;
 use crate::engine::EvalConfig;
 use crate::{SheetId, engine::vertex::VertexId};
 use formualizer_common::{ExcelError, LiteralValue};
-use formualizer_core::parser::{ASTNode, CollectPolicy};
+use formualizer_parse::parser::{ASTNode, CollectPolicy};
 use rustc_hash::FxHashMap;
 
 /// Summary of bulk ingest

@@ -1,6 +1,6 @@
 use crate::engine::pass_planner::{PassPlanner, PassWarmupPlan};
 use crate::engine::tuning::WarmupConfig;
-use formualizer_core::{ASTNode, ASTNodeType, LiteralValue};
+use formualizer_parse::{ASTNode, ASTNodeType, LiteralValue};
 
 #[cfg(test)]
 mod tests {

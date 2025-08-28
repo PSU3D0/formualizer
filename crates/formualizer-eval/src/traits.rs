@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType, TableSpecifier};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, TableSpecifier};
 
 /* ───────────────────────────── Range ───────────────────────────── */
 
@@ -414,7 +414,7 @@ pub trait NamedRangeResolver: Send + Sync {
 pub trait TableResolver: Send + Sync {
     fn resolve_table_reference(
         &self,
-        tref: &formualizer_core::parser::TableReference,
+        tref: &formualizer_parse::parser::TableReference,
     ) -> Result<Box<dyn Table>, ExcelError>;
 }
 pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + TableResolver {
@@ -466,7 +466,7 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                         }
                     }
                     Some(TableSpecifier::SpecialItem(
-                        formualizer_core::parser::SpecialItem::Headers,
+                        formualizer_parse::parser::SpecialItem::Headers,
                     )) => {
                         if let Some(h) = t.headers_row() {
                             Ok(h)
@@ -475,7 +475,7 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                         }
                     }
                     Some(TableSpecifier::SpecialItem(
-                        formualizer_core::parser::SpecialItem::Totals,
+                        formualizer_parse::parser::SpecialItem::Totals,
                     )) => {
                         if let Some(tr) = t.totals_row() {
                             Ok(tr)
@@ -484,7 +484,7 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                         }
                     }
                     Some(TableSpecifier::SpecialItem(
-                        formualizer_core::parser::SpecialItem::Data,
+                        formualizer_parse::parser::SpecialItem::Data,
                     )) => {
                         if let Some(body) = t.data_body() {
                             Ok(body)
@@ -493,7 +493,7 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                         }
                     }
                     Some(TableSpecifier::SpecialItem(
-                        formualizer_core::parser::SpecialItem::All,
+                        formualizer_parse::parser::SpecialItem::All,
                     )) => {
                         // Equivalent to TableSpecifier::All handling
                         let mut out: Vec<Vec<LiteralValue>> = Vec::new();
@@ -509,7 +509,7 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                         Ok(Box::new(InMemoryRange::new(out)))
                     }
                     Some(TableSpecifier::SpecialItem(
-                        formualizer_core::parser::SpecialItem::ThisRow,
+                        formualizer_parse::parser::SpecialItem::ThisRow,
                     )) => Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
                         "@ (This Row) requires table-aware context; not yet supported".to_string(),
                     )),

@@ -2,7 +2,7 @@ use crate::engine::graph::DependencyGraph;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::reference::{CellRef, Coord, RangeRef};
 use formualizer_common::{ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::parse;
+use formualizer_parse::parser::parse;
 
 /// Helper to create a literal number value
 fn lit_num(value: f64) -> LiteralValue {
@@ -515,7 +515,7 @@ fn test_named_formula_adjustment() {
             // For now we just verify it's still a formula
             assert!(matches!(
                 ast.node_type,
-                formualizer_core::parser::ASTNodeType::BinaryOp { .. }
+                formualizer_parse::parser::ASTNodeType::BinaryOp { .. }
             ));
         }
         _ => panic!("Expected Formula definition"),

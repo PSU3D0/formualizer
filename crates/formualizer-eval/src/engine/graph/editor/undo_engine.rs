@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_remove_vertex_dependency_roundtrip() {
-        use formualizer_core::parser::parse;
+        use formualizer_parse::parser::parse;
         let mut graph = DependencyGraph::new();
         let mut log = ChangeLog::new();
         let (a1_cell, a2_cell) = (

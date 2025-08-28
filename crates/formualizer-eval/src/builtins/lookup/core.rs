@@ -15,8 +15,8 @@ use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::ArgKind;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::ReferenceType;
 use formualizer_macros::func_caps;
+use formualizer_parse::parser::ReferenceType;
 
 fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32) -> Option<usize> {
     if mode == 0 || slice.is_empty() {
@@ -547,7 +547,7 @@ mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
     use std::sync::Arc;
     fn lit(v: LiteralValue) -> ASTNode {
         ASTNode::new(ASTNodeType::Literal(v), None)

@@ -14,7 +14,7 @@ use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::vertex::VertexId;
 use crate::engine::{ChangeEvent, ChangeLog};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::ASTNode;
+use formualizer_parse::parser::ASTNode;
 
 /// Orchestrates transactions across graph mutations, change logging, and rollback
 pub struct TransactionContext<'g> {
@@ -395,7 +395,7 @@ impl<'g> TransactionContext<'g> {
 mod tests {
     use super::*;
     use crate::{CellRef, reference::Coord};
-    use formualizer_core::parse;
+    use formualizer_parse::parse;
 
     fn create_test_graph() -> DependencyGraph {
         DependencyGraph::new()

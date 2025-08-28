@@ -137,7 +137,7 @@ fn test_change_logger_trait_object() {
 
 #[test]
 fn test_change_log_with_formula_events() {
-    use formualizer_core::parser::parse;
+    use formualizer_parse::parser::parse;
 
     let mut log = ChangeLog::new();
 
@@ -166,7 +166,7 @@ fn test_change_log_with_formula_events() {
 fn test_granular_change_events() {
     use crate::engine::packed_coord::PackedCoord;
     use crate::engine::vertex::VertexId;
-    use formualizer_core::parser::parse;
+    use formualizer_parse::parser::parse;
 
     let mut log = ChangeLog::new();
 
@@ -215,7 +215,7 @@ fn test_granular_change_events() {
 #[test]
 fn test_remove_vertex_event() {
     use crate::engine::vertex::VertexId;
-    use formualizer_core::parser::parse;
+    use formualizer_parse::parser::parse;
 
     let mut log = ChangeLog::new();
 

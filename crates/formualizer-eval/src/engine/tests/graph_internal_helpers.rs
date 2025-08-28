@@ -1,13 +1,13 @@
 use crate::engine::{packed_coord::PackedCoord, *};
 use formualizer_common::{ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::{ASTNode, ASTNodeType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
 // Helper to create a simple formula AST
 fn simple_formula(row: u32, col: u32) -> ASTNode {
     ASTNode {
         node_type: ASTNodeType::Reference {
             original: format!("A{}", row + 1),
-            reference: formualizer_core::parser::ReferenceType::Cell {
+            reference: formualizer_parse::parser::ReferenceType::Cell {
                 sheet: None,
                 row,
                 col,

@@ -10,8 +10,8 @@ use crate::reference::{CellRef, Coord};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, Resolver};
 use chrono::Timelike;
-use formualizer_core::parser::ReferenceType;
-use formualizer_core::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_parse::parser::ReferenceType;
+use formualizer_parse::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -639,7 +639,7 @@ where
         sheet: &str,
         row: u32,
         col: u32,
-    ) -> Option<(Option<formualizer_core::ASTNode>, Option<LiteralValue>)> {
+    ) -> Option<(Option<formualizer_parse::ASTNode>, Option<LiteralValue>)> {
         let v = self.get_cell_value(sheet, row, col);
         let sheet_id = self.graph.sheet_id(sheet)?;
         let coord = Coord::new(row, col, true, true);
@@ -1205,7 +1205,7 @@ where
         #[cfg(feature = "tracing")]
         let _span =
             tracing::info_span!("demand_subgraph", targets = target_vertices.len()).entered();
-        use formualizer_core::parser::ReferenceType;
+        use formualizer_parse::parser::ReferenceType;
         use rustc_hash::{FxHashMap, FxHashSet};
 
         let mut to_evaluate: FxHashSet<VertexId> = FxHashSet::default();
@@ -1608,7 +1608,7 @@ where
 
     /// Determine volatility using this engine's FunctionProvider, falling back to global registry.
     fn is_ast_volatile_with_provider(&self, ast: &ASTNode) -> bool {
-        use formualizer_core::parser::ASTNodeType;
+        use formualizer_parse::parser::ASTNodeType;
         match &ast.node_type {
             ASTNodeType::Function { name, args, .. } => {
                 if let Some(func) = self
@@ -1922,7 +1922,14 @@ struct MaskCache {
 
 impl MaskCache {
     fn new(snapshot: u64, cap: usize) -> Self {
-        Self { snapshot, cap, map: Default::default(), order: Default::default(), hits: 0, misses: 0 }
+        Self {
+            snapshot,
+            cap,
+            map: Default::default(),
+            order: Default::default(),
+            hits: 0,
+            misses: 0,
+        }
     }
     fn clear_and_set_snapshot(&mut self, snap: u64) {
         self.snapshot = snap;
@@ -1951,9 +1958,14 @@ impl MaskCache {
             CP::Le(n) => format!("LE:{n}"),
             CP::Eq(v) => format!("EQ:{}", Self::fmt_lit(v)),
             CP::Ne(v) => format!("NE:{}", Self::fmt_lit(v)),
-            CP::TextLike { pattern, case_insensitive } => {
+            CP::TextLike {
+                pattern,
+                case_insensitive,
+            } => {
                 let mut lp = pattern.replace('*', "%").replace('?', "_");
-                if *case_insensitive { lp = lp.to_ascii_lowercase(); }
+                if *case_insensitive {
+                    lp = lp.to_ascii_lowercase();
+                }
                 format!("LIKE:{}:{}", if *case_insensitive { 'i' } else { 's' }, lp)
             }
             CP::IsBlank | CP::IsNumber | CP::IsText | CP::IsLogical => return None,
@@ -1970,7 +1982,12 @@ impl MaskCache {
             LV::Boolean(b) => format!("B:{}", if *b { 1 } else { 0 }),
             LV::Empty => "E".to_string(),
             LV::Error(_) => "ERR".to_string(),
-            LV::Date(_) | LV::DateTime(_) | LV::Time(_) | LV::Duration(_) | LV::Array(_) | LV::Pending => "UNSUP".to_string(),
+            LV::Date(_)
+            | LV::DateTime(_)
+            | LV::Time(_)
+            | LV::Duration(_)
+            | LV::Array(_)
+            | LV::Pending => "UNSUP".to_string(),
         }
     }
 
@@ -2007,7 +2024,9 @@ impl MaskCache {
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
         use crate::compute_prelude::{boolean, cmp, concat_arrays};
         use arrow::compute::kernels::comparison::{ilike, nilike};
-        use arrow_array::{Array as _, ArrayRef, BooleanArray, Float64Array, StringArray, builder::BooleanBuilder};
+        use arrow_array::{
+            Array as _, ArrayRef, BooleanArray, Float64Array, StringArray, builder::BooleanBuilder,
+        };
 
         let (rows, _cols) = view.dims();
         // Build the criterion column arrays by concatenating slices for the single column
@@ -2022,8 +2041,10 @@ impl MaskCache {
         } else if num_parts.len() == 1 {
             Some(num_parts.remove(0))
         } else {
-            let anys: Vec<&dyn arrow_array::Array> =
-                num_parts.iter().map(|a| a.as_ref() as &dyn arrow_array::Array).collect();
+            let anys: Vec<&dyn arrow_array::Array> = num_parts
+                .iter()
+                .map(|a| a.as_ref() as &dyn arrow_array::Array)
+                .collect();
             let conc: ArrayRef = concat_arrays(&anys).ok()?;
             let fa = conc.as_any().downcast_ref::<Float64Array>()?.clone();
             Some(std::sync::Arc::new(fa))
@@ -2032,8 +2053,13 @@ impl MaskCache {
         // Lowered text column for this view/column
         let lowered_texts: Option<std::sync::Arc<StringArray>> = {
             let cols = view.lowered_text_columns();
-            if col_in_view >= cols.len() { None } else {
-                let sa = cols[col_in_view].as_any().downcast_ref::<StringArray>()?.clone();
+            if col_in_view >= cols.len() {
+                None
+            } else {
+                let sa = cols[col_in_view]
+                    .as_any()
+                    .downcast_ref::<StringArray>()?
+                    .clone();
                 Some(std::sync::Arc::new(sa))
             }
         };
@@ -2071,7 +2097,9 @@ impl MaskCache {
                     if t.is_empty() {
                         // Treat nulls as equal to empty string
                         let mut bb = BooleanBuilder::with_capacity(col.len());
-                        for i in 0..col.len() { bb.append_value(col.is_null(i)); }
+                        for i in 0..col.len() {
+                            bb.append_value(col.is_null(i));
+                        }
                         let nulls = bb.finish();
                         m = boolean::or_kleene(&m, &nulls).ok()?;
                     }
@@ -2095,9 +2123,16 @@ impl MaskCache {
                 }
                 _ => return None,
             },
-            crate::args::CriteriaPredicate::TextLike { pattern, case_insensitive } => {
+            crate::args::CriteriaPredicate::TextLike {
+                pattern,
+                case_insensitive,
+            } => {
                 let col = lowered_texts?;
-                let p = if *case_insensitive { pattern.to_ascii_lowercase() } else { pattern.clone() };
+                let p = if *case_insensitive {
+                    pattern.to_ascii_lowercase()
+                } else {
+                    pattern.clone()
+                };
                 let lp = p.replace('*', "%").replace('?', "_");
                 let pat = StringArray::new_scalar(lp);
                 ilike(col.as_ref(), &pat).ok()?
@@ -2282,7 +2317,6 @@ where
             Ok(LiteralValue::Int(0))
         }
     }
-
 }
 
 impl<R> crate::traits::RangeResolver for Engine<R>
@@ -2321,7 +2355,7 @@ where
 {
     fn resolve_table_reference(
         &self,
-        tref: &formualizer_core::parser::TableReference,
+        tref: &formualizer_parse::parser::TableReference,
     ) -> Result<Box<dyn crate::traits::Table>, ExcelError> {
         self.resolver.resolve_table_reference(tref)
     }

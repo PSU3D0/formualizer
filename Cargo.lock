@@ -764,15 +764,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "formualizer-core"
-version = "0.1.0"
-dependencies = [
- "formualizer-common",
- "once_cell",
- "smallvec",
-]
-
-[[package]]
 name = "formualizer-eval"
 version = "0.1.0"
 dependencies = [
@@ -787,8 +778,8 @@ dependencies = [
  "chrono",
  "dashmap",
  "formualizer-common",
- "formualizer-core",
  "formualizer-macros",
+ "formualizer-parse",
  "once_cell",
  "rand",
  "rayon",
@@ -806,8 +797,8 @@ dependencies = [
  "calamine",
  "chrono",
  "formualizer-common",
- "formualizer-core",
  "formualizer-eval",
+ "formualizer-parse",
  "memmap2",
  "once_cell",
  "parking_lot",
@@ -836,14 +827,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "formualizer-parse"
+version = "0.1.0"
+dependencies = [
+ "formualizer-common",
+ "once_cell",
+ "smallvec",
+]
+
+[[package]]
 name = "formualizer-python"
 version = "0.1.2"
 dependencies = [
  "chrono",
  "formualizer-common",
- "formualizer-core",
  "formualizer-eval",
  "formualizer-io",
+ "formualizer-parse",
  "pyo3",
  "pyo3-stub-gen",
  "pyo3-stub-gen-derive",
@@ -856,7 +856,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "formualizer-common",
- "formualizer-core",
+ "formualizer-parse",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",

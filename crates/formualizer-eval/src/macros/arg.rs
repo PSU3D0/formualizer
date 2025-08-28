@@ -2,7 +2,7 @@
 macro_rules! arg {
     // ----- boolean -----
     ($h:expr => bool) => {{
-        use formualizer_core::types::LiteralValue as V;
+        use formualizer_parse::types::LiteralValue as V;
         let v = $h.value()?;
         match v.as_ref() {
             V::Boolean(b) => Ok(*b),
@@ -17,7 +17,7 @@ macro_rules! arg {
     }};
     // ----- number -----
     ($h:expr => f64) => {{
-        use formualizer_core::types::LiteralValue as V;
+        use formualizer_parse::types::LiteralValue as V;
         let v = $h.value()?;
         match v.as_ref() {
             V::Number(n) => Ok(*n),

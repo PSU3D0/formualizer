@@ -3,7 +3,7 @@
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{Parser, parse};
+use formualizer_parse::parser::{Parser, parse};
 use std::time::Instant;
 
 #[test]

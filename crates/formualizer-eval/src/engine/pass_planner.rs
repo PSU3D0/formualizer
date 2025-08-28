@@ -2,8 +2,8 @@
 
 use crate::engine::cache::CriteriaKey;
 use crate::engine::tuning::WarmupConfig;
-use formualizer_core::ASTNode;
-use formualizer_core::parser::ReferenceType;
+use formualizer_parse::ASTNode;
+use formualizer_parse::parser::ReferenceType;
 
 /// Plan for what to warm up before evaluation (flats removed)
 #[derive(Debug, Clone, Default)]

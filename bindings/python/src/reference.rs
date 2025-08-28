@@ -1,4 +1,4 @@
-use formualizer_core::parser::ReferenceType;
+use formualizer_parse::parser::ReferenceType;
 use pyo3::{prelude::*, types::PyType};
 use pyo3_stub_gen::derive::*;
 use pyo3_stub_gen::PyStubType;

@@ -2,7 +2,7 @@ use crate::reference::CellRef;
 use crate::traits::{FunctionContext, VolatileLevel};
 use crate::window_ctx::{PaddingPolicy, WindowAxis, WindowSpec};
 use formualizer_common::{ExcelError, LiteralValue};
-use formualizer_core::parser::ReferenceType;
+use formualizer_parse::parser::ReferenceType;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

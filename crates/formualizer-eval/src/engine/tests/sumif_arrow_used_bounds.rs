@@ -1,7 +1,7 @@
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::Parser;
+use formualizer_parse::parser::Parser;
 
 // Repro: Arrow used-bounds cover only top rows; graph values exist below.
 // With the used-bounds fix, SUMIF over whole columns should include edited rows.

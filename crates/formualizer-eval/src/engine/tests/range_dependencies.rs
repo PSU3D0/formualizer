@@ -1,7 +1,7 @@
 //! Tests for the hybrid model of range dependency management.
 use crate::engine::{DependencyGraph, EvalConfig, StripeKey, StripeType, VertexId, block_index};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 /// Helper to create a range reference AST node
 fn range_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTNode {

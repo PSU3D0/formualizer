@@ -6,7 +6,7 @@ use crate::engine::packed_coord::PackedCoord;
 use crate::engine::{ChangeEvent, ChangeLogger, VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::ASTNode;
+use formualizer_parse::parser::ASTNode;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Metadata for creating a new vertex
@@ -1728,8 +1728,8 @@ mod tests {
             coord: Coord::new(1, 1, true, true),
         };
 
-        use formualizer_core::parser::ASTNodeType;
-        let formula = formualizer_core::parser::ASTNode {
+        use formualizer_parse::parser::ASTNodeType;
+        let formula = formualizer_parse::parser::ASTNode {
             node_type: ASTNodeType::Literal(LiteralValue::Number(100.0)),
             source_token: None,
             contains_volatile: false,

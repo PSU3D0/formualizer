@@ -24,7 +24,7 @@ use core::fmt;
 
 use crate::engine::sheet_registry::SheetRegistry; // `no_std`‑friendly; swap for `std::fmt` if you prefer
 use formualizer_common::{ExcelError, ExcelErrorKind};
-use formualizer_core::parser::ReferenceType;
+use formualizer_parse::parser::ReferenceType;
 
 //------------------------------------------------------------------------------
 // Coord

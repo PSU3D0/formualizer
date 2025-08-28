@@ -11,7 +11,7 @@ use crate::engine::packed_coord::PackedCoord;
 use crate::engine::vertex::VertexId;
 use crate::reference::CellRef;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::ASTNode;
+use formualizer_parse::parser::ASTNode;
 
 /// Represents a single change to the dependency graph
 #[derive(Debug, Clone, PartialEq)]

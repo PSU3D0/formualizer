@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
 pub fn make_num_ast(n: f64) -> ASTNode {
     ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(n)), None)

@@ -4,7 +4,7 @@ use crate::function::Function;
 use crate::interpreter::Interpreter;
 use crate::test_utils::test_workbook::TestWorkbook;
 use crate::traits::ArgumentHandle;
-use formualizer_core::parser::ASTNode;
+use formualizer_parse::parser::ASTNode;
 use std::sync::Arc;
 
 pub fn interp(wb: &TestWorkbook) -> Interpreter<'_> {

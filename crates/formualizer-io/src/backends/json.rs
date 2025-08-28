@@ -541,7 +541,7 @@ where
                     } else {
                         format!("={}", f)
                     };
-                    let parsed = formualizer_core::parser::parse(&with_eq)
+                    let parsed = formualizer_parse::parser::parse(&with_eq)
                         .map_err(|e| IoError::from_backend("json", e))?;
                     builder.add_formulas(sid, std::iter::once((c.row, c.col, parsed)));
                 }

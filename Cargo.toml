@@ -3,7 +3,7 @@ resolver = "2"
 
 members = [
   "crates/formualizer-common",
-  "crates/formualizer-core",
+  "crates/formualizer-parse",
   "crates/formualizer-eval",
   "crates/formualizer-macros",
   "crates/formualizer-io",

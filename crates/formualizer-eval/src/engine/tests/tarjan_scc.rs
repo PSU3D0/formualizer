@@ -1,7 +1,7 @@
 use super::common::get_vertex_ids_in_order;
 use crate::engine::{DependencyGraph, Scheduler, VertexId};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 /// Helper to create a cell reference AST node
 fn create_cell_ref_ast(sheet: Option<&str>, row: u32, col: u32, original: &str) -> ASTNode {

@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
-use formualizer_core::parser::ASTNodeType as CoreASTNodeType;
-use formualizer_core::tokenizer::{TokenSubType as CoreTokenSubType, TokenType as CoreTokenType};
+use formualizer_parse::parser::ASTNodeType as CoreASTNodeType;
+use formualizer_parse::tokenizer::{TokenSubType as CoreTokenSubType, TokenType as CoreTokenType};
 use pyo3::prelude::*;
 use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
 

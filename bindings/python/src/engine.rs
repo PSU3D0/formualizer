@@ -357,7 +357,7 @@ fn load_workbook_into_engine(
     }
 
     // Batch parser with volatility classifier so ASTs carry contains_volatile
-    let mut parser = formualizer_core::parser::BatchParser::builder()
+    let mut parser = formualizer_parse::parser::BatchParser::builder()
         .with_volatility_classifier(|name: &str| {
             formualizer_eval::function_registry::get("", name)
                 .map(|f| {
@@ -373,7 +373,7 @@ fn load_workbook_into_engine(
         let sid = *sheet_ids.get(sheet_name).expect("sheet id present");
         // Values and formulas
         let mut staged_values: Vec<(u32, u32, formualizer_common::LiteralValue)> = Vec::new();
-        let mut staged_asts: Vec<(u32, u32, formualizer_core::ASTNode)> = Vec::new();
+        let mut staged_asts: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
         for ((row, col), cell_data) in &sheet_data.cells {
             if let Some(ref value) = cell_data.value {
                 staged_values.push((*row, *col, value.clone()));
@@ -544,7 +544,7 @@ impl PyEngine {
         })?;
         // Use single-shot parse with volatility classification
         let ast =
-            formualizer_core::parser::parse_with_volatility_classifier(formula, |name: &str| {
+            formualizer_parse::parser::parse_with_volatility_classifier(formula, |name: &str| {
                 formualizer_eval::function_registry::get("", name)
                     .map(|f| {
                         f.caps()
@@ -582,7 +582,7 @@ impl PyEngine {
         let value = PyLiteralValue {
             inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
         };
-        let formula = ast.map(|a| formualizer_core::pretty::canonical_formula(&a));
+        let formula = ast.map(|a| formualizer_parse::pretty::canonical_formula(&a));
         Ok(PyCell { value, formula })
     }
 
@@ -700,7 +700,7 @@ impl PyEngine {
         let value = PyLiteralValue {
             inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
         };
-        let formula = ast.map(|a| formualizer_core::pretty::canonical_formula(&a));
+        let formula = ast.map(|a| formualizer_parse::pretty::canonical_formula(&a));
 
         Ok(PyCell { value, formula })
     }
@@ -718,7 +718,7 @@ impl PyEngine {
         })?;
 
         let (ast, _) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
-        Ok(ast.map(|a| formualizer_core::pretty::canonical_formula(&a)))
+        Ok(ast.map(|a| formualizer_parse::pretty::canonical_formula(&a)))
     }
 
     /// Get only the value for a cell (without evaluation, returns last computed value)
@@ -761,7 +761,7 @@ impl PyEngine {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
         })?;
         let (ast, _) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
-        let formula = ast.map(|a| formualizer_core::pretty::canonical_formula(&a));
+        let formula = ast.map(|a| formualizer_parse::pretty::canonical_formula(&a));
 
         Ok(PyCell { value, formula })
     }

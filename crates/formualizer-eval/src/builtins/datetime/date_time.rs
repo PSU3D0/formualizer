@@ -149,7 +149,7 @@ pub fn register_builtins() {
 mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
-    use formualizer_core::parser::{ASTNode, ASTNodeType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
     use std::sync::Arc;
 
     fn lit(v: LiteralValue) -> ASTNode {
@@ -219,7 +219,7 @@ mod tests {
     fn test_date_system_1900_vs_1904() {
         use crate::engine::{Engine, EvalConfig};
         use crate::interpreter::Interpreter;
-        use formualizer_core::parser::ASTNode;
+        use formualizer_parse::parser::ASTNode;
         use std::sync::Arc as SyncArc;
 
         // Engine with default 1900 system

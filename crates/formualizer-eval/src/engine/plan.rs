@@ -2,7 +2,7 @@ use crate::SheetId;
 use crate::engine::packed_coord::PackedCoord;
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::ExcelError;
-use formualizer_core::parser::{CollectPolicy, ReferenceType};
+use formualizer_parse::parser::{CollectPolicy, ReferenceType};
 use rustc_hash::FxHashMap;
 
 /// Compact range descriptor used during planning (engine-only)
@@ -56,7 +56,7 @@ pub fn build_dependency_plan<'a, I>(
     volatile_flags: Option<&[bool]>,
 ) -> Result<DependencyPlan, ExcelError>
 where
-    I: Iterator<Item = (&'a str, u32, u32, &'a formualizer_core::parser::ASTNode)>,
+    I: Iterator<Item = (&'a str, u32, u32, &'a formualizer_parse::parser::ASTNode)>,
 {
     let mut plan = DependencyPlan::default();
 

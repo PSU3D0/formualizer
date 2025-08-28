@@ -1,7 +1,7 @@
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::Parser;
+use formualizer_parse::parser::Parser;
 
 #[test]
 fn mask_cache_invalidates_on_edit_snapshot() {
@@ -15,22 +15,41 @@ fn mask_cache_invalidates_on_edit_snapshot() {
     {
         let mut ab = engine.begin_bulk_ingest_arrow();
         ab.add_sheet("Sheet1", 3, 128);
-        for _ in 0..200 { ab.append_row("Sheet1", &[LiteralValue::Empty, LiteralValue::Empty, LiteralValue::Empty]).unwrap(); }
+        for _ in 0..200 {
+            ab.append_row(
+                "Sheet1",
+                &[
+                    LiteralValue::Empty,
+                    LiteralValue::Empty,
+                    LiteralValue::Empty,
+                ],
+            )
+            .unwrap();
+        }
         ab.finish().unwrap();
     }
     // Data: A numeric, B text
     for r in 1..=200 {
-        engine.set_cell_value("Sheet1", r, 1, LiteralValue::Number(r as f64)).unwrap();
-        engine.set_cell_value("Sheet1", r, 2, LiteralValue::Text("foo".into())).unwrap();
+        engine
+            .set_cell_value("Sheet1", r, 1, LiteralValue::Number(r as f64))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", r, 2, LiteralValue::Text("foo".into()))
+            .unwrap();
     }
     // SUMIFS over bounded window to ensure Arrow fastpath dims alignment
-    let f = Parser::from("=SUMIFS(A1:A200,A1:A200,\">150\",B1:B200,\"foo\")").parse().unwrap();
+    let f = Parser::from("=SUMIFS(A1:A200,A1:A200,\">150\",B1:B200,\"foo\")")
+        .parse()
+        .unwrap();
     engine.set_cell_formula("Sheet1", 1, 4, f).unwrap();
 
     engine.evaluate_cell("Sheet1", 1, 4).unwrap();
     let v_before = engine.get_cell_value("Sheet1", 1, 4).unwrap();
     let (h1, m1, _l1) = engine.__mask_cache_stats();
-    assert!(m1 > 0 && h1 == 0, "expected misses on first eval; got hits={h1} misses={m1}");
+    assert!(
+        m1 > 0 && h1 == 0,
+        "expected misses on first eval; got hits={h1} misses={m1}"
+    );
 
     // Re-eval: hits should increase
     engine.evaluate_cell("Sheet1", 1, 4).unwrap();
@@ -40,7 +59,9 @@ fn mask_cache_invalidates_on_edit_snapshot() {
 
     // Now edit a relevant cell to change the result; this bumps snapshot
     // Change B160 from "foo" to "bar" (should reduce count by 1)
-    engine.set_cell_value("Sheet1", 160, 2, LiteralValue::Text("bar".into())).unwrap();
+    engine
+        .set_cell_value("Sheet1", 160, 2, LiteralValue::Text("bar".into()))
+        .unwrap();
 
     // After edit, snapshot changed; cache will be lazily cleared on next build
 
@@ -69,15 +90,35 @@ fn mask_cache_survives_overlay_compaction() {
     {
         let mut ab = engine.begin_bulk_ingest_arrow();
         ab.add_sheet("Sheet1", 3, 128);
-        for _ in 0..512 { ab.append_row("Sheet1", &[LiteralValue::Empty, LiteralValue::Empty, LiteralValue::Empty]).unwrap(); }
+        for _ in 0..512 {
+            ab.append_row(
+                "Sheet1",
+                &[
+                    LiteralValue::Empty,
+                    LiteralValue::Empty,
+                    LiteralValue::Empty,
+                ],
+            )
+            .unwrap();
+        }
         ab.finish().unwrap();
     }
     // Fill a column and induce compaction by many edits in a chunk
-    for r in 1..=512 { engine.set_cell_value("Sheet1", r, 1, LiteralValue::Number(0.0)).unwrap(); }
-    for r in 1..=64 { engine.set_cell_value("Sheet1", r, 2, LiteralValue::Text("x".into())).unwrap(); }
+    for r in 1..=512 {
+        engine
+            .set_cell_value("Sheet1", r, 1, LiteralValue::Number(0.0))
+            .unwrap();
+    }
+    for r in 1..=64 {
+        engine
+            .set_cell_value("Sheet1", r, 2, LiteralValue::Text("x".into()))
+            .unwrap();
+    }
 
     // SUMIFS sum A1:A512 where A1:A512==0 and B1:B512=="x"
-    let f = Parser::from("=SUMIFS(A1:A512,A1:A512,\"=0\",B1:B512,\"x\")").parse().unwrap();
+    let f = Parser::from("=SUMIFS(A1:A512,A1:A512,\"=0\",B1:B512,\"x\")")
+        .parse()
+        .unwrap();
     engine.set_cell_formula("Sheet1", 1, 5, f).unwrap();
 
     engine.evaluate_cell("Sheet1", 1, 5).unwrap();
@@ -85,7 +126,11 @@ fn mask_cache_survives_overlay_compaction() {
     assert!(l1 > 0, "mask cache should have entries after first eval");
 
     // Force more edits in B to cross compaction thresholds
-    for r in 65..=128 { engine.set_cell_value("Sheet1", r, 2, LiteralValue::Text("x".into())).unwrap(); }
+    for r in 65..=128 {
+        engine
+            .set_cell_value("Sheet1", r, 2, LiteralValue::Text("x".into()))
+            .unwrap();
+    }
     // Note: compaction happens internally; snapshot bumped by edits; cache will be cleared lazily on next build
 
     // Re-evaluate; result should reflect increased matches (sum remains 0 but mask count increases), and cache should populate again

@@ -1,5 +1,5 @@
 use crate::token::Token;
-use formualizer_core::Tokenizer as CoreTokenizer;
+use formualizer_parse::Tokenizer as CoreTokenizer;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]

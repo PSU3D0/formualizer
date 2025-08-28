@@ -1,5 +1,5 @@
 use crate::reference::{CellRef, Coord};
-use formualizer_core::parser::{ASTNode, ASTNodeType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
 /// Centralized reference adjustment logic for structural changes
 pub struct ReferenceAdjuster;
@@ -181,10 +181,10 @@ impl ReferenceAdjuster {
     /// Adjust a reference type (cell or range) for a shift operation
     fn adjust_reference(
         &self,
-        reference: &formualizer_core::parser::ReferenceType,
+        reference: &formualizer_parse::parser::ReferenceType,
         op: &ShiftOperation,
-    ) -> formualizer_core::parser::ReferenceType {
-        use formualizer_core::parser::ReferenceType;
+    ) -> formualizer_parse::parser::ReferenceType {
+        use formualizer_parse::parser::ReferenceType;
 
         match reference {
             ReferenceType::Cell { sheet, row, col } => {
@@ -448,9 +448,9 @@ impl RelativeReferenceAdjuster {
 
     fn adjust_reference(
         &self,
-        reference: &formualizer_core::parser::ReferenceType,
-    ) -> formualizer_core::parser::ReferenceType {
-        use formualizer_core::parser::ReferenceType;
+        reference: &formualizer_parse::parser::ReferenceType,
+    ) -> formualizer_parse::parser::ReferenceType {
+        use formualizer_parse::parser::ReferenceType;
 
         match reference {
             ReferenceType::Cell { sheet, row, col } => {
@@ -494,10 +494,10 @@ impl RelativeReferenceAdjuster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use formualizer_core::parser::parse;
+    use formualizer_parse::parser::parse;
 
     fn format_formula(ast: &ASTNode) -> String {
-        // TODO: Use the actual formualizer_core::parser::to_string when available
+        // TODO: Use the actual formualizer_parse::parser::to_string when available
         // For now, a simple representation
         format!("{ast:?}")
     }
@@ -527,7 +527,7 @@ mod tests {
                 ..
             } = &left.node_type
             {
-                if let formualizer_core::parser::ReferenceType::Cell { row, col, .. } = left_ref {
+                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = left_ref {
                     assert_eq!(*row, 5); // A5 unchanged
                     assert_eq!(*col, 1);
                 }
@@ -537,7 +537,7 @@ mod tests {
                 ..
             } = &right.node_type
             {
-                if let formualizer_core::parser::ReferenceType::Cell { row, col, .. } = right_ref {
+                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = right_ref {
                     assert_eq!(*row, 12); // B10 -> B12
                     assert_eq!(*col, 2);
                 }
@@ -570,7 +570,7 @@ mod tests {
             } = &left.node_type
             {
                 // C1 should become #REF! (marked with special sheet name)
-                if let formualizer_core::parser::ReferenceType::Cell { sheet, row, col } = left_ref
+                if let formualizer_parse::parser::ReferenceType::Cell { sheet, row, col } = left_ref
                 {
                     assert_eq!(sheet.as_deref(), Some("#REF"));
                     assert_eq!(*row, 0);
@@ -582,7 +582,7 @@ mod tests {
                 ..
             } = &right.node_type
             {
-                if let formualizer_core::parser::ReferenceType::Cell { row, col, .. } = right_ref {
+                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = right_ref {
                     assert_eq!(*row, 1); // Row unchanged
                     assert_eq!(*col, 4); // F1 (col 6) -> D1 (col 4)
                 }
@@ -611,7 +611,7 @@ mod tests {
         if let ASTNodeType::Function { args, .. } = &adjusted.node_type {
             if let Some(first_arg) = args.first() {
                 if let ASTNodeType::Reference { reference, .. } = &first_arg.node_type {
-                    if let formualizer_core::parser::ReferenceType::Range {
+                    if let formualizer_parse::parser::ReferenceType::Range {
                         start_row,
                         end_row,
                         ..
@@ -640,7 +640,7 @@ mod tests {
                 ..
             } = &left.node_type
             {
-                if let formualizer_core::parser::ReferenceType::Cell { row, col, .. } = left_ref {
+                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = left_ref {
                     assert_eq!(*row, 3); // A1 (1,1) -> D3 (3,4)
                     assert_eq!(*col, 4);
                 }
@@ -650,7 +650,7 @@ mod tests {
                 ..
             } = &right.node_type
             {
-                if let formualizer_core::parser::ReferenceType::Cell { row, col, .. } = right_ref {
+                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = right_ref {
                     assert_eq!(*row, 4); // B2 (2,2) -> E4 (4,5)
                     assert_eq!(*col, 5);
                 }
@@ -858,7 +858,7 @@ mod tests {
         if let ASTNodeType::Function { args, .. } = &adjusted.node_type {
             if let Some(first_arg) = args.first() {
                 if let ASTNodeType::Reference { reference, .. } = &first_arg.node_type {
-                    if let formualizer_core::parser::ReferenceType::Range {
+                    if let formualizer_parse::parser::ReferenceType::Range {
                         start_row,
                         end_row,
                         start_col,
@@ -897,7 +897,7 @@ mod tests {
         if let ASTNodeType::Function { args, .. } = &adjusted.node_type {
             if let Some(first_arg) = args.first() {
                 if let ASTNodeType::Reference { reference, .. } = &first_arg.node_type {
-                    if let formualizer_core::parser::ReferenceType::Range {
+                    if let formualizer_parse::parser::ReferenceType::Range {
                         start_row,
                         end_row,
                         ..

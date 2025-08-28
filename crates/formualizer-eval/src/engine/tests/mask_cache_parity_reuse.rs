@@ -1,7 +1,7 @@
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::Parser;
+use formualizer_parse::parser::Parser;
 
 #[test]
 fn mask_cache_parity_and_reuse_hits() {
@@ -15,19 +15,35 @@ fn mask_cache_parity_and_reuse_hits() {
     {
         let mut ab = engine.begin_bulk_ingest_arrow();
         ab.add_sheet("Sheet1", 3, 128);
-        for _ in 0..600 { ab.append_row("Sheet1", &[LiteralValue::Empty, LiteralValue::Empty, LiteralValue::Empty]).unwrap(); }
+        for _ in 0..600 {
+            ab.append_row(
+                "Sheet1",
+                &[
+                    LiteralValue::Empty,
+                    LiteralValue::Empty,
+                    LiteralValue::Empty,
+                ],
+            )
+            .unwrap();
+        }
         ab.finish().unwrap();
     }
     // Now overlay values via edits (exercises overlay + mask paths)
     for r in 1..=600 {
         let n = if r % 10 == 0 { 100.0 } else { (r % 20) as f64 };
-        engine.set_cell_value("Sheet1", r, 1, LiteralValue::Number(n)).unwrap();
+        engine
+            .set_cell_value("Sheet1", r, 1, LiteralValue::Number(n))
+            .unwrap();
         let txt = if r % 7 == 0 { "example" } else { "other" };
-        engine.set_cell_value("Sheet1", r, 2, LiteralValue::Text(txt.into())).unwrap();
+        engine
+            .set_cell_value("Sheet1", r, 2, LiteralValue::Text(txt.into()))
+            .unwrap();
     }
 
     // SUMIFS over full columns: sum A:A where A:A >= 10 and B:B LIKE "*exam*"
-    let f = Parser::from("=SUMIFS(A:A,A:A,\">=10\",B:B,\"*exam*\")").parse().unwrap();
+    let f = Parser::from("=SUMIFS(A:A,A:A,\">=10\",B:B,\"*exam*\")")
+        .parse()
+        .unwrap();
     engine.set_cell_formula("Sheet1", 1, 3, f).unwrap();
 
     // First evaluation: expect non-zero misses, zero hits

@@ -6,7 +6,7 @@
 use crate::CellRef;
 use crate::engine::{DependencyGraph, EvalConfig, VertexId};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 // use rustc_hash::FxHashSet; // Not needed for these tests
 
 /// Helper to create a range reference AST node

@@ -1066,7 +1066,7 @@ mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
     use std::sync::Arc;
     fn lit(v: LiteralValue) -> ASTNode {
         ASTNode::new(ASTNodeType::Literal(v), None)
@@ -1671,7 +1671,7 @@ mod tests {
             .with_cell_a1("Sheet1", "B1", LiteralValue::Int(10))
             .with_cell_a1("Sheet1", "B2", LiteralValue::Int(20));
         let ctx = wb.interpreter();
-        use formualizer_core::parser::{ASTNodeType, ReferenceType};
+        use formualizer_parse::parser::{ASTNodeType, ReferenceType};
         let range = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:B2".into(),
@@ -1709,7 +1709,7 @@ mod tests {
             .with_cell_a1("Sheet1", "B2", LiteralValue::Int(20))
             .with_cell_a1("Sheet1", "B3", LiteralValue::Int(30));
         let ctx = wb.interpreter();
-        use formualizer_core::parser::{ASTNodeType, ReferenceType};
+        use formualizer_parse::parser::{ASTNodeType, ReferenceType};
         let range = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:B3".into(),
@@ -1778,7 +1778,7 @@ mod tests {
             .with_cell_a1("Sheet1", "B2", LiteralValue::Int(20))
             .with_cell_a1("Sheet1", "B3", LiteralValue::Int(30));
         let ctx = wb.interpreter();
-        use formualizer_core::parser::{ASTNodeType, ReferenceType};
+        use formualizer_parse::parser::{ASTNodeType, ReferenceType};
         let range = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:B3".into(),

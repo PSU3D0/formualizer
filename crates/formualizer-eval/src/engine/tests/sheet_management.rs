@@ -2,7 +2,7 @@
 mod tests {
     use crate::engine::DependencyGraph;
     use formualizer_common::LiteralValue;
-    use formualizer_core::parse;
+    use formualizer_parse::parse;
 
     #[test]
     fn test_add_sheet() {

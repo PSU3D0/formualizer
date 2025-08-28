@@ -1,7 +1,7 @@
 use super::common::get_vertex_ids_in_order;
 use crate::engine::{DependencyGraph, VertexKind};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 #[test]
 fn test_mark_dirty_propagation() {

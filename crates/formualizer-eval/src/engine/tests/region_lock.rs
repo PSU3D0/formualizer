@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod region_lock_tests {
-    use formualizer_core::{ExcelErrorKind, LiteralValue};
+    use formualizer_parse::{ExcelErrorKind, LiteralValue};
 
     use crate::engine::eval::ShimSpillManager;
     use crate::engine::spill::{Region, RegionLockManager, SpillMeta, SpillShape};
@@ -44,7 +44,7 @@ mod region_lock_tests {
                 "Sheet1",
                 1,
                 1,
-                formualizer_core::parser::Parser::from("={1,2}")
+                formualizer_parse::parser::Parser::from("={1,2}")
                     .parse()
                     .unwrap(),
             )

@@ -319,7 +319,7 @@ pub trait Function: Send + Sync + 'static {
         &self,
         _args: &'a [ArgumentHandle<'a, 'b>],
         _ctx: &dyn crate::traits::FunctionContext,
-    ) -> Option<Result<formualizer_core::parser::ReferenceType, ExcelError>> {
+    ) -> Option<Result<formualizer_parse::parser::ReferenceType, ExcelError>> {
         None
     }
 

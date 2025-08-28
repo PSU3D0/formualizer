@@ -436,42 +436,90 @@ impl Function for SumIfsFn {
                             let col_text: Option<&StringArray> =
                                 crit_text_cols[j].as_ref().map(|cols| cols[c].as_ref());
                             // Try cached mask if criterion range is Arrow-backed
-                            let cur_cached: Option<BooleanArray> = if let Some(ref view) = crit_views[j] {
-                                if let Some(av) = view.as_arrow() {
-                                    if let Some(m) = ctx.get_criteria_mask(av, c, pred) {
-                                        Some((*m).clone())
-                                    } else { None }
-                                } else { None }
-                            } else { None };
+                            let cur_cached: Option<BooleanArray> =
+                                if let Some(ref view) = crit_views[j] {
+                                    if let Some(av) = view.as_arrow() {
+                                        if let Some(m) = ctx.get_criteria_mask(av, c, pred) {
+                                            Some((*m).clone())
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
 
-                            let cur = if let Some(cm) = cur_cached { Some(cm) } else { match pred {
-                                crate::args::CriteriaPredicate::Gt(n) => Some(
-                                    cmp::gt(col_arr.unwrap(), &Float64Array::new_scalar(*n))
-                                        .unwrap(),
-                                ),
-                                crate::args::CriteriaPredicate::Ge(n) => Some(
-                                    cmp::gt_eq(col_arr.unwrap(), &Float64Array::new_scalar(*n))
-                                        .unwrap(),
-                                ),
-                                crate::args::CriteriaPredicate::Lt(n) => Some(
-                                    cmp::lt(col_arr.unwrap(), &Float64Array::new_scalar(*n))
-                                        .unwrap(),
-                                ),
-                                crate::args::CriteriaPredicate::Le(n) => Some(
-                                    cmp::lt_eq(col_arr.unwrap(), &Float64Array::new_scalar(*n))
-                                        .unwrap(),
-                                ),
-                                crate::args::CriteriaPredicate::Eq(v) => {
-                                    match v {
+                            let cur = if let Some(cm) = cur_cached {
+                                Some(cm)
+                            } else {
+                                match pred {
+                                    crate::args::CriteriaPredicate::Gt(n) => Some(
+                                        cmp::gt(col_arr.unwrap(), &Float64Array::new_scalar(*n))
+                                            .unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Ge(n) => Some(
+                                        cmp::gt_eq(col_arr.unwrap(), &Float64Array::new_scalar(*n))
+                                            .unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Lt(n) => Some(
+                                        cmp::lt(col_arr.unwrap(), &Float64Array::new_scalar(*n))
+                                            .unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Le(n) => Some(
+                                        cmp::lt_eq(col_arr.unwrap(), &Float64Array::new_scalar(*n))
+                                            .unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Eq(v) => {
+                                        match v {
+                                            LiteralValue::Number(x) => Some(
+                                                cmp::eq(
+                                                    col_arr.unwrap(),
+                                                    &Float64Array::new_scalar(*x),
+                                                )
+                                                .unwrap(),
+                                            ),
+                                            LiteralValue::Int(i) => Some(
+                                                cmp::eq(
+                                                    col_arr.unwrap(),
+                                                    &Float64Array::new_scalar(*i as f64),
+                                                )
+                                                .unwrap(),
+                                            ),
+                                            LiteralValue::Text(t) => {
+                                                let lt = t.to_ascii_lowercase();
+                                                let lowered = col_text.unwrap();
+                                                let pat = StringArray::new_scalar(lt);
+                                                // Special case: equality to empty string treats nulls as equal in Excel
+                                                let mut m = ilike(&lowered, &pat).unwrap();
+                                                if t.is_empty() {
+                                                    // Build nulls mask and OR it
+                                                    let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(lowered.len());
+                                                    for i in 0..lowered.len() {
+                                                        bb.append_value(lowered.is_null(i));
+                                                    }
+                                                    let add = bb.finish();
+                                                    m = boolean::or_kleene(&m, &add).unwrap();
+                                                }
+                                                Some(m)
+                                            }
+                                            _ => {
+                                                ok = false;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    crate::args::CriteriaPredicate::Ne(v) => match v {
                                         LiteralValue::Number(x) => Some(
-                                            cmp::eq(
+                                            cmp::neq(
                                                 col_arr.unwrap(),
                                                 &Float64Array::new_scalar(*x),
                                             )
                                             .unwrap(),
                                         ),
                                         LiteralValue::Int(i) => Some(
-                                            cmp::eq(
+                                            cmp::neq(
                                                 col_arr.unwrap(),
                                                 &Float64Array::new_scalar(*i as f64),
                                             )
@@ -481,62 +529,30 @@ impl Function for SumIfsFn {
                                             let lt = t.to_ascii_lowercase();
                                             let lowered = col_text.unwrap();
                                             let pat = StringArray::new_scalar(lt);
-                                            // Special case: equality to empty string treats nulls as equal in Excel
-                                            let mut m = ilike(&lowered, &pat).unwrap();
-                                            if t.is_empty() {
-                                                // Build nulls mask and OR it
-                                                let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(lowered.len());
-                                                for i in 0..lowered.len() {
-                                                    bb.append_value(lowered.is_null(i));
-                                                }
-                                                let add = bb.finish();
-                                                m = boolean::or_kleene(&m, &add).unwrap();
-                                            }
-                                            Some(m)
+                                            Some(nilike(&lowered, &pat).unwrap())
                                         }
                                         _ => {
                                             ok = false;
                                             break;
                                         }
-                                    }
-                                }
-                                crate::args::CriteriaPredicate::Ne(v) => match v {
-                                    LiteralValue::Number(x) => Some(
-                                        cmp::neq(col_arr.unwrap(), &Float64Array::new_scalar(*x))
-                                            .unwrap(),
-                                    ),
-                                    LiteralValue::Int(i) => Some(
-                                        cmp::neq(
-                                            col_arr.unwrap(),
-                                            &Float64Array::new_scalar(*i as f64),
-                                        )
-                                        .unwrap(),
-                                    ),
-                                    LiteralValue::Text(t) => {
-                                        let lt = t.to_ascii_lowercase();
+                                    },
+                                    crate::args::CriteriaPredicate::TextLike {
+                                        pattern, ..
+                                    } => {
+                                        let lp = pattern
+                                            .replace('*', "%")
+                                            .replace('?', "_")
+                                            .to_ascii_lowercase();
                                         let lowered = col_text.unwrap();
-                                        let pat = StringArray::new_scalar(lt);
-                                        Some(nilike(&lowered, &pat).unwrap())
+                                        let pat = StringArray::new_scalar(lp);
+                                        Some(ilike(&lowered, &pat).unwrap())
                                     }
                                     _ => {
                                         ok = false;
                                         break;
                                     }
-                                },
-                                crate::args::CriteriaPredicate::TextLike { pattern, .. } => {
-                                    let lp = pattern
-                                        .replace('*', "%")
-                                        .replace('?', "_")
-                                        .to_ascii_lowercase();
-                                    let lowered = col_text.unwrap();
-                                    let pat = StringArray::new_scalar(lp);
-                                    Some(ilike(&lowered, &pat).unwrap())
                                 }
-                                _ => {
-                                    ok = false;
-                                    break;
-                                }
-                            }};
+                            };
 
                             if !ok {
                                 break;
@@ -723,8 +739,14 @@ impl Function for CountIfsFn {
             let mut all_arrow = true;
             for v in &crit_views {
                 if let Some(rv) = v {
-                    if rv.as_arrow().is_none() || rv.dims() != dims { all_arrow = false; break; }
-                } else { all_arrow = false; break; }
+                    if rv.as_arrow().is_none() || rv.dims() != dims {
+                        all_arrow = false;
+                        break;
+                    }
+                } else {
+                    all_arrow = false;
+                    break;
+                }
             }
             if all_arrow {
                 use crate::compute_prelude::boolean;
@@ -737,15 +759,23 @@ impl Function for CountIfsFn {
                         let av = crit_views[j].as_ref().unwrap().as_arrow().unwrap();
                         if let Some(m) = ctx.get_criteria_mask(av, c, pred) {
                             let cur = (*m).clone();
-                            mask_opt = Some(match mask_opt { None => cur, Some(prev) => boolean::and_kleene(&prev, &cur).unwrap() });
+                            mask_opt = Some(match mask_opt {
+                                None => cur,
+                                Some(prev) => boolean::and_kleene(&prev, &cur).unwrap(),
+                            });
                         } else {
-                            ok = false; break;
+                            ok = false;
+                            break;
                         }
                     }
-                    if !ok { break; }
+                    if !ok {
+                        break;
+                    }
                     if let Some(mask) = mask_opt {
                         use arrow_array::Array as _;
-                        total += (0..mask.len()).filter(|&i| mask.is_valid(i) && mask.value(i)).count() as i64;
+                        total += (0..mask.len())
+                            .filter(|&i| mask.is_valid(i) && mask.value(i))
+                            .count() as i64;
                     }
                 }
                 return Ok(LiteralValue::Number(total as f64));
@@ -1012,7 +1042,7 @@ mod tests {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_common::LiteralValue;
-    use formualizer_core::parser::{ASTNode, ASTNodeType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }

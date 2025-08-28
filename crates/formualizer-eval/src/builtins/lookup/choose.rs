@@ -309,7 +309,7 @@ impl Function for ChooseRowsFn {
 mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
-    use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
     use std::sync::Arc;
 
     fn lit(v: LiteralValue) -> ASTNode {

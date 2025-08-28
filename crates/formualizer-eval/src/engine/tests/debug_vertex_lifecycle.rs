@@ -1,7 +1,7 @@
 use crate::engine::{DependencyGraph, VertexEditor};
 use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
-use formualizer_core::parse;
+use formualizer_parse::parse;
 
 fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
     CellRef {

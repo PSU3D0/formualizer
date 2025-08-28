@@ -3,8 +3,11 @@ use crate::test_workbook::TestWorkbook;
 use crate::traits::ArgumentHandle;
 use formualizer_common::LiteralValue;
 
-fn lit(v: LiteralValue) -> formualizer_core::parser::ASTNode {
-    formualizer_core::parser::ASTNode::new(formualizer_core::parser::ASTNodeType::Literal(v), None)
+fn lit(v: LiteralValue) -> formualizer_parse::parser::ASTNode {
+    formualizer_parse::parser::ASTNode::new(
+        formualizer_parse::parser::ASTNodeType::Literal(v),
+        None,
+    )
 }
 
 #[test]
@@ -79,10 +82,10 @@ fn number_lenient_text_coercion_accepts_numeric_text() {
 fn by_ref_accepts_ast_reference() {
     let wb = TestWorkbook::new();
     let ctx = wb.interpreter();
-    let a0 = formualizer_core::parser::ASTNode::new(
-        formualizer_core::parser::ASTNodeType::Reference {
+    let a0 = formualizer_parse::parser::ASTNode::new(
+        formualizer_parse::parser::ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: formualizer_core::parser::ReferenceType::Cell {
+            reference: formualizer_parse::parser::ReferenceType::Cell {
                 sheet: None,
                 row: 1,
                 col: 1,
@@ -103,7 +106,7 @@ fn by_ref_accepts_ast_reference() {
     assert_eq!(out.items.len(), 1);
     match &out.items[0] {
         crate::args::PreparedArg::Reference(r) => match r {
-            formualizer_core::parser::ReferenceType::Cell { row, col, .. } => {
+            formualizer_parse::parser::ReferenceType::Cell { row, col, .. } => {
                 assert_eq!((*row, *col), (1, 1));
             }
             _ => panic!("expected cell reference"),

@@ -12,7 +12,7 @@ use crate::traits::{
     ReferenceResolver, Resolver, Table, TableResolver,
 };
 use formualizer_common::{ExcelError, LiteralValue};
-use formualizer_core::{
+use formualizer_parse::{
     ExcelErrorKind,
     parser::{ReferenceType, TableReference},
 };
@@ -214,7 +214,7 @@ impl EvaluationContext for TestWorkbook {
         reference: &ReferenceType,
         _current_sheet: &str,
     ) -> Result<RangeView<'c>, ExcelError> {
-        use formualizer_core::parser::ReferenceType as RT;
+        use formualizer_parse::parser::ReferenceType as RT;
         match reference {
             // Preserve #REF! for invalid single-cell references by embedding as a 1x1 value
             RT::Cell { sheet, row, col } => {

@@ -5,7 +5,7 @@ use crate::{
     traits::{ArgumentHandle, DefaultFunctionContext, EvaluationContext},
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 // no Arc needed here after cache removal
 
 pub struct Interpreter<'a> {
@@ -91,7 +91,7 @@ impl<'a> Interpreter<'a> {
         let current_sheet = self.current_sheet.to_string();
         let range_probe = |reference: &ReferenceType| -> Option<(u32, u32)> {
             // Mirror Engine::resolve_range_storage bound normalization without materialising
-            use formualizer_core::parser::ReferenceType as RT;
+            use formualizer_parse::parser::ReferenceType as RT;
             match reference {
                 RT::Range {
                     sheet,

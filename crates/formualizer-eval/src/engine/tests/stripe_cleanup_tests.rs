@@ -7,7 +7,7 @@
 use crate::CellRef;
 use crate::engine::{DependencyGraph, EvalConfig, StripeKey, StripeType};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 /// Helper to create a SUM(range) AST node
 fn sum_range_ast(

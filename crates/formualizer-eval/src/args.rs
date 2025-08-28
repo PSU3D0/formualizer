@@ -83,7 +83,7 @@ pub enum CriteriaPredicate {
 pub enum PreparedArg<'a> {
     Value(Cow<'a, LiteralValue>),
     Range(crate::engine::range_view::RangeView<'a>),
-    Reference(formualizer_core::parser::ReferenceType),
+    Reference(formualizer_parse::parser::ReferenceType),
     Predicate(CriteriaPredicate),
 }
 

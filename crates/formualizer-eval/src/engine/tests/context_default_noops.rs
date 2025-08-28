@@ -1,6 +1,6 @@
 use crate::reference::CellRef;
 use crate::traits::FunctionContext;
-use formualizer_core::parser::ReferenceType;
+use formualizer_parse::parser::ReferenceType;
 
 #[cfg(test)]
 mod tests {

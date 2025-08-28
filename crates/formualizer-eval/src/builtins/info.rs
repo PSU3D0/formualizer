@@ -427,7 +427,7 @@ pub fn register_builtins() {
 mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
-    use formualizer_core::parser::{ASTNode, ASTNodeType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }

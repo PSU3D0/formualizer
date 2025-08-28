@@ -1339,15 +1339,25 @@ pub struct ColumnShape {
 
 impl<'a> ArrowRangeView<'a> {
     /// Absolute 0-based start row of this view.
-    pub fn start_row(&self) -> usize { self.sr }
+    pub fn start_row(&self) -> usize {
+        self.sr
+    }
     /// Absolute 0-based end row of this view (inclusive).
-    pub fn end_row(&self) -> usize { self.er }
+    pub fn end_row(&self) -> usize {
+        self.er
+    }
     /// Absolute 0-based start column of this view.
-    pub fn start_col(&self) -> usize { self.sc }
+    pub fn start_col(&self) -> usize {
+        self.sc
+    }
     /// Absolute 0-based end column of this view (inclusive).
-    pub fn end_col(&self) -> usize { self.ec }
+    pub fn end_col(&self) -> usize {
+        self.ec
+    }
     /// Owning sheet name.
-    pub fn sheet_name(&self) -> &str { &self.sheet.name }
+    pub fn sheet_name(&self) -> &str {
+        &self.sheet.name
+    }
     #[inline]
     pub fn dims(&self) -> (usize, usize) {
         (self.rows, self.cols)

@@ -1,8 +1,8 @@
 use crate::engine::EvalConfig;
 use crate::engine::eval::Engine;
 use crate::test_workbook::TestWorkbook;
-use formualizer_core::LiteralValue;
-use formualizer_core::parser::Parser;
+use formualizer_parse::LiteralValue;
+use formualizer_parse::parser::Parser;
 
 #[test]
 fn spill_commit_is_atomic_under_fault() {

@@ -3,7 +3,7 @@ use crate::{
     engine::{DependencyGraph, VertexKind},
 };
 use formualizer_common::{ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 #[test]
 fn test_dependency_extraction_from_ast() {

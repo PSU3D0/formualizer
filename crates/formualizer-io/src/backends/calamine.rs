@@ -519,7 +519,7 @@ where
                 let start_row = frm_range.start().unwrap_or_default().0 as usize;
                 let start_col = frm_range.start().unwrap_or_default().1 as usize;
                 // cache to reuse parsed AST for shared formulas text
-                let mut cache: rustc_hash::FxHashMap<String, formualizer_core::ASTNode> =
+                let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
                     rustc_hash::FxHashMap::default();
                 cache.reserve(4096);
                 let mut builder = engine.begin_bulk_ingest();
@@ -538,7 +538,7 @@ where
                     let ast = if let Some(ast) = cache.get(&key_owned) {
                         ast.clone()
                     } else {
-                        let parsed = formualizer_core::parser::parse(&key_owned).map_err(|e| {
+                        let parsed = formualizer_parse::parser::parse(&key_owned).map_err(|e| {
                             calamine::Error::Io(std::io::Error::new(
                                 std::io::ErrorKind::Other,
                                 e.to_string(),

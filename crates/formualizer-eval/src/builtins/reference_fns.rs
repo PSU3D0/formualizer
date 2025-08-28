@@ -2,7 +2,7 @@ use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::{FnCaps, Function};
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::ReferenceType;
+use formualizer_parse::parser::ReferenceType;
 
 fn number_strict_scalar() -> ArgSchema {
     ArgSchema {
@@ -334,7 +334,7 @@ mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::parser::{ASTNode, ASTNodeType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()

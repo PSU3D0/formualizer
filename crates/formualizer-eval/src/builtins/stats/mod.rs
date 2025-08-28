@@ -35,7 +35,7 @@ fn collect_numeric_stats(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError
         // arguments (not a by-ref range). This allows boolean/text coercion per element akin to
         // passing multiple scalars to the function.
         match a.ast().node_type.clone() {
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Array(arr)) => {
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Array(arr)) => {
                 for row in arr.into_iter() {
                     for cell in row.into_iter() {
                         match cell {
@@ -1167,7 +1167,7 @@ mod tests_basic_stats {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_common::LiteralValue;
-    use formualizer_core::parser::{ASTNode, ASTNodeType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
     }

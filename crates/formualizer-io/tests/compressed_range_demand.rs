@@ -1,7 +1,7 @@
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::Parser;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_eval::test_workbook::TestWorkbook;
+use formualizer_parse::parser::Parser;
 
 // Reproduces the scheduling conditions from the user’s example at the IO layer,
 // without relying on any specific backend. Ensures demand-driven eval enters

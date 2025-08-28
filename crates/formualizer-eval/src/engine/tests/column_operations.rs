@@ -1,6 +1,6 @@
 use crate::engine::{DependencyGraph, VertexEditor};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::parse;
+use formualizer_parse::parser::parse;
 
 fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)

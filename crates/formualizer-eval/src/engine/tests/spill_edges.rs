@@ -1,7 +1,7 @@
 use crate::engine::{EvalConfig, eval::Engine};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::Parser;
+use formualizer_parse::parser::Parser;
 
 #[test]
 fn spill_exceeds_sheet_bounds() {

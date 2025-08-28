@@ -4,7 +4,7 @@ use crate::builtins::random::RandFn;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
 #[test]
 fn test_evaluate_linear_chain() {

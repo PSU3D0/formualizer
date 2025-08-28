@@ -3,7 +3,7 @@ use crate::engine::{Engine, EvalConfig};
 use crate::reference::{CellRef, Coord};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType, Parser, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, Parser, ReferenceType};
 
 fn make_engine() -> Engine<TestWorkbook> {
     let wb = TestWorkbook::new();
@@ -34,9 +34,7 @@ fn dependents_redirty_on_formula_edit_direct_chain() {
     let mut engine = make_engine();
 
     // A1 = 10 (as a formula), B1 = A1, C1 = B1
-    engine
-        .set_cell_formula("Sheet1", 1, 1, lit(10))
-        .unwrap();
+    engine.set_cell_formula("Sheet1", 1, 1, lit(10)).unwrap();
     engine
         .set_cell_formula("Sheet1", 1, 2, ref_cell(1, 1))
         .unwrap();
@@ -48,9 +46,7 @@ fn dependents_redirty_on_formula_edit_direct_chain() {
     engine.evaluate_all().unwrap();
 
     // Edit A1's formula to 20
-    engine
-        .set_cell_formula("Sheet1", 1, 1, lit(20))
-        .unwrap();
+    engine.set_cell_formula("Sheet1", 1, 1, lit(20)).unwrap();
 
     // Grab vertex IDs for B1 and C1
     let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
@@ -65,8 +61,14 @@ fn dependents_redirty_on_formula_edit_direct_chain() {
 
     // Ensure both B1 and C1 are scheduled (redirtied)
     let scheduled = engine.graph.get_evaluation_vertices();
-    assert!(scheduled.contains(&b1), "B1 should be scheduled after A1 edit");
-    assert!(scheduled.contains(&c1), "C1 should be scheduled after A1 edit");
+    assert!(
+        scheduled.contains(&b1),
+        "B1 should be scheduled after A1 edit"
+    );
+    assert!(
+        scheduled.contains(&c1),
+        "C1 should be scheduled after A1 edit"
+    );
 
     // Evaluate all; expect at least 3 computations (A1, B1, C1)
     let eval = engine.evaluate_all().unwrap();
@@ -94,9 +96,7 @@ fn dependents_redirty_when_value_becomes_formula() {
     engine.evaluate_all().unwrap();
 
     // Change A1 to a formula value
-    engine
-        .set_cell_formula("Sheet1", 1, 1, lit(20))
-        .unwrap();
+    engine.set_cell_formula("Sheet1", 1, 1, lit(20)).unwrap();
 
     // B1 and C1 should be scheduled
     let sid = engine.graph.sheet_id("Sheet1").unwrap();
@@ -121,18 +121,10 @@ fn whole_column_dependent_redirty_on_formula_edit() {
     let mut engine = make_engine();
 
     // D2..D5 are formulas; S1 = SUM(D:D)
-    engine
-        .set_cell_formula("Sheet1", 2, 4, lit(1))
-        .unwrap();
-    engine
-        .set_cell_formula("Sheet1", 3, 4, lit(2))
-        .unwrap();
-    engine
-        .set_cell_formula("Sheet1", 4, 4, lit(3))
-        .unwrap();
-    engine
-        .set_cell_formula("Sheet1", 5, 4, lit(4))
-        .unwrap();
+    engine.set_cell_formula("Sheet1", 2, 4, lit(1)).unwrap();
+    engine.set_cell_formula("Sheet1", 3, 4, lit(2)).unwrap();
+    engine.set_cell_formula("Sheet1", 4, 4, lit(3)).unwrap();
+    engine.set_cell_formula("Sheet1", 5, 4, lit(4)).unwrap();
     engine
         .set_cell_formula("Sheet1", 1, 19, Parser::from("=SUM(D:D)").parse().unwrap())
         .unwrap(); // S column is col 19
@@ -140,9 +132,7 @@ fn whole_column_dependent_redirty_on_formula_edit() {
     engine.evaluate_all().unwrap();
 
     // Change D5 formula
-    engine
-        .set_cell_formula("Sheet1", 5, 4, lit(40))
-        .unwrap();
+    engine.set_cell_formula("Sheet1", 5, 4, lit(40)).unwrap();
 
     // S1 should be scheduled via column stripe invalidation
     let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
@@ -151,7 +141,10 @@ fn whole_column_dependent_redirty_on_formula_edit() {
         .get_vertex_for_cell(&CellRef::new(sheet_id, Coord::new(1, 19, true, true)))
         .unwrap();
     let scheduled = engine.graph.get_evaluation_vertices();
-    assert!(scheduled.contains(&s1), "S1 should be scheduled after D5 edit");
+    assert!(
+        scheduled.contains(&s1),
+        "S1 should be scheduled after D5 edit"
+    );
 }
 
 #[test]
@@ -162,12 +155,8 @@ fn cross_sheet_whole_column_dependent_redirty_on_formula_edit() {
     engine.graph.add_sheet("Sheet2").unwrap();
 
     // Seed some formulas in Sheet1 column D
-    engine
-        .set_cell_formula("Sheet1", 2, 4, lit(5))
-        .unwrap();
-    engine
-        .set_cell_formula("Sheet1", 5, 4, lit(7))
-        .unwrap();
+    engine.set_cell_formula("Sheet1", 2, 4, lit(5)).unwrap();
+    engine.set_cell_formula("Sheet1", 5, 4, lit(7)).unwrap();
 
     engine
         .set_cell_formula(
@@ -181,9 +170,7 @@ fn cross_sheet_whole_column_dependent_redirty_on_formula_edit() {
     engine.evaluate_all().unwrap();
 
     // Edit Sheet1!D5 and ensure Sheet2!A1 is scheduled
-    engine
-        .set_cell_formula("Sheet1", 5, 4, lit(70))
-        .unwrap();
+    engine.set_cell_formula("Sheet1", 5, 4, lit(70)).unwrap();
 
     let s2_id = engine.graph.sheet_id("Sheet2").unwrap();
     let a1_sheet2 = engine

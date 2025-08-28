@@ -8,7 +8,7 @@ use crate::engine::graph::DependencyGraph;
 use crate::engine::vertex_editor::VertexEditor;
 use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
-use formualizer_core::parse;
+use formualizer_parse::parse;
 
 fn create_test_graph() -> DependencyGraph {
     DependencyGraph::new()

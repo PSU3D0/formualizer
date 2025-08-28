@@ -274,7 +274,7 @@ mod tests {
     use super::*;
     use crate::traits::{ArgumentHandle, DefaultFunctionContext};
     use crate::{interpreter::Interpreter, test_workbook::TestWorkbook};
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -356,16 +356,16 @@ mod tests {
         let and = ctx.context.get_function("", "AND").unwrap();
         let or = ctx.context.get_function("", "OR").unwrap();
         // Build ArgumentHandles manually: TRUE, 1, FALSE
-        let dummy_ast = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Boolean(true)),
+        let dummy_ast = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Boolean(true)),
             None,
         );
-        let dummy_ast_false = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Boolean(false)),
+        let dummy_ast_false = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Boolean(false)),
             None,
         );
-        let dummy_ast_one = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Int(1)),
+        let dummy_ast_one = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Int(1)),
             None,
         );
         let hs = vec![
@@ -402,12 +402,12 @@ mod tests {
         let and = ctx.context.get_function("", "AND").unwrap();
 
         // Build args: FALSE, COUNTING()
-        let a_false = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Boolean(false)),
+        let a_false = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Boolean(false)),
             None,
         );
-        let counting_call = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Function {
+        let counting_call = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Function {
                 name: "COUNTING".into(),
                 args: vec![],
             },
@@ -437,12 +437,12 @@ mod tests {
         let or = ctx.context.get_function("", "OR").unwrap();
 
         // Build args: TRUE, COUNTING()
-        let a_true = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Boolean(true)),
+        let a_true = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Boolean(true)),
             None,
         );
-        let counting_call = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Function {
+        let counting_call = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Function {
                 name: "COUNTING".into(),
                 args: vec![],
             },
@@ -472,21 +472,21 @@ mod tests {
         let or = ctx.context.get_function("", "OR").unwrap();
 
         // First arg is an array literal with first element 1 (truey), then zeros.
-        let arr = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Array(vec![
-                vec![formualizer_core::parser::ASTNode::new(
-                    formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Int(1)),
+        let arr = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Array(vec![
+                vec![formualizer_parse::parser::ASTNode::new(
+                    formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Int(1)),
                     None,
                 )],
-                vec![formualizer_core::parser::ASTNode::new(
-                    formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Int(0)),
+                vec![formualizer_parse::parser::ASTNode::new(
+                    formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Int(0)),
                     None,
                 )],
             ]),
             None,
         );
-        let counting_call = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Function {
+        let counting_call = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Function {
                 name: "COUNTING".into(),
                 args: vec![],
             },
@@ -516,12 +516,12 @@ mod tests {
         let and = ctx.context.get_function("", "AND").unwrap();
 
         // AND(1, ERRORFN(), 1) => #VALUE!
-        let one = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Int(1)),
+        let one = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Int(1)),
             None,
         );
-        let errcall = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Function {
+        let errcall = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Function {
                 name: "ERRORFN".into(),
                 args: vec![],
             },
@@ -555,12 +555,12 @@ mod tests {
         let or = ctx.context.get_function("", "OR").unwrap();
 
         // OR(TRUE, ERRORFN()) => TRUE and ERRORFN not evaluated
-        let a_true = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Boolean(true)),
+        let a_true = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Boolean(true)),
             None,
         );
-        let errcall = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Function {
+        let errcall = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Function {
                 name: "ERRORFN".into(),
                 args: vec![],
             },

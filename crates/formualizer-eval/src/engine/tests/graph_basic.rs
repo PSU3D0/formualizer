@@ -110,8 +110,8 @@ fn test_vertex_kind_transitions() {
     );
 
     // Transition to a formula (we'll use a simple literal AST for now)
-    let ast = formualizer_core::parser::ASTNode {
-        node_type: formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Int(100)),
+    let ast = formualizer_parse::parser::ASTNode {
+        node_type: formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Int(100)),
         source_token: None,
         contains_volatile: false,
     };
@@ -190,11 +190,11 @@ fn create_cell_ref_ast(
     row: u32,
     col: u32,
     original: &str,
-) -> formualizer_core::parser::ASTNode {
-    formualizer_core::parser::ASTNode {
-        node_type: formualizer_core::parser::ASTNodeType::Reference {
+) -> formualizer_parse::parser::ASTNode {
+    formualizer_parse::parser::ASTNode {
+        node_type: formualizer_parse::parser::ASTNodeType::Reference {
             original: original.to_string(),
-            reference: formualizer_core::parser::ReferenceType::Cell {
+            reference: formualizer_parse::parser::ReferenceType::Cell {
                 sheet: sheet.map(|s| s.to_string()),
                 row,
                 col,

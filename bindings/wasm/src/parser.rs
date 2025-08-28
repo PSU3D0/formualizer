@@ -1,5 +1,5 @@
 use crate::ast::ASTNode;
-use formualizer_core::{parser::Parser as CoreParser, Tokenizer as CoreTokenizer};
+use formualizer_parse::{parser::Parser as CoreParser, Tokenizer as CoreTokenizer};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]

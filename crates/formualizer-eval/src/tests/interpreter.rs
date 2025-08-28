@@ -2,9 +2,9 @@
 mod tests {
     use crate::test_workbook::TestWorkbook;
     use formualizer_common::error::{ExcelError, ExcelErrorKind};
-    use formualizer_core::LiteralValue;
-    use formualizer_core::Tokenizer;
-    use formualizer_core::parser::Parser;
+    use formualizer_parse::LiteralValue;
+    use formualizer_parse::Tokenizer;
+    use formualizer_parse::parser::Parser;
     use std::sync::Arc;
 
     /// Helper function to parse and evaluate a formula.

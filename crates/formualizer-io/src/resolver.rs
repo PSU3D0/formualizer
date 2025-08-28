@@ -3,12 +3,12 @@ use formualizer_common::{
     error::{ExcelError, ExcelErrorKind},
     LiteralValue,
 };
-use formualizer_core::parser::TableReference;
 use formualizer_eval::function::Function;
 use formualizer_eval::traits::{
     FunctionProvider, InMemoryRange, NamedRangeResolver, Range, RangeResolver, ReferenceResolver,
     Resolver, Table, TableResolver,
 };
+use formualizer_parse::parser::TableReference;
 use parking_lot::RwLock;
 use std::sync::Arc;
 

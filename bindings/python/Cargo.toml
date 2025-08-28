@@ -27,7 +27,7 @@ tracing_chrome = ["tracing", "formualizer-eval/tracing_chrome"]
 pyo3 = { version = "0.24.0", features = ["extension-module", "chrono"] }
 pyo3-stub-gen = "0.8.2"
 pyo3-stub-gen-derive = "0.8.2"
-formualizer-core = { path = "../../crates/formualizer-core" }
+formualizer-parse = { path = "../../crates/formualizer-parse" }
 formualizer-common = { path = "../../crates/formualizer-common" }
 formualizer-eval = { path = "../../crates/formualizer-eval" }
 formualizer-io = { path = "../../crates/formualizer-io", features = ["calamine"] }

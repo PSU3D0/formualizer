@@ -191,7 +191,7 @@ print(f"Context for B5: {[label.text for label in labels]}")
 formualizer/
 │
 ├─ crates/               # Pure‑Rust core, common types, evaluator, macros
-│   ├─ formualizer-core      (tokenizer + parser + pretty)
+│   ├─ formualizer-parse      (tokenizer + parser + pretty)
 │   ├─ formualizer-eval      (optional interpreter + built‑ins)
 │   ├─ formualizer-common    (shared literal / error / arg specs)
 │   └─ formualizer-macros    (proc‑macro helpers)

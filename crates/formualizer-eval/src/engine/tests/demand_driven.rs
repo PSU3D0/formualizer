@@ -2,7 +2,7 @@ use crate::engine::tests::common::{create_binary_op_ast, create_cell_ref_ast};
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
 #[test]
 fn test_evaluate_until_single_clean_target() {

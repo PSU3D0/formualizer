@@ -6,8 +6,8 @@ use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::Parser;
-use formualizer_core::parser::ReferenceType;
+use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::ReferenceType;
 
 #[test]
 fn infinite_column_empty_sheet_sum_count_are_zero() {

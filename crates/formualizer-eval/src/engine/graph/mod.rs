@@ -2,7 +2,7 @@ use crate::SheetId;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 #[cfg(test)]
@@ -247,11 +247,11 @@ impl DependencyGraph {
     pub fn plan_dependencies<'a, I>(
         &mut self,
         items: I,
-        policy: &formualizer_core::parser::CollectPolicy,
+        policy: &formualizer_parse::parser::CollectPolicy,
         volatile: Option<&[bool]>,
     ) -> Result<crate::engine::plan::DependencyPlan, formualizer_common::ExcelError>
     where
-        I: IntoIterator<Item = (&'a str, u32, u32, &'a formualizer_core::parser::ASTNode)>,
+        I: IntoIterator<Item = (&'a str, u32, u32, &'a formualizer_parse::parser::ASTNode)>,
     {
         crate::engine::plan::build_dependency_plan(
             &mut self.sheet_reg,
@@ -320,7 +320,7 @@ impl DependencyGraph {
     /// Store ASTs in batch and return their arena ids
     pub fn store_asts_batch<'a, I>(&mut self, asts: I) -> Vec<AstNodeId>
     where
-        I: IntoIterator<Item = &'a formualizer_core::parser::ASTNode>,
+        I: IntoIterator<Item = &'a formualizer_parse::parser::ASTNode>,
     {
         self.data_store.store_asts_batch(asts, &self.sheet_reg)
     }
@@ -848,7 +848,7 @@ impl DependencyGraph {
     pub fn get_range_dependencies(
         &self,
         vertex: VertexId,
-    ) -> Option<&Vec<formualizer_core::parser::ReferenceType>> {
+    ) -> Option<&Vec<formualizer_parse::parser::ReferenceType>> {
         self.formula_to_range_deps.get(&vertex)
     }
 
@@ -1722,7 +1722,7 @@ impl DependencyGraph {
     where
         I: IntoIterator<Item = (u32, u32, ASTNode)>,
     {
-        use formualizer_core::parser::CollectPolicy;
+        use formualizer_parse::parser::CollectPolicy;
         let sheet_id = self.sheet_id_mut(sheet);
 
         // 1) Collect items to allow a single plan build

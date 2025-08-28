@@ -3,7 +3,7 @@ use super::common::get_vertex_ids_in_order;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelError, LiteralValue};
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 fn create_simple_engine() -> Engine<TestWorkbook> {
     let wb = TestWorkbook::new();

@@ -12,8 +12,8 @@ use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::ReferenceType;
 use formualizer_macros::func_caps;
+use formualizer_parse::parser::ReferenceType;
 
 #[derive(Debug)]
 pub struct RowFn;
@@ -293,7 +293,7 @@ impl Function for ColumnsFn {
 mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
-    use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
     use std::sync::Arc;
 
     #[test]

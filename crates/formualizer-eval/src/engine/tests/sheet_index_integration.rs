@@ -1,6 +1,6 @@
 use crate::engine::*;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 // Helper to create a formula that adds two cells
 fn sum_formula(row1: u32, col1: u32, row2: u32, col2: u32) -> ASTNode {

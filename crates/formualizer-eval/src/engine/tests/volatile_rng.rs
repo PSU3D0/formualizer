@@ -3,7 +3,7 @@ use crate::builtins::random::register_builtins;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
 #[test]
 fn rand_reproducible_given_seed_and_cell_address() {

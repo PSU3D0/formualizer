@@ -3,7 +3,7 @@ use crate::test_workbook::TestWorkbook;
 use crate::traits::FunctionProvider;
 use crate::traits::{ArgumentHandle, DefaultFunctionContext};
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 fn whole_col_ref(sheet: &str, col: u32) -> ASTNode {
     let r = ReferenceType::Range {

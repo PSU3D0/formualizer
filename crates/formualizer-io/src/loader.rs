@@ -1,8 +1,8 @@
 use crate::error::{col_to_a1, IoError};
 use crate::traits::{LoadStrategy, SpreadsheetReader};
-use formualizer_core::parser;
 use formualizer_eval::engine::Engine;
 use formualizer_eval::traits::EvaluationContext;
+use formualizer_parse::parser;
 use std::time::Instant;
 
 #[derive(Debug, Default)]

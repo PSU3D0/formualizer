@@ -328,8 +328,8 @@ mod tests_sumproduct {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
-    use formualizer_core::parser::{ASTNode, ASTNodeType};
+    use formualizer_parse::LiteralValue;
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
@@ -489,7 +489,7 @@ mod tests_sumproduct {
 mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
-    use formualizer_core::LiteralValue;
+    use formualizer_parse::LiteralValue;
 
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
@@ -518,16 +518,16 @@ mod tests {
         let fctx = crate::traits::DefaultFunctionContext::new(ctx.context, None);
 
         // Test basic SUM functionality by creating ArgumentHandles manually
-        let dummy_ast_1 = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(1.0)),
+        let dummy_ast_1 = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(1.0)),
             None,
         );
-        let dummy_ast_2 = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(2.0)),
+        let dummy_ast_2 = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(2.0)),
             None,
         );
-        let dummy_ast_3 = formualizer_core::parser::ASTNode::new(
-            formualizer_core::parser::ASTNodeType::Literal(LiteralValue::Number(3.0)),
+        let dummy_ast_3 = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(3.0)),
             None,
         );
 
@@ -548,9 +548,9 @@ mod tests_count {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
-    use formualizer_core::parser::ASTNode;
-    use formualizer_core::parser::ASTNodeType;
+    use formualizer_parse::LiteralValue;
+    use formualizer_parse::parser::ASTNode;
+    use formualizer_parse::parser::ASTNodeType;
 
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
@@ -618,9 +618,9 @@ mod tests_average {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_core::LiteralValue;
-    use formualizer_core::parser::ASTNode;
-    use formualizer_core::parser::ASTNodeType;
+    use formualizer_parse::LiteralValue;
+    use formualizer_parse::parser::ASTNode;
+    use formualizer_parse::parser::ASTNodeType;
 
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()

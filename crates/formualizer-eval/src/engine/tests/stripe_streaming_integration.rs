@@ -8,7 +8,7 @@ use crate::builtins::math::SumFn;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::Parser;
+use formualizer_parse::parser::Parser;
 use std::time::Instant;
 
 #[test]

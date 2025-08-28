@@ -1,4 +1,4 @@
-use formualizer_core::{ASTNode, parser::ReferenceType};
+use formualizer_parse::{ASTNode, parser::ReferenceType};
 use rustc_hash::FxHashSet;
 
 use crate::{CellRef, RangeRef, SheetId, engine::VertexId};
