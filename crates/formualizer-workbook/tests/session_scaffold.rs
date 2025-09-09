@@ -1,6 +1,6 @@
 use formualizer_common::LiteralValue;
 use formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor;
-use formualizer_io::{EditorSession, IoConfig};
+use formualizer_workbook::{EditorSession, IoConfig};
 
 #[test]
 fn session_scaffold_basic() {

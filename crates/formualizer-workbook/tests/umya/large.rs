@@ -2,7 +2,7 @@
 
 use crate::common::build_standard_grid;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_io::{LoadStrategy, SpreadsheetReader, UmyaAdapter, WorkbookLoader};
+use formualizer_workbook::{LoadStrategy, SpreadsheetReader, UmyaAdapter, WorkbookLoader};
 use std::time::Instant;
 
 #[test]

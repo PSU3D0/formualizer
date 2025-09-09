@@ -472,8 +472,8 @@ impl PyEngine {
         match backend {
             "calamine" => {
                 use formualizer_eval::engine::ingest::EngineLoadStream;
-                use formualizer_io::backends::CalamineAdapter;
-                use formualizer_io::traits::SpreadsheetReader;
+                use formualizer_workbook::backends::CalamineAdapter;
+                use formualizer_workbook::traits::SpreadsheetReader;
                 let mut adapter =
                     <CalamineAdapter as SpreadsheetReader>::open_path(std::path::Path::new(path))
                         .map_err(|e| {

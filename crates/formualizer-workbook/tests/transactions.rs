@@ -1,5 +1,5 @@
-use formualizer_io::traits::SpreadsheetWriter;
-use formualizer_io::{CellData, LiteralValue, WriteTransaction};
+use formualizer_workbook::traits::SpreadsheetWriter;
+use formualizer_workbook::{CellData, LiteralValue, WriteTransaction};
 use std::collections::BTreeMap;
 // no concurrency primitives needed after simplifying isolation test
 

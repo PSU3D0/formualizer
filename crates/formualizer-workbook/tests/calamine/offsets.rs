@@ -1,6 +1,6 @@
 // Integration test for Calamine backend; run with `--features calamine,umya`.
 use crate::common::build_workbook;
-use formualizer_io::{CalamineAdapter, SpreadsheetReader}; // umya uses (col,row)
+use formualizer_workbook::{CalamineAdapter, SpreadsheetReader}; // umya uses (col,row)
 
 #[test]
 fn calamine_handles_offset_ranges() {

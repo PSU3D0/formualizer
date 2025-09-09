@@ -6,7 +6,7 @@ members = [
   "crates/formualizer-parse",
   "crates/formualizer-eval",
   "crates/formualizer-macros",
-  "crates/formualizer-io",
+  "crates/formualizer-workbook",
   "bindings/python",
   "bindings/wasm"
 ]

@@ -2,7 +2,7 @@
 
 use crate::common::build_workbook;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_io::{
+use formualizer_workbook::{
     CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookLoader,
 }; // umya coordinate order (col,row)
 

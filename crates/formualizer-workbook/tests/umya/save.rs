@@ -1,5 +1,5 @@
 // Integration test for Umya backend; run with `--features umya`.
-use formualizer_io::{CellData, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter};
+use formualizer_workbook::{CellData, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter};
 
 #[test]
 fn umya_save_in_place_and_bytes() {

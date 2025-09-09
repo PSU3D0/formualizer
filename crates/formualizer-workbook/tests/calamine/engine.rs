@@ -3,7 +3,7 @@ use crate::common::build_workbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_io::{CalamineAdapter, SpreadsheetReader};
+use formualizer_workbook::{CalamineAdapter, SpreadsheetReader};
 use formualizer_parse::parser::Parser;
 
 #[test]
@@ -219,12 +219,12 @@ fn stream_edit_propagation_chain() {
     engine.evaluate_all().unwrap();
     match engine.get_cell_value("Sheet1", 1, 2) {
         // B1
-        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 10.0).abs() < 1e-9),
+        Some(formualizer_workbook::LiteralValue::Number(n)) => assert!((n - 10.0).abs() < 1e-9),
         other => panic!("Unexpected B1 initial: {:?}", other),
     }
     match engine.get_cell_value("Sheet1", 1, 3) {
         // C1
-        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 10.0).abs() < 1e-9),
+        Some(formualizer_workbook::LiteralValue::Number(n)) => assert!((n - 10.0).abs() < 1e-9),
         other => panic!("Unexpected C1 initial: {:?}", other),
     }
 
@@ -234,11 +234,11 @@ fn stream_edit_propagation_chain() {
         .unwrap();
     engine.evaluate_all().unwrap();
     match engine.get_cell_value("Sheet1", 1, 2) {
-        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 20.0).abs() < 1e-9),
+        Some(formualizer_workbook::LiteralValue::Number(n)) => assert!((n - 20.0).abs() < 1e-9),
         other => panic!("Unexpected B1 after A1 edit: {:?}", other),
     }
     match engine.get_cell_value("Sheet1", 1, 3) {
-        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 20.0).abs() < 1e-9),
+        Some(formualizer_workbook::LiteralValue::Number(n)) => assert!((n - 20.0).abs() < 1e-9),
         other => panic!("Unexpected C1 after A1 edit: {:?}", other),
     }
 
@@ -248,11 +248,11 @@ fn stream_edit_propagation_chain() {
         .unwrap();
     engine.evaluate_all().unwrap();
     match engine.get_cell_value("Sheet1", 1, 2) {
-        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 60.0).abs() < 1e-9),
+        Some(formualizer_workbook::LiteralValue::Number(n)) => assert!((n - 60.0).abs() < 1e-9),
         other => panic!("Unexpected B1 after B1 edit: {:?}", other),
     }
     match engine.get_cell_value("Sheet1", 1, 3) {
-        Some(formualizer_io::LiteralValue::Number(n)) => assert!((n - 60.0).abs() < 1e-9),
+        Some(formualizer_workbook::LiteralValue::Number(n)) => assert!((n - 60.0).abs() < 1e-9),
         other => panic!("Unexpected C1 after B1 edit: {:?}", other),
     }
 }

@@ -1,6 +1,6 @@
 use formualizer_eval::engine::Engine;
 use formualizer_eval::engine::EvalConfig;
-use formualizer_io::{
+use formualizer_workbook::{
     AccessGranularity, BackendCaps, CellData, LiteralValue, LoadStrategy, SheetData,
     SpreadsheetReader, WorkbookLoader,
 };

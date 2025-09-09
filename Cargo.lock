@@ -791,32 +791,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "formualizer-io"
-version = "0.1.0"
-dependencies = [
- "calamine",
- "chrono",
- "formualizer-common",
- "formualizer-eval",
- "formualizer-parse",
- "memmap2",
- "once_cell",
- "parking_lot",
- "pyo3",
- "reqwest",
- "rustc-hash 1.1.0",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tracing",
- "umya-spreadsheet",
- "wasm-bindgen",
- "web-sys",
- "zstd",
-]
-
-[[package]]
 name = "formualizer-macros"
 version = "0.1.0"
 dependencies = [
@@ -842,8 +816,8 @@ dependencies = [
  "chrono",
  "formualizer-common",
  "formualizer-eval",
- "formualizer-io",
  "formualizer-parse",
+ "formualizer-workbook",
  "pyo3",
  "pyo3-stub-gen",
  "pyo3-stub-gen-derive",
@@ -864,6 +838,32 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
+]
+
+[[package]]
+name = "formualizer-workbook"
+version = "0.1.0"
+dependencies = [
+ "calamine",
+ "chrono",
+ "formualizer-common",
+ "formualizer-eval",
+ "formualizer-parse",
+ "memmap2",
+ "once_cell",
+ "parking_lot",
+ "pyo3",
+ "reqwest",
+ "rustc-hash 1.1.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+ "umya-spreadsheet",
+ "wasm-bindgen",
+ "web-sys",
+ "zstd",
 ]
 
 [[package]]

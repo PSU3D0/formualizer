@@ -148,7 +148,7 @@ impl PyWorkbook {
         path: &str,
         strategy: Option<&str>,
     ) -> PyResult<Self> {
-        use formualizer_io::{backends::CalamineAdapter, LoadStrategy, SpreadsheetReader};
+        use formualizer_workbook::{backends::CalamineAdapter, LoadStrategy, SpreadsheetReader};
         use std::path::Path;
 
         // Parse load strategy

@@ -1,4 +1,4 @@
-use formualizer_io::{
+use formualizer_workbook::{
     AccessGranularity, BackendCaps, CellData, LiteralValue, MergedRange, SheetData,
     SpreadsheetReader,
 };

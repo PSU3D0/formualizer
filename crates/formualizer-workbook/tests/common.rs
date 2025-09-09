@@ -1,4 +1,4 @@
-//! Shared test utilities for formualizer-io integration tests.
+//! Shared test utilities for formualizer-workbook integration tests.
 //!
 //! NOTE: umya-spreadsheet uses (col, row) ordering for tuple coordinates, i.e. (column, row),
 //! which is the reverse of the conventional (row, col) used in much of the rest of the codebase.

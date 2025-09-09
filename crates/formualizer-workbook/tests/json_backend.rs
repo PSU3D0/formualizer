@@ -1,8 +1,8 @@
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime};
 use formualizer_common::error::ExcelError;
 #[cfg(feature = "json")]
-use formualizer_io::JsonAdapter;
-use formualizer_io::{CellData, LiteralValue, SpreadsheetReader, SpreadsheetWriter};
+use formualizer_workbook::JsonAdapter;
+use formualizer_workbook::{CellData, LiteralValue, SpreadsheetReader, SpreadsheetWriter};
 
 #[cfg(feature = "json")]
 #[test]
@@ -55,7 +55,7 @@ fn json_schema_shape() {
 #[cfg(feature = "json")]
 #[test]
 fn json_transaction_commit_and_rollback() {
-    use formualizer_io::WriteTransaction;
+    use formualizer_workbook::WriteTransaction;
 
     let mut adapter = JsonAdapter::new();
     adapter.create_sheet("Sheet1").unwrap();
@@ -175,7 +175,7 @@ fn json_value_variants_roundtrip() {
 #[cfg(feature = "json")]
 #[test]
 fn json_metadata_roundtrip() {
-    use formualizer_io::{MergedRange, NamedRange, TableDefinition};
+    use formualizer_workbook::{MergedRange, NamedRange, TableDefinition};
     let mut adapter = JsonAdapter::new();
     adapter.create_sheet("Meta").unwrap();
 

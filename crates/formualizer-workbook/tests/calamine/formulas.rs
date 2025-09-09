@@ -1,7 +1,7 @@
 // Integration test for Calamine backend; run with `--features calamine,umya`.
 use crate::common::build_workbook;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_io::{
+use formualizer_workbook::{
     CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookLoader,
 }; // centralized helper (umya uses (col,row))
 

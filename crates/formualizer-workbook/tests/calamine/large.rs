@@ -1,7 +1,7 @@
 // Integration test for Calamine backend; run with `--features calamine,umya`.
 use crate::common::build_standard_grid;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_io::{CalamineAdapter, LoadStrategy, SpreadsheetReader, WorkbookLoader};
+use formualizer_workbook::{CalamineAdapter, LoadStrategy, SpreadsheetReader, WorkbookLoader};
 use std::time::Instant; // generates grid via umya (col,row)
 
 // This test is ignored by default due to generation cost; run with -- --ignored to include.

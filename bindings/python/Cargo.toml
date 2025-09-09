@@ -20,7 +20,7 @@ stub_gen_bin = []
 # Usage:
 #  - maturin develop --release --features tracing
 #  - maturin develop --release --features tracing,tracing_chrome
-tracing = ["formualizer-eval/tracing", "formualizer-io/tracing"]
+tracing = ["formualizer-eval/tracing", "formualizer-workbook/tracing"]
 tracing_chrome = ["tracing", "formualizer-eval/tracing_chrome"]
 
 [dependencies]
@@ -30,6 +30,6 @@ pyo3-stub-gen-derive = "0.8.2"
 formualizer-parse = { path = "../../crates/formualizer-parse" }
 formualizer-common = { path = "../../crates/formualizer-common" }
 formualizer-eval = { path = "../../crates/formualizer-eval" }
-formualizer-io = { path = "../../crates/formualizer-io", features = ["calamine"] }
+formualizer-workbook = { path = "../../crates/formualizer-workbook", features = ["calamine"] }
 chrono = "0.4"
 serde_json = "1.0"

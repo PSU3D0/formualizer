@@ -1,7 +1,7 @@
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_eval::test_workbook::TestWorkbook;
-use formualizer_io::{CellData, JsonAdapter, SpreadsheetWriter};
+use formualizer_workbook::{CellData, JsonAdapter, SpreadsheetWriter};
 
 #[test]
 fn json_date_system_propagates_and_affects_date_serials() {
