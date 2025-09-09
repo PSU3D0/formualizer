@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish-crates-io:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cargo login
+        run: |
+          cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Publish crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Publish core crates in order to satisfy dependencies
+          cargo publish -p formualizer-common --no-verify || true
+          cargo publish -p formualizer-macros --no-verify || true
+          cargo publish -p formualizer-parse --no-verify || true
+          cargo publish -p formualizer-eval --no-verify || true
+          cargo publish -p formualizer-workbook --no-verify || true
+
+  publish-pypi:
+    needs: publish-crates-io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Publish to PyPI (maturin)
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          command: publish
+          args: --release -u __token__ -p ${{ secrets.PYPI_API_TOKEN }}
+          sccache: 'true'
+
+  publish-npm:
+    needs: publish-crates-io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build WASM package (web)
+        working-directory: bindings/wasm
+        run: |
+          npm ci || true
+          wasm-pack build --target web --out-dir pkg --release
+      - name: Configure npm auth
+        working-directory: bindings/wasm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+      - name: Publish to npm
+        working-directory: bindings/wasm
+        run: npm publish --access public
+

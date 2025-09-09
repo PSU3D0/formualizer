@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
-use pyo3_stub_gen::{define_stub_info_gatherer, derive::gen_stub_pyfunction};
+use pyo3::wrap_pyfunction;
+use pyo3_stub_gen::define_stub_info_gatherer;
 
 mod ast;
 mod engine;
@@ -8,7 +9,7 @@ mod errors;
 mod parser;
 mod reference;
 mod resolver;
-mod sheet;
+mod sheet; // retain for compatibility
 mod token;
 mod tokenizer;
 mod value;
@@ -18,26 +19,28 @@ use ast::PyASTNode;
 use tokenizer::PyTokenizer;
 
 /// Convenience function to tokenize a formula string
-#[gen_stub_pyfunction]
 #[pyfunction]
 fn tokenize(formula: &str) -> PyResult<PyTokenizer> {
     PyTokenizer::from_formula(formula)
 }
 
 /// Convenience function to parse a formula string
-#[gen_stub_pyfunction]
 #[pyfunction]
 fn parse(formula: &str) -> PyResult<PyASTNode> {
     parser::parse_formula(formula)
 }
 
 /// Load a workbook from a file path (convenience function)
-#[gen_stub_pyfunction]
 #[pyfunction]
 #[pyo3(signature = (path, strategy=None))]
 fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<workbook::PyWorkbook> {
-    // Call the classmethod directly
-    workbook::PyWorkbook::load_path(&py.get_type::<workbook::PyWorkbook>(), path, strategy)
+    // Backward-compat convenience
+    let _ = strategy; // placeholder, backend currently fixed to calamine
+    workbook::PyWorkbook::from_path(
+        &py.get_type::<workbook::PyWorkbook>(),
+        path,
+        Some("calamine"),
+    )
 }
 
 /// The main formualizer Python module
@@ -55,8 +58,7 @@ fn formualizer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     engine::register(m)?;
     workbook::register(m)?;
     sheet::register(m)?;
-
-    // Add convenience functions
+    // Convenience functions
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(parse, m)?)?;
     m.add_function(wrap_pyfunction!(load_workbook, m)?)?;

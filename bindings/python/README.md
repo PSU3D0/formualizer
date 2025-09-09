@@ -76,6 +76,28 @@ print([r.to_excel() for r in refs])  # ['A1:B2']
 
 > **Tip:** You can build your own visitor by returning `VisitControl.SKIP` or `STOP` to short‑circuit traversal.
 
+### Changelog, Undo, and Redo
+
+Formualizer’s engine tracks edits and can undo/redo changes. You do not need to manually group edits for everyday use:
+
+- Single‑cell edits (e.g., `Workbook.set_value`, `Workbook.set_formula`) are individually undoable when changelog is enabled.
+- Batch operations (`Workbook.set_values_batch`, `Workbook.set_formulas_batch`) are automatically wrapped into a single undoable action for you.
+
+Power users can group multiple calls into one undo step using `begin_action(...)` / `end_action()` — this is optional and not required for typical workflows.
+
+```python
+wb.set_changelog_enabled(True)
+
+# Each set_value is its own undo step
+wb.set_value("S", 1, 1, fz.LiteralValue.int(10))
+wb.set_value("S", 1, 1, fz.LiteralValue.int(20))
+wb.undo()  # back to 10
+
+# Batch is auto‑grouped as one action
+wb.set_values_batch("S", 1, 1, [[fz.LiteralValue.int(1), fz.LiteralValue.int(2)]])
+wb.undo()  # reverts the entire batch
+```
+
 ---
 
 ## Public API Surface

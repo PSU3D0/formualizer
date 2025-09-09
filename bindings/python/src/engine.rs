@@ -13,7 +13,7 @@ use crate::workbook::{CellData, PyCell, PyWorkbook};
 #[pyclass(name = "Engine")]
 pub struct PyEngine {
     inner: Arc<RwLock<RustEngine<PyResolver>>>,
-    workbook: Option<PyWorkbook>,
+    workbook: Option<pyo3::Py<PyWorkbook>>,
 }
 
 /// Configuration for the evaluation engine
@@ -342,19 +342,8 @@ fn load_workbook_into_engine(
     workbook: &PyWorkbook,
     engine: &mut RustEngine<PyResolver>,
 ) -> PyResult<()> {
-    let sheets = workbook.sheets.read().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
-    })?;
     // Use bulk ingest builder to avoid per-cell graph mutations
     let mut builder = engine.begin_bulk_ingest();
-
-    // Pre-add sheets and capture their SheetIds for staging
-    let mut sheet_ids: std::collections::HashMap<String, formualizer_eval::SheetId> =
-        std::collections::HashMap::new();
-    for sheet_name in sheets.keys() {
-        let sid = builder.add_sheet(sheet_name);
-        sheet_ids.insert(sheet_name.clone(), sid);
-    }
 
     // Batch parser with volatility classifier so ASTs carry contains_volatile
     let mut parser = formualizer_parse::parser::BatchParser::builder()
@@ -368,28 +357,51 @@ fn load_workbook_into_engine(
         })
         .build();
 
-    for (sheet_name, sheet_data) in sheets.iter() {
-        // find SheetId from pre-added map
+    // Snapshot sheet names then ingest from the engine-backed workbook
+    let (names, dims): (Vec<String>, std::collections::HashMap<String, (u32, u32)>) = {
+        let names = workbook.sheet_names_snapshot()?;
+        let mut dims = std::collections::HashMap::new();
+        for n in &names {
+            if let Some((rows, cols)) = workbook.sheet_dimensions(n)? {
+                dims.insert(n.clone(), (rows, cols));
+            }
+        }
+        (names, dims)
+    };
+
+    // Pre-add sheets and capture their SheetIds for staging
+    let mut sheet_ids: std::collections::HashMap<String, formualizer_eval::SheetId> =
+        std::collections::HashMap::new();
+    for sheet_name in &names {
+        let sid = builder.add_sheet(sheet_name);
+        sheet_ids.insert(sheet_name.clone(), sid);
+    }
+
+    // Now gather values and formulas by scanning used rectangles
+    for sheet_name in &names {
         let sid = *sheet_ids.get(sheet_name).expect("sheet id present");
-        // Values and formulas
-        let mut staged_values: Vec<(u32, u32, formualizer_common::LiteralValue)> = Vec::new();
-        let mut staged_asts: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
-        for ((row, col), cell_data) in &sheet_data.cells {
-            if let Some(ref value) = cell_data.value {
-                staged_values.push((*row, *col, value.clone()));
+        if let Some((rows, cols)) = dims.get(sheet_name) {
+            let mut staged_values: Vec<(u32, u32, formualizer_common::LiteralValue)> = Vec::new();
+            let mut staged_asts: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
+            for r in 1..=*rows {
+                for c in 1..=*cols {
+                    if let Some(v) = workbook.get_value_inner(sheet_name, r, c)? {
+                        staged_values.push((r, c, v));
+                    }
+                    if let Some(formula) = workbook.get_formula_inner(sheet_name, r, c)? {
+                        let ast = parser.parse(&formula).map_err(|e| {
+                            PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
+                        })?;
+                        staged_asts.push((r, c, ast));
+                    }
+                }
             }
-            if let Some(ref formula) = cell_data.formula {
-                let ast = parser
-                    .parse(formula)
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-                staged_asts.push((*row, *col, ast));
+            if !staged_values.is_empty() {
+                builder.add_values(sid, staged_values);
             }
-        }
-        if !staged_values.is_empty() {
-            builder.add_values(sid, staged_values);
-        }
-        if !staged_asts.is_empty() {
-            builder.add_formulas(sid, staged_asts);
+            if !staged_asts.is_empty() {
+                builder.add_formulas(sid, staged_asts);
+            }
         }
     }
 
@@ -397,27 +409,38 @@ fn load_workbook_into_engine(
     builder.finish().map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("bulk finish: {e}"))
     })?;
-
+    // Ensure formulas are evaluable; build graph and compute once
+    let _ = engine.evaluate_all();
     Ok(())
 }
 
 #[pymethods]
 impl PyEngine {
     /// Create a new evaluation engine
+    /// Can be constructed as Engine() or Engine(workbook, config=None)
     #[new]
     #[pyo3(signature = (workbook=None, config=None))]
-    pub fn new(workbook: Option<PyWorkbook>, config: Option<PyEvaluationConfig>) -> PyResult<Self> {
+    pub fn new(
+        workbook: Option<pyo3::Py<PyWorkbook>>,
+        config: Option<PyEvaluationConfig>,
+    ) -> PyResult<Self> {
         let eval_config = config.map(|c| c.inner).unwrap_or_default();
         let mut engine = RustEngine::new(PyResolver, eval_config);
 
-        // If a workbook is provided, load its data into the engine
-        if let Some(ref wb) = workbook {
-            load_workbook_into_engine(wb, &mut engine)?;
-        }
+        let wb_py = if let Some(wb) = workbook {
+            // Load the workbook data into the engine
+            Python::with_gil(|py| {
+                let wb_ref = wb.borrow(py);
+                load_workbook_into_engine(&*wb_ref, &mut engine)
+            })?;
+            Some(wb)
+        } else {
+            None
+        };
 
         Ok(PyEngine {
             inner: Arc::new(RwLock::new(engine)),
-            workbook,
+            workbook: wb_py,
         })
     }
 
@@ -426,7 +449,7 @@ impl PyEngine {
     #[pyo3(signature = (workbook, config=None))]
     pub fn from_workbook(
         _cls: &Bound<'_, pyo3::types::PyType>,
-        workbook: PyWorkbook,
+        workbook: pyo3::Py<PyWorkbook>,
         config: Option<PyEvaluationConfig>,
     ) -> PyResult<Self> {
         // Initialize tracing subscriber if requested via env (no-op when disabled)
@@ -435,7 +458,10 @@ impl PyEngine {
         let mut engine = RustEngine::new(PyResolver, eval_config);
 
         // Load the workbook data into the engine
-        load_workbook_into_engine(&workbook, &mut engine)?;
+        Python::with_gil(|py| {
+            let wb_ref = workbook.borrow(py);
+            load_workbook_into_engine(&*wb_ref, &mut engine)
+        })?;
 
         Ok(PyEngine {
             inner: Arc::new(RwLock::new(engine)),
@@ -515,15 +541,18 @@ impl PyEngine {
 
         // Update workbook if present to keep it in sync
         if let Some(ref wb) = self.workbook {
-            wb.set_cell_data(
-                sheet,
-                row,
-                col,
-                CellData {
-                    value: Some(value.inner),
-                    formula: None, // Clear any formula when setting value
-                },
-            )?;
+            Python::with_gil(|py| {
+                let wb_ref = wb.borrow(py);
+                wb_ref.set_cell_data(
+                    sheet,
+                    row,
+                    col,
+                    CellData {
+                        value: Some(value.inner.clone()),
+                        formula: None,
+                    },
+                )
+            })?;
         }
 
         Ok(())
@@ -559,15 +588,18 @@ impl PyEngine {
 
         // Update workbook if present to keep it in sync
         if let Some(ref wb) = self.workbook {
-            wb.set_cell_data(
-                sheet,
-                row,
-                col,
-                CellData {
-                    value: None,
-                    formula: Some(formula.to_string()),
-                },
-            )?;
+            Python::with_gil(|py| {
+                let wb_ref = wb.borrow(py);
+                wb_ref.set_cell_data(
+                    sheet,
+                    row,
+                    col,
+                    CellData {
+                        value: None,
+                        formula: Some(formula.to_string()),
+                    },
+                )
+            })?;
         }
 
         Ok(())
@@ -587,7 +619,7 @@ impl PyEngine {
     }
 
     /// Set or change the workbook
-    pub fn set_workbook(&mut self, workbook: PyWorkbook) -> PyResult<()> {
+    pub fn set_workbook(&mut self, workbook: pyo3::Py<PyWorkbook>) -> PyResult<()> {
         // Clear existing data and load new workbook
         let mut engine = self.inner.write().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
@@ -597,7 +629,10 @@ impl PyEngine {
         // Note: There's no clear method in the engine, so we'd need to create a new one
         // For now, we'll just load the new data on top
 
-        load_workbook_into_engine(&workbook, &mut engine)?;
+        Python::with_gil(|py| {
+            let wb_ref = workbook.borrow(py);
+            load_workbook_into_engine(&*wb_ref, &mut engine)
+        })?;
         self.workbook = Some(workbook);
         Ok(())
     }
@@ -639,6 +674,14 @@ impl PyEngine {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Row/col are 1-based",
             ));
+        }
+
+        // If this engine was constructed from a Workbook, delegate to the workbook's engine-backed evaluation
+        if let Some(ref wb) = self.workbook {
+            return Python::with_gil(|py| {
+                let w = wb.borrow(py);
+                w.evaluate_cell(sheet, row, col)
+            });
         }
 
         let value = py.allow_threads(|| {

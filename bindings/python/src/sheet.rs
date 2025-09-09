@@ -4,6 +4,7 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::value::PyLiteralValue;
 use crate::workbook::{CellData, PyCell, PyWorkbook};
+use formualizer_workbook::WorksheetHandle;
 
 /// Sheet class - represents a view into workbook data
 #[gen_stub_pyclass]
@@ -13,6 +14,7 @@ pub struct PySheet {
     pub(crate) workbook: PyWorkbook,
     #[pyo3(get)]
     pub name: String,
+    pub(crate) handle: WorksheetHandle,
 }
 
 #[gen_stub_pymethods]
@@ -26,12 +28,8 @@ impl PySheet {
             ));
         }
 
-        let data = CellData {
-            value: Some(value.inner),
-            formula: None,
-        };
-
-        self.workbook.set_cell_data(&self.name, row, col, data)
+        // Delegate to workbook so compatibility cache stays in sync
+        self.workbook.set_value(&self.name, row, col, value)
     }
 
     /// Set a single formula (stores in workbook, doesn't evaluate)
@@ -42,12 +40,8 @@ impl PySheet {
             ));
         }
 
-        let data = CellData {
-            value: None,
-            formula: Some(formula.to_string()),
-        };
-
-        self.workbook.set_cell_data(&self.name, row, col, data)
+        // Delegate to workbook so compatibility cache stays in sync
+        self.workbook.set_formula(&self.name, row, col, formula)
     }
 
     /// Get a single cell's stored data (no evaluation)
@@ -58,25 +52,14 @@ impl PySheet {
             ));
         }
 
-        let cell_data = self.workbook.get_cell_data(&self.name, row, col)?;
-
-        match cell_data {
-            Some(data) => {
-                let value = data
-                    .value
-                    .unwrap_or(formualizer_common::LiteralValue::Empty);
-                Ok(PyCell {
-                    value: PyLiteralValue { inner: value },
-                    formula: data.formula,
-                })
-            }
-            None => Ok(PyCell {
-                value: PyLiteralValue {
-                    inner: formualizer_common::LiteralValue::Empty,
-                },
-                formula: None,
-            }),
-        }
+        let value = PyLiteralValue {
+            inner: self
+                .handle
+                .get_value(row, col)
+                .unwrap_or(formualizer_common::LiteralValue::Empty),
+        };
+        let formula = self.handle.get_formula(row, col);
+        Ok(PyCell { value, formula })
     }
 
     /// Batch set values into a rectangle
@@ -103,33 +86,9 @@ impl PySheet {
             )));
         }
 
-        for (i, row_data) in data.iter().enumerate() {
-            let row_list: &Bound<'_, PyList> = row_data.downcast()?;
-            if row_list.len() as u32 != cols {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Row {} has {} columns, expected {}",
-                    i,
-                    row_list.len(),
-                    cols
-                )));
-            }
-
-            for (j, val) in row_list.iter().enumerate() {
-                let py_val: PyLiteralValue = val.extract()?;
-                let row = start_row + i as u32;
-                let col = start_col + j as u32;
-
-                let cell_data = CellData {
-                    value: Some(py_val.inner),
-                    formula: None,
-                };
-
-                self.workbook
-                    .set_cell_data(&self.name, row, col, cell_data)?;
-            }
-        }
-
-        Ok(())
+        // Delegate to workbook batch API (handles cache)
+        self.workbook
+            .set_values_batch(&self.name, start_row, start_col, data)
     }
 
     /// Batch set formulas into a rectangle
@@ -156,33 +115,9 @@ impl PySheet {
             )));
         }
 
-        for (i, row_data) in formulas.iter().enumerate() {
-            let row_list: &Bound<'_, PyList> = row_data.downcast()?;
-            if row_list.len() as u32 != cols {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Row {} has {} columns, expected {}",
-                    i,
-                    row_list.len(),
-                    cols
-                )));
-            }
-
-            for (j, formula) in row_list.iter().enumerate() {
-                let formula_str: String = formula.extract()?;
-                let row = start_row + i as u32;
-                let col = start_col + j as u32;
-
-                let cell_data = CellData {
-                    value: None,
-                    formula: Some(formula_str),
-                };
-
-                self.workbook
-                    .set_cell_data(&self.name, row, col, cell_data)?;
-            }
-        }
-
-        Ok(())
+        // Delegate to workbook batch API (handles cache)
+        self.workbook
+            .set_formulas_batch(&self.name, start_row, start_col, formulas)
     }
 
     /// Get values from a range (no evaluation, just stored values)
@@ -190,24 +125,23 @@ impl PySheet {
         &self,
         range: &crate::workbook::PyRangeAddress,
     ) -> PyResult<Vec<Vec<PyLiteralValue>>> {
-        let mut result = Vec::new();
-
-        for row in range.start_row..=range.end_row {
-            let mut row_vec = Vec::new();
-            for col in range.start_col..=range.end_col {
-                let cell_data = self.workbook.get_cell_data(&self.name, row, col)?;
-                let value = match cell_data {
-                    Some(data) => data
-                        .value
-                        .unwrap_or(formualizer_common::LiteralValue::Empty),
-                    None => formualizer_common::LiteralValue::Empty,
-                };
-                row_vec.push(PyLiteralValue { inner: value });
-            }
-            result.push(row_vec);
-        }
-
-        Ok(result)
+        let ra = formualizer_workbook::RangeAddress::new(
+            &range.sheet,
+            range.start_row,
+            range.start_col,
+            range.end_row,
+            range.end_col,
+        )
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let vals = self.handle.read_range(&ra);
+        Ok(vals
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|v| PyLiteralValue { inner: v })
+                    .collect::<Vec<_>>()
+            })
+            .collect())
     }
 
     /// Get formulas from a range (returns formula strings, empty strings for non-formula cells)
@@ -215,24 +149,29 @@ impl PySheet {
         &self,
         range: &crate::workbook::PyRangeAddress,
     ) -> PyResult<Vec<Vec<String>>> {
-        let mut result = Vec::new();
-
-        for row in range.start_row..=range.end_row {
-            let mut row_vec = Vec::new();
-            for col in range.start_col..=range.end_col {
-                let cell_data = self.workbook.get_cell_data(&self.name, row, col)?;
-                let formula = match cell_data {
-                    Some(data) => data.formula.unwrap_or_default(),
-                    None => String::new(),
-                };
-                // Strip leading '=' if present
+        let ra = formualizer_workbook::RangeAddress::new(
+            &range.sheet,
+            range.start_row,
+            range.start_col,
+            range.end_row,
+            range.end_col,
+        )
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+        let height = ra.height();
+        let width = ra.width();
+        let mut out = Vec::with_capacity(height as usize);
+        for r in 0..height {
+            let mut row_vec = Vec::with_capacity(width as usize);
+            for c in 0..width {
+                let rr = ra.start_row + r;
+                let cc = ra.start_col + c;
+                let formula = self.handle.get_formula(rr, cc).unwrap_or_default();
                 let formula = formula.strip_prefix('=').unwrap_or(&formula).to_string();
                 row_vec.push(formula);
             }
-            result.push(row_vec);
+            out.push(row_vec);
         }
-
-        Ok(result)
+        Ok(out)
     }
 
     fn __repr__(&self) -> String {

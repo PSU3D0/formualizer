@@ -7,6 +7,7 @@ mod reference;
 mod token;
 mod tokenizer;
 mod utils;
+mod workbook;
 
 pub use ast::*;
 pub use errors::*;
@@ -14,6 +15,7 @@ pub use parser::*;
 pub use reference::*;
 pub use token::*;
 pub use tokenizer::*;
+pub use workbook::*;
 
 #[wasm_bindgen(start)]
 pub fn main() {

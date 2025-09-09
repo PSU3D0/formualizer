@@ -240,6 +240,13 @@ impl Workbook {
             .map(|s| s.name.as_ref().to_string())
             .collect()
     }
+    /// Return (rows, cols) for a sheet if present in the Arrow store
+    pub fn sheet_dimensions(&self, name: &str) -> Option<(u32, u32)> {
+        self.engine
+            .sheet_store()
+            .sheet(name)
+            .map(|s| (s.nrows as u32, s.columns.len() as u32))
+    }
     pub fn has_sheet(&self, name: &str) -> bool {
         self.engine.graph.sheet_id(name).is_some()
     }

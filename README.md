@@ -1,89 +1,103 @@
-# Formualizer 🚀
+# Formualizer
 
-<p align="center">
-  <img src="assets/formualizer-banner.jpg" alt="Formualizer Banner" width="800"/>
-</p>
+An open‑source, embeddable spreadsheet engine. Formualizer parses, evaluates, and mutates Excel‑style workbooks at speed — with a modern Rust core, Arrow‑powered storage, deferred/demand evaluation, and first‑class Python and WASM bindings.
 
-[![Rust CI](https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg)](https://github.com/psu3d0/formualizer/actions/workflows/ci.yml)
-[![Security Audit](https://github.com/psu3d0/formualizer/actions/workflows/security-audit.yml/badge.svg)](https://github.com/psu3d0/formualizer/actions/workflows/security-audit.yml)
+[![CI](https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg)](https://github.com/psu3d0/formualizer/actions/workflows/ci.yml)
 
-**Formualizer** is a lightning-fast, flexible formula processing library that brings spreadsheet-style calculations to your Rust applications! This **headless** engine provides a powerful **tokenizer**, **AST parser**, and **interpreter** for evaluating Excel-like formulas.
+## Overview
 
-## ✨ Features
+Formualizer is a full spreadsheet engine you can embed anywhere:
 
-- **⚡ Blazing-Fast Tokenization**: Transform formula strings into structured tokens with our optimized tokenizer.
-- **🧩 Robust Parsing**: Build accurate Abstract Syntax Trees (AST) from tokens with advanced error handling.
-- **🧮 Flexible Interpretation**: Evaluate formulas in any context you define - from spreadsheets to custom data structures.
-- **🔌 Ultimate Extensibility**: Easily create custom functions, range references, and structured table references that fit your specific needs.
-- **🛠️ Modular Design**: Use only what you need with our feature flags - tokenizer, parser, interpreter or all components together.
+- Engine: evaluates Excel‑style formulas with hundreds of built‑ins, dependency tracking, and cycle detection
+- Workbook: engine‑backed, mutable sheets/cells/ranges; streaming loaders; batch APIs; changelog/undo/redo
+- Storage: Arrow columnar backing for fast vectorized operations and large data
+- Modes: demand‑driven or deferred graph building for snappy edits and scalable recomputation
+- Bindings: first‑class Python and WASM surfaces for scripting and the web
 
-## 📦 Installation
+Use what you need: parse only, evaluate formulas against your own data, or use the workbook surface for a batteries‑included experience.
 
-Add Formualizer to your Rust project:
+## Crates
 
-```
-cargo add formualizer
-```
+- crates/formualizer-parse: Tokenizer/Parser/Pretty
+- crates/formualizer-eval: Evaluation engine with Arrow-backed storage, planning, and built‑ins
+- crates/formualizer-workbook: Engine‑backed `Workbook` with sheets/cells/ranges, batch APIs, and changelog/undo/redo
 
-```toml
-[dependencies]
-formualizer = { git = "https://github.com/psu3d0/formualizer.git" }
-```
+## Bindings
 
-### Feature Flags
+### Python (bindings/python)
 
-Customize your build with these feature flags:
+- Engine: evaluate formulas on demand (`Engine.from_path`, `Engine.from_workbook`, `evaluate_cell`, `evaluate_all`)
+- Workbook: set values/formulas, batch operations, undo/redo; evaluation via `Engine.from_workbook(wb)`
+- No begin/end required: single edits are individually undoable; batch methods auto‑group as one undo step
 
-```toml
-# Only include the tokenizer
-formualizer = { git = "https://github.com/psu3d0/formualizer.git", default-features = false }
+Install: `pip install formualizer` (see bindings/python/README.md)
 
-# Include tokenizer and parser
-formualizer = { git = "https://github.com/psu3d0/formualizer.git", default-features = false, features = ["parser"] }
+### WASM (bindings/wasm)
 
-# Include the full stack (default)
-formualizer = { git = "https://github.com/psu3d0/formualizer.git" }
-```
+- Workbook + Sheet facade for values/formulas and evaluation
+- Changelog/undo/redo controls for power users; single edits are undoable without manual grouping
+- Optional JSON loader when the `json` feature is enabled
 
-## 🔍 How It Works
+Install: `npm i formualizer-wasm` (see bindings/wasm/README.md)
 
-Formualizer's architecture consists of three powerful components:
+## Quick Start
 
-1. **Tokenizer (`tokenizer.rs`)**
-   - Transforms formula strings like `=SUM(A1:B2)` into a structured token sequence.
-   - Works standalone or as part of the full processing pipeline.
-
-2. **Parser (`parser.rs`)**
-   - Converts tokens into a robust Abstract Syntax Tree (AST).
-   - Handles operator precedence, function calls, and nested expressions with ease.
-
-
-**Formualizer makes no assumptions about your implementation**. Your approach to dependency resolution, formula registry, and so on is up to you. In line with this ethos, you can opt to use only the parts you need. Both the parser and interpreter are under feature flags - use only what you need!
-
-## 🚀 Usage
-
-### Tokenizing a Formula
+### Rust (parse)
 
 ```rust
-use formualizer::tokenizer::Tokenizer;
+use formualizer_parse::tokenizer::Tokenizer;
+use formualizer_parse::parser::Parser;
 
-let formula = "=SUM(A1:B2)";
-let tokenizer = Tokenizer::new(formula).unwrap();
-
-for token in tokenizer.items {
-    println!("Token: {} ({:?})", token.value, token.token_type);
-}
+let t = Tokenizer::new("=A1+B2").unwrap();
+let mut p = Parser::new(t.items, false);
+let ast = p.parse().unwrap();
+println!("{}", formualizer_parse::pretty::canonical_formula(&ast));
 ```
 
-### Parsing a Formula
+### Python (evaluate)
 
-```rust
-use formualizer::parser::Parser;
-use formualizer::tokenizer::Tokenizer;
+```python
+import formualizer as fz
 
-let tokenizer = Tokenizer::new("=A1+B2").unwrap();
-let mut parser = Parser::new(tokenizer.items, false);
-let ast = parser.parse().unwrap();
-println!("Parsed AST: {:?}", ast);
+wb = fz.Workbook()
+s = wb.sheet("Data")
+s.set_value(1, 1, fz.LiteralValue.int(10))
+s.set_value(1, 2, fz.LiteralValue.int(20))
+s.set_formula(1, 3, "=A1+B1")
+
+eng = fz.Engine.from_workbook(wb)
+assert eng.evaluate_cell("Data", 1, 3).as_number() == 30.0
 ```
 
+### WASM (browser)
+
+```ts
+import init, { Workbook } from 'formualizer-wasm'
+await init()
+
+const wb = new Workbook()
+wb.addSheet('S')
+wb.setValue('S', 1, 1, 5)
+wb.setValue('S', 1, 2, 7)
+wb.setFormula('S', 1, 3, '=A1+B1')
+console.log(await wb.evaluateCell('S', 1, 3)) // 12
+```
+
+## CI & Release
+
+- CI runs Rust tests + clippy + fmt, builds Python wheels via maturin, generates Python stubs, and runs Python tests.
+- WASM workflow builds the package and runs wasm‑pack tests on Node.
+- Publishing is set up for artifacts; configure PyPI/NPM tokens on tag release to publish.
+
+See `.github/workflows/ci.yml` and `.github/workflows/wasm.yml`.
+
+## Performance & Excel Parity
+
+- Performance: The evaluator uses columnar Arrow storage, vectorized kernels, and a staged/deferred graph for large workbooks. Benchmarks (coming soon) will include common workloads (SUMIFS/XLOOKUP/array formulas) across realistic data sizes.
+- Excel parity: Built‑ins aim for Excel compatibility. An OpenFormula and Excel conformance test suite is being prepared; we will publish parity results and gaps.
+
+Planned: a public benchmark harness and conformance dashboards.
+
+## License
+
+MIT OR Apache‑2.0
