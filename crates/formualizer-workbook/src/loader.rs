@@ -141,16 +141,22 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
                     if formula_str.is_empty() {
                         continue;
                     }
-                    let ast = parser::parse(&formula_str).map_err(|e| IoError::FormulaParser {
-                        sheet: sheet.to_string(),
-                        row,
-                        col: col_to_a1(col),
-                        message: e.to_string(),
-                    })?;
-                    engine
-                        .set_cell_formula(sheet, row, col, ast)
-                        .map_err(IoError::Engine)?;
-                    self.stats.formulas_loaded += 1;
+                    if engine.config.defer_graph_building {
+                        engine.stage_formula_text(sheet, row, col, formula_str);
+                        self.stats.formulas_loaded += 1;
+                    } else {
+                        let ast =
+                            parser::parse(&formula_str).map_err(|e| IoError::FormulaParser {
+                                sheet: sheet.to_string(),
+                                row,
+                                col: col_to_a1(col),
+                                message: e.to_string(),
+                            })?;
+                        engine
+                            .set_cell_formula(sheet, row, col, ast)
+                            .map_err(IoError::Engine)?;
+                        self.stats.formulas_loaded += 1;
+                    }
                 }
             }
         }

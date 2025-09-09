@@ -6,6 +6,7 @@ pub mod resolver;
 pub mod session;
 pub mod traits;
 pub mod transaction;
+pub mod workbook;
 
 #[cfg(feature = "calamine")]
 pub use backends::CalamineAdapter;
@@ -25,4 +26,5 @@ pub use traits::{
 pub use transaction::{WriteOp, WriteTransaction};
 
 // Re-export for convenience
-pub use formualizer_common::LiteralValue;
+pub use formualizer_common::{LiteralValue, RangeAddress};
+pub use workbook::Workbook;

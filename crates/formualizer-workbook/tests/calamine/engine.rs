@@ -3,8 +3,8 @@ use crate::common::build_workbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_workbook::{CalamineAdapter, SpreadsheetReader};
 use formualizer_parse::parser::Parser;
+use formualizer_workbook::{CalamineAdapter, SpreadsheetReader};
 
 #[test]
 fn stream_single_sheet_alignment_and_eval() {

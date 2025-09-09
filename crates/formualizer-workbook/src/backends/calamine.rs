@@ -512,48 +512,61 @@ where
                 );
             }
 
-            // Formulas: iterate formulas_range and parse with caching
+            // Formulas: iterate formulas_range and either stage or parse with caching
             let tf0 = std::time::Instant::now();
             let mut parsed_n = 0usize;
             if let Some(frm_range) = &formulas_range {
                 let start_row = frm_range.start().unwrap_or_default().0 as usize;
                 let start_col = frm_range.start().unwrap_or_default().1 as usize;
                 // cache to reuse parsed AST for shared formulas text
-                let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
-                    rustc_hash::FxHashMap::default();
-                cache.reserve(4096);
-                let mut builder = engine.begin_bulk_ingest();
-                let sid = builder.add_sheet(n);
-                for (row, col, formula) in frm_range.used_cells() {
-                    if formula.is_empty() {
-                        continue;
+                if engine.config.defer_graph_building {
+                    for (row, col, formula) in frm_range.used_cells() {
+                        if formula.is_empty() {
+                            continue;
+                        }
+                        let excel_row = (row + start_row + 1) as u32;
+                        let excel_col = (col + start_col + 1) as u32;
+                        engine.stage_formula_text(n, excel_row, excel_col, formula.clone());
+                        parsed_n += 1;
                     }
-                    let excel_row = (row + start_row + 1) as u32;
-                    let excel_col = (col + start_col + 1) as u32;
-                    let key_owned: String = if formula.starts_with('=') {
-                        formula.clone()
-                    } else {
-                        format!("={}", formula)
-                    };
-                    let ast = if let Some(ast) = cache.get(&key_owned) {
-                        ast.clone()
-                    } else {
-                        let parsed = formualizer_parse::parser::parse(&key_owned).map_err(|e| {
-                            calamine::Error::Io(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                e.to_string(),
-                            ))
-                        })?;
-                        cache.insert(key_owned, parsed.clone());
-                        parsed
-                    };
-                    builder.add_formulas(sid, std::iter::once((excel_row, excel_col, ast)));
-                    parsed_n += 1;
-                    if debug && (parsed_n % 5000 == 0) {
-                        eprintln!("[fz][load]    parsed formulas: {}", parsed_n);
+                } else {
+                    let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
+                        rustc_hash::FxHashMap::default();
+                    cache.reserve(4096);
+                    let mut builder = engine.begin_bulk_ingest();
+                    let sid = builder.add_sheet(n);
+                    for (row, col, formula) in frm_range.used_cells() {
+                        if formula.is_empty() {
+                            continue;
+                        }
+                        let excel_row = (row + start_row + 1) as u32;
+                        let excel_col = (col + start_col + 1) as u32;
+                        let key_owned: String = if formula.starts_with('=') {
+                            formula.clone()
+                        } else {
+                            format!("={}", formula)
+                        };
+                        let ast = if let Some(ast) = cache.get(&key_owned) {
+                            ast.clone()
+                        } else {
+                            let parsed =
+                                formualizer_parse::parser::parse(&key_owned).map_err(|e| {
+                                    calamine::Error::Io(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        e.to_string(),
+                                    ))
+                                })?;
+                            cache.insert(key_owned, parsed.clone());
+                            parsed
+                        };
+                        builder.add_formulas(sid, std::iter::once((excel_row, excel_col, ast)));
+                        parsed_n += 1;
+                        if debug && (parsed_n % 5000 == 0) {
+                            eprintln!("[fz][load]    parsed formulas: {}", parsed_n);
+                        }
                     }
+                    let _ = builder.finish();
                 }
-                let _ = builder.finish();
             }
             total_formulas += parsed_n;
             if debug {

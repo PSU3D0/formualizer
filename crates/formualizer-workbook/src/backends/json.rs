@@ -528,25 +528,36 @@ where
                 store.sheets.push(asheet);
             }
 
-            // Formulas: stage into graph
-            let mut builder = engine.begin_bulk_ingest();
-            let sid = builder.add_sheet(name);
-            for c in &sheet.cells {
-                if let Some(f) = &c.formula {
-                    if f.is_empty() {
-                        continue;
+            // Formulas: either stage into graph now or defer
+            if engine.config.defer_graph_building {
+                for c in &sheet.cells {
+                    if let Some(f) = &c.formula {
+                        if f.is_empty() {
+                            continue;
+                        }
+                        engine.stage_formula_text(name, c.row, c.col, f.clone());
                     }
-                    let with_eq = if f.starts_with('=') {
-                        f.clone()
-                    } else {
-                        format!("={}", f)
-                    };
-                    let parsed = formualizer_parse::parser::parse(&with_eq)
-                        .map_err(|e| IoError::from_backend("json", e))?;
-                    builder.add_formulas(sid, std::iter::once((c.row, c.col, parsed)));
                 }
+            } else {
+                let mut builder = engine.begin_bulk_ingest();
+                let sid = builder.add_sheet(name);
+                for c in &sheet.cells {
+                    if let Some(f) = &c.formula {
+                        if f.is_empty() {
+                            continue;
+                        }
+                        let with_eq = if f.starts_with('=') {
+                            f.clone()
+                        } else {
+                            format!("={}", f)
+                        };
+                        let parsed = formualizer_parse::parser::parse(&with_eq)
+                            .map_err(|e| IoError::from_backend("json", e))?;
+                        builder.add_formulas(sid, std::iter::once((c.row, c.col, parsed)));
+                    }
+                }
+                let _ = builder.finish();
             }
-            let _ = builder.finish();
         }
         // Finalize sheet indexes after load
         for name in self.data.sheets.keys() {

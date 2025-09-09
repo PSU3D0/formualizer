@@ -147,6 +147,10 @@ pub struct EvalConfig {
 
     /// Workbook date system: Excel 1900 (default) or 1904.
     pub date_system: DateSystem,
+
+    /// Defer dependency graph building: ingest values immediately but stage formulas
+    /// for on-demand graph construction during evaluation.
+    pub defer_graph_building: bool,
 }
 
 impl Default for EvalConfig {
@@ -184,6 +188,7 @@ impl Default for EvalConfig {
             delta_overlay_enabled: true,
             write_formula_overlay_enabled: true,
             date_system: DateSystem::Excel1900,
+            defer_graph_building: false,
         }
     }
 }

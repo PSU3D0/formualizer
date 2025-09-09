@@ -2,7 +2,9 @@
 
 use crate::common::build_workbook;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_workbook::{LiteralValue, LoadStrategy, SpreadsheetReader, UmyaAdapter, WorkbookLoader};
+use formualizer_workbook::{
+    LiteralValue, LoadStrategy, SpreadsheetReader, UmyaAdapter, WorkbookLoader,
+};
 
 #[test]
 fn umya_extracts_formulas_and_normalizes_equals() {

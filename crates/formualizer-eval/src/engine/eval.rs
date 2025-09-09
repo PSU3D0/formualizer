@@ -36,6 +36,8 @@ pub struct Engine<R> {
     row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
     // Pass-scoped criteria mask cache (Arrow-only)
     mask_cache: std::sync::RwLock<Option<MaskCache>>,
+    /// Staged formulas by sheet when `defer_graph_building` is enabled.
+    staged_formulas: std::collections::HashMap<String, Vec<(u32, u32, String)>>,
 }
 
 #[derive(Debug)]
@@ -103,6 +105,7 @@ where
             overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
             mask_cache: std::sync::RwLock::new(None),
+            staged_formulas: std::collections::HashMap::new(),
         }
     }
 
@@ -127,6 +130,7 @@ where
             overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
             mask_cache: std::sync::RwLock::new(None),
+            staged_formulas: std::collections::HashMap::new(),
         }
     }
 
@@ -179,6 +183,106 @@ where
     /// Access Arrow sheet store (mutable)
     pub fn sheet_store_mut(&mut self) -> &mut SheetStore {
         &mut self.arrow_sheets
+    }
+
+    /// Stage a formula text instead of inserting into the graph (used when deferring is enabled).
+    pub fn stage_formula_text(&mut self, sheet: &str, row: u32, col: u32, text: String) {
+        self.staged_formulas
+            .entry(sheet.to_string())
+            .or_default()
+            .push((row, col, text));
+    }
+
+    /// Get a staged formula text for a given cell if present (cloned).
+    pub fn get_staged_formula_text(&self, sheet: &str, row: u32, col: u32) -> Option<String> {
+        self.staged_formulas.get(sheet).and_then(|v| {
+            v.iter()
+                .find(|(r, c, _)| *r == row && *c == col)
+                .map(|(_, _, s)| s.clone())
+        })
+    }
+
+    /// Build graph for all staged formulas.
+    pub fn build_graph_all(&mut self) -> Result<(), formualizer_parse::ExcelError> {
+        if self.staged_formulas.is_empty() {
+            return Ok(());
+        }
+        // Take staged formulas before borrowing graph via builder
+        let staged = std::mem::take(&mut self.staged_formulas);
+        let mut builder = self.begin_bulk_ingest();
+        for (sheet, entries) in staged {
+            let sid = builder.add_sheet(&sheet);
+            // Parse with small cache for shared formulas
+            let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
+                rustc_hash::FxHashMap::default();
+            cache.reserve(4096);
+            for (row, col, txt) in entries {
+                let key = if txt.starts_with('=') {
+                    txt
+                } else {
+                    format!("={}", txt)
+                };
+                let ast = if let Some(p) = cache.get(&key) {
+                    p.clone()
+                } else {
+                    let parsed = formualizer_parse::parser::parse(&key).map_err(|e| {
+                        formualizer_parse::ExcelError::new(formualizer_parse::ExcelErrorKind::Value)
+                            .with_message(e.to_string())
+                    })?;
+                    cache.insert(key.clone(), parsed.clone());
+                    parsed
+                };
+                builder.add_formulas(sid, std::iter::once((row, col, ast)));
+            }
+        }
+        let _ = builder.finish();
+        Ok(())
+    }
+
+    /// Build graph for specific sheets (consuming only those staged entries).
+    pub fn build_graph_for_sheets<'a, I: IntoIterator<Item = &'a str>>(
+        &mut self,
+        sheets: I,
+    ) -> Result<(), formualizer_parse::ExcelError> {
+        let mut any = false;
+        // Collect entries first to avoid aliasing self while builder borrows graph
+        let mut collected: Vec<(&str, Vec<(u32, u32, String)>)> = Vec::new();
+        for s in sheets {
+            if let Some(entries) = self.staged_formulas.remove(s) {
+                collected.push((s, entries));
+            }
+        }
+        let mut builder = self.begin_bulk_ingest();
+        // small parse cache per call
+        let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
+            rustc_hash::FxHashMap::default();
+        cache.reserve(4096);
+        for (s, entries) in collected.into_iter() {
+            any = true;
+            let sid = builder.add_sheet(s);
+            for (row, col, txt) in entries {
+                let key = if txt.starts_with('=') {
+                    txt
+                } else {
+                    format!("={}", txt)
+                };
+                let ast = if let Some(p) = cache.get(&key) {
+                    p.clone()
+                } else {
+                    let parsed = formualizer_parse::parser::parse(&key).map_err(|e| {
+                        formualizer_parse::ExcelError::new(formualizer_parse::ExcelErrorKind::Value)
+                            .with_message(e.to_string())
+                    })?;
+                    cache.insert(key.clone(), parsed.clone());
+                    parsed
+                };
+                builder.add_formulas(sid, std::iter::once((row, col, ast)));
+            }
+        }
+        if any {
+            let _ = builder.finish();
+        }
+        Ok(())
     }
 
     /// Begin bulk Arrow ingest for base values (Phase A)
@@ -959,6 +1063,10 @@ where
 
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
+        if self.config.defer_graph_building {
+            // Build graph for all staged formulas before evaluating
+            self.build_graph_all()?;
+        }
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all").entered();
         let start = std::time::Instant::now();
@@ -1030,6 +1138,9 @@ where
         row: u32,
         col: u32,
     ) -> Result<Option<LiteralValue>, ExcelError> {
+        if self.config.defer_graph_building {
+            self.build_graph_for_sheets(std::iter::once(sheet))?;
+        }
         let addr = format!("{}!{}{}", sheet, Self::col_to_letters(col), row);
         let _ = self.evaluate_until(&[addr.as_str()])?; // ignore detailed EvalResult here
         Ok(self.get_cell_value(sheet, row, col))
@@ -1047,6 +1158,13 @@ where
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
         if targets.is_empty() {
             return Ok(Vec::new());
+        }
+        if self.config.defer_graph_building {
+            let mut sheets: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
+            for (s, _, _) in targets.iter() {
+                sheets.insert(*s);
+            }
+            self.build_graph_for_sheets(sheets.iter().cloned())?;
         }
         let addresses: Vec<String> = targets
             .iter()
@@ -1073,6 +1191,11 @@ where
                 estimated_parallel_layers: 0,
                 target_cells: Vec::new(),
             });
+        }
+        if self.config.defer_graph_building {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                "Evaluation plan requested with deferred graph; build first or call evaluate_*",
+            ));
         }
 
         // Convert targets to A1 notation for consistency
