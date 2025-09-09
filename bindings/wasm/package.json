@@ -1,0 +1,37 @@
+{
+  "name": "formualizer",
+  "version": "0.1.0",
+  "description": "WebAssembly bindings for Formualizer Excel formula parser",
+  "main": "pkg/formualizer_wasm.js",
+  "module": "pkg/formualizer_wasm.js",
+  "files": [
+    "pkg",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run build:wasm",
+    "build:wasm": "wasm-pack build --target bundler --out-dir pkg --release",
+    "test": "wasm-pack test --node",
+    "clean": "rimraf dist pkg"
+  },
+  "keywords": [
+    "excel",
+    "formula",
+    "parser",
+    "wasm",
+    "webassembly",
+    "spreadsheet"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "devDependencies": {
+    "@rollup/plugin-typescript": "^11.1.5",
+    "@types/node": "^20.10.0",
+    "rimraf": "^5.0.5",
+    "rollup": "^4.9.0",
+    "typescript": "^5.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/psu3d0/formualizer"
+  }
+}

@@ -1,5 +1,5 @@
 use crate::{errors::TokenizerError, token::PyToken};
-use formualizer_core::Tokenizer;
+use formualizer_parse::Tokenizer;
 use pyo3::prelude::*;
 use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
 

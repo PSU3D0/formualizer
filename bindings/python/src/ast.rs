@@ -1,10 +1,10 @@
 use crate::reference::{reference_type_to_py, ReferenceLike};
 use crate::token::PyToken;
 use formualizer_common::LiteralValue;
-use formualizer_core::parser::{ASTNode, ASTNodeType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
+use pyo3_stub_gen::derive::*;
 
 #[gen_stub_pyclass]
 #[pyclass(module = "formualizer", name = "ASTNode")]
@@ -29,14 +29,7 @@ impl PyASTNode {
 
     /// Round-trips the node back to canonical Excel formula (with leading '=').
     pub fn to_formula(&self) -> String {
-        let formula = formualizer_core::pretty::pretty_print(&self.inner);
-        if formula.starts_with('=') {
-            formula
-        } else if !matches!(self.inner.node_type, ASTNodeType::Literal(_)) {
-            format!("={}", formula)
-        } else {
-            formula
-        }
+        formualizer_parse::pretty::canonical_formula(&self.inner)
     }
 
     /// Get a stable fingerprint hash of this AST structure
@@ -217,6 +210,7 @@ impl PyASTNode {
             LiteralValue::Duration(dur) => format!("Duration({})", dur),
             LiteralValue::Array(arr) => format!("Array({:?})", arr),
             LiteralValue::Empty => "Empty".to_string(),
+            LiteralValue::Pending => "Pending".to_string(),
         }
     }
 
@@ -328,6 +322,7 @@ impl PyASTNode {
                 py_arr.to_object(py)
             }
             LiteralValue::Empty => py.None(),
+            LiteralValue::Pending => py.None(),
         }
     }
 }

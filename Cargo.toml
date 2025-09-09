@@ -1,7 +1,12 @@
 [workspace]
 resolver = "2"
 
-members = [ "crates/formualizer-common",
-  "crates/formualizer-core", "crates/formualizer-eval", "crates/formualizer-macros",
-  "crates/formualizer-common", "bindings/python"
+members = [
+  "crates/formualizer-common",
+  "crates/formualizer-parse",
+  "crates/formualizer-eval",
+  "crates/formualizer-macros",
+  "crates/formualizer-workbook",
+  "bindings/python",
+  "bindings/wasm"
 ]

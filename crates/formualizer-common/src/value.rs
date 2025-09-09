@@ -61,6 +61,7 @@ pub enum LiteralValue {
     Time(chrono::NaiveTime),         // For time values
     Duration(chrono::Duration),      // For durations
     Empty,                           // For empty cells/optional arguments
+    Pending,                         // For pending values
 
     Error(ExcelError),
 }
@@ -78,6 +79,7 @@ impl Hash for LiteralValue {
             LiteralValue::Time(t) => t.hash(state),
             LiteralValue::Duration(d) => d.hash(state),
             LiteralValue::Empty => state.write_u8(0),
+            LiteralValue::Pending => state.write_u8(1),
             LiteralValue::Error(e) => e.hash(state),
         }
     }
@@ -88,17 +90,18 @@ impl Eq for LiteralValue {}
 impl Display for LiteralValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LiteralValue::Int(i) => write!(f, "{}", i),
-            LiteralValue::Number(n) => write!(f, "{}", n),
-            LiteralValue::Text(s) => write!(f, "{}", s),
-            LiteralValue::Boolean(b) => write!(f, "{}", b),
-            LiteralValue::Error(e) => write!(f, "{}", e),
-            LiteralValue::Array(a) => write!(f, "{:?}", a),
-            LiteralValue::Date(d) => write!(f, "{}", d),
-            LiteralValue::DateTime(dt) => write!(f, "{}", dt),
-            LiteralValue::Time(t) => write!(f, "{}", t),
-            LiteralValue::Duration(d) => write!(f, "{}", d),
+            LiteralValue::Int(i) => write!(f, "{i}"),
+            LiteralValue::Number(n) => write!(f, "{n}"),
+            LiteralValue::Text(s) => write!(f, "{s}"),
+            LiteralValue::Boolean(b) => write!(f, "{b}"),
+            LiteralValue::Error(e) => write!(f, "{e}"),
+            LiteralValue::Array(a) => write!(f, "{a:?}"),
+            LiteralValue::Date(d) => write!(f, "{d}"),
+            LiteralValue::DateTime(dt) => write!(f, "{dt}"),
+            LiteralValue::Time(t) => write!(f, "{t}"),
+            LiteralValue::Duration(d) => write!(f, "{d}"),
             LiteralValue::Empty => write!(f, ""),
+            LiteralValue::Pending => write!(f, "Pending"),
         }
     }
 }
@@ -169,6 +172,7 @@ impl LiteralValue {
             LiteralValue::Duration(_) => true,
             LiteralValue::Error(_) => false,
             LiteralValue::Empty => false,
+            LiteralValue::Pending => false,
         }
     }
 }

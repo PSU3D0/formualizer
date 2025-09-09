@@ -1,0 +1,128 @@
+implements: "formualizer/0.2.0-draft"
+spec_digest: "sha256:UNSET"
+lang: "python"
+package: "formualizer"
+
+symbols:
+  # Formula module (functional API)
+  - cid: "FZ-API-FORM-001"
+    public: "tokenize"
+    signature: "(formula:str)->PyTokenizer"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+  - cid: "FZ-API-FORM-002"
+    public: "parse"
+    signature: "(formula:str)->PyASTNode"  
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+
+  # Tokenizer class (stateful streaming tokenizer)
+  - cid: "FZ-API-FORM-TOK-001"
+    public: "PyTokenizer.__init__"
+    signature: "(self, formula:str)->None"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+  - cid: "FZ-API-FORM-TOK-002"
+    public: "PyTokenizer.next"
+    signature: "(self)->Optional[PyToken]"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+  - cid: "FZ-API-FORM-TOK-003"
+    public: "PyTokenizer.reset"
+    signature: "(self)->None"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+  - cid: "FZ-API-FORM-TOK-004"
+    public: "PyTokenizer.close"
+    signature: "(self)->None"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+
+  # Engine class
+  - cid: "FZ-API-ENG-001"
+    public: "Engine.__init__"
+    signature: "(self, config:Optional[EvaluationConfig])->None"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+  - cid: "FZ-API-ENG-002"
+    public: "Engine.evaluate_all"
+    signature: "(self)->EvaluationResult"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+  - cid: "FZ-API-ENG-003"
+    public: "Engine.evaluate_cell"
+    signature: "(self, sheet:str, row:int, col:int)->Optional[LiteralValue]"
+    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-INDEX-001" ]
+  - cid: "FZ-API-ENG-004"
+    public: "Engine.evaluate_cells"
+    signature: "(self, cells:List[Tuple[str,int,int]])->List[Optional[LiteralValue]]"
+    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-INDEX-001" ]
+  - cid: "FZ-API-ENG-005"
+    public: "Engine.get_value"
+    signature: "(self, sheet:str, row:int, col:int)->Optional[LiteralValue]"
+    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-INDEX-001" ]
+  - cid: "FZ-API-ENG-006"
+    public: "Engine.recalc_epoch"
+    signature: "(self)->int"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+  - cid: "FZ-API-ENG-008"
+    public: "Engine.ensure_builtins_loaded"
+    signature: "(self)->None"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+  - cid: "FZ-API-ENG-014"
+    public: "Engine.set_workbook_seed"
+    signature: "(self, seed:int)->None"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+
+  # Engine cell manipulation
+  - cid: "FZ-API-SH-001"  # Reusing sheet API CID for Engine.set_value
+    public: "Engine.set_value"
+    signature: "(self, sheet:str, row:int, col:int, value:LiteralValue)->None"
+    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-INDEX-001" ]
+  - cid: "FZ-API-SH-002"  # Reusing sheet API CID for Engine.set_formula
+    public: "Engine.set_formula"
+    signature: "(self, sheet:str, row:int, col:int, formula:str)->None"
+    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-INDEX-001" ]
+
+  # Value types
+  - cid: "FZ-TYPE-LV-001"
+    public: "LiteralValue"
+    signature: "class"
+    maps: [ "FZ-MAP-PY-NAMES-001" ]
+  - cid: "FZ-TYPE-ERR-001"
+    public: "ExcelError"
+    signature: "class"
+    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-MAP-PY-ERR-001" ]
+
+coverage:
+  requirements:
+    implemented: [
+      "FZ-INDEX-001",      # 1-based indexing
+      "FZ-FP-IEEE-003",     # IEEE-754 floating point
+      "FZ-REG-IDEMP-001",   # Idempotent registration
+      "FZ-VOLATILE-STABLE-001" # Volatile stability within pass
+    ]
+    unsupported: [
+      "FZ-SPILL-ATOMIC-002" # Spill atomicity (not yet implemented)
+    ]
+  surface:
+    implemented: [
+      # Formula parsing
+      "FZ-API-FORM-001", "FZ-API-FORM-002",
+      # Tokenizer
+      "FZ-API-FORM-TOK-001", "FZ-API-FORM-TOK-002", "FZ-API-FORM-TOK-003", "FZ-API-FORM-TOK-004",
+      # Engine
+      "FZ-API-ENG-001", "FZ-API-ENG-002", "FZ-API-ENG-003", "FZ-API-ENG-004", "FZ-API-ENG-005",
+      "FZ-API-ENG-006", "FZ-API-ENG-008", "FZ-API-ENG-014",
+      # Sheet operations via Engine
+      "FZ-API-SH-001", "FZ-API-SH-002",
+      # Types
+      "FZ-TYPE-LV-001", "FZ-TYPE-ERR-001"
+    ]
+    partial: [
+      "FZ-API-FORM-003", # Pretty print (in AST module)
+      "FZ-API-FORM-004", # Fingerprint (available via AST)
+      "FZ-API-FORM-005"  # Collect references (available via AST)
+    ]
+    unsupported: [
+      # Workbook/Sheet classes not yet implemented
+      "FZ-API-WB-001", "FZ-API-WB-002", "FZ-API-WB-003", "FZ-API-WB-004",
+      "FZ-API-WB-005", "FZ-API-WB-006", "FZ-API-WB-008", "FZ-API-WB-009",
+      # Advanced Engine features
+      "FZ-API-ENG-007", "FZ-API-ENG-009", "FZ-API-ENG-010", "FZ-API-ENG-011",
+      "FZ-API-ENG-012", "FZ-API-ENG-013", "FZ-API-ENG-015", "FZ-API-ENG-016",
+      "FZ-API-ENG-017", "FZ-API-ENG-018", "FZ-API-ENG-019", "FZ-API-ENG-020",
+      "FZ-API-ENG-021"
+    ]

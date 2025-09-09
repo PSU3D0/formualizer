@@ -15,21 +15,7 @@ impl ArgKind {
             "logical" => Self::Logical,
             "range" => Self::Range,
             "" | "_" | "any" => Self::Any,
-            other => panic!("Unknown arg kind '{}'", other),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct ArgSpec {
-    pub kind: ArgKind,
-    pub required: bool,
-}
-impl ArgSpec {
-    pub const fn new(kind: ArgKind) -> Self {
-        Self {
-            kind,
-            required: true,
+            other => panic!("Unknown arg kind '{other}'"),
         }
     }
 }

@@ -31,6 +31,7 @@ pub enum ExcelErrorKind {
     Spill,
     Calc,
     Circ,
+    Cancelled,
 }
 
 impl fmt::Display for ExcelErrorKind {
@@ -48,6 +49,7 @@ impl fmt::Display for ExcelErrorKind {
             Self::Spill => "#SPILL!",
             Self::Calc => "#CALC!",
             Self::Circ => "#CIRC!",
+            Self::Cancelled => "#CANCELLED!",
         })
     }
 }
@@ -67,7 +69,8 @@ impl ExcelErrorKind {
             "#spill!" => Self::Spill,
             "#calc!" => Self::Calc,
             "#circ!" => Self::Circ,
-            _ => panic!("Unknown error kind '{}'", s),
+            "#cancelled!" => Self::Cancelled,
+            _ => panic!("Unknown error kind '{s}'"),
         }
     }
 }
@@ -80,7 +83,10 @@ impl ExcelErrorKind {
 pub struct ErrorContext {
     pub row: Option<u32>,
     pub col: Option<u32>,
-    // Add more sheet-wide coordinates here if ever required (sheet name, etc.)
+    // Origin location where the error first occurred (if different from row/col)
+    pub origin_row: Option<u32>,
+    pub origin_col: Option<u32>,
+    pub origin_sheet: Option<String>,
 }
 
 /// Kind-specific payloads (“extension slot”).
@@ -149,7 +155,28 @@ impl ExcelError {
         self.context = Some(ErrorContext {
             row: Some(row),
             col: Some(col),
+            origin_row: None,
+            origin_col: None,
+            origin_sheet: None,
         });
+        self
+    }
+
+    /// Attach origin location where the error first occurred.
+    pub fn with_origin(mut self, sheet: Option<String>, row: u32, col: u32) -> Self {
+        if let Some(ref mut ctx) = self.context {
+            ctx.origin_sheet = sheet;
+            ctx.origin_row = Some(row);
+            ctx.origin_col = Some(col);
+        } else {
+            self.context = Some(ErrorContext {
+                row: None,
+                col: None,
+                origin_row: Some(row),
+                origin_col: Some(col),
+                origin_sheet: sheet,
+            });
+        }
         self
     }
 
@@ -163,6 +190,34 @@ impl ExcelError {
         let kind = ExcelErrorKind::parse(s);
         Self::new(kind)
     }
+
+    pub fn new_value() -> Self {
+        Self::new(ExcelErrorKind::Value)
+    }
+
+    pub fn new_name() -> Self {
+        Self::new(ExcelErrorKind::Name)
+    }
+
+    pub fn new_div() -> Self {
+        Self::new(ExcelErrorKind::Div)
+    }
+
+    pub fn new_ref() -> Self {
+        Self::new(ExcelErrorKind::Ref)
+    }
+
+    pub fn new_circ() -> Self {
+        Self::new(ExcelErrorKind::Circ)
+    }
+
+    pub fn new_num() -> Self {
+        Self::new(ExcelErrorKind::Num)
+    }
+
+    pub fn new_na() -> Self {
+        Self::new(ExcelErrorKind::Na)
+    }
 }
 
 /* ───────────────────────── Display / Error ────────────────────────── */
@@ -174,16 +229,25 @@ impl fmt::Display for ExcelError {
 
         // Optional human message.
         if let Some(ref msg) = self.message {
-            write!(f, ": {}", msg)?;
+            write!(f, ": {msg}")?;
         }
 
         // Optional row/col context.
-        if let Some(ErrorContext {
-            row: Some(r),
-            col: Some(c),
-        }) = self.context
-        {
-            write!(f, " (row {}, col {})", r, c)?;
+        if let Some(ref ctx) = self.context {
+            if let (Some(r), Some(c)) = (ctx.row, ctx.col) {
+                write!(f, " (row {r}, col {c})")?;
+            }
+
+            // Show origin if different from the evaluation location
+            if let (Some(or), Some(oc)) = (ctx.origin_row, ctx.origin_col) {
+                if ctx.origin_row != ctx.row || ctx.origin_col != ctx.col {
+                    if let Some(ref sheet) = ctx.origin_sheet {
+                        write!(f, " [origin: {sheet}!R{or}C{oc}]")?;
+                    } else {
+                        write!(f, " [origin: R{or}C{oc}]")?;
+                    }
+                }
+            }
         }
 
         // Optional kind-specific payload - keep it terse for logs.
@@ -193,7 +257,7 @@ impl fmt::Display for ExcelError {
                 expected_rows,
                 expected_cols,
             } => {
-                write!(f, " [spill {}×{}]", expected_rows, expected_cols)?;
+                write!(f, " [spill {expected_rows}×{expected_cols}]")?;
             }
         }
 
@@ -204,7 +268,7 @@ impl fmt::Display for ExcelError {
 impl Error for ExcelError {}
 impl From<ExcelError> for String {
     fn from(error: ExcelError) -> Self {
-        format!("{}", error)
+        format!("{error}")
     }
 }
 impl From<ExcelError> for LiteralValue {
@@ -215,7 +279,7 @@ impl From<ExcelError> for LiteralValue {
 
 impl PartialEq<str> for ExcelErrorKind {
     fn eq(&self, other: &str) -> bool {
-        self == other
+        format!("{self}") == other
     }
 }
 

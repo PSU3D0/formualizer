@@ -1,41 +1,300 @@
-use crate::traits::{ArgumentHandle, EvaluationContext};
+use crate::{
+    CellRef,
+    broadcast::{broadcast_shape, project_index},
+    coercion,
+    traits::{ArgumentHandle, DefaultFunctionContext, EvaluationContext},
+};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_core::parser::{ASTNode, ASTNodeType, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+// no Arc needed here after cache removal
 
-pub struct Interpreter {
-    pub context: Box<dyn EvaluationContext>,
+pub struct Interpreter<'a> {
+    pub context: &'a dyn EvaluationContext,
+    current_sheet: &'a str,
+    current_cell: Option<crate::CellRef>,
 }
 
-impl Interpreter {
-    pub fn new(context: Box<dyn EvaluationContext>) -> Self {
-        Self { context }
+impl<'a> Interpreter<'a> {
+    pub fn new(context: &'a dyn EvaluationContext, current_sheet: &'a str) -> Self {
+        Self {
+            context,
+            current_sheet,
+            current_cell: None,
+        }
+    }
+
+    pub fn new_with_cell(
+        context: &'a dyn EvaluationContext,
+        current_sheet: &'a str,
+        cell: crate::CellRef,
+    ) -> Self {
+        Self {
+            context,
+            current_sheet,
+            current_cell: Some(cell),
+        }
+    }
+
+    pub fn current_sheet(&self) -> &'a str {
+        self.current_sheet
+    }
+
+    pub fn resolve_range_view<'c>(
+        &'c self,
+        reference: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<crate::engine::range_view::RangeView<'c>, ExcelError> {
+        self.context.resolve_range_view(reference, current_sheet)
+    }
+
+    /// Evaluate an AST node in a reference context and return a ReferenceType.
+    /// This is used for range combinators (e.g., ":"), by-ref argument flows,
+    /// and spill planning. Functions that can return references must set
+    /// `FnCaps::RETURNS_REFERENCE` and override `eval_reference`.
+    pub fn evaluate_ast_as_reference(&self, node: &ASTNode) -> Result<ReferenceType, ExcelError> {
+        match &node.node_type {
+            ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
+            ASTNodeType::Function { name, args } => {
+                if let Some(fun) = self.context.get_function("", name) {
+                    // Build handles; allow function to decide reference semantics
+                    let handles: Vec<ArgumentHandle> =
+                        args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
+                    let fctx = DefaultFunctionContext::new(self.context, None);
+                    if let Some(res) = fun.eval_reference(&handles, &fctx) {
+                        res
+                    } else {
+                        Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("Function does not return a reference"))
+                    }
+                } else {
+                    Err(ExcelError::new(ExcelErrorKind::Name)
+                        .with_message(format!("Unknown function: {name}")))
+                }
+            }
+            ASTNodeType::Array(_)
+            | ASTNodeType::UnaryOp { .. }
+            | ASTNodeType::BinaryOp { .. }
+            | ASTNodeType::Literal(_) => Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Expression cannot be used as a reference")),
+        }
     }
 
     /* ===================  public  =================== */
     pub fn evaluate_ast(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
+        self.evaluate_ast_uncached(node)
+    }
+
+    fn evaluate_ast_uncached(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
+        // Plan-aware evaluation: build a plan for this node and execute accordingly.
+        // Provide the planner with a lightweight range-dimension probe and function lookup
+        // so it can select chunked reduction and arg-parallel strategies where appropriate.
+        let current_sheet = self.current_sheet.to_string();
+        let range_probe = |reference: &ReferenceType| -> Option<(u32, u32)> {
+            // Mirror Engine::resolve_range_storage bound normalization without materialising
+            use formualizer_parse::parser::ReferenceType as RT;
+            match reference {
+                RT::Range {
+                    sheet,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                } => {
+                    let sheet_name = sheet.as_deref().unwrap_or(&current_sheet);
+                    // Start with provided values, fill None from used-region or sheet bounds.
+                    let mut sr = *start_row;
+                    let mut sc = *start_col;
+                    let mut er = *end_row;
+                    let mut ec = *end_col;
+
+                    // Column-only: rows are None on both ends
+                    if sr.is_none() && er.is_none() {
+                        // Full-column reference: anchor at row 1 for alignment across columns
+                        let scv = sc.unwrap_or(1);
+                        let ecv = ec.unwrap_or(scv);
+                        sr = Some(1);
+                        if let Some((_, max_r)) =
+                            self.context.used_rows_for_columns(sheet_name, scv, ecv)
+                        {
+                            er = Some(max_r);
+                        } else if let Some((max_rows, _)) = self.context.sheet_bounds(sheet_name) {
+                            er = Some(max_rows);
+                        }
+                    }
+
+                    // Row-only: cols are None on both ends
+                    if sc.is_none() && ec.is_none() {
+                        // Full-row reference: anchor at column 1 for alignment across rows
+                        let srv = sr.unwrap_or(1);
+                        let erv = er.unwrap_or(srv);
+                        sc = Some(1);
+                        if let Some((_, max_c)) =
+                            self.context.used_cols_for_rows(sheet_name, srv, erv)
+                        {
+                            ec = Some(max_c);
+                        } else if let Some((_, max_cols)) = self.context.sheet_bounds(sheet_name) {
+                            ec = Some(max_cols);
+                        }
+                    }
+
+                    // Partially bounded (e.g., A1:A or A:A10)
+                    if sr.is_some() && er.is_none() {
+                        let scv = sc.unwrap_or(1);
+                        let ecv = ec.unwrap_or(scv);
+                        if let Some((_, max_r)) =
+                            self.context.used_rows_for_columns(sheet_name, scv, ecv)
+                        {
+                            er = Some(max_r);
+                        } else if let Some((max_rows, _)) = self.context.sheet_bounds(sheet_name) {
+                            er = Some(max_rows);
+                        }
+                    }
+                    if er.is_some() && sr.is_none() {
+                        // Open start: anchor at row 1
+                        sr = Some(1);
+                    }
+                    if sc.is_some() && ec.is_none() {
+                        let srv = sr.unwrap_or(1);
+                        let erv = er.unwrap_or(srv);
+                        if let Some((_, max_c)) =
+                            self.context.used_cols_for_rows(sheet_name, srv, erv)
+                        {
+                            ec = Some(max_c);
+                        } else if let Some((_, max_cols)) = self.context.sheet_bounds(sheet_name) {
+                            ec = Some(max_cols);
+                        }
+                    }
+                    if ec.is_some() && sc.is_none() {
+                        // Open start: anchor at column 1
+                        sc = Some(1);
+                    }
+
+                    let sr = sr.unwrap_or(1);
+                    let sc = sc.unwrap_or(1);
+                    let er = er.unwrap_or(sr.saturating_sub(1));
+                    let ec = ec.unwrap_or(sc.saturating_sub(1));
+                    if er < sr || ec < sc {
+                        return Some((0, 0));
+                    }
+                    Some((er.saturating_sub(sr) + 1, ec.saturating_sub(sc) + 1))
+                }
+                RT::Cell { .. } => Some((1, 1)),
+                _ => None,
+            }
+        };
+        let fn_lookup = |ns: &str, name: &str| self.context.get_function(ns, name);
+
+        let mut planner = crate::planner::Planner::new(crate::planner::PlanConfig::default())
+            .with_range_probe(&range_probe)
+            .with_function_lookup(&fn_lookup);
+        let plan = planner.plan(node);
+        self.eval_with_plan(node, &plan.root)
+    }
+
+    fn eval_with_plan(
+        &self,
+        node: &ASTNode,
+        plan_node: &crate::planner::PlanNode,
+    ) -> Result<LiteralValue, ExcelError> {
         match &node.node_type {
             ASTNodeType::Literal(v) => Ok(v.clone()),
             ASTNodeType::Reference { reference, .. } => self.eval_reference(reference),
-            ASTNodeType::UnaryOp { op, expr } => self.eval_unary(op, expr),
+            ASTNodeType::UnaryOp { op, expr } => {
+                // For now, reuse existing unary implementation (which recurses).
+                // In a later phase, we can map plan_node.children[0].
+                self.eval_unary(op, expr)
+            }
             ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(op, left, right),
-            ASTNodeType::Function { name, args } => self.eval_function(name, args),
+            ASTNodeType::Function { name, args } => {
+                let strategy = plan_node.strategy;
+                if let Some(fun) = self.context.get_function("", name) {
+                    use crate::function::FnCaps;
+                    use crate::planner::ExecStrategy;
+                    let caps = fun.caps();
+
+                    // Short-circuit or volatile: always sequential
+                    if caps.contains(FnCaps::SHORT_CIRCUIT) || caps.contains(FnCaps::VOLATILE) {
+                        return self.eval_function(name, args);
+                    }
+
+                    // Chunked reduce for windowed functions
+                    if matches!(strategy, ExecStrategy::ChunkedReduce)
+                        && caps.contains(FnCaps::WINDOWED)
+                    {
+                        let handles: Vec<ArgumentHandle> =
+                            args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
+                        let fctx = DefaultFunctionContext::new(self.context, self.current_cell);
+                        let mut w = crate::window_ctx::SimpleWindowCtx::new(
+                            &handles,
+                            &fctx,
+                            crate::window_ctx::WindowSpec::default(),
+                        );
+                        if let Some(res) = fun.eval_window(&mut w) {
+                            return res;
+                        }
+                        // Fallback to scalar/dispatch if window not implemented
+                        return self.eval_function(name, args);
+                    }
+
+                    // Arg-parallel: prewarm subexpressions and then dispatch
+                    if matches!(strategy, ExecStrategy::ArgParallel)
+                        && caps.contains(FnCaps::PARALLEL_ARGS)
+                    {
+                        // Sequential prewarm of subexpressions (safe without Sync bounds)
+                        for arg in args {
+                            match &arg.node_type {
+                                ASTNodeType::Reference { reference, .. } => {
+                                    let _ = self
+                                        .context
+                                        .resolve_range_view(reference, self.current_sheet);
+                                }
+                                _ => {
+                                    let _ = self.evaluate_ast(arg);
+                                }
+                            }
+                        }
+                        return self.eval_function(name, args);
+                    }
+
+                    // Default path
+                    return self.eval_function(name, args);
+                }
+                self.eval_function(name, args)
+            }
             ASTNodeType::Array(rows) => self.eval_array_literal(rows),
         }
     }
 
     /* ===================  reference  =================== */
     fn eval_reference(&self, reference: &ReferenceType) -> Result<LiteralValue, ExcelError> {
-        match self.context.resolve_range_like(reference) {
-            Ok(range) => {
-                let (rows, cols) = range.dimensions();
-                let data = range.materialise().into_owned();
-                if rows == 1 && cols == 1 {
+        let view = self
+            .context
+            .resolve_range_view(reference, self.current_sheet)?;
+
+        match reference {
+            ReferenceType::Cell { .. } => {
+                // For a single cell reference, just return the value.
+                Ok(view.as_1x1().unwrap_or(LiteralValue::Empty))
+            }
+            _ => {
+                // For ranges, materialize into an array.
+                let (rows, cols) = view.dims();
+                let mut data = Vec::with_capacity(rows);
+
+                view.for_each_row(&mut |row| {
+                    let row_data: Vec<LiteralValue> = (0..cols)
+                        .map(|c| row.get(c).cloned().unwrap_or(LiteralValue::Empty))
+                        .collect();
+                    data.push(row_data);
+                    Ok(())
+                })?;
+
+                if data.len() == 1 && data[0].len() == 1 {
                     Ok(data[0][0].clone())
                 } else {
                     Ok(LiteralValue::Array(data))
                 }
             }
-            Err(e) => Ok(LiteralValue::Error(e)),
         }
     }
 
@@ -56,8 +315,7 @@ impl Interpreter {
             "-" => self.apply_number_unary(v, |n| -n),
             "%" => self.apply_number_unary(v, |n| n / 100.0),
             _ => {
-                Err(ExcelError::new(ExcelErrorKind::NImpl)
-                    .with_message(format!("Unary op '{}'", op)))
+                Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!("Unary op '{op}'")))
             }
         }
     }
@@ -66,8 +324,11 @@ impl Interpreter {
     where
         F: Fn(f64) -> f64,
     {
-        match self.coerce_number(&v) {
-            Ok(n) => Ok(LiteralValue::Number(f(n))),
+        match crate::coercion::to_number_lenient_with_locale(&v, &self.context.locale()) {
+            Ok(n) => match crate::coercion::sanitize_numeric(f(n)) {
+                Ok(n2) => Ok(LiteralValue::Number(n2)),
+                Err(e) => Ok(LiteralValue::Error(e)),
+            },
             Err(e) => Ok(LiteralValue::Error(e)),
         }
     }
@@ -97,14 +358,23 @@ impl Interpreter {
             "^" => self.power(l_val, r_val),
             "&" => Ok(LiteralValue::Text(format!(
                 "{}{}",
-                self.coerce_text(&l_val),
-                self.coerce_text(&r_val)
+                crate::coercion::to_text_invariant(&l_val),
+                crate::coercion::to_text_invariant(&r_val)
             ))),
-            ":" => Err(ExcelError::new(ExcelErrorKind::NImpl)
-                .with_message("Range operator ':' inside value context")),
+            ":" => {
+                // Compute a combined reference; in value context return #REF! for now.
+                let lref = self.evaluate_ast_as_reference(left)?;
+                let rref = self.evaluate_ast_as_reference(right)?;
+                match crate::reference::combine_references(&lref, &rref) {
+                    Ok(_r) => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                        "Reference produced by ':' cannot be used directly as a value",
+                    )),
+                    Err(e) => Ok(LiteralValue::Error(e)),
+                }
+            }
             _ => {
                 Err(ExcelError::new(ExcelErrorKind::NImpl)
-                    .with_message(format!("Binary op '{}'", op)))
+                    .with_message(format!("Binary op '{op}'")))
             }
         }
     }
@@ -114,11 +384,24 @@ impl Interpreter {
         if let Some(fun) = self.context.get_function("", name) {
             let handles: Vec<ArgumentHandle> =
                 args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
-            fun.eval(&handles, self.context.as_ref())
+            // Use the function's built-in dispatch method with a narrow FunctionContext
+            let fctx = DefaultFunctionContext::new(self.context, self.current_cell);
+            fun.dispatch(&handles, &fctx)
         } else {
-            Ok(LiteralValue::Error(ExcelError::from_error_string("#NAME?")))
+            // Include the function name in the error message for better debugging
+            Ok(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("Unknown function: {name}")),
+            ))
         }
     }
+
+    pub fn function_context(&self, cell_ref: Option<&CellRef>) -> DefaultFunctionContext<'_> {
+        DefaultFunctionContext::new(self.context, cell_ref.cloned())
+    }
+
+    // Test-only helpers removed: interpreter no longer maintains subexpression cache
+    // owned range cache removed in RangeView migration
 
     /* ===================  array literal  =================== */
     fn eval_array_literal(&self, rows: &[Vec<ASTNode>]) -> Result<LiteralValue, ExcelError> {
@@ -143,64 +426,56 @@ impl Interpreter {
     where
         F: Fn(f64, f64) -> f64 + Copy,
     {
-        use LiteralValue::*;
-        match (left, right) {
-            (Array(l), Array(r)) => self.combine_arrays(l, r, |a, b| self.numeric_binary(a, b, f)),
-            (Array(arr), v) => self.map_array(arr, |x| self.numeric_binary(x, v.clone(), f)),
-            (v, Array(arr)) => self.map_array(arr, |x| self.numeric_binary(v.clone(), x, f)),
-            (l, r) => {
-                let a = self.coerce_number(&l);
-                let b = self.coerce_number(&r);
-                match (a, b) {
-                    (Ok(a), Ok(b)) => Ok(Number(f(a, b))),
-                    (Err(e), _) | (_, Err(e)) => Ok(LiteralValue::Error(e)),
-                }
+        self.broadcast_apply(left, right, |l, r| {
+            let a = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
+            let b = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
+            match (a, b) {
+                (Ok(a), Ok(b)) => match crate::coercion::sanitize_numeric(f(a, b)) {
+                    Ok(n2) => Ok(LiteralValue::Number(n2)),
+                    Err(e) => Ok(LiteralValue::Error(e)),
+                },
+                (Err(e), _) | (_, Err(e)) => Ok(LiteralValue::Error(e)),
             }
-        }
+        })
     }
 
     fn divide(&self, left: LiteralValue, right: LiteralValue) -> Result<LiteralValue, ExcelError> {
-        let denom_num = |v: &LiteralValue| self.coerce_number(v);
-        use LiteralValue::*;
-        match (left, right) {
-            (Array(l), Array(r)) => self.combine_arrays(l, r, |a, b| self.divide(a, b)),
-            (Array(arr), v) => self.map_array(arr, |x| self.divide(x, v.clone())),
-            (v, Array(arr)) => self.map_array(arr, |x| self.divide(v.clone(), x)),
-            (l, r) => {
-                let d = denom_num(&r);
-                if matches!(d, Ok(n) if n == 0.0) {
-                    return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                        "#DIV/0!",
-                    )));
-                }
-                let (ln, rn) = match (self.coerce_number(&l), d) {
-                    (Ok(a), Ok(b)) => (a, b),
-                    (Err(e), _) | (_, Err(e)) => {
-                        return Ok(LiteralValue::Error(e));
-                    }
-                };
-                Ok(LiteralValue::Number(ln / rn))
+        self.broadcast_apply(left, right, |l, r| {
+            let ln = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
+            let rn = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
+            let (a, b) = match (ln, rn) {
+                (Ok(a), Ok(b)) => (a, b),
+                (Err(e), _) | (_, Err(e)) => return Ok(LiteralValue::Error(e)),
+            };
+            if b == 0.0 {
+                return Ok(LiteralValue::Error(ExcelError::from_error_string(
+                    "#DIV/0!",
+                )));
             }
-        }
+            match crate::coercion::sanitize_numeric(a / b) {
+                Ok(n) => Ok(LiteralValue::Number(n)),
+                Err(e) => Ok(LiteralValue::Error(e)),
+            }
+        })
     }
 
     fn power(&self, left: LiteralValue, right: LiteralValue) -> Result<LiteralValue, ExcelError> {
-        let try_pow = |a: f64, b: f64| {
+        self.broadcast_apply(left, right, |l, r| {
+            let ln = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
+            let rn = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
+            let (a, b) = match (ln, rn) {
+                (Ok(a), Ok(b)) => (a, b),
+                (Err(e), _) | (_, Err(e)) => return Ok(LiteralValue::Error(e)),
+            };
+            // Excel domain: negative base with non-integer exponent -> #NUM!
             if a < 0.0 && b.fract() != 0.0 {
-                None
-            } else {
-                Some(a.powf(b))
+                return Ok(LiteralValue::Error(ExcelError::new_num()));
             }
-        };
-        self.numeric_binary(left, right, |a, b| try_pow(a, b).unwrap_or(f64::NAN))
-            .map(|v| {
-                if let LiteralValue::Number(n) = &v {
-                    if n.is_nan() || n.is_infinite() {
-                        return LiteralValue::Error(ExcelError::from_error_string("#NUM!"));
-                    }
-                }
-                v
-            })
+            match crate::coercion::sanitize_numeric(a.powf(b)) {
+                Ok(n) => Ok(LiteralValue::Number(n)),
+                Err(e) => Ok(LiteralValue::Error(e)),
+            }
+        })
     }
 
     fn map_array<F>(&self, arr: Vec<Vec<LiteralValue>>, f: F) -> Result<LiteralValue, ExcelError>
@@ -230,25 +505,28 @@ impl Interpreter {
     where
         F: Fn(LiteralValue, LiteralValue) -> Result<LiteralValue, ExcelError> + Copy,
     {
-        let rows = l.len().max(r.len());
-        let cols = l
-            .iter()
-            .map(|r| r.len())
-            .max()
-            .unwrap_or(0)
-            .max(r.iter().map(|r| r.len()).max().unwrap_or(0));
-        let mut out = Vec::with_capacity(rows);
-        for i in 0..rows {
-            let mut row = Vec::with_capacity(cols);
-            for j in 0..cols {
+        // Use strict broadcasting across dimensions
+        let l_shape = (l.len(), l.first().map(|r| r.len()).unwrap_or(0));
+        let r_shape = (r.len(), r.first().map(|r| r.len()).unwrap_or(0));
+        let target = match broadcast_shape(&[l_shape, r_shape]) {
+            Ok(s) => s,
+            Err(e) => return Ok(LiteralValue::Error(e)),
+        };
+
+        let mut out = Vec::with_capacity(target.0);
+        for i in 0..target.0 {
+            let mut row = Vec::with_capacity(target.1);
+            for j in 0..target.1 {
+                let (li, lj) = project_index((i, j), l_shape);
+                let (ri, rj) = project_index((i, j), r_shape);
                 let lv = l
-                    .get(i)
-                    .and_then(|r| r.get(j))
+                    .get(li)
+                    .and_then(|r| r.get(lj))
                     .cloned()
                     .unwrap_or(LiteralValue::Empty);
                 let rv = r
-                    .get(i)
-                    .and_then(|r| r.get(j))
+                    .get(ri)
+                    .and_then(|r| r.get(rj))
                     .cloned()
                     .unwrap_or(LiteralValue::Empty);
                 row.push(match f(lv, rv) {
@@ -261,35 +539,81 @@ impl Interpreter {
         Ok(LiteralValue::Array(out))
     }
 
-    /* ---------- coercion helpers ---------- */
-    fn coerce_number(&self, v: &LiteralValue) -> Result<f64, ExcelError> {
+    fn broadcast_apply<F>(
+        &self,
+        left: LiteralValue,
+        right: LiteralValue,
+        f: F,
+    ) -> Result<LiteralValue, ExcelError>
+    where
+        F: Fn(LiteralValue, LiteralValue) -> Result<LiteralValue, ExcelError> + Copy,
+    {
         use LiteralValue::*;
-        match v {
-            Number(n) => Ok(*n),
-            Int(i) => Ok(*i as f64),
-            Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
-            Text(s) => s.trim().parse::<f64>().map_err(|_| {
-                ExcelError::new(ExcelErrorKind::Value)
-                    .with_message(format!("Cannot convert '{}' to number", s))
-            }),
-            Empty => Ok(0.0),
-            _ if v.as_serial_number().is_some() => Ok(v.as_serial_number().unwrap()),
-            Error(_) => Err(ExcelError::new(ExcelErrorKind::Value)),
-            _ => Err(ExcelError::new(ExcelErrorKind::Value)),
+        match (left, right) {
+            (Array(l), Array(r)) => self.combine_arrays(l, r, f),
+            (Array(arr), v) => {
+                let shape_l = (arr.len(), arr.first().map(|r| r.len()).unwrap_or(0));
+                let shape_r = (1usize, 1usize);
+                let target = match broadcast_shape(&[shape_l, shape_r]) {
+                    Ok(s) => s,
+                    Err(e) => return Ok(LiteralValue::Error(e)),
+                };
+                let mut out = Vec::with_capacity(target.0);
+                for i in 0..target.0 {
+                    let mut row = Vec::with_capacity(target.1);
+                    for j in 0..target.1 {
+                        let (li, lj) = project_index((i, j), shape_l);
+                        let lv = arr
+                            .get(li)
+                            .and_then(|r| r.get(lj))
+                            .cloned()
+                            .unwrap_or(LiteralValue::Empty);
+                        row.push(match f(lv, v.clone()) {
+                            Ok(vv) => vv,
+                            Err(e) => LiteralValue::Error(e),
+                        });
+                    }
+                    out.push(row);
+                }
+                Ok(LiteralValue::Array(out))
+            }
+            (v, Array(arr)) => {
+                let shape_l = (1usize, 1usize);
+                let shape_r = (arr.len(), arr.first().map(|r| r.len()).unwrap_or(0));
+                let target = match broadcast_shape(&[shape_l, shape_r]) {
+                    Ok(s) => s,
+                    Err(e) => return Ok(LiteralValue::Error(e)),
+                };
+                let mut out = Vec::with_capacity(target.0);
+                for i in 0..target.0 {
+                    let mut row = Vec::with_capacity(target.1);
+                    for j in 0..target.1 {
+                        let (ri, rj) = project_index((i, j), shape_r);
+                        let rv = arr
+                            .get(ri)
+                            .and_then(|r| r.get(rj))
+                            .cloned()
+                            .unwrap_or(LiteralValue::Empty);
+                        row.push(match f(v.clone(), rv) {
+                            Ok(vv) => vv,
+                            Err(e) => LiteralValue::Error(e),
+                        });
+                    }
+                    out.push(row);
+                }
+                Ok(LiteralValue::Array(out))
+            }
+            (l, r) => f(l, r),
         }
     }
 
+    /* ---------- coercion helpers ---------- */
+    fn coerce_number(&self, v: &LiteralValue) -> Result<f64, ExcelError> {
+        coercion::to_number_lenient(v)
+    }
+
     fn coerce_text(&self, v: &LiteralValue) -> String {
-        use LiteralValue::*;
-        match v {
-            Text(s) => s.clone(),
-            Number(n) => n.to_string(),
-            Int(i) => i.to_string(),
-            Boolean(b) => if *b { "TRUE" } else { "FALSE" }.into(),
-            Error(e) => e.to_string(),
-            Empty => "".into(),
-            _ => format!("{:?}", v),
-        }
+        coercion::to_text_invariant(v)
     }
 
     /* ---------- comparison ---------- */
@@ -307,11 +631,11 @@ impl Interpreter {
             return Ok(right);
         }
 
-        // arrays: element‑wise
+        // arrays: element‑wise with broadcasting
         match (left, right) {
             (Array(l), Array(r)) => self.combine_arrays(l, r, |a, b| self.compare(op, a, b)),
-            (Array(arr), v) => self.map_array(arr, |x| self.compare(op, x, v.clone())),
-            (v, Array(arr)) => self.map_array(arr, |x| self.compare(op, v.clone(), x)),
+            (Array(arr), v) => self.broadcast_apply(Array(arr), v, |a, b| self.compare(op, a, b)),
+            (v, Array(arr)) => self.broadcast_apply(v, Array(arr), |a, b| self.compare(op, a, b)),
             (l, r) => {
                 let res = match (l, r) {
                     (Number(a), Number(b)) => self.cmp_f64(a, b, op),
@@ -323,12 +647,24 @@ impl Interpreter {
                     (Text(a), Text(b)) => self.cmp_text(&a, &b, op),
                     (a, b) => {
                         // fallback to numeric coercion or text compare
-                        let an = self.coerce_number(&a).ok();
-                        let bn = self.coerce_number(&b).ok();
+                        let an = crate::coercion::to_number_lenient_with_locale(
+                            &a,
+                            &self.context.locale(),
+                        )
+                        .ok();
+                        let bn = crate::coercion::to_number_lenient_with_locale(
+                            &b,
+                            &self.context.locale(),
+                        )
+                        .ok();
                         if let (Some(a), Some(b)) = (an, bn) {
                             self.cmp_f64(a, b, op)
                         } else {
-                            self.cmp_text(&self.coerce_text(&a), &self.coerce_text(&b), op)
+                            self.cmp_text(
+                                &crate::coercion::to_text_invariant(&a),
+                                &crate::coercion::to_text_invariant(&b),
+                                op,
+                            )
                         }
                     }
                 };
@@ -349,7 +685,8 @@ impl Interpreter {
         }
     }
     fn cmp_text(&self, a: &str, b: &str, op: &str) -> bool {
-        let (a, b) = (a.to_ascii_lowercase(), b.to_ascii_lowercase());
+        let loc = self.context.locale();
+        let (a, b) = (loc.fold_case_invariant(a), loc.fold_case_invariant(b));
         self.cmp_f64(
             a.cmp(&b) as i32 as f64,
             0.0,

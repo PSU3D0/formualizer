@@ -1,7 +1,7 @@
-use formualizer_core::parser::ReferenceType;
+use formualizer_parse::parser::ReferenceType;
 use pyo3::{prelude::*, types::PyType};
-use pyo3_stub_gen::PyStubType;
 use pyo3_stub_gen::derive::*;
+use pyo3_stub_gen::PyStubType;
 
 use crate::errors::ParserError;
 
@@ -41,7 +41,13 @@ pub struct CellRef {
 impl CellRef {
     #[new]
     #[pyo3(signature = (sheet, row, col, abs_row = true, abs_col = true))]
-    fn new(sheet: Option<String>, row: u32, col: NumericOrStringColumn, abs_row: bool, abs_col: bool) -> Self {
+    fn new(
+        sheet: Option<String>,
+        row: u32,
+        col: NumericOrStringColumn,
+        abs_row: bool,
+        abs_col: bool,
+    ) -> Self {
         CellRef {
             sheet,
             row,
@@ -49,7 +55,10 @@ impl CellRef {
                 NumericOrStringColumn::Numeric(c) => c,
                 NumericOrStringColumn::String(c) => {
                     let col_str = c.to_uppercase();
-                    let col_num = col_str.chars().map(|c| c as u32 - b'A' as u32 + 1).sum::<u32>();
+                    let col_num = col_str
+                        .chars()
+                        .map(|c| c as u32 - b'A' as u32 + 1)
+                        .sum::<u32>();
                     col_num
                 }
             },
@@ -60,8 +69,12 @@ impl CellRef {
 
     #[classmethod]
     #[pyo3(signature = (reference, default_sheet = None))]
-    fn from_string(cls: &Bound<'_, PyType>, reference: &str, default_sheet: Option<&str>) -> Result<Self, PyErr> {
-        match ReferenceType::parse(reference) {
+    fn from_string(
+        cls: &Bound<'_, PyType>,
+        reference: &str,
+        default_sheet: Option<&str>,
+    ) -> Result<Self, PyErr> {
+        match ReferenceType::from_string(reference) {
             Ok(ReferenceType::Cell { sheet, row, col }) => {
                 let sheet = if sheet.is_some() {
                     sheet
@@ -70,7 +83,13 @@ impl CellRef {
                 } else {
                     None
                 };
-                Ok(CellRef::new(sheet, row, NumericOrStringColumn::Numeric(col), false, false))
+                Ok(CellRef::new(
+                    sheet,
+                    row,
+                    NumericOrStringColumn::Numeric(col),
+                    false,
+                    false,
+                ))
             }
             Ok(_) => Err(ParserError::new_with_pos(
                 "Invalid cell reference".to_string(),
@@ -121,7 +140,6 @@ impl CellRef {
         }
     }
 }
-
 
 #[gen_stub_pyclass]
 #[pyclass(frozen, eq, hash, module = "formualizer")]
@@ -302,7 +320,13 @@ pub fn reference_type_to_py(ref_type: &ReferenceType, original: &str) -> Referen
             let abs_row = original.contains(&format!("${}", row));
             let abs_col = original.contains(&format!("${}", number_to_column(*col)));
 
-            ReferenceLike::Cell(CellRef::new(sheet.clone(), *row, NumericOrStringColumn::Numeric(*col), abs_row, abs_col))
+            ReferenceLike::Cell(CellRef::new(
+                sheet.clone(),
+                *row,
+                NumericOrStringColumn::Numeric(*col),
+                abs_row,
+                abs_col,
+            ))
         }
         ReferenceType::Range {
             sheet,
@@ -315,7 +339,13 @@ pub fn reference_type_to_py(ref_type: &ReferenceType, original: &str) -> Referen
                 (Some(col), Some(row)) => {
                     let abs_row = original.contains(&format!("${}", row));
                     let abs_col = original.contains(&format!("${}", number_to_column(*col)));
-                    Some(CellRef::new(None, *row, NumericOrStringColumn::Numeric(*col), abs_row, abs_col))
+                    Some(CellRef::new(
+                        None,
+                        *row,
+                        NumericOrStringColumn::Numeric(*col),
+                        abs_row,
+                        abs_col,
+                    ))
                 }
                 _ => None,
             };
@@ -324,7 +354,13 @@ pub fn reference_type_to_py(ref_type: &ReferenceType, original: &str) -> Referen
                 (Some(col), Some(row)) => {
                     let abs_row = original.contains(&format!("${}", row));
                     let abs_col = original.contains(&format!("${}", number_to_column(*col)));
-                    Some(CellRef::new(None, *row, NumericOrStringColumn::Numeric(*col), abs_row, abs_col))
+                    Some(CellRef::new(
+                        None,
+                        *row,
+                        NumericOrStringColumn::Numeric(*col),
+                        abs_row,
+                        abs_col,
+                    ))
                 }
                 _ => None,
             };

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "formualizer"
-version = "0.1.2"
+version = "0.2.0"
 description = "Fast Excel-formula tooling (Python bindings)"
 requires-python = ">=3.8"
 license = {text = "MIT"}
@@ -20,6 +20,7 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.1.0",
     "mypy>=1.0",
+    "openpyxl"
 ]
 
 [tool.maturin]
@@ -98,3 +99,10 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+
+[dependency-groups]
+dev = [
+    "openpyxl>=3.1.5",
+    "pytest>=8.3.5",
+    "pytest-cov>=5.0.0",
+]
