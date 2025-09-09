@@ -395,12 +395,10 @@ impl Function for CeilingMathFn {
         };
         let result = if n >= 0.0 {
             (n / sig).ceil() * sig
+        } else if mode_nonzero {
+            (n / sig).floor() * sig /* away from zero */
         } else {
-            if mode_nonzero {
-                (n / sig).floor() * sig /* away from zero */
-            } else {
-                (n / sig).ceil() * sig /* toward +inf (less negative) */
-            }
+            (n / sig).ceil() * sig /* toward +inf (less negative) */
         };
         Ok(LiteralValue::Number(result))
     }
@@ -504,12 +502,10 @@ impl Function for FloorMathFn {
         };
         let result = if n >= 0.0 {
             (n / sig).floor() * sig
+        } else if mode_nonzero {
+            (n / sig).ceil() * sig
         } else {
-            if mode_nonzero {
-                (n / sig).ceil() * sig
-            } else {
-                (n / sig).floor() * sig
-            }
+            (n / sig).floor() * sig
         };
         Ok(LiteralValue::Number(result))
     }

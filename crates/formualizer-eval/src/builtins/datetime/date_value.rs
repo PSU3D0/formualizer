@@ -40,7 +40,7 @@ impl Function for DateValueFn {
             LiteralValue::Error(e) => return Err(e.clone()),
             other => {
                 return Err(ExcelError::new_value()
-                    .with_message(format!("DATEVALUE expects text, got {:?}", other)));
+                    .with_message(format!("DATEVALUE expects text, got {other:?}")));
             }
         };
 
@@ -99,7 +99,7 @@ impl Function for TimeValueFn {
             LiteralValue::Error(e) => return Err(e.clone()),
             other => {
                 return Err(ExcelError::new_value()
-                    .with_message(format!("TIMEVALUE expects text, got {:?}", other)));
+                    .with_message(format!("TIMEVALUE expects text, got {other:?}")));
             }
         };
 

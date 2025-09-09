@@ -1,11 +1,11 @@
-# Formualizer WASM Bindings
+# Formualizer (WASM)
 
-WebAssembly bindings for Formualizer — an engine-backed Excel-like workbook with a fast parser and evaluator.
+An open‑source, embeddable spreadsheet engine — in your browser and Node. Formualizer parses, evaluates, and mutates Excel‑style workbooks at speed, with a modern Rust core, Arrow‑powered storage, and a clean JS API.
 
 ## Installation
 
 ```bash
-npm install formualizer-wasm
+npm install formualizer
 ```
 
 ## Usage
@@ -13,7 +13,7 @@ npm install formualizer-wasm
 ### JavaScript/TypeScript
 
 ```typescript
-import init, { tokenize, parse, Workbook } from 'formualizer-wasm';
+import init, { tokenize, parse, Workbook } from 'formualizer';
 
 // Initialize the WASM module once
 await init();
@@ -42,20 +42,12 @@ await sheet.setFormula(1, 2, "=A1*3");
 console.log(await sheet.evaluateCell(1, 2)); // 15
 ```
 
-### Direct WASM Usage
+### Node / Bundlers
 
 ```javascript
-import init, { Tokenizer, Parser, Workbook } from 'formualizer-wasm/pkg';
+import init, { Workbook } from 'formualizer';
 
 await init();
-
-// Use the WASM classes directly
-const tokenizer = new Tokenizer("=SUM(A1:B2)");
-const tokens = JSON.parse(tokenizer.tokens());
-
-const parser = new Parser("=A1+B2*2");
-const ast = parser.parse();
-const astJson = JSON.parse(ast.toJSON());
 
 // Workbook + changelog/undo/redo
 const wb = new Workbook();
@@ -136,14 +128,8 @@ Represents a cell or range reference in Excel notation.
 # Install wasm-pack
 curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-# Build the WASM module (web target)
-wasm-pack build --target web --out-dir pkg --release
-
-# or for bundlers like Node test runner
-# wasm-pack build --target bundler --out-dir pkg --release
-
-# Build the JavaScript wrapper
-npm run build
+# Build the WASM module (bundler target for npm)
+wasm-pack build --target bundler --out-dir pkg --release
 ```
 
 ## Testing
@@ -159,3 +145,13 @@ wasm-pack test --node
 ## License
 
 MIT OR Apache-2.0
+
+---
+
+## Why Formualizer
+
+- Speed: Arrow‑powered columnar storage, vectorized kernels, and a modern dependency graph enable fast recalculation at scale.
+- Ergonomics: Engine‑backed `Workbook` and `Sheet` surfaces mirror spreadsheet operations and support batch edits with undo/redo.
+- Compatibility: Aims for Excel parity across core built‑ins; conformance suite (OpenFormula/Excel) is in progress.
+
+Benchmarks and parity dashboards are coming soon.

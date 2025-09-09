@@ -1,7 +1,6 @@
 //! crates/formualizer-eval/src/test_workbook.rs
 //! --------------------------------------------
 //! Lightweight in-memory workbook for unit/prop tests.
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 

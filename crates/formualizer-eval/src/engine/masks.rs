@@ -13,7 +13,7 @@ pub struct DenseMask {
 impl DenseMask {
     /// Create a new mask with the given length (in bits)
     pub fn new(len: usize) -> Self {
-        let n_words = (len + 63) / 64;
+        let n_words = len.div_ceil(64);
         Self {
             bits: Arc::new(vec![0u64; n_words]),
             len,
@@ -22,7 +22,7 @@ impl DenseMask {
 
     /// Create a mask with all bits set
     pub fn all_ones(len: usize) -> Self {
-        let n_words = (len + 63) / 64;
+        let n_words = len.div_ceil(64);
         let mut bits = vec![!0u64; n_words];
 
         // Clear unused bits in the last word

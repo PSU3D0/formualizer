@@ -159,7 +159,7 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                         if range_total < total {
                             // Need to pad this range with Empty values
                             let padding =
-                                std::iter::repeat(LiteralValue::Empty).take(total - range_total);
+                                std::iter::repeat_n(LiteralValue::Empty, total - range_total);
                             iters.push(Box::new(values.into_iter().chain(padding)));
                         } else {
                             // No padding needed
@@ -273,7 +273,7 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                         if range_total < total {
                             // Pad with Empty values to match total
                             values.extend(
-                                std::iter::repeat(LiteralValue::Empty).take(total - range_total),
+                                std::iter::repeat_n(LiteralValue::Empty, total - range_total),
                             );
                         }
                         flats.push(values);
@@ -472,7 +472,7 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                         let range_total = r * c;
                         if range_total < total {
                             values.extend(
-                                std::iter::repeat(LiteralValue::Empty).take(total - range_total),
+                                std::iter::repeat_n(LiteralValue::Empty, total - range_total),
                             );
                         }
                         flats.push(values);
@@ -738,7 +738,7 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                 WindowAxis::Rows => (eff_rows.max(1), threads.min(eff_rows.max(1))),
                 WindowAxis::Cols => (eff_cols.max(1), threads.min(eff_cols.max(1))),
             };
-            let chunk = (major_len + partitions - 1) / partitions;
+            let chunk = major_len.div_ceil(partitions);
             use rayon::prelude::*;
             let result = pool.install(|| {
                 (0..partitions)

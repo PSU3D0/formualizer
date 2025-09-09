@@ -1,6 +1,6 @@
 //! DATE and TIME functions
 
-use super::serial::{create_date_normalized, date_to_serial, time_to_fraction};
+use super::serial::{create_date_normalized, time_to_fraction};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -219,11 +219,9 @@ mod tests {
     fn test_date_system_1900_vs_1904() {
         use crate::engine::{Engine, EvalConfig};
         use crate::interpreter::Interpreter;
-        use formualizer_parse::parser::ASTNode;
-        use std::sync::Arc as SyncArc;
 
         // Engine with default 1900 system
-        let mut cfg_1900 = EvalConfig::default();
+        let cfg_1900 = EvalConfig::default();
         let eng_1900 = Engine::new(TestWorkbook::new(), cfg_1900.clone());
         let interp_1900 = Interpreter::new(&eng_1900, "Sheet1");
         let f = interp_1900.context.get_function("", "DATE").unwrap();

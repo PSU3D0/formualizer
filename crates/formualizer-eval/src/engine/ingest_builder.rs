@@ -92,10 +92,10 @@ impl<'g> BulkIngestBuilder<'g> {
         let t0 = Instant::now();
         let dbg = std::env::var("FZ_DEBUG_INGEST")
             .ok()
-            .map_or(false, |v| v != "0")
+            .is_some_and(|v| v != "0")
             || std::env::var("FZ_DEBUG_LOAD")
                 .ok()
-                .map_or(false, |v| v != "0");
+                .is_some_and(|v| v != "0");
         let mut total_vertices = 0usize;
         let mut total_formulas = 0usize;
         let mut total_edges = 0usize;
@@ -262,8 +262,7 @@ impl<'g> BulkIngestBuilder<'g> {
             let t_fin0 = Instant::now();
             if dbg {
                 eprintln!(
-                    "[fz][ingest] finalize: start rows={}, vertices={}",
-                    rows, total_vertices_now
+                    "[fz][ingest] finalize: start rows={rows}, vertices={total_vertices_now}"
                 );
             }
             // Heuristic: avoid one-shot CSR when vertices are huge and rows are sparse

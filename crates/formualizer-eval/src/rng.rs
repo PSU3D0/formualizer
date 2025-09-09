@@ -44,9 +44,7 @@ pub fn compose_seed(
 
 /// Build a SmallRng from the two seed lanes
 pub fn small_rng_from_lanes(l0: u64, l1: u64) -> SmallRng {
-    let mut seed = [0u8; 32];
-    seed[..8].copy_from_slice(&l0.to_le_bytes());
-    seed[8..16].copy_from_slice(&l1.to_le_bytes());
-    // The remaining 16 bytes are left as zeros
-    SmallRng::from_seed(seed)
+    // Use a portable seed derivation regardless of SmallRng's internal Seed size
+    let s = mix64(l0, l1);
+    SmallRng::seed_from_u64(s)
 }

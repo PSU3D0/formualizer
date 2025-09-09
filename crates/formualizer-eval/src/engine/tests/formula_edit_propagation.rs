@@ -1,4 +1,3 @@
-use super::common::get_vertex_ids_in_order;
 use crate::engine::{Engine, EvalConfig};
 use crate::reference::{CellRef, Coord};
 use crate::test_workbook::TestWorkbook;

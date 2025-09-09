@@ -220,7 +220,7 @@ where
                 let key = if txt.starts_with('=') {
                     txt
                 } else {
-                    format!("={}", txt)
+                    format!("={txt}")
                 };
                 let ast = if let Some(p) = cache.get(&key) {
                     p.clone()
@@ -264,7 +264,7 @@ where
                 let key = if txt.starts_with('=') {
                     txt
                 } else {
-                    format!("={}", txt)
+                    format!("={txt}")
                 };
                 let ast = if let Some(p) = cache.get(&key) {
                     p.clone()
@@ -448,9 +448,7 @@ where
                 min_r0 = Some(min_r0.map(|mm| mm.min(m as usize)).unwrap_or(m as usize));
             }
         }
-        if min_r0.is_none() {
-            return None;
-        }
+        min_r0?;
         let mut max_r0: Option<usize> = None;
         for ci in sc0..=ec0 {
             let sheet_id = self.graph.sheet_id(sheet)?;
@@ -2148,7 +2146,7 @@ impl MaskCache {
         use crate::compute_prelude::{boolean, cmp, concat_arrays};
         use arrow::compute::kernels::comparison::{ilike, nilike};
         use arrow_array::{
-            Array as _, ArrayRef, BooleanArray, Float64Array, StringArray, builder::BooleanBuilder,
+            Array as _, ArrayRef, Float64Array, StringArray, builder::BooleanBuilder,
         };
 
         let (rows, _cols) = view.dims();
@@ -2542,7 +2540,7 @@ where
     ) -> Option<(u32, u32)> {
         // Prefer Arrow-backed used-region; fallback to graph if formulas intersect region
         let sheet_id = self.graph.sheet_id(sheet)?;
-        let mut arrow_ok = self.sheet_store().sheet(sheet).is_some();
+        let arrow_ok = self.sheet_store().sheet(sheet).is_some();
         if arrow_ok {
             if let Some(bounds) = self.arrow_used_row_bounds(sheet, start_col, end_col) {
                 return Some(bounds);
@@ -2555,7 +2553,7 @@ where
     fn used_cols_for_rows(&self, sheet: &str, start_row: u32, end_row: u32) -> Option<(u32, u32)> {
         // Prefer Arrow-backed used-region; fallback to graph if formulas intersect region
         let sheet_id = self.graph.sheet_id(sheet)?;
-        let mut arrow_ok = self.sheet_store().sheet(sheet).is_some();
+        let arrow_ok = self.sheet_store().sheet(sheet).is_some();
         if arrow_ok {
             if let Some(bounds) = self.arrow_used_col_bounds(sheet, start_row, end_row) {
                 return Some(bounds);

@@ -40,7 +40,7 @@ impl ReferenceFingerprint for ReferenceType {
                 format!("table:{:x}", hasher.finish())
             }
             ReferenceType::NamedRange(name) => {
-                format!("named:{}", name)
+                format!("named:{name}")
             }
         }
     }

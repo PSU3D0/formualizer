@@ -424,7 +424,7 @@ impl DependencyGraph {
         // Fallback: scan cell map for bounds on the fly
         let mut min_r: Option<u32> = None;
         let mut max_r: Option<u32> = None;
-        for (cref, _vid) in &self.cell_to_vertex {
+        for cref in self.cell_to_vertex.keys() {
             if cref.sheet_id == sheet_id {
                 let c = cref.coord.col;
                 if c >= start_col && c <= end_col {
@@ -493,7 +493,7 @@ impl DependencyGraph {
         // Fallback: scan cell map on the fly
         let mut min_c: Option<u32> = None;
         let mut max_c: Option<u32> = None;
-        for (cref, _vid) in &self.cell_to_vertex {
+        for cref in self.cell_to_vertex.keys() {
             if cref.sheet_id == sheet_id {
                 let r = cref.coord.row;
                 if r >= start_row && r <= end_row {
@@ -512,7 +512,7 @@ impl DependencyGraph {
     /// Returns true if the given sheet currently contains any formula vertices.
     pub fn sheet_has_formulas(&self, sheet_id: SheetId) -> bool {
         // Check vertex_formulas keys; they represent formula vertices
-        for (&vid, _) in &self.vertex_formulas {
+        for &vid in self.vertex_formulas.keys() {
             if self.store.sheet_id(vid) == sheet_id {
                 return true;
             }
@@ -1060,7 +1060,7 @@ impl DependencyGraph {
     ) -> Result<OperationSummary, ExcelError> {
         let dbg = std::env::var("FZ_DEBUG_LOAD")
             .ok()
-            .map_or(false, |v| v != "0");
+            .is_some_and(|v| v != "0");
         let dep_ms_thresh: u128 = std::env::var("FZ_DEBUG_DEP_MS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -1089,7 +1089,7 @@ impl DependencyGraph {
         if let (true, Some(t)) = (dbg, t_dep0) {
             let elapsed = t.elapsed().as_millis();
             // Only log if over threshold or sampled
-            let do_log = (dep_ms_thresh > 0 && elapsed as u128 >= dep_ms_thresh)
+            let do_log = (dep_ms_thresh > 0 && elapsed >= dep_ms_thresh)
                 || (sample_n > 0 && (row as usize % sample_n == 0));
             if dep_ms_thresh == 0 && sample_n == 0 {
                 // default: very light sampling every 1000 rows
@@ -1097,7 +1097,7 @@ impl DependencyGraph {
                     eprintln!(
                         "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={} in {} ms",
                         self.sheet_name(sheet_id),
-                        crate::reference::Coord::new(row, col, true, true).to_string(),
+                        crate::reference::Coord::new(row, col, true, true),
                         new_dependencies.len(),
                         new_range_dependencies.len(),
                         created_placeholders.len(),
@@ -1108,7 +1108,7 @@ impl DependencyGraph {
                 eprintln!(
                     "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={} in {} ms",
                     self.sheet_name(sheet_id),
-                    crate::reference::Coord::new(row, col, true, true).to_string(),
+                    crate::reference::Coord::new(row, col, true, true),
                     new_dependencies.len(),
                     new_range_dependencies.len(),
                     created_placeholders.len(),
@@ -1144,12 +1144,12 @@ impl DependencyGraph {
 
         if let (true, Some(t)) = (dbg, t0) {
             let elapsed = t.elapsed().as_millis();
-            let log_set = dep_ms_thresh > 0 && elapsed as u128 >= dep_ms_thresh;
+            let log_set = dep_ms_thresh > 0 && elapsed >= dep_ms_thresh;
             if log_set {
                 eprintln!(
                     "[fz][set] {}!{} total {} ms",
                     self.sheet_name(sheet_id),
-                    crate::reference::Coord::new(row, col, true, true).to_string(),
+                    crate::reference::Coord::new(row, col, true, true),
                     elapsed
                 );
             }

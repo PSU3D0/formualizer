@@ -1,9 +1,9 @@
 use crate::SheetId as EngineSheetId;
 use crate::args::CoercionPolicy;
 use crate::arrow_store;
-use crate::engine::{DependencyGraph, SheetIndexMode};
-use crate::stripes::{NumericChunk, ValidityMask};
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use crate::engine::DependencyGraph;
+use crate::stripes::NumericChunk;
+use formualizer_common::{ExcelError, LiteralValue};
 
 /// Unified view over a 2D range with efficient traversal utilities.
 pub struct RangeView<'a> {
@@ -564,7 +564,7 @@ fn pack_numeric(v: &LiteralValue, policy: CoercionPolicy) -> Result<Option<f64>,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    
 
     #[test]
     fn borrowed2d_rows_are_borrowed() {

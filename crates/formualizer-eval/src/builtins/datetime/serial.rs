@@ -39,7 +39,7 @@ pub fn serial_to_date(serial: f64) -> Result<NaiveDate, ExcelError> {
     }
 
     let base = NaiveDate::from_ymd_opt(EXCEL_BASE_YEAR, EXCEL_BASE_MONTH, EXCEL_BASE_DAY)
-        .ok_or_else(|| ExcelError::new_num())?;
+        .ok_or_else(ExcelError::new_num)?;
 
     // serial < 60: offset = serial
     // serial > 60: offset = serial - 1 (skip phantom day)
@@ -50,7 +50,7 @@ pub fn serial_to_date(serial: f64) -> Result<NaiveDate, ExcelError> {
     };
 
     base.checked_add_signed(chrono::TimeDelta::days(offset))
-        .ok_or_else(|| ExcelError::new_num())
+        .ok_or_else(ExcelError::new_num)
 }
 
 /// Convert date to Excel serial number
@@ -79,7 +79,7 @@ pub fn serial_to_datetime(serial: f64) -> Result<NaiveDateTime, ExcelError> {
     let seconds = total_seconds % 60;
 
     let time = NaiveTime::from_hms_opt(hours.min(23), minutes.min(59), seconds.min(59))
-        .ok_or_else(|| ExcelError::new_num())?;
+        .ok_or_else(ExcelError::new_num)?;
 
     Ok(NaiveDateTime::new(date, time))
 }
@@ -129,14 +129,14 @@ pub fn serial_to_datetime_for(
             let days = serial.trunc() as i64;
             let date = EXCEL_1904_EPOCH
                 .checked_add_signed(chrono::TimeDelta::days(days))
-                .ok_or_else(|| ExcelError::new_num())?;
+                .ok_or_else(ExcelError::new_num)?;
             let time_fraction = serial.fract();
             let total_seconds = (time_fraction * 86400.0).round() as u32;
             let hours = total_seconds / 3600;
             let minutes = (total_seconds % 3600) / 60;
             let seconds = total_seconds % 60;
             let time = NaiveTime::from_hms_opt(hours.min(23), minutes.min(59), seconds.min(59))
-                .ok_or_else(|| ExcelError::new_num())?;
+                .ok_or_else(ExcelError::new_num)?;
             Ok(NaiveDateTime::new(date, time))
         }
     }
@@ -159,12 +159,12 @@ pub fn create_date_normalized(year: i32, month: i32, day: i32) -> Result<NaiveDa
 
     // Create a temporary date with day 1 to handle month boundaries
     let temp_date = NaiveDate::from_ymd_opt(normalized_year, normalized_month as u32, 1)
-        .ok_or_else(|| ExcelError::new_num())?;
+        .ok_or_else(ExcelError::new_num)?;
 
     // Add the days (minus 1 because we started at day 1)
     temp_date
         .checked_add_signed(chrono::TimeDelta::days((day - 1) as i64))
-        .ok_or_else(|| ExcelError::new_num())
+        .ok_or_else(ExcelError::new_num)
 }
 
 #[cfg(test)]

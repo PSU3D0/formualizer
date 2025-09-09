@@ -90,10 +90,10 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
         let s = self
             .updates
             .entry(sheet.to_string())
-            .or_insert_with(FxHashMap::default);
+            .or_default();
         let c = s
             .entry(col.saturating_sub(1) as usize)
-            .or_insert_with(FxHashMap::default);
+            .or_default();
         c.insert(row.saturating_sub(1) as usize, value);
     }
 
@@ -185,7 +185,6 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                         use arrow_array::Array as _;
                         use arrow_array::builder::{
                             BooleanBuilder, Float64Builder, StringBuilder, UInt8Builder,
-                            UInt32Builder,
                         };
                         items.sort_by_key(|(o, _)| *o);
                         let mut tag_b = UInt8Builder::with_capacity(len);

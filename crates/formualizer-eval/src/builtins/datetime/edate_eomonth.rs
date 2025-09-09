@@ -89,7 +89,7 @@ impl Function for EdateFn {
         let target_day = start_date.day().min(max_day);
 
         let target_date = NaiveDate::from_ymd_opt(target_year, target_month as u32, target_day)
-            .ok_or_else(|| ExcelError::new_num())?;
+            .ok_or_else(ExcelError::new_num)?;
 
         Ok(LiteralValue::Number(date_to_serial(&target_date)))
     }
@@ -141,7 +141,7 @@ impl Function for EomonthFn {
         let last_day = last_day_of_month(target_year, target_month as u32);
 
         let target_date = NaiveDate::from_ymd_opt(target_year, target_month as u32, last_day)
-            .ok_or_else(|| ExcelError::new_num())?;
+            .ok_or_else(ExcelError::new_num)?;
 
         Ok(LiteralValue::Number(date_to_serial(&target_date)))
     }

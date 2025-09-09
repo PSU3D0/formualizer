@@ -6,7 +6,7 @@ use chrono::Timelike;
 use std::sync::Arc;
 
 use arrow_array::builder::{
-    BooleanBuilder, Float64Builder, StringBuilder, UInt8Builder, UInt32Builder,
+    BooleanBuilder, Float64Builder, StringBuilder, UInt8Builder,
 };
 use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt8Array, UInt32Array};
 use once_cell::sync::OnceCell;
@@ -599,7 +599,7 @@ impl IngestBuilder {
         }
         // Precompute chunk starts from first column and enforce alignment across columns
         let mut chunk_starts: Vec<usize> = Vec::new();
-        if let Some(col0) = columns.get(0) {
+        if let Some(col0) = columns.first() {
             let chunks_len0 = col0.chunks.len();
             for (ci, col) in columns.iter().enumerate() {
                 if col.chunks.len() != chunks_len0 {
@@ -618,8 +618,7 @@ impl IngestBuilder {
                     let got = col.chunks[i].type_tag.len();
                     if got != len_i {
                         panic!(
-                            "ArrowSheet chunk row-length misalignment at chunk {}: col {} len={} != {}",
-                            i, ci, got, len_i
+                            "ArrowSheet chunk row-length misalignment at chunk {i}: col {ci} len={got} != {len_i}"
                         );
                     }
                 }
@@ -1020,7 +1019,7 @@ impl ArrowSheet {
                         tag_b.append_value(TypeTag::Text as u8);
                         nb.append_null();
                         bb.append_null();
-                        sb.append_value(&s);
+                        sb.append_value(s);
                         non_text += 1;
                         eb.append_null();
                     }
@@ -1270,7 +1269,7 @@ impl ArrowSheet {
             return;
         }
         // Determine chunk schema from first column if present
-        let mut empty_col = |lens: &[usize]| -> ArrowColumn {
+        let empty_col = |lens: &[usize]| -> ArrowColumn {
             let mut chunks = Vec::with_capacity(lens.len());
             for &l in lens {
                 chunks.push(Self::make_empty_chunk(l));
@@ -1398,7 +1397,7 @@ impl<'a> ArrowRangeView<'a> {
                 OverlayValue::Empty => LiteralValue::Empty,
                 OverlayValue::Number(n) => LiteralValue::Number(*n),
                 OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
-                OverlayValue::Text(s) => LiteralValue::Text((&**s).to_string()),
+                OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
                 OverlayValue::Error(code) => {
                     let kind = unmap_error_code(*code);
                     LiteralValue::Error(ExcelError::new(kind))
@@ -1478,7 +1477,7 @@ impl<'a> ArrowRangeView<'a> {
                 self.chunk_starts[ci + 1] - start
             } else {
                 // last chunk length from first column
-                if let Some(col0) = self.sheet.columns.get(0) {
+                if let Some(col0) = self.sheet.columns.first() {
                     col0.chunks[ci].type_tag.len()
                 } else {
                     0
@@ -1497,7 +1496,7 @@ impl<'a> ArrowRangeView<'a> {
             for col_idx in self.sc..=self.ec {
                 if col_idx >= self.sheet.columns.len() {
                     // Pad out-of-bounds columns with empty (null) lanes and Empty type_tag
-                    use arrow_array::Array;
+                    
                     let numbers = Some(new_null_array(&DataType::Float64, seg_len));
                     let booleans = Some(new_null_array(&DataType::Boolean, seg_len));
                     let text = Some(new_null_array(&DataType::Utf8, seg_len));
@@ -1734,7 +1733,7 @@ impl<'a> ArrowRangeView<'a> {
                         if let Some(ov) = ch.overlay.get(rel_off + i) {
                             mask_b.append_value(true);
                             match ov {
-                                OverlayValue::Text(s) => sb.append_value(&s),
+                                OverlayValue::Text(s) => sb.append_value(s),
                                 _ => sb.append_null(),
                             }
                         } else {

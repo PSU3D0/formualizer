@@ -1,7 +1,6 @@
 //! Tests for infinite and partial ranges resolved to used-region (Milestone 10)
 
 use crate::engine::graph::editor::vertex_editor::VertexEditor;
-use crate::engine::range_view::RangeView;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;

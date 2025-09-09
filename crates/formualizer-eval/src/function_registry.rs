@@ -51,8 +51,7 @@ pub fn get(ns: &str, name: &str) -> Option<Arc<dyn Function>> {
     // Try stripping known Excel prefixes and create runtime alias if found
     let normalized_name = norm(name);
     for prefix in EXCEL_PREFIXES {
-        if normalized_name.starts_with(prefix) {
-            let stripped = &normalized_name[prefix.len()..];
+        if let Some(stripped) = normalized_name.strip_prefix(prefix) {
             let stripped_key = (norm(ns), stripped.to_string());
 
             if let Some(v) = REG.get(&stripped_key) {

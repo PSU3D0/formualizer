@@ -266,7 +266,7 @@ impl Function for SumIfsFn {
             }
         };
 
-        let mut dims = sum_view.dims();
+        let dims = sum_view.dims();
 
         // Collect criteria ranges and predicates
         let mut crit_views = Vec::new();
@@ -439,11 +439,7 @@ impl Function for SumIfsFn {
                             let cur_cached: Option<BooleanArray> =
                                 if let Some(ref view) = crit_views[j] {
                                     if let Some(av) = view.as_arrow() {
-                                        if let Some(m) = ctx.get_criteria_mask(av, c, pred) {
-                                            Some((*m).clone())
-                                        } else {
-                                            None
-                                        }
+                                        ctx.get_criteria_mask(av, c, pred).map(|m| (*m).clone())
                                     } else {
                                         None
                                     }
@@ -866,7 +862,7 @@ impl Function for AverageIfsFn {
         };
 
         // Collect criteria as views or scalars; compute union dims with avg_view (prefer flats)
-        let mut dims = avg_view.dims();
+        let dims = avg_view.dims();
         let mut crit_views: Vec<Option<crate::engine::range_view::RangeView<'_>>> = Vec::new();
         let mut preds = Vec::new();
         // Build views/preds

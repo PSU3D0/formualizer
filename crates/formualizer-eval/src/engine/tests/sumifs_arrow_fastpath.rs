@@ -196,7 +196,7 @@ fn sumifs_text_and_date_window_parity() {
     let start_serial = formualizer_common::datetime_to_serial(&start);
     let next_serial = formualizer_common::datetime_to_serial(&next);
 
-    let mut empty_row = vec![LiteralValue::Empty; ncols];
+    let empty_row = vec![LiteralValue::Empty; ncols];
     // Row 1: non-match (before window)
     let mut r1 = empty_row.clone();
     r1[(p_col - 1) as usize] = LiteralValue::Int(999);

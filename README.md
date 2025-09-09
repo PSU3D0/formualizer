@@ -72,7 +72,7 @@ assert eng.evaluate_cell("Data", 1, 3).as_number() == 30.0
 ### WASM (browser)
 
 ```ts
-import init, { Workbook } from 'formualizer-wasm'
+import init, { Workbook } from 'formualizer'
 await init()
 
 const wb = new Workbook()

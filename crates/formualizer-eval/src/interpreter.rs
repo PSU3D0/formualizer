@@ -68,7 +68,7 @@ impl<'a> Interpreter<'a> {
                     }
                 } else {
                     Err(ExcelError::new(ExcelErrorKind::Name)
-                        .with_message(format!("Unknown function: {}", name)))
+                        .with_message(format!("Unknown function: {name}")))
                 }
             }
             ASTNodeType::Array(_)
@@ -391,7 +391,7 @@ impl<'a> Interpreter<'a> {
             // Include the function name in the error message for better debugging
             Ok(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Name)
-                    .with_message(format!("Unknown function: {}", name)),
+                    .with_message(format!("Unknown function: {name}")),
             ))
         }
     }

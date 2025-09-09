@@ -43,7 +43,6 @@ mod tests;
 
 use std::fmt::{Display, Formatter};
 
-use arrow::ipc::Date;
 pub use eval::{Engine, EvalResult};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;
