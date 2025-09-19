@@ -1,13 +1,11 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::value::PyLiteralValue;
-use crate::workbook::{CellData, PyCell, PyWorkbook};
+use crate::workbook::{PyCell, PyWorkbook};
 use formualizer_workbook::WorksheetHandle;
 
 /// Sheet class - represents a view into workbook data
-#[gen_stub_pyclass]
 #[pyclass(name = "Sheet", module = "formualizer")]
 #[derive(Clone)]
 pub struct PySheet {
@@ -17,7 +15,6 @@ pub struct PySheet {
     pub(crate) handle: WorksheetHandle,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PySheet {
     /// Set a single value (stores in workbook, doesn't evaluate)
@@ -68,7 +65,7 @@ impl PySheet {
         start_row: u32,
         start_col: u32,
         rows: u32,
-        cols: u32,
+        _cols: u32,
         data: &Bound<'_, PyList>,
     ) -> PyResult<()> {
         if start_row == 0 || start_col == 0 {
@@ -97,7 +94,7 @@ impl PySheet {
         start_row: u32,
         start_col: u32,
         rows: u32,
-        cols: u32,
+        _cols: u32,
         formulas: &Bound<'_, PyList>,
     ) -> PyResult<()> {
         if start_row == 0 || start_col == 0 {

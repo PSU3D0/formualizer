@@ -8,14 +8,8 @@ edition = "2021"
 name = "formualizer"
 crate-type = ["cdylib", "rlib"]
 
-[[bin]]
-name = "stub_gen"
-path = "src/bin/stub_gen.rs"
-required-features = ["stub_gen_bin"]
-
 [features]
 default = []
-stub_gen_bin = []
 # Enable engine/IO tracing spans from the Python wheel/venv build.
 # Usage:
 #  - maturin develop --release --features tracing
@@ -25,8 +19,6 @@ tracing_chrome = ["tracing", "formualizer-eval/tracing_chrome"]
 
 [dependencies]
 pyo3 = { version = "0.24.0", features = ["extension-module", "chrono"] }
-pyo3-stub-gen = "0.8.2"
-pyo3-stub-gen-derive = "0.8.2"
 formualizer-parse = { path = "../../crates/formualizer-parse" }
 formualizer-common = { path = "../../crates/formualizer-common" }
 formualizer-eval = { path = "../../crates/formualizer-eval" }

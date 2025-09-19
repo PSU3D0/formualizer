@@ -8,19 +8,25 @@ An open‑source, embeddable spreadsheet engine. Formualizer parses, evaluates, 
 
 Formualizer is a full spreadsheet engine you can embed anywhere:
 
-- Engine: evaluates Excel‑style formulas with hundreds of built‑ins, dependency tracking, and cycle detection
-- Workbook: engine‑backed, mutable sheets/cells/ranges; streaming loaders; batch APIs; changelog/undo/redo
-- Storage: Arrow columnar backing for fast vectorized operations and large data
-- Modes: demand‑driven or deferred graph building for snappy edits and scalable recomputation
-- Bindings: first‑class Python and WASM surfaces for scripting and the web
+- Engine: evaluates Excel‑style formulas with hundreds of built‑ins, dependency tracking, cycle detection, and deterministic volatility policies
+- Storage: Arrow columnar backing with spill overlays, parallel evaluation, and staged graph building for fast recalcs on large workbooks
+- Dialects: tokenizer/parser handle Excel and OpenFormula syntax with the same AST surface used throughout the stack
+- Tooling: streaming loaders, undoable change logs, and tracing hooks surface engine internals for profiling or telemetry
+- Bindings: first‑class Python and WASM APIs mirror the Rust workbook so scripting and browser clients share behavior
 
-Use what you need: parse only, evaluate formulas against your own data, or use the workbook surface for a batteries‑included experience.
+Use what you need: parse only, run the engine against your own sheet model, or let the workbook crate manage ingestion, evaluation, and ergonomics.
 
-## Crates
+## Core Crates
 
-- crates/formualizer-parse: Tokenizer/Parser/Pretty
-- crates/formualizer-eval: Evaluation engine with Arrow-backed storage, planning, and built‑ins
-- crates/formualizer-workbook: Engine‑backed `Workbook` with sheets/cells/ranges, batch APIs, and changelog/undo/redo
+- `formualizer-parse`: tokenizer, parser, and pretty printer that turn raw formula text into a dialect-aware AST shared by every other crate. Best when you are linting formulas, performing static analysis, or building custom tooling that stops at the parse tree.
+- `formualizer-eval`: Arrow-backed calculation engine with dependency graph, incremental recomputation, and extensible built-ins. Best for power users who already own workbook storage but want Formualizer's evaluator, planning, and telemetry primitives.
+- `formualizer-workbook`: high-level workbook surface with sheets, batch editors, undo/redo, staged formulas, and optional IO backends. Best choice for most integrations—it provides a stable API that mirrors what the Python and WASM bindings expose.
+
+### Choosing the right Rust layer
+
+- `formualizer-parse` is for parsing only. Reach for it when you need tokens, ASTs, or pretty-printing without executing formulas.
+- `formualizer-eval` fits when you want full evaluation control, custom resolvers, or to embed the engine in an existing data model. Expect to manage ingestion and cell storage yourself.
+- `formualizer-workbook` is the recommended default. It wraps the engine with ergonomic sheet APIs, keeps staged formulas in sync, and stays API-compatible with downstream bindings.
 
 ## Bindings
 

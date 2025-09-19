@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 /// Minimal resolver for engine-backed workbook (cells/ranges via graph/arrow; functions via registry).
 #[derive(Default, Debug, Clone, Copy)]
-struct WBResolver;
+pub struct WBResolver;
 
 impl formualizer_eval::traits::ReferenceResolver for WBResolver {
     fn resolve_cell_reference(
@@ -93,10 +93,10 @@ impl Workbook {
         Self::new_with_config(formualizer_eval::engine::EvalConfig::default())
     }
 
-    pub(crate) fn engine(&self) -> &formualizer_eval::engine::Engine<WBResolver> {
+    pub fn engine(&self) -> &formualizer_eval::engine::Engine<WBResolver> {
         &self.engine
     }
-    pub(crate) fn engine_mut(&mut self) -> &mut formualizer_eval::engine::Engine<WBResolver> {
+    pub fn engine_mut(&mut self) -> &mut formualizer_eval::engine::Engine<WBResolver> {
         &mut self.engine
     }
 

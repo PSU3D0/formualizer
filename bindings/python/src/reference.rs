@@ -1,7 +1,5 @@
 use formualizer_parse::parser::ReferenceType;
 use pyo3::{prelude::*, types::PyType};
-use pyo3_stub_gen::derive::*;
-use pyo3_stub_gen::PyStubType;
 
 use crate::errors::ParserError;
 
@@ -11,17 +9,6 @@ enum NumericOrStringColumn {
     String(String),
 }
 
-impl PyStubType for NumericOrStringColumn {
-    fn type_output() -> pyo3_stub_gen::TypeInfo {
-        pyo3_stub_gen::TypeInfo::any()
-    }
-
-    fn type_input() -> pyo3_stub_gen::TypeInfo {
-        pyo3_stub_gen::TypeInfo::any()
-    }
-}
-
-#[gen_stub_pyclass]
 #[pyclass(frozen, eq, hash, module = "formualizer")]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CellRef {
@@ -70,7 +57,7 @@ impl CellRef {
     #[classmethod]
     #[pyo3(signature = (reference, default_sheet = None))]
     fn from_string(
-        cls: &Bound<'_, PyType>,
+        _cls: &Bound<'_, PyType>,
         reference: &str,
         default_sheet: Option<&str>,
     ) -> Result<Self, PyErr> {
@@ -141,7 +128,6 @@ impl CellRef {
     }
 }
 
-#[gen_stub_pyclass]
 #[pyclass(frozen, eq, hash, module = "formualizer")]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RangeRef {
@@ -153,7 +139,6 @@ pub struct RangeRef {
     pub end: Option<CellRef>,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl RangeRef {
     #[new]
@@ -187,7 +172,6 @@ impl RangeRef {
     }
 }
 
-#[gen_stub_pyclass]
 #[pyclass(frozen, eq, hash, module = "formualizer")]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct TableRef {
@@ -197,7 +181,6 @@ pub struct TableRef {
     pub spec: Option<String>,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl TableRef {
     #[new]
@@ -243,7 +226,6 @@ impl NamedRangeRef {
     }
 }
 
-#[gen_stub_pyclass]
 #[pyclass(frozen, eq, hash, module = "formualizer")]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct UnknownRef {
@@ -251,7 +233,6 @@ pub struct UnknownRef {
     pub raw: String,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl UnknownRef {
     #[new]
@@ -277,16 +258,6 @@ pub enum ReferenceLike {
     Table(TableRef),
     NamedRange(NamedRangeRef),
     Unknown(UnknownRef),
-}
-
-impl PyStubType for ReferenceLike {
-    fn type_output() -> pyo3_stub_gen::TypeInfo {
-        pyo3_stub_gen::TypeInfo::any()
-    }
-
-    fn type_input() -> pyo3_stub_gen::TypeInfo {
-        pyo3_stub_gen::TypeInfo::any()
-    }
 }
 
 impl IntoPy<PyObject> for ReferenceLike {

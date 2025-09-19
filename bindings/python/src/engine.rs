@@ -1,6 +1,5 @@
 use formualizer_eval::engine::{DateSystem, Engine as RustEngine, EvalConfig};
 use pyo3::prelude::*;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::sync::{Arc, RwLock};
 
 use crate::errors::excel_eval_pyerr;
@@ -9,7 +8,6 @@ use crate::value::PyLiteralValue;
 use crate::workbook::{CellData, PyCell, PyWorkbook};
 
 /// Python wrapper for the evaluation engine
-#[gen_stub_pyclass]
 #[pyclass(name = "Engine")]
 pub struct PyEngine {
     inner: Arc<RwLock<RustEngine<PyResolver>>>,
@@ -17,14 +15,12 @@ pub struct PyEngine {
 }
 
 /// Configuration for the evaluation engine
-#[gen_stub_pyclass]
 #[pyclass(name = "EvaluationConfig")]
 #[derive(Clone)]
 pub struct PyEvaluationConfig {
     pub(crate) inner: EvalConfig,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyEvaluationConfig {
     /// Create a new evaluation configuration
@@ -180,7 +176,6 @@ impl PyEvaluationConfig {
 }
 
 /// Information about a single evaluation layer
-#[gen_stub_pyclass]
 #[pyclass(name = "LayerInfo")]
 #[derive(Clone)]
 pub struct PyLayerInfo {
@@ -192,7 +187,6 @@ pub struct PyLayerInfo {
     pub sample_cells: Vec<String>,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyLayerInfo {
     fn __repr__(&self) -> String {
@@ -204,7 +198,6 @@ impl PyLayerInfo {
 }
 
 /// Evaluation plan showing how cells would be evaluated
-#[gen_stub_pyclass]
 #[pyclass(name = "EvaluationPlan")]
 pub struct PyEvaluationPlan {
     #[pyo3(get)]
@@ -225,7 +218,6 @@ pub struct PyEvaluationPlan {
     pub target_cells: Vec<String>,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyEvaluationPlan {
     fn __repr__(&self) -> String {
@@ -288,7 +280,6 @@ impl PyEvaluationPlan {
 }
 
 /// Result from an evaluation pass
-#[gen_stub_pyclass]
 #[pyclass(name = "EvaluationResult")]
 pub struct PyEvaluationResult {
     pub(crate) computed_vertices: u64,
@@ -296,7 +287,6 @@ pub struct PyEvaluationResult {
     pub(crate) elapsed_ms: u64,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyEvaluationResult {
     /// Number of vertices computed
@@ -696,7 +686,7 @@ impl PyEngine {
                 .map_err(|e| excel_eval_pyerr(Some(sheet), Some(row), Some(col), &e))
         })?;
 
-        use formualizer_common::{ErrorContext, LiteralValue};
+        use formualizer_common::LiteralValue;
         let inner = match value {
             Some(v) => v,
             None => LiteralValue::Empty,

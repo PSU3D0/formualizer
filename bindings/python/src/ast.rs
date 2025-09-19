@@ -4,9 +4,7 @@ use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3_stub_gen::derive::*;
 
-#[gen_stub_pyclass]
 #[pyclass(module = "formualizer", name = "ASTNode")]
 #[derive(Clone)]
 pub struct PyASTNode {
@@ -19,7 +17,6 @@ impl PyASTNode {
     }
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyASTNode {
     /// Get the pretty-printed representation of this AST
@@ -327,7 +324,6 @@ impl PyASTNode {
     }
 }
 
-#[gen_stub_pyclass]
 #[pyclass(module = "formualizer")]
 pub struct PyRefWalker {
     refs: Vec<ReferenceLike>,

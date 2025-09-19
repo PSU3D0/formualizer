@@ -2,9 +2,7 @@ use crate::enums::{PyTokenSubType, PyTokenType};
 use formualizer_parse::tokenizer::Token;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
 
-#[gen_stub_pyclass]
 #[pyclass(module = "formualizer")]
 #[derive(Clone)]
 pub struct PyToken {
@@ -17,7 +15,6 @@ impl PyToken {
     }
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyToken {
     #[getter]

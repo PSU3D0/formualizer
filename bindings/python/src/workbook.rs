@@ -1,12 +1,10 @@
 use pyo3::prelude::*;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use formualizer_common::LiteralValue;
 
 use crate::value::PyLiteralValue;
 use std::collections::HashMap;
 
-#[gen_stub_pyclass]
 #[pyclass(name = "Workbook", module = "formualizer")]
 #[derive(Clone)]
 pub struct PyWorkbook {
@@ -16,7 +14,6 @@ pub struct PyWorkbook {
         std::sync::Arc<std::sync::RwLock<HashMap<String, HashMap<(u32, u32), CellData>>>>,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyWorkbook {
     #[new]
@@ -364,7 +361,6 @@ pub struct CellData {
     pub formula: Option<String>,
 }
 
-#[gen_stub_pyclass]
 #[pyclass(name = "Cell", module = "formualizer")]
 pub struct PyCell {
     #[pyo3(get)]
@@ -373,7 +369,6 @@ pub struct PyCell {
     pub formula: Option<String>,
 }
 
-#[gen_stub_pyclass]
 #[pyclass(name = "RangeAddress", module = "formualizer")]
 #[derive(Clone, Debug)]
 pub struct PyRangeAddress {
@@ -389,7 +384,6 @@ pub struct PyRangeAddress {
     pub end_col: u32,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyRangeAddress {
     #[new]

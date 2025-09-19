@@ -1,13 +1,10 @@
 use std::fmt::Display;
 
-use formualizer_parse::parser::ASTNodeType as CoreASTNodeType;
 use formualizer_parse::tokenizer::{TokenSubType as CoreTokenSubType, TokenType as CoreTokenType};
-use formualizer_parse::FormulaDialect as CoreFormulaDialect;
+use formualizer_parse::types::FormulaDialect as CoreFormulaDialect;
 use pyo3::prelude::*;
-use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
 
 /// Python-exposed token type enum
-#[gen_stub_pyclass_enum]
 #[pyclass(module = "formualizer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyTokenType {
@@ -86,7 +83,6 @@ impl From<PyTokenType> for CoreTokenType {
 }
 
 /// Python-exposed token subtype enum
-#[gen_stub_pyclass_enum]
 #[pyclass(module = "formualizer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyTokenSubType {
@@ -165,7 +161,6 @@ impl From<PyTokenSubType> for CoreTokenSubType {
 }
 
 /// Formula dialect enum exposed to Python
-#[gen_stub_pyclass_enum]
 #[pyclass(module = "formualizer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyFormulaDialect {

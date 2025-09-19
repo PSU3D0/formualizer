@@ -1,6 +1,6 @@
 use formualizer_common::error::{ExcelError, ExcelErrorKind};
 use formualizer_common::value::LiteralValue;
-use formualizer_parse::parser::{ReferenceType, TableReference};
+use formualizer_parse::parser::TableReference;
 
 /// A minimal in-process resolver for Python bindings.
 ///

@@ -2,6 +2,12 @@
 name = "formualizer-common"
 version = "0.1.0"
 edition = "2024"
+description = "Shared value, reference, function, and error types for the Formualizer spreadsheet engine"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/psu3d0/formualizer"
+readme = "README.md"
+keywords = ["excel", "formula", "spreadsheet", "engine", "arrow"]
+categories = ["data-structures"]
 
 [dependencies]
 chrono = "0.4.41"

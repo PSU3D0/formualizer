@@ -45,6 +45,7 @@ jobs:
       working-directory: bindings/python
       run: |
         uv venv
+        uv pip install maturin
         uv pip install -e ".[dev]"
 
     - name: Build Python extension
@@ -52,12 +53,6 @@ jobs:
       run: |
         source .venv/bin/activate
         maturin develop
-
-    - name: Generate Python stubs
-      working-directory: bindings/python
-      run: |
-        source .venv/bin/activate
-        cargo run --bin stub_gen
 
     - name: Run Python linting
       working-directory: bindings/python

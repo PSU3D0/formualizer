@@ -3,18 +3,14 @@ use formualizer_common::error::{ExcelError, ExcelErrorKind};
 use formualizer_common::value::LiteralValue;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
-use std::collections::HashMap;
 
 /// Python representation of a LiteralValue from the formula engine
-#[gen_stub_pyclass]
 #[pyclass(name = "LiteralValue")]
 #[derive(Clone, Debug)]
 pub struct PyLiteralValue {
     pub(crate) inner: LiteralValue,
 }
 
-#[gen_stub_pymethods]
 #[pymethods]
 impl PyLiteralValue {
     /// Extract as Python int; errors if not an Int
