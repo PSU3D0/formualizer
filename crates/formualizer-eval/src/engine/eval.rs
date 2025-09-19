@@ -246,10 +246,14 @@ where
     ) -> Result<(), formualizer_parse::ExcelError> {
         let mut any = false;
         // Collect entries first to avoid aliasing self while builder borrows graph
-        let mut collected: Vec<(&str, Vec<(u32, u32, String)>)> = Vec::new();
+        struct SheetFormulas<'s> {
+            sheet: &'s str,
+            entries: Vec<(u32, u32, String)>,
+        }
+        let mut collected: Vec<SheetFormulas<'_>> = Vec::new();
         for s in sheets {
             if let Some(entries) = self.staged_formulas.remove(s) {
-                collected.push((s, entries));
+                collected.push(SheetFormulas { sheet: s, entries });
             }
         }
         let mut builder = self.begin_bulk_ingest();
@@ -257,7 +261,7 @@ where
         let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
             rustc_hash::FxHashMap::default();
         cache.reserve(4096);
-        for (s, entries) in collected.into_iter() {
+        for SheetFormulas { sheet: s, entries } in collected.into_iter() {
             any = true;
             let sid = builder.add_sheet(s);
             for (row, col, txt) in entries {
@@ -429,14 +433,13 @@ where
         let mut min_r0: Option<usize> = None;
         for ci in sc0..=ec0 {
             let sheet_id = self.graph.sheet_id(sheet)?;
-            if let Some((min1, _)) = self.row_bounds_cache.read().ok().and_then(|g| {
+            if let Some((Some(mv), _)) = self.row_bounds_cache.read().ok().and_then(|g| {
                 g.as_ref()
                     .and_then(|c| c.get_row_bounds(sheet_id, ci, snap))
             }) {
-                if let Some(mv) = min1 {
-                    min_r0 = Some(min_r0.map(|m| m.min(mv as usize)).unwrap_or(mv as usize));
-                    continue;
-                }
+                let mv = mv as usize;
+                min_r0 = Some(min_r0.map(|m| m.min(mv)).unwrap_or(mv));
+                continue;
             }
             // Compute and store
             let (min_c, max_c) = Self::scan_column_used_bounds(a, ci);
@@ -452,14 +455,13 @@ where
         let mut max_r0: Option<usize> = None;
         for ci in sc0..=ec0 {
             let sheet_id = self.graph.sheet_id(sheet)?;
-            if let Some((_, max1)) = self.row_bounds_cache.read().ok().and_then(|g| {
+            if let Some((_, Some(mv))) = self.row_bounds_cache.read().ok().and_then(|g| {
                 g.as_ref()
                     .and_then(|c| c.get_row_bounds(sheet_id, ci, snap))
             }) {
-                if let Some(mv) = max1 {
-                    max_r0 = Some(max_r0.map(|m| m.max(mv as usize)).unwrap_or(mv as usize));
-                    continue;
-                }
+                let mv = mv as usize;
+                max_r0 = Some(max_r0.map(|m| m.max(mv)).unwrap_or(mv));
+                continue;
             }
             let (_min_c, max_c) = Self::scan_column_used_bounds(a, ci);
             if let Ok(mut g) = self.row_bounds_cache.write() {
@@ -931,6 +933,22 @@ where
                 self.graph.clear_spill_region(vertex_id);
                 let err_val = LiteralValue::Error(e.clone());
                 self.graph.update_vertex_value(vertex_id, err_val.clone());
+                if self.config.arrow_storage_enabled
+                    && self.config.delta_overlay_enabled
+                    && self.config.write_formula_overlay_enabled
+                {
+                    let anchor = self
+                        .graph
+                        .get_cell_ref(vertex_id)
+                        .expect("cell ref for vertex");
+                    let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
+                    self.mirror_value_to_overlay(
+                        &sheet_name,
+                        anchor.coord.row,
+                        anchor.coord.col,
+                        &err_val,
+                    );
+                }
                 Ok(err_val)
             }
         }
@@ -2676,9 +2694,10 @@ where
                 let er = er.unwrap_or(sr.saturating_sub(1));
                 let ec = ec.unwrap_or(sc.saturating_sub(1));
 
-                // Feature: Arrow-only RangeView resolution (no Hybrid/GraphSlice).
-                // If an Arrow sheet exists, return a pure Arrow-backed RangeView.
-                // Otherwise, materialize values from the graph and return a Borrowed2D view.
+                // Feature: Arrow-only RangeView resolution (no Hybrid/GraphSlice) when overlay mirroring is enabled.
+                if self.config.arrow_storage_enabled
+                    && self.config.delta_overlay_enabled
+                    && self.config.write_formula_overlay_enabled
                 {
                     if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
                         let sr0 = sr.saturating_sub(1) as usize;
@@ -2688,7 +2707,7 @@ where
                         let av = asheet.range_view(sr0, sc0, er0, ec0);
                         return Ok(RangeView::from_arrow(av));
                     }
-                    // Materialize via graph
+                    // Materialize via graph when Arrow backend is absent.
                     let rows = (sr..=er)
                         .map(|r| {
                             (sc..=ec)
@@ -2719,6 +2738,23 @@ where
             }
             ReferenceType::Cell { sheet, row, col } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                if let Some(sheet_id) = self.graph.sheet_id(sheet_name) {
+                    let coord = Coord::new(*row, *col, true, true);
+                    let addr = CellRef::new(sheet_id, coord);
+                    if let Some(vid) = self.graph.get_vertex_id_for_address(&addr) {
+                        if matches!(
+                            self.graph.get_vertex_kind(*vid),
+                            VertexKind::FormulaScalar | VertexKind::FormulaArray
+                        ) {
+                            if let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col) {
+                                return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
+                            }
+                        }
+                    }
+                }
+                if self.config.arrow_storage_enabled
+                    && self.config.delta_overlay_enabled
+                    && self.config.write_formula_overlay_enabled
                 {
                     if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
                         let r0 = row.saturating_sub(1) as usize;

@@ -15,7 +15,7 @@ fn calamine_extracts_formulas_and_normalizes_equals() {
         sh.get_cell_mut((2, 2)).set_value_number(3); // B2 value only
     });
 
-    let mut backend = CalamineAdapter::open_path(&path).unwrap();
+    let backend = CalamineAdapter::open_path(&path).unwrap();
     let mut loader = WorkbookLoader::new(backend, LoadStrategy::EagerAll);
     let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
@@ -24,13 +24,13 @@ fn calamine_extracts_formulas_and_normalizes_equals() {
 
     match engine.get_cell_value("Sheet1", 1, 2) {
         // B1
-        Some(LiteralValue::Number(n)) => assert!((n - 15.0).abs() < 1e-9, "Expected 15 got {}", n),
-        other => panic!("Unexpected B1: {:?}", other),
+        Some(LiteralValue::Number(n)) => assert!((n - 15.0).abs() < 1e-9, "Expected 15 got {n}"),
+        other => panic!("Unexpected B1: {other:?}"),
     }
     match engine.get_cell_value("Sheet1", 2, 1) {
         // A2
-        Some(LiteralValue::Number(n)) => assert!((n - 20.0).abs() < 1e-9, "Expected 20 got {}", n),
-        other => panic!("Unexpected A2: {:?}", other),
+        Some(LiteralValue::Number(n)) => assert!((n - 20.0).abs() < 1e-9, "Expected 20 got {n}"),
+        other => panic!("Unexpected A2: {other:?}"),
     }
 }
 

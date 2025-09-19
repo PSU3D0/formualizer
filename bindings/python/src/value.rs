@@ -1,6 +1,7 @@
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use formualizer_common::error::{ExcelError, ExcelErrorKind};
 use formualizer_common::value::LiteralValue;
+use pyo3::conversion::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -165,8 +166,7 @@ impl PyLiteralValue {
             "Cancelled" => ExcelErrorKind::Cancelled,
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid error kind: {}",
-                    kind
+                    "Invalid error kind: {kind}"
                 )))
             }
         };
@@ -276,10 +276,10 @@ impl PyLiteralValue {
     /// Convert to a Python object
     pub fn to_python(&self, py: Python) -> PyResult<PyObject> {
         match &self.inner {
-            LiteralValue::Int(v) => Ok((*v).into_pyobject(py)?.into_any().to_object(py)),
-            LiteralValue::Number(v) => Ok((*v).into_pyobject(py)?.into_any().to_object(py)),
-            LiteralValue::Boolean(v) => Ok((*v).to_object(py)),
-            LiteralValue::Text(v) => Ok(v.clone().into_pyobject(py)?.into_any().to_object(py)),
+            LiteralValue::Int(v) => Ok((*v).into_py_any(py)?),
+            LiteralValue::Number(v) => Ok((*v).into_py_any(py)?),
+            LiteralValue::Boolean(v) => Ok((*v).into_py_any(py)?),
+            LiteralValue::Text(v) => Ok(v.clone().into_py_any(py)?),
             LiteralValue::Empty => Ok(py.None()),
             LiteralValue::Date(d) => {
                 let dict = PyDict::new(py);
@@ -287,7 +287,7 @@ impl PyLiteralValue {
                 dict.set_item("year", d.year())?;
                 dict.set_item("month", d.month())?;
                 dict.set_item("day", d.day())?;
-                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
+                Ok(dict.into_py_any(py)?)
             }
             LiteralValue::Time(t) => {
                 let dict = PyDict::new(py);
@@ -295,7 +295,7 @@ impl PyLiteralValue {
                 dict.set_item("hour", t.hour())?;
                 dict.set_item("minute", t.minute())?;
                 dict.set_item("second", t.second())?;
-                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
+                Ok(dict.into_py_any(py)?)
             }
             LiteralValue::DateTime(dt) => {
                 let dict = PyDict::new(py);
@@ -306,13 +306,13 @@ impl PyLiteralValue {
                 dict.set_item("hour", dt.hour())?;
                 dict.set_item("minute", dt.minute())?;
                 dict.set_item("second", dt.second())?;
-                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
+                Ok(dict.into_py_any(py)?)
             }
             LiteralValue::Duration(d) => {
                 let dict = PyDict::new(py);
                 dict.set_item("type", "Duration")?;
                 dict.set_item("seconds", d.num_seconds())?;
-                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
+                Ok(dict.into_py_any(py)?)
             }
             LiteralValue::Array(arr) => {
                 let py_list = PyList::empty(py);
@@ -324,7 +324,7 @@ impl PyLiteralValue {
                     }
                     py_list.append(py_row)?;
                 }
-                Ok(py_list.into_pyobject(py)?.into_any().to_object(py))
+                Ok(py_list.into_py_any(py)?)
             }
             LiteralValue::Error(e) => {
                 let dict = PyDict::new(py);
@@ -341,22 +341,22 @@ impl PyLiteralValue {
                         dict.set_item("col", c)?;
                     }
                 }
-                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
+                Ok(dict.into_py_any(py)?)
             }
             LiteralValue::Pending => {
                 let dict = PyDict::new(py);
                 dict.set_item("type", "Pending")?;
-                Ok(dict.into_pyobject(py)?.into_any().to_object(py))
+                Ok(dict.into_py_any(py)?)
             }
         }
     }
 
     fn __repr__(&self) -> String {
         match &self.inner {
-            LiteralValue::Int(v) => format!("LiteralValue.int({})", v),
-            LiteralValue::Number(v) => format!("LiteralValue.number({})", v),
-            LiteralValue::Boolean(v) => format!("LiteralValue.boolean({})", v),
-            LiteralValue::Text(v) => format!("LiteralValue.text({:?})", v),
+            LiteralValue::Int(v) => format!("LiteralValue.int({v})"),
+            LiteralValue::Number(v) => format!("LiteralValue.number({v})"),
+            LiteralValue::Boolean(v) => format!("LiteralValue.boolean({v})"),
+            LiteralValue::Text(v) => format!("LiteralValue.text({v:?})"),
             LiteralValue::Empty => "LiteralValue.empty()".to_string(),
             LiteralValue::Date(d) => {
                 format!(

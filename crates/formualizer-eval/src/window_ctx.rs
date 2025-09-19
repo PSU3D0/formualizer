@@ -818,7 +818,7 @@ mod tests {
                     let sum_win: i64 = wins[0]
                         .iter()
                         .map(|v| match v {
-                            LiteralValue::Int(i) => *i as i64,
+                            LiteralValue::Int(i) => *i,
                             LiteralValue::Number(n) => *n as i64,
                             _ => 0,
                         })
@@ -839,7 +839,7 @@ mod tests {
         let ctx = interp(&wb);
         // Row vector [1..=7] (1x7)
         let row = lit(LiteralValue::Array(vec![
-            (1..=7).map(|n| LiteralValue::Int(n)).collect(),
+            (1..=7).map(LiteralValue::Int).collect(),
         ]));
         let args = vec![ArgumentHandle::new(&row, &ctx)];
         let fctx = ctx.function_context(None);
@@ -861,7 +861,7 @@ mod tests {
                     let sum_win: i64 = wins[0]
                         .iter()
                         .map(|v| match v {
-                            LiteralValue::Int(i) => *i as i64,
+                            LiteralValue::Int(i) => *i,
                             LiteralValue::Number(n) => *n as i64,
                             _ => 0,
                         })
@@ -914,7 +914,7 @@ mod tests {
                     ctr.fetch_add(1, Ordering::Relaxed);
                     if let Some(v) = wins[0].last() {
                         if let LiteralValue::Int(i) = v {
-                            *acc += *i as i64;
+                            *acc += *i;
                         }
                     }
                     Ok(())
@@ -934,9 +934,9 @@ mod tests {
         let ctx = interp(&wb);
         // 1x6000 row: 1000 empties, 4000 numbers 1..=4000, 1000 empties
         let mut row: Vec<LiteralValue> = Vec::with_capacity(6000);
-        row.extend(std::iter::repeat(LiteralValue::Empty).take(1000));
+        row.extend(std::iter::repeat_n(LiteralValue::Empty, 1000));
         row.extend((1..=4000).map(LiteralValue::Int));
-        row.extend(std::iter::repeat(LiteralValue::Empty).take(1000));
+        row.extend(std::iter::repeat_n(LiteralValue::Empty, 1000));
         let arr = lit(LiteralValue::Array(vec![row]));
         let args = vec![ArgumentHandle::new(&arr, &ctx)];
         let fctx = ctx.function_context(None);
@@ -960,7 +960,7 @@ mod tests {
                     ctr.fetch_add(1, Ordering::Relaxed);
                     if let Some(v) = wins[0].last() {
                         if let LiteralValue::Int(i) = v {
-                            *acc += *i as i64;
+                            *acc += *i;
                         }
                     }
                     Ok(())

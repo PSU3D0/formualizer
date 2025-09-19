@@ -5,13 +5,15 @@ use formualizer_common::LiteralValue;
 use crate::value::PyLiteralValue;
 use std::collections::HashMap;
 
+type SheetCellMap = HashMap<(u32, u32), CellData>;
+type SheetCache = HashMap<String, SheetCellMap>;
+
 #[pyclass(name = "Workbook", module = "formualizer")]
 #[derive(Clone)]
 pub struct PyWorkbook {
     inner: std::sync::Arc<std::sync::RwLock<formualizer_workbook::Workbook>>,
     // Compatibility cache for old sheet API used by some wrappers
-    pub(crate) sheets:
-        std::sync::Arc<std::sync::RwLock<HashMap<String, HashMap<(u32, u32), CellData>>>>,
+    pub(crate) sheets: std::sync::Arc<std::sync::RwLock<SheetCache>>,
 }
 
 #[pymethods]
@@ -72,7 +74,7 @@ impl PyWorkbook {
                 let adapter =
                     <CalamineAdapter as SpreadsheetReader>::open_path(std::path::Path::new(path))
                         .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {}", e))
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
                     })?;
                 let cfg = formualizer_eval::engine::EvalConfig::default();
                 let wb = formualizer_workbook::Workbook::from_reader(
@@ -81,7 +83,7 @@ impl PyWorkbook {
                     cfg,
                 )
                 .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {}", e))
+                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
                 })?;
                 Ok(Self {
                     inner: std::sync::Arc::new(std::sync::RwLock::new(wb)),
@@ -89,8 +91,7 @@ impl PyWorkbook {
                 })
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Unsupported backend: {}",
-                backend
+                "Unsupported backend: {backend}"
             ))),
         }
     }
@@ -102,7 +103,7 @@ impl PyWorkbook {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         wb.add_sheet(name);
         let mut sheets = self.sheets.write().unwrap();
-        sheets.entry(name.to_string()).or_insert_with(HashMap::new);
+        sheets.entry(name.to_string()).or_default();
         Ok(())
     }
 
@@ -130,7 +131,7 @@ impl PyWorkbook {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         // Update compatibility cache
         let mut sheets = self.sheets.write().unwrap();
-        let sheet_map = sheets.entry(sheet.to_string()).or_insert_with(HashMap::new);
+        let sheet_map = sheets.entry(sheet.to_string()).or_default();
         sheet_map.insert(
             (row, col),
             CellData {
@@ -150,7 +151,7 @@ impl PyWorkbook {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         // Update compatibility cache
         let mut sheets = self.sheets.write().unwrap();
-        let sheet_map = sheets.entry(sheet.to_string()).or_insert_with(HashMap::new);
+        let sheet_map = sheets.entry(sheet.to_string()).or_default();
         sheet_map.insert(
             (row, col),
             CellData {
@@ -264,7 +265,7 @@ impl PyWorkbook {
         // Update compatibility cache
         {
             let mut sheets = self.sheets.write().unwrap();
-            let sheet_map = sheets.entry(sheet.to_string()).or_insert_with(HashMap::new);
+            let sheet_map = sheets.entry(sheet.to_string()).or_default();
             for (r_off, row_vals) in rows_vec.into_iter().enumerate() {
                 for (c_off, v) in row_vals.into_iter().enumerate() {
                     let r = start_row + (r_off as u32);
@@ -312,7 +313,7 @@ impl PyWorkbook {
         // Update compatibility cache
         {
             let mut sheets = self.sheets.write().unwrap();
-            let sheet_map = sheets.entry(sheet.to_string()).or_insert_with(HashMap::new);
+            let sheet_map = sheets.entry(sheet.to_string()).or_default();
             for (r_off, row_vals) in rows_vec.into_iter().enumerate() {
                 for (c_off, s) in row_vals.into_iter().enumerate() {
                     let r = start_row + (r_off as u32);
@@ -476,11 +477,12 @@ impl PyWorkbook {
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         }
         let mut sheets = self.sheets.write().unwrap();
-        let sheet_map = sheets.entry(sheet.to_string()).or_insert_with(HashMap::new);
+        let sheet_map = sheets.entry(sheet.to_string()).or_default();
         sheet_map.insert((row, col), data);
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_cell_data(
         &self,
         sheet: &str,

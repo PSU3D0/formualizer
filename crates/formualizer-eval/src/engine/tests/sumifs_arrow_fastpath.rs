@@ -242,8 +242,8 @@ fn sumifs_text_and_date_window_parity() {
     let r_rng = whole_col_ref(sheet, r_col);
     let crit_k = lit_text("Malpractice SC0279");
     let crit_av = lit_text(match_tag);
-    let crit_start = lit_text(&format!(">={}", start_serial));
-    let crit_end = lit_text(&format!("<{}", next_serial));
+    let crit_start = lit_text(&format!(">={start_serial}"));
+    let crit_end = lit_text(&format!("<{next_serial}"));
 
     let fun = engine.get_function("", "SUMIFS").expect("SUMIFS available");
 

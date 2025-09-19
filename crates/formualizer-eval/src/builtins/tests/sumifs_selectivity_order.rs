@@ -138,7 +138,7 @@ mod tests {
         let mut sum = 0.0;
         for i in 0..sum_range.len() {
             if let LiteralValue::Number(n) = num_range[i] {
-                if n >= 20.0 && n <= 40.0 {
+                if (20.0..=40.0).contains(&n) {
                     if let LiteralValue::Number(s) = sum_range[i] {
                         sum += s;
                     }

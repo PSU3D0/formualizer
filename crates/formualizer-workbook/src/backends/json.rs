@@ -549,7 +549,7 @@ where
                         let with_eq = if f.starts_with('=') {
                             f.clone()
                         } else {
-                            format!("={}", f)
+                            format!("={f}")
                         };
                         let parsed = formualizer_parse::parser::parse(&with_eq)
                             .map_err(|e| IoError::from_backend("json", e))?;

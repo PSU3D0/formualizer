@@ -24,7 +24,7 @@ fn literal_to_js(v: formualizer_common::LiteralValue) -> JsValue {
         formualizer_common::LiteralValue::Int(i) => JsValue::from_f64(i as f64),
         formualizer_common::LiteralValue::Number(n) => JsValue::from_f64(n),
         formualizer_common::LiteralValue::Text(s) => JsValue::from_str(&s),
-        _ => JsValue::from_str(&format!("{:?}", v)),
+        _ => JsValue::from_str(&format!("{v:?}")),
     }
 }
 
@@ -33,13 +33,19 @@ pub struct Workbook {
     inner: Arc<RwLock<formualizer_workbook::Workbook>>,
 }
 
+impl Default for Workbook {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(formualizer_workbook::Workbook::new())),
+        }
+    }
+}
+
 #[wasm_bindgen]
 impl Workbook {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Workbook {
-        Workbook {
-            inner: Arc::new(RwLock::new(formualizer_workbook::Workbook::new())),
-        }
+        Workbook::default()
     }
 
     /// Construct from a JSON workbook string (feature: json)
@@ -50,14 +56,14 @@ impl Workbook {
             use formualizer_workbook::backends::JsonAdapter;
             use formualizer_workbook::traits::SpreadsheetReader;
             let adapter = <JsonAdapter as SpreadsheetReader>::open_bytes(json.into_bytes())
-                .map_err(|e| JsValue::from_str(&format!("open failed: {}", e)))?;
+                .map_err(|e| JsValue::from_str(&format!("open failed: {e}")))?;
             let cfg = formualizer_eval::engine::EvalConfig::default();
             let wb = formualizer_workbook::Workbook::from_reader(
                 adapter,
                 formualizer_workbook::LoadStrategy::EagerAll,
                 cfg,
             )
-            .map_err(|e| JsValue::from_str(&format!("load failed: {}", e)))?;
+            .map_err(|e| JsValue::from_str(&format!("load failed: {e}")))?;
             Ok(Workbook {
                 inner: Arc::new(RwLock::new(wb)),
             })
@@ -308,7 +314,7 @@ impl Sheet {
         let addr = formualizer_workbook::RangeAddress::new(
             &self.name, start_row, start_col, end_row, end_col,
         )
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        .map_err(JsValue::from)?;
         let vals = self
             .wb
             .read()

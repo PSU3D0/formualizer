@@ -24,12 +24,12 @@ impl PyToken {
 
     #[getter]
     pub fn token_type(&self) -> PyTokenType {
-        self.inner.token_type.clone().into()
+        self.inner.token_type.into()
     }
 
     #[getter]
     pub fn subtype(&self) -> PyTokenSubType {
-        self.inner.subtype.clone().into()
+        self.inner.subtype.into()
     }
 
     #[getter]

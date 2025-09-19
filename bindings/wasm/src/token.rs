@@ -42,10 +42,13 @@ impl JsToken {
     }
 
     #[wasm_bindgen(js_name = "toString")]
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         format!(
-            "Token({}: '{}' at {})",
-            self.inner.token_type, self.inner.value, self.inner.pos
+            "Token({token_type}: '{value}' at {pos})",
+            token_type = self.inner.token_type,
+            value = self.inner.value,
+            pos = self.inner.pos
         )
     }
 

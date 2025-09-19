@@ -255,10 +255,10 @@ mod tests {
         match (v1900, v1904) {
             (LiteralValue::Number(a), LiteralValue::Number(b)) => {
                 // 1904-01-01 is 1462 in 1900 system, 0 in 1904 system
-                assert!((a - 1462.0).abs() < 1e-9, "expected 1462, got {}", a);
-                assert!(b.abs() < 1e-9, "expected 0, got {}", b);
+                assert!((a - 1462.0).abs() < 1e-9, "expected 1462, got {a}");
+                assert!(b.abs() < 1e-9, "expected 0, got {b}");
             }
-            other => panic!("Unexpected results: {:?}", other),
+            other => panic!("Unexpected results: {other:?}"),
         }
     }
 

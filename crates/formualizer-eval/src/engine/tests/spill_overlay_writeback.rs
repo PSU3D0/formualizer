@@ -36,10 +36,10 @@ fn spill_overlay_writeback_visible_via_arrow() {
     // Expect row 1 col 0 = 1, row 2 col 0 = 2
     match av.get_cell(1, 0) {
         LiteralValue::Number(n) => assert!((n - 1.0).abs() < 1e-9),
-        other => panic!("expected 1.0 at (2,1) from overlay, got {:?}", other),
+        other => panic!("expected 1.0 at (2,1) from overlay, got {other:?}"),
     }
     match av.get_cell(2, 0) {
         LiteralValue::Number(n) => assert!((n - 2.0).abs() < 1e-9),
-        other => panic!("expected 2.0 at (3,1) from overlay, got {:?}", other),
+        other => panic!("expected 2.0 at (3,1) from overlay, got {other:?}"),
     }
 }

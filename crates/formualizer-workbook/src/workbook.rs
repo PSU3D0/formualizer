@@ -77,6 +77,12 @@ pub struct Workbook {
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
 }
 
+impl Default for Workbook {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Workbook {
     pub fn new_with_config(mut config: formualizer_eval::engine::EvalConfig) -> Self {
         // Default to deferred graph building unless explicitly disabled
@@ -245,7 +251,7 @@ impl Workbook {
         self.engine
             .sheet_store()
             .sheet(name)
-            .map(|s| (s.nrows as u32, s.columns.len() as u32))
+            .map(|s| (s.nrows, s.columns.len() as u32))
     }
     pub fn has_sheet(&self, name: &str) -> bool {
         self.engine.graph.sheet_id(name).is_some()
@@ -322,7 +328,7 @@ impl Workbook {
             let with_eq = if formula.starts_with('=') {
                 formula.to_string()
             } else {
-                format!("={}", formula)
+                format!("={formula}")
             };
             let ast = formualizer_parse::parser::parse(&with_eq)
                 .map_err(|e| IoError::from_backend("parser", e))?;
@@ -433,7 +439,7 @@ impl Workbook {
                             let with_eq = if f.starts_with('=') {
                                 f.clone()
                             } else {
-                                format!("={}", f)
+                                format!("={f}")
                             };
                             let ast = formualizer_parse::parser::parse(&with_eq)
                                 .map_err(|e| IoError::from_backend("parser", e))?;
@@ -464,7 +470,7 @@ impl Workbook {
                         let with_eq = if f.starts_with('=') {
                             f.clone()
                         } else {
-                            format!("={}", f)
+                            format!("={f}")
                         };
                         let ast = formualizer_parse::parser::parse(&with_eq)
                             .map_err(|e| IoError::from_backend("parser", e))?;
@@ -569,7 +575,7 @@ impl Workbook {
                         let with_eq = if f.starts_with('=') {
                             f.clone()
                         } else {
-                            format!("={}", f)
+                            format!("={f}")
                         };
                         let ast = formualizer_parse::parser::parse(&with_eq)
                             .map_err(|e| IoError::from_backend("parser", e))?;
@@ -587,7 +593,7 @@ impl Workbook {
                     let with_eq = if f.starts_with('=') {
                         f.clone()
                     } else {
-                        format!("={}", f)
+                        format!("={f}")
                     };
                     let ast = formualizer_parse::parser::parse(&with_eq)
                         .map_err(|e| IoError::from_backend("parser", e))?;

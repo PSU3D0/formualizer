@@ -21,7 +21,7 @@ fn calamine_error_formula_evaluates_to_error() {
     let v = engine.get_cell_value("Sheet1", 1, 1).unwrap();
     match v {
         LiteralValue::Error(e) => assert_eq!(e.kind.to_string(), "#DIV/0!"),
-        other => panic!("Expected error got {:?}", other),
+        other => panic!("Expected error got {other:?}"),
     }
 }
 

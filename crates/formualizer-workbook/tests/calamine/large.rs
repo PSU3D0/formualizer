@@ -45,7 +45,7 @@ fn calamine_large_file_performance() {
             );
 
             assert!(loader.stats().cells_loaded >= (rows * cols) as usize);
-            assert!(elapsed.as_secs_f64() < 5.0, "Load exceeded 5s: {:?}", elapsed);
+            assert!(elapsed.as_secs_f64() < 5.0, "Load exceeded 5s: {elapsed:?}");
         })
         .expect("spawn perf thread");
 

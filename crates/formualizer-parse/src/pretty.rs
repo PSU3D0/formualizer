@@ -16,7 +16,7 @@ pub fn pretty_print(ast: &ASTNode) -> String {
             // Quote and escape text literals to preserve Excel semantics
             crate::LiteralValue::Text(s) => {
                 let escaped = s.replace('"', "\"\"");
-                format!("\"{}\"", escaped)
+                format!("\"{escaped}\"")
             }
             _ => format!("{value}"),
         },

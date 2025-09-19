@@ -11,6 +11,12 @@ pub struct PyParser {
     _phantom: std::marker::PhantomData<()>,
 }
 
+impl Default for PyParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[pymethods]
 impl PyParser {
     #[new]
@@ -79,9 +85,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn parse_formula_impl(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode> {
-    let dialect: FormulaDialect = dialect
-        .map(Into::into)
-        .unwrap_or_else(FormulaDialect::default);
+    let dialect: FormulaDialect = dialect.map(Into::into).unwrap_or_default();
     let ast = parse_with_dialect(formula, dialect)
         .map_err(|e| ParserError::new_with_pos(e.message, e.position))?;
     Ok(PyASTNode::new(ast))

@@ -1,5 +1,3 @@
-#![cfg(feature = "calamine")]
-
 use crate::traits::{
     AccessGranularity, BackendCaps, CellData, MergedRange, SheetData, SpreadsheetReader,
 };
@@ -61,7 +59,7 @@ impl CalamineAdapter {
                 Data::String(s) if s.is_empty() => None, // Treat empty strings as no value
                 Data::String(s) => Some(LiteralValue::Text(s.clone())),
                 Data::Float(f) => Some(LiteralValue::Number(*f)),
-                Data::Int(i) => Some(LiteralValue::Int(*i as i64)),
+                Data::Int(i) => Some(LiteralValue::Int(*i)),
                 Data::Bool(b) => Some(LiteralValue::Boolean(*b)),
                 Data::Error(e) => {
                     let kind = match e {
@@ -108,7 +106,7 @@ impl CalamineAdapter {
                     let formula_with_eq = if formula.starts_with('=') {
                         formula.clone()
                     } else {
-                        format!("={}", formula)
+                        format!("={formula}")
                     };
 
                     // Update existing cell or create new one with formula
@@ -258,7 +256,7 @@ where
         // Simple eager load: iterate sheets, add, bulk insert values, then formulas
         let debug = std::env::var("FZ_DEBUG_LOAD")
             .ok()
-            .map_or(false, |v| v != "0");
+            .is_some_and(|v| v != "0");
         let t0 = std::time::Instant::now();
         let names = self.sheet_names()?;
         if debug {
@@ -267,12 +265,10 @@ where
         for n in &names {
             #[cfg(feature = "tracing")]
             let _span_sheet = tracing::info_span!("io_load_sheet", sheet = n.as_str()).entered();
-            engine.graph.add_sheet(n.as_str()).map_err(|e| {
-                calamine::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?;
+            engine
+                .graph
+                .add_sheet(n.as_str())
+                .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
         }
         // Speed up load: lazy sheet index + no range expansion during ingestion
         let prev_index_mode = engine.config.sheet_index_mode;
@@ -293,7 +289,7 @@ where
         for n in &names {
             let t_sheet = std::time::Instant::now();
             if debug {
-                eprintln!("[fz][load] >> sheet '{}'", n);
+                eprintln!("[fz][load] >> sheet '{n}'");
             }
             #[cfg(feature = "tracing")]
             let _span_sheet =
@@ -305,9 +301,9 @@ where
                 let r = wb.worksheet_range(n)?;
                 let f = wb.worksheet_formula(n).ok();
                 // Respect potential non-(1,1) starts in calamine ranges
-                let sr0 = r.start().unwrap_or_default().0 as u32; // 0-based
-                let sc0 = r.start().unwrap_or_default().1 as u32; // 0-based
-                                                                  // Total logical dimensions include top/left padding
+                let sr0 = r.start().unwrap_or_default().0; // 0-based
+                let sc0 = r.start().unwrap_or_default().1; // 0-based
+                                                           // Total logical dimensions include top/left padding
                 dims = (r.height() as u32 + sr0, r.width() as u32 + sc0);
                 range = r;
                 formulas_range = f;
@@ -319,10 +315,9 @@ where
             // Compute absolute alignment from range start offsets.
             let sr0 = range.start().unwrap_or_default().0 as usize; // top padding (rows)
             let sc0 = range.start().unwrap_or_default().1 as usize; // left padding (cols)
-            let width = range.width() as usize;
-            let height = range.height() as usize;
+            let width = range.width();
+            let height = range.height();
             let abs_cols = sc0 + width;
-            let abs_rows = sr0 + height;
 
             let mut aib: IngestBuilder =
                 IngestBuilder::new(n, abs_cols, chunk_rows, engine.config.date_system);
@@ -462,12 +457,7 @@ where
                     len: abs_cols,
                     emitted: 0,
                 })
-                .map_err(|e| {
-                    calamine::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    ))
-                })?;
+                .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
                 row_count += 1;
             }
 
@@ -480,16 +470,12 @@ where
                     abs_cols,
                     row_rel: rr,
                     cur_col: 0,
-                    used_iter: (&mut used_iter).by_ref(),
+                    used_iter: used_iter.by_ref(),
                     carry: &mut carry,
                 };
                 // Append row; RowEmit consumes iterator until end-of-row
-                aib.append_row_cells_iter(iter).map_err(|e| {
-                    calamine::Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    ))
-                })?;
+                aib.append_row_cells_iter(iter)
+                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
                 row_count += 1;
             }
             // Install Arrow sheet into the engine store now
@@ -503,7 +489,7 @@ where
                 }
             }
             // Defer adding values until after formulas staging below
-            total_values += (row_count as usize) * (abs_cols as usize);
+            total_values += row_count * abs_cols;
             if debug {
                 eprintln!(
                     "[fz][load]    rows={} → arrow in {} ms",
@@ -544,17 +530,14 @@ where
                         let key_owned: String = if formula.starts_with('=') {
                             formula.clone()
                         } else {
-                            format!("={}", formula)
+                            format!("={formula}")
                         };
                         let ast = if let Some(ast) = cache.get(&key_owned) {
                             ast.clone()
                         } else {
                             let parsed =
                                 formualizer_parse::parser::parse(&key_owned).map_err(|e| {
-                                    calamine::Error::Io(std::io::Error::new(
-                                        std::io::ErrorKind::Other,
-                                        e.to_string(),
-                                    ))
+                                    calamine::Error::Io(std::io::Error::other(e.to_string()))
                                 })?;
                             cache.insert(key_owned, parsed.clone());
                             parsed
@@ -562,7 +545,7 @@ where
                         builder.add_formulas(sid, std::iter::once((excel_row, excel_col, ast)));
                         parsed_n += 1;
                         if debug && (parsed_n % 5000 == 0) {
-                            eprintln!("[fz][load]    parsed formulas: {}", parsed_n);
+                            eprintln!("[fz][load]    parsed formulas: {parsed_n}");
                         }
                     }
                     let _ = builder.finish();

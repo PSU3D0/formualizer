@@ -21,6 +21,12 @@ pub struct PyEvaluationConfig {
     pub(crate) inner: EvalConfig,
 }
 
+impl Default for PyEvaluationConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[pymethods]
 impl PyEvaluationConfig {
     /// Create a new evaluation configuration
@@ -77,11 +83,11 @@ impl PyEvaluationConfig {
 
     fn __repr__(&self) -> String {
         format!(
-            "EvaluationConfig(parallel={}, max_threads={:?}, range_limit={}, seed={})",
-            self.inner.enable_parallel,
-            self.inner.max_threads,
-            self.inner.range_expansion_limit,
-            self.inner.workbook_seed
+            "EvaluationConfig(parallel={parallel}, max_threads={max_threads:?}, range_limit={range_limit}, seed={seed})",
+            parallel = self.inner.enable_parallel,
+            max_threads = self.inner.max_threads,
+            range_limit = self.inner.range_expansion_limit,
+            seed = self.inner.workbook_seed
         )
     }
 
@@ -165,8 +171,7 @@ impl PyEvaluationConfig {
             "1904" => DateSystem::Excel1904,
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid date system: {}. Use '1900' or '1904'.",
-                    value
+                    "Invalid date system: {value}. Use '1900' or '1904'."
                 )))
             }
         };
@@ -421,7 +426,7 @@ impl PyEngine {
             // Load the workbook data into the engine
             Python::with_gil(|py| {
                 let wb_ref = wb.borrow(py);
-                load_workbook_into_engine(&*wb_ref, &mut engine)
+                load_workbook_into_engine(&wb_ref, &mut engine)
             })?;
             Some(wb)
         } else {
@@ -450,7 +455,7 @@ impl PyEngine {
         // Load the workbook data into the engine
         Python::with_gil(|py| {
             let wb_ref = workbook.borrow(py);
-            load_workbook_into_engine(&*wb_ref, &mut engine)
+            load_workbook_into_engine(&wb_ref, &mut engine)
         })?;
 
         Ok(PyEngine {
@@ -493,16 +498,15 @@ impl PyEngine {
                 let mut adapter =
                     <CalamineAdapter as SpreadsheetReader>::open_path(std::path::Path::new(path))
                         .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {}", e))
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
                     })?;
                 adapter.stream_into_engine(&mut engine).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {}", e))
+                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
                 })?;
             }
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Unsupported backend: {}",
-                    backend
+                    "Unsupported backend: {backend}"
                 )));
             }
         }
@@ -621,7 +625,7 @@ impl PyEngine {
 
         Python::with_gil(|py| {
             let wb_ref = workbook.borrow(py);
-            load_workbook_into_engine(&*wb_ref, &mut engine)
+            load_workbook_into_engine(&wb_ref, &mut engine)
         })?;
         self.workbook = Some(workbook);
         Ok(())
@@ -633,15 +637,13 @@ impl PyEngine {
         py.allow_threads(|| {
             let mut engine = self.inner.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to acquire engine lock: {}",
-                    e
+                    "Failed to acquire engine lock: {e}"
                 ))
             })?;
 
             let result = engine.evaluate_all().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Evaluation failed: {:?}",
-                    e
+                    "Evaluation failed: {e:?}"
                 ))
             })?;
             Ok(PyEvaluationResult {
@@ -677,8 +679,7 @@ impl PyEngine {
         let value = py.allow_threads(|| {
             let mut engine = self.inner.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to acquire engine lock: {}",
-                    e
+                    "Failed to acquire engine lock: {e}"
                 ))
             })?;
             engine
@@ -817,8 +818,7 @@ impl PyEngine {
         let values = py.allow_threads(|| {
             let mut engine = self.inner.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to acquire engine lock: {}",
-                    e
+                    "Failed to acquire engine lock: {e}"
                 ))
             })?;
             // Convert targets to the format expected by evaluate_cells
@@ -856,8 +856,7 @@ impl PyEngine {
 
         let engine = self.inner.read().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to acquire engine lock: {}",
-                e
+                "Failed to acquire engine lock: {e}"
             ))
         })?;
 
@@ -896,7 +895,7 @@ impl PyEngine {
 
     fn __repr__(&self) -> String {
         let has_workbook = self.workbook.is_some();
-        format!("Engine(has_workbook={})", has_workbook)
+        format!("Engine(has_workbook={has_workbook})")
     }
 }
 

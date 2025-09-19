@@ -1,6 +1,5 @@
 use formualizer_parse::{ASTNode as CoreASTNode, ASTNodeType, LiteralValue};
 use serde::{Deserialize, Serialize};
-use serde_wasm_bindgen;
 use wasm_bindgen::prelude::*;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -60,7 +59,7 @@ impl ASTNodeData {
             LiteralValue::Text(s) => ASTNodeData::Text { value: s.clone() },
             LiteralValue::Boolean(b) => ASTNodeData::Boolean { value: *b },
             LiteralValue::Error(e) => ASTNodeData::Error {
-                message: format!("{:?}", e),
+                message: format!("{e:?}"),
             },
             LiteralValue::Empty => ASTNodeData::Text {
                 value: String::new(),
@@ -68,7 +67,7 @@ impl ASTNodeData {
             LiteralValue::Array(arr) => ASTNodeData::Array {
                 elements: arr
                     .iter()
-                    .map(|row| row.iter().map(|v| Self::from_literal(v)).collect())
+                    .map(|row| row.iter().map(Self::from_literal).collect())
                     .collect(),
             },
             LiteralValue::Date(d) => ASTNodeData::Text {
@@ -81,7 +80,7 @@ impl ASTNodeData {
                 value: t.to_string(),
             },
             LiteralValue::Duration(d) => ASTNodeData::Text {
-                value: format!("{:?}", d),
+                value: format!("{d:?}"),
             },
             LiteralValue::Pending => ASTNodeData::Text {
                 value: "#PENDING!".to_string(),
@@ -97,7 +96,7 @@ impl ASTNodeData {
                 LiteralValue::Text(s) => ASTNodeData::Text { value: s.clone() },
                 LiteralValue::Boolean(b) => ASTNodeData::Boolean { value: *b },
                 LiteralValue::Error(e) => ASTNodeData::Error {
-                    message: format!("{:?}", e),
+                    message: format!("{e:?}"),
                 },
                 LiteralValue::Empty => ASTNodeData::Text {
                     value: String::new(),
@@ -105,7 +104,7 @@ impl ASTNodeData {
                 LiteralValue::Array(arr) => ASTNodeData::Array {
                     elements: arr
                         .iter()
-                        .map(|row| row.iter().map(|v| Self::from_literal(v)).collect())
+                        .map(|row| row.iter().map(Self::from_literal).collect())
                         .collect(),
                 },
                 LiteralValue::Date(d) => ASTNodeData::Text {
@@ -118,7 +117,7 @@ impl ASTNodeData {
                     value: t.to_string(),
                 },
                 LiteralValue::Duration(d) => ASTNodeData::Text {
-                    value: format!("{:?}", d),
+                    value: format!("{d:?}"),
                 },
                 LiteralValue::Pending => ASTNodeData::Text {
                     value: "#PENDING!".to_string(),
@@ -181,6 +180,7 @@ impl ASTNode {
     }
 
     #[wasm_bindgen(js_name = "toString")]
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         format!("{:?}", self.data)
     }

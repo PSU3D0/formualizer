@@ -62,8 +62,8 @@ mod tests {
         let snapshot_v2 = 2;
 
         // Key includes snapshot ID
-        let key_v1 = format!("snap:{}|range:A:A|eq:test", snapshot_v1);
-        let key_v2 = format!("snap:{}|range:A:A|eq:test", snapshot_v2);
+        let key_v1 = format!("snap:{snapshot_v1}|range:A:A|eq:test");
+        let key_v2 = format!("snap:{snapshot_v2}|range:A:A|eq:test");
 
         let mask = DenseMask::new(100);
 

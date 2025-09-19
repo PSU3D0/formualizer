@@ -167,7 +167,7 @@ fn set_formulas_batch_deferred_then_eval() {
         "S",
         1,
         1,
-        &vec![vec![LiteralValue::Int(5), LiteralValue::Int(6)]],
+        &[vec![LiteralValue::Int(5), LiteralValue::Int(6)]],
     )
     .unwrap();
     let forms = vec![vec!["A1*2".to_string(), "B1+1".to_string()]];

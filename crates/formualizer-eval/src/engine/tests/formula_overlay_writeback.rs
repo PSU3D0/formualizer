@@ -33,6 +33,6 @@ fn formula_scalar_writeback_overlays_arrow_when_enabled() {
     let av = asheet.range_view(0, 0, 2, 0); // rows 0..=2, col 0
     match av.get_cell(1, 0) {
         LiteralValue::Number(n) => assert!((n - 3.0).abs() < 1e-9),
-        other => panic!("expected number 3.0 from overlay, got {:?}", other),
+        other => panic!("expected number 3.0 from overlay, got {other:?}"),
     }
 }

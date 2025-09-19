@@ -94,13 +94,13 @@ impl DenseMask {
         let bits = Arc::make_mut(&mut self.bits);
         let min_words = bits.len().min(other.bits.len());
 
-        for i in 0..min_words {
-            bits[i] &= other.bits[i];
+        for (dst, src) in bits.iter_mut().zip(other.bits.iter()).take(min_words) {
+            *dst &= *src;
         }
 
         // Clear any remaining words if other is shorter
-        for i in min_words..bits.len() {
-            bits[i] = 0;
+        for slot in bits.iter_mut().skip(min_words) {
+            *slot = 0;
         }
     }
 
@@ -109,8 +109,8 @@ impl DenseMask {
         let bits = Arc::make_mut(&mut self.bits);
         let min_words = bits.len().min(other.bits.len());
 
-        for i in 0..min_words {
-            bits[i] |= other.bits[i];
+        for (dst, src) in bits.iter_mut().zip(other.bits.iter()).take(min_words) {
+            *dst |= *src;
         }
     }
 
@@ -168,9 +168,9 @@ impl DenseMask {
             }
         } else {
             // Dense: linear scan
-            for i in 0..min_len {
-                if self.get(i) {
-                    result.push(&values[i]);
+            for (idx, value) in values.iter().take(min_len).enumerate() {
+                if self.get(idx) {
+                    result.push(value);
                 }
             }
         }

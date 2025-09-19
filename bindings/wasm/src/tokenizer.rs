@@ -11,15 +11,14 @@ pub struct Tokenizer {
 impl Tokenizer {
     #[wasm_bindgen(constructor)]
     pub fn new(formula: &str, dialect: Option<FormulaDialect>) -> Result<Tokenizer, JsValue> {
-        let dialect: CoreFormulaDialect = dialect
-            .map(Into::into)
-            .unwrap_or_else(CoreFormulaDialect::default);
+        let dialect: CoreFormulaDialect = dialect.map(Into::into).unwrap_or_default();
         CoreTokenizer::new_with_dialect(formula, dialect)
             .map(|inner| Tokenizer { inner })
             .map_err(|e| {
                 JsValue::from_str(&format!(
-                    "Tokenizer error: {} at position {}",
-                    e.message, e.pos
+                    "Tokenizer error: {message} at position {pos}",
+                    message = e.message,
+                    pos = e.pos
                 ))
             })
     }
@@ -57,6 +56,7 @@ impl Tokenizer {
     }
 
     #[wasm_bindgen(js_name = "toString")]
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         format!("Tokenizer({} tokens)", self.inner.items.len())
     }

@@ -19,9 +19,7 @@ impl PyTokenizer {
     #[new]
     #[pyo3(signature = (formula, dialect = None))]
     pub fn from_formula(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<Self> {
-        let dialect: FormulaDialect = dialect
-            .map(Into::into)
-            .unwrap_or_else(FormulaDialect::default);
+        let dialect: FormulaDialect = dialect.map(Into::into).unwrap_or_default();
         let tokenizer = Tokenizer::new_with_dialect(formula, dialect)
             .map_err(|e| TokenizerError::new_with_pos(e.message, Some(e.pos)))?;
         Ok(PyTokenizer::new(tokenizer))

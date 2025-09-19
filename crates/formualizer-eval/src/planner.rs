@@ -8,6 +8,9 @@ use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
+type RangeDimsProbe<'a> = dyn Fn(&ReferenceType) -> Option<(u32, u32)> + 'a;
+type FunctionLookup<'a> = dyn Fn(&str, &str) -> Option<Arc<dyn Function>> + 'a;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecStrategy {
     Sequential,
@@ -80,9 +83,9 @@ pub struct Planner<'a> {
     // cache subtree fingerprints to count repeats among siblings
     fp_cache: FxHashMap<u64, u16>,
     // optionally accept range-dims peek from the engine; stubbed for now
-    _range_dims_probe: Option<&'a dyn Fn(&ReferenceType) -> Option<(u32, u32)>>,
+    _range_dims_probe: Option<&'a RangeDimsProbe<'a>>,
     // function registry getter
-    get_fn: Option<&'a dyn Fn(&str, &str) -> Option<Arc<dyn Function>>>,
+    get_fn: Option<&'a FunctionLookup<'a>>,
 }
 
 impl<'a> Planner<'a> {
@@ -95,18 +98,12 @@ impl<'a> Planner<'a> {
         }
     }
 
-    pub fn with_range_probe(
-        mut self,
-        probe: &'a dyn Fn(&ReferenceType) -> Option<(u32, u32)>,
-    ) -> Self {
+    pub fn with_range_probe(mut self, probe: &'a RangeDimsProbe<'a>) -> Self {
         self._range_dims_probe = Some(probe);
         self
     }
 
-    pub fn with_function_lookup(
-        mut self,
-        get_fn: &'a dyn Fn(&str, &str) -> Option<Arc<dyn Function>>,
-    ) -> Self {
+    pub fn with_function_lookup(mut self, get_fn: &'a FunctionLookup<'a>) -> Self {
         self.get_fn = Some(get_fn);
         self
     }
@@ -375,7 +372,7 @@ mod tests {
     fn sum_of_many_args_prefers_arg_parallel() {
         let p = plan_for("=SUM(1,2,3,4,5,6)");
         // With default thresholds, fanout 6 and cost should trigger ArgParallel
-        assert!(matches!(p.root.children.get(0), Some(_))); // has children
+        assert!(p.root.children.first().is_some()); // has children
         // Root is a function; strategy may be ArgParallel
         // We assert that non-trivial fanout promotes parallel strategy
         assert!(matches!(
@@ -430,7 +427,7 @@ mod tests {
         // SUM(f(), f(), f(), f()) where f is same subtree
         let p = plan_for("=SUM(1+2, 1+2, 1+2, 1+2)");
         // Fanout 4 may or may not cross threshold; accept either but ensure children exist
-        assert!(p.root.children.len() >= 1);
+        assert!(!p.root.children.is_empty());
     }
 
     #[test]
@@ -477,7 +474,7 @@ mod tests {
         // Deep sub-AST in criteria (e.g., TEXT + DATE math)
         let p = plan_for("=SUMIFS(A1:A100, B1:B100, TEXT(2024+1, \"0\"))");
         // Should produce a plan with children; exact strategy may vary
-        assert!(p.root.children.len() >= 1);
+        assert!(!p.root.children.is_empty());
     }
 
     #[test]

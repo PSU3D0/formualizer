@@ -1,4 +1,5 @@
 use formualizer_parse::parser::ReferenceType;
+use pyo3::conversion::IntoPyObject;
 use pyo3::{prelude::*, types::PyType};
 
 use crate::errors::ParserError;
@@ -63,13 +64,8 @@ impl CellRef {
     ) -> Result<Self, PyErr> {
         match ReferenceType::from_string(reference) {
             Ok(ReferenceType::Cell { sheet, row, col }) => {
-                let sheet = if sheet.is_some() {
-                    sheet
-                } else if let Some(default_sheet) = default_sheet {
-                    Some(default_sheet.to_string())
-                } else {
-                    None
-                };
+                let sheet =
+                    sheet.or_else(|| default_sheet.map(|default_sheet| default_sheet.to_string()));
                 Ok(CellRef::new(
                     sheet,
                     row,
@@ -92,38 +88,39 @@ impl CellRef {
     }
 
     fn __repr__(&self) -> String {
+        let sheet = match &self.sheet {
+            Some(s) => format!("{s:?}"),
+            None => "None".to_string(),
+        };
         format!(
-            "CellRef(sheet={}, row={}, col={})",
-            match &self.sheet {
-                Some(s) => format!("{:?}", s),
-                None => "None".to_string(),
-            },
-            self.row,
-            self.col
+            "CellRef(sheet={sheet}, row={row}, col={col})",
+            row = self.row,
+            col = self.col
         )
     }
 
     fn __str__(&self) -> String {
         let col_str = number_to_column(self.col);
         let col_ref = if self.abs_col {
-            format!("${}", col_str)
+            format!("${col_str}")
         } else {
             col_str
         };
+        let row = self.row;
         let row_ref = if self.abs_row {
-            format!("${}", self.row)
+            format!("${row}")
         } else {
-            self.row.to_string()
+            row.to_string()
         };
 
         if let Some(ref sheet) = self.sheet {
             if sheet.contains(' ') || sheet.contains('!') {
-                format!("'{}'!{}{}", sheet, col_ref, row_ref)
+                format!("'{sheet}'!{col_ref}{row_ref}")
             } else {
-                format!("{}!{}{}", sheet, col_ref, row_ref)
+                format!("{sheet}!{col_ref}{row_ref}")
             }
         } else {
-            format!("{}{}", col_ref, row_ref)
+            format!("{col_ref}{row_ref}")
         }
     }
 }
@@ -148,27 +145,25 @@ impl RangeRef {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "RangeRef(sheet={}, start={}, end={})",
-            match &self.sheet {
-                Some(s) => format!("{:?}", s),
-                None => "None".to_string(),
-            },
-            match &self.start {
-                Some(s) => s.__str__(),
-                None => "None".to_string(),
-            },
-            match &self.end {
-                Some(e) => e.__str__(),
-                None => "None".to_string(),
-            },
-        )
+        let sheet = match &self.sheet {
+            Some(s) => format!("{s:?}"),
+            None => "None".to_string(),
+        };
+        let start = match &self.start {
+            Some(s) => s.__str__(),
+            None => "None".to_string(),
+        };
+        let end = match &self.end {
+            Some(e) => e.__str__(),
+            None => "None".to_string(),
+        };
+        format!("RangeRef(sheet={sheet}, start={start}, end={end})")
     }
 
     fn __str__(&self) -> String {
         let start_str = self.start.as_ref().map_or("".to_string(), |s| s.__str__());
         let end_str = self.end.as_ref().map_or("".to_string(), |e| e.__str__());
-        format!("{}:{}", start_str, end_str)
+        format!("{start_str}:{end_str}")
     }
 }
 
@@ -190,12 +185,16 @@ impl TableRef {
     }
 
     fn __repr__(&self) -> String {
-        format!("TableRef(name='{}', spec={:?})", self.name, self.spec)
+        format!(
+            "TableRef(name='{name}', spec={spec:?})",
+            name = self.name,
+            spec = self.spec
+        )
     }
 
     fn __str__(&self) -> String {
         if let Some(ref spec) = self.spec {
-            format!("{}[{}]", self.name, spec)
+            format!("{name}[{spec}]", name = self.name, spec = spec)
         } else {
             self.name.clone()
         }
@@ -218,7 +217,7 @@ impl NamedRangeRef {
     }
 
     fn __repr__(&self) -> String {
-        format!("NamedRangeRef(name='{}')", self.name)
+        format!("NamedRangeRef(name='{name}')", name = self.name)
     }
 
     fn __str__(&self) -> String {
@@ -242,7 +241,7 @@ impl UnknownRef {
     }
 
     fn __repr__(&self) -> String {
-        format!("UnknownRef(raw='{}')", self.raw)
+        format!("UnknownRef(raw='{raw}')", raw = self.raw)
     }
 
     fn __str__(&self) -> String {
@@ -257,17 +256,22 @@ pub enum ReferenceLike {
     Range(RangeRef),
     Table(TableRef),
     NamedRange(NamedRangeRef),
+    #[allow(dead_code)]
     Unknown(UnknownRef),
 }
 
-impl IntoPy<PyObject> for ReferenceLike {
-    fn into_py(self, py: Python<'_>) -> PyObject {
+impl<'py> IntoPyObject<'py> for ReferenceLike {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
         match self {
-            ReferenceLike::Cell(cell) => cell.into_py(py),
-            ReferenceLike::Range(range) => range.into_py(py),
-            ReferenceLike::Table(table) => table.into_py(py),
-            ReferenceLike::NamedRange(named) => named.into_py(py),
-            ReferenceLike::Unknown(unknown) => unknown.into_py(py),
+            ReferenceLike::Cell(cell) => cell.into_pyobject(py).map(Bound::into_any),
+            ReferenceLike::Range(range) => range.into_pyobject(py).map(Bound::into_any),
+            ReferenceLike::Table(table) => table.into_pyobject(py).map(Bound::into_any),
+            ReferenceLike::NamedRange(named) => named.into_pyobject(py).map(Bound::into_any),
+            ReferenceLike::Unknown(unknown) => unknown.into_pyobject(py).map(Bound::into_any),
         }
     }
 }
@@ -288,8 +292,9 @@ pub fn reference_type_to_py(ref_type: &ReferenceType, original: &str) -> Referen
     match ref_type {
         ReferenceType::Cell { sheet, row, col } => {
             // For now, assume absolute references (we could parse the original to detect $)
-            let abs_row = original.contains(&format!("${}", row));
-            let abs_col = original.contains(&format!("${}", number_to_column(*col)));
+            let abs_row = original.contains(&format!("${row}"));
+            let col_str = number_to_column(*col);
+            let abs_col = original.contains(&format!("${col_str}"));
 
             ReferenceLike::Cell(CellRef::new(
                 sheet.clone(),
@@ -308,8 +313,9 @@ pub fn reference_type_to_py(ref_type: &ReferenceType, original: &str) -> Referen
         } => {
             let start = match (start_col, start_row) {
                 (Some(col), Some(row)) => {
-                    let abs_row = original.contains(&format!("${}", row));
-                    let abs_col = original.contains(&format!("${}", number_to_column(*col)));
+                    let abs_row = original.contains(&format!("${row}"));
+                    let col_str = number_to_column(*col);
+                    let abs_col = original.contains(&format!("${col_str}"));
                     Some(CellRef::new(
                         None,
                         *row,
@@ -323,8 +329,9 @@ pub fn reference_type_to_py(ref_type: &ReferenceType, original: &str) -> Referen
 
             let end = match (end_col, end_row) {
                 (Some(col), Some(row)) => {
-                    let abs_row = original.contains(&format!("${}", row));
-                    let abs_col = original.contains(&format!("${}", number_to_column(*col)));
+                    let abs_row = original.contains(&format!("${row}"));
+                    let col_str = number_to_column(*col);
+                    let abs_col = original.contains(&format!("${col_str}"));
                     Some(CellRef::new(
                         None,
                         *row,
@@ -339,7 +346,7 @@ pub fn reference_type_to_py(ref_type: &ReferenceType, original: &str) -> Referen
             ReferenceLike::Range(RangeRef::new(sheet.clone(), start, end))
         }
         ReferenceType::Table(table_ref) => {
-            let spec = table_ref.specifier.as_ref().map(|s| format!("{}", s));
+            let spec = table_ref.specifier.as_ref().map(|s| format!("{s}"));
             ReferenceLike::Table(TableRef::new(table_ref.name.clone(), spec))
         }
         ReferenceType::NamedRange(name) => {

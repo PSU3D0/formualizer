@@ -2834,14 +2834,12 @@ impl DependencyGraph {
         // If the adjusted AST contains special #REF markers (from structural edits),
         // treat this as a REF error on the vertex instead of attempting to resolve.
         // This prevents failures when reference_adjuster injected placeholder refs.
-        let has_ref_marker = ast.get_dependencies().into_iter().any(|r| match r {
-            ReferenceType::Cell { sheet: Some(s), .. }
-            | ReferenceType::Range { sheet: Some(s), .. }
-                if s == "#REF" =>
-            {
-                true
-            }
-            _ => false,
+        let has_ref_marker = ast.get_dependencies().into_iter().any(|r| {
+            matches!(
+                r,
+                ReferenceType::Cell { sheet: Some(s), .. }
+                    | ReferenceType::Range { sheet: Some(s), .. } if s == "#REF"
+            )
         });
         if has_ref_marker {
             // Store the adjusted AST for round-tripping/display, but set value state to #REF!

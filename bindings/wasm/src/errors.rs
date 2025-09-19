@@ -26,10 +26,14 @@ impl TokenizerError {
     }
 
     #[wasm_bindgen(js_name = "toString")]
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         match self.pos {
-            Some(pos) => format!("TokenizerError: {} at position {}", self.message, pos),
-            None => format!("TokenizerError: {}", self.message),
+            Some(pos) => format!(
+                "TokenizerError: {message} at position {pos}",
+                message = self.message
+            ),
+            None => format!("TokenizerError: {message}", message = self.message),
         }
     }
 }
@@ -59,10 +63,14 @@ impl ParserError {
     }
 
     #[wasm_bindgen(js_name = "toString")]
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         match self.pos {
-            Some(pos) => format!("ParserError: {} at position {}", self.message, pos),
-            None => format!("ParserError: {}", self.message),
+            Some(pos) => format!(
+                "ParserError: {message} at position {pos}",
+                message = self.message
+            ),
+            None => format!("ParserError: {message}", message = self.message),
         }
     }
 }

@@ -69,7 +69,7 @@ impl Function for SumIfFn {
         // Resolve sum source and iteration dims
         let mut sum_view_opt: Option<crate::engine::range_view::RangeView<'_>> = None;
         let mut sum_scalar_opt: Option<LiteralValue> = None;
-        let mut dims: (usize, usize) = (1, 1);
+        let dims: (usize, usize);
 
         if args.len() == 3 {
             if let Ok(v) = args[2].range_view() {

@@ -96,6 +96,10 @@ impl ColumnChunk {
         self.type_tag.len()
     }
     #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    #[inline]
     pub fn numbers_or_null(&self) -> Arc<Float64Array> {
         if let Some(a) = &self.numbers {
             return a.clone();
@@ -719,6 +723,10 @@ impl Overlay {
     #[inline]
     pub fn len(&self) -> usize {
         self.map.len()
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
     #[inline]
     pub fn any_in_range(&self, range: core::ops::Range<usize>) -> bool {
@@ -2293,7 +2301,7 @@ mod tests {
         assert_eq!(av1.get_cell(6, 0), LiteralValue::Boolean(true));
         match av1.get_cell(7, 0) {
             LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Div),
-            other => panic!("expected error at row 7, got {:?}", other),
+            other => panic!("expected error at row 7, got {other:?}"),
         }
         assert_eq!(av1.get_cell(9, 0), LiteralValue::Empty);
 
@@ -2306,7 +2314,7 @@ mod tests {
         assert_eq!(av2.get_cell(8, 0), LiteralValue::Boolean(true));
         match av2.get_cell(9, 0) {
             LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Div),
-            other => panic!("expected error at row 9, got {:?}", other),
+            other => panic!("expected error at row 9, got {other:?}"),
         }
         assert_eq!(av2.get_cell(11, 0), LiteralValue::Empty);
 
@@ -2318,7 +2326,7 @@ mod tests {
         assert_eq!(av3.get_cell(6, 0), LiteralValue::Boolean(true));
         match av3.get_cell(7, 0) {
             LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Div),
-            other => panic!("expected error at row 8, got {:?}", other),
+            other => panic!("expected error at row 8, got {other:?}"),
         }
         assert_eq!(av3.get_cell(9, 0), LiteralValue::Empty);
 

@@ -8,6 +8,11 @@ use smallvec::SmallVec;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
+type VolatilityFn = dyn Fn(&str) -> bool + Send + Sync + 'static;
+type VolatilityClassifierBox = Box<VolatilityFn>;
+type VolatilityClassifierArc = Arc<VolatilityFn>;
 
 /// A custom error type for the parser.
 #[derive(Debug)]
@@ -697,8 +702,7 @@ impl ReferenceType {
                     if let Some(end_sheet) = &end.sheet {
                         if end_sheet != sheet {
                             return Err(ParsingError::InvalidReference(format!(
-                                "Mismatched sheets in reference: {} vs {}",
-                                sheet, end_sheet
+                                "Mismatched sheets in reference: {sheet} vs {end_sheet}"
                             )));
                         }
                     }
@@ -757,8 +761,8 @@ impl ReferenceType {
             )));
         }
 
-        let (sheet, coord_slice) = if trimmed.starts_with('.') {
-            (None, trimmed[1..].trim())
+        let (sheet, coord_slice) = if let Some(stripped) = trimmed.strip_prefix('.') {
+            (None, stripped.trim())
         } else if let Some(dot_idx) = Self::find_openformula_sheet_separator(trimmed) {
             let sheet_part = trimmed[..dot_idx].trim();
             let coord_part = trimmed[dot_idx + 1..].trim();
@@ -1338,7 +1342,7 @@ pub struct Parser {
     tokens: Vec<Token>,
     position: usize,
     /// Optional classifier to determine whether a function name is volatile.
-    volatility_classifier: Option<Box<dyn Fn(&str) -> bool + Send + Sync + 'static>>,
+    volatility_classifier: Option<VolatilityClassifierBox>,
     dialect: FormulaDialect,
 }
 
@@ -1847,7 +1851,7 @@ where
 /// (very common in spreadsheets) will avoid re-tokenization and whitespace filtering.
 pub struct BatchParser {
     include_whitespace: bool,
-    volatility_classifier: Option<std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync + 'static>>,
+    volatility_classifier: Option<VolatilityClassifierArc>,
     token_cache: std::collections::HashMap<String, Vec<Token>>, // filtered tokens
     dialect: FormulaDialect,
 }
@@ -1865,10 +1869,7 @@ impl BatchParser {
         } else {
             let mut tokens = Tokenizer::new_with_dialect(formula, self.dialect)?.items;
             if !self.include_whitespace {
-                tokens = tokens
-                    .into_iter()
-                    .filter(|t| t.token_type != TokenType::Whitespace)
-                    .collect();
+                tokens.retain(|t| t.token_type != TokenType::Whitespace);
             }
             self.token_cache.insert(formula.to_string(), tokens.clone());
             tokens
@@ -1876,8 +1877,7 @@ impl BatchParser {
 
         let mut parser = Parser::new_with_dialect(filtered, true, self.dialect); // already filtered per include_whitespace
         if let Some(classifier) = self.volatility_classifier.clone() {
-            let arc = classifier.clone();
-            parser = parser.with_volatility_classifier(move |name| arc(name));
+            parser = parser.with_volatility_classifier(move |name| classifier(name));
         }
         parser.parse()
     }
@@ -1886,7 +1886,7 @@ impl BatchParser {
 #[derive(Default)]
 pub struct BatchParserBuilder {
     include_whitespace: bool,
-    volatility_classifier: Option<std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync + 'static>>,
+    volatility_classifier: Option<VolatilityClassifierArc>,
     dialect: FormulaDialect,
 }
 
@@ -1900,7 +1900,7 @@ impl BatchParserBuilder {
     where
         F: Fn(&str) -> bool + Send + Sync + 'static,
     {
-        self.volatility_classifier = Some(std::sync::Arc::new(f));
+        self.volatility_classifier = Some(Arc::new(f));
         self
     }
 

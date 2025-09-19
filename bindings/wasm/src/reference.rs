@@ -18,6 +18,7 @@ pub struct Reference {
 #[wasm_bindgen]
 impl Reference {
     #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         sheet: Option<String>,
         row_start: usize,
@@ -98,11 +99,12 @@ impl Reference {
     }
 
     #[wasm_bindgen(js_name = "toString")]
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         let sheet_prefix = self
             .sheet
             .as_ref()
-            .map(|s| format!("{}!", s))
+            .map(|s| format!("{s}!"))
             .unwrap_or_default();
 
         let start_col = Self::col_to_letters(self.col_start);
@@ -117,7 +119,7 @@ impl Reference {
         );
 
         if self.is_single_cell() {
-            format!("{}{}", sheet_prefix, start_ref)
+            format!("{sheet_prefix}{start_ref}")
         } else {
             let end_ref = format!(
                 "{}{}{}{}",
@@ -126,7 +128,7 @@ impl Reference {
                 if self.row_abs_end { "$" } else { "" },
                 self.row_end
             );
-            format!("{}{}:{}", sheet_prefix, start_ref, end_ref)
+            format!("{sheet_prefix}{start_ref}:{end_ref}")
         }
     }
 

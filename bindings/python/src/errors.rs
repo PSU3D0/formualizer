@@ -16,9 +16,9 @@ pyo3::create_exception!(formualizer, ExcelEvaluationError, PyException);
 impl TokenizerError {
     pub fn new_with_pos(message: String, pos: Option<usize>) -> PyErr {
         let error_msg = if let Some(p) = pos {
-            format!("TokenizerError at position {}: {}", p, message)
+            format!("TokenizerError at position {p}: {message}")
         } else {
-            format!("TokenizerError: {}", message)
+            format!("TokenizerError: {message}")
         };
         PyErr::new::<TokenizerError, _>(error_msg)
     }
@@ -27,9 +27,9 @@ impl TokenizerError {
 impl ParserError {
     pub fn new_with_pos(message: String, pos: Option<usize>) -> PyErr {
         let error_msg = if let Some(p) = pos {
-            format!("ParserError at position {}: {}", p, message)
+            format!("ParserError at position {p}: {message}")
         } else {
-            format!("ParserError: {}", message)
+            format!("ParserError: {message}")
         };
         PyErr::new::<ParserError, _>(error_msg)
     }
@@ -52,14 +52,14 @@ pub fn excel_eval_pyerr(
     };
 
     let location = match (sheet, row, col) {
-        (Some(s), r, c) if r > 0 && c > 0 => format!(" at {}!R{}C{}", s, r, c),
-        (None, r, c) if r > 0 && c > 0 => format!(" at R{}C{}", r, c),
+        (Some(s), r, c) if r > 0 && c > 0 => format!(" at {s}!R{r}C{c}"),
+        (None, r, c) if r > 0 && c > 0 => format!(" at R{r}C{c}"),
         _ => String::new(),
     };
 
     let msg = match &err.message {
-        Some(m) if !m.is_empty() => format!("{}: {}{}", err.kind, m, location),
-        _ => format!("{}{}", err.kind, location),
+        Some(m) if !m.is_empty() => format!("{kind}: {m}{location}", kind = err.kind),
+        _ => format!("{kind}{location}", kind = err.kind),
     };
 
     PyErr::new::<ExcelEvaluationError, _>(msg)
@@ -100,8 +100,7 @@ impl PyExcelError {
             "NImpl" => ExcelErrorKind::NImpl,
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid error kind: {}",
-                    kind
+                    "Invalid error kind: {kind}"
                 )))
             }
         };

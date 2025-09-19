@@ -39,17 +39,13 @@ impl WorksheetHandle {
     pub fn set_value(&self, row: u32, col: u32, v: LiteralValue) -> Result<(), crate::IoError> {
         self.wb
             .write()
-            .map_err(|_| {
-                crate::IoError::Io(std::io::Error::new(std::io::ErrorKind::Other, "lock"))
-            })?
+            .map_err(|_| crate::IoError::Io(std::io::Error::other("lock")))?
             .set_value(&self.name, row, col, v)
     }
     pub fn set_formula(&self, row: u32, col: u32, f: &str) -> Result<(), crate::IoError> {
         self.wb
             .write()
-            .map_err(|_| {
-                crate::IoError::Io(std::io::Error::new(std::io::ErrorKind::Other, "lock"))
-            })?
+            .map_err(|_| crate::IoError::Io(std::io::Error::other("lock")))?
             .set_formula(&self.name, row, col, f)
     }
     pub fn set_values(
@@ -60,9 +56,7 @@ impl WorksheetHandle {
     ) -> Result<(), crate::IoError> {
         self.wb
             .write()
-            .map_err(|_| {
-                crate::IoError::Io(std::io::Error::new(std::io::ErrorKind::Other, "lock"))
-            })?
+            .map_err(|_| crate::IoError::Io(std::io::Error::other("lock")))?
             .set_values(&self.name, start_row, start_col, rows)
     }
     pub fn set_formulas(
@@ -73,9 +67,7 @@ impl WorksheetHandle {
     ) -> Result<(), crate::IoError> {
         self.wb
             .write()
-            .map_err(|_| {
-                crate::IoError::Io(std::io::Error::new(std::io::ErrorKind::Other, "lock"))
-            })?
+            .map_err(|_| crate::IoError::Io(std::io::Error::other("lock")))?
             .set_formulas(&self.name, start_row, start_col, rows)
     }
     pub fn read_range(&self, addr: &RangeAddress) -> Vec<Vec<LiteralValue>> {
@@ -90,17 +82,13 @@ impl WorksheetHandle {
     ) -> Result<(), crate::IoError> {
         self.wb
             .write()
-            .map_err(|_| {
-                crate::IoError::Io(std::io::Error::new(std::io::ErrorKind::Other, "lock"))
-            })?
+            .map_err(|_| crate::IoError::Io(std::io::Error::other("lock")))?
             .write_range(&self.name, (1, 1), cells)
     }
     pub fn evaluate_cell(&self, row: u32, col: u32) -> Result<LiteralValue, crate::IoError> {
         self.wb
             .write()
-            .map_err(|_| {
-                crate::IoError::Io(std::io::Error::new(std::io::ErrorKind::Other, "lock"))
-            })?
+            .map_err(|_| crate::IoError::Io(std::io::Error::other("lock")))?
             .evaluate_cell(&self.name, row, col)
     }
 }

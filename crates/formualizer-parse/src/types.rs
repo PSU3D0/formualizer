@@ -1,15 +1,10 @@
 use std::fmt::{self, Display};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FormulaDialect {
+    #[default]
     Excel,
     OpenFormula,
-}
-
-impl Default for FormulaDialect {
-    fn default() -> Self {
-        FormulaDialect::Excel
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

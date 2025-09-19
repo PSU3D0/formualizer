@@ -51,7 +51,7 @@ fn demand_driven_enters_compressed_ranges() {
     let _ = engine.evaluate_cell("Sheet1", 7, 4);
     match engine.get_cell_value("Sheet1", 7, 4) {
         Some(LiteralValue::Number(n)) => assert!((n - 5.0).abs() < 1e-9),
-        other => panic!("Expected 5.0 for SUMIF, got {:?}", other),
+        other => panic!("Expected 5.0 for SUMIF, got {other:?}"),
     }
 }
 

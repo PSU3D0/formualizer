@@ -49,14 +49,12 @@ fn calamine_reads_values_and_formulas_from_generated_xlsx() {
     let stats = loader.stats();
     assert!(
         stats.cells_loaded >= 2,
-        "Expected at least 2 cells loaded, got {:?}",
-        stats
+        "Expected at least 2 cells loaded, got {stats:?}"
     );
 
     assert!(
         engine.sheet_id(&sheet_name).is_some(),
-        "Engine did not register sheet {}",
-        sheet_name
+        "Engine did not register sheet {sheet_name}"
     );
 
     // Debug: check what's in the graph
@@ -67,7 +65,7 @@ fn calamine_reads_values_and_formulas_from_generated_xlsx() {
         Some(LiteralValue::Int(41)) => {}
         Some(LiteralValue::Number(n)) if (n - 41.0).abs() < 1e-9 => {}
         Some(LiteralValue::Text(ref s)) if s == "41" => {}
-        other => panic!("Unexpected A1 value: {:?}", other),
+        other => panic!("Unexpected A1 value: {other:?}"),
     }
     // B1 has formula; before evaluation, its value is not computed; evaluate all
     let _eval_result = engine.evaluate_all().expect("eval");
@@ -75,12 +73,12 @@ fn calamine_reads_values_and_formulas_from_generated_xlsx() {
     // B1 should be 42
     match engine.get_cell_value(&sheet_name, 1, 2) {
         Some(LiteralValue::Number(n)) => assert!((n - 42.0).abs() < 1e-9),
-        other => panic!("Unexpected B1 value: {:?}", other),
+        other => panic!("Unexpected B1 value: {other:?}"),
     }
 
     // B2 should be 7.0
     match engine.get_cell_value(&sheet_name, 2, 2) {
         Some(LiteralValue::Number(n)) => assert!((n - 7.0).abs() < 1e-9),
-        other => panic!("Unexpected B2 value: {:?}", other),
+        other => panic!("Unexpected B2 value: {other:?}"),
     }
 }

@@ -2,6 +2,7 @@ use crate::reference::{reference_type_to_py, ReferenceLike};
 use crate::token::PyToken;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
+use pyo3::conversion::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -153,7 +154,7 @@ impl PyASTNode {
                 )
             }
             ASTNodeType::Reference { original, .. } => {
-                format!("{}Reference({})", indent_str, original)
+                format!("{indent_str}Reference({original})")
             }
             ASTNodeType::UnaryOp { op, expr } => {
                 format!(
@@ -173,7 +174,7 @@ impl PyASTNode {
                 )
             }
             ASTNodeType::Function { name, args } => {
-                let mut result = format!("{}Function({})", indent_str, name);
+                let mut result = format!("{indent_str}Function({name})");
                 for arg in args {
                     result.push('\n');
                     result.push_str(&PyASTNode::new(arg.clone()).format_node(indent + 1));
@@ -181,7 +182,7 @@ impl PyASTNode {
                 result
             }
             ASTNodeType::Array(rows) => {
-                let mut result = format!("{}Array", indent_str);
+                let mut result = format!("{indent_str}Array");
                 for (row_idx, row) in rows.iter().enumerate() {
                     result.push_str(&format!("\n{}Row {}", "  ".repeat(indent + 1), row_idx));
                     for cell in row {
@@ -198,14 +199,14 @@ impl PyASTNode {
         match value {
             LiteralValue::Int(i) => i.to_string(),
             LiteralValue::Number(n) => n.to_string(),
-            LiteralValue::Text(s) => format!("\"{}\"", s),
+            LiteralValue::Text(s) => format!("\"{s}\""),
             LiteralValue::Boolean(b) => b.to_string(),
-            LiteralValue::Error(e) => format!("Error({})", e),
-            LiteralValue::Date(d) => format!("Date({})", d),
-            LiteralValue::DateTime(dt) => format!("DateTime({})", dt),
-            LiteralValue::Time(t) => format!("Time({})", t),
-            LiteralValue::Duration(dur) => format!("Duration({})", dur),
-            LiteralValue::Array(arr) => format!("Array({:?})", arr),
+            LiteralValue::Error(e) => format!("Error({e})"),
+            LiteralValue::Date(d) => format!("Date({d})"),
+            LiteralValue::DateTime(dt) => format!("DateTime({dt})"),
+            LiteralValue::Time(t) => format!("Time({t})"),
+            LiteralValue::Duration(dur) => format!("Duration({dur})"),
+            LiteralValue::Array(arr) => format!("Array({arr:?})"),
             LiteralValue::Empty => "Empty".to_string(),
             LiteralValue::Pending => "Pending".to_string(),
         }
@@ -296,17 +297,42 @@ impl PyASTNode {
         dict.into()
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn literal_value_to_py(&self, py: Python<'_>, value: &LiteralValue) -> PyObject {
         match value {
-            LiteralValue::Int(i) => i.to_object(py),
-            LiteralValue::Number(n) => n.to_object(py),
-            LiteralValue::Text(s) => s.to_object(py),
-            LiteralValue::Boolean(b) => b.to_object(py),
-            LiteralValue::Error(e) => e.to_string().to_object(py),
-            LiteralValue::Date(d) => d.to_string().to_object(py),
-            LiteralValue::DateTime(dt) => dt.to_string().to_object(py),
-            LiteralValue::Time(t) => t.to_string().to_object(py),
-            LiteralValue::Duration(dur) => dur.to_string().to_object(py),
+            LiteralValue::Int(i) => (*i)
+                .into_py_any(py)
+                .expect("integer conversion must succeed"),
+            LiteralValue::Number(n) => (*n)
+                .into_py_any(py)
+                .expect("number conversion must succeed"),
+            LiteralValue::Text(s) => s
+                .clone()
+                .into_py_any(py)
+                .expect("string conversion must succeed"),
+            LiteralValue::Boolean(b) => (*b)
+                .into_py_any(py)
+                .expect("boolean conversion must succeed"),
+            LiteralValue::Error(e) => e
+                .to_string()
+                .into_py_any(py)
+                .expect("error conversion must succeed"),
+            LiteralValue::Date(d) => d
+                .to_string()
+                .into_py_any(py)
+                .expect("date conversion must succeed"),
+            LiteralValue::DateTime(dt) => dt
+                .to_string()
+                .into_py_any(py)
+                .expect("datetime conversion must succeed"),
+            LiteralValue::Time(t) => t
+                .to_string()
+                .into_py_any(py)
+                .expect("time conversion must succeed"),
+            LiteralValue::Duration(dur) => dur
+                .to_string()
+                .into_py_any(py)
+                .expect("duration conversion must succeed"),
             LiteralValue::Array(arr) => {
                 let py_arr: Vec<Vec<PyObject>> = arr
                     .iter()
@@ -316,7 +342,9 @@ impl PyASTNode {
                             .collect()
                     })
                     .collect();
-                py_arr.to_object(py)
+                py_arr
+                    .into_py_any(py)
+                    .expect("array conversion must succeed")
             }
             LiteralValue::Empty => py.None(),
             LiteralValue::Pending => py.None(),
@@ -340,7 +368,11 @@ impl PyRefWalker {
         if slf.index < slf.refs.len() {
             let reference = slf.refs[slf.index].clone();
             slf.index += 1;
-            Some(Python::with_gil(|py| reference.into_py(py)))
+            Some(Python::with_gil(|py| {
+                reference
+                    .into_py_any(py)
+                    .expect("ReferenceLike should convert to PyObject")
+            }))
         } else {
             None
         }

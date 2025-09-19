@@ -67,7 +67,7 @@ mod tests {
         assert!(!refs.is_empty());
 
         // Expect first is A1 cell
-        match refs.get(0).unwrap() {
+        match refs.first().unwrap() {
             RefView::Cell { sheet, row, col } => {
                 assert!(sheet.is_none());
                 assert_eq!((*row, *col), (1, 1));
