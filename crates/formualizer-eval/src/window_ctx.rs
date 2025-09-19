@@ -272,9 +272,10 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                         let range_total = r * c;
                         if range_total < total {
                             // Pad with Empty values to match total
-                            values.extend(
-                                std::iter::repeat_n(LiteralValue::Empty, total - range_total),
-                            );
+                            values.extend(std::iter::repeat_n(
+                                LiteralValue::Empty,
+                                total - range_total,
+                            ));
                         }
                         flats.push(values);
                     }
@@ -471,9 +472,10 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                         })?;
                         let range_total = r * c;
                         if range_total < total {
-                            values.extend(
-                                std::iter::repeat_n(LiteralValue::Empty, total - range_total),
-                            );
+                            values.extend(std::iter::repeat_n(
+                                LiteralValue::Empty,
+                                total - range_total,
+                            ));
                         }
                         flats.push(values);
                     }

@@ -1,6 +1,6 @@
-use crate::tokenizer::{Associativity, Token, TokenSubType, TokenType, TokenizerError};
+use crate::tokenizer::{Associativity, Token, TokenSubType, TokenType, Tokenizer, TokenizerError};
+use crate::types::{FormulaDialect, ParsingError};
 use crate::{ExcelError, LiteralValue};
-use crate::{ParsingError, Tokenizer};
 
 use crate::hasher::FormulaHasher;
 use once_cell::sync::Lazy;
@@ -205,9 +205,31 @@ fn sheet_name_needs_quoting(name: &str) -> bool {
     )
 }
 
+#[derive(Debug, Clone)]
+struct OpenFormulaRefPart {
+    sheet: Option<String>,
+    coord: String,
+}
+
 impl ReferenceType {
     /// Create a reference from a string. Can be A1, A:A, A1:B2, Table1[Column], etc.
     pub fn from_string(reference: &str) -> Result<Self, ParsingError> {
+        Self::parse_excel_reference(reference)
+    }
+
+    /// Create a reference from a string using the specified formula dialect.
+    pub fn from_string_with_dialect(
+        reference: &str,
+        dialect: FormulaDialect,
+    ) -> Result<Self, ParsingError> {
+        match dialect {
+            FormulaDialect::Excel => Self::parse_excel_reference(reference),
+            FormulaDialect::OpenFormula => Self::parse_openformula_reference(reference)
+                .or_else(|_| Self::parse_excel_reference(reference)),
+        }
+    }
+
+    fn parse_excel_reference(reference: &str) -> Result<Self, ParsingError> {
         // First check if this is a table reference (contains '[')
         if reference.contains('[') {
             return Self::parse_table_reference(reference);
@@ -648,6 +670,157 @@ impl ReferenceType {
 
         // If we can't determine the type, just use the raw specifier
         Ok(Some(TableSpecifier::Column(content.trim().to_string())))
+    }
+
+    fn parse_openformula_reference(reference: &str) -> Result<Self, ParsingError> {
+        if reference.starts_with('[') && reference.ends_with(']') {
+            let inner = &reference[1..reference.len() - 1];
+            if inner.is_empty() {
+                return Err(ParsingError::InvalidReference(
+                    "Empty OpenFormula reference".to_string(),
+                ));
+            }
+
+            let mut parts = inner.splitn(2, ':');
+            let start_part_str = parts.next().unwrap();
+            let end_part_str = parts.next();
+
+            let start_part = Self::parse_openformula_part(start_part_str)?;
+            let end_part = if let Some(part) = end_part_str {
+                Some(Self::parse_openformula_part(part)?)
+            } else {
+                None
+            };
+
+            let sheet = match (&start_part.sheet, &end_part) {
+                (Some(sheet), Some(end)) => {
+                    if let Some(end_sheet) = &end.sheet {
+                        if end_sheet != sheet {
+                            return Err(ParsingError::InvalidReference(format!(
+                                "Mismatched sheets in reference: {} vs {}",
+                                sheet, end_sheet
+                            )));
+                        }
+                    }
+                    Some(sheet.clone())
+                }
+                (Some(sheet), None) => Some(sheet.clone()),
+                (None, Some(end)) => end.sheet.clone(),
+                (None, None) => None,
+            };
+
+            let mut excel_like = String::new();
+            if let Some(sheet_name) = sheet {
+                if sheet_name_needs_quoting(&sheet_name) {
+                    let escaped = sheet_name.replace('\'', "''");
+                    excel_like.push('\'');
+                    excel_like.push_str(&escaped);
+                    excel_like.push('\'');
+                } else {
+                    excel_like.push_str(&sheet_name);
+                }
+                excel_like.push('!');
+            }
+
+            excel_like.push_str(&start_part.coord);
+            if let Some(end) = end_part {
+                excel_like.push(':');
+                excel_like.push_str(&end.coord);
+            }
+
+            return Self::parse_excel_reference(&excel_like);
+        }
+
+        Err(ParsingError::InvalidReference(format!(
+            "Unsupported OpenFormula reference: {reference}"
+        )))
+    }
+
+    fn parse_openformula_part(part: &str) -> Result<OpenFormulaRefPart, ParsingError> {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            return Err(ParsingError::InvalidReference(
+                "Empty component in OpenFormula reference".to_string(),
+            ));
+        }
+
+        if trimmed == "." {
+            return Err(ParsingError::InvalidReference(
+                "Incomplete OpenFormula reference component".to_string(),
+            ));
+        }
+
+        if trimmed.starts_with('[') {
+            // Nested brackets are not expected here
+            return Err(ParsingError::InvalidReference(format!(
+                "Unexpected '[' in OpenFormula reference component: {trimmed}"
+            )));
+        }
+
+        let (sheet, coord_slice) = if trimmed.starts_with('.') {
+            (None, trimmed[1..].trim())
+        } else if let Some(dot_idx) = Self::find_openformula_sheet_separator(trimmed) {
+            let sheet_part = trimmed[..dot_idx].trim();
+            let coord_part = trimmed[dot_idx + 1..].trim();
+            if coord_part.is_empty() {
+                return Err(ParsingError::InvalidReference(format!(
+                    "Missing coordinate in OpenFormula reference component: {trimmed}"
+                )));
+            }
+            let sheet_name = Self::normalise_openformula_sheet(sheet_part)?;
+            (Some(sheet_name), coord_part)
+        } else {
+            (None, trimmed)
+        };
+
+        let coord = coord_slice.trim_start_matches('.').trim().to_string();
+
+        if coord.is_empty() {
+            return Err(ParsingError::InvalidReference(format!(
+                "Missing coordinate in OpenFormula reference component: {trimmed}"
+            )));
+        }
+
+        Ok(OpenFormulaRefPart { sheet, coord })
+    }
+
+    fn normalise_openformula_sheet(sheet: &str) -> Result<String, ParsingError> {
+        let without_abs = sheet.trim().trim_start_matches('$');
+
+        if without_abs.starts_with('\'') {
+            if without_abs.len() < 2 || !without_abs.ends_with('\'') {
+                return Err(ParsingError::InvalidReference(format!(
+                    "Unterminated sheet name in OpenFormula reference: {sheet}"
+                )));
+            }
+            let inner = &without_abs[1..without_abs.len() - 1];
+            Ok(inner.replace("''", "'"))
+        } else {
+            Ok(without_abs.to_string())
+        }
+    }
+
+    fn find_openformula_sheet_separator(part: &str) -> Option<usize> {
+        let bytes = part.as_bytes();
+        let mut i = 0;
+        let mut in_quotes = false;
+
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\'' => {
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                        i += 2;
+                        continue;
+                    }
+                    in_quotes = !in_quotes;
+                    i += 1;
+                }
+                b'.' if !in_quotes => return Some(i),
+                _ => i += 1,
+            }
+        }
+
+        None
     }
 
     /// Parse a special item specifier like "#Headers", "#Data", etc.
@@ -1166,6 +1339,7 @@ pub struct Parser {
     position: usize,
     /// Optional classifier to determine whether a function name is volatile.
     volatility_classifier: Option<Box<dyn Fn(&str) -> bool + Send + Sync + 'static>>,
+    dialect: FormulaDialect,
 }
 
 impl<T> From<T> for Parser
@@ -1180,6 +1354,14 @@ where
 
 impl Parser {
     pub fn new(tokens: Vec<Token>, include_whitespace: bool) -> Self {
+        Self::new_with_dialect(tokens, include_whitespace, FormulaDialect::Excel)
+    }
+
+    pub fn new_with_dialect(
+        tokens: Vec<Token>,
+        include_whitespace: bool,
+        dialect: FormulaDialect,
+    ) -> Self {
         let filtered_tokens = if include_whitespace {
             tokens
         } else {
@@ -1192,6 +1374,7 @@ impl Parser {
             tokens: filtered_tokens,
             position: 0,
             volatility_classifier: None,
+            dialect,
         }
     }
 
@@ -1211,6 +1394,18 @@ impl Parser {
         F: Fn(&str) -> bool + Send + Sync + 'static,
     {
         Self::new(tokens, include_whitespace).with_volatility_classifier(f)
+    }
+
+    pub fn new_with_classifier_and_dialect<F>(
+        tokens: Vec<Token>,
+        include_whitespace: bool,
+        dialect: FormulaDialect,
+        f: F,
+    ) -> Self
+    where
+        F: Fn(&str) -> bool + Send + Sync + 'static,
+    {
+        Self::new_with_dialect(tokens, include_whitespace, dialect).with_volatility_classifier(f)
     }
 
     /// Parse the tokens into an AST.
@@ -1416,8 +1611,8 @@ impl Parser {
                 ))
             }
             TokenSubType::Range => {
-                let reference =
-                    ReferenceType::from_string(&token.value).map_err(|e| ParserError {
+                let reference = ReferenceType::from_string_with_dialect(&token.value, self.dialect)
+                    .map_err(|e| ParserError {
                         message: format!("Invalid reference '{}': {}", token.value, e),
                         position: Some(self.position),
                     })?;
@@ -1606,7 +1801,16 @@ pub fn normalise_reference(reference: &str) -> Result<String, ParsingError> {
 }
 
 pub fn parse<T: AsRef<str>>(formula: T) -> Result<ASTNode, ParserError> {
-    Parser::from(formula.as_ref()).parse()
+    parse_with_dialect(formula, FormulaDialect::Excel)
+}
+
+pub fn parse_with_dialect<T: AsRef<str>>(
+    formula: T,
+    dialect: FormulaDialect,
+) -> Result<ASTNode, ParserError> {
+    let tokenizer = Tokenizer::new_with_dialect(formula.as_ref(), dialect)?;
+    let mut parser = Parser::new_with_dialect(tokenizer.items, false, dialect);
+    parser.parse()
 }
 
 /// Parse a single formula and annotate volatility using the provided classifier.
@@ -1619,8 +1823,21 @@ where
     T: AsRef<str>,
     F: Fn(&str) -> bool + Send + Sync + 'static,
 {
-    let tokens = Tokenizer::new(formula.as_ref())?.items;
-    let mut parser = Parser::new_with_classifier(tokens, false, classifier);
+    parse_with_dialect_and_volatility_classifier(formula, FormulaDialect::Excel, classifier)
+}
+
+pub fn parse_with_dialect_and_volatility_classifier<T, F>(
+    formula: T,
+    dialect: FormulaDialect,
+    classifier: F,
+) -> Result<ASTNode, ParserError>
+where
+    T: AsRef<str>,
+    F: Fn(&str) -> bool + Send + Sync + 'static,
+{
+    let tokenizer = Tokenizer::new_with_dialect(formula.as_ref(), dialect)?;
+    let mut parser =
+        Parser::new_with_classifier_and_dialect(tokenizer.items, false, dialect, classifier);
     parser.parse()
 }
 
@@ -1632,6 +1849,7 @@ pub struct BatchParser {
     include_whitespace: bool,
     volatility_classifier: Option<std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync + 'static>>,
     token_cache: std::collections::HashMap<String, Vec<Token>>, // filtered tokens
+    dialect: FormulaDialect,
 }
 
 impl BatchParser {
@@ -1645,7 +1863,7 @@ impl BatchParser {
         let filtered = if let Some(tokens) = self.token_cache.get(formula) {
             tokens.clone()
         } else {
-            let mut tokens = Tokenizer::new(formula)?.items;
+            let mut tokens = Tokenizer::new_with_dialect(formula, self.dialect)?.items;
             if !self.include_whitespace {
                 tokens = tokens
                     .into_iter()
@@ -1656,7 +1874,7 @@ impl BatchParser {
             tokens
         };
 
-        let mut parser = Parser::new(filtered, true); // already filtered per include_whitespace
+        let mut parser = Parser::new_with_dialect(filtered, true, self.dialect); // already filtered per include_whitespace
         if let Some(classifier) = self.volatility_classifier.clone() {
             let arc = classifier.clone();
             parser = parser.with_volatility_classifier(move |name| arc(name));
@@ -1669,6 +1887,7 @@ impl BatchParser {
 pub struct BatchParserBuilder {
     include_whitespace: bool,
     volatility_classifier: Option<std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync + 'static>>,
+    dialect: FormulaDialect,
 }
 
 impl BatchParserBuilder {
@@ -1685,11 +1904,17 @@ impl BatchParserBuilder {
         self
     }
 
+    pub fn dialect(mut self, dialect: FormulaDialect) -> Self {
+        self.dialect = dialect;
+        self
+    }
+
     pub fn build(self) -> BatchParser {
         BatchParser {
             include_whitespace: self.include_whitespace,
             volatility_classifier: self.volatility_classifier,
             token_cache: std::collections::HashMap::new(),
+            dialect: self.dialect,
         }
     }
 }

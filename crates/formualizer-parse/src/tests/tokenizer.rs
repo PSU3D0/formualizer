@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::FormulaDialect;
     use crate::tokenizer::{Token, TokenSubType, TokenType, Tokenizer};
     macro_rules! assert_token_types {
         ($actual:expr, $expected:expr) => {
@@ -187,6 +188,37 @@ mod tests {
         assert_eq!(tokenizer.items[0].value, "#DIV/0!");
         assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
         assert_eq!(tokenizer.items[0].subtype, TokenSubType::Error);
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_openformula_semicolon_argument_separator() {
+        let formula = "=SUM([.A1];[.A2])";
+        let tokenizer = Tokenizer::new_with_dialect(formula, FormulaDialect::OpenFormula).unwrap();
+
+        assert_eq!(tokenizer.items.len(), 5);
+        assert_eq!(tokenizer.items[0].value, "SUM(");
+        assert_eq!(tokenizer.items[1].value, "[.A1]");
+        assert_eq!(tokenizer.items[2].token_type, TokenType::Sep);
+        assert_eq!(tokenizer.items[2].subtype, TokenSubType::Arg);
+        assert_eq!(tokenizer.items[3].value, "[.A2]");
+        assert_eq!(tokenizer.items[4].token_type, TokenType::Func);
+        assert_eq!(tokenizer.items[4].subtype, TokenSubType::Close);
+        assert_eq!(tokenizer.render(), formula);
+    }
+
+    #[test]
+    fn test_openformula_array_row_separator() {
+        let formula = "={1;2}";
+        let tokenizer = Tokenizer::new_with_dialect(formula, FormulaDialect::OpenFormula).unwrap();
+
+        assert!(
+            tokenizer
+                .items
+                .iter()
+                .any(|token| token.token_type == TokenType::Sep
+                    && token.subtype == TokenSubType::Row)
+        );
         assert_eq!(tokenizer.render(), formula);
     }
 

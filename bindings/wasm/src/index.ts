@@ -3,8 +3,8 @@ import init, {
   Parser as WasmParser,
   ASTNode as WasmASTNode,
   Reference as WasmReference,
-  tokenize as wasmTokenize,
   parse as wasmParse,
+  FormulaDialect as WasmFormulaDialect,
 } from '../pkg/formualizer_wasm.js';
 
 let wasmInitialized = false;
@@ -65,11 +65,26 @@ export interface ASTNodeData {
   message?: string;
 }
 
+export enum FormulaDialect {
+  Excel = 'excel',
+  OpenFormula = 'openFormula',
+}
+
+function resolveDialect(dialect?: FormulaDialect): WasmFormulaDialect | undefined {
+  if (dialect === undefined) {
+    return undefined;
+  }
+
+  return dialect === FormulaDialect.OpenFormula
+    ? WasmFormulaDialect.OpenFormula
+    : WasmFormulaDialect.Excel;
+}
+
 export class Tokenizer {
   private inner: WasmTokenizer;
 
-  constructor(formula: string) {
-    this.inner = new WasmTokenizer(formula);
+  constructor(formula: string, dialect?: FormulaDialect) {
+    this.inner = new WasmTokenizer(formula, resolveDialect(dialect));
   }
 
   get tokens(): Token[] {
@@ -98,8 +113,8 @@ export class Tokenizer {
 export class Parser {
   private inner: WasmParser;
 
-  constructor(formula: string) {
-    this.inner = new WasmParser(formula);
+  constructor(formula: string, dialect?: FormulaDialect) {
+    this.inner = new WasmParser(formula, resolveDialect(dialect));
   }
 
   parse(): ASTNodeData {
@@ -214,16 +229,22 @@ export class Reference {
 /**
  * Tokenize a formula string
  */
-export async function tokenize(formula: string): Promise<Tokenizer> {
-  return ensureInitialized(() => new Tokenizer(formula));
+export async function tokenize(
+  formula: string,
+  dialect?: FormulaDialect,
+): Promise<Tokenizer> {
+  return ensureInitialized(() => new Tokenizer(formula, dialect));
 }
 
 /**
  * Parse a formula string into an AST
  */
-export async function parse(formula: string): Promise<ASTNodeData> {
+export async function parse(
+  formula: string,
+  dialect?: FormulaDialect,
+): Promise<ASTNodeData> {
   return ensureInitialized(() => {
-    const ast = wasmParse(formula);
+    const ast = wasmParse(formula, resolveDialect(dialect));
     const json = ast.toJSON();
     return JSON.parse(json);
   });

@@ -1,7 +1,9 @@
 use crate::ast::PyASTNode;
-use crate::errors::{ParserError, TokenizerError};
+use crate::enums::PyFormulaDialect;
+use crate::errors::ParserError;
 use crate::tokenizer::PyTokenizer;
 use formualizer_parse::parser::Parser;
+use formualizer_parse::{parse_with_dialect, FormulaDialect};
 use pyo3::prelude::*;
 
 #[pyclass(module = "formualizer")]
@@ -19,16 +21,22 @@ impl PyParser {
     }
 
     /// Parse a formula string into an AST
-    pub fn parse_string(&self, formula: &str) -> PyResult<PyASTNode> {
-        parse_formula(formula)
+    #[pyo3(signature = (formula, dialect = None))]
+    pub fn parse_string(
+        &self,
+        formula: &str,
+        dialect: Option<PyFormulaDialect>,
+    ) -> PyResult<PyASTNode> {
+        parse_formula_impl(formula, dialect)
     }
 
     /// Parse from a tokenizer
-    #[pyo3(signature = (tokenizer, include_whitespace = false))]
+    #[pyo3(signature = (tokenizer, include_whitespace = false, dialect = None))]
     pub fn parse_tokens(
         &self,
         tokenizer: &PyTokenizer,
         include_whitespace: bool,
+        dialect: Option<PyFormulaDialect>,
     ) -> PyResult<PyASTNode> {
         let tokens = tokenizer
             .tokens()
@@ -45,7 +53,10 @@ impl PyParser {
             })
             .collect();
 
-        let mut parser = Parser::new(tokens, include_whitespace);
+        let dialect: FormulaDialect = dialect
+            .map(Into::into)
+            .unwrap_or_else(|| tokenizer.dialect().into());
+        let mut parser = Parser::new_with_dialect(tokens, include_whitespace, dialect);
         let ast = parser
             .parse()
             .map_err(|e| ParserError::new_with_pos(e.message, e.position))?;
@@ -55,12 +66,9 @@ impl PyParser {
 
 /// Convenience function to parse a formula string directly
 #[pyfunction]
-pub fn parse_formula(formula: &str) -> PyResult<PyASTNode> {
-    let mut parser = Parser::from(formula);
-    let ast = parser
-        .parse()
-        .map_err(|e| ParserError::new_with_pos(e.message, e.position))?;
-    Ok(PyASTNode::new(ast))
+#[pyo3(signature = (formula, dialect = None))]
+pub fn parse_formula(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode> {
+    parse_formula_impl(formula, dialect)
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -68,4 +76,13 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_formula, m)?)?;
 
     Ok(())
+}
+
+fn parse_formula_impl(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode> {
+    let dialect: FormulaDialect = dialect
+        .map(Into::into)
+        .unwrap_or_else(FormulaDialect::default);
+    let ast = parse_with_dialect(formula, dialect)
+        .map_err(|e| ParserError::new_with_pos(e.message, e.position))?;
+    Ok(PyASTNode::new(ast))
 }

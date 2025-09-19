@@ -5,9 +5,7 @@ use arrow_schema::DataType;
 use chrono::Timelike;
 use std::sync::Arc;
 
-use arrow_array::builder::{
-    BooleanBuilder, Float64Builder, StringBuilder, UInt8Builder,
-};
+use arrow_array::builder::{BooleanBuilder, Float64Builder, StringBuilder, UInt8Builder};
 use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt8Array, UInt32Array};
 use once_cell::sync::OnceCell;
 
@@ -1496,7 +1494,7 @@ impl<'a> ArrowRangeView<'a> {
             for col_idx in self.sc..=self.ec {
                 if col_idx >= self.sheet.columns.len() {
                     // Pad out-of-bounds columns with empty (null) lanes and Empty type_tag
-                    
+
                     let numbers = Some(new_null_array(&DataType::Float64, seg_len));
                     let booleans = Some(new_null_array(&DataType::Boolean, seg_len));
                     let text = Some(new_null_array(&DataType::Utf8, seg_len));

@@ -1,25 +1,24 @@
-use crate::ast::ASTNode;
-use formualizer_parse::{parser::Parser as CoreParser, Tokenizer as CoreTokenizer};
+use crate::{ast::ASTNode, FormulaDialect};
+use formualizer_parse::{
+    parse_with_dialect, parser::Parser as CoreParser, FormulaDialect as CoreFormulaDialect,
+    Tokenizer as CoreTokenizer,
+};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
-pub fn parse_formula(formula: &str) -> Result<ASTNode, JsValue> {
-    let tokenizer = CoreTokenizer::new(formula).map_err(|e| {
-        JsValue::from_str(&format!(
-            "Tokenizer error: {} at position {}",
-            e.message, e.pos
-        ))
-    })?;
+pub fn parse_formula(formula: &str, dialect: Option<FormulaDialect>) -> Result<ASTNode, JsValue> {
+    let dialect: CoreFormulaDialect = dialect
+        .map(Into::into)
+        .unwrap_or_else(CoreFormulaDialect::default);
 
-    let mut parser = CoreParser::new(tokenizer.items.clone(), false);
-    let ast = parser.parse().map_err(|e| {
-        JsValue::from_str(&format!(
-            "Parser error: {} at position {:?}",
-            e.message, e.position
-        ))
-    })?;
-
-    Ok(ASTNode::from_core(ast))
+    parse_with_dialect(formula, dialect)
+        .map(ASTNode::from_core)
+        .map_err(|e| {
+            JsValue::from_str(&format!(
+                "Parser error: {} at position {:?}",
+                e.message, e.position
+            ))
+        })
 }
 
 #[wasm_bindgen]
@@ -30,8 +29,11 @@ pub struct Parser {
 #[wasm_bindgen]
 impl Parser {
     #[wasm_bindgen(constructor)]
-    pub fn new(formula: &str) -> Result<Parser, JsValue> {
-        let tokenizer = CoreTokenizer::new(formula).map_err(|e| {
+    pub fn new(formula: &str, dialect: Option<FormulaDialect>) -> Result<Parser, JsValue> {
+        let dialect: CoreFormulaDialect = dialect
+            .map(Into::into)
+            .unwrap_or_else(CoreFormulaDialect::default);
+        let tokenizer = CoreTokenizer::new_with_dialect(formula, dialect).map_err(|e| {
             JsValue::from_str(&format!(
                 "Tokenizer error: {} at position {}",
                 e.message, e.pos
@@ -39,7 +41,7 @@ impl Parser {
         })?;
 
         Ok(Parser {
-            inner: CoreParser::new(tokenizer.items.clone(), false),
+            inner: CoreParser::new_with_dialect(tokenizer.items.clone(), false, dialect),
         })
     }
 

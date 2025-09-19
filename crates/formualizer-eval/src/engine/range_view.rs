@@ -564,7 +564,6 @@ fn pack_numeric(v: &LiteralValue, policy: CoercionPolicy) -> Result<Option<f64>,
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn borrowed2d_rows_are_borrowed() {

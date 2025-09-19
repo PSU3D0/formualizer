@@ -2,6 +2,8 @@ use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::{self, Display};
 
+use crate::types::FormulaDialect;
+
 const TOKEN_ENDERS: &str = ",;}) +-*/^&=><%";
 
 const fn build_token_enders() -> [bool; 256] {
@@ -350,11 +352,20 @@ pub struct Tokenizer {
     offset: usize,      // Byte offset in formula
     token_start: usize, // Start of current token
     token_end: usize,   // End of current token
+    dialect: FormulaDialect,
 }
 
 impl Tokenizer {
     /// Create a new tokenizer and immediately parse the formula.
     pub fn new(formula: &str) -> Result<Self, TokenizerError> {
+        Self::new_with_dialect(formula, FormulaDialect::Excel)
+    }
+
+    /// Create a new tokenizer for the specified formula dialect.
+    pub fn new_with_dialect(
+        formula: &str,
+        dialect: FormulaDialect,
+    ) -> Result<Self, TokenizerError> {
         let mut tokenizer = Tokenizer {
             formula: formula.to_string(),
             items: Vec::with_capacity(formula.len() / 2), // Reasonable estimate
@@ -362,6 +373,7 @@ impl Tokenizer {
             offset: 0,
             token_start: 0,
             token_end: 0,
+            dialect,
         };
         tokenizer.parse()?;
         Ok(tokenizer)
@@ -821,16 +833,35 @@ impl Tokenizer {
         let curr_byte = self.formula.as_bytes()[self.offset];
         assert!(curr_byte == b';' || curr_byte == b',');
 
-        let (token_type, subtype) = if curr_byte == b';' {
-            (TokenType::Sep, TokenSubType::Row)
-        } else if let Some(top) = self.token_stack.last() {
-            if top.token_type == TokenType::Func || top.token_type == TokenType::Array {
-                (TokenType::Sep, TokenSubType::Arg)
-            } else {
-                (TokenType::OpInfix, TokenSubType::None)
+        let top_token = self.token_stack.last();
+        let in_function_or_array = matches!(
+            top_token.map(|t| t.token_type),
+            Some(TokenType::Func | TokenType::Array)
+        );
+        let in_array = matches!(top_token.map(|t| t.token_type), Some(TokenType::Array));
+
+        let (token_type, subtype) = match curr_byte {
+            b',' => {
+                if in_function_or_array {
+                    (TokenType::Sep, TokenSubType::Arg)
+                } else {
+                    (TokenType::OpInfix, TokenSubType::None)
+                }
             }
-        } else {
-            (TokenType::OpInfix, TokenSubType::None)
+            b';' => {
+                if in_array {
+                    // Array row separator for both dialects
+                    (TokenType::Sep, TokenSubType::Row)
+                } else if self.dialect == FormulaDialect::OpenFormula && in_function_or_array {
+                    // OpenFormula uses ';' for argument separators inside functions
+                    (TokenType::Sep, TokenSubType::Arg)
+                } else if self.dialect == FormulaDialect::OpenFormula {
+                    (TokenType::OpInfix, TokenSubType::None)
+                } else {
+                    (TokenType::Sep, TokenSubType::Row)
+                }
+            }
+            _ => (TokenType::OpInfix, TokenSubType::None),
         };
 
         self.items.push(Token::from_slice(
@@ -856,6 +887,11 @@ impl Tokenizer {
             let concatenated: String = self.items.iter().map(|t| t.value.clone()).collect();
             format!("={concatenated}")
         }
+    }
+
+    /// Return the dialect used when tokenizing this formula.
+    pub fn dialect(&self) -> FormulaDialect {
+        self.dialect
     }
 }
 

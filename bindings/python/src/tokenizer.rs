@@ -1,5 +1,5 @@
-use crate::{errors::TokenizerError, token::PyToken};
-use formualizer_parse::Tokenizer;
+use crate::{enums::PyFormulaDialect, errors::TokenizerError, token::PyToken};
+use formualizer_parse::{FormulaDialect, Tokenizer};
 use pyo3::prelude::*;
 use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
 
@@ -19,8 +19,12 @@ impl PyTokenizer {
 #[pymethods]
 impl PyTokenizer {
     #[new]
-    pub fn from_formula(formula: &str) -> PyResult<Self> {
-        let tokenizer = Tokenizer::new(formula)
+    #[pyo3(signature = (formula, dialect = None))]
+    pub fn from_formula(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<Self> {
+        let dialect: FormulaDialect = dialect
+            .map(Into::into)
+            .unwrap_or_else(FormulaDialect::default);
+        let tokenizer = Tokenizer::new_with_dialect(formula, dialect)
             .map_err(|e| TokenizerError::new_with_pos(e.message, Some(e.pos)))?;
         Ok(PyTokenizer::new(tokenizer))
     }
@@ -37,6 +41,11 @@ impl PyTokenizer {
     /// Reconstruct the original formula from tokens
     fn render(&self) -> String {
         self.inner.render()
+    }
+
+    #[getter]
+    pub fn dialect(&self) -> PyFormulaDialect {
+        self.inner.dialect().into()
     }
 
     /// Make the tokenizer iterable

@@ -16,18 +16,21 @@ mod value;
 mod workbook;
 
 use ast::PyASTNode;
+use enums::PyFormulaDialect;
 use tokenizer::PyTokenizer;
 
 /// Convenience function to tokenize a formula string
 #[pyfunction]
-fn tokenize(formula: &str) -> PyResult<PyTokenizer> {
-    PyTokenizer::from_formula(formula)
+#[pyo3(signature = (formula, dialect = None))]
+fn tokenize(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyTokenizer> {
+    PyTokenizer::from_formula(formula, dialect)
 }
 
 /// Convenience function to parse a formula string
 #[pyfunction]
-fn parse(formula: &str) -> PyResult<PyASTNode> {
-    parser::parse_formula(formula)
+#[pyo3(signature = (formula, dialect = None))]
+fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode> {
+    parser::parse_formula(formula, dialect)
 }
 
 /// Load a workbook from a file path (convenience function)
@@ -62,6 +65,9 @@ fn formualizer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(parse, m)?)?;
     m.add_function(wrap_pyfunction!(load_workbook, m)?)?;
+    if let Ok(dialect) = m.getattr("PyFormulaDialect") {
+        m.add("FormulaDialect", dialect)?;
+    }
 
     Ok(())
 }

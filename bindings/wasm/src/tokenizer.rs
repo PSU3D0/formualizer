@@ -1,5 +1,5 @@
-use crate::token::Token;
-use formualizer_parse::Tokenizer as CoreTokenizer;
+use crate::{token::Token, FormulaDialect};
+use formualizer_parse::{FormulaDialect as CoreFormulaDialect, Tokenizer as CoreTokenizer};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -10,8 +10,11 @@ pub struct Tokenizer {
 #[wasm_bindgen]
 impl Tokenizer {
     #[wasm_bindgen(constructor)]
-    pub fn new(formula: &str) -> Result<Tokenizer, JsValue> {
-        CoreTokenizer::new(formula)
+    pub fn new(formula: &str, dialect: Option<FormulaDialect>) -> Result<Tokenizer, JsValue> {
+        let dialect: CoreFormulaDialect = dialect
+            .map(Into::into)
+            .unwrap_or_else(CoreFormulaDialect::default);
+        CoreTokenizer::new_with_dialect(formula, dialect)
             .map(|inner| Tokenizer { inner })
             .map_err(|e| {
                 JsValue::from_str(&format!(

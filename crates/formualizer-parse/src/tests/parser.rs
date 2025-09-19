@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::FormulaDialect;
     use crate::tokenizer::Tokenizer;
     use formualizer_common::{ExcelError, LiteralValue};
 
@@ -13,6 +14,18 @@ mod tests {
             position: Some(e.pos),
         })?;
         let mut parser = Parser::new(tokenizer.items, false);
+        parser.parse()
+    }
+
+    fn parse_formula_with_dialect(
+        formula: &str,
+        dialect: FormulaDialect,
+    ) -> Result<ASTNode, ParserError> {
+        let tokenizer = Tokenizer::new_with_dialect(formula, dialect).map_err(|e| ParserError {
+            message: e.to_string(),
+            position: Some(e.pos),
+        })?;
+        let mut parser = Parser::new_with_dialect(tokenizer.items, false, dialect);
         parser.parse()
     }
 
@@ -133,6 +146,66 @@ mod tests {
         match &refs[0] {
             ReferenceType::Cell { row, col, .. } => assert_eq!((*row, *col), (1, 1)),
             _ => panic!("expected a Cell ref"),
+        }
+    }
+
+    #[test]
+    fn test_parse_openformula_cell_reference() {
+        let ast = parse_formula_with_dialect("=SUM([.A1])", FormulaDialect::OpenFormula).unwrap();
+
+        let (name, args) = match &ast.node_type {
+            ASTNodeType::Function { name, args } => (name, args),
+            _ => panic!("expected Function node"),
+        };
+
+        assert_eq!(name, "SUM");
+        assert_eq!(args.len(), 1);
+
+        match &args[0].node_type {
+            ASTNodeType::Reference { reference, .. } => {
+                assert_eq!(
+                    reference,
+                    &ReferenceType::Cell {
+                        sheet: None,
+                        row: 1,
+                        col: 1,
+                    }
+                );
+            }
+            other => panic!("expected Reference argument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_openformula_sheet_range() {
+        let ast =
+            parse_formula_with_dialect("=SUM([Sheet One.A1:.B2])", FormulaDialect::OpenFormula)
+                .unwrap();
+
+        let args = match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                assert_eq!(name, "SUM");
+                args
+            }
+            _ => panic!("expected Function node"),
+        };
+
+        assert_eq!(args.len(), 1);
+
+        match &args[0].node_type {
+            ASTNodeType::Reference { reference, .. } => {
+                assert_eq!(
+                    reference,
+                    &ReferenceType::Range {
+                        sheet: Some("Sheet One".to_string()),
+                        start_row: Some(1),
+                        start_col: Some(1),
+                        end_row: Some(2),
+                        end_col: Some(2),
+                    }
+                );
+            }
+            other => panic!("expected range reference, got {other:?}"),
         }
     }
 

@@ -87,13 +87,8 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
     }
 
     pub fn update_cell(&mut self, sheet: &str, row: u32, col: u32, value: LiteralValue) {
-        let s = self
-            .updates
-            .entry(sheet.to_string())
-            .or_default();
-        let c = s
-            .entry(col.saturating_sub(1) as usize)
-            .or_default();
+        let s = self.updates.entry(sheet.to_string()).or_default();
+        let c = s.entry(col.saturating_sub(1) as usize).or_default();
         c.insert(row.saturating_sub(1) as usize, value);
     }
 

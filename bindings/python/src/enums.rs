@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use formualizer_parse::parser::ASTNodeType as CoreASTNodeType;
 use formualizer_parse::tokenizer::{TokenSubType as CoreTokenSubType, TokenType as CoreTokenType};
+use formualizer_parse::FormulaDialect as CoreFormulaDialect;
 use pyo3::prelude::*;
 use pyo3_stub_gen::{create_exception, define_stub_info_gatherer, derive::*, module_variable};
 
@@ -163,8 +164,50 @@ impl From<PyTokenSubType> for CoreTokenSubType {
     }
 }
 
+/// Formula dialect enum exposed to Python
+#[gen_stub_pyclass_enum]
+#[pyclass(module = "formualizer")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PyFormulaDialect {
+    Excel,
+    OpenFormula,
+}
+
+#[pymethods]
+impl PyFormulaDialect {
+    fn __str__(&self) -> &'static str {
+        match self {
+            PyFormulaDialect::Excel => "Excel",
+            PyFormulaDialect::OpenFormula => "OpenFormula",
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("FormulaDialect.{}", self.__str__())
+    }
+}
+
+impl From<PyFormulaDialect> for CoreFormulaDialect {
+    fn from(value: PyFormulaDialect) -> Self {
+        match value {
+            PyFormulaDialect::Excel => CoreFormulaDialect::Excel,
+            PyFormulaDialect::OpenFormula => CoreFormulaDialect::OpenFormula,
+        }
+    }
+}
+
+impl From<CoreFormulaDialect> for PyFormulaDialect {
+    fn from(value: CoreFormulaDialect) -> Self {
+        match value {
+            CoreFormulaDialect::Excel => PyFormulaDialect::Excel,
+            CoreFormulaDialect::OpenFormula => PyFormulaDialect::OpenFormula,
+        }
+    }
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTokenType>()?;
     m.add_class::<PyTokenSubType>()?;
+    m.add_class::<PyFormulaDialect>()?;
     Ok(())
 }
