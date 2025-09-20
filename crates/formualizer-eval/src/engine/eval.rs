@@ -2747,7 +2747,9 @@ where
                             VertexKind::FormulaScalar | VertexKind::FormulaArray
                         ) {
                             if let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col) {
-                                return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
+                                return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![
+                                    vec![v],
+                                ]))));
                             }
                         }
                     }

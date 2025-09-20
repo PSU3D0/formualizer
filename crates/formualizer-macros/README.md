@@ -5,6 +5,11 @@ Formualizer spreadsheet engine. Today it exposes the `func_caps!` macro used to
 annotate built-in function implementations with capability flags consumed by the
 engine planner.
 
+> **Note:** This crate is an internal implementation detail of the Formualizer
+> workspace. It is published only to satisfy dependency resolution for other
+> `formualizer-*` crates, and its APIs may change without notice outside the
+> workspace. External consumers typically do not need to depend on it directly.
+
 ## What it provides
 
 - **Capability synthesis** – generate `Function::caps()` bodies from a tidy list
