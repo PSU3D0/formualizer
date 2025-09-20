@@ -15,3 +15,14 @@ members = [
 homepage = "https://github.com/psu3d0/formualizer"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/psu3d0/formualizer"
+
+
+
+[workspace.dependencies]
+
+formualizer-common = { version = "0.1.0", path = "crates/formualizer-common" }
+formualizer-macros = { version = "0.1.0", path = "crates/formualizer-macros" }
+formualizer-parse = { version = "0.1.0", path = "crates/formualizer-parse" }
+formualizer-eval = { version = "0.1.0", path = "crates/formualizer-eval" }
+
+chrono = "0.4.41"

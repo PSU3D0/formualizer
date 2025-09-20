@@ -11,13 +11,13 @@ keywords = ["excel", "formula", "workbook", "engine", "spreadsheet"]
 categories = ["data-structures"]
 
 [dependencies]
-formualizer-parse = { path = "../formualizer-parse" }
-formualizer-common = { path = "../formualizer-common" }
-formualizer-eval = { path = "../formualizer-eval" }
+formualizer-parse = { workspace = true }
+formualizer-common = { workspace = true }
+formualizer-eval = { workspace = true }
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 parking_lot = "0.12"
-chrono = "0.4"
+chrono = { workspace = true }
 once_cell = "1.19"
 rustc-hash = "1.1"
 

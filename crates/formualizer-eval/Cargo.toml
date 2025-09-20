@@ -19,15 +19,15 @@ too_many_arguments = "allow"
 only_used_in_recursion = "allow"
 
 [dependencies]
-formualizer-parse = { path = "../formualizer-parse" }
-formualizer-macros  = { path = "../formualizer-macros" }
-formualizer-common = { path = "../formualizer-common" }
+formualizer-parse = { workspace = true }
+formualizer-macros  = { workspace = true }
+formualizer-common = { workspace = true }
 once_cell = "1.21.3"
 rustc-hash = "1.1"
 rand = { version = "0.8.5", features = ["small_rng"] }
 rayon = "1.8"
 dashmap = "6.1.0"
-chrono = "0.4.41"
+chrono = { workspace = true }
 bitflags = "2.9.1"
 bumpalo = { version = "3.16", features = ["collections"] }
 smallvec = "1.13"

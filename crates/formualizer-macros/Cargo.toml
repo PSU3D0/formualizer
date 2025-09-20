@@ -8,7 +8,6 @@ license.workspace = true
 repository.workspace = true
 readme = "README.md"
 keywords = ["excel", "formula", "spreadsheet", "macro"]
-categories = ["development-tools::procedural-macro"]
 
 [lib]
 proc-macro = true
@@ -17,4 +16,4 @@ proc-macro = true
 syn   = { version = "1.0", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0"
-formualizer-common = { path = "../formualizer-common" }
+formualizer-common = { workspace = true }
