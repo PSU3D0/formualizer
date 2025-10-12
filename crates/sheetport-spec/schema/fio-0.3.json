@@ -1,0 +1,956 @@
+{
+  "$schema": "https://json-schema.org/draft/2019-09/schema",
+  "title": "Formualizer I/O Manifest (SheetPort)",
+  "description": "Specification that binds typed input/output ports to a spreadsheet so it can be treated as a pure function.",
+  "examples": [
+    {
+      "manifest": {
+        "description": "Expose the workbook as a function that ingests inventory data and produces restock recommendations.",
+        "id": "supply-planning-io",
+        "metadata": null,
+        "name": "Supply Planning I/O",
+        "tags": null,
+        "workbook": {
+          "date_system": 1900,
+          "locale": "en-US",
+          "timezone": null,
+          "uri": "file://Samples/SupplyPlan.xlsx"
+        }
+      },
+      "ports": [
+        {
+          "constraints": {
+            "enum": null,
+            "max": null,
+            "min": null,
+            "nullable": null,
+            "pattern": "^[A-Z]{2}-\\d{3}$"
+          },
+          "default": null,
+          "description": "Warehouse identifier used for restock planning.",
+          "dir": "in",
+          "id": "warehouse_code",
+          "location": {
+            "a1": "Inputs!B2"
+          },
+          "partition_key": null,
+          "required": true,
+          "schema": {
+            "format": null,
+            "type": "string"
+          },
+          "shape": "scalar",
+          "units": null
+        },
+        {
+          "constraints": null,
+          "default": null,
+          "description": "Planning horizon (month and year).",
+          "dir": "in",
+          "id": "planning_window",
+          "location": {
+            "a1": "Inputs!B1:C1"
+          },
+          "partition_key": null,
+          "required": true,
+          "schema": {
+            "fields": {
+              "month": {
+                "constraints": {
+                  "enum": null,
+                  "max": 12.0,
+                  "min": 1.0,
+                  "nullable": null,
+                  "pattern": null
+                },
+                "location": {
+                  "a1": "Inputs!B1"
+                },
+                "type": "integer",
+                "units": null
+              },
+              "year": {
+                "constraints": null,
+                "location": {
+                  "a1": "Inputs!C1"
+                },
+                "type": "integer",
+                "units": null
+              }
+            },
+            "kind": "record"
+          },
+          "shape": "record",
+          "units": null
+        },
+        {
+          "constraints": null,
+          "default": null,
+          "description": "Current inventory snapshot by SKU.",
+          "dir": "in",
+          "id": "sku_inventory",
+          "location": {
+            "layout": {
+              "anchor_col": "A",
+              "header_row": 1,
+              "marker_text": null,
+              "sheet": "Inventory",
+              "terminate": "first_blank_row"
+            }
+          },
+          "partition_key": null,
+          "required": true,
+          "schema": {
+            "columns": [
+              {
+                "col": "A",
+                "format": null,
+                "name": "sku",
+                "type": "string",
+                "units": null
+              },
+              {
+                "col": "B",
+                "format": null,
+                "name": "description",
+                "type": "string",
+                "units": null
+              },
+              {
+                "col": "C",
+                "format": null,
+                "name": "on_hand",
+                "type": "integer",
+                "units": null
+              },
+              {
+                "col": "D",
+                "format": null,
+                "name": "safety_stock",
+                "type": "integer",
+                "units": null
+              },
+              {
+                "col": "E",
+                "format": null,
+                "name": "lead_time_days",
+                "type": "integer",
+                "units": null
+              }
+            ],
+            "keys": [
+              "sku"
+            ],
+            "kind": "table"
+          },
+          "shape": "table",
+          "units": null
+        },
+        {
+          "constraints": null,
+          "default": null,
+          "description": "High-level metrics summarizing the recommended restock.",
+          "dir": "out",
+          "id": "restock_summary",
+          "location": {
+            "a1": "Outputs!B2:B6"
+          },
+          "partition_key": null,
+          "required": true,
+          "schema": {
+            "fields": {
+              "estimated_cost": {
+                "constraints": null,
+                "location": {
+                  "a1": "Outputs!B4"
+                },
+                "type": "number",
+                "units": {
+                  "currency": "USD"
+                }
+              },
+              "next_restock_date": {
+                "constraints": null,
+                "location": {
+                  "a1": "Outputs!B5"
+                },
+                "type": "date",
+                "units": null
+              },
+              "total_skus": {
+                "constraints": null,
+                "location": {
+                  "a1": "Outputs!B2"
+                },
+                "type": "integer",
+                "units": null
+              },
+              "units_to_order": {
+                "constraints": null,
+                "location": {
+                  "a1": "Outputs!B3"
+                },
+                "type": "integer",
+                "units": null
+              }
+            },
+            "kind": "record"
+          },
+          "shape": "record",
+          "units": null
+        }
+      ],
+      "spec": "fio",
+      "spec_version": "0.3.0"
+    }
+  ],
+  "type": "object",
+  "required": [
+    "manifest",
+    "ports",
+    "spec",
+    "spec_version"
+  ],
+  "properties": {
+    "manifest": {
+      "description": "Human-facing metadata describing the manifest.",
+      "$ref": "#/definitions/ManifestMeta"
+    },
+    "ports": {
+      "description": "Ordered list of typed ports.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Port"
+      }
+    },
+    "spec": {
+      "description": "Identifier for this specification (must be `fio`).",
+      "type": "string"
+    },
+    "spec_version": {
+      "$ref": "#/definitions/SpecVersion"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Constraints": {
+      "description": "Constraints applied to a port or field.",
+      "type": "object",
+      "properties": {
+        "enum": {
+          "description": "Enumerated set of allowed categorical values.",
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": true
+        },
+        "max": {
+          "description": "Maximum allowed numeric value.",
+          "default": null,
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "min": {
+          "description": "Minimum allowed numeric value.",
+          "default": null,
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "nullable": {
+          "description": "Whether null/blank values are permitted.",
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "pattern": {
+          "description": "Regular expression pattern string.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Direction": {
+      "description": "Port direction.",
+      "oneOf": [
+        {
+          "description": "Input port (values provided to the workbook).",
+          "type": "string",
+          "enum": [
+            "in"
+          ]
+        },
+        {
+          "description": "Output port (values read from the workbook).",
+          "type": "string",
+          "enum": [
+            "out"
+          ]
+        }
+      ]
+    },
+    "FieldSelector": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SelectorA1"
+        },
+        {
+          "$ref": "#/definitions/SelectorName"
+        },
+        {
+          "$ref": "#/definitions/SelectorStructRef"
+        }
+      ]
+    },
+    "LayoutDescriptor": {
+      "type": "object",
+      "required": [
+        "anchor_col",
+        "header_row",
+        "sheet",
+        "terminate"
+      ],
+      "properties": {
+        "anchor_col": {
+          "description": "Column letter where the layout begins.",
+          "type": "string"
+        },
+        "header_row": {
+          "description": "1-based index of the header row.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "marker_text": {
+          "description": "Marker text required when `terminate` equals `until_marker`.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sheet": {
+          "description": "Sheet containing the layout.",
+          "type": "string"
+        },
+        "terminate": {
+          "description": "Termination rule for the layout.",
+          "$ref": "#/definitions/LayoutTermination"
+        }
+      },
+      "additionalProperties": false
+    },
+    "LayoutTermination": {
+      "type": "string",
+      "enum": [
+        "first_blank_row",
+        "sheet_end",
+        "until_marker"
+      ]
+    },
+    "ManifestMeta": {
+      "description": "Manifest metadata block.",
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "description": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Stable identifier for the manifest (lowercase alphanumeric + hyphen).",
+          "type": "string"
+        },
+        "metadata": {
+          "default": null,
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        },
+        "name": {
+          "description": "Human readable manifest name.",
+          "type": "string"
+        },
+        "tags": {
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "workbook": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WorkbookMeta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Port": {
+      "description": "Port definition.",
+      "type": "object",
+      "required": [
+        "dir",
+        "id",
+        "location",
+        "schema",
+        "shape"
+      ],
+      "properties": {
+        "constraints": {
+          "description": "Optional constraints applied to values.",
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Constraints"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default": {
+          "description": "Optional default value (inputs only).",
+          "default": null
+        },
+        "description": {
+          "description": "Optional documentation.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dir": {
+          "description": "Direction (input or output).",
+          "$ref": "#/definitions/Direction"
+        },
+        "id": {
+          "description": "Unique identifier for the port within the manifest.",
+          "type": "string"
+        },
+        "location": {
+          "description": "Selector binding the port to a workbook region.",
+          "$ref": "#/definitions/Selector"
+        },
+        "partition_key": {
+          "description": "Hint for partitioning/sharding semantics.",
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "required": {
+          "description": "Whether the port value is required (defaults to true).",
+          "default": true,
+          "type": "boolean"
+        },
+        "schema": {
+          "description": "Type information for values carried by the port.",
+          "$ref": "#/definitions/Schema"
+        },
+        "shape": {
+          "description": "Structural shape of the port.",
+          "$ref": "#/definitions/Shape"
+        },
+        "units": {
+          "description": "Optional units metadata.",
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Units"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RangeKind": {
+      "type": "string",
+      "enum": [
+        "range"
+      ]
+    },
+    "RangeSchema": {
+      "type": "object",
+      "required": [
+        "cell_type"
+      ],
+      "properties": {
+        "cell_type": {
+          "description": "Value type enforced for each cell.",
+          "$ref": "#/definitions/ValueType"
+        },
+        "format": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "default": "range",
+          "$ref": "#/definitions/RangeKind"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RecordField": {
+      "type": "object",
+      "required": [
+        "location",
+        "type"
+      ],
+      "properties": {
+        "constraints": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Constraints"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "location": {
+          "description": "Selector resolving to the field cell.",
+          "$ref": "#/definitions/FieldSelector"
+        },
+        "type": {
+          "description": "Scalar value type for the field.",
+          "$ref": "#/definitions/ValueType"
+        },
+        "units": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Units"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RecordKind": {
+      "type": "string",
+      "enum": [
+        "record"
+      ]
+    },
+    "RecordSchema": {
+      "type": "object",
+      "required": [
+        "fields"
+      ],
+      "properties": {
+        "fields": {
+          "description": "Mapping of field names to scalar schema definitions.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/RecordField"
+          }
+        },
+        "kind": {
+          "default": "record",
+          "$ref": "#/definitions/RecordKind"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ScalarSchema": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "format": {
+          "description": "Optional format hint.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "Scalar value type.",
+          "$ref": "#/definitions/ValueType"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Schema": {
+      "description": "Schema union.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ScalarSchema"
+        },
+        {
+          "$ref": "#/definitions/RecordSchema"
+        },
+        {
+          "$ref": "#/definitions/RangeSchema"
+        },
+        {
+          "$ref": "#/definitions/TableSchema"
+        }
+      ]
+    },
+    "Selector": {
+      "description": "Selector union.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SelectorA1"
+        },
+        {
+          "$ref": "#/definitions/SelectorName"
+        },
+        {
+          "$ref": "#/definitions/SelectorTable"
+        },
+        {
+          "$ref": "#/definitions/SelectorStructRef"
+        },
+        {
+          "$ref": "#/definitions/SelectorLayout"
+        }
+      ]
+    },
+    "SelectorA1": {
+      "type": "object",
+      "required": [
+        "a1"
+      ],
+      "properties": {
+        "a1": {
+          "description": "Absolute A1-style reference to a cell or range (e.g., `Sheet1!A1:C10`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SelectorLayout": {
+      "type": "object",
+      "required": [
+        "layout"
+      ],
+      "properties": {
+        "layout": {
+          "description": "Declarative layout descriptor for header-based regions.",
+          "$ref": "#/definitions/LayoutDescriptor"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SelectorName": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "description": "Workbook-defined name (global or sheet scoped).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SelectorStructRef": {
+      "type": "object",
+      "required": [
+        "struct_ref"
+      ],
+      "properties": {
+        "struct_ref": {
+          "description": "Excel structured reference syntax (e.g., `TblOrders[Qty]`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SelectorTable": {
+      "type": "object",
+      "required": [
+        "table"
+      ],
+      "properties": {
+        "table": {
+          "$ref": "#/definitions/TableSelector"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Shape": {
+      "description": "Port shape.",
+      "oneOf": [
+        {
+          "description": "Scalar value (single cell).",
+          "type": "string",
+          "enum": [
+            "scalar"
+          ]
+        },
+        {
+          "description": "Record of named scalar fields.",
+          "type": "string",
+          "enum": [
+            "record"
+          ]
+        },
+        {
+          "description": "Rectangular range with uniform type.",
+          "type": "string",
+          "enum": [
+            "range"
+          ]
+        },
+        {
+          "description": "Table with named columns.",
+          "type": "string",
+          "enum": [
+            "table"
+          ]
+        }
+      ]
+    },
+    "SpecVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z-.]+)?(?:\\+[0-9A-Za-z-.]+)?$"
+    },
+    "TableArea": {
+      "oneOf": [
+        {
+          "description": "Header row of the table.",
+          "type": "string",
+          "enum": [
+            "header"
+          ]
+        },
+        {
+          "description": "Table body rows (default).",
+          "type": "string",
+          "enum": [
+            "body"
+          ]
+        },
+        {
+          "description": "Totals row.",
+          "type": "string",
+          "enum": [
+            "totals"
+          ]
+        }
+      ]
+    },
+    "TableColumn": {
+      "type": "object",
+      "required": [
+        "name",
+        "type"
+      ],
+      "properties": {
+        "col": {
+          "description": "Optional column letter hint when using layout selectors.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Column name exposed to clients.",
+          "type": "string"
+        },
+        "type": {
+          "description": "Scalar type for column cells.",
+          "$ref": "#/definitions/ValueType"
+        },
+        "units": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Units"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "TableKind": {
+      "type": "string",
+      "enum": [
+        "table"
+      ]
+    },
+    "TableSchema": {
+      "type": "object",
+      "required": [
+        "columns"
+      ],
+      "properties": {
+        "columns": {
+          "description": "Column definitions.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TableColumn"
+          }
+        },
+        "keys": {
+          "description": "Optional list of column names forming a logical primary key.",
+          "default": null,
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "default": "table",
+          "$ref": "#/definitions/TableKind"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TableSelector": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "area": {
+          "description": "Optional target area within the table.",
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TableArea"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "Excel table name.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Units": {
+      "description": "Units metadata (extensible).",
+      "type": "object",
+      "properties": {
+        "currency": {
+          "description": "Currency code (ISO 4217).",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ValueType": {
+      "description": "Scalar value types.",
+      "type": "string",
+      "enum": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "date",
+        "datetime"
+      ]
+    },
+    "WorkbookMeta": {
+      "description": "Optional workbook descriptors.",
+      "type": "object",
+      "properties": {
+        "date_system": {
+          "description": "Expected Excel date system (1900 or 1904).",
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "locale": {
+          "description": "Locale hint for parsing numbers/dates.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timezone": {
+          "description": "Time zone identifier for datetime interpretation.",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "description": "Optional workbook URI (sharepoint://, file://, etc.).",
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
