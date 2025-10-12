@@ -9,7 +9,7 @@ members = [
   "crates/formualizer-workbook",
   "bindings/python",
   "bindings/wasm",
-  "crates/sheetport-spec",
+  "crates/sheetport-spec", "crates/formualizer-sheetport", "crates/formualizer",
 ]
 
 [workspace.package]
@@ -35,3 +35,4 @@ semver = "1.0.26"
 regex = "1.11.1"
 clap = "4.5.48"
 anyhow = "1.0.100"
+thiserror = "1.0.63"

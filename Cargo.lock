@@ -919,6 +919,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "formualizer"
+version = "0.1.0"
+dependencies = [
+ "formualizer-eval",
+ "formualizer-sheetport",
+ "formualizer-workbook",
+ "sheetport-spec",
+]
+
+[[package]]
 name = "formualizer-common"
 version = "0.1.0"
 dependencies = [
@@ -982,6 +992,19 @@ dependencies = [
  "formualizer-workbook",
  "pyo3",
  "serde_json",
+]
+
+[[package]]
+name = "formualizer-sheetport"
+version = "0.1.0"
+dependencies = [
+ "formualizer-common",
+ "formualizer-parse",
+ "formualizer-workbook",
+ "serde",
+ "serde_json",
+ "sheetport-spec",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
