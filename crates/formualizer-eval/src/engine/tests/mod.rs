@@ -14,6 +14,7 @@ mod layer_evaluation;
 //mod mark_dirty_benchmarks;
 mod parallel;
 mod range_dependencies;
+mod recalc_plan;
 mod range_property_tests;
 mod schedule_integration;
 mod sheet_index_integration;

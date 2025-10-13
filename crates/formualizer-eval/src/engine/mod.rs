@@ -43,7 +43,7 @@ mod tests;
 
 use std::fmt::{Display, Formatter};
 
-pub use eval::{Engine, EvalResult};
+pub use eval::{Engine, EvalResult, RecalcPlan};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{

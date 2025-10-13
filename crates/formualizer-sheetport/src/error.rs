@@ -1,4 +1,5 @@
 use crate::validation::ConstraintViolation;
+use formualizer_common::ExcelError;
 use formualizer_workbook::error::IoError;
 use sheetport_spec::{ManifestIssue, ValidationError};
 use thiserror::Error;
@@ -29,6 +30,12 @@ pub enum SheetPortError {
     #[error("value did not satisfy manifest constraints")]
     ConstraintViolation {
         violations: Vec<ConstraintViolation>,
+    },
+    /// Underlying engine reported an evaluation error.
+    #[error("engine error: {source}")]
+    Engine {
+        #[from]
+        source: ExcelError,
     },
     /// Failure when interacting with the underlying workbook backend.
     #[error("workbook error: {source}")]

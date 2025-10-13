@@ -1000,6 +1000,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "formualizer-common",
+ "formualizer-eval",
  "formualizer-parse",
  "formualizer-workbook",
  "regex",

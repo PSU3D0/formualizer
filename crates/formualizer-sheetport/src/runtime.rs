@@ -9,6 +9,7 @@ use crate::validation::{ValidationScope, validate_port_value};
 use crate::value::{InputSnapshot, InputUpdate, OutputSnapshot, PortValue, TableRow, TableValue};
 use crate::{BatchExecutor, BatchOptions};
 use formualizer_common::{LiteralValue, RangeAddress};
+use formualizer_eval::engine::RecalcPlan;
 use formualizer_workbook::Workbook;
 use sheetport_spec::{Direction, Manifest};
 use std::collections::BTreeMap;
@@ -145,13 +146,25 @@ impl<'a> SheetPort<'a> {
         self.read_outputs()
     }
 
+    pub fn evaluate_with_plan(
+        &mut self,
+        plan: &RecalcPlan,
+        options: EvalOptions,
+    ) -> Result<OutputSnapshot, SheetPortError> {
+        // Future: apply options before evaluation.
+        let _ = options;
+        self.workbook.evaluate_with_plan(plan)?;
+        self.read_outputs()
+    }
+
     pub fn batch(
         &'a mut self,
         options: BatchOptions<'a>,
     ) -> Result<BatchExecutor<'a>, SheetPortError> {
         let baseline = self.read_inputs()?;
         let baseline_update = baseline.to_update();
-        Ok(BatchExecutor::new(self, baseline_update, options))
+        let plan = self.workbook().engine().build_recalc_plan()?;
+        Ok(BatchExecutor::new(self, baseline_update, options, plan))
     }
 
     fn read_port_value(&mut self, binding: &PortBinding) -> Result<PortValue, SheetPortError> {

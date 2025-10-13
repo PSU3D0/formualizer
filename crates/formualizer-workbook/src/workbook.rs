@@ -648,6 +648,15 @@ impl Workbook {
         self.engine.evaluate_all().map_err(IoError::Engine)
     }
 
+    pub fn evaluate_with_plan(
+        &mut self,
+        plan: &formualizer_eval::engine::RecalcPlan,
+    ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
+        self.engine
+            .evaluate_recalc_plan(plan)
+            .map_err(IoError::Engine)
+    }
+
     // Persistence/transactions via SpreadsheetWriter (self implements writer)
     pub fn begin_tx<'a, W: SpreadsheetWriter>(
         &'a mut self,

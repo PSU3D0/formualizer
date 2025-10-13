@@ -1,6 +1,7 @@
 use crate::SheetPortError;
 use crate::runtime::{EvalOptions, SheetPort};
 use crate::value::{InputUpdate, OutputSnapshot};
+use formualizer_eval::engine::RecalcPlan;
 
 /// Execution options for batch runs.
 pub struct BatchOptions<'a> {
@@ -54,6 +55,7 @@ pub struct BatchExecutor<'a> {
     sheetport: &'a mut SheetPort<'a>,
     baseline_update: InputUpdate,
     options: BatchOptions<'a>,
+    plan: RecalcPlan,
 }
 
 impl<'a> BatchExecutor<'a> {
@@ -61,11 +63,13 @@ impl<'a> BatchExecutor<'a> {
         sheetport: &'a mut SheetPort<'a>,
         baseline_update: InputUpdate,
         options: BatchOptions<'a>,
+        plan: RecalcPlan,
     ) -> Self {
         Self {
             sheetport,
             baseline_update,
             options,
+            plan,
         }
     }
 
@@ -83,7 +87,9 @@ impl<'a> BatchExecutor<'a> {
             if !update.is_empty() {
                 self.sheetport.write_inputs(update)?;
             }
-            let outputs = self.sheetport.evaluate_once(self.options.eval.clone())?;
+            let outputs =
+                self.sheetport
+                    .evaluate_with_plan(&self.plan, self.options.eval.clone())?;
             if let Some(callback) = self.options.progress.as_mut() {
                 callback(BatchProgress {
                     completed: idx + 1,

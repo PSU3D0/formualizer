@@ -13,6 +13,7 @@ use chrono::Timelike;
 use formualizer_parse::parser::ReferenceType;
 use formualizer_parse::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -45,6 +46,18 @@ pub struct EvalResult {
     pub computed_vertices: usize,
     pub cycle_errors: usize,
     pub elapsed: std::time::Duration,
+}
+
+/// Cached evaluation schedule that can be replayed across multiple recalculations.
+#[derive(Debug)]
+pub struct RecalcPlan {
+    schedule: crate::engine::Schedule,
+}
+
+impl RecalcPlan {
+    pub fn layer_count(&self) -> usize {
+        self.schedule.layers.len()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1068,6 +1081,91 @@ where
         self.graph.clear_dirty_flags(&precedents_to_eval);
 
         // Re-dirty volatile vertices
+        self.graph.redirty_volatiles();
+
+        Ok(EvalResult {
+            computed_vertices,
+            cycle_errors,
+            elapsed: start.elapsed(),
+        })
+    }
+
+    /// Build a reusable evaluation plan that covers every formula vertex in the workbook.
+    pub fn build_recalc_plan(&self) -> Result<RecalcPlan, ExcelError> {
+        let mut vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
+        vertices.sort_unstable();
+        if vertices.is_empty() {
+            return Ok(RecalcPlan {
+                schedule: crate::engine::Schedule {
+                    layers: Vec::new(),
+                    cycles: Vec::new(),
+                },
+            });
+        }
+
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = scheduler.create_schedule(&vertices)?;
+        Ok(RecalcPlan { schedule })
+    }
+
+    /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
+    pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
+        if self.config.defer_graph_building {
+            self.build_graph_all()?;
+        }
+
+        let start = std::time::Instant::now();
+        let dirty_vertices = self.graph.get_evaluation_vertices();
+        if dirty_vertices.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices: 0,
+                cycle_errors: 0,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        let dirty_set: FxHashSet<VertexId> = dirty_vertices.iter().copied().collect();
+        let mut computed_vertices = 0;
+        let mut cycle_errors = 0;
+
+        if !plan.schedule.cycles.is_empty() {
+            let circ_error = LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Circ)
+                    .with_message("Circular dependency detected".to_string()),
+            );
+            for cycle in &plan.schedule.cycles {
+                if !cycle.iter().any(|v| dirty_set.contains(v)) {
+                    continue;
+                }
+                cycle_errors += 1;
+                for &vertex_id in cycle {
+                    if dirty_set.contains(&vertex_id) {
+                        self.graph
+                            .update_vertex_value(vertex_id, circ_error.clone());
+                    }
+                }
+            }
+        }
+
+        for layer in &plan.schedule.layers {
+            let work: Vec<VertexId> = layer
+                .vertices
+                .iter()
+                .copied()
+                .filter(|v| dirty_set.contains(v))
+                .collect();
+            if work.is_empty() {
+                continue;
+            }
+            let temp_layer = crate::engine::scheduler::Layer { vertices: work };
+            if self.thread_pool.is_some() && temp_layer.vertices.len() > 1 {
+                computed_vertices += self.evaluate_layer_parallel(&temp_layer)?;
+            } else {
+                computed_vertices += self.evaluate_layer_sequential(&temp_layer)?;
+            }
+        }
+
+        self.graph.clear_dirty_flags(&dirty_vertices);
         self.graph.redirty_volatiles();
 
         Ok(EvalResult {
