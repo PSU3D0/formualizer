@@ -1,3 +1,4 @@
+use crate::validation::ConstraintViolation;
 use formualizer_workbook::error::IoError;
 use sheetport_spec::{ManifestIssue, ValidationError};
 use thiserror::Error;
@@ -18,9 +19,17 @@ pub enum SheetPortError {
         reference: String,
         details: String,
     },
+    /// Referenced sheet was not present in the workbook.
+    #[error("sheet `{sheet}` referenced by port `{port}` was not found in the workbook")]
+    MissingSheet { port: String, sheet: String },
     /// Structural invariant could not be satisfied.
     #[error("invariant violation for port `{port}`: {message}")]
     InvariantViolation { port: String, message: String },
+    /// Input or resolved data violated manifest constraints.
+    #[error("value did not satisfy manifest constraints")]
+    ConstraintViolation {
+        violations: Vec<ConstraintViolation>,
+    },
     /// Failure when interacting with the underlying workbook backend.
     #[error("workbook error: {source}")]
     Workbook {

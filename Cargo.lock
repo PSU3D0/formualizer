@@ -998,13 +998,17 @@ dependencies = [
 name = "formualizer-sheetport"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "formualizer-common",
  "formualizer-parse",
  "formualizer-workbook",
+ "regex",
  "serde",
  "serde_json",
  "sheetport-spec",
+ "tempfile",
  "thiserror 1.0.69",
+ "umya-spreadsheet",
 ]
 
 [[package]]

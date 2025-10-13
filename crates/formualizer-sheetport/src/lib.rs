@@ -5,16 +5,24 @@
 //! pure I/O contract: resolving selectors, describing typed ports, and preparing
 //! the groundwork for deterministic reads and writes.
 
+mod batch;
 mod binding;
+mod context;
 mod error;
+mod layout;
 mod location;
 mod resolver;
 mod runtime;
+mod validation;
+mod value;
 
+pub use batch::{BatchExecutor, BatchInput, BatchOptions, BatchProgress, BatchResult};
 pub use binding::{
-    BoundPort, ManifestBindings, PortBinding, RecordBinding, RecordFieldBinding, ScalarBinding,
-    TableBinding,
+    BoundPort, ManifestBindings, PortBinding, RangeBinding, RecordBinding, RecordFieldBinding,
+    ScalarBinding, TableBinding, TableColumnBinding,
 };
 pub use error::SheetPortError;
 pub use location::{AreaLocation, FieldLocation, ScalarLocation, TableLocation};
-pub use runtime::SheetPort;
+pub use runtime::{EvalMode, EvalOptions, SheetPort};
+pub use validation::{ConstraintViolation, ValidationScope};
+pub use value::{InputSnapshot, InputUpdate, OutputSnapshot, PortValue, TableRow, TableValue};

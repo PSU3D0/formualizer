@@ -9,9 +9,13 @@ primitives so a workbook plus manifest behaves like a pure function.
 - Resolve every manifest selector (`a1`, named ranges, tables, structured
   references, header-based layouts) into workbook coordinates.
 - Coerce values into typed inputs/outputs in accordance with manifest schemas,
-  including default application and constraint checking.
-- Provide ergonomic APIs for loading manifests, reading outputs, writing inputs,
-  and triggering evaluation through the existing Formualizer engine.
+  including default application and constraint checking. Violations surface as
+  `SheetPortError::ConstraintViolation` with detailed paths so callers can
+  highlight the offending cells or fields.
+- Provide ergonomic APIs for loading manifests, reading inputs/outputs, writing
+  inputs, and triggering evaluation through the existing Formualizer engine.
+- Batch execution helpers (`BatchExecutor`) fan scenarios across a shared
+  workbook while reapplying the baseline manifest between runs.
 
 ## Non-goals (for now)
 
