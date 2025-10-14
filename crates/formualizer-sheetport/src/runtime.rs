@@ -193,9 +193,26 @@ impl<'a> SheetPort<'a> {
                     .unwrap_or(LiteralValue::Empty);
                 Ok(PortValue::Scalar(value))
             }
+            crate::location::ScalarLocation::Name(name) => {
+                let addr = self.named_range_address(&binding.id, name)?;
+                if addr.height() != 1 || addr.width() != 1 {
+                    return Err(SheetPortError::InvariantViolation {
+                        port: binding.id.clone(),
+                        message: format!(
+                            "named range `{name}` must resolve to a single cell for scalar ports"
+                        ),
+                    });
+                }
+                let value = self
+                    .workbook
+                    .get_value(&addr.sheet, addr.start_row, addr.start_col)
+                    .unwrap_or(LiteralValue::Empty);
+                Ok(PortValue::Scalar(value))
+            }
             _ => Err(SheetPortError::UnsupportedSelector {
                 port: binding.id.clone(),
-                reason: "scalar selectors beyond cells are not supported yet".to_string(),
+                reason: "scalar selectors beyond cells or named ranges are not supported yet"
+                    .to_string(),
             }),
         }
     }
@@ -224,10 +241,19 @@ impl<'a> SheetPort<'a> {
                 .get_value(&addr.sheet, addr.start_row, addr.start_col)
                 .unwrap_or(LiteralValue::Empty)),
             crate::location::FieldLocation::Name(name) => {
-                Err(SheetPortError::UnsupportedSelector {
-                    port: port_id.to_string(),
-                    reason: format!("named range `{name}` is not yet supported"),
-                })
+                let addr = self.named_range_address(port_id, name)?;
+                if addr.height() != 1 || addr.width() != 1 {
+                    return Err(SheetPortError::InvariantViolation {
+                        port: port_id.to_string(),
+                        message: format!(
+                            "named range `{name}` must resolve to a single cell for record fields"
+                        ),
+                    });
+                }
+                Ok(self
+                    .workbook
+                    .get_value(&addr.sheet, addr.start_row, addr.start_col)
+                    .unwrap_or(LiteralValue::Empty))
             }
             crate::location::FieldLocation::StructRef(struct_ref) => {
                 Err(SheetPortError::UnsupportedSelector {
@@ -245,6 +271,10 @@ impl<'a> SheetPort<'a> {
     ) -> Result<PortValue, SheetPortError> {
         let grid = match &range.location {
             crate::location::AreaLocation::Range(addr) => self.workbook.read_range(addr),
+            crate::location::AreaLocation::Name(name) => {
+                let addr = self.named_range_address(&binding.id, name)?;
+                self.workbook.read_range(&addr)
+            }
             crate::location::AreaLocation::Layout(layout) => {
                 let bounds = resolve_range_layout(&binding.id, self.workbook, layout)?;
                 let start_row = bounds.start_row;
@@ -351,6 +381,20 @@ impl<'a> SheetPort<'a> {
                 .workbook
                 .set_value(&addr.sheet, addr.start_row, addr.start_col, value)
                 .map_err(SheetPortError::from),
+            crate::location::ScalarLocation::Name(name) => {
+                let addr = self.named_range_address(&binding.id, name)?;
+                if addr.height() != 1 || addr.width() != 1 {
+                    return Err(SheetPortError::InvariantViolation {
+                        port: binding.id.clone(),
+                        message: format!(
+                            "named range `{name}` must resolve to a single cell for scalar ports"
+                        ),
+                    });
+                }
+                self.workbook
+                    .set_value(&addr.sheet, addr.start_row, addr.start_col, value)
+                    .map_err(SheetPortError::from)
+            }
             _ => Err(SheetPortError::UnsupportedSelector {
                 port: binding.id.clone(),
                 reason: "scalar selectors beyond cells are not supported yet".to_string(),
@@ -373,6 +417,20 @@ impl<'a> SheetPort<'a> {
             })?;
             match &field_binding.location {
                 crate::location::FieldLocation::Cell(addr) => {
+                    self.workbook
+                        .set_value(&addr.sheet, addr.start_row, addr.start_col, value)
+                        .map_err(SheetPortError::from)?;
+                }
+                crate::location::FieldLocation::Name(name) => {
+                    let addr = self.named_range_address(&binding.id, name)?;
+                    if addr.height() != 1 || addr.width() != 1 {
+                        return Err(SheetPortError::InvariantViolation {
+                            port: binding.id.clone(),
+                            message: format!(
+                                "record field `{field_name}` named range `{name}` must resolve to a single cell"
+                            ),
+                        });
+                    }
                     self.workbook
                         .set_value(&addr.sheet, addr.start_row, addr.start_col, value)
                         .map_err(SheetPortError::from)?;
@@ -424,6 +482,36 @@ impl<'a> SheetPort<'a> {
                     grid,
                 )
             }
+            crate::location::AreaLocation::Name(name) => {
+                let addr = self.named_range_address(&binding.id, name)?;
+                let expected_width = addr.width();
+                if grid.first().map(|row| row.len() as u32).unwrap_or(0) != expected_width {
+                    return Err(SheetPortError::InvariantViolation {
+                        port: binding.id.clone(),
+                        message: format!(
+                            "range update width does not match named range `{name}` width"
+                        ),
+                    });
+                }
+                let height = grid.len() as u32;
+                if height != addr.height() {
+                    return Err(SheetPortError::InvariantViolation {
+                        port: binding.id.clone(),
+                        message: format!(
+                            "range update height does not match named range `{name}` height"
+                        ),
+                    });
+                }
+                self.write_grid(
+                    binding.id.as_str(),
+                    &addr.sheet,
+                    addr.start_row,
+                    addr.start_col,
+                    height,
+                    expected_width,
+                    grid,
+                )
+            }
             other => Err(SheetPortError::UnsupportedSelector {
                 port: binding.id.clone(),
                 reason: format!("unsupported area selector `{other:?}` for range port"),
@@ -463,6 +551,19 @@ impl<'a> SheetPort<'a> {
             }
         }
         Ok(())
+    }
+
+    fn named_range_address(
+        &self,
+        port_id: &str,
+        name: &str,
+    ) -> Result<RangeAddress, SheetPortError> {
+        self.workbook
+            .named_range_address(name)
+            .ok_or_else(|| SheetPortError::InvariantViolation {
+                port: port_id.to_string(),
+                message: format!("named range `{name}` was not found in the workbook"),
+            })
     }
 
     fn write_table(

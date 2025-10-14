@@ -1,8 +1,10 @@
 use crate::error::{col_to_a1, IoError};
-use crate::traits::{LoadStrategy, SpreadsheetReader};
+use crate::traits::{LoadStrategy, NamedRange, NamedRangeScope, SpreadsheetReader};
 use formualizer_eval::engine::Engine;
 use formualizer_eval::traits::EvaluationContext;
+use formualizer_eval::{reference::CellRef, reference::Coord};
 use formualizer_parse::parser;
+use rustc_hash::FxHashSet;
 use std::time::Instant;
 
 #[derive(Debug, Default)]
@@ -23,6 +25,8 @@ pub struct WorkbookLoader<B: SpreadsheetReader> {
     backend: B,
     strategy: LoadStrategy,
     stats: LoaderStats,
+    pending_named_ranges: Vec<PendingNamedRange>,
+    seen_named_ranges: FxHashSet<(NamedRangeScope, Option<String>, String)>,
 }
 
 impl<B: SpreadsheetReader> WorkbookLoader<B> {
@@ -31,6 +35,8 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
             backend,
             strategy,
             stats: LoaderStats::default(),
+            pending_named_ranges: Vec::new(),
+            seen_named_ranges: FxHashSet::default(),
         }
     }
 
@@ -88,6 +94,10 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
         };
 
         engine.end_batch();
+
+        if result.is_ok() {
+            self.register_named_ranges(engine)?;
+        }
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
         self.stats.load_time_ms = if elapsed_ms == 0 { 1 } else { elapsed_ms };
@@ -164,6 +174,99 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
         self.stats.sheets_loaded += 1;
         let insert_elapsed = t_insert_start.elapsed();
         self.stats.engine_insert_time_ms += insert_elapsed.as_millis() as u64;
+
+        self.collect_named_ranges(sheet, &sheet_data.named_ranges);
         Ok(())
     }
+
+    fn collect_named_ranges(&mut self, sheet: &str, ranges: &[NamedRange]) {
+        for named in ranges {
+            let target_sheet = named.sheet.clone().unwrap_or_else(|| sheet.to_string());
+            if target_sheet != sheet {
+                // Defer to the sheet the range references to avoid duplicating entries.
+                continue;
+            }
+            let key = (
+                named.scope.clone(),
+                Some(target_sheet.clone()),
+                named.name.clone(),
+            );
+            if !self.seen_named_ranges.insert(key) {
+                continue;
+            }
+            self.pending_named_ranges.push(PendingNamedRange {
+                name: named.name.clone(),
+                scope: named.scope.clone(),
+                target_sheet,
+                range: named.range,
+            });
+        }
+    }
+
+    fn register_named_ranges<R>(&mut self, engine: &mut Engine<R>) -> Result<(), IoError>
+    where
+        R: EvaluationContext,
+    {
+        for pending in self.pending_named_ranges.drain(..) {
+            let sheet_id = match engine.graph.sheet_id(&pending.target_sheet) {
+                Some(id) => id,
+                None => {
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!(
+                        name = %pending.name,
+                        sheet = %pending.target_sheet,
+                        "named range references sheet that was not loaded; skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let (sr, sc, er, ec) = pending.range;
+            if sr == 0 || sc == 0 || er == 0 || ec == 0 {
+                #[cfg(feature = "tracing")]
+                tracing::warn!(
+                    name = %pending.name,
+                    sheet = %pending.target_sheet,
+                    "named range contains zero-based coordinates; skipping"
+                );
+                continue;
+            }
+            let start_coord = Coord::new(sr.saturating_sub(1), sc.saturating_sub(1), true, true);
+            let end_coord = Coord::new(er.saturating_sub(1), ec.saturating_sub(1), true, true);
+            let start_ref = CellRef::new(sheet_id, start_coord);
+            let end_ref = CellRef::new(sheet_id, end_coord);
+
+            let definition = if sr == er && sc == ec {
+                formualizer_eval::engine::named_range::NamedDefinition::Cell(start_ref)
+            } else {
+                let range_ref = formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                formualizer_eval::engine::named_range::NamedDefinition::Range(range_ref)
+            };
+
+            let scope = match pending.scope {
+                NamedRangeScope::Workbook => {
+                    formualizer_eval::engine::named_range::NameScope::Workbook
+                }
+                NamedRangeScope::Sheet => {
+                    formualizer_eval::engine::named_range::NameScope::Sheet(sheet_id)
+                }
+            };
+
+            engine
+                .graph
+                .define_name(&pending.name, definition, scope)
+                .map_err(IoError::Engine)?;
+        }
+
+        self.seen_named_ranges.clear();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingNamedRange {
+    name: String,
+    scope: NamedRangeScope,
+    target_sheet: String,
+    range: (u32, u32, u32, u32),
 }

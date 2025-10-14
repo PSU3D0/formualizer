@@ -113,9 +113,25 @@ pub struct SheetData {
 }
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "json", serde(rename_all = "lowercase"))]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum NamedRangeScope {
+    Workbook,
+    Sheet,
+}
+
+impl Default for NamedRangeScope {
+    fn default() -> Self {
+        NamedRangeScope::Workbook
+    }
+}
+
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug)]
 pub struct NamedRange {
     pub name: String,
+    #[cfg_attr(feature = "json", serde(default))]
+    pub scope: NamedRangeScope,
     pub sheet: Option<String>,
     pub range: (u32, u32, u32, u32), // (start_row, start_col, end_row, end_col)
 }

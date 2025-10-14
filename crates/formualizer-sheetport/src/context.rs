@@ -34,10 +34,19 @@ impl<'a> WorkbookContext<'a> {
     ) -> Result<(), SheetPortError> {
         match &binding.location {
             ScalarLocation::Cell(addr) => self.ensure_sheet(port_id, &addr.sheet),
-            ScalarLocation::Name(name) => Err(SheetPortError::UnsupportedSelector {
-                port: port_id.to_string(),
-                reason: format!("named range `{name}` is not yet supported"),
-            }),
+            ScalarLocation::Name(name) => match self.workbook.named_range_address(name) {
+                Some(addr) if addr.height() == 1 && addr.width() == 1 => Ok(()),
+                Some(_) => Err(SheetPortError::InvariantViolation {
+                    port: port_id.to_string(),
+                    message: format!(
+                        "named range `{name}` must resolve to exactly one cell for scalar ports"
+                    ),
+                }),
+                None => Err(SheetPortError::InvariantViolation {
+                    port: port_id.to_string(),
+                    message: format!("named range `{name}` was not found in the workbook"),
+                }),
+            },
             ScalarLocation::StructRef(struct_ref) => Err(SheetPortError::UnsupportedSelector {
                 port: port_id.to_string(),
                 reason: format!("structured reference `{struct_ref}` is not yet supported"),
@@ -54,14 +63,25 @@ impl<'a> WorkbookContext<'a> {
         for (field_name, field) in &binding.fields {
             match &field.location {
                 FieldLocation::Cell(addr) => self.ensure_sheet(port_id, &addr.sheet)?,
-                FieldLocation::Name(name) => {
-                    return Err(SheetPortError::UnsupportedSelector {
-                        port: port_id.to_string(),
-                        reason: format!(
-                            "record field `{field_name}` references named range `{name}` which is not yet supported"
-                        ),
-                    });
-                }
+                FieldLocation::Name(name) => match self.workbook.named_range_address(name) {
+                    Some(addr) if addr.height() == 1 && addr.width() == 1 => {}
+                    Some(_) => {
+                        return Err(SheetPortError::InvariantViolation {
+                            port: port_id.to_string(),
+                            message: format!(
+                                "record field `{field_name}` named range `{name}` must resolve to a single cell"
+                            ),
+                        });
+                    }
+                    None => {
+                        return Err(SheetPortError::InvariantViolation {
+                            port: port_id.to_string(),
+                            message: format!(
+                                "record field `{field_name}` references missing named range `{name}`"
+                            ),
+                        });
+                    }
+                },
                 FieldLocation::StructRef(struct_ref) => {
                     return Err(SheetPortError::UnsupportedSelector {
                         port: port_id.to_string(),
@@ -78,10 +98,16 @@ impl<'a> WorkbookContext<'a> {
     fn ensure_area(&self, port_id: &str, location: &AreaLocation) -> Result<(), SheetPortError> {
         match location {
             AreaLocation::Range(addr) => self.ensure_sheet(port_id, &addr.sheet),
-            AreaLocation::Name(name) => Err(SheetPortError::UnsupportedSelector {
-                port: port_id.to_string(),
-                reason: format!("area selector named range `{name}` is not yet supported"),
-            }),
+            AreaLocation::Name(name) => {
+                if let Some(_) = self.workbook.named_range_address(name) {
+                    Ok(())
+                } else {
+                    Err(SheetPortError::InvariantViolation {
+                        port: port_id.to_string(),
+                        message: format!("named range `{name}` was not found in the workbook"),
+                    })
+                }
+            }
             AreaLocation::StructRef(struct_ref) => Err(SheetPortError::UnsupportedSelector {
                 port: port_id.to_string(),
                 reason: format!("structured reference `{struct_ref}` is not yet supported"),

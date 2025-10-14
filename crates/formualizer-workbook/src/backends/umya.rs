@@ -1,14 +1,21 @@
 #![cfg(feature = "umya")]
 
 use crate::traits::{
-    AccessGranularity, BackendCaps, CellData, SheetData, SpreadsheetReader, SpreadsheetWriter,
+    AccessGranularity, BackendCaps, CellData, NamedRange, NamedRangeScope, SheetData,
+    SpreadsheetReader, SpreadsheetWriter,
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_parse::parser::ReferenceType;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
-use umya_spreadsheet::{reader::xlsx, CellRawValue, CellValue, Spreadsheet};
+use umya_spreadsheet::{
+    reader::xlsx,
+    structs::{DefinedName, Worksheet},
+    CellRawValue, CellValue, Spreadsheet,
+};
 
 pub struct UmyaAdapter {
     workbook: RwLock<Spreadsheet>,
@@ -201,7 +208,7 @@ impl SpreadsheetReader for UmyaAdapter {
             cells: cells_map,
             dimensions: Some(dims),
             tables: vec![],
-            named_ranges: vec![],
+            named_ranges: Self::collect_named_ranges(sheet, &wb, ws),
             date_system_1904: false,
             merged_cells: vec![],
             hidden: false,
@@ -345,7 +352,7 @@ impl SpreadsheetWriter for UmyaAdapter {
     fn create_sheet(&mut self, name: &str) -> Result<(), Self::Error> {
         let mut wb = self.workbook.write();
         if wb.get_sheet_by_name(name).is_none() {
-            wb.new_sheet(name);
+            let _ = wb.new_sheet(name);
         }
         Ok(())
     }
@@ -420,5 +427,85 @@ impl SpreadsheetWriter for UmyaAdapter {
                 Ok(Some(buf))
             }
         }
+    }
+}
+
+impl UmyaAdapter {
+    fn collect_named_ranges(
+        sheet_name: &str,
+        workbook: &Spreadsheet,
+        worksheet: &Worksheet,
+    ) -> Vec<NamedRange> {
+        let mut ranges = Vec::new();
+        let mut seen: HashSet<(NamedRangeScope, String)> = HashSet::new();
+
+        for defined in worksheet.get_defined_names() {
+            if let Some(named) = Self::convert_defined_name(defined, sheet_name) {
+                let key = (named.scope.clone(), named.name.clone());
+                if seen.insert(key) {
+                    ranges.push(named);
+                }
+            }
+        }
+
+        for defined in workbook.get_defined_names() {
+            if let Some(named) = Self::convert_defined_name(defined, sheet_name) {
+                let key = (named.scope.clone(), named.name.clone());
+                if seen.insert(key) {
+                    ranges.push(named);
+                }
+            }
+        }
+
+        ranges
+    }
+
+    fn convert_defined_name(defined: &DefinedName, current_sheet: &str) -> Option<NamedRange> {
+        let raw = defined.get_address();
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.contains(',') {
+            return None;
+        }
+
+        let reference = ReferenceType::from_string(trimmed).ok()?;
+
+        let (sheet_name, start_row, start_col, end_row, end_col) = match reference {
+            ReferenceType::Cell { sheet, row, col } => {
+                let sheet = sheet.unwrap_or_else(|| current_sheet.to_string());
+                (sheet, row, col, row, col)
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => {
+                let sr = start_row?;
+                let sc = start_col?;
+                let er = end_row.unwrap_or(sr);
+                let ec = end_col.unwrap_or(sc);
+                let sheet = sheet.unwrap_or_else(|| current_sheet.to_string());
+                (sheet, sr, sc, er, ec)
+            }
+            _ => return None,
+        };
+
+        if sheet_name != current_sheet {
+            return None;
+        }
+
+        let scope = if defined.has_local_sheet_id() {
+            NamedRangeScope::Sheet
+        } else {
+            NamedRangeScope::Workbook
+        };
+
+        Some(NamedRange {
+            name: defined.get_name().to_string(),
+            scope,
+            sheet: Some(sheet_name),
+            range: (start_row, start_col, end_row, end_col),
+        })
     }
 }

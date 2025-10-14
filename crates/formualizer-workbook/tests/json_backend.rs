@@ -175,6 +175,7 @@ fn json_value_variants_roundtrip() {
 #[cfg(feature = "json")]
 #[test]
 fn json_metadata_roundtrip() {
+    use formualizer_workbook::traits::NamedRangeScope;
     use formualizer_workbook::{MergedRange, NamedRange, TableDefinition};
     let mut adapter = JsonAdapter::new();
     adapter.create_sheet("Meta").unwrap();
@@ -203,6 +204,7 @@ fn json_metadata_roundtrip() {
         "Meta",
         vec![NamedRange {
             name: "R1".into(),
+            scope: NamedRangeScope::Workbook,
             sheet: Some("Meta".into()),
             range: (1, 1, 2, 2),
         }],

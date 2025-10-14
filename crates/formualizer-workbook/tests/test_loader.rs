@@ -2,7 +2,7 @@ use formualizer_eval::engine::Engine;
 use formualizer_eval::engine::EvalConfig;
 use formualizer_workbook::{
     AccessGranularity, BackendCaps, CellData, LiteralValue, LoadStrategy, SheetData,
-    SpreadsheetReader, WorkbookLoader,
+    SpreadsheetReader, SpreadsheetWriter, WorkbookLoader,
 };
 use std::collections::BTreeMap;
 // no std::time here
@@ -198,4 +198,74 @@ fn test_loader_performance_tracking() {
     // Should track timing
     assert!(loader.stats().load_time_ms > 0);
     assert_eq!(loader.stats().cells_loaded, 100);
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn test_loader_registers_named_ranges() {
+    use formualizer_eval::engine::named_range::NamedDefinition;
+    use formualizer_workbook::traits::NamedRangeScope;
+    use formualizer_workbook::{CellData, JsonAdapter, NamedRange};
+
+    let mut adapter = JsonAdapter::new();
+    adapter.create_sheet("Sheet1").unwrap();
+    adapter.create_sheet("Sheet2").unwrap();
+    adapter
+        .write_cell("Sheet2", 1, 1, CellData::from_value(0.0))
+        .unwrap();
+
+    adapter.set_named_ranges(
+        "Sheet1",
+        vec![
+            NamedRange {
+                name: "GlobalName".into(),
+                scope: NamedRangeScope::Workbook,
+                sheet: Some("Sheet1".into()),
+                range: (1, 1, 1, 1),
+            },
+            NamedRange {
+                name: "LocalName".into(),
+                scope: NamedRangeScope::Sheet,
+                sheet: Some("Sheet1".into()),
+                range: (2, 1, 2, 2),
+            },
+        ],
+    );
+
+    let mut engine = create_test_engine();
+    let mut loader = WorkbookLoader::new(adapter, LoadStrategy::EagerAll);
+    loader.load_into_engine(&mut engine).unwrap();
+
+    let sheet_id = engine.graph.sheet_id("Sheet1").expect("sheet present");
+
+    let global = engine
+        .graph
+        .resolve_name("GlobalName", sheet_id)
+        .expect("global name registered");
+    match global {
+        NamedDefinition::Cell(cell) => {
+            assert_eq!(engine.graph.sheet_name(cell.sheet_id), "Sheet1");
+            assert_eq!(format!("{}", cell.coord), "$A$1");
+        }
+        other => panic!("expected cell definition, got {:?}", other),
+    }
+
+    let local = engine
+        .graph
+        .resolve_name("LocalName", sheet_id)
+        .expect("local name registered");
+    match local {
+        NamedDefinition::Range(range) => {
+            assert_eq!(format!("{}", range), "$A$2:$B$2");
+        }
+        other => panic!("expected range definition, got {:?}", other),
+    }
+
+    // Workbook-scoped name should also resolve from another sheet.
+    let sheet2_id = engine.graph.sheet_id("Sheet2").expect("second sheet");
+    let global_from_sheet2 = engine
+        .graph
+        .resolve_name("GlobalName", sheet2_id)
+        .expect("global name visible to other sheets");
+    assert!(matches!(global_from_sheet2, NamedDefinition::Cell(_)));
 }

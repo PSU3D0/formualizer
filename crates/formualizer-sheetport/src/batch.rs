@@ -87,9 +87,9 @@ impl<'a> BatchExecutor<'a> {
             if !update.is_empty() {
                 self.sheetport.write_inputs(update)?;
             }
-            let outputs =
-                self.sheetport
-                    .evaluate_with_plan(&self.plan, self.options.eval.clone())?;
+            let outputs = self
+                .sheetport
+                .evaluate_with_plan(&self.plan, self.options.eval.clone())?;
             if let Some(callback) = self.options.progress.as_mut() {
                 callback(BatchProgress {
                     completed: idx + 1,

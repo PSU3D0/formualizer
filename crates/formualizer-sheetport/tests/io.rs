@@ -6,6 +6,7 @@ mod workbook_common;
 
 use chrono::NaiveDate;
 use formualizer_common::LiteralValue;
+use formualizer_eval::engine::EvalConfig;
 use formualizer_sheetport::{
     BatchInput, BatchOptions, BatchProgress, ConstraintViolation, EvalOptions, InputSnapshot,
     InputUpdate, PortValue, SheetPort, SheetPortError, TableRow, TableValue,
@@ -108,6 +109,33 @@ ports:
           type: date
           location:
             a1: Outputs!B5
+"#;
+
+const NAMED_MANIFEST_YAML: &str = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: named-range-test
+  name: Named Range Manifest
+  workbook:
+    uri: memory://named.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: input_value
+    dir: in
+    shape: scalar
+    location:
+      name: InputValue
+    schema:
+      type: number
+  - id: output_value
+    dir: out
+    shape: scalar
+    location:
+      name: OutputValue
+    schema:
+      type: number
 "#;
 
 fn build_workbook() -> Result<Workbook, SheetPortError> {
@@ -222,8 +250,76 @@ fn set_formula(
         .map_err(SheetPortError::from)
 }
 
+fn build_named_range_workbook() -> Result<Workbook, SheetPortError> {
+    let tmp = tempfile::tempdir().map_err(|e| SheetPortError::InvariantViolation {
+        port: "named_range_setup".to_string(),
+        message: format!("failed to create temp dir: {e}"),
+    })?;
+    let path = tmp.path().join("named_range_sheetport.xlsx");
+
+    let mut book = umya_spreadsheet::new_file();
+    let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("default sheet");
+    sheet1.get_cell_mut((1, 1)).set_value_number(10.0);
+    sheet1
+        .add_defined_name("InputValue", "Sheet1!$A$1")
+        .expect("add input name");
+    sheet1.get_cell_mut((2, 1)).set_formula("InputValue*2");
+    sheet1
+        .add_defined_name("OutputValue", "Sheet1!$B$1")
+        .expect("add output name");
+    umya_spreadsheet::writer::xlsx::write(&book, &path).map_err(|e| {
+        SheetPortError::InvariantViolation {
+            port: "named_range_setup".to_string(),
+            message: format!("failed to write temp workbook: {e}"),
+        }
+    })?;
+
+    let backend =
+        UmyaAdapter::open_path(&path).map_err(|e| SheetPortError::InvariantViolation {
+            port: "named_range_setup".to_string(),
+            message: format!("failed to reopen temp workbook: {e}"),
+        })?;
+    let mut workbook =
+        Workbook::from_reader(backend, LoadStrategy::EagerAll, EvalConfig::default())
+            .map_err(SheetPortError::from)?;
+    workbook.evaluate_all().map_err(SheetPortError::from)?;
+    Ok(workbook)
+}
+
 fn parse_manifest() -> Manifest {
     Manifest::from_yaml_str(MANIFEST_YAML).expect("manifest parses")
+}
+
+fn parse_named_manifest() -> Manifest {
+    Manifest::from_yaml_str(NAMED_MANIFEST_YAML).expect("named manifest parses")
+}
+
+#[test]
+fn named_range_io_roundtrip() -> Result<(), SheetPortError> {
+    let mut workbook = build_named_range_workbook()?;
+    let manifest = parse_named_manifest();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+
+    let inputs = sheetport.read_inputs()?;
+    assert_scalar(
+        &inputs,
+        "input_value",
+        |v| matches!(v, LiteralValue::Number(n) if (n - 10.0).abs() < 1e-9),
+    );
+
+    let mut update = InputUpdate::new();
+    update.insert("input_value", PortValue::Scalar(LiteralValue::Number(25.0)));
+    sheetport.write_inputs(update)?;
+
+    let outputs = sheetport.evaluate_once(EvalOptions::default())?;
+    match outputs.get("output_value") {
+        Some(PortValue::Scalar(LiteralValue::Number(n))) => {
+            assert!((*n - 50.0).abs() < 1e-9)
+        }
+        other => panic!("expected scalar output value, got {other:?}"),
+    }
+
+    Ok(())
 }
 
 #[test]
@@ -480,9 +576,8 @@ fn table_updates_require_all_columns() -> Result<(), SheetPortError> {
 fn umya_loads_manifest_end_to_end() -> Result<(), SheetPortError> {
     let path = build_umya_inventory_fixture();
     let adapter = UmyaAdapter::open_path(&path).expect("open XLSX fixture");
-    let mut workbook =
-        Workbook::from_reader(adapter, LoadStrategy::EagerAll, Default::default())
-            .map_err(SheetPortError::from)?;
+    let mut workbook = Workbook::from_reader(adapter, LoadStrategy::EagerAll, Default::default())
+        .map_err(SheetPortError::from)?;
     workbook.evaluate_all().map_err(SheetPortError::from)?;
     workbook
         .set_value(
@@ -496,9 +591,11 @@ fn umya_loads_manifest_end_to_end() -> Result<(), SheetPortError> {
     let manifest = parse_manifest();
     let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
     let inputs = sheetport.read_inputs()?;
-    assert_scalar(&inputs, "warehouse_code", |v| {
-        matches!(v, LiteralValue::Text(code) if code == "WH-001")
-    });
+    assert_scalar(
+        &inputs,
+        "warehouse_code",
+        |v| matches!(v, LiteralValue::Text(code) if code == "WH-001"),
+    );
 
     let outputs = sheetport.evaluate_once(EvalOptions::default())?;
     assert!(matches!(
@@ -568,9 +665,11 @@ fn table_update_rejects_unknown_columns() -> Result<(), SheetPortError> {
         .write_inputs(update)
         .expect_err("expected validation failure for unknown column");
     let violations = expect_constraint(err);
-    assert!(violations
-        .iter()
-        .any(|v| v.path.contains("sku_inventory[0].unexpected")));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.path.contains("sku_inventory[0].unexpected"))
+    );
     Ok(())
 }
 
@@ -582,10 +681,7 @@ fn partial_record_update_preserves_other_fields() -> Result<(), SheetPortError> 
 
     let baseline = sheetport.read_inputs()?;
     let original_year = match baseline.get("planning_window") {
-        Some(PortValue::Record(map)) => map
-            .get("year")
-            .cloned()
-            .unwrap_or(LiteralValue::Empty),
+        Some(PortValue::Record(map)) => map.get("year").cloned().unwrap_or(LiteralValue::Empty),
         other => panic!("expected record for planning_window, got {other:?}"),
     };
 
@@ -649,22 +745,14 @@ fn build_umya_inventory_fixture() -> std::path::PathBuf {
             inventory.get_cell_mut((4, 1)).set_value("safety_stock");
             inventory.get_cell_mut((5, 1)).set_value("lead_time_days");
 
-            inventory
-                .get_cell_mut((1, 2))
-                .set_value("SKU-001");
-            inventory
-                .get_cell_mut((2, 2))
-                .set_value("Widget");
+            inventory.get_cell_mut((1, 2)).set_value("SKU-001");
+            inventory.get_cell_mut((2, 2)).set_value("Widget");
             inventory.get_cell_mut((3, 2)).set_value_number(30.0);
             inventory.get_cell_mut((4, 2)).set_value_number(12.0);
             inventory.get_cell_mut((5, 2)).set_value_number(5.0);
 
-            inventory
-                .get_cell_mut((1, 3))
-                .set_value("SKU-002");
-            inventory
-                .get_cell_mut((2, 3))
-                .set_value("Gadget");
+            inventory.get_cell_mut((1, 3)).set_value("SKU-002");
+            inventory.get_cell_mut((2, 3)).set_value("Gadget");
             inventory.get_cell_mut((3, 3)).set_value_number(45.0);
             inventory.get_cell_mut((4, 3)).set_value_number(18.0);
             inventory.get_cell_mut((5, 3)).set_value_number(7.0);
@@ -680,9 +768,7 @@ fn build_umya_inventory_fixture() -> std::path::PathBuf {
             outputs
                 .get_cell_mut((2, 4))
                 .set_formula("=SUM(Inventory!E2:E100)");
-            outputs
-                .get_cell_mut((2, 5))
-                .set_value("2025-01-01");
+            outputs.get_cell_mut((2, 5)).set_value("2025-01-01");
         }
     })
 }
