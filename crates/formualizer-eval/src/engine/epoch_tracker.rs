@@ -58,7 +58,7 @@ impl EpochTracker {
     }
 
     /// Begin a write operation, incrementing the global epoch
-    pub fn begin_write(&self) -> WriteGuard {
+    pub fn begin_write(&'_ self) -> WriteGuard<'_> {
         let epoch = self.current_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         WriteGuard {
             tracker: self,
@@ -68,7 +68,7 @@ impl EpochTracker {
     }
 
     /// Begin a read operation on the given thread
-    pub fn begin_read(&self, thread_id: usize) -> ReadGuard {
+    pub fn begin_read(&'_ self, thread_id: usize) -> ReadGuard<'_> {
         assert!(
             thread_id < MAX_THREADS,
             "Thread ID {thread_id} exceeds MAX_THREADS"

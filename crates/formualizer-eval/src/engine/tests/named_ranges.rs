@@ -1,8 +1,12 @@
 use crate::engine::graph::DependencyGraph;
 use crate::engine::named_range::{NameScope, NamedDefinition};
+use crate::engine::vertex::VertexKind;
 use crate::reference::{CellRef, Coord, RangeRef};
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
+use crate::engine::{Engine, EvalConfig};
+use crate::test_workbook::TestWorkbook;
+use rustc_hash::FxHashSet;
 
 /// Helper to create a literal number value
 fn lit_num(value: f64) -> LiteralValue {
@@ -33,6 +37,189 @@ fn test_named_range_basic() {
 
     // Verify dependency was created
     assert!(!result.affected_vertices.is_empty());
+}
+
+#[test]
+fn named_range_vertex_defaults_to_scalar_kind() {
+    let mut graph = DependencyGraph::new();
+    graph.set_cell_value("Sheet1", 0, 0, lit_num(5.0)).unwrap();
+
+    let definition = NamedDefinition::Cell(CellRef::new(0, Coord::new(0, 0, true, true)));
+    graph
+        .define_name("ScalarName", definition, NameScope::Workbook)
+        .unwrap();
+
+    let (_name, named_range) = graph
+        .named_ranges_iter()
+        .find(|(n, _)| n.as_str() == "ScalarName")
+        .expect("named range should exist");
+
+    assert_eq!(
+        graph.get_vertex_kind(named_range.vertex),
+        VertexKind::NamedScalar
+    );
+}
+
+#[test]
+fn named_range_range_allocates_array_vertex() {
+    let mut graph = DependencyGraph::new();
+    let start = CellRef::new(0, Coord::new(0, 0, true, true));
+    let end = CellRef::new(0, Coord::new(1, 1, true, true));
+    let range_def = NamedDefinition::Range(RangeRef::new(start, end));
+
+    graph
+        .define_name("RangeName", range_def, NameScope::Workbook)
+        .unwrap();
+
+    let (_name, named_range) = graph
+        .named_ranges_iter()
+        .find(|(n, _)| n.as_str() == "RangeName")
+        .expect("range name should exist");
+
+    assert_eq!(
+        graph.get_vertex_kind(named_range.vertex),
+        VertexKind::NamedArray
+    );
+}
+
+#[test]
+fn named_range_dirty_propagation_reaches_formula() {
+    let mut graph = DependencyGraph::new();
+    graph.set_cell_value("Sheet1", 0, 0, lit_num(5.0)).unwrap();
+
+    let base_ref = CellRef::new(0, Coord::new(0, 0, true, true));
+    graph
+        .define_name(
+            "Input",
+            NamedDefinition::Cell(base_ref),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    let ast = parse("=Input + 1").unwrap();
+    let formula_summary = graph.set_cell_formula("Sheet1", 1, 0, ast).unwrap();
+    assert!(
+        formula_summary.affected_vertices.contains(
+            &graph
+                .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
+                .unwrap()
+        )
+    );
+
+    let name_vertex = graph
+        .named_ranges_iter()
+        .find(|(n, _)| n.as_str() == "Input")
+        .unwrap()
+        .1
+        .vertex;
+    let formula_vertex = graph
+        .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
+        .unwrap();
+
+    let summary = graph.set_cell_value("Sheet1", 0, 0, lit_num(7.0)).unwrap();
+    let affected: FxHashSet<_> = summary.affected_vertices.into_iter().collect();
+    assert!(
+        affected.contains(&name_vertex),
+        "expected name vertex to be dirtied when base cell edits"
+    );
+    assert!(
+        affected.contains(&formula_vertex),
+        "expected formula dependent to be dirtied when name changes"
+    );
+}
+
+#[test]
+fn named_range_eval_mutation_propagates() {
+    let mut graph = DependencyGraph::new();
+    let sheet_id = graph.sheet_id_mut("Sheet1");
+    graph
+        .set_cell_value("Sheet1", 0, 0, lit_num(10.0))
+        .unwrap();
+
+    let input_ref = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+    graph
+        .define_name("InputValue", NamedDefinition::Cell(input_ref), NameScope::Workbook)
+        .unwrap();
+
+    let formula_ast = parse("=InputValue*2").unwrap();
+    graph
+        .set_cell_formula("Sheet1", 1, 0, formula_ast)
+        .unwrap();
+
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine.graph = graph;
+
+    engine.evaluate_all().unwrap();
+    let initial = engine
+        .get_cell_value("Sheet1", 1, 0)
+        .expect("initial output");
+    println!("initial_output = {:?}", initial);
+
+    assert!(matches!(initial, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9));
+
+    engine
+        .set_cell_value("Sheet1", 0, 0, LiteralValue::Number(25.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    let updated = engine
+        .get_cell_value("Sheet1", 1, 0)
+        .expect("updated output");
+    assert!(matches!(updated, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9));
+}
+
+#[test]
+fn named_range_chain_propagates_dirty() {
+    let mut graph = DependencyGraph::new();
+    graph.set_cell_value("Sheet1", 0, 0, lit_num(2.0)).unwrap();
+
+    let inner_ref = CellRef::new(0, Coord::new(0, 0, true, true));
+    graph
+        .define_name(
+            "Inner",
+            NamedDefinition::Cell(inner_ref),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    let outer_ast = parse("=Inner * 2").unwrap();
+    graph
+        .define_name(
+            "Outer",
+            NamedDefinition::Formula {
+                ast: outer_ast,
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    let sum_ast = parse("=Outer + 3").unwrap();
+    graph.set_cell_formula("Sheet1", 1, 0, sum_ast).unwrap();
+
+    let inner_vertex = graph
+        .named_ranges_iter()
+        .find(|(n, _)| n.as_str() == "Inner")
+        .unwrap()
+        .1
+        .vertex;
+    let outer_vertex = graph
+        .named_ranges_iter()
+        .find(|(n, _)| n.as_str() == "Outer")
+        .unwrap()
+        .1
+        .vertex;
+    let formula_vertex = graph
+        .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
+        .unwrap();
+
+    let summary = graph.set_cell_value("Sheet1", 0, 0, lit_num(6.0)).unwrap();
+    let affected: FxHashSet<_> = summary.affected_vertices.into_iter().collect();
+
+    assert!(affected.contains(&inner_vertex));
+    assert!(affected.contains(&outer_vertex));
+    assert!(affected.contains(&formula_vertex));
 }
 
 #[test]

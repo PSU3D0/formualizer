@@ -197,13 +197,13 @@ impl<'s> fmt::Debug for VertexViewMut<'s> {
 impl VertexStore {
     /// Create an immutable view for a vertex
     #[inline]
-    pub fn view(&self, id: VertexId) -> VertexView {
+    pub fn view(&'_ self, id: VertexId) -> VertexView<'_> {
         VertexView::new(self, id)
     }
 
     /// Create a mutable view for a vertex
     #[inline]
-    pub fn view_mut(&mut self, id: VertexId) -> VertexViewMut {
+    pub fn view_mut(&'_ mut self, id: VertexId) -> VertexViewMut<'_> {
         VertexViewMut::new(self, id)
     }
 

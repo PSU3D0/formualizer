@@ -42,6 +42,7 @@ pub struct DependencyPlan {
     pub global_cells: Vec<(SheetId, PackedCoord)>,
     pub per_formula_cells: Vec<Vec<u32>>, // indices into global_cells
     pub per_formula_ranges: Vec<Vec<RangeKey>>,
+    pub per_formula_names: Vec<Vec<String>>,
     pub per_formula_flags: Vec<FormulaFlags>,
     pub edges_flat: Option<Vec<u32>>, // optional flat adjacency (indices into global_cells)
     pub offsets: Option<Vec<u32>>,    // len = num_formulas + 1 when edges_flat is Some
@@ -77,6 +78,7 @@ where
 
         let mut per_cells: Vec<u32> = Vec::new();
         let mut per_ranges: Vec<RangeKey> = Vec::new();
+        let mut per_names: Vec<String> = Vec::new();
 
         // Collect references using core collector (may expand small ranges per policy)
         let refs = ast.collect_references(policy);
@@ -139,8 +141,10 @@ where
                         }),
                     }
                 }
-                ReferenceType::NamedRange(_name) => {
+                ReferenceType::NamedRange(name) => {
                     // Resolution handled later; mark via flags if caller cares
+                    flags |= F_HAS_NAMES;
+                    per_names.push(name);
                 }
                 ReferenceType::Table(_tbl) => {
                     // Treat like named entity; handled later
@@ -150,6 +154,7 @@ where
 
         plan.per_formula_cells.push(per_cells);
         plan.per_formula_ranges.push(per_ranges);
+        plan.per_formula_names.push(per_names);
         plan.per_formula_flags.push(flags);
     }
 

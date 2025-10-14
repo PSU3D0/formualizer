@@ -231,8 +231,8 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
                 );
                 continue;
             }
-            let start_coord = Coord::new(sr.saturating_sub(1), sc.saturating_sub(1), true, true);
-            let end_coord = Coord::new(er.saturating_sub(1), ec.saturating_sub(1), true, true);
+            let start_coord = Coord::new(sr, sc, true, true);
+            let end_coord = Coord::new(er, ec, true, true);
             let start_ref = CellRef::new(sheet_id, start_coord);
             let end_ref = CellRef::new(sheet_id, end_coord);
 

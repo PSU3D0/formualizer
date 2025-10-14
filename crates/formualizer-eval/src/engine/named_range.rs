@@ -36,4 +36,6 @@ pub struct NamedRange {
     pub scope: NameScope,
     /// Formulas that reference this name (for invalidation)
     pub dependents: FxHashSet<VertexId>,
+    /// Vertex representing this named range within the dependency graph
+    pub vertex: VertexId,
 }

@@ -544,7 +544,7 @@ impl CsrEdges {
     }
 
     /// Iterate over all vertices and their outgoing edges
-    pub fn iter(&self) -> CsrIterator {
+    pub fn iter(&'_ self) -> CsrIterator<'_> {
         CsrIterator {
             csr: self,
             current_vertex: 0,

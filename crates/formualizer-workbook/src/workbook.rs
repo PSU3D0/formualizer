@@ -6,7 +6,7 @@ use formualizer_common::{
     error::{ExcelError, ExcelErrorKind},
     LiteralValue, RangeAddress,
 };
-use formualizer_eval::engine::{named_range::NamedDefinition, VertexId};
+use formualizer_eval::engine::named_range::NamedDefinition;
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ptr;

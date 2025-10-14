@@ -38,14 +38,20 @@ pub enum VertexKind {
     /// Formula that returns an array (AST stored separately)
     FormulaArray = 3,
 
+    /// Workbook or sheet scoped named range producing a scalar
+    NamedScalar = 4,
+
+    /// Workbook or sheet scoped named range producing an array
+    NamedArray = 5,
+
     /// Infinite range placeholder (A:A, 1:1)
-    InfiniteRange = 4,
+    InfiniteRange = 6,
 
     /// Range reference
-    Range = 5,
+    Range = 7,
 
     /// External reference
-    External = 6,
+    External = 8,
 }
 
 impl VertexKind {
@@ -56,9 +62,11 @@ impl VertexKind {
             1 => VertexKind::Cell,
             2 => VertexKind::FormulaScalar,
             3 => VertexKind::FormulaArray,
-            4 => VertexKind::InfiniteRange,
-            5 => VertexKind::Range,
-            6 => VertexKind::External,
+            4 => VertexKind::NamedScalar,
+            5 => VertexKind::NamedArray,
+            6 => VertexKind::InfiniteRange,
+            7 => VertexKind::Range,
+            8 => VertexKind::External,
             _ => VertexKind::Empty,
         }
     }
