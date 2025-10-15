@@ -7,6 +7,7 @@ use formualizer_parse::parser;
 use rustc_hash::FxHashSet;
 use std::time::Instant;
 
+
 #[derive(Debug, Default)]
 pub struct LoaderStats {
     pub cells_loaded: usize,
@@ -25,8 +26,8 @@ pub struct WorkbookLoader<B: SpreadsheetReader> {
     backend: B,
     strategy: LoadStrategy,
     stats: LoaderStats,
-    pending_named_ranges: Vec<PendingNamedRange>,
-    seen_named_ranges: FxHashSet<(NamedRangeScope, Option<String>, String)>,
+    pending_named_ranges: Vec<NamedRange>,
+    seen_named_ranges: FxHashSet<(NamedRangeScope, String, String)>,
 }
 
 impl<B: SpreadsheetReader> WorkbookLoader<B> {
@@ -181,25 +182,19 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
 
     fn collect_named_ranges(&mut self, sheet: &str, ranges: &[NamedRange]) {
         for named in ranges {
-            let target_sheet = named.sheet.clone().unwrap_or_else(|| sheet.to_string());
-            if target_sheet != sheet {
+            if named.address.sheet != sheet {
                 // Defer to the sheet the range references to avoid duplicating entries.
                 continue;
             }
             let key = (
                 named.scope.clone(),
-                Some(target_sheet.clone()),
+                named.address.sheet.clone(),
                 named.name.clone(),
             );
             if !self.seen_named_ranges.insert(key) {
                 continue;
             }
-            self.pending_named_ranges.push(PendingNamedRange {
-                name: named.name.clone(),
-                scope: named.scope.clone(),
-                target_sheet,
-                range: named.range,
-            });
+            self.pending_named_ranges.push(named.clone());
         }
     }
 
@@ -207,43 +202,39 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
     where
         R: EvaluationContext,
     {
-        for pending in self.pending_named_ranges.drain(..) {
-            let sheet_id = match engine.graph.sheet_id(&pending.target_sheet) {
+        for named in self.pending_named_ranges.drain(..) {
+            let addr = &named.address;
+            let sheet_id = match engine.graph.sheet_id(&addr.sheet) {
                 Some(id) => id,
                 None => {
                     #[cfg(feature = "tracing")]
                     tracing::warn!(
-                        name = %pending.name,
-                        sheet = %pending.target_sheet,
+                        name = %named.name,
+                        sheet = %addr.sheet,
                         "named range references sheet that was not loaded; skipping"
                     );
                     continue;
                 }
             };
 
-            let (sr, sc, er, ec) = pending.range;
-            if sr == 0 || sc == 0 || er == 0 || ec == 0 {
-                #[cfg(feature = "tracing")]
-                tracing::warn!(
-                    name = %pending.name,
-                    sheet = %pending.target_sheet,
-                    "named range contains zero-based coordinates; skipping"
-                );
-                continue;
-            }
-            let start_coord = Coord::new(sr, sc, true, true);
-            let end_coord = Coord::new(er, ec, true, true);
+            let sr0 = addr.start_row.saturating_sub(1);
+            let sc0 = addr.start_col.saturating_sub(1);
+            let er0 = addr.end_row.saturating_sub(1);
+            let ec0 = addr.end_col.saturating_sub(1);
+
+            let start_coord = Coord::new(sr0, sc0, true, true);
+            let end_coord = Coord::new(er0, ec0, true, true);
             let start_ref = CellRef::new(sheet_id, start_coord);
             let end_ref = CellRef::new(sheet_id, end_coord);
 
-            let definition = if sr == er && sc == ec {
+            let definition = if sr0 == er0 && sc0 == ec0 {
                 formualizer_eval::engine::named_range::NamedDefinition::Cell(start_ref)
             } else {
                 let range_ref = formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
                 formualizer_eval::engine::named_range::NamedDefinition::Range(range_ref)
             };
 
-            let scope = match pending.scope {
+            let scope = match named.scope {
                 NamedRangeScope::Workbook => {
                     formualizer_eval::engine::named_range::NameScope::Workbook
                 }
@@ -254,19 +245,11 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
 
             engine
                 .graph
-                .define_name(&pending.name, definition, scope)
+                .define_name(&named.name, definition, scope)
                 .map_err(IoError::Engine)?;
         }
 
         self.seen_named_ranges.clear();
         Ok(())
     }
-}
-
-#[derive(Clone, Debug)]
-struct PendingNamedRange {
-    name: String,
-    scope: NamedRangeScope,
-    target_sheet: String,
-    range: (u32, u32, u32, u32),
 }

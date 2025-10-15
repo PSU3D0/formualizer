@@ -78,7 +78,7 @@ fn spill_values_update_dependents() {
     // Two-pass: first pass materializes spill cells; second pass updates dependents
     let _ = engine.evaluate_all().unwrap();
     // Demand-driven compute of C1 after spill is materialized
-    let _ = engine.evaluate_until(&["C1"]).unwrap();
+    let _ = engine.evaluate_until(&[("Sheet1", 1, 3)]).unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
         Some(LiteralValue::Number(4.0))
@@ -89,7 +89,7 @@ fn spill_values_update_dependents() {
         .set_cell_formula("Sheet1", 1, 1, Parser::from("={5,6;7,8}").parse().unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
-    let _ = engine.evaluate_until(&["C1"]).unwrap();
+    let _ = engine.evaluate_until(&[("Sheet1", 1, 3)]).unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
         Some(LiteralValue::Number(8.0))

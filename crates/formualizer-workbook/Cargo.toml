@@ -23,7 +23,7 @@ rustc-hash = "1.1"
 
 [features]
 default = ["json"]
-json = ["dep:serde_json"]
+json = ["dep:serde_json", "formualizer-common/serde"]
 calamine = ["dep:calamine"]
 umya = ["dep:umya-spreadsheet"]
 mmap = ["dep:memmap2"]

@@ -1,4 +1,4 @@
-use formualizer_common::LiteralValue;
+use formualizer_common::{LiteralValue, RangeAddress};
 #[cfg(feature = "json")]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -132,8 +132,7 @@ pub struct NamedRange {
     pub name: String,
     #[cfg_attr(feature = "json", serde(default))]
     pub scope: NamedRangeScope,
-    pub sheet: Option<String>,
-    pub range: (u32, u32, u32, u32), // (start_row, start_col, end_row, end_col)
+    pub address: RangeAddress,
 }
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]

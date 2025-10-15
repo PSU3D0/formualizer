@@ -74,6 +74,9 @@ fn value_edit_triggers_recompute_in_deferred_mode() {
     wb.set_value("S", 1, 1, LiteralValue::Int(3)).unwrap();
     wb.set_formula("S", 1, 2, "A1*2").unwrap();
 
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(3)));
+    assert_eq!(wb.get_formula("S", 1, 2), Some("A1*2".to_string()));
+
     let v = wb.evaluate_cell("S", 1, 2).unwrap();
     assert_eq!(v, LiteralValue::Number(6.0));
 

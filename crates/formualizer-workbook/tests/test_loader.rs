@@ -203,6 +203,7 @@ fn test_loader_performance_tracking() {
 #[cfg(feature = "json")]
 #[test]
 fn test_loader_registers_named_ranges() {
+    use formualizer_common::RangeAddress;
     use formualizer_eval::engine::named_range::NamedDefinition;
     use formualizer_workbook::traits::NamedRangeScope;
     use formualizer_workbook::{CellData, JsonAdapter, NamedRange};
@@ -220,16 +221,24 @@ fn test_loader_registers_named_ranges() {
             NamedRange {
                 name: "GlobalName".into(),
                 scope: NamedRangeScope::Workbook,
-                sheet: Some("Sheet1".into()),
-                range: (1, 1, 1, 1),
+                address: RangeAddress::new("Sheet1", 1, 1, 1, 1).unwrap(),
             },
             NamedRange {
                 name: "LocalName".into(),
                 scope: NamedRangeScope::Sheet,
-                sheet: Some("Sheet1".into()),
-                range: (2, 1, 2, 2),
+                address: RangeAddress::new("Sheet1", 2, 1, 2, 2).unwrap(),
             },
         ],
+    );
+
+    let sheet = adapter.read_sheet("Sheet1").expect("read sheet1");
+    assert_eq!(sheet.named_ranges.len(), 2);
+
+    assert_eq!(sheet.named_ranges[0].name, "GlobalName");
+    assert_eq!(sheet.named_ranges[0].scope, NamedRangeScope::Workbook);
+    assert_eq!(
+        sheet.named_ranges[0].address,
+        RangeAddress::new("Sheet1", 1, 1, 1, 1).unwrap()
     );
 
     let mut engine = create_test_engine();

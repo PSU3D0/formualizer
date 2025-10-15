@@ -4,7 +4,7 @@ use crate::traits::{
     AccessGranularity, BackendCaps, CellData, NamedRange, NamedRangeScope, SheetData,
     SpreadsheetReader, SpreadsheetWriter,
 };
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, RangeAddress};
 use formualizer_parse::parser::ReferenceType;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
@@ -501,11 +501,12 @@ impl UmyaAdapter {
             NamedRangeScope::Workbook
         };
 
+        let address = RangeAddress::new(sheet_name, start_row, start_col, end_row, end_col).ok()?;
+
         Some(NamedRange {
             name: defined.get_name().to_string(),
             scope,
-            sheet: Some(sheet_name),
-            range: (start_row, start_col, end_row, end_col),
+            address,
         })
     }
 }

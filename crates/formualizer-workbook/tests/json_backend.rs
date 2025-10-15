@@ -1,5 +1,5 @@
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime};
-use formualizer_common::error::ExcelError;
+use formualizer_common::{error::ExcelError, RangeAddress};
 #[cfg(feature = "json")]
 use formualizer_workbook::JsonAdapter;
 use formualizer_workbook::{CellData, LiteralValue, SpreadsheetReader, SpreadsheetWriter};
@@ -205,8 +205,7 @@ fn json_metadata_roundtrip() {
         vec![NamedRange {
             name: "R1".into(),
             scope: NamedRangeScope::Workbook,
-            sheet: Some("Meta".into()),
-            range: (1, 1, 2, 2),
+            address: RangeAddress::new("Meta", 1, 1, 2, 2).unwrap(),
         }],
     );
 

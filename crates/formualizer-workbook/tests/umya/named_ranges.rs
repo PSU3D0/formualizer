@@ -21,8 +21,7 @@ fn build_named_range_workbook() -> Workbook {
         .expect("add output name");
     umya_spreadsheet::writer::xlsx::write(&book, &path).expect("write workbook");
 
-    let backend =
-        UmyaAdapter::open_path(&path).expect("open workbook for runtime evaluation");
+    let backend = UmyaAdapter::open_path(&path).expect("open workbook for runtime evaluation");
     let mut workbook =
         Workbook::from_reader(backend, LoadStrategy::EagerAll, EvalConfig::default())
             .expect("load workbook");
@@ -68,14 +67,20 @@ fn umya_exposes_named_ranges_with_scope() {
             "GlobalName" => {
                 saw_global = true;
                 assert_eq!(named.scope, NamedRangeScope::Workbook);
-                assert_eq!(named.sheet.as_deref(), Some("Sheet1"));
-                assert_eq!(named.range, (1, 1, 1, 1));
+                assert_eq!(named.address.sheet, "Sheet1");
+                assert_eq!(named.address.start_row, 1);
+                assert_eq!(named.address.start_col, 1);
+                assert_eq!(named.address.end_row, 1);
+                assert_eq!(named.address.end_col, 1);
             }
             "LocalName" => {
                 saw_local = true;
                 assert_eq!(named.scope, NamedRangeScope::Sheet);
-                assert_eq!(named.sheet.as_deref(), Some("Sheet1"));
-                assert_eq!(named.range, (2, 2, 2, 2));
+                assert_eq!(named.address.sheet, "Sheet1");
+                assert_eq!(named.address.start_row, 2);
+                assert_eq!(named.address.start_col, 2);
+                assert_eq!(named.address.end_row, 2);
+                assert_eq!(named.address.end_col, 2);
             }
             other => panic!("unexpected named range {other}"),
         }
@@ -187,5 +192,8 @@ fn umya_named_range_set_value_recalc() {
     let updated = workbook
         .get_value("Sheet1", 1, 2)
         .expect("updated output value");
-    assert!(matches!(updated, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9), "got {updated:?} instead");
+    assert!(
+        matches!(updated, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9),
+        "got {updated:?} instead"
+    );
 }

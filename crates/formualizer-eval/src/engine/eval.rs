@@ -1040,19 +1040,18 @@ where
     }
 
     /// Evaluate only the necessary precedents for specific target cells (demand-driven)
-    pub fn evaluate_until(&mut self, targets: &[&str]) -> Result<EvalResult, ExcelError> {
+    pub fn evaluate_until(&mut self, targets: &[(&str, u32, u32)]) -> Result<EvalResult, ExcelError> {
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = std::time::Instant::now();
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
-        for target in targets {
+        for (sheet, row, col) in targets {
             // For now, assume simple A1-style references on default sheet
             // TODO: Parse complex references with sheets
-            let (sheet, row, col) = Self::parse_a1_notation(target)?;
-            let sheet_id = self.graph.sheet_id_mut(&sheet);
-            let coord = Coord::new(row, col, true, true);
+            let sheet_id = self.graph.sheet_id_mut(*sheet);
+            let coord = Coord::new(*row, *col, true, true);
             target_addrs.push(CellRef::new(sheet_id, coord));
         }
 
@@ -1324,12 +1323,25 @@ where
         row: u32,
         col: u32,
     ) -> Result<Option<LiteralValue>, ExcelError> {
+        if row == 0 || col == 0 {
+            return Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Row and column must be >= 1".to_string()));
+        }
+
         if self.config.defer_graph_building {
             self.build_graph_for_sheets(std::iter::once(sheet))?;
         }
-        let addr = format!("{}!{}{}", sheet, Self::col_to_letters(col), row);
-        let _ = self.evaluate_until(&[addr.as_str()])?; // ignore detailed EvalResult here
-        Ok(self.get_cell_value(sheet, row, col))
+        
+        let result = self.evaluate_cells(&[(sheet, row, col)])?;
+
+        match result.len() {
+            0 => return Ok(None),
+            1 => {
+                let v = result.into_iter().next().unwrap();
+                return Ok(v);
+            }
+            _ => unreachable!("evaluate_cells returned unexpected length"),
+        }
     }
 
     /// Convenience: demand-driven evaluation of multiple cells; accepts a slice of
@@ -1352,12 +1364,7 @@ where
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
         }
-        let addresses: Vec<String> = targets
-            .iter()
-            .map(|(s, r, c)| format!("{}!{}{}", s, Self::col_to_letters(*c), r))
-            .collect();
-        let addr_refs: Vec<&str> = addresses.iter().map(|s| s.as_str()).collect();
-        let _ = self.evaluate_until(&addr_refs)?;
+        self.evaluate_until(targets)?;
         Ok(targets
             .iter()
             .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
@@ -1701,6 +1708,9 @@ where
 
     /// Helper: convert 1-based column index to Excel-style letters (1 -> A, 27 -> AA)
     fn col_to_letters(mut col: u32) -> String {
+        if col == 0 {
+            panic!("Column index must be >= 1")
+        }
         let mut s = String::new();
         while col > 0 {
             let rem = ((col - 1) % 26) as u8;
@@ -2169,11 +2179,7 @@ where
                         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
                         Ok(self
                             .graph
-                            .get_cell_value(
-                                sheet_name,
-                                cell_ref.coord.row,
-                                cell_ref.coord.col,
-                            )
+                            .get_cell_value(sheet_name, cell_ref.coord.row, cell_ref.coord.col)
                             .unwrap_or(LiteralValue::Empty))
                     }
                     NamedDefinition::Formula { ast, .. } => {

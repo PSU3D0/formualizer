@@ -1,11 +1,11 @@
 use crate::engine::graph::DependencyGraph;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::vertex::VertexKind;
+use crate::engine::{Engine, EvalConfig};
 use crate::reference::{CellRef, Coord, RangeRef};
+use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
-use crate::engine::{Engine, EvalConfig};
-use crate::test_workbook::TestWorkbook;
 use rustc_hash::FxHashSet;
 
 /// Helper to create a literal number value
@@ -132,19 +132,19 @@ fn named_range_dirty_propagation_reaches_formula() {
 fn named_range_eval_mutation_propagates() {
     let mut graph = DependencyGraph::new();
     let sheet_id = graph.sheet_id_mut("Sheet1");
-    graph
-        .set_cell_value("Sheet1", 0, 0, lit_num(10.0))
-        .unwrap();
+    graph.set_cell_value("Sheet1", 0, 0, lit_num(10.0)).unwrap();
 
     let input_ref = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
     graph
-        .define_name("InputValue", NamedDefinition::Cell(input_ref), NameScope::Workbook)
+        .define_name(
+            "InputValue",
+            NamedDefinition::Cell(input_ref),
+            NameScope::Workbook,
+        )
         .unwrap();
 
     let formula_ast = parse("=InputValue*2").unwrap();
-    graph
-        .set_cell_formula("Sheet1", 1, 0, formula_ast)
-        .unwrap();
+    graph.set_cell_formula("Sheet1", 1, 0, formula_ast).unwrap();
 
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     engine.graph = graph;
@@ -166,6 +166,59 @@ fn named_range_eval_mutation_propagates() {
         .get_cell_value("Sheet1", 1, 0)
         .expect("updated output");
     assert!(matches!(updated, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9));
+}
+
+#[test]
+fn engine_get_cell_value_handles_named_range_formula() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine
+        .set_cell_value("Sheet1", 0, 0, LiteralValue::Number(10.0))
+        .unwrap();
+
+    let sheet_id = engine.graph.sheet_id_mut("Sheet1");
+    let input_ref = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+    engine
+        .graph
+        .define_name(
+            "InputValue",
+            NamedDefinition::Cell(input_ref),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    let formula_ast = parse("=InputValue*2").unwrap();
+    engine
+        .set_cell_formula("Sheet1", 0, 1, formula_ast)
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+
+    let via_engine = engine
+        .get_cell_value("Sheet1", 0, 1)
+        .expect("engine should surface formula result");
+    assert!(matches!(via_engine, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9));
+
+    let via_graph = engine
+        .graph
+        .get_cell_value("Sheet1", 0, 1)
+        .expect("graph should have formula value");
+    assert!(matches!(via_graph, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9));
+
+    engine
+        .set_cell_value("Sheet1", 0, 0, LiteralValue::Number(25.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    let updated_engine = engine
+        .get_cell_value("Sheet1", 0, 1)
+        .expect("engine should reflect updated named range");
+    assert!(matches!(updated_engine, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9));
+
+    let updated_graph = engine
+        .graph
+        .get_cell_value("Sheet1", 0, 1)
+        .expect("graph should reflect updated named range");
+    assert!(matches!(updated_graph, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9));
 }
 
 #[test]

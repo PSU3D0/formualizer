@@ -6,7 +6,8 @@ mod workbook_common;
 
 use chrono::NaiveDate;
 use formualizer_common::LiteralValue;
-use formualizer_eval::engine::EvalConfig;
+use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
+use formualizer_eval::reference::{CellRef, Coord};
 use formualizer_sheetport::{
     BatchInput, BatchOptions, BatchProgress, ConstraintViolation, EvalOptions, InputSnapshot,
     InputUpdate, PortValue, SheetPort, SheetPortError, TableRow, TableValue,
@@ -109,33 +110,6 @@ ports:
           type: date
           location:
             a1: Outputs!B5
-"#;
-
-const NAMED_MANIFEST_YAML: &str = r#"
-spec: fio
-spec_version: "0.3.0"
-manifest:
-  id: named-range-test
-  name: Named Range Manifest
-  workbook:
-    uri: memory://named.xlsx
-    locale: en-US
-    date_system: 1900
-ports:
-  - id: input_value
-    dir: in
-    shape: scalar
-    location:
-      name: InputValue
-    schema:
-      type: number
-  - id: output_value
-    dir: out
-    shape: scalar
-    location:
-      name: OutputValue
-    schema:
-      type: number
 "#;
 
 fn build_workbook() -> Result<Workbook, SheetPortError> {
@@ -250,54 +224,101 @@ fn set_formula(
         .map_err(SheetPortError::from)
 }
 
-fn build_named_range_workbook() -> Result<Workbook, SheetPortError> {
-    let tmp = tempfile::tempdir().map_err(|e| SheetPortError::InvariantViolation {
-        port: "named_range_setup".to_string(),
-        message: format!("failed to create temp dir: {e}"),
-    })?;
-    let path = tmp.path().join("named_range_sheetport.xlsx");
-
-    let mut book = umya_spreadsheet::new_file();
-    let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("default sheet");
-    sheet1.get_cell_mut((1, 1)).set_value_number(10.0);
-    sheet1
-        .add_defined_name("InputValue", "Sheet1!$A$1")
-        .expect("add input name");
-    sheet1.get_cell_mut((2, 1)).set_formula("InputValue*2");
-    sheet1
-        .add_defined_name("OutputValue", "Sheet1!$B$1")
-        .expect("add output name");
-    umya_spreadsheet::writer::xlsx::write(&book, &path).map_err(|e| {
-        SheetPortError::InvariantViolation {
-            port: "named_range_setup".to_string(),
-            message: format!("failed to write temp workbook: {e}"),
-        }
-    })?;
-
-    let backend =
-        UmyaAdapter::open_path(&path).map_err(|e| SheetPortError::InvariantViolation {
-            port: "named_range_setup".to_string(),
-            message: format!("failed to reopen temp workbook: {e}"),
-        })?;
-    let mut workbook =
-        Workbook::from_reader(backend, LoadStrategy::EagerAll, EvalConfig::default())
-            .map_err(SheetPortError::from)?;
-    workbook.evaluate_all().map_err(SheetPortError::from)?;
-    Ok(workbook)
-}
-
 fn parse_manifest() -> Manifest {
     Manifest::from_yaml_str(MANIFEST_YAML).expect("manifest parses")
 }
 
-fn parse_named_manifest() -> Manifest {
-    Manifest::from_yaml_str(NAMED_MANIFEST_YAML).expect("named manifest parses")
-}
-
 #[test]
 fn named_range_io_roundtrip() -> Result<(), SheetPortError> {
-    let mut workbook = build_named_range_workbook()?;
-    let manifest = parse_named_manifest();
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: named-range-test
+  name: Named Range Manifest
+  workbook:
+    uri: memory://named.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: input_value
+    dir: in
+    shape: scalar
+    location:
+      name: InputValue
+    schema:
+      type: number
+  - id: output_value
+    dir: out
+    shape: scalar
+    location:
+      name: OutputValue
+    schema:
+      type: number
+"#;
+    let manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet1");
+
+    workbook
+        .set_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .map_err(SheetPortError::from)?;
+
+    let sheet_id = {
+        let engine = workbook.engine_mut();
+        engine.graph.sheet_id_mut("Sheet1")
+    };
+
+    {
+        let engine = workbook.engine_mut();
+        engine
+            .graph
+            .define_name(
+                "InputValue",
+                NamedDefinition::Cell(CellRef::new(sheet_id, Coord::new(0, 0, true, true))),
+                NameScope::Workbook,
+            )
+            .map_err(SheetPortError::from)?;
+    }
+
+    set_formula(&mut workbook, "Sheet1", 1, 2, "InputValue*2")?;
+
+    {
+        let engine = workbook.engine_mut();
+        engine
+            .graph
+            .define_name(
+                "OutputValue",
+                NamedDefinition::Cell(CellRef::new(sheet_id, Coord::new(0, 1, true, true))),
+                NameScope::Workbook,
+            )
+            .map_err(SheetPortError::from)?;
+    }
+
+    workbook.evaluate_all().map_err(SheetPortError::from)?;
+
+    {
+        let value = workbook
+            .engine()
+            .get_cell_value("Sheet1", 1, 1)
+            .unwrap_or(LiteralValue::Empty);
+        assert_eq!(value, LiteralValue::Number(10.0));
+    }
+
+    let input_addr = workbook
+        .named_range_address("InputValue")
+        .expect("named range InputValue registered");
+    let input_values = workbook.read_range(&input_addr);
+    assert_eq!(
+        input_values
+            .first()
+            .and_then(|row| row.first())
+            .cloned()
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Number(10.0)
+    );
+
     let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
 
     let inputs = sheetport.read_inputs()?;
@@ -314,7 +335,7 @@ fn named_range_io_roundtrip() -> Result<(), SheetPortError> {
     let outputs = sheetport.evaluate_once(EvalOptions::default())?;
     match outputs.get("output_value") {
         Some(PortValue::Scalar(LiteralValue::Number(n))) => {
-            assert!((*n - 50.0).abs() < 1e-9)
+            assert_eq!(*n, 50.0)
         }
         other => panic!("expected scalar output value, got {other:?}"),
     }

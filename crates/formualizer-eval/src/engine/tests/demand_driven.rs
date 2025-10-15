@@ -29,7 +29,7 @@ fn test_evaluate_until_single_clean_target() {
     engine.evaluate_all().unwrap();
 
     // Test: evaluate_until B1 should do nothing since it's clean
-    let result = engine.evaluate_until(&["B1"]).unwrap();
+    let result = engine.evaluate_until(&[("Sheet1", 1, 2)]).unwrap();
     assert_eq!(result.computed_vertices, 0);
 
     // B1 should still have its value
@@ -66,7 +66,7 @@ fn test_evaluate_until_single_dirty_target() {
         .unwrap();
 
     // Test: evaluate_until B1 should evaluate B1 only
-    let result = engine.evaluate_until(&["B1"]).unwrap();
+    let result = engine.evaluate_until(&[("Sheet1", 1, 2)]).unwrap();
     assert_eq!(result.computed_vertices, 1);
 
     // B1 should have updated value
@@ -99,7 +99,7 @@ fn test_evaluate_until_dependency_chain() {
         .unwrap();
 
     // Test: evaluate_until C1 should evaluate A1->B1->C1 chain
-    let result = engine.evaluate_until(&["C1"]).unwrap();
+    let result = engine.evaluate_until(&[("Sheet1", 1, 3)]).unwrap();
     assert_eq!(result.computed_vertices, 2); // B1 and C1 (A1 is a value, not computed)
 
     // All values should be updated
@@ -181,7 +181,9 @@ fn test_evaluate_until_multiple_targets() {
 
     // Test: evaluate_until C1 and E1 should compute union of precedents
     // Should evaluate B1, C1, E1 (all depend on A1)
-    let result = engine.evaluate_until(&["C1", "E1"]).unwrap();
+    let result = engine
+        .evaluate_until(&[("Sheet1", 1, 3), ("Sheet1", 1, 5)])
+        .unwrap();
     assert_eq!(result.computed_vertices, 2); // C1 and E1
 
     // Check that only requested targets and their precedents were computed
@@ -197,7 +199,7 @@ fn test_evaluate_until_multiple_targets() {
     // D1 should still be dirty/old since we didn't request it
     // We can't easily test this without exposing internal state,
     // but we can test that evaluating D1 separately works
-    let result2 = engine.evaluate_until(&["D1"]).unwrap();
+    let result2 = engine.evaluate_until(&[("Sheet1", 1, 4)]).unwrap();
     assert_eq!(result2.computed_vertices, 2); // B1 and D1
 
     assert_eq!(
@@ -241,7 +243,7 @@ fn test_evaluate_until_volatile_precedent() {
     engine.evaluate_all().unwrap();
 
     // Test: evaluate_until B1 should still evaluate A1 because it's volatile
-    let result = engine.evaluate_until(&["B1"]).unwrap();
+    let result = engine.evaluate_until(&[("Sheet1", 1, 2)]).unwrap();
     assert_eq!(result.computed_vertices, 2); // Both A1 and B1 should be evaluated
 }
 
@@ -269,7 +271,7 @@ fn test_evaluate_until_target_is_volatile() {
     engine.evaluate_all().unwrap();
 
     // Test: evaluate_until A1 should still evaluate it because it's volatile
-    let result = engine.evaluate_until(&["A1"]).unwrap();
+    let result = engine.evaluate_until(&[("Sheet1", 1, 1)]).unwrap();
     assert_eq!(result.computed_vertices, 1); // A1 should be evaluated even though "clean"
 }
 
@@ -298,7 +300,7 @@ fn test_evaluate_until_precedents_include_a_cycle() {
     engine.set_cell_formula("Sheet1", 1, 3, c1_ast).unwrap();
 
     // Test: evaluate_until C1 should handle the cycle correctly
-    let result = engine.evaluate_until(&["C1"]).unwrap();
+    let result = engine.evaluate_until(&[("Sheet1", 1, 3)]).unwrap();
     assert_eq!(result.cycle_errors, 1); // Should detect one cycle (A1-B1)
     assert_eq!(result.computed_vertices, 1); // C1 should still be computed
 

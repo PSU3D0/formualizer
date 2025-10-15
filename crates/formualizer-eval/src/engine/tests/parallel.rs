@@ -593,7 +593,7 @@ fn test_demand_driven_parallel_evaluation() {
     }
 
     // Demand-driven evaluation of just the last cell (J2 = column 10, row 2)
-    let result = engine.evaluate_until(&["J2"]).unwrap();
+    let result = engine.evaluate_until(&[("Sheet1", 2, 10)]).unwrap();
 
     // Should have evaluated some vertices (at least the dependency chain)
     assert!(result.computed_vertices > 0);
