@@ -1040,7 +1040,10 @@ where
     }
 
     /// Evaluate only the necessary precedents for specific target cells (demand-driven)
-    pub fn evaluate_until(&mut self, targets: &[(&str, u32, u32)]) -> Result<EvalResult, ExcelError> {
+    pub fn evaluate_until(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<EvalResult, ExcelError> {
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = std::time::Instant::now();
@@ -1331,7 +1334,7 @@ where
         if self.config.defer_graph_building {
             self.build_graph_for_sheets(std::iter::once(sheet))?;
         }
-        
+
         let result = self.evaluate_cells(&[(sheet, row, col)])?;
 
         match result.len() {

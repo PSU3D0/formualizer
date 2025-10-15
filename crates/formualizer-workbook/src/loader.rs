@@ -7,7 +7,6 @@ use formualizer_parse::parser;
 use rustc_hash::FxHashSet;
 use std::time::Instant;
 
-
 #[derive(Debug, Default)]
 pub struct LoaderStats {
     pub cells_loaded: usize,

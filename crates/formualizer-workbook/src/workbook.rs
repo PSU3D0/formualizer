@@ -370,21 +370,18 @@ impl Workbook {
                 }
                 self.engine.mark_data_edited();
                 Ok(())
-        } else {
-            self.engine
-                .set_cell_formula(sheet, row, col, ast)
-                .map_err(IoError::Engine)
+            } else {
+                self.engine
+                    .set_cell_formula(sheet, row, col, ast)
+                    .map_err(IoError::Engine)
+            }
         }
-    }
     }
     pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
         self.engine.get_cell_value(sheet, row, col)
     }
     pub fn get_formula(&self, sheet: &str, row: u32, col: u32) -> Option<String> {
-        if let Some(s) = self
-            .engine
-            .get_staged_formula_text(sheet, row, col)
-        {
+        if let Some(s) = self.engine.get_staged_formula_text(sheet, row, col) {
             return Some(s);
         }
         self.engine

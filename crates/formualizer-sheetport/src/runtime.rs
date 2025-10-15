@@ -12,7 +12,7 @@ use formualizer_common::{LiteralValue, RangeAddress};
 use formualizer_eval::engine::RecalcPlan;
 use formualizer_workbook::Workbook;
 use sheetport_spec::{Direction, Manifest};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Runtime container that pairs a manifest with a concrete workbook.
 pub struct SheetPort<'a> {
@@ -142,8 +142,242 @@ impl<'a> SheetPort<'a> {
     ) -> Result<OutputSnapshot, SheetPortError> {
         // Future: apply options (volatile, rng seed) before evaluation.
         let _ = options;
-        self.workbook.evaluate_all()?;
+
+        if self.outputs_require_full_eval() {
+            self.workbook.prepare_graph_all()?;
+            self.workbook.evaluate_all()?;
+            return self.read_outputs();
+        }
+
+        let target_specs = self.collect_output_targets()?;
+        if target_specs.is_empty() {
+            self.workbook.prepare_graph_all()?;
+            self.workbook.evaluate_all()?;
+        } else {
+            let mut sheets: BTreeSet<&str> = BTreeSet::new();
+            for (sheet, _, _) in target_specs.iter() {
+                sheets.insert(sheet.as_str());
+            }
+            self.workbook
+                .prepare_graph_for_sheets(sheets.iter().copied())?;
+            let borrowed: Vec<(&str, u32, u32)> = target_specs
+                .iter()
+                .map(|(sheet, row, col)| (sheet.as_str(), *row, *col))
+                .collect();
+            if let Err(_) = self.workbook.evaluate_cells(&borrowed) {
+                self.workbook.prepare_graph_all()?;
+                self.workbook.evaluate_all()?;
+            }
+        }
         self.read_outputs()
+    }
+
+    fn outputs_require_full_eval(&self) -> bool {
+        self.bindings
+            .bindings()
+            .iter()
+            .filter(|binding| binding.direction == Direction::Out)
+            .any(|binding| match &binding.kind {
+                BoundPort::Scalar(scalar) => {
+                    matches!(scalar.location, crate::location::ScalarLocation::Name(_))
+                }
+                BoundPort::Record(record) => record
+                    .fields
+                    .values()
+                    .any(|field| matches!(field.location, crate::location::FieldLocation::Name(_))),
+                BoundPort::Range(range) => {
+                    matches!(range.location, crate::location::AreaLocation::Name(_))
+                }
+                BoundPort::Table(table) => {
+                    matches!(table.location, crate::location::TableLocation::Table(_))
+                }
+            })
+    }
+
+    fn collect_output_targets(&mut self) -> Result<Vec<(String, u32, u32)>, SheetPortError> {
+        let mut targets: BTreeSet<(String, u32, u32)> = BTreeSet::new();
+        let output_bindings: Vec<PortBinding> = self
+            .bindings
+            .bindings()
+            .iter()
+            .filter(|binding| binding.direction == Direction::Out)
+            .cloned()
+            .collect();
+        for binding in output_bindings.iter() {
+            self.collect_binding_targets(binding, &mut targets)?;
+        }
+        Ok(targets.into_iter().collect())
+    }
+
+    fn collect_binding_targets(
+        &mut self,
+        binding: &PortBinding,
+        targets: &mut BTreeSet<(String, u32, u32)>,
+    ) -> Result<(), SheetPortError> {
+        match &binding.kind {
+            BoundPort::Scalar(scalar) => match &scalar.location {
+                crate::location::ScalarLocation::Cell(addr) => {
+                    Self::add_range_cells(targets, addr);
+                    Ok(())
+                }
+                crate::location::ScalarLocation::Name(name) => {
+                    let addr = self.named_range_address(&binding.id, name)?;
+                    if addr.height() != 1 || addr.width() != 1 {
+                        return Err(SheetPortError::InvariantViolation {
+                            port: binding.id.clone(),
+                            message: format!(
+                                "named range `{name}` must resolve to a single cell for scalar ports"
+                            ),
+                        });
+                    }
+                    Self::add_range_cells(targets, &addr);
+                    Ok(())
+                }
+                crate::location::ScalarLocation::StructRef(struct_ref) => {
+                    Err(SheetPortError::UnsupportedSelector {
+                        port: binding.id.clone(),
+                        reason: format!(
+                            "scalar selectors using structured reference `{struct_ref}` \
+                             are not supported yet"
+                        ),
+                    })
+                }
+            },
+            BoundPort::Record(record) => {
+                for (field_name, field_binding) in &record.fields {
+                    match &field_binding.location {
+                        crate::location::FieldLocation::Cell(addr) => {
+                            Self::add_range_cells(targets, addr);
+                        }
+                        crate::location::FieldLocation::Name(name) => {
+                            let addr = self.named_range_address(&binding.id, name)?;
+                            if addr.height() != 1 || addr.width() != 1 {
+                                return Err(SheetPortError::InvariantViolation {
+                                    port: binding.id.clone(),
+                                    message: format!(
+                                        "record field `{field_name}` named range `{name}` \
+                                         must resolve to a single cell"
+                                    ),
+                                });
+                            }
+                            Self::add_range_cells(targets, &addr);
+                        }
+                        crate::location::FieldLocation::StructRef(struct_ref) => {
+                            return Err(SheetPortError::UnsupportedSelector {
+                                port: binding.id.clone(),
+                                reason: format!(
+                                    "record field `{field_name}` uses unsupported selector `{struct_ref}`"
+                                ),
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            }
+            BoundPort::Range(range) => match &range.location {
+                crate::location::AreaLocation::Range(addr) => {
+                    Self::add_range_cells(targets, addr);
+                    Ok(())
+                }
+                crate::location::AreaLocation::Name(name) => {
+                    let addr = self.named_range_address(&binding.id, name)?;
+                    Self::add_range_cells(targets, &addr);
+                    Ok(())
+                }
+                crate::location::AreaLocation::Layout(layout) => {
+                    let bounds = resolve_range_layout(&binding.id, self.workbook, layout)?;
+                    let start_row = bounds.start_row;
+                    let end_row = bounds.end_row.max(bounds.start_row);
+                    let start_col = bounds.start_col;
+                    let end_col = bounds.end_col.max(bounds.start_col);
+                    let sheet = bounds.sheet.clone();
+                    let addr =
+                        RangeAddress::new(sheet.clone(), start_row, start_col, end_row, end_col)
+                            .map_err(|msg| SheetPortError::InvariantViolation {
+                                port: binding.id.clone(),
+                                message: msg.to_string(),
+                            })?;
+                    Self::add_range_cells(targets, &addr);
+                    match layout.terminate {
+                        sheetport_spec::LayoutTermination::FirstBlankRow
+                        | sheetport_spec::LayoutTermination::UntilMarker => {
+                            let sentinel_row = if end_row >= start_row {
+                                end_row.saturating_add(1)
+                            } else {
+                                start_row
+                            };
+                            for col in start_col..=end_col {
+                                Self::add_cell(targets, sheet.as_str(), sentinel_row, col);
+                            }
+                        }
+                        sheetport_spec::LayoutTermination::SheetEnd => {}
+                    }
+                    Ok(())
+                }
+                other => Err(SheetPortError::UnsupportedSelector {
+                    port: binding.id.clone(),
+                    reason: format!("unsupported area selector `{other:?}` for range port"),
+                }),
+            },
+            BoundPort::Table(table) => match &table.location {
+                crate::location::TableLocation::Layout(layout) => {
+                    let column_hints: Vec<Option<String>> = table
+                        .columns
+                        .iter()
+                        .map(|c| c.column_hint.clone())
+                        .collect();
+                    let bounds =
+                        resolve_table_layout(&binding.id, self.workbook, layout, &column_hints)?;
+                    let header_row = layout.header_row;
+                    for &col in &bounds.column_indices {
+                        Self::add_cell(targets, &bounds.sheet, header_row, col);
+                    }
+                    if bounds.data_end_row >= bounds.data_start_row {
+                        for row in bounds.data_start_row..=bounds.data_end_row {
+                            for &col in &bounds.column_indices {
+                                Self::add_cell(targets, &bounds.sheet, row, col);
+                            }
+                        }
+                    }
+                    match layout.terminate {
+                        sheetport_spec::LayoutTermination::FirstBlankRow
+                        | sheetport_spec::LayoutTermination::UntilMarker => {
+                            let sentinel_row = if bounds.data_end_row >= bounds.data_start_row {
+                                bounds.data_end_row.saturating_add(1)
+                            } else {
+                                bounds.data_start_row
+                            };
+                            for &col in &bounds.column_indices {
+                                Self::add_cell(targets, &bounds.sheet, sentinel_row, col);
+                            }
+                        }
+                        sheetport_spec::LayoutTermination::SheetEnd => {}
+                    }
+                    Ok(())
+                }
+                crate::location::TableLocation::Table(selector) => {
+                    Err(SheetPortError::UnsupportedSelector {
+                        port: binding.id.clone(),
+                        reason: format!(
+                            "native table `{}` selectors are not supported yet",
+                            selector.name
+                        ),
+                    })
+                }
+            },
+        }
+    }
+
+    fn add_range_cells(targets: &mut BTreeSet<(String, u32, u32)>, addr: &RangeAddress) {
+        for row in addr.start_row..=addr.end_row {
+            for col in addr.start_col..=addr.end_col {
+                Self::add_cell(targets, &addr.sheet, row, col);
+            }
+        }
+    }
+
+    fn add_cell(targets: &mut BTreeSet<(String, u32, u32)>, sheet: &str, row: u32, col: u32) {
+        targets.insert((sheet.to_string(), row, col));
     }
 
     pub fn evaluate_with_plan(
