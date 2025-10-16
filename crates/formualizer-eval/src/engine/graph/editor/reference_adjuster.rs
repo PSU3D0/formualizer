@@ -523,8 +523,7 @@ mod tests {
         // Verify by checking the AST structure
         if let ASTNodeType::BinaryOp { left, right, .. } = &adjusted.node_type {
             if let ASTNodeType::Reference {
-                reference:
-                    formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &left.node_type
             {
@@ -532,8 +531,7 @@ mod tests {
                 assert_eq!(*col, 1);
             }
             if let ASTNodeType::Reference {
-                reference:
-                    formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &right.node_type
             {
@@ -563,8 +561,7 @@ mod tests {
         // C1 -> #REF! (deleted), F1 -> D1 (shifted left by 2)
         if let ASTNodeType::BinaryOp { left, right, .. } = &adjusted.node_type {
             if let ASTNodeType::Reference {
-                reference:
-                    formualizer_parse::parser::ReferenceType::Cell { sheet, row, col },
+                reference: formualizer_parse::parser::ReferenceType::Cell { sheet, row, col },
                 ..
             } = &left.node_type
             {
@@ -573,8 +570,7 @@ mod tests {
                 assert_eq!(*col, 0);
             }
             if let ASTNodeType::Reference {
-                reference:
-                    formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &right.node_type
             {
@@ -606,9 +602,7 @@ mod tests {
             && let Some(ASTNodeType::Reference {
                 reference:
                     formualizer_parse::parser::ReferenceType::Range {
-                        start_row,
-                        end_row,
-                        ..
+                        start_row, end_row, ..
                     },
                 ..
             }) = args.first().map(|arg| &arg.node_type)
@@ -629,8 +623,7 @@ mod tests {
         // A1 -> D3, B2 -> E4
         if let ASTNodeType::BinaryOp { left, right, .. } = &adjusted.node_type {
             if let ASTNodeType::Reference {
-                reference:
-                    formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &left.node_type
             {
@@ -638,8 +631,7 @@ mod tests {
                 assert_eq!(*col, 4);
             }
             if let ASTNodeType::Reference {
-                reference:
-                    formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &right.node_type
             {
@@ -888,9 +880,7 @@ mod tests {
             && let Some(ASTNodeType::Reference {
                 reference:
                     formualizer_parse::parser::ReferenceType::Range {
-                        start_row,
-                        end_row,
-                        ..
+                        start_row, end_row, ..
                     },
                 ..
             }) = args.first().map(|arg| &arg.node_type)

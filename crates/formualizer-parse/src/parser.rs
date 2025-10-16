@@ -699,7 +699,9 @@ impl ReferenceType {
 
             let sheet = match (&start_part.sheet, &end_part) {
                 (Some(sheet), Some(end)) => {
-                    if let Some(end_sheet) = &end.sheet && end_sheet != sheet {
+                    if let Some(end_sheet) = &end.sheet
+                        && end_sheet != sheet
+                    {
                         return Err(ParsingError::InvalidReference(format!(
                             "Mismatched sheets in reference: {sheet} vs {end_sheet}"
                         )));

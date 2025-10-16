@@ -412,12 +412,13 @@ impl<'a> SheetPort<'a> {
     }
 
     fn read_port_value(&mut self, binding: &PortBinding) -> Result<PortValue, SheetPortError> {
-        let value = match &binding.kind {
+        let mut value = match &binding.kind {
             BoundPort::Scalar(scalar) => self.read_scalar(binding, scalar),
             BoundPort::Record(record) => self.read_record(binding, record),
             BoundPort::Range(range) => self.read_range(binding, range),
             BoundPort::Table(table) => self.read_table(binding, table),
         }?;
+        value = apply_defaults(binding, value);
         if let Err(violations) = validate_port_value(binding, &value, ValidationScope::Full) {
             return Err(SheetPortError::ConstraintViolation { violations });
         }
@@ -885,4 +886,48 @@ impl<'a> SheetPort<'a> {
             }
         }
     }
+}
+
+fn apply_defaults(binding: &PortBinding, value: PortValue) -> PortValue {
+    if let Some(default) = &binding.resolved_default {
+        merge_with_default(value, default)
+    } else {
+        value
+    }
+}
+
+fn merge_with_default(mut current: PortValue, default: &PortValue) -> PortValue {
+    match (&mut current, default) {
+        (PortValue::Scalar(current_lit), PortValue::Scalar(default_lit)) => {
+            if matches!(current_lit, LiteralValue::Empty) {
+                *current_lit = default_lit.clone();
+            }
+        }
+        (PortValue::Record(current_fields), PortValue::Record(default_fields)) => {
+            for (field, default_value) in default_fields {
+                let entry = current_fields
+                    .entry(field.clone())
+                    .or_insert(LiteralValue::Empty);
+                if matches!(entry, LiteralValue::Empty) {
+                    *entry = default_value.clone();
+                }
+            }
+        }
+        (PortValue::Range(current_rows), PortValue::Range(default_rows)) => {
+            let is_empty = current_rows.is_empty()
+                || current_rows
+                    .iter()
+                    .all(|row| row.iter().all(|cell| matches!(cell, LiteralValue::Empty)));
+            if is_empty {
+                *current_rows = default_rows.clone();
+            }
+        }
+        (PortValue::Table(current_table), PortValue::Table(default_table)) => {
+            if current_table.is_empty() {
+                *current_table = default_table.clone();
+            }
+        }
+        _ => {}
+    }
+    current
 }

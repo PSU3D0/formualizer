@@ -1,6 +1,6 @@
 use super::common::arrow_eval_config;
-use crate::engine::arrow_ingest::ArrowBulkUpdateBuilder;
 use crate::engine::Engine;
+use crate::engine::arrow_ingest::ArrowBulkUpdateBuilder;
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 

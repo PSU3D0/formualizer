@@ -316,9 +316,10 @@ impl<'a> Scheduler<'a> {
             let dependencies = self.graph.get_dependencies(vertex_id);
             for &dep_id in &dependencies {
                 if vertex_set.contains(&dep_id)
-                    && let Some(in_degree) = in_degrees.get_mut(&vertex_id) {
-                        *in_degree += 1;
-                    }
+                    && let Some(in_degree) = in_degrees.get_mut(&vertex_id)
+                {
+                    *in_degree += 1;
+                }
             }
         }
 

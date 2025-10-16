@@ -385,11 +385,7 @@ fn test_dirty_propagation_performance() {
     // Verify all downstream vertices are dirty
     for (idx, &vertex_id) in all_vertex_ids.iter().enumerate().skip(1) {
         // Skip A1 (it's a value)
-        assert!(
-            graph.is_dirty(vertex_id),
-            "A{} should be dirty",
-            idx + 1
-        );
+        assert!(graph.is_dirty(vertex_id), "A{} should be dirty", idx + 1);
         assert!(
             graph.get_vertex_kind(vertex_id) == VertexKind::FormulaScalar,
             "A{} should be a formula",

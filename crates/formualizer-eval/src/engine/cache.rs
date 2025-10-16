@@ -27,10 +27,12 @@ impl CriteriaMaskCache {
 
     pub fn insert(&mut self, key: String, mask: DenseMask) -> bool {
         // Simple LRU-like behavior: if at capacity, remove oldest
-        if self.cache.len() >= self.entries_cap && !self.cache.contains_key(&key)
-            && let Some(first_key) = self.cache.keys().next().cloned() {
-                self.cache.remove(&first_key);
-            }
+        if self.cache.len() >= self.entries_cap
+            && !self.cache.contains_key(&key)
+            && let Some(first_key) = self.cache.keys().next().cloned()
+        {
+            self.cache.remove(&first_key);
+        }
         self.cache.insert(key, mask);
         true
     }

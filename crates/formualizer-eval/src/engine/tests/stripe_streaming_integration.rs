@@ -4,9 +4,9 @@
 //! evaluation, ensuring that large ranges are both efficiently tracked for
 //! dependencies AND efficiently evaluated via streaming.
 
+use super::common::eval_config_with_range_limit;
 use crate::builtins::math::SumFn;
 use crate::engine::Engine;
-use super::common::eval_config_with_range_limit;
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::Parser;

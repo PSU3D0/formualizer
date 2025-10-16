@@ -43,6 +43,10 @@ pub fn validate_port_value(
     value: &PortValue,
     scope: ValidationScope,
 ) -> Result<(), Vec<ConstraintViolation>> {
+    if !binding.required && value.is_empty() {
+        return Ok(());
+    }
+
     let mut violations = Vec::new();
     match (&binding.kind, value) {
         (BoundPort::Scalar(scalar), PortValue::Scalar(lit)) => {

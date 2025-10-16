@@ -488,9 +488,10 @@ impl DataStore {
                     for c in 0..*cols {
                         let idx = (r * *cols + c) as usize;
                         if let Some(&elem_id) = elements.get(idx)
-                            && let Some(node) = self.reconstruct_ast_node(elem_id, sheet_registry) {
-                                row.push(node);
-                            }
+                            && let Some(node) = self.reconstruct_ast_node(elem_id, sheet_registry)
+                        {
+                            row.push(node);
+                        }
                     }
                     result.push(row);
                 }

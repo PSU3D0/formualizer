@@ -1,8 +1,8 @@
 //! Tests for the precision of dirty propagation.
 
+use super::common::eval_config_with_range_limit;
 use crate::CellRef;
 use crate::engine::DependencyGraph;
-use super::common::eval_config_with_range_limit;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 

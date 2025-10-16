@@ -68,8 +68,7 @@ fn config_with_range_limit(limit: usize) -> EvalConfig {
 /// Test the core property for small ranges (expanded to individual cell dependencies)
 #[test]
 fn test_property_small_range_dependency_tracking() {
-    let mut graph =
-        DependencyGraph::new_with_config(config_with_range_limit(100)); // Ensure small ranges are expanded
+    let mut graph = DependencyGraph::new_with_config(config_with_range_limit(100)); // Ensure small ranges are expanded
 
     // Test range: A1:C3 (3x3 = 9 cells)
     let start_row = 1;
@@ -149,8 +148,7 @@ fn test_property_small_range_dependency_tracking() {
 /// Test the core property for large ranges (using stripe-based tracking)
 #[test]
 fn test_property_large_range_stripe_tracking() {
-    let mut graph =
-        DependencyGraph::new_with_config(config_with_range_limit(16)); // Force stripe tracking for larger ranges
+    let mut graph = DependencyGraph::new_with_config(config_with_range_limit(16)); // Force stripe tracking for larger ranges
 
     // Test tall range: A1:A1000 (1000 cells)
     let start_row = 1;

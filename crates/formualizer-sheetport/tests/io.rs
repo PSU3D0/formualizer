@@ -33,8 +33,18 @@ ports:
       a1: Inputs!B2
     schema:
       type: string
+    default: "WH-900"
     constraints:
       pattern: "^[A-Z]{2}-\\d{3}$"
+
+  - id: manager_note
+    dir: in
+    shape: scalar
+    required: false
+    location:
+      a1: Inputs!D2
+    schema:
+      type: string
 
   - id: planning_window
     dir: in
@@ -55,6 +65,9 @@ ports:
           type: integer
           location:
             a1: Inputs!C1
+    default:
+      month: 1
+      year: 2024
 
   - id: sku_inventory
     dir: in
@@ -226,7 +239,6 @@ fn parse_manifest() -> Manifest {
     Manifest::from_yaml_str(MANIFEST_YAML).expect("manifest parses")
 }
 
-
 #[test]
 fn singular_io_roundtrip() -> Result<(), SheetPortError> {
     let mut workbook = build_workbook()?;
@@ -320,6 +332,54 @@ fn singular_io_roundtrip() -> Result<(), SheetPortError> {
         other => panic!("expected record summary, got {other:?}"),
     }
 
+    Ok(())
+}
+
+#[test]
+fn defaults_fill_missing_scalar() -> Result<(), SheetPortError> {
+    let mut workbook = build_workbook()?;
+    set_value(&mut workbook, "Inputs", 2, 2, LiteralValue::Empty)?;
+    let manifest = parse_manifest();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+    let inputs = sheetport.read_inputs()?;
+    assert_scalar(
+        &inputs,
+        "warehouse_code",
+        |v| matches!(v, LiteralValue::Text(text) if text == "WH-900"),
+    );
+    Ok(())
+}
+
+#[test]
+fn record_defaults_fill_missing_fields() -> Result<(), SheetPortError> {
+    let mut workbook = build_workbook()?;
+    set_value(&mut workbook, "Inputs", 1, 2, LiteralValue::Empty)?;
+    set_value(&mut workbook, "Inputs", 1, 3, LiteralValue::Empty)?;
+    let manifest = parse_manifest();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+    let inputs = sheetport.read_inputs()?;
+    assert_record_field(&inputs, "planning_window", "month", |v| {
+        matches!(v, LiteralValue::Int(1))
+    });
+    assert_record_field(&inputs, "planning_window", "year", |v| {
+        matches!(v, LiteralValue::Int(2024))
+    });
+    Ok(())
+}
+
+#[test]
+fn optional_ports_allow_empty_values() -> Result<(), SheetPortError> {
+    let mut workbook = build_workbook()?;
+    let manifest = parse_manifest();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+    let inputs = sheetport.read_inputs()?;
+    assert_scalar(&inputs, "manager_note", |v| {
+        matches!(v, LiteralValue::Empty)
+    });
+
+    let mut update = InputUpdate::new();
+    update.insert("manager_note", PortValue::Scalar(LiteralValue::Empty));
+    sheetport.write_inputs(update)?;
     Ok(())
 }
 

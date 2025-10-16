@@ -1,10 +1,7 @@
 //! Tests for striped dirty propagation (Milestone 5.3)
 
-use crate::{
-    CellRef,
-    engine::DependencyGraph,
-};
 use super::common::eval_config_with_range_limit;
+use crate::{CellRef, engine::DependencyGraph};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 

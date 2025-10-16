@@ -174,8 +174,7 @@ impl Manifest {
             {
                 issues.push(ManifestIssue::new(
                     format!("ports[{}].location.layout.marker_text", idx),
-                    "marker_text must be provided when terminate == \"until_marker\""
-                        .to_string(),
+                    "marker_text must be provided when terminate == \"until_marker\"".to_string(),
                 ));
             }
 

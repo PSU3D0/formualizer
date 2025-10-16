@@ -229,27 +229,27 @@ impl<'g> BulkIngestBuilder<'g> {
                     }
                     t_ranges_ms += tr0.elapsed().as_millis();
                     if let Some(names) = plan.per_formula_names.get(fi)
-                        && !names.is_empty() {
-                            let mut name_vertices = Vec::new();
-                            let (formula_sheet, _) = plan
-                                .formula_targets
-                                .get(fi)
-                                .copied()
-                                .unwrap_or((stage.id, PackedCoord::new(1, 1)));
-                            for name in names {
-                                if let Some(named) = self.g.resolve_name_entry(name, formula_sheet)
-                                {
-                                    row.push(named.vertex.0);
-                                    name_vertices.push(named.vertex);
-                                } else {
-                                    self.g
-                                        .record_pending_name_reference(formula_sheet, name, tvid);
-                                }
-                            }
-                            if !name_vertices.is_empty() {
-                                self.g.attach_vertex_to_names(tvid, &name_vertices);
+                        && !names.is_empty()
+                    {
+                        let mut name_vertices = Vec::new();
+                        let (formula_sheet, _) = plan
+                            .formula_targets
+                            .get(fi)
+                            .copied()
+                            .unwrap_or((stage.id, PackedCoord::new(1, 1)));
+                        for name in names {
+                            if let Some(named) = self.g.resolve_name_entry(name, formula_sheet) {
+                                row.push(named.vertex.0);
+                                name_vertices.push(named.vertex);
+                            } else {
+                                self.g
+                                    .record_pending_name_reference(formula_sheet, name, tvid);
                             }
                         }
+                        if !name_vertices.is_empty() {
+                            self.g.attach_vertex_to_names(tvid, &name_vertices);
+                        }
+                    }
                     // Always add adjacency row for target (may be empty)
                     edges_adj.push((tvid.0, row.into_vec()));
                 }

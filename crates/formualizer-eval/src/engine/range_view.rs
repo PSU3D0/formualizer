@@ -207,9 +207,10 @@ impl<'a> RangeView<'a> {
                 let coord = crate::reference::Coord::new(abs_row, abs_col, true, true);
                 let addr = crate::reference::CellRef::new(*sheet_id, coord);
                 if let Some(vid) = graph.get_vertex_id_for_address(&addr)
-                    && let Some(v) = graph.get_value(*vid) {
-                        return v;
-                    }
+                    && let Some(v) = graph.get_value(*vid)
+                {
+                    return v;
+                }
                 arrow.get_cell(row, col)
             }
         }

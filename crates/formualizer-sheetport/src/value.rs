@@ -38,6 +38,24 @@ impl PortValue {
             _ => None,
         }
     }
+
+    /// Returns true when the port carries no concrete data.
+    pub fn is_empty(&self) -> bool {
+        match self {
+            PortValue::Scalar(value) => matches!(value, LiteralValue::Empty),
+            PortValue::Record(fields) => fields
+                .values()
+                .all(|value| matches!(value, LiteralValue::Empty)),
+            PortValue::Range(rows) => {
+                if rows.is_empty() {
+                    return true;
+                }
+                rows.iter()
+                    .all(|row| row.iter().all(|cell| matches!(cell, LiteralValue::Empty)))
+            }
+            PortValue::Table(table) => table.is_empty(),
+        }
+    }
 }
 
 /// Table-shaped value consisting of ordered rows.
@@ -52,7 +70,7 @@ impl TableValue {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.rows.is_empty()
+        self.rows.is_empty() || self.rows.iter().all(TableRow::is_empty)
     }
 }
 
@@ -69,6 +87,12 @@ impl TableRow {
 
     pub fn get(&self, column: &str) -> Option<&LiteralValue> {
         self.values.get(column)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values
+            .values()
+            .all(|value| matches!(value, LiteralValue::Empty))
     }
 }
 

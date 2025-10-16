@@ -1,6 +1,6 @@
 //! Tests for the hybrid model of range dependency management.
-use crate::engine::{DependencyGraph, EvalConfig, StripeKey, StripeType, VertexId, block_index};
 use super::common::eval_config_with_range_limit;
+use crate::engine::{DependencyGraph, EvalConfig, StripeKey, StripeType, VertexId, block_index};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
