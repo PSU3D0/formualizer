@@ -192,6 +192,56 @@ impl Default for EvalConfig {
     }
 }
 
+impl EvalConfig {
+    #[inline]
+    pub fn with_range_expansion_limit(mut self, limit: usize) -> Self {
+        self.range_expansion_limit = limit;
+        self
+    }
+
+    #[inline]
+    pub fn with_parallel(mut self, enable: bool) -> Self {
+        self.enable_parallel = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_block_stripes(mut self, enable: bool) -> Self {
+        self.enable_block_stripes = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_arrow_storage(mut self, enable: bool) -> Self {
+        self.arrow_storage_enabled = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_arrow_fastpath(mut self, enable: bool) -> Self {
+        self.arrow_fastpath_enabled = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_delta_overlay(mut self, enable: bool) -> Self {
+        self.delta_overlay_enabled = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_formula_overlay(mut self, enable: bool) -> Self {
+        self.write_formula_overlay_enabled = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_date_system(mut self, system: DateSystem) -> Self {
+        self.date_system = system;
+        self
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SheetIndexMode {
     /// Build full interval-tree based index during inserts (current behavior)

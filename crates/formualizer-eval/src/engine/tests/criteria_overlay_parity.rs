@@ -1,4 +1,5 @@
-use crate::engine::{Engine, EvalConfig};
+use super::common::arrow_eval_config;
+use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use crate::traits::FunctionProvider;
 use crate::traits::{ArgumentHandle, DefaultFunctionContext};
@@ -28,12 +29,8 @@ fn lit_text(s: &str) -> ASTNode {
 
 #[test]
 fn sumif_overlay_and_fastpath_parity() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    cfg.delta_overlay_enabled = true;
-    cfg.write_formula_overlay_enabled = true;
-    let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
+    let config = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::new(), config.clone());
 
     let sheet = "SOV";
     // Build base: 2 cols, 6 rows
@@ -70,7 +67,7 @@ fn sumif_overlay_and_fastpath_parity() {
     let fun = engine.get_function("", "SUMIF").expect("SUMIF");
 
     // Disable fast path and recompute
-    engine.config.arrow_fastpath_enabled = false;
+    engine.config = config.with_arrow_fastpath(false);
     let got_slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, sheet);
         let args = vec![
@@ -88,12 +85,8 @@ fn sumif_overlay_and_fastpath_parity() {
 
 #[test]
 fn sumifs_overlay_and_fastpath_parity() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    cfg.delta_overlay_enabled = true;
-    cfg.write_formula_overlay_enabled = true;
-    let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
+    let config = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::new(), config.clone());
 
     let sheet = "SOV2";
     // 3 cols: sum, crit1 (0/1), crit2 text
@@ -143,7 +136,7 @@ fn sumifs_overlay_and_fastpath_parity() {
         fun.dispatch(&args, &fctx).unwrap()
     };
 
-    engine.config.arrow_fastpath_enabled = false;
+    engine.config = config.with_arrow_fastpath(false);
     let got_slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, sheet);
         let args = vec![

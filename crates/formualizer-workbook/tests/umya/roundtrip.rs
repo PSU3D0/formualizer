@@ -47,7 +47,7 @@ fn umya_full_roundtrip_formula_update() {
     engine2.set_sheet_index_mode(SheetIndexMode::FastBatch);
     loader2.load_into_engine(&mut engine2).unwrap();
     // Demand-driven: evaluate just B1 (Sheet1!B1)
-    engine2.evaluate_until(&["Sheet1!B1"]).unwrap();
+    engine2.evaluate_until(&[("Sheet1", 1, 2)]).unwrap();
     match engine2.get_cell_value("Sheet1", 1, 2) {
         // row=1 col=2
         Some(LiteralValue::Number(n)) => assert!((n - 30.0).abs() < 1e-9),
@@ -58,7 +58,7 @@ fn umya_full_roundtrip_formula_update() {
     engine2
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(20.0))
         .unwrap();
-    engine2.evaluate_until(&["Sheet1!B1"]).unwrap();
+    engine2.evaluate_until(&[("Sheet1", 1, 2)]).unwrap();
     match engine2.get_cell_value("Sheet1", 1, 2) {
         Some(LiteralValue::Number(n)) => assert!((n - 60.0).abs() < 1e-9),
         other => panic!("Expected updated on-demand 60 got {:?}", other),

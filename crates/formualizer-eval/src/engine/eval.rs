@@ -1053,7 +1053,7 @@ where
         for (sheet, row, col) in targets {
             // For now, assume simple A1-style references on default sheet
             // TODO: Parse complex references with sheets
-            let sheet_id = self.graph.sheet_id_mut(*sheet);
+            let sheet_id = self.graph.sheet_id_mut(sheet);
             let coord = Coord::new(*row, *col, true, true);
             target_addrs.push(CellRef::new(sheet_id, coord));
         }
@@ -1338,10 +1338,10 @@ where
         let result = self.evaluate_cells(&[(sheet, row, col)])?;
 
         match result.len() {
-            0 => return Ok(None),
+            0 => Ok(None),
             1 => {
                 let v = result.into_iter().next().unwrap();
-                return Ok(v);
+                Ok(v)
             }
             _ => unreachable!("evaluate_cells returned unexpected length"),
         }
@@ -1936,11 +1936,9 @@ where
                 if let Some(func) = self
                     .get_function("", name)
                     .or_else(|| crate::function_registry::get("", name))
-                {
-                    if func.caps().contains(crate::function::FnCaps::VOLATILE) {
+                    && func.caps().contains(crate::function::FnCaps::VOLATILE) {
                         return true;
                     }
-                }
                 args.iter()
                     .any(|arg| self.is_ast_volatile_with_provider(arg))
             }
@@ -2174,11 +2172,10 @@ where
 
                 return match &named_range.definition {
                     NamedDefinition::Cell(cell_ref) => {
-                        if let Some(dep_vertex) = self.graph.get_vertex_for_cell(cell_ref) {
-                            if let Some(existing) = self.graph.get_value(dep_vertex) {
+                        if let Some(dep_vertex) = self.graph.get_vertex_for_cell(cell_ref)
+                            && let Some(existing) = self.graph.get_value(dep_vertex) {
                                 return Ok(existing.clone());
                             }
-                        }
                         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
                         Ok(self
                             .graph
@@ -2364,11 +2361,10 @@ impl MaskCache {
         self.misses = self.misses.saturating_add(1);
         let mask = Self::compute_mask(engine, view, col_in_view, pred)?;
         // Insert with FIFO eviction
-        if self.map.len() >= self.cap && !self.map.contains_key(&key) {
-            if let Some(old) = self.order.pop_front() {
+        if self.map.len() >= self.cap && !self.map.contains_key(&key)
+            && let Some(old) = self.order.pop_front() {
                 self.map.remove(&old);
             }
-        }
         self.order.push_back(key.clone());
         self.map.insert(key, mask.clone());
         Some(mask)
@@ -2507,10 +2503,10 @@ where
     R: EvaluationContext,
 {
     pub fn __mask_cache_stats(&self) -> (u64, u64, usize) {
-        if let Ok(g) = self.mask_cache.read() {
-            if let Some(c) = g.as_ref() {
-                return (c.hits, c.misses, c.map.len());
-            }
+        if let Ok(g) = self.mask_cache.read()
+            && let Some(c) = g.as_ref()
+        {
+            return (c.hits, c.misses, c.map.len());
         }
         (0, 0, 0)
     }
@@ -2778,11 +2774,10 @@ where
         // Prefer Arrow-backed used-region; fallback to graph if formulas intersect region
         let sheet_id = self.graph.sheet_id(sheet)?;
         let arrow_ok = self.sheet_store().sheet(sheet).is_some();
-        if arrow_ok {
-            if let Some(bounds) = self.arrow_used_row_bounds(sheet, start_col, end_col) {
+        if arrow_ok
+            && let Some(bounds) = self.arrow_used_row_bounds(sheet, start_col, end_col) {
                 return Some(bounds);
             }
-        }
         self.graph
             .used_row_bounds_for_columns(sheet_id, start_col, end_col)
     }
@@ -2791,11 +2786,10 @@ where
         // Prefer Arrow-backed used-region; fallback to graph if formulas intersect region
         let sheet_id = self.graph.sheet_id(sheet)?;
         let arrow_ok = self.sheet_store().sheet(sheet).is_some();
-        if arrow_ok {
-            if let Some(bounds) = self.arrow_used_col_bounds(sheet, start_row, end_row) {
+        if arrow_ok
+            && let Some(bounds) = self.arrow_used_col_bounds(sheet, start_row, end_row) {
                 return Some(bounds);
             }
-        }
         self.graph
             .used_col_bounds_for_rows(sheet_id, start_row, end_row)
     }
@@ -2960,18 +2954,16 @@ where
                 if let Some(sheet_id) = self.graph.sheet_id(sheet_name) {
                     let coord = Coord::new(*row, *col, true, true);
                     let addr = CellRef::new(sheet_id, coord);
-                    if let Some(vid) = self.graph.get_vertex_id_for_address(&addr) {
-                        if matches!(
+                    if let Some(vid) = self.graph.get_vertex_id_for_address(&addr)
+                        && matches!(
                             self.graph.get_vertex_kind(*vid),
                             VertexKind::FormulaScalar | VertexKind::FormulaArray
-                        ) {
-                            if let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col) {
+                        )
+                            && let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col) {
                                 return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![
                                     vec![v],
                                 ]))));
                             }
-                        }
-                    }
                 }
                 if self.config.arrow_storage_enabled
                     && self.config.delta_overlay_enabled
@@ -3008,8 +3000,8 @@ where
                 ]]))))
             }
             ReferenceType::NamedRange(name) => {
-                if let Some(current_id) = self.graph.sheet_id(current_sheet) {
-                    if let Some(named) = self.graph.resolve_name_entry(name, current_id) {
+                if let Some(current_id) = self.graph.sheet_id(current_sheet)
+                    && let Some(named) = self.graph.resolve_name_entry(name, current_id) {
                         match &named.definition {
                             NamedDefinition::Cell(cell_ref) => {
                                 let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
@@ -3048,7 +3040,6 @@ where
                             }
                         }
                     }
-                }
                 let data = self.resolver.resolve_named_range_reference(name)?;
                 Ok(RangeView::from_borrowed(Box::leak(Box::new(data))))
             }

@@ -3,21 +3,14 @@ use crate::runtime::{EvalOptions, SheetPort};
 use crate::value::{InputUpdate, OutputSnapshot};
 use formualizer_eval::engine::RecalcPlan;
 
+type ProgressCallback<'a> = Box<dyn FnMut(BatchProgress<'_>) + Send + 'a>;
+
 /// Execution options for batch runs.
+#[derive(Default)]
 pub struct BatchOptions<'a> {
     pub eval: EvalOptions,
     pub concurrency: Option<usize>,
-    pub progress: Option<Box<dyn FnMut(BatchProgress<'_>) + Send + 'a>>,
-}
-
-impl<'a> Default for BatchOptions<'a> {
-    fn default() -> Self {
-        Self {
-            eval: EvalOptions::default(),
-            concurrency: None,
-            progress: None,
-        }
-    }
+    pub progress: Option<ProgressCallback<'a>>,
 }
 
 /// Progress information emitted during batch execution.

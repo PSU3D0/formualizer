@@ -207,9 +207,10 @@ fn changelog_undo_redo_values() {
 #[test]
 fn changelog_with_formulas_non_deferred() {
     // Disable deferral so formula graph exists → logs capture formula edits
-    let mut cfg = EvalConfig::default();
-    cfg.defer_graph_building = false;
-    let mut wb = Workbook::new_with_config(cfg);
+    let mut wb = Workbook::new_with_config(EvalConfig {
+        defer_graph_building: false,
+        ..Default::default()
+    });
     wb.set_changelog_enabled(true);
     wb.add_sheet("S");
     wb.set_value("S", 1, 1, LiteralValue::Int(2)).unwrap();

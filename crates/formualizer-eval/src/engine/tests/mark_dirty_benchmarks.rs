@@ -52,11 +52,11 @@ fn sum_range_ast(
 fn create_overlapping_ranges_graph(num_formulas: usize, enable_stripes: bool) -> DependencyGraph {
     let mut config = EvalConfig::default();
     if enable_stripes {
-        config.range_expansion_limit = 16; // Force stripe usage
+        config = config.with_range_expansion_limit(16); // Force stripe usage
     } else {
-        config.range_expansion_limit = 1000000; // Force expansion to individual cells
+        config = config.with_range_expansion_limit(1000000); // Force expansion to individual cells
     }
-    config.enable_block_stripes = enable_stripes;
+    config = config.with_block_stripes(enable_stripes);
 
     let mut graph = DependencyGraph::new_with_config(config);
 
@@ -269,8 +269,8 @@ fn test_mark_dirty_sparse_vs_dense_ranges() {
     println!("\n=== Benchmark: sparse vs dense range performance ===");
 
     let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    config.enable_block_stripes = true;
+    config = config.with_range_expansion_limit(16);
+    config = config.with_block_stripes(true);
 
     // Create sparse ranges (single columns)
     let mut sparse_graph = DependencyGraph::new_with_config(config.clone());
@@ -353,7 +353,7 @@ fn test_mark_dirty_cross_sheet_performance() {
     println!("\n=== Benchmark: cross-sheet range performance ===");
 
     let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
+    config = config.with_range_expansion_limit(16);
     let mut graph = DependencyGraph::new_with_config(config);
 
     // Create formulas on Sheet1 that depend on ranges in Sheet2
@@ -473,7 +473,7 @@ fn test_mark_dirty_pathological_case() {
 
     // Create a pathological case: one cell affects thousands of formulas
     let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
+    config = config.with_range_expansion_limit(16);
     let mut graph = DependencyGraph::new_with_config(config);
 
     const NUM_FORMULAS: usize = 3000;

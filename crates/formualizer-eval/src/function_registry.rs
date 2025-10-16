@@ -42,10 +42,10 @@ pub fn get(ns: &str, name: &str) -> Option<Arc<dyn Function>> {
     }
 
     // Try existing alias
-    if let Some(canon) = ALIASES.get(&key) {
-        if let Some(v) = REG.get(canon.value()) {
-            return Some(Arc::clone(v.value()));
-        }
+    if let Some(canon) = ALIASES.get(&key)
+        && let Some(v) = REG.get(canon.value())
+    {
+        return Some(Arc::clone(v.value()));
     }
 
     // Try stripping known Excel prefixes and create runtime alias if found

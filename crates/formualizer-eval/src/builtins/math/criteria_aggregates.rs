@@ -94,31 +94,31 @@ impl Function for SumIfFn {
         }
 
         // Optimized numeric-only path when summing from a numeric-only view
-        if let Some(ref sum_view) = sum_view_opt {
-            if sum_view.kind_probe() == crate::engine::range_view::RangeKind::NumericOnly {
-                let mut total = 0.0f64;
-                for row in 0..dims.0 {
-                    for col in 0..dims.1 {
-                        // Criteria value (padded/broadcast)
-                        let cval = if let Some(ref v) = crit_view {
-                            v.get_cell(row, col)
-                        } else if let Some(ref s) = crit_scalar {
-                            s.clone()
-                        } else {
-                            LiteralValue::Empty
-                        };
-                        if !criteria_match(&pred, &cval) {
-                            continue;
-                        }
-                        match sum_view.get_cell(row, col) {
-                            LiteralValue::Number(n) => total += n,
-                            LiteralValue::Int(i) => total += i as f64,
-                            _ => {}
-                        }
+        if let Some(ref sum_view) = sum_view_opt
+            && sum_view.kind_probe() == crate::engine::range_view::RangeKind::NumericOnly
+        {
+            let mut total = 0.0f64;
+            for row in 0..dims.0 {
+                for col in 0..dims.1 {
+                    // Criteria value (padded/broadcast)
+                    let cval = if let Some(ref v) = crit_view {
+                        v.get_cell(row, col)
+                    } else if let Some(ref s) = crit_scalar {
+                        s.clone()
+                    } else {
+                        LiteralValue::Empty
+                    };
+                    if !criteria_match(&pred, &cval) {
+                        continue;
+                    }
+                    match sum_view.get_cell(row, col) {
+                        LiteralValue::Number(n) => total += n,
+                        LiteralValue::Int(i) => total += i as f64,
+                        _ => {}
                     }
                 }
-                return Ok(LiteralValue::Number(total));
             }
+            return Ok(LiteralValue::Number(total));
         }
 
         // General path (mixed types, or scalar sum)
@@ -235,7 +235,7 @@ impl Function for SumIfsFn {
     ) -> Result<LiteralValue, ExcelError> {
         #[cfg(feature = "tracing")]
         let _span = tracing::info_span!("SUMIFS").entered();
-        if args.len() < 3 || (args.len() - 1) % 2 != 0 {
+        if args.len() < 3 || !(args.len() - 1).is_multiple_of(2) {
             return Ok(LiteralValue::Error(
                 ExcelError::new_value().with_message(format!(
                     "SUMIFS expects 1 sum_range followed by N pairs (criteria_range, criteria); got {} args",
@@ -309,8 +309,8 @@ impl Function for SumIfsFn {
 
         // Arrow fast path (guarded by config): numeric comparators and basic text (eq/neq, wildcard) over Arrow-backed views.
         // Supports N-criteria with array/scalar comparisons.
-        if ctx.arrow_fastpath_enabled() {
-            if let Some(sum_av) = sum_view.as_arrow() {
+        if ctx.arrow_fastpath_enabled()
+            && let Some(sum_av) = sum_view.as_arrow() {
                 use crate::compute_prelude::{boolean, cmp, concat_arrays, filter_array};
                 use arrow::compute::kernels::aggregate::sum_array;
                 use arrow::compute::kernels::comparison::{ilike, nilike};
@@ -341,12 +341,11 @@ impl Function for SumIfsFn {
                     if !ok {
                         break;
                     }
-                    if let Some(ref v) = crit_views[j] {
-                        if v.as_arrow().is_none() || v.dims() != dims {
+                    if let Some(ref v) = crit_views[j]
+                        && (v.as_arrow().is_none() || v.dims() != dims) {
                             ok = false;
                             break;
                         }
-                    }
                 }
 
                 if ok {
@@ -580,7 +579,6 @@ impl Function for SumIfsFn {
                     }
                 }
             }
-        }
 
         // Check if we can use the optimized numeric path
         if sum_view.kind_probe() == crate::engine::range_view::RangeKind::NumericOnly {
@@ -682,7 +680,7 @@ impl Function for CountIfsFn {
     ) -> Result<LiteralValue, ExcelError> {
         #[cfg(feature = "tracing")]
         let _span = tracing::info_span!("COUNTIFS").entered();
-        if args.len() < 2 || args.len() % 2 != 0 {
+        if args.len() < 2 || !args.len().is_multiple_of(2) {
             return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
                 format!(
                     "COUNTIFS expects N pairs (criteria_range, criteria); got {} args",
@@ -832,7 +830,7 @@ impl Function for AverageIfsFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        if args.len() < 3 || (args.len() - 1) % 2 != 0 {
+        if args.len() < 3 || !(args.len() - 1).is_multiple_of(2) {
             return Ok(LiteralValue::Error(
                 ExcelError::new_value().with_message(format!(
                     "AVERAGEIFS expects 1 avg_range followed by N pairs (criteria_range, criteria); got {} args",

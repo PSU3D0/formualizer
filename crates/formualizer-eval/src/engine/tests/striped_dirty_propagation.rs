@@ -2,8 +2,9 @@
 
 use crate::{
     CellRef,
-    engine::{DependencyGraph, EvalConfig},
+    engine::DependencyGraph,
 };
+use super::common::eval_config_with_range_limit;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -39,9 +40,7 @@ fn sum_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTNod
 
 #[test]
 fn test_change_in_tiny_range_dirties_dependent() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 10; // Allow small ranges to expand
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(eval_config_with_range_limit(10)); // Allow small ranges to expand
 
     // B1 = SUM(A1:A4) - small range that expands to direct dependencies
     graph
@@ -73,9 +72,7 @@ fn test_change_in_tiny_range_dirties_dependent() {
 
 #[test]
 fn test_change_in_large_tall_range_dirties_dependent() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4; // Force large ranges to be compressed
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(eval_config_with_range_limit(4)); // Force large ranges to be compressed
 
     // B1 = SUM(A1:A100) - tall range that uses column stripe
     graph
@@ -104,9 +101,7 @@ fn test_change_in_large_tall_range_dirties_dependent() {
 
 #[test]
 fn test_change_in_large_wide_range_dirties_dependent() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4; // Force large ranges to be compressed
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(eval_config_with_range_limit(4)); // Force large ranges to be compressed
 
     // B1 = SUM(A1:Z1) - wide range that uses row stripe
     graph
@@ -135,9 +130,7 @@ fn test_change_in_large_wide_range_dirties_dependent() {
 
 #[test]
 fn test_change_outside_range_does_not_dirty_dependent() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(eval_config_with_range_limit(4));
 
     // B1 = SUM(A1:A10) - depends on column A rows 1-10
     graph
@@ -179,9 +172,7 @@ fn test_change_outside_range_does_not_dirty_dependent() {
 
 #[test]
 fn test_multi_stripe_border_cell_edit() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    config.enable_block_stripes = true;
+    let config = eval_config_with_range_limit(4).with_block_stripes(true);
     let mut graph = DependencyGraph::new_with_config(config);
 
     // Create a dense range that spans multiple blocks
@@ -237,9 +228,7 @@ fn generate_test_coordinates() -> Vec<(u32, u32)> {
 
 #[test]
 fn prop_any_cell_change_in_range_dirties_dependent() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(eval_config_with_range_limit(4));
 
     // Test range: A1:AZ50 (large enough to use stripe indexing)
 
@@ -280,9 +269,7 @@ fn prop_any_cell_change_in_range_dirties_dependent() {
 
 #[test]
 fn test_multiple_ranges_same_stripe() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(eval_config_with_range_limit(4));
 
     // Create two formulas that depend on overlapping ranges in column A
     // B1 = SUM(A1:A30)
@@ -326,9 +313,7 @@ fn test_multiple_ranges_same_stripe() {
 
 #[test]
 fn test_cross_sheet_stripe_isolation() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(eval_config_with_range_limit(4));
 
     // Formula on Sheet1 depends on range in Sheet1
     graph

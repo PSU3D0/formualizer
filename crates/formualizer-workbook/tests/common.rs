@@ -3,6 +3,7 @@
 //! NOTE: umya-spreadsheet uses (col, row) ordering for tuple coordinates, i.e. (column, row),
 //! which is the reverse of the conventional (row, col) used in much of the rest of the codebase.
 //! Be careful when translating between engine (row, col) and umya (col, row).
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 use tempfile::tempdir;

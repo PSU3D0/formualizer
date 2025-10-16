@@ -107,11 +107,10 @@ fn is_valid_excel_name(name: &str) -> bool {
     let mut chars = name.chars();
 
     // First character must be letter, underscore, or backslash
-    if let Some(first) = chars.next() {
-        if !first.is_alphabetic() && first != '_' && first != '\\' {
+    if let Some(first) = chars.next()
+        && !first.is_alphabetic() && first != '_' && first != '\\' {
             return false;
         }
-    }
 
     // Remaining characters must be letters, digits, periods, or underscores
     for c in chars {
@@ -286,7 +285,7 @@ impl DependencyGraph {
         let seq = self.name_vertex_seq;
         self.name_vertex_seq = self.name_vertex_seq.wrapping_add(1);
         let row = (seq / 16_384).min(0x000F_FFFF);
-        let col = (seq % 16_384) as u32;
+        let col = seq % 16_384;
         PackedCoord::new(row, col)
     }
 
@@ -449,8 +448,8 @@ impl DependencyGraph {
         end_col: u32,
     ) -> Option<(u32, u32)> {
         // Prefer sheet index when available
-        if let Some(index) = self.sheet_indexes.get(&sheet_id) {
-            if !index.is_empty() {
+        if let Some(index) = self.sheet_indexes.get(&sheet_id)
+            && !index.is_empty() {
                 let mut min_r: Option<u32> = None;
                 let mut max_r: Option<u32> = None;
                 for vid in index.vertices_in_col_range(start_col, end_col) {
@@ -463,7 +462,6 @@ impl DependencyGraph {
                     _ => None,
                 };
             }
-        }
         // Fallback: scan cell map for bounds on the fly
         let mut min_r: Option<u32> = None;
         let mut max_r: Option<u32> = None;
@@ -489,11 +487,10 @@ impl DependencyGraph {
             return;
         };
         // If already present and non-empty, skip
-        if let Some(idx) = self.sheet_indexes.get(&sheet_id) {
-            if !idx.is_empty() {
+        if let Some(idx) = self.sheet_indexes.get(&sheet_id)
+            && !idx.is_empty() {
                 return;
             }
-        }
         let mut idx = SheetIndex::new();
         // Collect coords for this sheet
         let mut batch: Vec<(PackedCoord, VertexId)> = Vec::with_capacity(self.cell_to_vertex.len());
@@ -518,8 +515,8 @@ impl DependencyGraph {
         start_row: u32,
         end_row: u32,
     ) -> Option<(u32, u32)> {
-        if let Some(index) = self.sheet_indexes.get(&sheet_id) {
-            if !index.is_empty() {
+        if let Some(index) = self.sheet_indexes.get(&sheet_id)
+            && !index.is_empty() {
                 let mut min_c: Option<u32> = None;
                 let mut max_c: Option<u32> = None;
                 for vid in index.vertices_in_row_range(start_row, end_row) {
@@ -532,7 +529,6 @@ impl DependencyGraph {
                     _ => None,
                 };
             }
-        }
         // Fallback: scan cell map on the fly
         let mut min_c: Option<u32> = None;
         let mut max_c: Option<u32> = None;
@@ -1092,14 +1088,13 @@ impl DependencyGraph {
         for (row, col, value) in collected {
             let coord = Coord::new(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
-            if !assume_new {
-                if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
+            if !assume_new
+                && let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
                     let value_ref = self.data_store.store_value(value);
                     self.vertex_values.insert(existing_id, value_ref);
                     self.store.set_kind(existing_id, VertexKind::Cell);
                     continue;
                 }
-            }
             let packed = PackedCoord::new(row, col);
             let vertex_id = self.store.allocate(packed, sheet_id, 0x00);
             self.store.set_kind(vertex_id, VertexKind::Cell);
@@ -1199,10 +1194,10 @@ impl DependencyGraph {
             let elapsed = t.elapsed().as_millis();
             // Only log if over threshold or sampled
             let do_log = (dep_ms_thresh > 0 && elapsed >= dep_ms_thresh)
-                || (sample_n > 0 && (row as usize % sample_n == 0));
+                || (sample_n > 0 && (row as usize).is_multiple_of(sample_n));
             if dep_ms_thresh == 0 && sample_n == 0 {
                 // default: very light sampling every 1000 rows
-                if (row % 1000) == 0 {
+                if row.is_multiple_of(1000) {
                     eprintln!(
                         "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={}, names={} in {} ms",
                         self.sheet_name(sheet_id),
@@ -1399,8 +1394,8 @@ impl DependencyGraph {
                             let range_sheet_name = sheet
                                 .as_deref()
                                 .unwrap_or_else(|| self.sheet_name(dirty_sheet_id));
-                            if let Some(range_sheet_id) = self.sheet_reg.get_id(range_sheet_name) {
-                                if range_sheet_id == dirty_sheet_id
+                            if let Some(range_sheet_id) = self.sheet_reg.get_id(range_sheet_name)
+                                && range_sheet_id == dirty_sheet_id
                                     && row >= start_row.unwrap_or(1)
                                     && row <= end_row.unwrap_or(u32::MAX)
                                     && col >= start_col.unwrap_or(1)
@@ -1409,7 +1404,6 @@ impl DependencyGraph {
                                     to_visit.push(dep_id);
                                     break; // Found a matching range
                                 }
-                            }
                         }
                     }
                 }
@@ -1722,8 +1716,8 @@ impl DependencyGraph {
         // If PK enabled, update order using a short-lived adapter without holding &mut self
         // Track dependencies that should be skipped if rejecting cycle-creating edges
         let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
-        if self.pk_order.is_some() {
-            if let Some(mut pk) = self.pk_order.take() {
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take() {
                 pk.ensure_nodes(std::iter::once(dependent));
                 pk.ensure_nodes(dependencies.iter().copied());
                 {
@@ -1743,7 +1737,6 @@ impl DependencyGraph {
                 } // drop adapter
                 self.pk_order = Some(pk);
             }
-        }
 
         // Now mutate engine edges; if rejecting cycles, re-check and skip those that would create cycles
         for &dep_id in dependencies {
@@ -1764,8 +1757,8 @@ impl DependencyGraph {
     fn add_dependent_edges_nobatch(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
         // If PK enabled, update order using a short-lived adapter without holding &mut self
         let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
-        if self.pk_order.is_some() {
-            if let Some(mut pk) = self.pk_order.take() {
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take() {
                 pk.ensure_nodes(std::iter::once(dependent));
                 pk.ensure_nodes(dependencies.iter().copied());
                 {
@@ -1785,7 +1778,6 @@ impl DependencyGraph {
                 }
                 self.pk_order = Some(pk);
             }
-        }
 
         for &dep_id in dependencies {
             if self.config.pk_reject_cycle_edges && skip_deps.contains(&dep_id) {
@@ -1944,8 +1936,8 @@ impl DependencyGraph {
             return;
         }
         // If PK enabled attempt to add maintaining ordering; fallback to rebuild if cycle
-        if self.pk_order.is_some() {
-            if let Some(mut pk) = self.pk_order.take() {
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take() {
                 pk.ensure_nodes(std::iter::once(dependent));
                 pk.ensure_nodes(std::iter::once(dependency));
                 let adapter = GraphAdapter { g: self };
@@ -1955,7 +1947,6 @@ impl DependencyGraph {
                 }
                 self.pk_order = Some(pk);
             }
-        }
         self.edges.add_edge(dependent, dependency);
         self.store.set_dirty(dependent, true);
         self.dirty_vertices.insert(dependent);
@@ -2241,14 +2232,13 @@ impl DependencyGraph {
         let dependencies = self.edges.out_edges(vertex);
 
         self.edges.begin_batch();
-        if self.pk_order.is_some() {
-            if let Some(mut pk) = self.pk_order.take() {
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take() {
                 for dep in &dependencies {
                     pk.remove_edge(*dep, vertex);
                 }
                 self.pk_order = Some(pk);
             }
-        }
         for dep in dependencies {
             self.edges.remove_edge(vertex, dep);
         }
@@ -2680,8 +2670,8 @@ impl DependencyGraph {
             }
 
             // If cell is occupied by another formula anchor, block regardless of value visibility
-            if let Some(&vid) = self.cell_to_vertex.get(cell) {
-                if vid != anchor {
+            if let Some(&vid) = self.cell_to_vertex.get(cell)
+                && vid != anchor {
                     // Prevent clobbering formulas (array or scalar) in the target area
                     match self.store.kind(vid) {
                         VertexKind::FormulaScalar | VertexKind::FormulaArray => {
@@ -2708,7 +2698,6 @@ impl DependencyGraph {
                         }
                     }
                 }
-            }
         }
         Ok(())
     }
@@ -2803,8 +2792,8 @@ impl DependencyGraph {
 
         // Apply with optional injected fault
         for (applied, op) in ops.iter().enumerate() {
-            if let Some(n) = fault_after_ops {
-                if applied == n {
+            if let Some(n) = fault_after_ops
+                && applied == n {
                     for idx in (0..applied).rev() {
                         let ((ref sheet, row, col), ref old) = old_values[idx];
                         let _ = self.set_cell_value(sheet, row, col, old.value.clone());
@@ -2812,7 +2801,6 @@ impl DependencyGraph {
                     return Err(ExcelError::new(ExcelErrorKind::Error)
                         .with_message("Injected persistence fault during spill commit"));
                 }
-            }
             let _ = self.set_cell_value(&op.sheet, op.row, op.col, op.new_value.clone());
         }
 
@@ -3008,14 +2996,13 @@ impl DependencyGraph {
 
         // Remove incoming edges (vertices that depend on this vertex)
         let dependents = self.get_dependents(id);
-        if self.pk_order.is_some() {
-            if let Some(mut pk) = self.pk_order.take() {
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take() {
                 for dependent in &dependents {
                     pk.remove_edge(id, *dependent);
                 }
                 self.pk_order = Some(pk);
             }
-        }
         for dependent in dependents {
             self.edges.remove_edge(dependent, id);
         }
@@ -3591,9 +3578,9 @@ impl DependencyGraph {
 
         // Second pass: Copy formulas and update references
         for (old_id, _) in &source_vertices {
-            if let Some(&new_id) = vertex_mapping.get(old_id) {
-                if let Some(&ast_id) = self.vertex_formulas.get(old_id) {
-                    if let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg) {
+            if let Some(&new_id) = vertex_mapping.get(old_id)
+                && let Some(&ast_id) = self.vertex_formulas.get(old_id)
+                    && let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg) {
                         // Update internal sheet references from source to new sheet
                         let updated_ast = update_internal_sheet_references(
                             &ast,
@@ -3628,8 +3615,6 @@ impl DependencyGraph {
                             }
                         }
                     }
-                }
-            }
         }
 
         // Copy sheet-scoped named ranges

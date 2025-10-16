@@ -14,6 +14,10 @@ categories = ["data-structures", "mathematics"]
 unused_variables = "allow"
 dead_code = "allow"
 
+[lints.rust.unexpected_cfgs]
+level = "allow"
+check-cfg = ['cfg(skip_until_transaction_context_impl)']
+
 [lints.clippy]
 too_many_arguments = "allow"
 only_used_in_recursion = "allow"

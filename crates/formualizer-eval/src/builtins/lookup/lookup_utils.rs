@@ -104,14 +104,13 @@ pub fn approximate_select_ascending(
                 if cmp_for_lookup(v, needle).map(|c| c == 0).unwrap_or(false) {
                     return Some(i);
                 }
-                if let (Some(nn), Some(vv)) = (needle_num, value_to_f64_lenient(v)) {
-                    if vv <= nn
-                        && best.is_none_or(|b| {
-                            value_to_f64_lenient(&values[b]).unwrap_or(f64::NEG_INFINITY) < vv
-                        })
-                    {
-                        best = Some(i);
-                    }
+                if let (Some(nn), Some(vv)) = (needle_num, value_to_f64_lenient(v))
+                    && vv <= nn
+                    && best.is_none_or(|b| {
+                        value_to_f64_lenient(&values[b]).unwrap_or(f64::NEG_INFINITY) < vv
+                    })
+                {
+                    best = Some(i);
                 }
             }
             best
@@ -123,14 +122,13 @@ pub fn approximate_select_ascending(
                 if cmp_for_lookup(v, needle).map(|c| c == 0).unwrap_or(false) {
                     return Some(i);
                 }
-                if let (Some(nn), Some(vv)) = (needle_num, value_to_f64_lenient(v)) {
-                    if vv >= nn
-                        && best.is_none_or(|b| {
-                            value_to_f64_lenient(&values[b]).unwrap_or(f64::INFINITY) > vv
-                        })
-                    {
-                        best = Some(i);
-                    }
+                if let (Some(nn), Some(vv)) = (needle_num, value_to_f64_lenient(v))
+                    && vv >= nn
+                    && best.is_none_or(|b| {
+                        value_to_f64_lenient(&values[b]).unwrap_or(f64::INFINITY) > vv
+                    })
+                {
+                    best = Some(i);
                 }
             }
             best
@@ -244,12 +242,12 @@ pub fn wildcard_pattern_match(pattern: &str, text: &str) -> bool {
                     }
                 }
             }
-            if let Some((star_tok, new_si)) = bt.pop() {
-                if new_si <= b.len() {
-                    ti = star_tok + 1;
-                    si = new_si;
-                    continue;
-                }
+            if let Some((star_tok, new_si)) = bt.pop()
+                && new_si <= b.len()
+            {
+                ti = star_tok + 1;
+                si = new_si;
+                continue;
             }
             return false;
         }

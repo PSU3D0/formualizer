@@ -794,11 +794,10 @@ impl ArrowSheet {
         }
         // Determine chunk size from last chunk, fallback to 32k
         let mut chunk_size = 32 * 1024;
-        if let Some(c0) = self.columns.first() {
-            if let Some(last) = c0.chunks.last() {
+        if let Some(c0) = self.columns.first()
+            && let Some(last) = c0.chunks.last() {
                 chunk_size = last.type_tag.len().max(1);
             }
-        }
         let mut cur_rows = self.nrows as usize;
         while cur_rows < target_rows {
             let len = (target_rows - cur_rows).min(chunk_size);

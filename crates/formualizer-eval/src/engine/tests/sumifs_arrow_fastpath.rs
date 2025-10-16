@@ -1,4 +1,5 @@
-use crate::engine::{Engine, EvalConfig};
+use super::common::arrow_eval_config;
+use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use crate::traits::{ArgumentHandle, DefaultFunctionContext, FunctionProvider};
 use chrono::NaiveDate;
@@ -46,11 +47,7 @@ fn whole_col_ref(sheet: &str, col: u32) -> ASTNode {
 #[test]
 fn countifs_hybrid_formula_and_base_text() {
     // Ensure COUNTIFS sees both Arrow base values and graph formula values in a single column
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    cfg.write_formula_overlay_enabled = true; // ensure used-region includes formula row via overlay
-    let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config()); // ensures overlay writeback
 
     // Build Arrow sheet with 3 rows, 2 columns
     let sheet = "SheetCF";
@@ -104,10 +101,8 @@ fn countifs_hybrid_formula_and_base_text() {
 #[test]
 fn sumifs_arrow_fastpath_parity_small() {
     // Engine with Arrow enabled + fastpath
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
+    let config = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::new(), config.clone());
 
     // Build Arrow sheet with 3 columns and multi-chunk rows
     let mut ab = engine.begin_bulk_ingest_arrow();
@@ -147,7 +142,7 @@ fn sumifs_arrow_fastpath_parity_small() {
     };
 
     // Disable fastpath and re-evaluate
-    engine.config.arrow_fastpath_enabled = false;
+    engine.config = config.with_arrow_fastpath(false);
     let got_slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, "Sheet1");
         let args = vec![
@@ -169,10 +164,8 @@ fn sumifs_arrow_fastpath_parity_small() {
 #[test]
 fn sumifs_text_and_date_window_parity() {
     // Build Arrow sheet 'MONTHLY.DATA R260' with P(16), K(11), AV(48), R(18)
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
+    let config = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::new(), config.clone());
 
     let sheet = "MONTHLY.DATA R260";
     let mut ab = engine.begin_bulk_ingest_arrow();
@@ -264,7 +257,7 @@ fn sumifs_text_and_date_window_parity() {
         fun.dispatch(&args, &fctx).unwrap()
     };
 
-    engine.config.arrow_fastpath_enabled = false;
+    engine.config = config.with_arrow_fastpath(false);
     let got_slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, sheet);
         let args = vec![
@@ -289,10 +282,8 @@ fn sumifs_text_and_date_window_parity() {
 #[test]
 fn sumifs_arrow_fastpath_large_numeric_criteria() {
     // Large range + multiple numeric criteria to exercise boolean mask composition
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
+    let config = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::new(), config.clone());
 
     let rows: u32 = 10_000;
     let mut ab = engine.begin_bulk_ingest_arrow();
@@ -336,7 +327,7 @@ fn sumifs_arrow_fastpath_large_numeric_criteria() {
         fun.dispatch(&args, &fctx).unwrap()
     };
 
-    engine.config.arrow_fastpath_enabled = false;
+    engine.config = config.with_arrow_fastpath(false);
     let slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, "Sheet1");
         let args = vec![

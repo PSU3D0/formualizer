@@ -239,7 +239,7 @@ impl Function for IfsFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        if args.len() < 2 || args.len() % 2 != 0 {
+        if args.len() < 2 || !args.len().is_multiple_of(2) {
             return Ok(LiteralValue::Error(ExcelError::new_value()));
         }
         for pair in args.chunks(2) {

@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -56,7 +56,7 @@ fn run(args: Args) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn report_issues(path: &PathBuf, issues: &[ManifestIssue]) {
+fn report_issues(path: &Path, issues: &[ManifestIssue]) {
     eprintln!("Manifest validation failed: {}", path.display());
     for issue in issues {
         eprintln!("  - {}: {}", issue.path, issue.message);

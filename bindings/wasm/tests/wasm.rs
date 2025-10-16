@@ -1,3 +1,5 @@
+#![cfg(target_arch = "wasm32")]
+
 use formualizer_wasm::{parse, tokenize, FormulaDialect, Parser, Reference, Tokenizer, Workbook};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::*;

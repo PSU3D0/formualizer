@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::ptr;
 
 thread_local! {
-    static ACTIVE_WORKBOOK: Cell<*const Workbook> = Cell::new(ptr::null());
+    static ACTIVE_WORKBOOK: Cell<*const Workbook> = const { Cell::new(ptr::null()) };
 }
 
 /// Minimal resolver for engine-backed workbook (cells/ranges via graph/arrow; functions via registry).

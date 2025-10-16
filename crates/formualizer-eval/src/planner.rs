@@ -372,7 +372,7 @@ mod tests {
     fn sum_of_many_args_prefers_arg_parallel() {
         let p = plan_for("=SUM(1,2,3,4,5,6)");
         // With default thresholds, fanout 6 and cost should trigger ArgParallel
-        assert!(p.root.children.first().is_some()); // has children
+        assert!(!p.root.children.is_empty()); // has children
         // Root is a function; strategy may be ArgParallel
         // We assert that non-trivial fanout promotes parallel strategy
         assert!(matches!(

@@ -361,11 +361,10 @@ impl FunctionProvider for TestWorkbook {
             return Some(f.clone());
         }
         // alias in workbook scope
-        if let Some((t_ns, t_name)) = self.aliases.get(&(nns.clone(), nname.clone())) {
-            if let Some(f) = self.fns.get(&(t_ns.clone(), t_name.clone())) {
+        if let Some((t_ns, t_name)) = self.aliases.get(&(nns.clone(), nname.clone()))
+            && let Some(f) = self.fns.get(&(t_ns.clone(), t_name.clone())) {
                 return Some(f.clone());
             }
-        }
         // fall back to global registry (case-insensitive with aliases)
         crate::function_registry::get(&nns, &nname)
     }

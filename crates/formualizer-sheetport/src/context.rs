@@ -99,7 +99,7 @@ impl<'a> WorkbookContext<'a> {
         match location {
             AreaLocation::Range(addr) => self.ensure_sheet(port_id, &addr.sheet),
             AreaLocation::Name(name) => {
-                if let Some(_) = self.workbook.named_range_address(name) {
+                if self.workbook.named_range_address(name).is_some() {
                     Ok(())
                 } else {
                     Err(SheetPortError::InvariantViolation {

@@ -259,10 +259,10 @@ fn validate_literal(
         return;
     }
 
-    if let Some(constraints) = constraints {
-        if let Err(message) = enforce_constraints(value_type, value, constraints) {
-            violations.push(ConstraintViolation::new(port_id, path.to_string(), message));
-        }
+    if let Some(constraints) = constraints
+        && let Err(message) = enforce_constraints(value_type, value, constraints)
+    {
+        violations.push(ConstraintViolation::new(port_id, path.to_string(), message));
     }
 
     if scope == ValidationScope::Partial && is_empty(value) {

@@ -228,8 +228,8 @@ impl<'g> BulkIngestBuilder<'g> {
                         self.g.add_range_deps_from_keys(tvid, rks, stage.id);
                     }
                     t_ranges_ms += tr0.elapsed().as_millis();
-                    if let Some(names) = plan.per_formula_names.get(fi) {
-                        if !names.is_empty() {
+                    if let Some(names) = plan.per_formula_names.get(fi)
+                        && !names.is_empty() {
                             let mut name_vertices = Vec::new();
                             let (formula_sheet, _) = plan
                                 .formula_targets
@@ -250,7 +250,6 @@ impl<'g> BulkIngestBuilder<'g> {
                                 self.g.attach_vertex_to_names(tvid, &name_vertices);
                             }
                         }
-                    }
                     // Always add adjacency row for target (may be empty)
                     edges_adj.push((tvid.0, row.into_vec()));
                 }

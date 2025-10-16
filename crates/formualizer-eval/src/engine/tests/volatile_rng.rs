@@ -9,8 +9,10 @@ use formualizer_parse::parser::{ASTNode, ASTNodeType};
 fn rand_reproducible_given_seed_and_cell_address() {
     register_builtins();
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.workbook_seed = 123456789;
+    let cfg = EvalConfig {
+        workbook_seed: 123456789,
+        ..Default::default()
+    };
     let mut engine = Engine::new(wb, cfg);
 
     // A1 = RAND(), B1 = RAND()

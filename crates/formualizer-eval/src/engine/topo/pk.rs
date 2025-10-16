@@ -182,12 +182,11 @@ where
             self.succ_buf.clear();
             graph.successors(u, &mut self.succ_buf);
             for &s in &self.succ_buf {
-                if let Some(&ps) = self.pos.get(&s) {
-                    if ps <= px && !visited.contains(&s) {
+                if let Some(&ps) = self.pos.get(&s)
+                    && ps <= px && !visited.contains(&s) {
                         parent.insert(s, u);
                         stack.push(s);
                     }
-                }
             }
         }
 
@@ -195,7 +194,7 @@ where
         let relabeled = self.splice_after(px as usize, &affected);
 
         self.op_count += 1;
-        if self.op_count % self.cfg.compaction_interval_ops == 0 {
+        if self.op_count.is_multiple_of(self.cfg.compaction_interval_ops) {
             self.compact_ranks();
         }
         Ok(PkStats {
@@ -207,7 +206,7 @@ where
     pub fn remove_edge(&mut self, _x: N, _y: N) {
         // PK does not require reorder on deletion.
         self.op_count += 1;
-        if self.op_count % self.cfg.compaction_interval_ops == 0 {
+        if self.op_count.is_multiple_of(self.cfg.compaction_interval_ops) {
             self.compact_ranks();
         }
     }

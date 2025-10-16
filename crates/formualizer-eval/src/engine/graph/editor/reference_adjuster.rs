@@ -523,24 +523,22 @@ mod tests {
         // Verify by checking the AST structure
         if let ASTNodeType::BinaryOp { left, right, .. } = &adjusted.node_type {
             if let ASTNodeType::Reference {
-                reference: left_ref,
+                reference:
+                    formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &left.node_type
             {
-                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = left_ref {
-                    assert_eq!(*row, 5); // A5 unchanged
-                    assert_eq!(*col, 1);
-                }
+                assert_eq!(*row, 5); // A5 unchanged
+                assert_eq!(*col, 1);
             }
             if let ASTNodeType::Reference {
-                reference: right_ref,
+                reference:
+                    formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &right.node_type
             {
-                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = right_ref {
-                    assert_eq!(*row, 12); // B10 -> B12
-                    assert_eq!(*col, 2);
-                }
+                assert_eq!(*row, 12); // B10 -> B12
+                assert_eq!(*col, 2);
             }
         }
     }
@@ -565,27 +563,23 @@ mod tests {
         // C1 -> #REF! (deleted), F1 -> D1 (shifted left by 2)
         if let ASTNodeType::BinaryOp { left, right, .. } = &adjusted.node_type {
             if let ASTNodeType::Reference {
-                reference: left_ref,
+                reference:
+                    formualizer_parse::parser::ReferenceType::Cell { sheet, row, col },
                 ..
             } = &left.node_type
             {
-                // C1 should become #REF! (marked with special sheet name)
-                if let formualizer_parse::parser::ReferenceType::Cell { sheet, row, col } = left_ref
-                {
-                    assert_eq!(sheet.as_deref(), Some("#REF"));
-                    assert_eq!(*row, 0);
-                    assert_eq!(*col, 0);
-                }
+                assert_eq!(sheet.as_deref(), Some("#REF"));
+                assert_eq!(*row, 0);
+                assert_eq!(*col, 0);
             }
             if let ASTNodeType::Reference {
-                reference: right_ref,
+                reference:
+                    formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &right.node_type
             {
-                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = right_ref {
-                    assert_eq!(*row, 1); // Row unchanged
-                    assert_eq!(*col, 4); // F1 (col 6) -> D1 (col 4)
-                }
+                assert_eq!(*row, 1); // Row unchanged
+                assert_eq!(*col, 4); // F1 (col 6) -> D1 (col 4)
             }
         }
     }
@@ -608,20 +602,19 @@ mod tests {
         );
 
         // Range should expand: A1:A10 -> A1:A13
-        if let ASTNodeType::Function { args, .. } = &adjusted.node_type {
-            if let Some(first_arg) = args.first() {
-                if let ASTNodeType::Reference { reference, .. } = &first_arg.node_type {
-                    if let formualizer_parse::parser::ReferenceType::Range {
+        if let ASTNodeType::Function { args, .. } = &adjusted.node_type
+            && let Some(ASTNodeType::Reference {
+                reference:
+                    formualizer_parse::parser::ReferenceType::Range {
                         start_row,
                         end_row,
                         ..
-                    } = reference
-                    {
-                        assert_eq!(start_row.unwrap_or(0), 1); // A1 start unchanged
-                        assert_eq!(end_row.unwrap_or(0), 13); // A10 -> A13
-                    }
-                }
-            }
+                    },
+                ..
+            }) = args.first().map(|arg| &arg.node_type)
+        {
+            assert_eq!(start_row.unwrap_or(0), 1); // A1 start unchanged
+            assert_eq!(end_row.unwrap_or(0), 13); // A10 -> A13
         }
     }
 
@@ -636,24 +629,22 @@ mod tests {
         // A1 -> D3, B2 -> E4
         if let ASTNodeType::BinaryOp { left, right, .. } = &adjusted.node_type {
             if let ASTNodeType::Reference {
-                reference: left_ref,
+                reference:
+                    formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &left.node_type
             {
-                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = left_ref {
-                    assert_eq!(*row, 3); // A1 (1,1) -> D3 (3,4)
-                    assert_eq!(*col, 4);
-                }
+                assert_eq!(*row, 3); // A1 (1,1) -> D3 (3,4)
+                assert_eq!(*col, 4);
             }
             if let ASTNodeType::Reference {
-                reference: right_ref,
+                reference:
+                    formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &right.node_type
             {
-                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = right_ref {
-                    assert_eq!(*row, 4); // B2 (2,2) -> E4 (4,5)
-                    assert_eq!(*col, 5);
-                }
+                assert_eq!(*row, 4); // B2 (2,2) -> E4 (4,5)
+                assert_eq!(*col, 5);
             }
         }
     }
@@ -855,24 +846,23 @@ mod tests {
         );
 
         // Range should expand: B2:D10 -> B2:D13
-        if let ASTNodeType::Function { args, .. } = &adjusted.node_type {
-            if let Some(first_arg) = args.first() {
-                if let ASTNodeType::Reference { reference, .. } = &first_arg.node_type {
-                    if let formualizer_parse::parser::ReferenceType::Range {
+        if let ASTNodeType::Function { args, .. } = &adjusted.node_type
+            && let Some(ASTNodeType::Reference {
+                reference:
+                    formualizer_parse::parser::ReferenceType::Range {
                         start_row,
                         end_row,
                         start_col,
                         end_col,
                         ..
-                    } = reference
-                    {
-                        assert_eq!(*start_row, Some(2)); // Start unchanged
-                        assert_eq!(*end_row, Some(13)); // End expanded from 10 to 13
-                        assert_eq!(*start_col, Some(2)); // B column
-                        assert_eq!(*end_col, Some(4)); // D column
-                    }
-                }
-            }
+                    },
+                ..
+            }) = args.first().map(|arg| &arg.node_type)
+        {
+            assert_eq!(*start_row, Some(2)); // Start unchanged
+            assert_eq!(*end_row, Some(13)); // End expanded from 10 to 13
+            assert_eq!(*start_col, Some(2)); // B column
+            assert_eq!(*end_col, Some(4)); // D column
         }
     }
 
@@ -894,20 +884,19 @@ mod tests {
         );
 
         // Range should contract: A5:A20 -> A5:A15
-        if let ASTNodeType::Function { args, .. } = &adjusted.node_type {
-            if let Some(first_arg) = args.first() {
-                if let ASTNodeType::Reference { reference, .. } = &first_arg.node_type {
-                    if let formualizer_parse::parser::ReferenceType::Range {
+        if let ASTNodeType::Function { args, .. } = &adjusted.node_type
+            && let Some(ASTNodeType::Reference {
+                reference:
+                    formualizer_parse::parser::ReferenceType::Range {
                         start_row,
                         end_row,
                         ..
-                    } = reference
-                    {
-                        assert_eq!(*start_row, Some(5)); // Start unchanged
-                        assert_eq!(*end_row, Some(15)); // End contracted from 20 to 15
-                    }
-                }
-            }
+                    },
+                ..
+            }) = args.first().map(|arg| &arg.node_type)
+        {
+            assert_eq!(*start_row, Some(5)); // Start unchanged
+            assert_eq!(*end_row, Some(15)); // End contracted from 20 to 15
         }
     }
 }

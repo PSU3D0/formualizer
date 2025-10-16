@@ -238,8 +238,10 @@ mod tests {
             .unwrap();
 
         // Engine with 1904 system
-        let mut cfg_1904 = EvalConfig::default();
-        cfg_1904.date_system = crate::engine::DateSystem::Excel1904;
+        let cfg_1904 = EvalConfig {
+            date_system: crate::engine::DateSystem::Excel1904,
+            ..Default::default()
+        };
         let eng_1904 = Engine::new(TestWorkbook::new(), cfg_1904);
         let interp_1904 = Interpreter::new(&eng_1904, "Sheet1");
         let f2 = interp_1904.context.get_function("", "DATE").unwrap();

@@ -17,7 +17,7 @@ fn umya_save_in_place_and_bytes() {
     // Re-open and verify persists
     let mut adapter2 = UmyaAdapter::open_path(&path).unwrap();
     let sheet = adapter2.read_sheet("Sheet1").unwrap();
-    assert!(sheet.cells.get(&(1, 1)).is_some());
+    assert!(sheet.cells.contains_key(&(1, 1)));
 
     // Bytes save
     adapter2

@@ -8,12 +8,17 @@ use formualizer_common::LiteralValue;
 use formualizer_parse::parser::Parser;
 use formualizer_parse::parser::ReferenceType;
 
+fn range_limit_config(limit: usize) -> EvalConfig {
+    EvalConfig {
+        range_expansion_limit: limit,
+        ..Default::default()
+    }
+}
+
 #[test]
 fn infinite_column_empty_sheet_sum_count_are_zero() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, config);
+    let mut engine = Engine::new(wb, range_limit_config(16));
 
     // =SUM(A:A) in B1
     let ast_sum = Parser::from("=SUM(A:A)").parse().unwrap();
@@ -35,10 +40,8 @@ fn infinite_column_empty_sheet_sum_count_are_zero() {
 
 #[test]
 fn infinite_column_sparse_sum_and_count_correct() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, config);
+    let mut engine = Engine::new(wb, range_limit_config(16));
 
     // Sparse values in column A
     engine
@@ -71,10 +74,8 @@ fn infinite_column_sparse_sum_and_count_correct() {
 
 #[test]
 fn infinite_row_sum_and_count_correct() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, config);
+    let mut engine = Engine::new(wb, range_limit_config(16));
 
     // Values across row 1 (cols 2..=27 i.e. B..AA)
     let mut sum: i64 = 0;
@@ -108,10 +109,8 @@ fn infinite_row_sum_and_count_correct() {
 
 #[test]
 fn partial_ranges_column_tail_and_head_bounds() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, config);
+    let mut engine = Engine::new(wb, range_limit_config(16));
 
     // For A1:A (open end) and A:A10 (open start)
     engine
@@ -172,10 +171,8 @@ fn partial_ranges_column_tail_and_head_bounds() {
 
 #[test]
 fn invalidation_on_growth_column_and_row() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, config);
+    let mut engine = Engine::new(wb, range_limit_config(16));
 
     // Column case: A1..A10 = 1
     for r in 1..=10u32 {
@@ -231,10 +228,8 @@ fn invalidation_on_growth_column_and_row() {
 #[test]
 fn invalidation_on_shrink_via_empty() {
     // Shrink by setting a previously numeric cell to Empty
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, config);
+    let mut engine = Engine::new(wb, range_limit_config(16));
 
     for r in 1..=10u32 {
         engine
@@ -317,8 +312,10 @@ fn unbounded_ranges_resolve_with_expected_dims() {
 
 #[test]
 fn used_region_growth_shrink_has_zero_stripe_churn() {
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false; // isolate potential rayon contention in this churn test
+    let cfg = EvalConfig {
+        enable_parallel: false, // isolate potential rayon contention in this churn test
+        ..Default::default()
+    };
     let mut engine = Engine::new(TestWorkbook::new(), cfg);
     let sheet = "Sheet1";
 
@@ -365,8 +362,10 @@ fn used_region_growth_shrink_has_zero_stripe_churn() {
 
 #[test]
 fn edge_churn_on_insert_delete_rows_is_bounded() {
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false; // isolate potential rayon contention in this churn test
+    let cfg = EvalConfig {
+        enable_parallel: false, // isolate potential rayon contention in this churn test
+        ..Default::default()
+    };
     let mut engine = Engine::new(TestWorkbook::new(), cfg);
     let sheet = engine.default_sheet_name().to_string();
 

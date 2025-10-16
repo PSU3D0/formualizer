@@ -70,11 +70,10 @@ where
         plan.formula_targets.push(target);
 
         let mut flags: FormulaFlags = 0;
-        if let Some(v) = volatile_flags.and_then(|v| v.get(i)).copied() {
-            if v {
+        if let Some(v) = volatile_flags.and_then(|v| v.get(i)).copied()
+            && v {
                 flags |= F_VOLATILE;
             }
-        }
 
         let mut per_cells: Vec<u32> = Vec::new();
         let mut per_ranges: Vec<RangeKey> = Vec::new();

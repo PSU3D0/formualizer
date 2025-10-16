@@ -1,12 +1,11 @@
-use crate::engine::{Engine, EvalConfig};
+use super::common::arrow_eval_config;
+use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 
 #[test]
 fn overlay_compacts_on_threshold_via_set_cell_value() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.delta_overlay_enabled = true;
+    let cfg = arrow_eval_config();
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
 
     // Build Arrow sheet with 1 column, 64 rows (single chunk of 64)

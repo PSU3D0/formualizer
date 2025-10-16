@@ -544,7 +544,7 @@ where
                         };
                         builder.add_formulas(sid, std::iter::once((excel_row, excel_col, ast)));
                         parsed_n += 1;
-                        if debug && (parsed_n % 5000 == 0) {
+                        if debug && parsed_n.is_multiple_of(5000) {
                             eprintln!("[fz][load]    parsed formulas: {parsed_n}");
                         }
                     }

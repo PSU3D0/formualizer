@@ -1,5 +1,3 @@
-#![cfg(feature = "umya")]
-
 use crate::traits::{
     AccessGranularity, BackendCaps, CellData, NamedRange, NamedRangeScope, SheetData,
     SpreadsheetReader, SpreadsheetWriter,
@@ -309,8 +307,8 @@ impl SpreadsheetWriter for UmyaAdapter {
             cell.set_blank();
         }
         if let Some(f) = data.formula {
-            if f.starts_with('=') {
-                cell.set_formula(&f[1..]); // umya stores formula without leading '='
+            if let Some(stripped) = f.strip_prefix('=') {
+                cell.set_formula(stripped); // umya stores formula without leading '='
             } else {
                 cell.set_formula(f);
             }
@@ -395,7 +393,7 @@ impl SpreadsheetWriter for UmyaAdapter {
                 for i in 0..count {
                     wb.read_sheet(i);
                 }
-                umya_spreadsheet::writer::xlsx::write(&*wb, path)?;
+                umya_spreadsheet::writer::xlsx::write(&wb, path)?;
                 Ok(None)
             }
             SaveDestination::Path(p) => {
@@ -404,7 +402,7 @@ impl SpreadsheetWriter for UmyaAdapter {
                 for i in 0..count {
                     wb.read_sheet(i);
                 }
-                umya_spreadsheet::writer::xlsx::write(&*wb, p)?;
+                umya_spreadsheet::writer::xlsx::write(&wb, p)?;
                 Ok(None)
             }
             SaveDestination::Writer(w) => {
@@ -413,7 +411,7 @@ impl SpreadsheetWriter for UmyaAdapter {
                 for i in 0..count {
                     wb.read_sheet(i);
                 }
-                umya_spreadsheet::writer::xlsx::write_writer(&*wb, w)?;
+                umya_spreadsheet::writer::xlsx::write_writer(&wb, w)?;
                 Ok(None)
             }
             SaveDestination::Bytes => {
@@ -423,7 +421,7 @@ impl SpreadsheetWriter for UmyaAdapter {
                     wb.read_sheet(i);
                 }
                 let mut buf: Vec<u8> = Vec::new();
-                umya_spreadsheet::writer::xlsx::write_writer(&*wb, &mut buf)?;
+                umya_spreadsheet::writer::xlsx::write_writer(&wb, &mut buf)?;
                 Ok(Some(buf))
             }
         }

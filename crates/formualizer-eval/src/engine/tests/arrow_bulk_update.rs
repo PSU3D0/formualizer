@@ -1,16 +1,13 @@
+use super::common::arrow_eval_config;
 use crate::engine::arrow_ingest::ArrowBulkUpdateBuilder;
-use crate::engine::{Engine, EvalConfig};
+use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 
 #[test]
 fn bulk_update_sparse_and_dense_across_chunks() {
     // Engine with Arrow storage enabled
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    cfg.delta_overlay_enabled = true;
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let mut engine = Engine::new(TestWorkbook::default(), arrow_eval_config());
 
     // Build Arrow sheet with 1 column, 400 rows, chunk_rows=200 → 2 chunks
     {
@@ -60,11 +57,7 @@ fn bulk_update_sparse_and_dense_across_chunks() {
 
 #[test]
 fn bulk_update_contiguous_range_triggers_rebuild() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    cfg.delta_overlay_enabled = true;
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let mut engine = Engine::new(TestWorkbook::default(), arrow_eval_config());
 
     // Build Arrow sheet with 1 column, 200 rows (single chunk)
     {
@@ -103,11 +96,7 @@ fn bulk_update_contiguous_range_triggers_rebuild() {
 
 #[test]
 fn bulk_update_noncontiguous_dense_triggers_rebuild_varied_chunk2() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    cfg.delta_overlay_enabled = true;
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let mut engine = Engine::new(TestWorkbook::default(), arrow_eval_config());
 
     // Build Arrow sheet with 1 column, 128 rows, chunk_rows=64 → two chunks
     {
@@ -140,11 +129,7 @@ fn bulk_update_noncontiguous_dense_triggers_rebuild_varied_chunk2() {
 
 #[test]
 fn bulk_update_noncontiguous_dense_triggers_rebuild_varied_chunk() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    cfg.delta_overlay_enabled = true;
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let mut engine = Engine::new(TestWorkbook::default(), arrow_eval_config());
 
     // Build Arrow sheet with 1 column, 128 rows, chunk_rows=64 → two chunks
     {

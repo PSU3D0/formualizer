@@ -162,22 +162,21 @@ impl Manifest {
                 ));
             }
 
-            if let Selector::Layout(layout) = &port.location {
-                if matches!(layout.layout.terminate, LayoutTermination::UntilMarker)
-                    && layout
-                        .layout
-                        .marker_text
-                        .as_deref()
-                        .map(str::trim)
-                        .unwrap_or_default()
-                        .is_empty()
-                {
-                    issues.push(ManifestIssue::new(
-                        format!("ports[{}].location.layout.marker_text", idx),
-                        "marker_text must be provided when terminate == \"until_marker\""
-                            .to_string(),
-                    ));
-                }
+            if let Selector::Layout(layout) = &port.location
+                && matches!(layout.layout.terminate, LayoutTermination::UntilMarker)
+                && layout
+                    .layout
+                    .marker_text
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or_default()
+                    .is_empty()
+            {
+                issues.push(ManifestIssue::new(
+                    format!("ports[{}].location.layout.marker_text", idx),
+                    "marker_text must be provided when terminate == \"until_marker\""
+                        .to_string(),
+                ));
             }
 
             if port.shape == Shape::Record {
@@ -457,16 +456,11 @@ pub struct RecordSchema {
     pub fields: BTreeMap<String, RecordField>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RecordKind {
+    #[default]
     Record,
-}
-
-impl Default for RecordKind {
-    fn default() -> Self {
-        RecordKind::Record
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -502,16 +496,11 @@ pub struct RangeSchema {
     pub format: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RangeKind {
+    #[default]
     Range,
-}
-
-impl Default for RangeKind {
-    fn default() -> Self {
-        RangeKind::Range
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -526,16 +515,11 @@ pub struct TableSchema {
     pub keys: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TableKind {
+    #[default]
     Table,
-}
-
-impl Default for TableKind {
-    fn default() -> Self {
-        TableKind::Table
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -650,20 +634,17 @@ impl JsonSchema for SpecVersion {
     }
 
     fn json_schema(_gen: &mut SchemaGenerator) -> schemars::schema::Schema {
-        schemars::schema::Schema::Object(
-            schemars::schema::SchemaObject {
-                instance_type: Some(InstanceType::String.into()),
-                string: Some(Box::new(StringValidation {
-                    pattern: Some(
-                        r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-.]+)?(?:\+[0-9A-Za-z-.]+)?$"
-                            .to_string(),
-                    ),
-                    ..Default::default()
-                })),
+        schemars::schema::Schema::Object(schemars::schema::SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            string: Some(Box::new(StringValidation {
+                pattern: Some(
+                    r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-.]+)?(?:\+[0-9A-Za-z-.]+)?$"
+                        .to_string(),
+                ),
                 ..Default::default()
-            }
-            .into(),
-        )
+            })),
+            ..Default::default()
+        })
     }
 }
 
@@ -677,7 +658,7 @@ impl std::str::FromStr for Manifest {
 
 fn canonicalize_enum(values: &mut Option<Vec<JsonValue>>) {
     if let Some(list) = values {
-        list.sort_by(|a, b| value_sort_key(a).cmp(&value_sort_key(b)));
+        list.sort_by_key(value_sort_key);
         list.dedup();
     }
 }

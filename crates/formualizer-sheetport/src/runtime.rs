@@ -14,6 +14,16 @@ use formualizer_workbook::Workbook;
 use sheetport_spec::{Direction, Manifest};
 use std::collections::{BTreeMap, BTreeSet};
 
+struct GridWrite<'a> {
+    port_id: &'a str,
+    sheet: &'a str,
+    start_row: u32,
+    start_col: u32,
+    height: u32,
+    width: u32,
+    grid: Vec<Vec<LiteralValue>>,
+}
+
 /// Runtime container that pairs a manifest with a concrete workbook.
 pub struct SheetPort<'a> {
     workbook: &'a mut Workbook,
@@ -164,7 +174,7 @@ impl<'a> SheetPort<'a> {
                 .iter()
                 .map(|(sheet, row, col)| (sheet.as_str(), *row, *col))
                 .collect();
-            if let Err(_) = self.workbook.evaluate_cells(&borrowed) {
+            if self.workbook.evaluate_cells(&borrowed).is_err() {
                 self.workbook.prepare_graph_all()?;
                 self.workbook.evaluate_all()?;
             }
@@ -687,15 +697,15 @@ impl<'a> SheetPort<'a> {
         grid: Vec<Vec<LiteralValue>>,
     ) -> Result<(), SheetPortError> {
         match &range.location {
-            crate::location::AreaLocation::Range(addr) => self.write_grid(
-                binding.id.as_str(),
-                &addr.sheet,
-                addr.start_row,
-                addr.start_col,
-                addr.height(),
-                addr.width(),
+            crate::location::AreaLocation::Range(addr) => self.write_grid(GridWrite {
+                port_id: binding.id.as_str(),
+                sheet: &addr.sheet,
+                start_row: addr.start_row,
+                start_col: addr.start_col,
+                height: addr.height(),
+                width: addr.width(),
                 grid,
-            ),
+            }),
             crate::location::AreaLocation::Layout(layout) => {
                 let bounds = resolve_range_layout(&binding.id, self.workbook, layout)?;
                 let expected_width = bounds.columns.len() as u32;
@@ -706,15 +716,15 @@ impl<'a> SheetPort<'a> {
                     });
                 }
                 let height = grid.len() as u32;
-                self.write_grid(
-                    binding.id.as_str(),
-                    &bounds.sheet,
-                    bounds.start_row,
-                    bounds.start_col,
+                self.write_grid(GridWrite {
+                    port_id: binding.id.as_str(),
+                    sheet: &bounds.sheet,
+                    start_row: bounds.start_row,
+                    start_col: bounds.start_col,
                     height,
-                    expected_width,
+                    width: expected_width,
                     grid,
-                )
+                })
             }
             crate::location::AreaLocation::Name(name) => {
                 let addr = self.named_range_address(&binding.id, name)?;
@@ -736,15 +746,15 @@ impl<'a> SheetPort<'a> {
                         ),
                     });
                 }
-                self.write_grid(
-                    binding.id.as_str(),
-                    &addr.sheet,
-                    addr.start_row,
-                    addr.start_col,
+                self.write_grid(GridWrite {
+                    port_id: binding.id.as_str(),
+                    sheet: &addr.sheet,
+                    start_row: addr.start_row,
+                    start_col: addr.start_col,
                     height,
-                    expected_width,
+                    width: expected_width,
                     grid,
-                )
+                })
             }
             other => Err(SheetPortError::UnsupportedSelector {
                 port: binding.id.clone(),
@@ -753,16 +763,16 @@ impl<'a> SheetPort<'a> {
         }
     }
 
-    fn write_grid(
-        &mut self,
-        port_id: &str,
-        sheet: &str,
-        start_row: u32,
-        start_col: u32,
-        height: u32,
-        width: u32,
-        grid: Vec<Vec<LiteralValue>>,
-    ) -> Result<(), SheetPortError> {
+    fn write_grid(&mut self, params: GridWrite<'_>) -> Result<(), SheetPortError> {
+        let GridWrite {
+            port_id,
+            sheet,
+            start_row,
+            start_col,
+            height,
+            width,
+            grid,
+        } = params;
         if grid.len() as u32 != height {
             return Err(SheetPortError::InvariantViolation {
                 port: port_id.to_string(),

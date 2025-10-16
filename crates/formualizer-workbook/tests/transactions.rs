@@ -11,19 +11,8 @@ struct MemWriter {
     saved: bool,
 }
 
-#[derive(Debug)]
-enum MemError {
-    Msg(String),
-}
-impl std::fmt::Display for MemError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for MemError {}
-
 impl SpreadsheetWriter for MemWriter {
-    type Error = MemError;
+    type Error = std::convert::Infallible;
     fn write_cell(
         &mut self,
         sheet: &str,

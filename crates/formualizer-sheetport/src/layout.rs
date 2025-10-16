@@ -57,16 +57,16 @@ pub fn resolve_range_layout(
 
     let data_start_row = layout.header_row;
     let relevant_columns = columns.clone();
-    let data_end_row = determine_end_row(
+    let data_end_row = determine_end_row(EndRowParams {
         port_id,
         workbook,
-        &sheet,
-        data_start_row,
-        &relevant_columns,
-        &layout.terminate,
-        layout.marker_text.as_deref(),
-        true,
-    )?;
+        sheet: &sheet,
+        start_row: data_start_row,
+        columns: &relevant_columns,
+        terminate: &layout.terminate,
+        marker_text: layout.marker_text.as_deref(),
+        include_header: true,
+    })?;
 
     Ok(RangeLayoutBounds {
         sheet,
@@ -100,16 +100,16 @@ pub fn resolve_table_layout(
     }
 
     let data_start_row = layout.header_row + 1;
-    let data_end_row = determine_end_row(
+    let data_end_row = determine_end_row(EndRowParams {
         port_id,
         workbook,
-        &sheet,
-        data_start_row,
-        &column_indices,
-        &layout.terminate,
-        layout.marker_text.as_deref(),
-        false,
-    )?;
+        sheet: &sheet,
+        start_row: data_start_row,
+        columns: &column_indices,
+        terminate: &layout.terminate,
+        marker_text: layout.marker_text.as_deref(),
+        include_header: false,
+    })?;
 
     Ok(TableLayoutBounds {
         sheet,
@@ -140,16 +140,28 @@ fn col_to_index(port_id: &str, col: &str) -> Result<u32, SheetPortError> {
     Ok(result)
 }
 
-fn determine_end_row(
-    port_id: &str,
-    workbook: &Workbook,
-    sheet: &str,
-    data_start_row: u32,
-    columns: &[u32],
-    termination: &LayoutTermination,
-    marker_text: Option<&str>,
+struct EndRowParams<'a> {
+    port_id: &'a str,
+    workbook: &'a Workbook,
+    sheet: &'a str,
+    start_row: u32,
+    columns: &'a [u32],
+    terminate: &'a LayoutTermination,
+    marker_text: Option<&'a str>,
     include_header: bool,
-) -> Result<u32, SheetPortError> {
+}
+
+fn determine_end_row(params: EndRowParams<'_>) -> Result<u32, SheetPortError> {
+    let EndRowParams {
+        port_id,
+        workbook,
+        sheet,
+        start_row: data_start_row,
+        columns,
+        terminate: termination,
+        marker_text,
+        include_header,
+    } = params;
     match termination {
         LayoutTermination::FirstBlankRow => {
             let mut last_row = if include_header {
@@ -172,16 +184,16 @@ fn determine_end_row(
                 Ok(rows)
             } else {
                 // Fallback to scanning for blank rows when dimensions are unavailable.
-                determine_end_row(
+                determine_end_row(EndRowParams {
                     port_id,
                     workbook,
                     sheet,
-                    data_start_row,
+                    start_row: data_start_row,
                     columns,
-                    &LayoutTermination::FirstBlankRow,
+                    terminate: &LayoutTermination::FirstBlankRow,
                     marker_text,
                     include_header,
-                )
+                })
             }
         }
         LayoutTermination::UntilMarker => {

@@ -1,7 +1,8 @@
 //! Tests for the precision of dirty propagation.
 
 use crate::CellRef;
-use crate::engine::{DependencyGraph, EvalConfig};
+use crate::engine::DependencyGraph;
+use super::common::eval_config_with_range_limit;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -32,9 +33,7 @@ fn sum_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTNod
 
 #[test]
 fn test_change_outside_range_in_same_stripe_does_not_dirty() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4; // Force compression
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(eval_config_with_range_limit(4)); // Force compression
 
     // B1 = SUM(A1:A10)
     graph

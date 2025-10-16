@@ -168,10 +168,10 @@ mod tests {
     fn test_scalar_arena_float_alloc() {
         let mut arena = ScalarArena::new();
         let ref1 = arena.insert_float(42.0);
-        let ref2 = arena.insert_float(3.14);
+        let ref2 = arena.insert_float(std::f64::consts::PI);
 
         assert_eq!(arena.get_float(ref1), Some(42.0));
-        assert_eq!(arena.get_float(ref2), Some(3.14));
+        assert_eq!(arena.get_float(ref2), Some(std::f64::consts::PI));
         assert_eq!(arena.len(), 2);
     }
 
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn test_scalar_arena_mixed_types() {
         let mut arena = ScalarArena::new();
-        let float_ref = arena.insert_float(3.14);
+        let float_ref = arena.insert_float(std::f64::consts::PI);
         let int_ref = arena.insert_integer(42);
 
         assert!(float_ref.is_float());
@@ -197,7 +197,7 @@ mod tests {
         assert!(int_ref.is_integer());
         assert!(!int_ref.is_float());
 
-        assert_eq!(arena.get_float(float_ref), Some(3.14));
+        assert_eq!(arena.get_float(float_ref), Some(std::f64::consts::PI));
         assert_eq!(arena.get_integer(int_ref), Some(42));
 
         // Wrong type access returns None
@@ -233,10 +233,10 @@ mod tests {
     #[test]
     fn test_scalar_arena_get_as_float() {
         let mut arena = ScalarArena::new();
-        let float_ref = arena.insert_float(3.14);
+        let float_ref = arena.insert_float(std::f64::consts::PI);
         let int_ref = arena.insert_integer(42);
 
-        assert_eq!(arena.get_as_float(float_ref), Some(3.14));
+        assert_eq!(arena.get_as_float(float_ref), Some(std::f64::consts::PI));
         assert_eq!(arena.get_as_float(int_ref), Some(42.0));
     }
 
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn test_scalar_ref_display() {
         let mut arena = ScalarArena::new();
-        let float_ref = arena.insert_float(3.14);
+        let float_ref = arena.insert_float(std::f64::consts::PI);
         let int_ref = arena.insert_integer(42);
 
         assert_eq!(format!("{float_ref}"), "Float(0)");
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn test_scalar_arena_clear() {
         let mut arena = ScalarArena::new();
-        arena.insert_float(3.14);
+        arena.insert_float(std::f64::consts::PI);
         arena.insert_integer(42);
 
         assert_eq!(arena.len(), 2);

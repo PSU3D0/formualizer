@@ -181,10 +181,10 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
         let mut window_cells: Vec<LiteralValue> = vec![LiteralValue::Empty; iters.len()];
         for _idx in 0..total {
             // cancellation
-            if let Some(cancel) = self.fctx.cancellation_token() {
-                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                    return Err(ExcelError::new(ExcelErrorKind::Cancelled));
-                }
+            if let Some(cancel) = self.fctx.cancellation_token()
+                && cancel.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled));
             }
             for (i, it) in iters.iter_mut().enumerate() {
                 window_cells[i] = it.next().unwrap_or(LiteralValue::Empty);
@@ -316,10 +316,10 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                     let mut sr = 0usize;
                     while sr < rows {
                         // cancellation
-                        if let Some(cancel) = self.fctx.cancellation_token() {
-                            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                                return Err(ExcelError::new(ExcelErrorKind::Cancelled));
-                            }
+                        if let Some(cancel) = self.fctx.cancellation_token()
+                            && cancel.load(std::sync::atomic::Ordering::Relaxed)
+                        {
+                            return Err(ExcelError::new(ExcelErrorKind::Cancelled));
                         }
                         // Build window per argument
                         let mut windows: Vec<Vec<LiteralValue>> = Vec::with_capacity(flats.len());
@@ -356,10 +356,10 @@ impl<'a, 'b> SimpleWindowCtx<'a, 'b> {
                 for r in 0..rows {
                     let mut sc = 0usize;
                     while sc < cols {
-                        if let Some(cancel) = self.fctx.cancellation_token() {
-                            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                                return Err(ExcelError::new(ExcelErrorKind::Cancelled));
-                            }
+                        if let Some(cancel) = self.fctx.cancellation_token()
+                            && cancel.load(std::sync::atomic::Ordering::Relaxed)
+                        {
+                            return Err(ExcelError::new(ExcelErrorKind::Cancelled));
                         }
                         let mut windows: Vec<Vec<LiteralValue>> = Vec::with_capacity(flats.len());
                         let mut skip = false;
@@ -912,10 +912,8 @@ mod tests {
                 || 0i64,
                 move |wins, acc| {
                     ctr.fetch_add(1, Ordering::Relaxed);
-                    if let Some(v) = wins[0].last() {
-                        if let LiteralValue::Int(i) = v {
-                            *acc += *i;
-                        }
+                    if let Some(LiteralValue::Int(i)) = wins[0].last() {
+                        *acc += *i;
                     }
                     Ok(())
                 },
@@ -958,10 +956,8 @@ mod tests {
                 || 0i64,
                 move |wins, acc| {
                     ctr.fetch_add(1, Ordering::Relaxed);
-                    if let Some(v) = wins[0].last() {
-                        if let LiteralValue::Int(i) = v {
-                            *acc += *i;
-                        }
+                    if let Some(LiteralValue::Int(i)) = wins[0].last() {
+                        *acc += *i;
                     }
                     Ok(())
                 },

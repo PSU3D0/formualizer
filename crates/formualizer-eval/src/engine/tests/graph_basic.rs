@@ -26,14 +26,14 @@ fn test_vertex_creation_and_lookup() {
 
     // Test updating an existing cell
     let summary2 = graph
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(3.14))
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(std::f64::consts::PI))
         .unwrap();
     assert_eq!(summary2.affected_vertices.len(), 1);
     assert_eq!(summary.affected_vertices[0], summary2.affected_vertices[0]); // Same vertex ID
     assert!(summary2.created_placeholders.is_empty()); // Not a new placeholder
 
     let updated_value = graph.get_cell_value("Sheet1", 1, 1);
-    assert_eq!(updated_value, Some(LiteralValue::Number(3.14)));
+    assert_eq!(updated_value, Some(LiteralValue::Number(std::f64::consts::PI)));
 
     // Verify internal structure
     assert_eq!(graph.vertex_len(), 1); // Only A1 exists
@@ -43,7 +43,7 @@ fn test_vertex_creation_and_lookup() {
         .unwrap();
     assert_eq!(graph.get_vertex_sheet_id(vertex_id), 0);
     assert_eq!(graph.get_vertex_kind(vertex_id), VertexKind::Cell);
-    assert_eq!(graph.get_value(vertex_id), Some(LiteralValue::Number(3.14)));
+    assert_eq!(graph.get_value(vertex_id), Some(LiteralValue::Number(std::f64::consts::PI)));
 }
 
 #[test]

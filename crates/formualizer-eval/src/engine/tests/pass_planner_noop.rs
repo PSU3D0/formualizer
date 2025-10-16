@@ -8,8 +8,10 @@ mod tests {
 
     #[test]
     fn test_pass_planner_produces_empty_plan_when_disabled() {
-        let mut config = WarmupConfig::default();
-        config.warmup_enabled = false; // Disable warmup
+        let config = WarmupConfig {
+            warmup_enabled: false,
+            ..WarmupConfig::default()
+        };
         assert!(!config.warmup_enabled);
 
         let planner = PassPlanner::new(config);
@@ -39,9 +41,11 @@ mod tests {
 
     #[test]
     fn test_pass_planner_respects_thresholds() {
-        let mut config = WarmupConfig::default();
-        config.warmup_enabled = true;
-        config.min_flat_cells = 10000; // Unused after flats removal
+        let config = WarmupConfig {
+            warmup_enabled: true,
+            min_flat_cells: 10000, // Unused after flats removal
+            ..WarmupConfig::default()
+        };
 
         let planner = PassPlanner::new(config);
 
@@ -57,9 +61,11 @@ mod tests {
 
     #[test]
     fn test_pass_planner_respects_reuse_thresholds() {
-        let mut config = WarmupConfig::default();
-        config.warmup_enabled = true;
-        config.flat_reuse_threshold = 5; // Unused after flats removal
+        let config = WarmupConfig {
+            warmup_enabled: true,
+            flat_reuse_threshold: 5, // Unused after flats removal
+            ..WarmupConfig::default()
+        };
 
         let planner = PassPlanner::new(config);
 
@@ -77,8 +83,10 @@ mod tests {
 
     #[test]
     fn test_pass_planner_empty_targets() {
-        let mut config = WarmupConfig::default();
-        config.warmup_enabled = true;
+        let config = WarmupConfig {
+            warmup_enabled: true,
+            ..WarmupConfig::default()
+        };
 
         let planner = PassPlanner::new(config);
         let targets: Vec<&ASTNode> = vec![];
@@ -93,8 +101,10 @@ mod tests {
 
     #[test]
     fn test_pass_planner_single_cell_evaluation() {
-        let mut config = WarmupConfig::default();
-        config.warmup_enabled = true;
+        let config = WarmupConfig {
+            warmup_enabled: true,
+            ..WarmupConfig::default()
+        };
 
         let planner = PassPlanner::new(config);
 

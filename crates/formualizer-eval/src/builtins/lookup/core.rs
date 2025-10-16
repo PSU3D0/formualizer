@@ -351,11 +351,11 @@ impl Function for VLookupFn {
         } else {
             let mut found = None;
             for (i, v) in first_col.iter().enumerate() {
-                if let Some(c) = cmp_for_lookup(lookup_value.as_ref(), v) {
-                    if c == 0 {
-                        found = Some(i);
-                        break;
-                    }
+                if let Some(c) = cmp_for_lookup(lookup_value.as_ref(), v)
+                    && c == 0
+                {
+                    found = Some(i);
+                    break;
                 }
             }
             found
@@ -509,11 +509,11 @@ impl Function for HLookupFn {
         } else {
             let mut f = None;
             for (i, v) in first_row.iter().enumerate() {
-                if let Some(c) = cmp_for_lookup(lookup_value.as_ref(), v) {
-                    if c == 0 {
-                        f = Some(i);
-                        break;
-                    }
+                if let Some(c) = cmp_for_lookup(lookup_value.as_ref(), v)
+                    && c == 0
+                {
+                    f = Some(i);
+                    break;
                 }
             }
             f

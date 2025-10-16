@@ -1,13 +1,12 @@
-use crate::engine::{Engine, EvalConfig};
+use super::common::arrow_eval_config;
+use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::Parser;
 
 #[test]
 fn mask_cache_parity_and_reuse_hits() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_fastpath_enabled = true;
-    cfg.delta_overlay_enabled = true;
+    let cfg = arrow_eval_config();
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, cfg);
 

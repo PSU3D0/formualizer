@@ -699,12 +699,10 @@ impl ReferenceType {
 
             let sheet = match (&start_part.sheet, &end_part) {
                 (Some(sheet), Some(end)) => {
-                    if let Some(end_sheet) = &end.sheet {
-                        if end_sheet != sheet {
-                            return Err(ParsingError::InvalidReference(format!(
-                                "Mismatched sheets in reference: {sheet} vs {end_sheet}"
-                            )));
-                        }
+                    if let Some(end_sheet) = &end.sheet && end_sheet != sheet {
+                        return Err(ParsingError::InvalidReference(format!(
+                            "Mismatched sheets in reference: {sheet} vs {end_sheet}"
+                        )));
                     }
                     Some(sheet.clone())
                 }
@@ -1174,25 +1172,24 @@ impl ASTNode {
                 end_col,
             } => {
                 // Optionally expand very small finite ranges into individual cells
-                if policy.expand_small_ranges {
-                    if let (Some(sr), Some(sc), Some(er), Some(ec)) =
+                if policy.expand_small_ranges
+                    && let (Some(sr), Some(sc), Some(er), Some(ec)) =
                         (start_row, start_col, end_row, end_col)
-                    {
-                        let rows = er.saturating_sub(sr) + 1;
-                        let cols = ec.saturating_sub(sc) + 1;
-                        let area = rows.saturating_mul(cols);
-                        if area as usize <= policy.range_expansion_limit {
-                            for r in sr..=er {
-                                for c in sc..=ec {
-                                    out.push(ReferenceType::Cell {
-                                        sheet: sheet.map(|s| s.to_string()),
-                                        row: r,
-                                        col: c,
-                                    });
-                                }
+                {
+                    let rows = er.saturating_sub(sr) + 1;
+                    let cols = ec.saturating_sub(sc) + 1;
+                    let area = rows.saturating_mul(cols);
+                    if area as usize <= policy.range_expansion_limit {
+                        for r in sr..=er {
+                            for c in sc..=ec {
+                                out.push(ReferenceType::Cell {
+                                    sheet: sheet.map(|s| s.to_string()),
+                                    row: r,
+                                    col: c,
+                                });
                             }
-                            return; // handled
                         }
+                        return; // handled
                     }
                 }
                 out.push(ReferenceType::Range {

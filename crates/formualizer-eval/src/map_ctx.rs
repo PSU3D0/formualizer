@@ -251,10 +251,10 @@ impl<'a, 'b> SimpleMapCtx<'a, 'b> {
 
     pub fn take_output(self) -> LiteralValue {
         if self.shape == (1, 1) {
-            if let Some(row) = self.output_rows.first() {
-                if let Some(cell) = row.first() {
-                    return cell.clone();
-                }
+            if let Some(row) = self.output_rows.first()
+                && let Some(cell) = row.first()
+            {
+                return cell.clone();
             }
             LiteralValue::Empty
         } else {

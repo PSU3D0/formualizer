@@ -1,4 +1,5 @@
-use crate::engine::{Engine, EvalConfig};
+use super::common::arrow_eval_config;
+use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::Parser;
@@ -7,8 +8,7 @@ use formualizer_parse::parser::Parser;
 // With the used-bounds fix, SUMIF over whole columns should include edited rows.
 #[test]
 fn sumif_whole_column_includes_post_edit_rows_when_arrow_reads_disabled() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true; // enable Arrow store and Arrow used-bounds (gated by has_edited)
+    let cfg = arrow_eval_config(); // enable Arrow store and Arrow used-bounds (gated by has_edited)
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, cfg);
 

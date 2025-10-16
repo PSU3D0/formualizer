@@ -6,8 +6,6 @@ mod workbook_common;
 
 use chrono::NaiveDate;
 use formualizer_common::LiteralValue;
-use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
-use formualizer_eval::reference::{CellRef, Coord};
 use formualizer_sheetport::{
     BatchInput, BatchOptions, BatchProgress, ConstraintViolation, EvalOptions, InputSnapshot,
     InputUpdate, PortValue, SheetPort, SheetPortError, TableRow, TableValue,
@@ -272,9 +270,10 @@ fn singular_io_roundtrip() -> Result<(), SheetPortError> {
     record_update.insert("month".into(), LiteralValue::Int(9));
     update.insert("planning_window", PortValue::Record(record_update));
 
-    let mut rows = Vec::new();
-    rows.push(make_inventory_row("SKU-A", "Alpha", 40, 20, 5));
-    rows.push(make_inventory_row("SKU-B", "Beta", 60, 25, 6));
+    let rows = vec![
+        make_inventory_row("SKU-A", "Alpha", 40, 20, 5),
+        make_inventory_row("SKU-B", "Beta", 60, 25, 6),
+    ];
     update.insert("sku_inventory", PortValue::Table(TableValue::new(rows)));
 
     sheetport.write_inputs(update)?;
@@ -336,13 +335,15 @@ fn batch_executor_restores_baseline() -> Result<(), SheetPortError> {
         baseline_inputs = sheetport.read_inputs()?;
 
         let progress_clone = Arc::clone(&progress_log);
-        let mut options = BatchOptions::default();
-        options.progress = Some(Box::new(move |progress: BatchProgress<'_>| {
-            progress_clone
-                .lock()
-                .unwrap()
-                .push((progress.completed, progress.scenario_id.to_string()));
-        }));
+        let options = BatchOptions {
+            progress: Some(Box::new(move |progress: BatchProgress<'_>| {
+                progress_clone
+                    .lock()
+                    .unwrap()
+                    .push((progress.completed, progress.scenario_id.to_string()));
+            })),
+            ..Default::default()
+        };
 
         let scenarios = vec![
             BatchInput::new(
@@ -723,7 +724,7 @@ where
         .get(port)
         .unwrap_or_else(|| panic!("missing port {port}"));
     match value {
-        PortValue::Scalar(lit) => assert!(predicate(&lit), "unexpected scalar value: {lit:?}"),
+        PortValue::Scalar(lit) => assert!(predicate(lit), "unexpected scalar value: {lit:?}"),
         other => panic!("expected scalar value for {port}, got {other:?}"),
     }
 }
