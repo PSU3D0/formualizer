@@ -6,9 +6,10 @@ mod workbook_common;
 
 use chrono::NaiveDate;
 use formualizer_common::LiteralValue;
+use formualizer_eval::traits::VolatileLevel;
 use formualizer_sheetport::{
     BatchInput, BatchOptions, BatchProgress, ConstraintViolation, EvalOptions, InputSnapshot,
-    InputUpdate, PortValue, SheetPort, SheetPortError, TableRow, TableValue,
+    InputUpdate, OutputSnapshot, PortValue, SheetPort, SheetPortError, TableRow, TableValue,
 };
 use formualizer_workbook::{LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook};
 use sheetport_spec::Manifest;
@@ -123,6 +124,26 @@ ports:
             a1: Outputs!B5
 "#;
 
+const RNG_MANIFEST: &str = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: rng-test
+  name: RNG Test Manifest
+  workbook:
+    uri: memory://rng.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: rng_value
+    dir: out
+    shape: scalar
+    location:
+      a1: Random!A1
+    schema:
+      type: number
+"#;
+
 fn build_workbook() -> Result<Workbook, SheetPortError> {
     let mut wb = Workbook::new();
     wb.add_sheet("Inputs");
@@ -208,6 +229,13 @@ fn build_workbook() -> Result<Workbook, SheetPortError> {
     set_value(&mut wb, "Outputs", 5, 2, LiteralValue::Date(date))?;
 
     wb.evaluate_all().map_err(SheetPortError::from)?;
+    Ok(wb)
+}
+
+fn build_rng_workbook() -> Result<Workbook, SheetPortError> {
+    let mut wb = Workbook::new();
+    wb.add_sheet("Random");
+    set_formula(&mut wb, "Random", 1, 1, "RAND()")?;
     Ok(wb)
 }
 
@@ -380,6 +408,44 @@ fn optional_ports_allow_empty_values() -> Result<(), SheetPortError> {
     let mut update = InputUpdate::new();
     update.insert("manager_note", PortValue::Scalar(LiteralValue::Empty));
     sheetport.write_inputs(update)?;
+    Ok(())
+}
+
+#[test]
+fn eval_options_control_rng_behavior() -> Result<(), SheetPortError> {
+    let mut workbook = build_rng_workbook()?;
+    let manifest = Manifest::from_yaml_str(RNG_MANIFEST).expect("rng manifest parses");
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+
+    sheetport
+        .workbook_mut()
+        .engine_mut()
+        .set_volatile_level(VolatileLevel::OnRecalc);
+    sheetport.workbook_mut().engine_mut().set_workbook_seed(1);
+
+    let mut first_opts = EvalOptions::default();
+    first_opts.rng_seed = Some(1);
+
+    let first = scalar_number(&sheetport.evaluate_once(first_opts.clone())?, "rng_value");
+
+    set_formula(sheetport.workbook_mut(), "Random", 1, 1, "RAND()")?;
+
+    let mut second_opts = EvalOptions::default();
+    second_opts.rng_seed = Some(2);
+    let second = scalar_number(&sheetport.evaluate_once(second_opts.clone())?, "rng_value");
+    assert_ne!(first, second, "rng_seed should influence volatile outputs");
+
+    let mut frozen = EvalOptions::default();
+    frozen.freeze_volatile = true;
+    frozen.rng_seed = Some(5);
+
+    let frozen_first = scalar_number(&sheetport.evaluate_once(frozen.clone())?, "rng_value");
+    let frozen_second = scalar_number(&sheetport.evaluate_once(frozen.clone())?, "rng_value");
+    assert_eq!(
+        frozen_first, frozen_second,
+        "freeze_volatile should stabilize RAND outputs for a fixed seed"
+    );
+
     Ok(())
 }
 
@@ -811,5 +877,16 @@ fn expect_constraint(err: SheetPortError) -> Vec<ConstraintViolation> {
     match err {
         SheetPortError::ConstraintViolation { violations } => violations,
         other => panic!("expected constraint violation error, got {other:?}"),
+    }
+}
+
+fn scalar_number(snapshot: &OutputSnapshot, port: &str) -> f64 {
+    let value = snapshot
+        .get(port)
+        .unwrap_or_else(|| panic!("missing port {port}"));
+    match value.as_scalar() {
+        Some(LiteralValue::Number(n)) => *n,
+        Some(LiteralValue::Int(i)) => *i as f64,
+        other => panic!("expected numeric scalar for {port}, got {other:?}"),
     }
 }

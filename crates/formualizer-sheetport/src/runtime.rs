@@ -10,6 +10,7 @@ use crate::value::{InputSnapshot, InputUpdate, OutputSnapshot, PortValue, TableR
 use crate::{BatchExecutor, BatchOptions};
 use formualizer_common::{LiteralValue, RangeAddress};
 use formualizer_eval::engine::RecalcPlan;
+use formualizer_eval::traits::VolatileLevel;
 use formualizer_workbook::Workbook;
 use sheetport_spec::{Direction, Manifest};
 use std::collections::{BTreeMap, BTreeSet};
@@ -150,36 +151,38 @@ impl<'a> SheetPort<'a> {
         &mut self,
         options: EvalOptions,
     ) -> Result<OutputSnapshot, SheetPortError> {
-        // Future: apply options (volatile, rng seed) before evaluation.
-        let _ = options;
-
-        if self.outputs_require_full_eval() {
-            self.workbook.prepare_graph_all()?;
-            self.workbook.evaluate_all()?;
-            return self.read_outputs();
-        }
-
-        let target_specs = self.collect_output_targets()?;
-        if target_specs.is_empty() {
-            self.workbook.prepare_graph_all()?;
-            self.workbook.evaluate_all()?;
-        } else {
-            let mut sheets: BTreeSet<&str> = BTreeSet::new();
-            for (sheet, _, _) in target_specs.iter() {
-                sheets.insert(sheet.as_str());
-            }
-            self.workbook
-                .prepare_graph_for_sheets(sheets.iter().copied())?;
-            let borrowed: Vec<(&str, u32, u32)> = target_specs
-                .iter()
-                .map(|(sheet, row, col)| (sheet.as_str(), *row, *col))
-                .collect();
-            if self.workbook.evaluate_cells(&borrowed).is_err() {
+        let restore = self.apply_eval_options(&options);
+        let result = (|| -> Result<OutputSnapshot, SheetPortError> {
+            if self.outputs_require_full_eval() {
                 self.workbook.prepare_graph_all()?;
                 self.workbook.evaluate_all()?;
+                return self.read_outputs();
             }
-        }
-        self.read_outputs()
+
+            let target_specs = self.collect_output_targets()?;
+            if target_specs.is_empty() {
+                self.workbook.prepare_graph_all()?;
+                self.workbook.evaluate_all()?;
+            } else {
+                let mut sheets: BTreeSet<&str> = BTreeSet::new();
+                for (sheet, _, _) in target_specs.iter() {
+                    sheets.insert(sheet.as_str());
+                }
+                self.workbook
+                    .prepare_graph_for_sheets(sheets.iter().copied())?;
+                let borrowed: Vec<(&str, u32, u32)> = target_specs
+                    .iter()
+                    .map(|(sheet, row, col)| (sheet.as_str(), *row, *col))
+                    .collect();
+                if self.workbook.evaluate_cells(&borrowed).is_err() {
+                    self.workbook.prepare_graph_all()?;
+                    self.workbook.evaluate_all()?;
+                }
+            }
+            self.read_outputs()
+        })();
+        self.restore_eval_options(restore);
+        result
     }
 
     fn outputs_require_full_eval(&self) -> bool {
@@ -395,10 +398,13 @@ impl<'a> SheetPort<'a> {
         plan: &RecalcPlan,
         options: EvalOptions,
     ) -> Result<OutputSnapshot, SheetPortError> {
-        // Future: apply options before evaluation.
-        let _ = options;
-        self.workbook.evaluate_with_plan(plan)?;
-        self.read_outputs()
+        let restore = self.apply_eval_options(&options);
+        let result = (|| -> Result<OutputSnapshot, SheetPortError> {
+            self.workbook.evaluate_with_plan(plan)?;
+            self.read_outputs()
+        })();
+        self.restore_eval_options(restore);
+        result
     }
 
     pub fn batch(
@@ -930,4 +936,56 @@ fn merge_with_default(mut current: PortValue, default: &PortValue) -> PortValue 
         _ => {}
     }
     current
+}
+
+struct EvalConfigRestore {
+    seed: u64,
+    volatile_level: VolatileLevel,
+    seed_overridden: bool,
+    volatile_overridden: bool,
+}
+
+impl<'a> SheetPort<'a> {
+    fn apply_eval_options(&mut self, options: &EvalOptions) -> EvalConfigRestore {
+        let seed = self.workbook.engine().config.workbook_seed;
+        let volatile_level = self.workbook.engine().config.volatile_level;
+
+        let mut seed_overridden = false;
+        let mut volatile_overridden = false;
+
+        if let Some(desired_seed) = options.rng_seed {
+            if desired_seed != seed {
+                self.workbook.engine_mut().set_workbook_seed(desired_seed);
+                seed_overridden = true;
+            }
+        }
+
+        if options.freeze_volatile {
+            if volatile_level != VolatileLevel::OnOpen {
+                self.workbook
+                    .engine_mut()
+                    .set_volatile_level(VolatileLevel::OnOpen);
+                volatile_overridden = true;
+            }
+        }
+
+        EvalConfigRestore {
+            seed,
+            volatile_level,
+            seed_overridden,
+            volatile_overridden,
+        }
+    }
+
+    fn restore_eval_options(&mut self, restore: EvalConfigRestore) {
+        if restore.seed_overridden {
+            self.workbook.engine_mut().set_workbook_seed(restore.seed);
+        }
+
+        if restore.volatile_overridden {
+            self.workbook
+                .engine_mut()
+                .set_volatile_level(restore.volatile_level);
+        }
+    }
 }
