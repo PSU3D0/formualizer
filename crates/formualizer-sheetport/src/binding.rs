@@ -13,7 +13,7 @@ use sheetport_spec::{
 use std::collections::BTreeMap;
 
 /// Bound manifest along with per-port selector metadata.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ManifestBindings {
     manifest: Manifest,
     bindings: Vec<PortBinding>,

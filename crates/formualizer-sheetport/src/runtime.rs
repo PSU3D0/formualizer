@@ -62,6 +62,16 @@ impl<'a> SheetPort<'a> {
         Ok(Self { workbook, bindings })
     }
 
+    /// Construct a SheetPort using pre-bound manifest bindings.
+    pub fn from_bindings(
+        workbook: &'a mut Workbook,
+        bindings: ManifestBindings,
+    ) -> Result<Self, SheetPortError> {
+        let ctx = WorkbookContext::new(&*workbook);
+        ctx.validate(&bindings)?;
+        Ok(Self { workbook, bindings })
+    }
+
     /// Immutable access to the underlying workbook.
     pub fn workbook(&self) -> &Workbook {
         &*self.workbook

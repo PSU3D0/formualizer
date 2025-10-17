@@ -13,6 +13,7 @@ mod layout;
 mod location;
 mod resolver;
 mod runtime;
+mod session;
 mod validation;
 mod value;
 
@@ -24,5 +25,6 @@ pub use binding::{
 pub use error::SheetPortError;
 pub use location::{AreaLocation, FieldLocation, ScalarLocation, TableLocation};
 pub use runtime::{EvalMode, EvalOptions, SheetPort};
+pub use session::SheetPortSession;
 pub use validation::{ConstraintViolation, ValidationScope};
 pub use value::{InputSnapshot, InputUpdate, OutputSnapshot, PortValue, TableRow, TableValue};
