@@ -145,7 +145,8 @@ impl DataStore {
                 // Store as integer seconds (chrono::Duration has num_seconds())
                 let secs = dur.num_seconds();
                 let idx = self.scalars.insert_integer(secs);
-                ValueRef::duration(idx.as_u32())
+                let raw_index = idx.as_u32() & 0x7FFF_FFFF;
+                ValueRef::duration(raw_index)
             }
 
             LiteralValue::Int(i) => {

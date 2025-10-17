@@ -1,7 +1,5 @@
 use formualizer_common::LiteralValue;
-use formualizer_sheetport::{
-    EvalOptions, InputUpdate, PortValue, SheetPort, SheetPortSession,
-};
+use formualizer_sheetport::{EvalOptions, InputUpdate, PortValue, SheetPort, SheetPortSession};
 use formualizer_workbook::Workbook;
 use sheetport_spec::Manifest;
 

@@ -45,17 +45,9 @@ def test_openpyxl_roundtrip(tmp_path: Path):
     engine = fz.Engine.from_workbook(wb)
     
     # Evaluate and check values
-    val_b1 = engine.evaluate_cell("Sheet1", 1, 2)
-    print(f"B1 value type: {val_b1.type_name}, value: {val_b1}")
-    assert val_b1.as_number() == 6.0
-    
-    val_c1 = engine.evaluate_cell("Sheet1", 1, 3)
-    print(f"C1 value type: {val_c1.type_name}, value: {val_c1}")
-    assert val_c1.as_number() == 12.0
-    
-    val_d1 = engine.evaluate_cell("Sheet1", 1, 4)
-    print(f"D1 value type: {val_d1.type_name}, value: {val_d1}")
-    assert val_d1.as_number() == 6.0
+    assert engine.evaluate_cell("Sheet1", 1, 2) == 6.0
+    assert engine.evaluate_cell("Sheet1", 1, 3) == 12.0
+    assert engine.evaluate_cell("Sheet1", 1, 4) == 6.0
 
     # Note: With the new pattern, mutation happens through the workbook
     # but evaluation happens through the engine
@@ -67,8 +59,8 @@ def test_batch_values_and_formulas():
     s = wb.sheet("Data")
 
     s.set_values_batch(1, 1, 2, 3, [
-        [fz.LiteralValue.int(1), fz.LiteralValue.int(2), fz.LiteralValue.int(3)],
-        [fz.LiteralValue.int(4), fz.LiteralValue.int(5), fz.LiteralValue.int(6)],
+        [1, 2, 3],
+        [4, 5, 6],
     ])
 
     s.set_formulas_batch(1, 4, 2, 1, [
@@ -80,14 +72,8 @@ def test_batch_values_and_formulas():
     engine = fz.Engine.from_workbook(wb)
     
     # Evaluate the formula cells
-    val1 = engine.evaluate_cell("Data", 1, 4)
-    val2 = engine.evaluate_cell("Data", 2, 4)
-    
-    print(f"Sum 1 value type: {val1.type_name}, value: {val1}")
-    print(f"Sum 2 value type: {val2.type_name}, value: {val2}")
-    
-    assert val1.as_number() == 6.0
-    assert val2.as_number() == 15.0
+    assert engine.evaluate_cell("Data", 1, 4) == 6.0
+    assert engine.evaluate_cell("Data", 2, 4) == 15.0
 
     # Check that formulas were stored correctly
     forms = s.get_formulas(fz.RangeAddress("Data", 1, 4, 2, 4))
@@ -123,19 +109,19 @@ def test_load_workbook_from_disk(tmp_path: Path):
     
     # Check values were loaded (raw values from workbook)
     sheet = fz_wb.sheet("Data")
-    assert sheet.get_cell(1, 1).value.as_number() == 100.0
-    assert sheet.get_cell(2, 1).value.as_number() == 200.0
-    assert sheet.get_cell(3, 1).value.as_number() == 300.0
+    assert sheet.get_cell(1, 1).value == 100.0
+    assert sheet.get_cell(2, 1).value == 200.0
+    assert sheet.get_cell(3, 1).value == 300.0
     
     # Check formulas were loaded and can be evaluated
-    assert engine.evaluate_cell("Data", 1, 2).as_number() == 200.0  # A1*2
-    assert engine.evaluate_cell("Data", 2, 2).as_number() == 500.0  # A2+A3
-    assert engine.evaluate_cell("Data", 3, 2).as_number() == 600.0  # SUM(A1:A3)
+    assert engine.evaluate_cell("Data", 1, 2) == 200.0  # A1*2
+    assert engine.evaluate_cell("Data", 2, 2) == 500.0  # A2+A3
+    assert engine.evaluate_cell("Data", 3, 2) == 600.0  # SUM(A1:A3)
     
     # Test using classmethod directly
     fz_wb2 = fz.Workbook.load_path(str(xlsx_path), strategy="eager_all")
     engine2 = fz.Engine.from_workbook(fz_wb2)
-    assert engine2.evaluate_cell("Data", 1, 1).as_number() == 100.0
+    assert engine2.evaluate_cell("Data", 1, 1) == 100.0
 
 
 def test_formula_evaluation_types():
@@ -144,9 +130,9 @@ def test_formula_evaluation_types():
     s = wb.sheet("Test")
     
     # Set up integer values
-    s.set_value(1, 1, fz.LiteralValue.int(10))
-    s.set_value(2, 1, fz.LiteralValue.int(20))
-    s.set_value(3, 1, fz.LiteralValue.int(30))
+    s.set_value(1, 1, 10)
+    s.set_value(2, 1, 20)
+    s.set_value(3, 1, 30)
     
     # Set up various formulas
     s.set_formula(1, 2, "=A1+A2")  # Simple addition
@@ -160,21 +146,18 @@ def test_formula_evaluation_types():
     
     # Check the types and values through evaluation
     add_result = engine.evaluate_cell("Test", 1, 2)
-    print(f"A1+A2: type={add_result.type_name}, value={add_result}")
-    assert add_result.as_number() == 30.0
+    assert add_result == 30.0
     
     mult_result = engine.evaluate_cell("Test", 2, 2)
-    print(f"A1*2: type={mult_result.type_name}, value={mult_result}")
-    assert mult_result.as_number() == 20.0
+    assert mult_result == 20.0
     
     div_result = engine.evaluate_cell("Test", 3, 2)
-    print(f"A1/2: type={div_result.type_name}, value={div_result}")
-    assert div_result.as_number() == 5.0
+    assert isinstance(div_result, float)
+    assert div_result == 5.0
     
     sum_result = engine.evaluate_cell("Test", 4, 2)
-    print(f"SUM(A1:A3): type={sum_result.type_name}, value={sum_result}")
-    assert sum_result.as_number() == 60.0
+    assert sum_result == 60.0
     
     avg_result = engine.evaluate_cell("Test", 5, 2)
-    print(f"AVERAGE(A1:A3): type={avg_result.type_name}, value={avg_result}")
-    assert avg_result.as_number() == 20.0
+    assert isinstance(avg_result, float)
+    assert avg_result == 20.0

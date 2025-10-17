@@ -1,13 +1,12 @@
+use crate::SheetPortError;
 use crate::binding::ManifestBindings;
 use crate::runtime::{EvalOptions, SheetPort};
 use crate::value::{InputSnapshot, InputUpdate, OutputSnapshot};
-use crate::SheetPortError;
 use formualizer_eval::engine::RecalcPlan;
 use formualizer_workbook::Workbook;
 use sheetport_spec::Manifest;
 
 /// Owned runtime session that keeps workbook state and manifest bindings together.
-#[derive(Debug)]
 pub struct SheetPortSession {
     workbook: Workbook,
     bindings: ManifestBindings,
@@ -22,8 +21,11 @@ impl SheetPortSession {
     }
 
     /// Construct a session from components that are already bound.
-    pub fn from_parts(mut workbook: Workbook, bindings: ManifestBindings) -> Result<Self, SheetPortError> {
-        let mut sheetport = SheetPort::from_bindings(&mut workbook, bindings)?;
+    pub fn from_parts(
+        mut workbook: Workbook,
+        bindings: ManifestBindings,
+    ) -> Result<Self, SheetPortError> {
+        let sheetport = SheetPort::from_bindings(&mut workbook, bindings)?;
         let (_, bindings) = sheetport.into_parts();
         Ok(Self { workbook, bindings })
     }
@@ -81,7 +83,10 @@ impl SheetPortSession {
     }
 
     /// Evaluate the manifest once using the provided options and return outputs.
-    pub fn evaluate_once(&mut self, options: EvalOptions) -> Result<OutputSnapshot, SheetPortError> {
+    pub fn evaluate_once(
+        &mut self,
+        options: EvalOptions,
+    ) -> Result<OutputSnapshot, SheetPortError> {
         self.with_sheetport(move |sp| sp.evaluate_once(options))
     }
 

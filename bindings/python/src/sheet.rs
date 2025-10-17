@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyAny, PyList};
 
-use crate::value::PyLiteralValue;
+use crate::value::literal_to_py;
 use crate::workbook::{PyCell, PyWorkbook};
 use formualizer_workbook::WorksheetHandle;
 
@@ -18,7 +18,13 @@ pub struct PySheet {
 #[pymethods]
 impl PySheet {
     /// Set a single value (stores in workbook, doesn't evaluate)
-    pub fn set_value(&self, row: u32, col: u32, value: PyLiteralValue) -> PyResult<()> {
+    pub fn set_value(
+        &self,
+        py: Python<'_>,
+        row: u32,
+        col: u32,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
         if row == 0 || col == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Row/col are 1-based",
@@ -26,7 +32,7 @@ impl PySheet {
         }
 
         // Delegate to workbook so compatibility cache stays in sync
-        self.workbook.set_value(&self.name, row, col, value)
+        self.workbook.set_value(py, &self.name, row, col, value)
     }
 
     /// Set a single formula (stores in workbook, doesn't evaluate)
@@ -49,19 +55,38 @@ impl PySheet {
             ));
         }
 
-        let value = PyLiteralValue {
-            inner: self
-                .handle
-                .get_value(row, col)
-                .unwrap_or(formualizer_common::LiteralValue::Empty),
+        let cached = {
+            let sheets = self.workbook.sheets.read().unwrap();
+            sheets
+                .get(&self.name)
+                .and_then(|m| m.get(&(row, col)).cloned())
         };
+
+        if let Some(data) = cached {
+            let value = data
+                .value
+                .clone()
+                .or_else(|| self.handle.get_value(row, col))
+                .unwrap_or(formualizer_common::LiteralValue::Empty);
+            let formula = data
+                .formula
+                .clone()
+                .or_else(|| self.handle.get_formula(row, col));
+            return Ok(PyCell::new(value, formula));
+        }
+
+        let value = self
+            .handle
+            .get_value(row, col)
+            .unwrap_or(formualizer_common::LiteralValue::Empty);
         let formula = self.handle.get_formula(row, col);
-        Ok(PyCell { value, formula })
+        Ok(PyCell::new(value, formula))
     }
 
     /// Batch set values into a rectangle
     pub fn set_values_batch(
         &self,
+        py: Python<'_>,
         start_row: u32,
         start_col: u32,
         rows: u32,
@@ -74,7 +99,6 @@ impl PySheet {
             ));
         }
 
-        // Validate rectangular shape
         if data.len() as u32 != rows {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Expected {} rows, got {}",
@@ -83,9 +107,8 @@ impl PySheet {
             )));
         }
 
-        // Delegate to workbook batch API (handles cache)
         self.workbook
-            .set_values_batch(&self.name, start_row, start_col, data)
+            .set_values_batch(py, &self.name, start_row, start_col, data)
     }
 
     /// Batch set formulas into a rectangle
@@ -120,8 +143,9 @@ impl PySheet {
     /// Get values from a range (no evaluation, just stored values)
     pub fn get_values(
         &self,
+        py: Python<'_>,
         range: &crate::workbook::PyRangeAddress,
-    ) -> PyResult<Vec<Vec<PyLiteralValue>>> {
+    ) -> PyResult<Vec<Vec<PyObject>>> {
         let ra = formualizer_workbook::RangeAddress::new(
             &range.sheet,
             range.start_row,
@@ -131,14 +155,13 @@ impl PySheet {
         )
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let vals = self.handle.read_range(&ra);
-        Ok(vals
-            .into_iter()
+        vals.into_iter()
             .map(|row| {
                 row.into_iter()
-                    .map(|v| PyLiteralValue { inner: v })
-                    .collect::<Vec<_>>()
+                    .map(|v| literal_to_py(py, &v))
+                    .collect::<PyResult<Vec<_>>>()
             })
-            .collect())
+            .collect()
     }
 
     /// Get formulas from a range (returns formula strings, empty strings for non-formula cells)

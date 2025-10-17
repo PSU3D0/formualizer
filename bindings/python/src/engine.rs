@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::errors::excel_eval_pyerr;
 use crate::resolver::PyResolver;
-use crate::value::PyLiteralValue;
+use crate::value::{literal_to_py, py_to_literal};
 use crate::workbook::{CellData, PyCell, PyWorkbook};
 
 /// Python wrapper for the evaluation engine
@@ -519,34 +519,33 @@ impl PyEngine {
     /// Set a single cell value after load (clears any formula).
     pub fn set_value(
         &self,
+        py: Python<'_>,
         sheet: &str,
         row: u32,
         col: u32,
-        value: PyLiteralValue,
+        value: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
+        let literal = py_to_literal(value)?;
         let mut engine = self.inner.write().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
         })?;
         engine
-            .set_cell_value(sheet, row, col, value.inner.clone())
+            .set_cell_value(sheet, row, col, literal.clone())
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("set_value: {e}"))
             })?;
 
-        // Update workbook if present to keep it in sync
         if let Some(ref wb) = self.workbook {
-            Python::with_gil(|py| {
-                let wb_ref = wb.borrow(py);
-                wb_ref.set_cell_data(
-                    sheet,
-                    row,
-                    col,
-                    CellData {
-                        value: Some(value.inner.clone()),
-                        formula: None,
-                    },
-                )
-            })?;
+            let wb_ref = wb.borrow(py);
+            wb_ref.set_cell_data(
+                sheet,
+                row,
+                col,
+                CellData {
+                    value: Some(literal),
+                    formula: None,
+                },
+            )?;
         }
 
         Ok(())
@@ -605,11 +604,9 @@ impl PyEngine {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
         })?;
         let (ast, value) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
-        let value = PyLiteralValue {
-            inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
-        };
+        let value = value.unwrap_or(formualizer_common::LiteralValue::Empty);
         let formula = ast.map(|a| formualizer_parse::pretty::canonical_formula(&a));
-        Ok(PyCell { value, formula })
+        Ok(PyCell::new(value, formula))
     }
 
     /// Set or change the workbook
@@ -657,23 +654,20 @@ impl PyEngine {
     /// Evaluate a specific cell and return its value
     pub fn evaluate_cell(
         &self,
-        py: Python,
+        py: Python<'_>,
         sheet: &str,
         row: u32,
         col: u32,
-    ) -> PyResult<PyLiteralValue> {
+    ) -> PyResult<PyObject> {
         if row == 0 || col == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Row/col are 1-based",
             ));
         }
 
-        // If this engine was constructed from a Workbook, delegate to the workbook's engine-backed evaluation
         if let Some(ref wb) = self.workbook {
-            return Python::with_gil(|py| {
-                let w = wb.borrow(py);
-                w.evaluate_cell(sheet, row, col)
-            });
+            let w = wb.borrow(py);
+            return w.evaluate_cell(py, sheet, row, col);
         }
 
         let value = py.allow_threads(|| {
@@ -687,12 +681,8 @@ impl PyEngine {
                 .map_err(|e| excel_eval_pyerr(Some(sheet), Some(row), Some(col), &e))
         })?;
 
-        use formualizer_common::LiteralValue;
-        let inner = match value {
-            Some(v) => v,
-            None => LiteralValue::Empty,
-        };
-        Ok(PyLiteralValue { inner })
+        let literal = value.unwrap_or(formualizer_common::LiteralValue::Empty);
+        literal_to_py(py, &literal)
     }
 
     /// Evaluate a cell and return a native Python value; raise if the result is an Excel error.
@@ -709,12 +699,7 @@ impl PyEngine {
         row: u32,
         col: u32,
     ) -> PyResult<PyObject> {
-        let v = self.evaluate_cell(py, sheet, row, col)?; // already performs engine call and basic checks
-                                                          // If it is an error, raise a rich exception
-        if let formualizer_common::LiteralValue::Error(ref e) = v.inner {
-            return Err(excel_eval_pyerr(Some(sheet), Some(row), Some(col), e));
-        }
-        v.to_python(py)
+        self.evaluate_cell(py, sheet, row, col)
     }
 
     /// Get a cell without evaluation (value from last evaluation + formula)
@@ -731,12 +716,10 @@ impl PyEngine {
 
         // Get formula and value from engine (without evaluation)
         let (ast, value) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
-        let value = PyLiteralValue {
-            inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
-        };
+        let value = value.unwrap_or(formualizer_common::LiteralValue::Empty);
         let formula = ast.map(|a| formualizer_parse::pretty::canonical_formula(&a));
 
-        Ok(PyCell { value, formula })
+        Ok(PyCell::new(value, formula))
     }
 
     /// Get only the formula for a cell (without evaluation)
@@ -756,7 +739,7 @@ impl PyEngine {
     }
 
     /// Get only the value for a cell (without evaluation, returns last computed value)
-    pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> PyResult<PyLiteralValue> {
+    pub fn get_value(&self, py: Python<'_>, sheet: &str, row: u32, col: u32) -> PyResult<PyObject> {
         if row == 0 || col == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Row/col are 1-based",
@@ -768,9 +751,8 @@ impl PyEngine {
         })?;
 
         let (_, value) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
-        Ok(PyLiteralValue {
-            inner: value.unwrap_or(formualizer_common::LiteralValue::Empty),
-        })
+        let literal = value.unwrap_or(formualizer_common::LiteralValue::Empty);
+        literal_to_py(py, &literal)
     }
 
     /// Get an evaluated cell (triggers evaluation + formula)
@@ -787,17 +769,27 @@ impl PyEngine {
             ));
         }
 
-        // Evaluate the cell
-        let value = self.evaluate_cell(py, sheet, row, col)?;
+        // Evaluate the cell value directly
+        let literal = py.allow_threads(|| {
+            let mut engine = self.inner.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to acquire engine lock: {e}"
+                ))
+            })?;
+            engine
+                .evaluate_cell(sheet, row, col)
+                .map_err(|e| excel_eval_pyerr(Some(sheet), Some(row), Some(col), &e))
+        })?;
 
-        // Get the formula from the engine
+        let literal = literal.unwrap_or(formualizer_common::LiteralValue::Empty);
+
         let engine = self.inner.read().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock error: {e}"))
         })?;
         let (ast, _) = engine.get_cell(sheet, row, col).unwrap_or((None, None));
         let formula = ast.map(|a| formualizer_parse::pretty::canonical_formula(&a));
 
-        Ok(PyCell { value, formula })
+        Ok(PyCell::new(literal, formula))
     }
 
     /// Evaluate multiple cells and return their values in the same order
@@ -805,8 +797,7 @@ impl PyEngine {
         &self,
         py: Python,
         targets: Vec<(String, u32, u32)>,
-    ) -> PyResult<Vec<PyLiteralValue>> {
-        // Validate that all are 1-based
+    ) -> PyResult<Vec<PyObject>> {
         for (_, row, col) in &targets {
             if *row == 0 || *col == 0 {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -821,7 +812,6 @@ impl PyEngine {
                     "Failed to acquire engine lock: {e}"
                 ))
             })?;
-            // Convert targets to the format expected by evaluate_cells
             let target_refs: Vec<(&str, u32, u32)> = targets
                 .iter()
                 .map(|(s, r, c)| (s.as_str(), *r, *c))
@@ -831,12 +821,13 @@ impl PyEngine {
                 .map_err(|e| excel_eval_pyerr(None, None, None, &e))
         })?;
 
-        Ok(values
+        values
             .into_iter()
-            .map(|v| PyLiteralValue {
-                inner: v.unwrap_or(formualizer_common::LiteralValue::Empty),
+            .map(|v| {
+                let literal = v.unwrap_or(formualizer_common::LiteralValue::Empty);
+                literal_to_py(py, &literal)
             })
-            .collect())
+            .collect()
     }
 
     /// Get the evaluation plan for cells without actually evaluating them
