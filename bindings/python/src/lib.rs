@@ -9,6 +9,7 @@ mod parser;
 mod reference;
 mod resolver;
 mod sheet; // retain for compatibility
+mod sheetport;
 mod token;
 mod tokenizer;
 mod value;
@@ -60,6 +61,7 @@ fn formualizer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     engine::register(m)?;
     workbook::register(m)?;
     sheet::register(m)?;
+    sheetport::register(m)?;
     // Convenience functions
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(parse, m)?)?;

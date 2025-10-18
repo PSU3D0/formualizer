@@ -990,9 +990,11 @@ dependencies = [
  "formualizer-common",
  "formualizer-eval",
  "formualizer-parse",
+ "formualizer-sheetport",
  "formualizer-workbook",
  "pyo3",
  "serde_json",
+ "sheetport-spec",
 ]
 
 [[package]]

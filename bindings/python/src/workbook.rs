@@ -457,6 +457,28 @@ impl PyRangeAddress {
 
 // Non-Python methods for internal use
 impl PyWorkbook {
+    pub(crate) fn with_workbook<T, F>(&self, f: F) -> PyResult<T>
+    where
+        F: FnOnce(&formualizer_workbook::Workbook) -> PyResult<T>,
+    {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        f(&wb)
+    }
+
+    pub(crate) fn with_workbook_mut<T, F>(&self, f: F) -> PyResult<T>
+    where
+        F: FnOnce(&mut formualizer_workbook::Workbook) -> PyResult<T>,
+    {
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        f(&mut wb)
+    }
+
     pub(crate) fn sheet_names_snapshot(&self) -> PyResult<Vec<String>> {
         let wb = self
             .inner
