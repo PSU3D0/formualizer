@@ -18,8 +18,7 @@ sudo apt-get clean
 
 export PATH="${HOME}/.local/bin:${PATH}"
 
-sudo mkdir -p "${HOME}/.cache" "${HOME}/.local/share"
-sudo chown -R "$(id -un)":"$(id -gn)" "${HOME}/.cache" "${HOME}/.local/share"
+mkdir -p "${HOME}/.cache" "${HOME}/.local/share" "${HOME}/.local/state"
 
 
 if command -v mise >/dev/null 2>&1 && [ -f "${WORKSPACE_DIR}/mise.toml" ]; then
