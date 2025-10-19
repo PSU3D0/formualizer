@@ -1,0 +1,59 @@
+{
+  "name": "formualizer-dev",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
+  "workspaceFolder": "/workspaces/formualizer",
+  "init": true,
+  "features": {
+    "ghcr.io/devcontainers-extra/features/mise:1": {},
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2.12.4": {}
+  },
+  "mounts": [
+    "source=formualizer-home,target=/home/vscode,type=volume",
+    "source=formualizer-tool-cache,target=/home/vscode/.cache,type=volume"
+  ],
+  "runArgs": [
+    "--cap-add=SYS_PTRACE",
+    "--security-opt=seccomp=unconfined"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "ms-python.python",
+        "rust-lang.rust-analyzer",
+        "ms-vscode.makefile-tools",
+        "ms-vscode.remote-explorer",
+        "fill-labs.dependi",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "tmux",
+        "terminal.integrated.profiles.linux": {
+          "zsh": {
+            "path": "/bin/zsh"
+          },
+          "resumable-tmux": {
+            "path": "/usr/bin/tmux",
+            "args": [
+              "new-session",
+              "-A",
+              "-s",
+              "devcontainer"
+            ]
+          }
+        },
+        "terminal.integrated.localEchoEnabled": "on",
+        "files.trimTrailingWhitespace": true,
+        "editor.formatOnSave": true,
+        "python.analysis.typeCheckingMode": "strict",
+        "rust-analyzer.cargo.allFeatures": true,
+        "rust-analyzer.check.command": "clippy"
+      }
+    }
+  },
+  "postCreateCommand": "./.devcontainer/scripts/post-create.sh",
+  "postStartCommand": "./.devcontainer/scripts/post-start.sh"
+}

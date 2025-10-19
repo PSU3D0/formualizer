@@ -39,12 +39,6 @@ console_panic = ["console_error_panic_hook"]
 # Expose a local `json` feature and forward it to the workbook dependency
 json = ["formualizer-workbook/json"]
 
-[profile.release]
-opt-level = "z"     # Optimize for size
-lto = true          # Enable Link Time Optimization
-codegen-units = 1   # Single codegen unit for better optimization
-strip = true        # Strip symbols
-
 # Ensure getrandom works on wasm32-unknown-unknown by enabling the `js` feature
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
