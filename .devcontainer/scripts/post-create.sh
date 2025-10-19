@@ -19,7 +19,7 @@ sudo apt-get clean
 export PATH="${HOME}/.local/bin:${PATH}"
 
 mkdir -p "${HOME}/.cache" "${HOME}/.local/share" "${HOME}/.local/state"
-
+chown -R vscode:vscode "${HOME}/.cache" "${HOME}/.local/share" "${HOME}/.local/state"
 
 if command -v mise >/dev/null 2>&1 && [ -f "${WORKSPACE_DIR}/mise.toml" ]; then
   mise trust "${WORKSPACE_DIR}/mise.toml"

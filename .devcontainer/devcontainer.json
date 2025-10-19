@@ -33,7 +33,7 @@
         "terminal.integrated.defaultProfile.linux": "tmux",
         "terminal.integrated.profiles.linux": {
           "zsh": {
-            "path": "/bin/zsh"
+            "path": "/usr/bin/zsh"
           },
           "resumable-tmux": {
             "path": "/usr/bin/tmux",

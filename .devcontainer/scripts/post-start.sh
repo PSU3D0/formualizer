@@ -5,7 +5,8 @@ WORKSPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if command -v mise >/dev/null 2>&1; then
   # Ensure mise-managed tools are available for the rest of the session.
-  eval "$(mise hook-env -s bash)"
+  eval "$(mise activate)"
+  eval "$(mise hook-env)"
 
   if [ -f "${WORKSPACE_DIR}/mise.toml" ]; then
     (cd "${WORKSPACE_DIR}" && mise install)
