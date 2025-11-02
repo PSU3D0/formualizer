@@ -26,15 +26,15 @@ only_used_in_recursion = "allow"
 formualizer-parse = { workspace = true }
 formualizer-macros  = { workspace = true }
 formualizer-common = { workspace = true }
-once_cell = "1.21.3"
-rustc-hash = "1.1"
+once_cell = { workspace = true }
+rustc-hash = { workspace = true }
 rand = { version = "0.8.5", features = ["small_rng"] }
 rayon = "1.8"
 dashmap = "6.1.0"
 chrono = { workspace = true }
 bitflags = "2.9.1"
 bumpalo = { version = "3.16", features = ["collections"] }
-smallvec = "1.13"
+smallvec = { workspace = true }
 
 # Arrow (per-crate) — pinned to 56.x series
 arrow-array = "56"
