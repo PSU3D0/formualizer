@@ -20,7 +20,7 @@ pub fn schema_json() -> &'static str {
 ///
 /// This is primarily used for verifying that the bundled schema file is up to date.
 pub fn generate_schema_json_pretty() -> String {
-    use schemars::r#gen::SchemaSettings;
+    use schemars::generate::SchemaSettings;
 
     let settings = SchemaSettings::draft2019_09();
     let generator = settings.into_generator();

@@ -1,7 +1,9 @@
 #![cfg(target_arch = "wasm32")]
 
-use formualizer_wasm::{parse, tokenize, FormulaDialect, Parser, Reference, Tokenizer, Workbook};
-use wasm_bindgen::JsValue;
+use formualizer_wasm::{
+    parse, tokenize, FormulaDialect, Parser, Reference, SheetPortSession, Tokenizer, Workbook,
+};
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::*;
 
 #[wasm_bindgen_test]
@@ -156,4 +158,196 @@ fn test_changelog_undo_redo() {
     wb.redo().unwrap();
     let v2 = sheet.get_value(1, 1).unwrap();
     assert_eq!(v2.as_f64().unwrap(), 20.0);
+}
+
+const SHEETPORT_MANIFEST: &str = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: wasm-sheetport-tests
+  name: WASM SheetPort Session Tests
+  workbook:
+    uri: memory://wasm-sheetport.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: demand
+    dir: in
+    shape: scalar
+    location:
+      a1: Inputs!A1
+    schema:
+      type: number
+  - id: mix
+    dir: in
+    shape: record
+    location:
+      a1: Inputs!B1:C1
+    schema:
+      kind: record
+      fields:
+        qty:
+          type: integer
+          location:
+            a1: Inputs!B1
+          constraints:
+            min: 0
+        label:
+          type: string
+          location:
+            a1: Inputs!C1
+    default:
+      qty: 1
+      label: seed
+  - id: plan_output
+    dir: out
+    shape: scalar
+    location:
+      a1: Outputs!A1
+    schema:
+      type: number
+"#;
+
+fn build_sheetport_workbook() -> Workbook {
+    let wb = Workbook::new();
+    wb.add_sheet("Inputs".to_string());
+    wb.add_sheet("Outputs".to_string());
+
+    wb.set_value("Inputs".to_string(), 1, 1, JsValue::from_f64(120.0))
+        .unwrap();
+    wb.set_value("Inputs".to_string(), 1, 2, JsValue::from_f64(3.0))
+        .unwrap();
+    wb.set_value("Inputs".to_string(), 1, 3, JsValue::from_str("seed"))
+        .unwrap();
+    wb.set_value("Outputs".to_string(), 1, 1, JsValue::from_f64(42.0))
+        .unwrap();
+    wb
+}
+
+#[wasm_bindgen_test]
+fn test_sheetport_session_read_write_roundtrip() {
+    let wb = build_sheetport_workbook();
+    let mut session =
+        SheetPortSession::from_manifest_yaml(SHEETPORT_MANIFEST.to_string(), &wb).unwrap();
+
+    let inputs = session.read_inputs().unwrap();
+    let inputs_obj: js_sys::Object = inputs.into();
+    let demand = js_sys::Reflect::get(&inputs_obj, &JsValue::from_str("demand"))
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    assert_eq!(demand, 120.0);
+
+    let mix = js_sys::Reflect::get(&inputs_obj, &JsValue::from_str("mix"))
+        .unwrap()
+        .dyn_into::<js_sys::Object>()
+        .unwrap();
+    let qty = js_sys::Reflect::get(&mix, &JsValue::from_str("qty"))
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    assert_eq!(qty, 3.0);
+    let label = js_sys::Reflect::get(&mix, &JsValue::from_str("label"))
+        .unwrap()
+        .as_string()
+        .unwrap();
+    assert_eq!(label, "seed");
+
+    let ports = session
+        .describe_ports()
+        .unwrap()
+        .dyn_into::<js_sys::Array>()
+        .unwrap();
+    assert_eq!(ports.length(), 3);
+
+    let updates = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(
+        &updates,
+        &JsValue::from_str("demand"),
+        &JsValue::from_f64(250.5),
+    );
+    let mix_update = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(
+        &mix_update,
+        &JsValue::from_str("qty"),
+        &JsValue::from_f64(7.0),
+    );
+    let _ = js_sys::Reflect::set(
+        &updates,
+        &JsValue::from_str("mix"),
+        &JsValue::from(mix_update),
+    );
+    session.write_inputs(JsValue::from(updates)).unwrap();
+
+    let refreshed = session
+        .read_inputs()
+        .unwrap()
+        .dyn_into::<js_sys::Object>()
+        .unwrap();
+    let demand_after = js_sys::Reflect::get(&refreshed, &JsValue::from_str("demand"))
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    assert_eq!(demand_after, 250.5);
+    let mix_after = js_sys::Reflect::get(&refreshed, &JsValue::from_str("mix"))
+        .unwrap()
+        .dyn_into::<js_sys::Object>()
+        .unwrap();
+    let qty_after = js_sys::Reflect::get(&mix_after, &JsValue::from_str("qty"))
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    assert_eq!(qty_after, 7.0);
+    let label_after = js_sys::Reflect::get(&mix_after, &JsValue::from_str("label"))
+        .unwrap()
+        .as_string()
+        .unwrap();
+    assert_eq!(label_after, "seed");
+
+    // Workbook reflects updates
+    let sheet = wb.sheet("Inputs".to_string());
+    let stored = sheet.get_value(1, 1).unwrap();
+    assert_eq!(stored.as_f64().unwrap(), 250.5);
+
+    let outputs = session.evaluate_once(JsValue::UNDEFINED).unwrap();
+    let outputs_obj: js_sys::Object = outputs.into();
+    let plan_output = js_sys::Reflect::get(&outputs_obj, &JsValue::from_str("plan_output"))
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    assert_eq!(plan_output, 42.0);
+}
+
+#[wasm_bindgen_test]
+fn test_sheetport_session_constraint_error() {
+    let wb = build_sheetport_workbook();
+    let mut session =
+        SheetPortSession::from_manifest_yaml(SHEETPORT_MANIFEST.to_string(), &wb).unwrap();
+
+    let updates = js_sys::Object::new();
+    let mix_update = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(
+        &mix_update,
+        &JsValue::from_str("qty"),
+        &JsValue::from_f64(-4.0),
+    );
+    let _ = js_sys::Reflect::set(
+        &updates,
+        &JsValue::from_str("mix"),
+        &JsValue::from(mix_update),
+    );
+
+    let err = session.write_inputs(JsValue::from(updates)).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    let kind = js_sys::Reflect::get(error.as_ref(), &JsValue::from_str("kind"))
+        .unwrap()
+        .as_string()
+        .unwrap();
+    assert_eq!(kind, "ConstraintViolation");
+
+    let violations = js_sys::Reflect::get(error.as_ref(), &JsValue::from_str("violations"))
+        .unwrap()
+        .dyn_into::<js_sys::Array>()
+        .unwrap();
+    assert!(violations.length() > 0);
 }

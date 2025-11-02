@@ -2,16 +2,14 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use regex::Regex;
-use schemars::{
-    JsonSchema,
-    r#gen::SchemaGenerator,
-    schema::{InstanceType, StringValidation},
-};
+use schemars::json_schema;
+use schemars::{JsonSchema, SchemaGenerator};
 use semver::Version;
 use serde::de::{self, Deserializer, Visitor};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::borrow::Cow;
 
 use crate::validation::{ManifestIssue, ValidationError};
 
@@ -25,7 +23,7 @@ pub const SPEC_IDENT: &str = "fio";
 #[schemars(
     title = "Formualizer I/O Manifest (SheetPort)",
     description = "Specification that binds typed input/output ports to a spreadsheet so it can be treated as a pure function.",
-    example = "crate::manifest::example_data::supply_planning_example"
+    example = crate::manifest::example_data::supply_planning_example()
 )]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -178,6 +176,14 @@ impl Manifest {
                 ));
             }
 
+            if let Some(constraints) = &port.constraints {
+                validate_constraints(
+                    constraints,
+                    format!("ports[{}].constraints", idx),
+                    &mut issues,
+                );
+            }
+
             if port.shape == Shape::Record {
                 if let Schema::Record(record) = &port.schema {
                     if record.fields.is_empty() {
@@ -225,6 +231,18 @@ impl Manifest {
                         format!("ports[{}].schema", idx),
                         "table shape must use a table schema".to_string(),
                     ));
+                }
+            }
+
+            if let Schema::Record(record) = &port.schema {
+                for (field_name, field) in &record.fields {
+                    if let Some(constraints) = &field.constraints {
+                        validate_constraints(
+                            constraints,
+                            format!("ports[{}].schema.fields.{}.constraints", idx, field_name),
+                            &mut issues,
+                        );
+                    }
                 }
             }
         }
@@ -628,21 +646,14 @@ impl<'de> Deserialize<'de> for SpecVersion {
 }
 
 impl JsonSchema for SpecVersion {
-    fn schema_name() -> String {
-        "SpecVersion".to_string()
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("SpecVersion")
     }
 
-    fn json_schema(_gen: &mut SchemaGenerator) -> schemars::schema::Schema {
-        schemars::schema::Schema::Object(schemars::schema::SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            string: Some(Box::new(StringValidation {
-                pattern: Some(
-                    r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-.]+)?(?:\+[0-9A-Za-z-.]+)?$"
-                        .to_string(),
-                ),
-                ..Default::default()
-            })),
-            ..Default::default()
+    fn json_schema(_gen: &mut SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "string",
+            "pattern": r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-.]+)?(?:\+[0-9A-Za-z-.]+)?$"
         })
     }
 }
@@ -664,6 +675,39 @@ fn canonicalize_enum(values: &mut Option<Vec<JsonValue>>) {
 
 fn value_sort_key(value: &JsonValue) -> String {
     serde_json::to_string(value).unwrap_or_default()
+}
+
+fn validate_constraints(
+    constraints: &Constraints,
+    base_path: String,
+    issues: &mut Vec<ManifestIssue>,
+) {
+    if let (Some(min), Some(max)) = (constraints.min, constraints.max) {
+        if min > max {
+            issues.push(ManifestIssue::new(
+                format!("{}.min", base_path),
+                format!("`min` value {min} exceeds `max` value {max}"),
+            ));
+        }
+    }
+
+    if let Some(enum_values) = &constraints.r#enum {
+        if enum_values.is_empty() {
+            issues.push(ManifestIssue::new(
+                format!("{}.enum", base_path),
+                "enumerated values must contain at least one entry".to_string(),
+            ));
+        }
+    }
+
+    if let Some(pattern) = &constraints.pattern {
+        if let Err(err) = Regex::new(pattern) {
+            issues.push(ManifestIssue::new(
+                format!("{}.pattern", base_path),
+                format!("invalid regex pattern `{pattern}`: {err}"),
+            ));
+        }
+    }
 }
 
 pub(crate) mod example_data {

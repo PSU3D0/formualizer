@@ -5,6 +5,8 @@ import init, {
   Reference as WasmReference,
   parse as wasmParse,
   FormulaDialect as WasmFormulaDialect,
+  Workbook as WasmWorkbook,
+  SheetPortSession as WasmSheetPortSession,
 } from '../pkg/formualizer_wasm.js';
 
 let wasmInitialized = false;
@@ -249,6 +251,8 @@ export async function parse(
     return JSON.parse(json);
   });
 }
+
+export { WasmWorkbook as Workbook, WasmSheetPortSession as SheetPortSession };
 
 // Re-export the initialization function as default
 export default initializeWasm;

@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 use wasm_bindgen::prelude::*;
 
-fn js_to_literal(value: &JsValue) -> formualizer_common::LiteralValue {
+pub(crate) fn js_to_literal(value: &JsValue) -> formualizer_common::LiteralValue {
     use formualizer_common::LiteralValue;
     if value.is_null() || value.is_undefined() {
         LiteralValue::Empty
@@ -10,21 +10,41 @@ fn js_to_literal(value: &JsValue) -> formualizer_common::LiteralValue {
     } else if let Some(s) = value.as_string() {
         LiteralValue::Text(s)
     } else if let Some(n) = value.as_f64() {
-        // Heuristic: integers are still numbers here; consumers can decide
-        LiteralValue::Number(n)
+        if n.fract() == 0.0 && n.is_finite() && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
+            LiteralValue::Int(n as i64)
+        } else {
+            LiteralValue::Number(n)
+        }
     } else {
-        LiteralValue::Empty
+        // Fallback string representation for unsupported objects
+        LiteralValue::Text(format!("{value:?}"))
     }
 }
 
-fn literal_to_js(v: formualizer_common::LiteralValue) -> JsValue {
+pub(crate) fn literal_to_js(v: formualizer_common::LiteralValue) -> JsValue {
     match v {
         formualizer_common::LiteralValue::Empty => JsValue::NULL,
         formualizer_common::LiteralValue::Boolean(b) => JsValue::from_bool(b),
         formualizer_common::LiteralValue::Int(i) => JsValue::from_f64(i as f64),
         formualizer_common::LiteralValue::Number(n) => JsValue::from_f64(n),
         formualizer_common::LiteralValue::Text(s) => JsValue::from_str(&s),
-        _ => JsValue::from_str(&format!("{v:?}")),
+        formualizer_common::LiteralValue::Date(d) => JsValue::from_str(&d.to_string()),
+        formualizer_common::LiteralValue::DateTime(dt) => JsValue::from_str(&dt.to_string()),
+        formualizer_common::LiteralValue::Time(t) => JsValue::from_str(&t.to_string()),
+        formualizer_common::LiteralValue::Duration(dur) => JsValue::from_str(&format!("{dur:?}")),
+        formualizer_common::LiteralValue::Array(values) => {
+            let outer = js_sys::Array::new();
+            for row in values {
+                let arr = js_sys::Array::new();
+                for cell in row {
+                    arr.push(&literal_to_js(cell));
+                }
+                outer.push(&arr);
+            }
+            outer.into()
+        }
+        formualizer_common::LiteralValue::Pending => JsValue::from_str("Pending"),
+        formualizer_common::LiteralValue::Error(err) => JsValue::from_str(&err.to_string()),
     }
 }
 
@@ -37,6 +57,14 @@ impl Default for Workbook {
     fn default() -> Self {
         Self {
             inner: Arc::new(RwLock::new(formualizer_workbook::Workbook::new())),
+        }
+    }
+}
+
+impl Clone for Workbook {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
         }
     }
 }
@@ -189,6 +217,10 @@ impl Workbook {
             .map_err(|_| JsValue::from_str("lock"))?
             .redo()
             .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    pub(crate) fn inner_arc(&self) -> Arc<RwLock<formualizer_workbook::Workbook>> {
+        Arc::clone(&self.inner)
     }
 }
 
