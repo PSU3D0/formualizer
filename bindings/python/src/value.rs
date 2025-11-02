@@ -526,7 +526,7 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
             py_dt.get_hour() as u32,
             py_dt.get_minute() as u32,
             py_dt.get_second() as u32,
-            py_dt.get_microsecond() as u32,
+            py_dt.get_microsecond(),
         )
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid datetime"))?;
         return Ok(LiteralValue::DateTime(NaiveDateTime::new(date, time)));
@@ -545,7 +545,7 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
             py_time.get_hour() as u32,
             py_time.get_minute() as u32,
             py_time.get_second() as u32,
-            py_time.get_microsecond() as u32,
+            py_time.get_microsecond(),
         )
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid time"))?;
         return Ok(LiteralValue::Time(time));
@@ -556,270 +556,260 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
         let duration = chrono::Duration::seconds(secs) + chrono::Duration::microseconds(micros);
         return Ok(LiteralValue::Duration(duration));
     }
-    if let Ok(dict) = value.downcast::<PyDict>() {
-        if let Some(kind_obj) = dict.get_item("type")? {
-            let type_tag: String = kind_obj.extract()?;
-            let type_lower = type_tag.to_ascii_lowercase();
-            match type_lower.as_str() {
-                "error" => {
-                    let kind_obj = dict.get_item("kind")?.ok_or_else(|| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>("Error dict missing 'kind'")
-                    })?;
-                    let kind_str: String = kind_obj.extract()?;
-                    let kind_key = kind_str.trim().to_ascii_lowercase();
-                    let excel_kind = match kind_key.as_str() {
-                        "div" | "div0" | "#div/0!" => ExcelErrorKind::Div,
-                        "ref" | "#ref!" => ExcelErrorKind::Ref,
-                        "name" | "#name?" => ExcelErrorKind::Name,
-                        "value" | "#value!" => ExcelErrorKind::Value,
-                        "num" | "#num!" => ExcelErrorKind::Num,
-                        "null" | "#null!" => ExcelErrorKind::Null,
-                        "na" | "n/a" | "#n/a" => ExcelErrorKind::Na,
-                        "spill" | "#spill!" => ExcelErrorKind::Spill,
-                        "calc" | "#calc!" => ExcelErrorKind::Calc,
-                        "circ" | "#circ!" => ExcelErrorKind::Circ,
-                        "cancelled" | "#cancelled!" => ExcelErrorKind::Cancelled,
-                        "error" | "#error!" => ExcelErrorKind::Error,
-                        "nimpl" | "n/impl" | "#n/impl!" => ExcelErrorKind::NImpl,
-                        other => {
-                            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                                "Unknown error kind: {other}"
-                            )));
-                        }
-                    };
-                    let mut error = ExcelError::new(excel_kind);
-                    if let Some(message) = dict
-                        .get_item("message")?
-                        .map(|m| m.extract::<String>())
-                        .transpose()?
-                    {
-                        error = error.with_message(message);
+    if let Ok(dict) = value.downcast::<PyDict>()
+        && let Some(kind_obj) = dict.get_item("type")?
+    {
+        let type_tag: String = kind_obj.extract()?;
+        let type_lower = type_tag.to_ascii_lowercase();
+        match type_lower.as_str() {
+            "error" => {
+                let kind_obj = dict.get_item("kind")?.ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>("Error dict missing 'kind'")
+                })?;
+                let kind_str: String = kind_obj.extract()?;
+                let kind_key = kind_str.trim().to_ascii_lowercase();
+                let excel_kind = match kind_key.as_str() {
+                    "div" | "div0" | "#div/0!" => ExcelErrorKind::Div,
+                    "ref" | "#ref!" => ExcelErrorKind::Ref,
+                    "name" | "#name?" => ExcelErrorKind::Name,
+                    "value" | "#value!" => ExcelErrorKind::Value,
+                    "num" | "#num!" => ExcelErrorKind::Num,
+                    "null" | "#null!" => ExcelErrorKind::Null,
+                    "na" | "n/a" | "#n/a" => ExcelErrorKind::Na,
+                    "spill" | "#spill!" => ExcelErrorKind::Spill,
+                    "calc" | "#calc!" => ExcelErrorKind::Calc,
+                    "circ" | "#circ!" => ExcelErrorKind::Circ,
+                    "cancelled" | "#cancelled!" => ExcelErrorKind::Cancelled,
+                    "error" | "#error!" => ExcelErrorKind::Error,
+                    "nimpl" | "n/impl" | "#n/impl!" => ExcelErrorKind::NImpl,
+                    other => {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "Unknown error kind: {other}"
+                        )));
                     }
-                    let row = match dict.get_item("row")? {
-                        Some(obj) => Some(obj.extract::<u32>().map_err(|_| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Error 'row' must be an int",
-                            )
-                        })?),
-                        None => None,
-                    };
-                    let col = match dict.get_item("col")? {
-                        Some(obj) => Some(obj.extract::<u32>().map_err(|_| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Error 'col' must be an int",
-                            )
-                        })?),
-                        None => None,
-                    };
-                    let origin_row = match dict.get_item("origin_row")? {
-                        Some(obj) => Some(obj.extract::<u32>().map_err(|_| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Error 'origin_row' must be an int",
-                            )
-                        })?),
-                        None => None,
-                    };
-                    let origin_col = match dict.get_item("origin_col")? {
-                        Some(obj) => Some(obj.extract::<u32>().map_err(|_| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Error 'origin_col' must be an int",
-                            )
-                        })?),
-                        None => None,
-                    };
-                    let origin_sheet = match dict.get_item("sheet")? {
-                        Some(obj) => Some(obj.extract::<String>().map_err(|_| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Error 'sheet' must be a string",
-                            )
-                        })?),
-                        None => None,
-                    };
-                    if row.is_some()
-                        || col.is_some()
-                        || origin_row.is_some()
-                        || origin_col.is_some()
-                        || origin_sheet.is_some()
-                    {
-                        error.context = Some(ErrorContext {
-                            row,
-                            col,
-                            origin_row,
-                            origin_col,
-                            origin_sheet,
-                        });
-                    }
-                    return Ok(LiteralValue::Error(error));
+                };
+                let mut error = ExcelError::new(excel_kind);
+                if let Some(message) = dict
+                    .get_item("message")?
+                    .map(|m| m.extract::<String>())
+                    .transpose()?
+                {
+                    error = error.with_message(message);
                 }
-                "date" => {
-                    let year: i32 = dict
-                        .get_item("year")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Date dict missing 'year'",
-                            )
-                        })?
-                        .extract()?;
-                    let month: u32 = dict
-                        .get_item("month")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Date dict missing 'month'",
-                            )
-                        })?
-                        .extract()?;
-                    let day: u32 = dict
-                        .get_item("day")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Date dict missing 'day'",
-                            )
-                        })?
-                        .extract()?;
-                    let date = NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid date")
+                let row = match dict.get_item("row")? {
+                    Some(obj) => Some(obj.extract::<u32>().map_err(|_| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Error 'row' must be an int",
+                        )
+                    })?),
+                    None => None,
+                };
+                let col = match dict.get_item("col")? {
+                    Some(obj) => Some(obj.extract::<u32>().map_err(|_| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Error 'col' must be an int",
+                        )
+                    })?),
+                    None => None,
+                };
+                let origin_row = match dict.get_item("origin_row")? {
+                    Some(obj) => Some(obj.extract::<u32>().map_err(|_| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Error 'origin_row' must be an int",
+                        )
+                    })?),
+                    None => None,
+                };
+                let origin_col = match dict.get_item("origin_col")? {
+                    Some(obj) => Some(obj.extract::<u32>().map_err(|_| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Error 'origin_col' must be an int",
+                        )
+                    })?),
+                    None => None,
+                };
+                let origin_sheet = match dict.get_item("sheet")? {
+                    Some(obj) => Some(obj.extract::<String>().map_err(|_| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Error 'sheet' must be a string",
+                        )
+                    })?),
+                    None => None,
+                };
+                if row.is_some()
+                    || col.is_some()
+                    || origin_row.is_some()
+                    || origin_col.is_some()
+                    || origin_sheet.is_some()
+                {
+                    error.context = Some(ErrorContext {
+                        row,
+                        col,
+                        origin_row,
+                        origin_col,
+                        origin_sheet,
+                    });
+                }
+                return Ok(LiteralValue::Error(error));
+            }
+            "date" => {
+                let year: i32 = dict
+                    .get_item("year")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>("Date dict missing 'year'")
+                    })?
+                    .extract()?;
+                let month: u32 = dict
+                    .get_item("month")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>("Date dict missing 'month'")
+                    })?
+                    .extract()?;
+                let day: u32 = dict
+                    .get_item("day")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>("Date dict missing 'day'")
+                    })?
+                    .extract()?;
+                let date = NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid date")
+                })?;
+                return Ok(LiteralValue::Date(date));
+            }
+            "time" => {
+                let hour: u32 = dict
+                    .get_item("hour")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>("Time dict missing 'hour'")
+                    })?
+                    .extract()?;
+                let minute: u32 = dict
+                    .get_item("minute")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Time dict missing 'minute'",
+                        )
+                    })?
+                    .extract()?;
+                let second: u32 = dict
+                    .get_item("second")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Time dict missing 'second'",
+                        )
+                    })?
+                    .extract()?;
+                let microsecond: u32 = dict
+                    .get_item("microsecond")?
+                    .map(|v| v.extract::<u32>())
+                    .transpose()?
+                    .unwrap_or(0);
+                let time = NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond)
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid time")
                     })?;
-                    return Ok(LiteralValue::Date(date));
-                }
-                "time" => {
-                    let hour: u32 = dict
-                        .get_item("hour")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Time dict missing 'hour'",
-                            )
-                        })?
-                        .extract()?;
-                    let minute: u32 = dict
-                        .get_item("minute")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Time dict missing 'minute'",
-                            )
-                        })?
-                        .extract()?;
-                    let second: u32 = dict
-                        .get_item("second")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Time dict missing 'second'",
-                            )
-                        })?
-                        .extract()?;
-                    let microsecond: u32 = dict
-                        .get_item("microsecond")?
-                        .map(|v| v.extract::<u32>())
-                        .transpose()?
-                        .unwrap_or(0);
-                    let time = NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond)
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid time")
-                        })?;
-                    return Ok(LiteralValue::Time(time));
-                }
-                "datetime" => {
-                    let year: i32 = dict
-                        .get_item("year")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "DateTime dict missing 'year'",
-                            )
-                        })?
-                        .extract()?;
-                    let month: u32 = dict
-                        .get_item("month")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "DateTime dict missing 'month'",
-                            )
-                        })?
-                        .extract()?;
-                    let day: u32 = dict
-                        .get_item("day")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "DateTime dict missing 'day'",
-                            )
-                        })?
-                        .extract()?;
-                    let hour: u32 = dict
-                        .get_item("hour")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "DateTime dict missing 'hour'",
-                            )
-                        })?
-                        .extract()?;
-                    let minute: u32 = dict
-                        .get_item("minute")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "DateTime dict missing 'minute'",
-                            )
-                        })?
-                        .extract()?;
-                    let second: u32 = dict
-                        .get_item("second")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "DateTime dict missing 'second'",
-                            )
-                        })?
-                        .extract()?;
-                    let microsecond: u32 = dict
-                        .get_item("microsecond")?
-                        .map(|v| v.extract::<u32>())
-                        .transpose()?
-                        .unwrap_or(0);
-                    let date = NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| {
+                return Ok(LiteralValue::Time(time));
+            }
+            "datetime" => {
+                let year: i32 = dict
+                    .get_item("year")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "DateTime dict missing 'year'",
+                        )
+                    })?
+                    .extract()?;
+                let month: u32 = dict
+                    .get_item("month")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "DateTime dict missing 'month'",
+                        )
+                    })?
+                    .extract()?;
+                let day: u32 = dict
+                    .get_item("day")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "DateTime dict missing 'day'",
+                        )
+                    })?
+                    .extract()?;
+                let hour: u32 = dict
+                    .get_item("hour")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "DateTime dict missing 'hour'",
+                        )
+                    })?
+                    .extract()?;
+                let minute: u32 = dict
+                    .get_item("minute")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "DateTime dict missing 'minute'",
+                        )
+                    })?
+                    .extract()?;
+                let second: u32 = dict
+                    .get_item("second")?
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "DateTime dict missing 'second'",
+                        )
+                    })?
+                    .extract()?;
+                let microsecond: u32 = dict
+                    .get_item("microsecond")?
+                    .map(|v| v.extract::<u32>())
+                    .transpose()?
+                    .unwrap_or(0);
+                let date = NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid datetime")
+                })?;
+                let time = NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond)
+                    .ok_or_else(|| {
                         PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid datetime")
                     })?;
-                    let time = NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond)
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid datetime")
-                        })?;
-                    return Ok(LiteralValue::DateTime(NaiveDateTime::new(date, time)));
-                }
-                "duration" => {
-                    let seconds: i64 = dict
-                        .get_item("seconds")?
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                                "Duration dict missing 'seconds'",
-                            )
-                        })?
-                        .extract()?;
-                    let microseconds: i64 = dict
-                        .get_item("microseconds")?
-                        .map(|v| v.extract::<i64>())
-                        .transpose()?
-                        .unwrap_or(0);
-                    let duration = chrono::Duration::seconds(seconds)
-                        + chrono::Duration::microseconds(microseconds);
-                    return Ok(LiteralValue::Duration(duration));
-                }
-                "pending" => return Ok(LiteralValue::Pending),
-                "empty" => return Ok(LiteralValue::Empty),
-                "array" => {
-                    let values = dict.get_item("values")?.ok_or_else(|| {
+                return Ok(LiteralValue::DateTime(NaiveDateTime::new(date, time)));
+            }
+            "duration" => {
+                let seconds: i64 = dict
+                    .get_item("seconds")?
+                    .ok_or_else(|| {
                         PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            "Array dict missing 'values'",
+                            "Duration dict missing 'seconds'",
                         )
-                    })?;
-                    let arr_literal = py_to_literal(&values)?;
-                    if let LiteralValue::Array(rows) = arr_literal {
-                        return Ok(LiteralValue::Array(rows));
-                    } else {
-                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                            "Array 'values' must be a 2D list",
-                        ));
-                    }
+                    })?
+                    .extract()?;
+                let microseconds: i64 = dict
+                    .get_item("microseconds")?
+                    .map(|v| v.extract::<i64>())
+                    .transpose()?
+                    .unwrap_or(0);
+                let duration = chrono::Duration::seconds(seconds)
+                    + chrono::Duration::microseconds(microseconds);
+                return Ok(LiteralValue::Duration(duration));
+            }
+            "pending" => return Ok(LiteralValue::Pending),
+            "empty" => return Ok(LiteralValue::Empty),
+            "array" => {
+                let values = dict.get_item("values")?.ok_or_else(|| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>("Array dict missing 'values'")
+                })?;
+                let arr_literal = py_to_literal(&values)?;
+                if let LiteralValue::Array(rows) = arr_literal {
+                    return Ok(LiteralValue::Array(rows));
+                } else {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Array 'values' must be a 2D list",
+                    ));
                 }
-                other => {
-                    return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-                        "Unsupported LiteralValue dict type: {other}"
-                    )));
-                }
+            }
+            other => {
+                return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                    "Unsupported LiteralValue dict type: {other}"
+                )));
             }
         }
     }

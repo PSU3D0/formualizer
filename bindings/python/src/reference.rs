@@ -43,11 +43,11 @@ impl CellRef {
                 NumericOrStringColumn::Numeric(c) => c,
                 NumericOrStringColumn::String(c) => {
                     let col_str = c.to_uppercase();
-                    let col_num = col_str
+
+                    col_str
                         .chars()
                         .map(|c| c as u32 - b'A' as u32 + 1)
-                        .sum::<u32>();
-                    col_num
+                        .sum::<u32>()
                 }
             },
             abs_row,

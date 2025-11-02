@@ -963,20 +963,18 @@ impl<'a> SheetPort<'a> {
         let mut seed_overridden = false;
         let mut volatile_overridden = false;
 
-        if let Some(desired_seed) = options.rng_seed {
-            if desired_seed != seed {
-                self.workbook.engine_mut().set_workbook_seed(desired_seed);
-                seed_overridden = true;
-            }
+        if let Some(desired_seed) = options.rng_seed
+            && desired_seed != seed
+        {
+            self.workbook.engine_mut().set_workbook_seed(desired_seed);
+            seed_overridden = true;
         }
 
-        if options.freeze_volatile {
-            if volatile_level != VolatileLevel::OnOpen {
-                self.workbook
-                    .engine_mut()
-                    .set_volatile_level(VolatileLevel::OnOpen);
-                volatile_overridden = true;
-            }
+        if options.freeze_volatile && volatile_level != VolatileLevel::OnOpen {
+            self.workbook
+                .engine_mut()
+                .set_volatile_level(VolatileLevel::OnOpen);
+            volatile_overridden = true;
         }
 
         EvalConfigRestore {

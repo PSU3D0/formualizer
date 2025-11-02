@@ -128,7 +128,7 @@ impl PySheetPortSession {
             entry.set_item("location", location_summary(py, binding)?)?;
             list.append(entry)?;
         }
-        Ok(list.into_pyobject(py)?.into_any().unbind().into())
+        Ok(list.into_pyobject(py)?.into_any().unbind())
     }
 
     pub fn read_inputs<'py>(&mut self, py: Python<'py>) -> PyResult<PyObject> {
@@ -145,7 +145,7 @@ impl PySheetPortSession {
         let dict = update.downcast::<PyDict>().map_err(|_| {
             PyErr::new::<PyTypeError, _>("input updates must be provided as a dict")
         })?;
-        let converted = py_to_input_update(&self.bindings, &dict)?;
+        let converted = py_to_input_update(&self.bindings, dict)?;
         self.with_sheetport(py, |sheetport| sheetport.write_inputs(converted))
             .map(|_| ())
     }
@@ -228,7 +228,7 @@ fn port_value_to_py(py: Python<'_>, value: &PortValue) -> PyResult<PyObject> {
             for (field, value) in map.iter() {
                 dict.set_item(field, literal_to_py(py, value)?)?;
             }
-            Ok(dict.into_pyobject(py)?.into_any().unbind().into())
+            Ok(dict.into_pyobject(py)?.into_any().unbind())
         }
         PortValue::Range(rows) => {
             let outer = PyList::empty(py);
@@ -239,7 +239,7 @@ fn port_value_to_py(py: Python<'_>, value: &PortValue) -> PyResult<PyObject> {
                 }
                 outer.append(inner)?;
             }
-            Ok(outer.into_pyobject(py)?.into_any().unbind().into())
+            Ok(outer.into_pyobject(py)?.into_any().unbind())
         }
         PortValue::Table(table) => table_value_to_py(py, table),
     }
@@ -254,7 +254,7 @@ fn table_value_to_py(py: Python<'_>, table: &TableValue) -> PyResult<PyObject> {
         }
         outer.append(dict)?;
     }
-    Ok(outer.into_pyobject(py)?.into_any().unbind().into())
+    Ok(outer.into_pyobject(py)?.into_any().unbind())
 }
 
 fn py_to_port_value(binding: &PortBinding, value: &Bound<'_, PyAny>) -> PyResult<PortValue> {
@@ -304,7 +304,7 @@ fn py_to_port_value(binding: &PortBinding, value: &Bound<'_, PyAny>) -> PyResult
                     ))
                 })?;
                 let mut converted: Vec<LiteralValue> = Vec::new();
-                while let Some(cell) = row_iter.next() {
+                for cell in row_iter {
                     let cell_any = cell?;
                     let literal = py_to_literal(&cell_any)?;
                     converted.push(literal);
@@ -367,7 +367,7 @@ fn snapshot_to_py(py: Python<'_>, map: &BTreeMap<String, PortValue>) -> PyResult
     for (port_id, value) in map {
         dict.set_item(port_id, port_value_to_py(py, value)?)?;
     }
-    Ok(dict.into_pyobject(py)?.into_any().unbind().into())
+    Ok(dict.into_pyobject(py)?.into_any().unbind())
 }
 
 fn location_summary(py: Python<'_>, binding: &PortBinding) -> PyResult<PyObject> {
@@ -404,7 +404,7 @@ fn location_summary(py: Python<'_>, binding: &PortBinding) -> PyResult<PyObject>
             dict.set_item("columns", columns)?;
         }
     }
-    Ok(dict.into_pyobject(py)?.into_any().unbind().into())
+    Ok(dict.into_pyobject(py)?.into_any().unbind())
 }
 
 fn scalar_location_to_py(
@@ -416,12 +416,12 @@ fn scalar_location_to_py(
         formualizer_sheetport::ScalarLocation::Name(name) => {
             let dict = PyDict::new(py);
             dict.set_item("name", name)?;
-            Ok(dict.into_pyobject(py)?.into_any().unbind().into())
+            Ok(dict.into_pyobject(py)?.into_any().unbind())
         }
         formualizer_sheetport::ScalarLocation::StructRef(reference) => {
             let dict = PyDict::new(py);
             dict.set_item("struct_ref", reference)?;
-            Ok(dict.into_pyobject(py)?.into_any().unbind().into())
+            Ok(dict.into_pyobject(py)?.into_any().unbind())
         }
     }
 }
@@ -435,12 +435,12 @@ fn area_location_to_py(
         formualizer_sheetport::AreaLocation::Name(name) => {
             let dict = PyDict::new(py);
             dict.set_item("name", name)?;
-            Ok(dict.into_pyobject(py)?.into_any().unbind().into())
+            Ok(dict.into_pyobject(py)?.into_any().unbind())
         }
         formualizer_sheetport::AreaLocation::StructRef(reference) => {
             let dict = PyDict::new(py);
             dict.set_item("struct_ref", reference)?;
-            Ok(dict.into_pyobject(py)?.into_any().unbind().into())
+            Ok(dict.into_pyobject(py)?.into_any().unbind())
         }
         formualizer_sheetport::AreaLocation::Layout(layout) => {
             let value = serde_json::to_value(layout).map_err(|err| {
@@ -487,7 +487,7 @@ fn range_address_to_py(
     dict.set_item("start_col", addr.start_col)?;
     dict.set_item("end_row", addr.end_row)?;
     dict.set_item("end_col", addr.end_col)?;
-    Ok(dict.into_pyobject(py)?.into_any().unbind().into())
+    Ok(dict.into_pyobject(py)?.into_any().unbind())
 }
 
 fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<PyObject> {
@@ -496,29 +496,29 @@ fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<PyObject> {
         JsonValue::Bool(b) => (*b).into_py_any(py),
         JsonValue::Number(num) => {
             if let Some(int) = num.as_i64() {
-                Ok(int.into_pyobject(py)?.into_any().unbind().into())
+                Ok(int.into_pyobject(py)?.into_any().unbind())
             } else if let Some(uint) = num.as_u64() {
-                Ok((uint as i64).into_pyobject(py)?.into_any().unbind().into())
+                Ok((uint as i64).into_pyobject(py)?.into_any().unbind())
             } else if let Some(f) = num.as_f64() {
-                Ok(f.into_pyobject(py)?.into_any().unbind().into())
+                Ok(f.into_pyobject(py)?.into_any().unbind())
             } else {
                 Ok(py.None())
             }
         }
-        JsonValue::String(s) => Ok(s.clone().into_pyobject(py)?.into_any().unbind().into()),
+        JsonValue::String(s) => Ok(s.clone().into_pyobject(py)?.into_any().unbind()),
         JsonValue::Array(items) => {
             let list = PyList::empty(py);
             for item in items {
                 list.append(json_to_py(py, item)?)?;
             }
-            Ok(list.into_pyobject(py)?.into_any().unbind().into())
+            Ok(list.into_pyobject(py)?.into_any().unbind())
         }
         JsonValue::Object(map) => {
             let dict = PyDict::new(py);
             for (key, item) in map {
                 dict.set_item(key, json_to_py(py, item)?)?;
             }
-            Ok(dict.into_pyobject(py)?.into_any().unbind().into())
+            Ok(dict.into_pyobject(py)?.into_any().unbind())
         }
     }
 }
@@ -577,7 +577,7 @@ fn manifest_issues_to_py(py: Python<'_>, issues: &[ManifestIssue]) -> PyResult<P
         dict.set_item("message", issue.message.clone())?;
         list.append(dict)?;
     }
-    Ok(list.into_pyobject(py)?.into_any().unbind().into())
+    Ok(list.into_pyobject(py)?.into_any().unbind())
 }
 
 fn constraint_details_to_py(
@@ -592,7 +592,7 @@ fn constraint_details_to_py(
         dict.set_item("message", violation.message.clone())?;
         list.append(dict)?;
     }
-    Ok(list.into_pyobject(py)?.into_any().unbind().into())
+    Ok(list.into_pyobject(py)?.into_any().unbind())
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

@@ -682,31 +682,31 @@ fn validate_constraints(
     base_path: String,
     issues: &mut Vec<ManifestIssue>,
 ) {
-    if let (Some(min), Some(max)) = (constraints.min, constraints.max) {
-        if min > max {
-            issues.push(ManifestIssue::new(
-                format!("{}.min", base_path),
-                format!("`min` value {min} exceeds `max` value {max}"),
-            ));
-        }
+    if let (Some(min), Some(max)) = (constraints.min, constraints.max)
+        && min > max
+    {
+        issues.push(ManifestIssue::new(
+            format!("{}.min", base_path),
+            format!("`min` value {min} exceeds `max` value {max}"),
+        ));
     }
 
-    if let Some(enum_values) = &constraints.r#enum {
-        if enum_values.is_empty() {
-            issues.push(ManifestIssue::new(
-                format!("{}.enum", base_path),
-                "enumerated values must contain at least one entry".to_string(),
-            ));
-        }
+    if let Some(enum_values) = &constraints.r#enum
+        && enum_values.is_empty()
+    {
+        issues.push(ManifestIssue::new(
+            format!("{}.enum", base_path),
+            "enumerated values must contain at least one entry".to_string(),
+        ));
     }
 
-    if let Some(pattern) = &constraints.pattern {
-        if let Err(err) = Regex::new(pattern) {
-            issues.push(ManifestIssue::new(
-                format!("{}.pattern", base_path),
-                format!("invalid regex pattern `{pattern}`: {err}"),
-            ));
-        }
+    if let Some(pattern) = &constraints.pattern
+        && let Err(err) = Regex::new(pattern)
+    {
+        issues.push(ManifestIssue::new(
+            format!("{}.pattern", base_path),
+            format!("invalid regex pattern `{pattern}`: {err}"),
+        ));
     }
 }
 

@@ -191,10 +191,9 @@ impl PyWorkbook {
         if let Some(cached) = {
             let sheets = self.sheets.read().unwrap();
             sheets.get(sheet).and_then(|m| m.get(&(row, col)).cloned())
-        } {
-            if let Some(value) = cached.value {
-                return Ok(Some(literal_to_py(py, &value)?));
-            }
+        } && let Some(value) = cached.value
+        {
+            return Ok(Some(literal_to_py(py, &value)?));
         }
         let wb = self
             .inner
