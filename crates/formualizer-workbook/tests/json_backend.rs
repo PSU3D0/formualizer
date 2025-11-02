@@ -1,5 +1,5 @@
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime};
-use formualizer_common::{error::ExcelError, RangeAddress};
+use formualizer_common::{RangeAddress, error::ExcelError};
 #[cfg(feature = "json")]
 use formualizer_workbook::JsonAdapter;
 use formualizer_workbook::{CellData, LiteralValue, SpreadsheetReader, SpreadsheetWriter};

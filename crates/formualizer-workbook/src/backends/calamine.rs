@@ -8,10 +8,10 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
-use calamine::{open_workbook, Data, Range, Reader, Xlsx};
-use formualizer_eval::arrow_store::{map_error_code, CellIngest, IngestBuilder};
-use formualizer_eval::engine::ingest::EngineLoadStream;
+use calamine::{Data, Range, Reader, Xlsx, open_workbook};
+use formualizer_eval::arrow_store::{CellIngest, IngestBuilder, map_error_code};
 use formualizer_eval::engine::Engine as EvalEngine;
+use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::traits::EvaluationContext;
 
 pub struct CalamineAdapter {
@@ -303,7 +303,7 @@ where
                 // Respect potential non-(1,1) starts in calamine ranges
                 let sr0 = r.start().unwrap_or_default().0; // 0-based
                 let sc0 = r.start().unwrap_or_default().1; // 0-based
-                                                           // Total logical dimensions include top/left padding
+                // Total logical dimensions include top/left padding
                 dims = (r.height() as u32 + sr0, r.width() as u32 + sc0);
                 range = r;
                 formulas_range = f;

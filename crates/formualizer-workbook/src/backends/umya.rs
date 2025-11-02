@@ -10,9 +10,9 @@ use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
 use umya_spreadsheet::{
+    CellRawValue, CellValue, Spreadsheet,
     reader::xlsx,
     structs::{DefinedName, Worksheet},
-    CellRawValue, CellValue, Spreadsheet,
 };
 
 pub struct UmyaAdapter {

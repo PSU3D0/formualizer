@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use formualizer_wasm::{
-    parse, tokenize, FormulaDialect, Parser, Reference, SheetPortSession, Tokenizer, Workbook,
+    FormulaDialect, Parser, Reference, SheetPortSession, Tokenizer, Workbook, parse, tokenize,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::*;

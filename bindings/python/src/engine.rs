@@ -172,7 +172,7 @@ impl PyEvaluationConfig {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "Invalid date system: {value}. Use '1900' or '1904'."
-                )))
+                )));
             }
         };
         self.inner.date_system = date_system;

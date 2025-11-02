@@ -1,4 +1,4 @@
-use crate::error::{col_to_a1, IoError};
+use crate::error::{IoError, col_to_a1};
 use crate::traits::{LoadStrategy, NamedRange, NamedRangeScope, SpreadsheetReader};
 use formualizer_eval::engine::Engine;
 use formualizer_eval::traits::EvaluationContext;

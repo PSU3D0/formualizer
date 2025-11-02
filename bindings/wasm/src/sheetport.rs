@@ -1,4 +1,4 @@
-use crate::workbook::{js_to_literal, literal_to_js, Workbook};
+use crate::workbook::{Workbook, js_to_literal, literal_to_js};
 use formualizer_common::{LiteralValue, RangeAddress};
 use formualizer_sheetport::{
     BoundPort, ConstraintViolation, EvalOptions, ManifestBindings, PortBinding, PortValue,
@@ -6,8 +6,8 @@ use formualizer_sheetport::{
 };
 use sheetport_spec::{Direction, Manifest, ManifestIssue};
 use std::collections::{BTreeMap, BTreeSet};
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub struct SheetPortSession {

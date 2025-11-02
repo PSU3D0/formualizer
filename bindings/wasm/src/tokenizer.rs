@@ -1,4 +1,4 @@
-use crate::{token::Token, FormulaDialect};
+use crate::{FormulaDialect, token::Token};
 use formualizer_parse::{FormulaDialect as CoreFormulaDialect, Tokenizer as CoreTokenizer};
 use wasm_bindgen::prelude::*;
 

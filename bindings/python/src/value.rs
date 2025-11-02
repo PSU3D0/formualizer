@@ -170,7 +170,7 @@ impl PyLiteralValue {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "Invalid error kind: {kind}"
-                )))
+                )));
             }
         };
 
@@ -818,7 +818,7 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
                 other => {
                     return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
                         "Unsupported LiteralValue dict type: {other}"
-                    )))
+                    )));
                 }
             }
         }

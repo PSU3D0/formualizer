@@ -101,7 +101,7 @@ impl PyExcelError {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "Invalid error kind: {kind}"
-                )))
+                )));
             }
         };
 

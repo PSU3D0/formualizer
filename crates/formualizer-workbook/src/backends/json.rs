@@ -1,8 +1,8 @@
+use crate::IoError;
 use crate::traits::{
     AccessGranularity, BackendCaps, CellData, MergedRange, NamedRange, SaveDestination, SheetData,
     SpreadsheetReader, SpreadsheetWriter, TableDefinition,
 };
-use crate::IoError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::File;

@@ -1,8 +1,8 @@
 use formualizer_common::LiteralValue;
 use formualizer_eval::engine::EvalConfig;
 use formualizer_workbook::{
-    traits::NamedRangeScope, CellData, LoadStrategy, SpreadsheetReader, SpreadsheetWriter,
-    UmyaAdapter, Workbook,
+    CellData, LoadStrategy, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter, Workbook,
+    traits::NamedRangeScope,
 };
 
 fn build_named_range_workbook() -> Workbook {
@@ -121,11 +121,13 @@ fn umya_named_range_loader_evaluates() {
     assert_eq!(addr.start_row, 1);
     assert_eq!(addr.start_col, 1);
     let sheet_id = workbook.engine().graph.sheet_id("Sheet1").unwrap();
-    assert!(workbook
-        .engine()
-        .graph
-        .resolve_name("InputValue", sheet_id)
-        .is_some());
+    assert!(
+        workbook
+            .engine()
+            .graph
+            .resolve_name("InputValue", sheet_id)
+            .is_some()
+    );
 
     let output = workbook.get_value("Sheet1", 1, 2).expect("output present");
     assert!(matches!(output, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9));

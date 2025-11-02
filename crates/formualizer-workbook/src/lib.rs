@@ -16,7 +16,7 @@ pub use backends::JsonAdapter;
 #[cfg(feature = "umya")]
 pub use backends::UmyaAdapter;
 pub use builtins::{ensure_builtins_loaded, register_function_dynamic, try_load_builtins};
-pub use error::{with_cell_context, IoError};
+pub use error::{IoError, with_cell_context};
 pub use loader::{LoaderStats, WorkbookLoader};
 pub use resolver::IoResolver;
 pub use session::{EditorSession, IoConfig};

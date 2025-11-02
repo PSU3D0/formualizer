@@ -1,7 +1,7 @@
-use crate::{ast::ASTNode, FormulaDialect};
+use crate::{FormulaDialect, ast::ASTNode};
 use formualizer_parse::{
-    parse_with_dialect, parser::Parser as CoreParser, FormulaDialect as CoreFormulaDialect,
-    Tokenizer as CoreTokenizer,
+    FormulaDialect as CoreFormulaDialect, Tokenizer as CoreTokenizer, parse_with_dialect,
+    parser::Parser as CoreParser,
 };
 use wasm_bindgen::prelude::*;
 

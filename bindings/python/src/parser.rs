@@ -2,7 +2,7 @@ use crate::ast::PyASTNode;
 use crate::enums::PyFormulaDialect;
 use crate::errors::ParserError;
 use crate::tokenizer::PyTokenizer;
-use formualizer_parse::parser::{parse_with_dialect, Parser};
+use formualizer_parse::parser::{Parser, parse_with_dialect};
 use formualizer_parse::types::FormulaDialect;
 use pyo3::prelude::*;
 
