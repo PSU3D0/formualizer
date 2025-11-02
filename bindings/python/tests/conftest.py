@@ -27,4 +27,3 @@ def xlsx_builder(tmp_path):
         return path
 
     return _build
-

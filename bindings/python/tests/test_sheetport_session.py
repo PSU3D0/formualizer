@@ -115,4 +115,3 @@ def test_write_inputs_enforces_constraints():
     details = excinfo.value.args[1]
     assert details[0]["port"] == "mix"
     assert "min" in details[0]["message"].lower()
-

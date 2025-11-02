@@ -30,13 +30,14 @@ def test_edit_propagation_chain_calamine(xlsx_builder):
     # Edit B1; only C1 (and B1) should change accordingly
     eng.set_formula("Sheet1", 1, 2, "=A1*3")
     res3 = eng.evaluate_all()
-    assert res3.computed_vertices  >= 2
+    assert res3.computed_vertices >= 2
     assert eng.evaluate_cell("Sheet1", 1, 2) == 60.0
     assert eng.evaluate_cell("Sheet1", 1, 3) == 60.0
 
 
 def test_demand_driven_without_evaluate_all(xlsx_builder):
     """After edits, evaluate_cell should recompute on-demand without evaluate_all."""
+
     def populate(wb):
         ws = wb["Sheet1"]
         ws["A1"] = 10

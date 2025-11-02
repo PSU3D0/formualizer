@@ -44,6 +44,9 @@ ignore = [
     "B008",  # do not perform function calls in argument defaults
     "C901",  # too complex
 ]
+exclude = [
+    "formualizer.pyi"
+]
 
 [tool.ruff.format]
 quote-style = "double"

@@ -3,7 +3,6 @@ import pytest
 import formualizer as fz
 
 
-
 def test_sumifs_cross_sheet_with_dependent_multiplier(xlsx_builder):
     def populate(wb):
         # Calculations sheet with criteria and dependent cells
@@ -32,8 +31,8 @@ def test_sumifs_cross_sheet_with_dependent_multiplier(xlsx_builder):
         for i, (ab, t, w) in enumerate(rows):
             r = start_row + i
             polr.cell(row=r, column=28, value=ab)  # AB
-            polr.cell(row=r, column=20, value=t)   # T
-            polr.cell(row=r, column=23, value=w)   # W
+            polr.cell(row=r, column=20, value=t)  # T
+            polr.cell(row=r, column=23, value=w)  # W
 
     path = xlsx_builder(populate)
 
@@ -55,6 +54,7 @@ def test_sumifs_cross_sheet_with_dependent_multiplier(xlsx_builder):
 
 def test_sumifs_demand_driven_single_eval(xlsx_builder):
     """Change criteria and evaluate dependent without a full evaluate_all."""
+
     def populate(wb):
         calc = wb.active
         calc.title = "Calculations"
@@ -86,6 +86,7 @@ def test_sumifs_demand_driven_single_eval(xlsx_builder):
 
 def test_sumifs_edit_formula_demand_driven(xlsx_builder):
     """Change the SUMIFS formula itself; demand-evaluate dependent only."""
+
     def populate(wb):
         calc = wb.active
         calc.title = "Calculations"
@@ -116,7 +117,7 @@ def test_sumifs_edit_formula_demand_driven(xlsx_builder):
         "Calculations",
         5,
         4,
-        '=SUMIFS(\'MONTHLY.POLR\'!W:W, \'MONTHLY.POLR\'!AB:AB, D3, \'MONTHLY.POLR\'!T:T, ">=6")',
+        "=SUMIFS('MONTHLY.POLR'!W:W, 'MONTHLY.POLR'!AB:AB, D3, 'MONTHLY.POLR'!T:T, \">=6\")",
     )
     # Demand-evaluate E5; should reflect only the row with T=7 → D5=400, E5=800
     assert eng.evaluate_cell("Calculations", 5, 5) == 800.0
