@@ -8,7 +8,6 @@ from formualizer import (
     Workbook,
 )
 
-
 MANIFEST_YAML = textwrap.dedent(
     """
     spec: fio

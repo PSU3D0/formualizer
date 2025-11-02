@@ -750,7 +750,7 @@ impl Workbook {
             }
             NamedDefinition::Formula { .. } => {
                 #[cfg(feature = "tracing")]
-                tracing::debug!(name, "formula-backed named ranges are not yet supported");
+                tracing::debug!("formula-backed named ranges are not yet supported");
                 None
             }
         }

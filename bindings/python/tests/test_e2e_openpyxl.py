@@ -1,7 +1,8 @@
-import tempfile
 from pathlib import Path
 
 import pytest
+
+import formualizer as fz
 
 try:
     import openpyxl  # type: ignore
@@ -12,7 +13,6 @@ pytestmark = pytest.mark.skipif(openpyxl is None, reason="openpyxl not installed
 
 
 # The extension module name configured by maturin
-import formualizer as fz
 
 
 def make_wb(tmp: Path) -> Path:

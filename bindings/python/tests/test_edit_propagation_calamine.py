@@ -1,5 +1,3 @@
-import pytest
-
 import formualizer as fz
 
 
