@@ -23,10 +23,7 @@ pub fn init_tracing_from_env() -> bool {
                     .file(path)
                     .build();
                 // keep guard alive for process lifetime
-                if let Ok(mut slot) = CHROME_GUARD
-                    .get_or_init(|| Mutex::new(None))
-                    .lock()
-                {
+                if let Ok(mut slot) = CHROME_GUARD.get_or_init(|| Mutex::new(None)).lock() {
                     *slot = Some(guard);
                 }
                 let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);

@@ -48,7 +48,7 @@ fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<wor
 
 /// The main formualizer Python module
 #[pymodule]
-fn formualizer(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register all submodules
     enums::register(m)?;
     errors::register(m)?;
