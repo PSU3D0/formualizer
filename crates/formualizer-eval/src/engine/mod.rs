@@ -28,14 +28,8 @@ pub mod vertex_store;
 // Phase 1: Arena modules
 pub mod arena;
 
-// Phase 1: Warmup modules
-pub mod cache;
-pub mod masks;
-pub mod metrics;
-pub mod pass_planner;
-pub mod reference_fingerprint;
+// Phase 1: Warmup configuration (kept for compatibility)
 pub mod tuning;
-pub mod warmup;
 
 #[cfg(test)]
 mod tests;

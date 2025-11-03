@@ -742,12 +742,6 @@ pub trait FunctionContext {
 
     // Flats removed
 
-    /// Get a pre-built criteria mask if available (Phase 3)
-    /// Returns None if not warmed up or not available
-    fn get_or_build_mask(&self, _key: &str) -> Option<crate::engine::masks::DenseMask> {
-        None
-    }
-
     /// Deterministic RNG seeded for the current evaluation site and function salt.
     fn rng_for_current(&self, fn_salt: u64) -> rand::rngs::SmallRng {
         use crate::rng::{compose_seed, small_rng_from_lanes};
