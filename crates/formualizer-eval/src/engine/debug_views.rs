@@ -227,12 +227,12 @@ impl VertexStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::packed_coord::PackedCoord;
+    use formualizer_common::Coord as AbsCoord;
 
     #[test]
     fn test_vertex_view_access() {
         let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(5, 10), 2, 0x03);
+        let id = store.allocate(AbsCoord::new(5, 10), 2, 0x03);
 
         let view = store.view(id);
         assert_eq!(view.row(), 5);
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn test_debug_output() {
         let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(1, 1), 0, 0x01);
+        let id = store.allocate(AbsCoord::new(1, 1), 0, 0x01);
         store.set_kind(id, VertexKind::Cell);
 
         let view = store.view(id);
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn test_mutable_view() {
         let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(0, 0), 0, 0);
+        let id = store.allocate(AbsCoord::new(0, 0), 0, 0);
 
         {
             let mut view = store.view_mut(id);
@@ -275,8 +275,8 @@ mod tests {
     #[test]
     fn test_view_lifetime() {
         let mut store = VertexStore::new();
-        let id1 = store.allocate(PackedCoord::new(0, 0), 0, 0);
-        let id2 = store.allocate(PackedCoord::new(1, 1), 0, 0);
+        let id1 = store.allocate(AbsCoord::new(0, 0), 0, 0);
+        let id2 = store.allocate(AbsCoord::new(1, 1), 0, 0);
 
         // Multiple immutable views should work
         let view1 = store.view(id1);
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn test_view_display() {
         let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(0, 5), 1, 0x01);
+        let id = store.allocate(AbsCoord::new(0, 5), 1, 0x01);
         store.set_kind(id, VertexKind::Cell);
 
         let view = store.view(id);
@@ -302,7 +302,7 @@ mod tests {
         // Verify that view methods are truly zero-cost
         // This test ensures inlining happens correctly
         let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(100, 200), 5, 0x07);
+        let id = store.allocate(AbsCoord::new(100, 200), 5, 0x07);
 
         // These should compile to direct array access
         let view = store.view(id);

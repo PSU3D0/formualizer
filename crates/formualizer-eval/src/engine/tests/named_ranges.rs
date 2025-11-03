@@ -295,8 +295,8 @@ fn test_named_range_resolution() {
     let resolved = graph.resolve_name("GlobalName", 0).unwrap();
     match resolved {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row, 1);
-            assert_eq!(cell_ref.coord.col, 1);
+            assert_eq!(cell_ref.coord.row(), 1);
+            assert_eq!(cell_ref.coord.col(), 1);
         }
         _ => panic!("Expected Cell definition"),
     }
@@ -576,8 +576,8 @@ fn test_named_range_insert_rows() {
     let adjusted = graph.resolve_name("Target", 0).unwrap();
     match adjusted {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row, 6, "Row should shift from 4 to 6");
-            assert_eq!(cell_ref.coord.col, 1, "Column should remain 1");
+            assert_eq!(cell_ref.coord.row(), 6, "Row should shift from 4 to 6");
+            assert_eq!(cell_ref.coord.col(), 1, "Column should remain 1");
         }
         _ => panic!("Expected Cell definition"),
     }
@@ -608,8 +608,8 @@ fn test_named_range_delete_rows() {
     let adjusted = graph.resolve_name("Target", 0).unwrap();
     match adjusted {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row, 6, "Row should shift from 9 to 6");
-            assert_eq!(cell_ref.coord.col, 1, "Column should remain 1");
+            assert_eq!(cell_ref.coord.row(), 6, "Row should shift from 9 to 6");
+            assert_eq!(cell_ref.coord.col(), 1, "Column should remain 1");
         }
         _ => panic!("Expected Cell definition"),
     }
@@ -640,8 +640,8 @@ fn test_named_range_insert_columns() {
     let adjusted = graph.resolve_name("Target", 0).unwrap();
     match adjusted {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row, 2, "Row should remain 2");
-            assert_eq!(cell_ref.coord.col, 6, "Column should shift from 4 to 6");
+            assert_eq!(cell_ref.coord.row(), 2, "Row should remain 2");
+            assert_eq!(cell_ref.coord.col(), 6, "Column should shift from 4 to 6");
         }
         _ => panic!("Expected Cell definition"),
     }
@@ -672,8 +672,8 @@ fn test_named_range_delete_columns() {
     let adjusted = graph.resolve_name("Target", 0).unwrap();
     match adjusted {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row, 2, "Row should remain 2");
-            assert_eq!(cell_ref.coord.col, 6, "Column should shift from 9 to 6");
+            assert_eq!(cell_ref.coord.row(), 2, "Row should remain 2");
+            assert_eq!(cell_ref.coord.col(), 6, "Column should shift from 9 to 6");
         }
         _ => panic!("Expected Cell definition"),
     }
@@ -707,13 +707,14 @@ fn test_named_range_adjustment() {
     let adjusted = graph.resolve_name("DataRange", 0).unwrap();
     match adjusted {
         NamedDefinition::Range(range_ref) => {
-            assert_eq!(range_ref.start.coord.row, 1, "Start row should remain 1");
+            assert_eq!(range_ref.start.coord.row(), 1, "Start row should remain 1");
             assert_eq!(
-                range_ref.end.coord.row, 4,
+                range_ref.end.coord.row(),
+                4,
                 "End row should shift from 3 to 4"
             );
-            assert_eq!(range_ref.start.coord.col, 1, "Start col should remain 1");
-            assert_eq!(range_ref.end.coord.col, 3, "End col should remain 3");
+            assert_eq!(range_ref.start.coord.col(), 1, "Start col should remain 1");
+            assert_eq!(range_ref.end.coord.col(), 3, "End col should remain 3");
         }
         _ => panic!("Expected Range definition"),
     }
@@ -816,8 +817,8 @@ fn test_absolute_references_dont_move() {
     let adjusted = graph.resolve_name("AbsoluteTarget", 0).unwrap();
     match adjusted {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row, 4, "Absolute row should not change");
-            assert_eq!(cell_ref.coord.col, 1, "Absolute column should not change");
+            assert_eq!(cell_ref.coord.row(), 4, "Absolute row should not change");
+            assert_eq!(cell_ref.coord.col(), 1, "Absolute column should not change");
             assert!(cell_ref.coord.row_abs(), "Should still be absolute row");
             assert!(cell_ref.coord.col_abs(), "Should still be absolute column");
         }
@@ -857,10 +858,11 @@ fn test_mixed_references_partial_adjustment() {
     match mixed1 {
         NamedDefinition::Cell(cell_ref) => {
             assert_eq!(
-                cell_ref.coord.row, 6,
+                cell_ref.coord.row(),
+                6,
                 "Relative row should shift from 4 to 6"
             );
-            assert_eq!(cell_ref.coord.col, 1, "Absolute column should remain 1");
+            assert_eq!(cell_ref.coord.col(), 1, "Absolute column should remain 1");
             assert!(!cell_ref.coord.row_abs(), "Row should be relative");
             assert!(cell_ref.coord.col_abs(), "Column should be absolute");
         }
@@ -871,8 +873,8 @@ fn test_mixed_references_partial_adjustment() {
     let mixed2 = graph.resolve_name("MixedRef2", 0).unwrap();
     match mixed2 {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row, 4, "Absolute row should remain 4");
-            assert_eq!(cell_ref.coord.col, 1, "Column should remain 1");
+            assert_eq!(cell_ref.coord.row(), 4, "Absolute row should remain 4");
+            assert_eq!(cell_ref.coord.col(), 1, "Column should remain 1");
             assert!(cell_ref.coord.row_abs(), "Row should be absolute");
             assert!(!cell_ref.coord.col_abs(), "Column should be relative");
         }
@@ -911,8 +913,8 @@ fn test_mixed_references_column_operations() {
     let mixed1 = graph.resolve_name("ColMixed1", 0).unwrap();
     match mixed1 {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row, 2, "Row should remain 2");
-            assert_eq!(cell_ref.coord.col, 4, "Absolute column should remain 4");
+            assert_eq!(cell_ref.coord.row(), 2, "Row should remain 2");
+            assert_eq!(cell_ref.coord.col(), 4, "Absolute column should remain 4");
             assert!(!cell_ref.coord.row_abs(), "Row should be relative");
             assert!(cell_ref.coord.col_abs(), "Column should be absolute");
         }
@@ -923,9 +925,10 @@ fn test_mixed_references_column_operations() {
     let mixed2 = graph.resolve_name("ColMixed2", 0).unwrap();
     match mixed2 {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row, 2, "Absolute row should remain 2");
+            assert_eq!(cell_ref.coord.row(), 2, "Absolute row should remain 2");
             assert_eq!(
-                cell_ref.coord.col, 6,
+                cell_ref.coord.col(),
+                6,
                 "Relative column should shift from 4 to 6"
             );
             assert!(cell_ref.coord.row_abs(), "Row should be absolute");
@@ -965,20 +968,23 @@ fn test_range_with_mixed_references() {
         NamedDefinition::Range(range_ref) => {
             // Start ($B$2) should not move
             assert_eq!(
-                range_ref.start.coord.row, 1,
+                range_ref.start.coord.row(),
+                1,
                 "Absolute start row should remain 1"
             );
             assert_eq!(
-                range_ref.start.coord.col, 1,
+                range_ref.start.coord.col(),
+                1,
                 "Absolute start col should remain 1"
             );
 
             // End (D4) should move to D5
             assert_eq!(
-                range_ref.end.coord.row, 4,
+                range_ref.end.coord.row(),
+                4,
                 "Relative end row should shift from 3 to 4"
             );
-            assert_eq!(range_ref.end.coord.col, 3, "End col should remain 3");
+            assert_eq!(range_ref.end.coord.col(), 3, "End col should remain 3");
         }
         _ => panic!("Expected Range definition"),
     }
@@ -1016,10 +1022,11 @@ fn test_absolute_ref_deleted_no_error() {
     match adjusted {
         NamedDefinition::Cell(cell_ref) => {
             assert_eq!(
-                cell_ref.coord.row, 2,
+                cell_ref.coord.row(),
+                2,
                 "Absolute reference should not change"
             );
-            assert_eq!(cell_ref.coord.col, 1, "Column should not change");
+            assert_eq!(cell_ref.coord.col(), 1, "Column should not change");
         }
         _ => panic!("Expected Cell definition"),
     }
@@ -1050,8 +1057,8 @@ fn test_vertex_editor_define_name_for_cell() {
     let resolved = graph.resolve_name("TotalSales", 0).unwrap();
     match resolved {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row, 5);
-            assert_eq!(cell_ref.coord.col, 2);
+            assert_eq!(cell_ref.coord.row(), 5);
+            assert_eq!(cell_ref.coord.col(), 2);
         }
         _ => panic!("Expected Cell definition"),
     }
@@ -1088,10 +1095,10 @@ fn test_vertex_editor_define_name_for_range() {
     let resolved = graph.resolve_name("SalesData", 0).unwrap();
     match resolved {
         NamedDefinition::Range(range_ref) => {
-            assert_eq!(range_ref.start.coord.row, 1);
-            assert_eq!(range_ref.start.coord.col, 1);
-            assert_eq!(range_ref.end.coord.row, 10);
-            assert_eq!(range_ref.end.coord.col, 3);
+            assert_eq!(range_ref.start.coord.row(), 1);
+            assert_eq!(range_ref.start.coord.col(), 1);
+            assert_eq!(range_ref.end.coord.row(), 10);
+            assert_eq!(range_ref.end.coord.col(), 3);
         }
         _ => panic!("Expected Range definition"),
     }
@@ -1122,10 +1129,11 @@ fn test_vertex_editor_sheet_scoped_names() {
     match resolved {
         NamedDefinition::Cell(cell_ref) => {
             assert_eq!(
-                cell_ref.coord.row, 2,
+                cell_ref.coord.row(),
+                2,
                 "Sheet-scoped name should take precedence"
             );
-            assert_eq!(cell_ref.coord.col, 2);
+            assert_eq!(cell_ref.coord.col(), 2);
         }
         _ => panic!("Expected Cell definition"),
     }
@@ -1255,10 +1263,11 @@ fn test_vertex_editor_structural_operations_with_names() {
         NamedDefinition::Range(range_ref) => {
             // Range should have shifted down by 1 row
             assert_eq!(
-                range_ref.start.coord.row, 4,
+                range_ref.start.coord.row(),
+                4,
                 "Start should shift from 3 to 4"
             );
-            assert_eq!(range_ref.end.coord.row, 6, "End should shift from 5 to 6");
+            assert_eq!(range_ref.end.coord.row(), 6, "End should shift from 5 to 6");
         }
         _ => panic!("Expected Range definition"),
     }

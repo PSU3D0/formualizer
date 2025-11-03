@@ -98,8 +98,8 @@ fn create_test_graph_with_formulas()
     for (addr, &vertex_id) in graph.cell_to_vertex() {
         let cell_ref = format!(
             "{}{}",
-            char::from_u32('A' as u32 + addr.coord.col - 1).unwrap(),
-            addr.coord.row
+            char::from_u32('A' as u32 + addr.coord.col() - 1).unwrap(),
+            addr.coord.row()
         );
         cell_map.insert(cell_ref, vertex_id);
     }

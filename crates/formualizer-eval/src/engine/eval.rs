@@ -855,11 +855,11 @@ where
                 let sheet_id = anchor.sheet_id;
                 let h = rows.len() as u32;
                 let w = rows.first().map(|r| r.len()).unwrap_or(0) as u32;
-                // Bounds check to avoid out-of-range writes (align to PackedCoord capacity)
+                // Bounds check to avoid out-of-range writes (align to AbsCoord capacity)
                 const PACKED_MAX_ROW: u32 = 1_048_575; // 20-bit max
                 const PACKED_MAX_COL: u32 = 16_383; // 14-bit max
-                let end_row = anchor.coord.row.saturating_add(h).saturating_sub(1);
-                let end_col = anchor.coord.col.saturating_add(w).saturating_sub(1);
+                let end_row = anchor.coord.row().saturating_add(h).saturating_sub(1);
+                let end_col = anchor.coord.col().saturating_add(w).saturating_sub(1);
                 if end_row > PACKED_MAX_ROW || end_col > PACKED_MAX_COL {
                     let spill_err = ExcelError::new(ExcelErrorKind::Spill)
                         .with_message("Spill exceeds sheet bounds")
@@ -876,8 +876,8 @@ where
                     for c in 0..w {
                         targets.push(self.graph.make_cell_ref_internal(
                             sheet_id,
-                            anchor.coord.row + r,
-                            anchor.coord.col + c,
+                            anchor.coord.row() + r,
+                            anchor.coord.col() + c,
                         ));
                     }
                 }
@@ -942,8 +942,8 @@ where
                     let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
                     self.mirror_value_to_overlay(
                         &sheet_name,
-                        anchor.coord.row,
-                        anchor.coord.col,
+                        anchor.coord.row(),
+                        anchor.coord.col(),
                         &other,
                     );
                 }
@@ -966,8 +966,8 @@ where
                     let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
                     self.mirror_value_to_overlay(
                         &sheet_name,
-                        anchor.coord.row,
-                        anchor.coord.col,
+                        anchor.coord.row(),
+                        anchor.coord.col(),
                         &err_val,
                     );
                 }
@@ -1054,7 +1054,7 @@ where
             // For now, assume simple A1-style references on default sheet
             // TODO: Parse complex references with sheets
             let sheet_id = self.graph.sheet_id_mut(sheet);
-            let coord = Coord::new(*row, *col, true, true);
+            let coord = Coord::from_excel(*row, *col, true, true);
             target_addrs.push(CellRef::new(sheet_id, coord));
         }
 
@@ -1404,7 +1404,7 @@ where
         let mut target_addrs = Vec::new();
         for (sheet, row, col) in targets {
             if let Some(sheet_id) = self.graph.sheet_id(sheet) {
-                let coord = Coord::new(*row, *col, true, true);
+                let coord = Coord::from_excel(*row, *col, true, true);
                 target_addrs.push(CellRef::new(sheet_id, coord));
             }
         }
@@ -1486,8 +1486,8 @@ where
                             format!(
                                 "{}!{}{}",
                                 sheet_name,
-                                Self::col_to_letters(cell_ref.coord.col),
-                                cell_ref.coord.row
+                                Self::col_to_letters(cell_ref.coord.col()),
+                                cell_ref.coord.row()
                             )
                         })
                 })
@@ -2181,7 +2181,7 @@ where
                         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
                         Ok(self
                             .graph
-                            .get_cell_value(sheet_name, cell_ref.coord.row, cell_ref.coord.col)
+                            .get_cell_value(sheet_name, cell_ref.coord.row(), cell_ref.coord.col())
                             .unwrap_or(LiteralValue::Empty))
                     }
                     NamedDefinition::Formula { ast, .. } => {
@@ -2545,16 +2545,16 @@ impl ShimSpillManager {
         // Derive region from anchor + shape; enforce in-flight exclusivity only.
         let region = crate::engine::spill::Region {
             sheet_id: anchor_cell.sheet_id as u32,
-            row_start: anchor_cell.coord.row,
+            row_start: anchor_cell.coord.row(),
             row_end: anchor_cell
                 .coord
-                .row
+                .row()
                 .saturating_add(shape.rows)
                 .saturating_sub(1),
-            col_start: anchor_cell.coord.col,
+            col_start: anchor_cell.coord.col(),
             col_end: anchor_cell
                 .coord
-                .col
+                .col()
                 .saturating_add(shape.cols)
                 .saturating_sub(1),
         };
@@ -2646,7 +2646,7 @@ impl ShimSpillManager {
                     .cloned()
                     .unwrap_or(LiteralValue::Empty);
                 let sheet_name = engine.graph.sheet_name(cell.sheet_id).to_string();
-                engine.mirror_value_to_overlay(&sheet_name, cell.coord.row, cell.coord.col, &v);
+                engine.mirror_value_to_overlay(&sheet_name, cell.coord.row(), cell.coord.col(), &v);
             }
         }
         Ok(())
@@ -2927,7 +2927,7 @@ where
                         .map(|r| {
                             (sc..=ec)
                                 .map(|c| {
-                                    let coord = Coord::new(r, c, true, true);
+                                    let coord = Coord::from_excel(r, c, true, true);
                                     let addr = CellRef::new(sheet_id, coord);
                                     self.graph
                                         .get_vertex_id_for_address(&addr)
@@ -2954,7 +2954,7 @@ where
             ReferenceType::Cell { sheet, row, col } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
                 if let Some(sheet_id) = self.graph.sheet_id(sheet_name) {
-                    let coord = Coord::new(*row, *col, true, true);
+                    let coord = Coord::from_excel(*row, *col, true, true);
                     let addr = CellRef::new(sheet_id, coord);
                     if let Some(vid) = self.graph.get_vertex_id_for_address(&addr)
                         && matches!(
@@ -3009,7 +3009,11 @@ where
                             let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
                             let value = self
                                 .graph
-                                .get_cell_value(sheet_name, cell_ref.coord.row, cell_ref.coord.col)
+                                .get_cell_value(
+                                    sheet_name,
+                                    cell_ref.coord.row(),
+                                    cell_ref.coord.col(),
+                                )
                                 .unwrap_or(LiteralValue::Empty);
                             let data = vec![vec![value]];
                             return Ok(RangeView::from_borrowed(Box::leak(Box::new(data))));
@@ -3017,9 +3021,9 @@ where
                         NamedDefinition::Range(range_ref) => {
                             let sheet_name = self.graph.sheet_name(range_ref.start.sheet_id);
                             let mut rows = Vec::new();
-                            for row in range_ref.start.coord.row..=range_ref.end.coord.row {
+                            for row in range_ref.start.coord.row()..=range_ref.end.coord.row() {
                                 let mut line = Vec::new();
-                                for col in range_ref.start.coord.col..=range_ref.end.coord.col {
+                                for col in range_ref.start.coord.col()..=range_ref.end.coord.col() {
                                     let value = self
                                         .graph
                                         .get_cell_value(sheet_name, row, col)
@@ -3100,7 +3104,7 @@ where
                 let c_off = idx % width;
                 let v = rows[r_off][c_off].clone();
                 let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
-                self.mirror_value_to_overlay(&sheet_name, cell.coord.row, cell.coord.col, &v);
+                self.mirror_value_to_overlay(&sheet_name, cell.coord.row(), cell.coord.col(), &v);
             }
         }
         Ok(())

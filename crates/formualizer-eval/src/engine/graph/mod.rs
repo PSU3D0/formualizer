@@ -29,7 +29,6 @@ pub mod snapshot;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
-use super::packed_coord::PackedCoord;
 use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
 use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
@@ -38,6 +37,7 @@ use crate::engine::topo::{
     pk::{DynamicTopo, PkConfig},
 };
 use crate::reference::{CellRef, Coord};
+use formualizer_common::Coord as AbsCoord;
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
 
 pub use editor::change_log::{ChangeEvent, ChangeLog};
@@ -284,12 +284,12 @@ impl DependencyGraph {
         )
     }
 
-    fn next_name_coord(&mut self) -> PackedCoord {
+    fn next_name_coord(&mut self) -> AbsCoord {
         let seq = self.name_vertex_seq;
         self.name_vertex_seq = self.name_vertex_seq.wrapping_add(1);
         let row = (seq / 16_384).min(0x000F_FFFF);
         let col = seq % 16_384;
-        PackedCoord::new(row, col)
+        AbsCoord::new(row, col)
     }
 
     fn allocate_name_vertex(&mut self, scope: NameScope) -> VertexId {
@@ -310,10 +310,10 @@ impl DependencyGraph {
     /// Returns a list suitable for edges.add_vertices_batch.
     pub fn ensure_vertices_batch(
         &mut self,
-        coords: &[(SheetId, PackedCoord)],
-    ) -> Vec<(PackedCoord, u32)> {
+        coords: &[(SheetId, AbsCoord)],
+    ) -> Vec<(AbsCoord, u32)> {
         use rustc_hash::FxHashMap;
-        let mut grouped: FxHashMap<SheetId, Vec<PackedCoord>> = FxHashMap::default();
+        let mut grouped: FxHashMap<SheetId, Vec<AbsCoord>> = FxHashMap::default();
         for (sid, pc) in coords.iter().copied() {
             let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
             if self.cell_to_vertex.contains_key(&addr) {
@@ -321,7 +321,7 @@ impl DependencyGraph {
             }
             grouped.entry(sid).or_default().push(pc);
         }
-        let mut add_batch: Vec<(PackedCoord, u32)> = Vec::new();
+        let mut add_batch: Vec<(AbsCoord, u32)> = Vec::new();
         for (sid, pcs) in grouped {
             if pcs.is_empty() {
                 continue;
@@ -370,8 +370,8 @@ impl DependencyGraph {
         self.data_store.store_asts_batch(asts, &self.sheet_reg)
     }
 
-    /// Lookup VertexId for a (SheetId, PackedCoord)
-    pub fn vid_for_sid_pc(&self, sid: SheetId, pc: PackedCoord) -> Option<VertexId> {
+    /// Lookup VertexId for a (SheetId, AbsCoord)
+    pub fn vid_for_sid_pc(&self, sid: SheetId, pc: AbsCoord) -> Option<VertexId> {
         let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
         self.cell_to_vertex.get(&addr).copied()
     }
@@ -423,8 +423,8 @@ impl DependencyGraph {
         self.store.all_vertices()
     }
 
-    /// Get current PackedCoord for a vertex
-    pub fn vertex_coord(&self, vid: VertexId) -> PackedCoord {
+    /// Get current AbsCoord for a vertex
+    pub fn vertex_coord(&self, vid: VertexId) -> AbsCoord {
         self.store.coord(vid)
     }
 
@@ -437,7 +437,7 @@ impl DependencyGraph {
     pub fn build_edges_from_adjacency(
         &mut self,
         adjacency: Vec<(u32, Vec<u32>)>,
-        coords: Vec<PackedCoord>,
+        coords: Vec<AbsCoord>,
         vertex_ids: Vec<u32>,
     ) {
         self.edges
@@ -471,9 +471,9 @@ impl DependencyGraph {
         let mut max_r: Option<u32> = None;
         for cref in self.cell_to_vertex.keys() {
             if cref.sheet_id == sheet_id {
-                let c = cref.coord.col;
+                let c = cref.coord.col();
                 if c >= start_col && c <= end_col {
-                    let r = cref.coord.row;
+                    let r = cref.coord.row();
                     min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
                     max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
                 }
@@ -498,10 +498,10 @@ impl DependencyGraph {
         }
         let mut idx = SheetIndex::new();
         // Collect coords for this sheet
-        let mut batch: Vec<(PackedCoord, VertexId)> = Vec::with_capacity(self.cell_to_vertex.len());
+        let mut batch: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(self.cell_to_vertex.len());
         for (cref, vid) in &self.cell_to_vertex {
             if cref.sheet_id == sheet_id {
-                batch.push((PackedCoord::new(cref.coord.row, cref.coord.col), *vid));
+                batch.push((AbsCoord::new(cref.coord.row(), cref.coord.col()), *vid));
             }
         }
         // Use batch builder
@@ -540,9 +540,9 @@ impl DependencyGraph {
         let mut max_c: Option<u32> = None;
         for cref in self.cell_to_vertex.keys() {
             if cref.sheet_id == sheet_id {
-                let r = cref.coord.row;
+                let r = cref.coord.row();
                 if r >= start_row && r <= end_row {
-                    let c = cref.coord.col;
+                    let c = cref.coord.col();
                     min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
                     max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
                 }
@@ -1003,7 +1003,7 @@ impl DependencyGraph {
         } else {
             // Create new vertex
             created_placeholders.push(addr);
-            let packed_coord = PackedCoord::new(row, col);
+            let packed_coord = AbsCoord::new(row, col);
             let vertex_id = self.store.allocate(packed_coord, sheet_id, 0x01); // dirty flag
 
             // Add vertex coordinate for CSR
@@ -1052,7 +1052,7 @@ impl DependencyGraph {
             self.store.set_kind(existing_id, VertexKind::Cell);
             return;
         }
-        let packed_coord = PackedCoord::new(row, col);
+        let packed_coord = AbsCoord::new(row, col);
         let vertex_id = self.store.allocate(packed_coord, sheet_id, 0x00); // not dirty
         self.edges.add_vertex(packed_coord, vertex_id.0);
         self.sheet_index_mut(sheet_id)
@@ -1078,11 +1078,10 @@ impl DependencyGraph {
         let sheet_id = self.sheet_id_mut(sheet);
         self.reserve_cells(collected.len());
         let t_reserve = Instant::now();
-        let mut new_vertices: Vec<(PackedCoord, u32)> = Vec::with_capacity(collected.len());
-        let mut index_items: Vec<(PackedCoord, VertexId)> = Vec::with_capacity(collected.len());
+        let mut new_vertices: Vec<(AbsCoord, u32)> = Vec::with_capacity(collected.len());
+        let mut index_items: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(collected.len());
         // For new allocations, accumulate values and assign after a single batch store
-        let mut new_value_coords: Vec<(PackedCoord, VertexId)> =
-            Vec::with_capacity(collected.len());
+        let mut new_value_coords: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(collected.len());
         let mut new_value_literals: Vec<LiteralValue> = Vec::with_capacity(collected.len());
         // Detect fast path: during initial ingest, caller may guarantee most cells are new.
         let assume_new = self.first_load_assume_new
@@ -1100,7 +1099,7 @@ impl DependencyGraph {
                 self.store.set_kind(existing_id, VertexKind::Cell);
                 continue;
             }
-            let packed = PackedCoord::new(row, col);
+            let packed = AbsCoord::new(row, col);
             let vertex_id = self.store.allocate(packed, sheet_id, 0x00);
             self.store.set_kind(vertex_id, VertexKind::Cell);
             // Defer value arena storage to a single batch
@@ -1671,7 +1670,7 @@ impl DependencyGraph {
         }
 
         created_placeholders.push(*addr);
-        let packed_coord = PackedCoord::new(addr.coord.row, addr.coord.col);
+        let packed_coord = AbsCoord::new(addr.coord.row(), addr.coord.col());
         let vertex_id = self.store.allocate(packed_coord, addr.sheet_id, 0x00);
 
         // Add vertex coordinate for CSR
@@ -1699,7 +1698,7 @@ impl DependencyGraph {
                     Some(name) => self.resolve_existing_sheet_id(name)?,
                     None => current_sheet_id,
                 };
-                let coord = Coord::new(*row, *col, true, true);
+                let coord = Coord::from_excel(*row, *col, true, true);
                 let addr = CellRef::new(sheet_id, coord);
                 Ok(self.get_or_create_vertex(&addr, created_placeholders))
             }
@@ -2546,20 +2545,20 @@ impl DependencyGraph {
                 let height = range_ref
                     .end
                     .coord
-                    .row
-                    .saturating_sub(range_ref.start.coord.row)
+                    .row()
+                    .saturating_sub(range_ref.start.coord.row())
                     + 1;
                 let width = range_ref
                     .end
                     .coord
-                    .col
-                    .saturating_sub(range_ref.start.coord.col)
+                    .col()
+                    .saturating_sub(range_ref.start.coord.col())
                     + 1;
                 let size = (width * height) as usize;
 
                 if size <= self.config.range_expansion_limit {
-                    for row in range_ref.start.coord.row..=range_ref.end.coord.row {
-                        for col in range_ref.start.coord.col..=range_ref.end.coord.col {
+                    for row in range_ref.start.coord.row()..=range_ref.end.coord.row() {
+                        for col in range_ref.start.coord.col()..=range_ref.end.coord.col() {
                             let coord = Coord::new(row, col, true, true);
                             let addr = CellRef::new(range_ref.start.sheet_id, coord);
                             let vertex_id = self.get_or_create_vertex(&addr, &mut placeholders);
@@ -2570,10 +2569,10 @@ impl DependencyGraph {
                     let sheet_name = self.sheet_name(range_ref.start.sheet_id).to_string();
                     range_dependencies.push(ReferenceType::Range {
                         sheet: Some(sheet_name),
-                        start_row: Some(range_ref.start.coord.row),
-                        start_col: Some(range_ref.start.coord.col),
-                        end_row: Some(range_ref.end.coord.row),
-                        end_col: Some(range_ref.end.coord.col),
+                        start_row: Some(range_ref.start.coord.row()),
+                        start_col: Some(range_ref.start.coord.col()),
+                        end_row: Some(range_ref.end.coord.row()),
+                        end_col: Some(range_ref.end.coord.col()),
                     });
                 }
             }
@@ -2638,8 +2637,8 @@ impl DependencyGraph {
             let mut min_c = u32::MAX;
             let mut max_c = 0u32;
             for cell in target_cells {
-                let r = cell.coord.row;
-                let c = cell.coord.col;
+                let r = cell.coord.row();
+                let c = cell.coord.col();
                 if r < min_r {
                     min_r = r;
                 }
@@ -2752,8 +2751,8 @@ impl DependencyGraph {
                 let sheet = self.sheet_name(cell.sheet_id).to_string();
                 ops.push(Op {
                     sheet,
-                    row: cell.coord.row,
-                    col: cell.coord.col,
+                    row: cell.coord.row(),
+                    col: cell.coord.col(),
                     new_value: LiteralValue::Empty,
                 });
             }
@@ -2762,8 +2761,8 @@ impl DependencyGraph {
         // Writes for new values (row-major to match target rectangle)
         if !target_cells.is_empty() {
             let first = target_cells.first().copied().unwrap();
-            let row0 = first.coord.row;
-            let col0 = first.coord.col;
+            let row0 = first.coord.row();
+            let col0 = first.coord.col();
             let sheet = self.sheet_name(first.sheet_id).to_string();
             for (r_off, row_vals) in values.iter().enumerate() {
                 for (c_off, v) in row_vals.iter().enumerate() {
@@ -2837,8 +2836,8 @@ impl DependencyGraph {
                 let sheet = self.sheet_name(cell.sheet_id).to_string();
                 let _ = self.set_cell_value(
                     &sheet,
-                    cell.coord.row,
-                    cell.coord.col,
+                    cell.coord.row(),
+                    cell.coord.col(),
                     LiteralValue::Empty,
                 );
                 self.spill_cell_to_anchor.remove(&cell);
@@ -3067,13 +3066,13 @@ impl DependencyGraph {
 
     /// Update vertex coordinate
     #[doc(hidden)]
-    pub fn set_coord(&mut self, id: VertexId, coord: PackedCoord) {
+    pub fn set_coord(&mut self, id: VertexId, coord: AbsCoord) {
         self.store.set_coord(id, coord);
     }
 
     /// Update edge cache coordinate
     #[doc(hidden)]
-    pub fn update_edge_coord(&mut self, id: VertexId, coord: PackedCoord) {
+    pub fn update_edge_coord(&mut self, id: VertexId, coord: AbsCoord) {
         self.edges.update_coord(id, coord);
     }
 
@@ -3136,7 +3135,7 @@ impl DependencyGraph {
     }
 
     /// Get coord for a vertex (public for VertexEditor)
-    pub fn get_coord(&self, id: VertexId) -> PackedCoord {
+    pub fn get_coord(&self, id: VertexId) -> AbsCoord {
         self.store.coord(id)
     }
 
@@ -3548,7 +3547,7 @@ impl DependencyGraph {
         self.begin_batch();
 
         // Collect all vertices in the source sheet
-        let source_vertices: Vec<(VertexId, PackedCoord)> = self
+        let source_vertices: Vec<(VertexId, AbsCoord)> = self
             .vertices_in_sheet(source_sheet_id)
             .map(|id| (id, self.store.coord(id)))
             .collect();

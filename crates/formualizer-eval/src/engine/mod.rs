@@ -20,7 +20,6 @@ pub mod delta_edges;
 pub mod epoch_tracker;
 pub mod interval_tree;
 pub mod named_range;
-pub mod packed_coord;
 pub mod sheet_index;
 pub mod sheet_registry;
 pub mod topo;

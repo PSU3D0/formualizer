@@ -753,7 +753,7 @@ pub trait FunctionContext {
         use crate::rng::{compose_seed, small_rng_from_lanes};
         let (sheet_id, row, col) = self
             .current_cell()
-            .map(|c| (c.sheet_id as u32, c.coord.row, c.coord.col))
+            .map(|c| (c.sheet_id as u32, c.coord.row(), c.coord.col()))
             .unwrap_or((0, 0, 0));
         // Include epoch only for OnRecalc
         let epoch = match self.volatile_level() {

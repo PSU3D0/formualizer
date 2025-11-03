@@ -1,6 +1,6 @@
 use super::interval_tree::IntervalTree;
-use super::packed_coord::PackedCoord;
 use super::vertex::VertexId;
+use formualizer_common::Coord as AbsCoord;
 use std::collections::HashSet;
 
 /// Sheet-level sparse index for efficient range queries on vertex positions.
@@ -55,7 +55,7 @@ impl SheetIndex {
     }
 
     /// Fast path build from sorted coordinates. Assumes items are row-major sorted.
-    pub fn build_from_sorted(&mut self, items: &[(PackedCoord, VertexId)]) {
+    pub fn build_from_sorted(&mut self, items: &[(AbsCoord, VertexId)]) {
         self.add_vertices_batch(items);
     }
 
@@ -63,7 +63,7 @@ impl SheetIndex {
     ///
     /// ## Complexity
     /// O(log n) where n is the number of vertices in the index
-    pub fn add_vertex(&mut self, coord: PackedCoord, vertex_id: VertexId) {
+    pub fn add_vertex(&mut self, coord: AbsCoord, vertex_id: VertexId) {
         let row = coord.row();
         let col = coord.col();
 
@@ -81,7 +81,7 @@ impl SheetIndex {
     }
 
     /// Add many vertices in a single pass. Assumes coords belong to same sheet index.
-    pub fn add_vertices_batch(&mut self, items: &[(PackedCoord, VertexId)]) {
+    pub fn add_vertices_batch(&mut self, items: &[(AbsCoord, VertexId)]) {
         if items.is_empty() {
             return;
         }
@@ -129,7 +129,7 @@ impl SheetIndex {
     ///
     /// ## Complexity
     /// O(log n) where n is the number of vertices in the index
-    pub fn remove_vertex(&mut self, coord: PackedCoord, vertex_id: VertexId) {
+    pub fn remove_vertex(&mut self, coord: AbsCoord, vertex_id: VertexId) {
         let row = coord.row();
         let col = coord.col();
 
@@ -150,12 +150,7 @@ impl SheetIndex {
     ///
     /// ## Complexity
     /// O(log n) for removal + O(log n) for insertion = O(log n)
-    pub fn update_vertex(
-        &mut self,
-        old_coord: PackedCoord,
-        new_coord: PackedCoord,
-        vertex_id: VertexId,
-    ) {
+    pub fn update_vertex(&mut self, old_coord: AbsCoord, new_coord: AbsCoord, vertex_id: VertexId) {
         self.remove_vertex(old_coord, vertex_id);
         self.add_vertex(new_coord, vertex_id);
     }
@@ -246,7 +241,7 @@ mod tests {
     #[test]
     fn test_add_and_query_single_vertex() {
         let mut index = SheetIndex::new();
-        let coord = PackedCoord::new(5, 10);
+        let coord = AbsCoord::new(5, 10);
         let vertex_id = VertexId(1024);
 
         index.add_vertex(coord, vertex_id);
@@ -267,7 +262,7 @@ mod tests {
     #[test]
     fn test_remove_vertex() {
         let mut index = SheetIndex::new();
-        let coord = PackedCoord::new(5, 10);
+        let coord = AbsCoord::new(5, 10);
         let vertex_id = VertexId(1024);
 
         index.add_vertex(coord, vertex_id);
@@ -284,8 +279,8 @@ mod tests {
     #[test]
     fn test_update_vertex_position() {
         let mut index = SheetIndex::new();
-        let old_coord = PackedCoord::new(5, 10);
-        let new_coord = PackedCoord::new(15, 20);
+        let old_coord = AbsCoord::new(5, 10);
+        let new_coord = AbsCoord::new(15, 20);
         let vertex_id = VertexId(1024);
 
         index.add_vertex(old_coord, vertex_id);
@@ -310,7 +305,7 @@ mod tests {
         // Add vertices in a pattern
         for row in 0..10 {
             for col in 0..5 {
-                let coord = PackedCoord::new(row, col);
+                let coord = AbsCoord::new(row, col);
                 let vertex_id = VertexId(1024 + row * 5 + col);
                 index.add_vertex(coord, vertex_id);
             }
@@ -334,11 +329,11 @@ mod tests {
         let mut index = SheetIndex::new();
 
         // Simulate sparse sheet - only a few cells in a million-row range
-        index.add_vertex(PackedCoord::new(100, 5), VertexId(1024));
-        index.add_vertex(PackedCoord::new(50_000, 10), VertexId(1025));
-        index.add_vertex(PackedCoord::new(100_000, 15), VertexId(1026));
-        index.add_vertex(PackedCoord::new(500_000, 20), VertexId(1027));
-        index.add_vertex(PackedCoord::new(999_999, 25), VertexId(1028));
+        index.add_vertex(AbsCoord::new(100, 5), VertexId(1024));
+        index.add_vertex(AbsCoord::new(50_000, 10), VertexId(1025));
+        index.add_vertex(AbsCoord::new(100_000, 15), VertexId(1026));
+        index.add_vertex(AbsCoord::new(500_000, 20), VertexId(1027));
+        index.add_vertex(AbsCoord::new(999_999, 25), VertexId(1028));
 
         assert_eq!(index.len(), 5);
 
@@ -357,7 +352,7 @@ mod tests {
 
         // Setup: cells at rows 10, 20, 30, 40, 50
         for row in [10, 20, 30, 40, 50] {
-            index.add_vertex(PackedCoord::new(row, 0), VertexId(1024 + row));
+            index.add_vertex(AbsCoord::new(row, 0), VertexId(1024 + row));
         }
 
         // Simulate "insert 5 rows at row 25" - need to find all vertices with row >= 25
@@ -366,7 +361,7 @@ mod tests {
 
         // Simulate "delete columns B:D" - need to find all vertices in columns 1-3
         for col in 1..=3 {
-            index.add_vertex(PackedCoord::new(5, col), VertexId(2000 + col));
+            index.add_vertex(AbsCoord::new(5, col), VertexId(2000 + col));
         }
 
         let vertices_to_delete = index.vertices_in_col_range(1, 3);
@@ -380,7 +375,7 @@ mod tests {
         // Simulate a spreadsheet with scattered data
         for row in (0..10000).step_by(100) {
             for col in 0..10 {
-                index.add_vertex(PackedCoord::new(row, col), VertexId(row * 10 + col));
+                index.add_vertex(AbsCoord::new(row, col), VertexId(row * 10 + col));
             }
         }
 

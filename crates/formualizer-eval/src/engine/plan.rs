@@ -1,6 +1,6 @@
 use crate::SheetId;
-use crate::engine::packed_coord::PackedCoord;
 use crate::engine::sheet_registry::SheetRegistry;
+use formualizer_common::Coord as AbsCoord;
 use formualizer_common::ExcelError;
 use formualizer_parse::parser::{CollectPolicy, ReferenceType};
 use rustc_hash::FxHashMap;
@@ -10,8 +10,8 @@ use rustc_hash::FxHashMap;
 pub enum RangeKey {
     Rect {
         sheet: SheetId,
-        start: PackedCoord,
-        end: PackedCoord, // inclusive
+        start: AbsCoord,
+        end: AbsCoord, // inclusive
     },
     WholeRow {
         sheet: SheetId,
@@ -24,8 +24,8 @@ pub enum RangeKey {
     /// Partially bounded rectangle; None means unbounded in that direction
     OpenRect {
         sheet: SheetId,
-        start: Option<PackedCoord>,
-        end: Option<PackedCoord>,
+        start: Option<AbsCoord>,
+        end: Option<AbsCoord>,
     },
 }
 
@@ -38,8 +38,8 @@ pub const F_LIKELY_ARRAY: FormulaFlags = 0b0000_1000;
 
 #[derive(Debug, Default, Clone)]
 pub struct DependencyPlan {
-    pub formula_targets: Vec<(SheetId, PackedCoord)>,
-    pub global_cells: Vec<(SheetId, PackedCoord)>,
+    pub formula_targets: Vec<(SheetId, AbsCoord)>,
+    pub global_cells: Vec<(SheetId, AbsCoord)>,
     pub per_formula_cells: Vec<Vec<u32>>, // indices into global_cells
     pub per_formula_ranges: Vec<Vec<RangeKey>>,
     pub per_formula_names: Vec<Vec<String>>,
@@ -62,11 +62,11 @@ where
     let mut plan = DependencyPlan::default();
 
     // Global cell pool: (sheet, coord) -> index
-    let mut cell_index: FxHashMap<(SheetId, PackedCoord), u32> = FxHashMap::default();
+    let mut cell_index: FxHashMap<(SheetId, AbsCoord), u32> = FxHashMap::default();
 
     for (i, (sheet_name, row, col, ast)) in formulas.enumerate() {
         let sheet_id = sheet_reg.id_for(sheet_name);
-        let target = (sheet_id, PackedCoord::new(row, col));
+        let target = (sheet_id, AbsCoord::new(row, col));
         plan.formula_targets.push(target);
 
         let mut flags: FormulaFlags = 0;
@@ -89,7 +89,7 @@ where
                         .as_deref()
                         .map(|name| sheet_reg.id_for(name))
                         .unwrap_or(sheet_id);
-                    let key = (dep_sheet, PackedCoord::new(row, col));
+                    let key = (dep_sheet, AbsCoord::new(row, col));
                     let idx = match cell_index.get(&key) {
                         Some(&idx) => idx,
                         None => {
@@ -116,8 +116,8 @@ where
                         (Some(sr), Some(sc), Some(er), Some(ec)) => {
                             per_ranges.push(RangeKey::Rect {
                                 sheet: dep_sheet,
-                                start: PackedCoord::new(sr, sc),
-                                end: PackedCoord::new(er, ec),
+                                start: AbsCoord::from_excel(sr, sc),
+                                end: AbsCoord::from_excel(er, ec),
                             })
                         }
                         (None, Some(c), None, Some(ec)) if c == ec => {
@@ -136,8 +136,10 @@ where
                             sheet: dep_sheet,
                             start: start_row
                                 .zip(start_col)
-                                .map(|(r, c)| PackedCoord::new(r, c)),
-                            end: end_row.zip(end_col).map(|(r, c)| PackedCoord::new(r, c)),
+                                .map(|(r, c)| AbsCoord::from_excel(r, c)),
+                            end: end_row
+                                .zip(end_col)
+                                .map(|(r, c)| AbsCoord::from_excel(r, c)),
                         }),
                     }
                 }

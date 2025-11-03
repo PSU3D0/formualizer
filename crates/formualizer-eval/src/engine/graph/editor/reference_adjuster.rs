@@ -93,14 +93,14 @@ impl ReferenceAdjuster {
                 before,
                 count,
             } if cell_ref.sheet_id == *sheet_id => {
-                if coord.row_abs() || coord.row < *before {
+                if coord.row_abs() || coord.row() < *before {
                     // Absolute references or cells before insert point don't move
                     coord
                 } else {
                     // Shift down
                     Coord::new(
-                        coord.row + count,
-                        coord.col,
+                        coord.row() + count,
+                        coord.col(),
                         coord.row_abs(),
                         coord.col_abs(),
                     )
@@ -114,14 +114,14 @@ impl ReferenceAdjuster {
                 if coord.row_abs() {
                     // Absolute references don't adjust
                     coord
-                } else if coord.row >= *start && coord.row < start + count {
+                } else if coord.row() >= *start && coord.row() < start + count {
                     // Cell deleted
                     return None;
-                } else if coord.row >= start + count {
+                } else if coord.row() >= start + count {
                     // Shift up
                     Coord::new(
-                        coord.row - count,
-                        coord.col,
+                        coord.row() - count,
+                        coord.col(),
                         coord.row_abs(),
                         coord.col_abs(),
                     )
@@ -135,14 +135,14 @@ impl ReferenceAdjuster {
                 before,
                 count,
             } if cell_ref.sheet_id == *sheet_id => {
-                if coord.col_abs() || coord.col < *before {
+                if coord.col_abs() || coord.col() < *before {
                     // Absolute references or cells before insert point don't move
                     coord
                 } else {
                     // Shift right
                     Coord::new(
-                        coord.row,
-                        coord.col + count,
+                        coord.row(),
+                        coord.col() + count,
                         coord.row_abs(),
                         coord.col_abs(),
                     )
@@ -156,14 +156,14 @@ impl ReferenceAdjuster {
                 if coord.col_abs() {
                     // Absolute references don't adjust
                     coord
-                } else if coord.col >= *start && coord.col < start + count {
+                } else if coord.col() >= *start && coord.col() < start + count {
                     // Cell deleted
                     return None;
-                } else if coord.col >= start + count {
+                } else if coord.col() >= start + count {
                     // Shift left
                     Coord::new(
-                        coord.row,
-                        coord.col - count,
+                        coord.row(),
+                        coord.col() - count,
                         coord.row_abs(),
                         coord.col_abs(),
                     )
@@ -197,7 +197,7 @@ impl ReferenceAdjuster {
                         | ShiftOperation::InsertColumns { sheet_id, .. }
                         | ShiftOperation::DeleteColumns { sheet_id, .. } => *sheet_id,
                     },
-                    Coord::new(*row, *col, false, false), // Assume relative for now
+                    Coord::from_excel(*row, *col, false, false), // Assume relative for now
                 );
 
                 match self.adjust_cell_ref(&temp_ref, op) {
@@ -212,8 +212,8 @@ impl ReferenceAdjuster {
                     }
                     Some(adjusted) => ReferenceType::Cell {
                         sheet: sheet.clone(),
-                        row: adjusted.coord.row,
-                        col: adjusted.coord.col,
+                        row: adjusted.coord.row(),
+                        col: adjusted.coord.col(),
                     },
                 }
             }
@@ -664,8 +664,8 @@ mod tests {
         // Absolute row should not change
         assert!(result.is_some());
         let adjusted = result.unwrap();
-        assert_eq!(adjusted.coord.row, 5); // Row stays at 5
-        assert_eq!(adjusted.coord.col, 2); // Column unchanged
+        assert_eq!(adjusted.coord.row(), 5); // Row stays at 5
+        assert_eq!(adjusted.coord.col(), 2); // Column unchanged
         assert!(adjusted.coord.row_abs());
         assert!(!adjusted.coord.col_abs());
     }
@@ -693,8 +693,8 @@ mod tests {
         // Absolute column should not change
         assert!(result.is_some());
         let adjusted = result.unwrap();
-        assert_eq!(adjusted.coord.row, 5); // Row unchanged
-        assert_eq!(adjusted.coord.col, 2); // Column stays at 2 despite deletion
+        assert_eq!(adjusted.coord.row(), 5); // Row unchanged
+        assert_eq!(adjusted.coord.col(), 2); // Column stays at 2 despite deletion
         assert!(!adjusted.coord.row_abs());
         assert!(adjusted.coord.col_abs());
     }
@@ -720,8 +720,8 @@ mod tests {
 
         assert!(result1.is_some());
         let adj1 = result1.unwrap();
-        assert_eq!(adj1.coord.row, 7); // Row 5 -> 7 (shifted)
-        assert_eq!(adj1.coord.col, 1); // Column stays at 1 (absolute)
+        assert_eq!(adj1.coord.row(), 7); // Row 5 -> 7 (shifted)
+        assert_eq!(adj1.coord.col(), 1); // Column stays at 1 (absolute)
 
         // Test 2: B$10 (col relative, row absolute) with column deletion
         let mixed2 = CellRef::new(
@@ -740,8 +740,8 @@ mod tests {
 
         assert!(result2.is_some());
         let adj2 = result2.unwrap();
-        assert_eq!(adj2.coord.row, 10); // Row stays at 10 (absolute)
-        assert_eq!(adj2.coord.col, 2); // Column 3 -> 2 (shifted left)
+        assert_eq!(adj2.coord.row(), 10); // Row stays at 10 (absolute)
+        assert_eq!(adj2.coord.col(), 2); // Column 3 -> 2 (shifted left)
     }
 
     #[test]
@@ -766,8 +766,8 @@ mod tests {
             },
         );
         assert!(result1.is_some());
-        assert_eq!(result1.unwrap().coord.row, 1);
-        assert_eq!(result1.unwrap().coord.col, 1);
+        assert_eq!(result1.unwrap().coord.row(), 1);
+        assert_eq!(result1.unwrap().coord.col(), 1);
 
         // Delete columns
         let result2 = adjuster.adjust_cell_ref(
@@ -779,8 +779,8 @@ mod tests {
             },
         );
         assert!(result2.is_some());
-        assert_eq!(result2.unwrap().coord.row, 1);
-        assert_eq!(result2.unwrap().coord.col, 1);
+        assert_eq!(result2.unwrap().coord.row(), 1);
+        assert_eq!(result2.unwrap().coord.col(), 1);
     }
 
     #[test]

@@ -729,8 +729,8 @@ impl Workbook {
         match definition {
             NamedDefinition::Cell(cell) => {
                 let sheet = self.engine.graph.sheet_name(cell.sheet_id).to_string();
-                let row = cell.coord.row + 1;
-                let col = cell.coord.col + 1;
+                let row = cell.coord.row() + 1;
+                let col = cell.coord.col() + 1;
                 RangeAddress::new(sheet, row, col, row, col).ok()
             }
             NamedDefinition::Range(range) => {
@@ -742,10 +742,10 @@ impl Workbook {
                     .graph
                     .sheet_name(range.start.sheet_id)
                     .to_string();
-                let start_row = range.start.coord.row + 1;
-                let start_col = range.start.coord.col + 1;
-                let end_row = range.end.coord.row + 1;
-                let end_col = range.end.coord.col + 1;
+                let start_row = range.start.coord.row() + 1;
+                let start_col = range.start.coord.col() + 1;
+                let end_row = range.end.coord.row() + 1;
+                let end_col = range.end.coord.col() + 1;
                 RangeAddress::new(sheet, start_row, start_col, end_row, end_col).ok()
             }
             NamedDefinition::Formula { .. } => {

@@ -1,6 +1,6 @@
-use super::packed_coord::PackedCoord;
 use super::vertex::{VertexId, VertexKind};
 use crate::SheetId;
+use formualizer_common::Coord as AbsCoord;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 #[cfg(test)]
@@ -10,8 +10,8 @@ mod tests {
     #[test]
     fn test_vertex_store_allocation() {
         let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(10, 20), 1, 0x01);
-        assert_eq!(store.coord(id), PackedCoord::new(10, 20));
+        let id = store.allocate(AbsCoord::new(10, 20), 1, 0x01);
+        assert_eq!(store.coord(id), AbsCoord::new(10, 20));
         assert_eq!(store.sheet_id(id), 1);
         assert_eq!(store.flags(id), 0x01);
     }
@@ -20,7 +20,7 @@ mod tests {
     fn test_vertex_store_grow() {
         let mut store = VertexStore::with_capacity(1000);
         for i in 0..10_000 {
-            store.allocate(PackedCoord::new(i, i), 0, 0);
+            store.allocate(AbsCoord::new(i, i), 0, 0);
         }
         assert_eq!(store.len(), 10_000);
         // Note: While VertexStore itself is 64-byte aligned,
@@ -41,7 +41,7 @@ mod tests {
     #[test]
     fn test_vertex_store_accessors() {
         let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(5, 10), 3, 0x03);
+        let id = store.allocate(AbsCoord::new(5, 10), 3, 0x03);
 
         // Test coord access
         assert_eq!(store.coord(id).row(), 5);
@@ -64,14 +64,14 @@ mod tests {
     fn test_reserved_vertex_range() {
         let mut store = VertexStore::new();
         // First allocation should be >= FIRST_NORMAL_VERTEX
-        let id = store.allocate(PackedCoord::new(0, 0), 0, 0);
+        let id = store.allocate(AbsCoord::new(0, 0), 0, 0);
         assert!(id.0 >= FIRST_NORMAL_VERTEX);
     }
 
     #[test]
     fn test_atomic_flag_operations() {
         let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(0, 0), 0, 0);
+        let id = store.allocate(AbsCoord::new(0, 0), 0, 0);
 
         // Test atomic flag updates
         store.set_dirty(id, true);
@@ -87,17 +87,17 @@ mod tests {
     #[test]
     fn test_vertex_store_set_coord() {
         let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(1, 1), 0, 0);
+        let id = store.allocate(AbsCoord::new(1, 1), 0, 0);
 
         // Update coordinate
-        store.set_coord(id, PackedCoord::new(5, 10));
-        assert_eq!(store.coord(id), PackedCoord::new(5, 10));
+        store.set_coord(id, AbsCoord::new(5, 10));
+        assert_eq!(store.coord(id), AbsCoord::new(5, 10));
     }
 
     #[test]
     fn test_vertex_store_atomic_flags() {
         let mut store = VertexStore::new();
-        let id = store.allocate(PackedCoord::new(0, 0), 0, 0);
+        let id = store.allocate(AbsCoord::new(0, 0), 0, 0);
 
         // Test atomic flag operations
         store.set_dirty(id, true);
@@ -116,7 +116,7 @@ mod tests {
         let mut store = VertexStore::new();
 
         // Verify first allocation is >= FIRST_NORMAL_VERTEX
-        let id = store.allocate(PackedCoord::new(0, 0), 0, 0);
+        let id = store.allocate(AbsCoord::new(0, 0), 0, 0);
         assert!(id.0 >= FIRST_NORMAL_VERTEX);
 
         // Verify deletion uses tombstone, not physical removal
@@ -141,11 +141,11 @@ pub const EXTERNAL_VERTEX_START: u32 = 256;
 #[derive(Debug)]
 pub struct VertexStore {
     // Dense columnar arrays - 21B per vertex logical
-    coords: Vec<PackedCoord>, // 8B (packed row/col)
-    sheet_kind: Vec<u32>,     // 4B (16-bit sheet, 8-bit kind, 8-bit reserved)
-    flags: Vec<AtomicU8>,     // 1B (dirty|volatile|deleted|...)
-    value_ref: Vec<u32>,      // 4B (2-bit tag, 4-bit error, 26-bit index)
-    edge_offset: Vec<u32>,    // 4B (CSR offset)
+    coords: Vec<AbsCoord>, // 8B (packed row/col)
+    sheet_kind: Vec<u32>,  // 4B (16-bit sheet, 8-bit kind, 8-bit reserved)
+    flags: Vec<AtomicU8>,  // 1B (dirty|volatile|deleted|...)
+    value_ref: Vec<u32>,   // 4B (2-bit tag, 4-bit error, 26-bit index)
+    edge_offset: Vec<u32>, // 4B (CSR offset)
 
     // Length tracking
     len: usize,
@@ -206,7 +206,7 @@ impl VertexStore {
 
     /// Allocate a new vertex, returning its ID
     /// IDs start at FIRST_NORMAL_VERTEX to reserve 0-1023 for special vertices
-    pub fn allocate(&mut self, coord: PackedCoord, sheet: SheetId, flags: u8) -> VertexId {
+    pub fn allocate(&mut self, coord: AbsCoord, sheet: SheetId, flags: u8) -> VertexId {
         let id = VertexId(self.len as u32 + FIRST_NORMAL_VERTEX);
         debug_assert!(id.0 >= FIRST_NORMAL_VERTEX);
 
@@ -225,7 +225,7 @@ impl VertexStore {
     pub fn allocate_contiguous(
         &mut self,
         sheet: SheetId,
-        coords: &[PackedCoord],
+        coords: &[AbsCoord],
         flags: u8,
     ) -> Vec<VertexId> {
         if coords.is_empty() {
@@ -264,11 +264,11 @@ impl VertexStore {
 
     // Accessors
     #[inline]
-    pub fn coord(&self, id: VertexId) -> PackedCoord {
+    pub fn coord(&self, id: VertexId) -> AbsCoord {
         if let Some(idx) = self.vertex_id_to_index(id) {
             self.coords[idx]
         } else {
-            PackedCoord::new(0, 0) // Default for invalid vertices
+            AbsCoord::new(0, 0) // Default for invalid vertices
         }
     }
 
@@ -386,7 +386,7 @@ impl VertexStore {
     /// # Safety
     /// Caller must ensure CSR edge cache is updated via CsrMutableEdges::update_coord
     #[doc(hidden)]
-    pub fn set_coord(&mut self, id: VertexId, coord: PackedCoord) {
+    pub fn set_coord(&mut self, id: VertexId, coord: AbsCoord) {
         if let Some(idx) = self.vertex_id_to_index(id) {
             self.coords[idx] = coord;
         }

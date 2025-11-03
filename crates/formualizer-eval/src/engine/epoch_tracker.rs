@@ -301,8 +301,8 @@ mod tests {
 
     #[test]
     fn test_mvcc_with_vertex_store() {
-        use crate::engine::packed_coord::PackedCoord;
         use crate::engine::vertex_store::VertexStore;
+        use formualizer_common::Coord as AbsCoord;
 
         let tracker = Arc::new(EpochTracker::new());
         let store = Arc::new(std::sync::Mutex::new(VertexStore::new()));
@@ -315,7 +315,7 @@ mod tests {
             let mut store = writer_store.lock().unwrap();
 
             for i in 0..5 {
-                store.allocate(PackedCoord::new(i, i), 0, 0);
+                store.allocate(AbsCoord::new(i, i), 0, 0);
             }
         });
 

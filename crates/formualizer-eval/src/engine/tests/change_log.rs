@@ -164,8 +164,8 @@ fn test_change_log_with_formula_events() {
 
 #[test]
 fn test_granular_change_events() {
-    use crate::engine::packed_coord::PackedCoord;
     use crate::engine::vertex::VertexId;
+    use formualizer_common::Coord as AbsCoord;
     use formualizer_parse::parser::parse;
 
     let mut log = ChangeLog::new();
@@ -173,8 +173,8 @@ fn test_granular_change_events() {
     // Test VertexMoved event
     let move_event = ChangeEvent::VertexMoved {
         id: VertexId(1),
-        old_coord: PackedCoord::new(5, 1),
-        new_coord: PackedCoord::new(7, 1),
+        old_coord: AbsCoord::new(5, 1),
+        new_coord: AbsCoord::new(7, 1),
     };
     log.record(move_event);
 

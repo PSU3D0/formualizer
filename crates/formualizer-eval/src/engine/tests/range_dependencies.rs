@@ -73,7 +73,7 @@ fn test_tiny_range_expands_to_cell_dependencies() {
     let mut dep_addrs = Vec::new();
     for &dep_id in &dependencies {
         let cell_ref = graph.get_cell_ref(dep_id).unwrap();
-        dep_addrs.push((cell_ref.coord.row, cell_ref.coord.col));
+        dep_addrs.push((cell_ref.coord.row(), cell_ref.coord.col()));
     }
     dep_addrs.sort();
     let expected_addrs = vec![(1, 1), (2, 1), (3, 1), (4, 1)];
