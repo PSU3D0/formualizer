@@ -1,0 +1,101 @@
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: supply-planning-io
+  name: Supply Planning I/O
+  description: Expose the workbook as a function that ingests inventory data and produces restock recommendations.
+  workbook:
+    uri: file://Samples/SupplyPlan.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: warehouse_code
+    dir: in
+    shape: scalar
+    description: Warehouse identifier used for restock planning.
+    location:
+      a1: Inputs!B2
+    schema:
+      type: string
+    constraints:
+      pattern: "^[A-Z]{2}-\\d{3}$"
+
+  - id: planning_window
+    dir: in
+    shape: record
+    description: Planning horizon (month and year).
+    location:
+      a1: Inputs!B1:C1
+    schema:
+      kind: record
+      fields:
+        month:
+          type: integer
+          location:
+            a1: Inputs!B1
+          constraints:
+            min: 1
+            max: 12
+        year:
+          type: integer
+          location:
+            a1: Inputs!C1
+
+  - id: sku_inventory
+    dir: in
+    shape: table
+    description: Current inventory snapshot by SKU.
+    location:
+      layout:
+        sheet: Inventory
+        header_row: 1
+        anchor_col: A
+        terminate: first_blank_row
+    schema:
+      kind: table
+      columns:
+        - name: sku
+          type: string
+          col: A
+        - name: description
+          type: string
+          col: B
+        - name: on_hand
+          type: integer
+          col: C
+        - name: safety_stock
+          type: integer
+          col: D
+        - name: lead_time_days
+          type: integer
+          col: E
+      keys:
+        - sku
+
+  - id: restock_summary
+    dir: out
+    shape: record
+    description: High-level metrics summarizing the recommended restock.
+    location:
+      a1: Outputs!B2:B6
+    schema:
+      kind: record
+      fields:
+        total_skus:
+          type: integer
+          location:
+            a1: Outputs!B2
+        units_to_order:
+          type: integer
+          location:
+            a1: Outputs!B3
+        estimated_cost:
+          type: number
+          location:
+            a1: Outputs!B4
+          units:
+            currency: USD
+        next_restock_date:
+          type: date
+          location:
+            a1: Outputs!B5

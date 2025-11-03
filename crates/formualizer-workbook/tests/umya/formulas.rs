@@ -15,7 +15,7 @@ fn umya_extracts_formulas_and_normalizes_equals() {
         sh.get_cell_mut((1, 2)).set_formula("=A1*2"); // A2
         sh.get_cell_mut((2, 2)).set_value_number(3); // B2
     });
-    let mut backend = UmyaAdapter::open_path(&path).unwrap();
+    let backend = UmyaAdapter::open_path(&path).unwrap();
     let mut loader = WorkbookLoader::new(backend, LoadStrategy::EagerAll);
     let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());

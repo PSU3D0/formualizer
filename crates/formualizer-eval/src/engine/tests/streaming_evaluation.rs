@@ -5,12 +5,12 @@ use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{Parser, parse};
 use std::time::Instant;
+use eval_config_with_range_limit;
 
 #[test]
 fn test_sum_over_large_range_succeeds_without_oom() {
-    let mut config = EvalConfig::default();
     // Set a low expansion limit to force streaming
-    config.range_expansion_limit = 16;
+    let config = eval_config_with_range_limit(16);
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, config);
 
@@ -43,11 +43,9 @@ fn test_sum_over_large_range_succeeds_without_oom() {
 
 #[test]
 fn test_streaming_vs_materialized_threshold() {
-    let mut config_small = EvalConfig::default();
-    config_small.range_expansion_limit = 100; // Forces materialization for range of 50
+    let config_small = EvalConfig::default().with_range_expansion_limit(100); // Forces materialization for range of 50
 
-    let mut config_large = EvalConfig::default();
-    config_large.range_expansion_limit = 16; // Forces streaming for range of 50
+    let config_large = eval_config_with_range_limit(16); // Forces streaming for range of 50
 
     let wb1 = TestWorkbook::new();
     let wb2 = TestWorkbook::new();
@@ -94,8 +92,7 @@ fn test_streaming_vs_materialized_threshold() {
 
 #[test]
 fn test_multiple_functions_use_streaming() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
+    let config = eval_config_with_range_limit(16);
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, config);
 
@@ -127,8 +124,7 @@ fn test_multiple_functions_use_streaming() {
 
 #[test]
 fn test_streaming_with_sparse_data() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
+    let config = eval_config_with_range_limit(16);
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, config);
 
@@ -153,8 +149,7 @@ fn test_streaming_with_sparse_data() {
 
 #[test]
 fn test_streaming_range_shapes() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
+    let config = eval_config_with_range_limit(16);
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, config);
 
@@ -196,8 +191,7 @@ fn test_streaming_range_shapes() {
 
 #[test]
 fn test_streaming_performance_regression() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
+    let config = eval_config_with_range_limit(16);
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, config);
 
@@ -244,8 +238,7 @@ fn sum_large_stream_does_not_materialize_entire_range() {
     // Register SUM
     wb = wb.with_function(std::sync::Arc::new(crate::builtins::math::SumFn));
 
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16; // 16 cells
+    let config = eval_config_with_range_limit(16); // 16 cells
     let mut engine = Engine::new(wb.clone(), config);
     engine
         .set_cell_formula("Sheet1", 1, 1, parse("=SUM(A1:GR200)").unwrap())
@@ -259,8 +252,7 @@ fn sum_large_stream_does_not_materialize_entire_range() {
 
 #[test]
 fn test_streaming_with_errors_in_range() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
+    let config = eval_config_with_range_limit(16);
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, config);
 
@@ -300,8 +292,7 @@ fn test_streaming_with_errors_in_range() {
 
 #[test]
 fn test_incremental_update_with_streaming_range() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
+    let config = eval_config_with_range_limit(16);
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, config);
 

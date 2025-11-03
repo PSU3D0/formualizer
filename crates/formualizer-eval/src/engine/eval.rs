@@ -1,18 +1,19 @@
 use crate::SheetId;
 use crate::arrow_store::SheetStore;
-use crate::engine::pass_planner::PassPlanner;
+use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
-use crate::engine::warmup::{PassContext, WarmupExecutor};
 use crate::engine::{DependencyGraph, EvalConfig, Scheduler, VertexId, VertexKind};
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, Resolver};
 use chrono::Timelike;
+use formualizer_common::{col_letters_from_1based, parse_a1_1based};
 use formualizer_parse::parser::ReferenceType;
 use formualizer_parse::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -24,8 +25,6 @@ pub struct Engine<R> {
     pub recalc_epoch: u64,
     snapshot_id: std::sync::atomic::AtomicU64,
     spill_mgr: ShimSpillManager,
-    /// Optional pass-scoped warmup context (flats/masks) available during evaluation
-    warmup_pass_ctx: Option<PassContext>,
     /// Arrow-backed storage for sheet values (Phase A)
     arrow_sheets: SheetStore,
     /// True if any edit after bulk load; disables Arrow reads for parity
@@ -34,8 +33,6 @@ pub struct Engine<R> {
     overlay_compactions: u64,
     // Pass-scoped cache for Arrow used-row bounds per column
     row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
-    // Pass-scoped criteria mask cache (Arrow-only)
-    mask_cache: std::sync::RwLock<Option<MaskCache>>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
     staged_formulas: std::collections::HashMap<String, Vec<(u32, u32, String)>>,
 }
@@ -45,6 +42,140 @@ pub struct EvalResult {
     pub computed_vertices: usize,
     pub cycle_errors: usize,
     pub elapsed: std::time::Duration,
+}
+
+/// Cached evaluation schedule that can be replayed across multiple recalculations.
+#[derive(Debug)]
+pub struct RecalcPlan {
+    schedule: crate::engine::Schedule,
+}
+
+impl RecalcPlan {
+    pub fn layer_count(&self) -> usize {
+        self.schedule.layers.len()
+    }
+}
+
+fn compute_criteria_mask(
+    view: &crate::arrow_store::ArrowRangeView<'_>,
+    col_in_view: usize,
+    pred: &crate::args::CriteriaPredicate,
+) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+    use crate::compute_prelude::{boolean, cmp, concat_arrays};
+    use arrow::compute::kernels::comparison::{ilike, nilike};
+    use arrow_array::{Array as _, ArrayRef, Float64Array, StringArray, builder::BooleanBuilder};
+
+    // Build the criterion column arrays by concatenating slices for the single column
+    let mut num_parts: Vec<std::sync::Arc<Float64Array>> = Vec::new();
+    for (_rs, _rl, cols_seg) in view.numbers_slices() {
+        if col_in_view < cols_seg.len() {
+            num_parts.push(cols_seg[col_in_view].clone());
+        }
+    }
+    let num_col: Option<std::sync::Arc<Float64Array>> = if num_parts.is_empty() {
+        None
+    } else if num_parts.len() == 1 {
+        Some(num_parts.remove(0))
+    } else {
+        let anys: Vec<&dyn arrow_array::Array> = num_parts
+            .iter()
+            .map(|a| a.as_ref() as &dyn arrow_array::Array)
+            .collect();
+        let conc: ArrayRef = concat_arrays(&anys).ok()?;
+        let fa = conc.as_any().downcast_ref::<Float64Array>()?.clone();
+        Some(std::sync::Arc::new(fa))
+    };
+
+    // Lowered text column for this view/column
+    let lowered_texts: Option<std::sync::Arc<StringArray>> = {
+        let cols = view.lowered_text_columns();
+        if col_in_view >= cols.len() {
+            None
+        } else {
+            let sa = cols[col_in_view]
+                .as_any()
+                .downcast_ref::<StringArray>()?
+                .clone();
+            Some(std::sync::Arc::new(sa))
+        }
+    };
+
+    let out = match pred {
+        crate::args::CriteriaPredicate::Gt(n) => {
+            let col = num_col?;
+            cmp::gt(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
+        }
+        crate::args::CriteriaPredicate::Ge(n) => {
+            let col = num_col?;
+            cmp::gt_eq(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
+        }
+        crate::args::CriteriaPredicate::Lt(n) => {
+            let col = num_col?;
+            cmp::lt(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
+        }
+        crate::args::CriteriaPredicate::Le(n) => {
+            let col = num_col?;
+            cmp::lt_eq(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
+        }
+        crate::args::CriteriaPredicate::Eq(v) => match v {
+            formualizer_common::LiteralValue::Number(x) => {
+                let col = num_col?;
+                cmp::eq(col.as_ref(), &Float64Array::new_scalar(*x)).ok()?
+            }
+            formualizer_common::LiteralValue::Int(i) => {
+                let col = num_col?;
+                cmp::eq(col.as_ref(), &Float64Array::new_scalar(*i as f64)).ok()?
+            }
+            formualizer_common::LiteralValue::Text(t) => {
+                let col = lowered_texts?;
+                let pat = StringArray::new_scalar(t.to_ascii_lowercase());
+                let mut m = ilike(col.as_ref(), &pat).ok()?;
+                if t.is_empty() {
+                    // Treat nulls as equal to empty string
+                    let mut bb = BooleanBuilder::with_capacity(col.len());
+                    for i in 0..col.len() {
+                        bb.append_value(col.is_null(i));
+                    }
+                    let nulls = bb.finish();
+                    m = boolean::or_kleene(&m, &nulls).ok()?;
+                }
+                m
+            }
+            _ => return None,
+        },
+        crate::args::CriteriaPredicate::Ne(v) => match v {
+            formualizer_common::LiteralValue::Number(x) => {
+                let col = num_col?;
+                cmp::neq(col.as_ref(), &Float64Array::new_scalar(*x)).ok()?
+            }
+            formualizer_common::LiteralValue::Int(i) => {
+                let col = num_col?;
+                cmp::neq(col.as_ref(), &Float64Array::new_scalar(*i as f64)).ok()?
+            }
+            formualizer_common::LiteralValue::Text(t) => {
+                let col = lowered_texts?;
+                let pat = StringArray::new_scalar(t.to_ascii_lowercase());
+                nilike(col.as_ref(), &pat).ok()?
+            }
+            _ => return None,
+        },
+        crate::args::CriteriaPredicate::TextLike {
+            pattern,
+            case_insensitive,
+        } => {
+            let col = lowered_texts?;
+            let p = if *case_insensitive {
+                pattern.to_ascii_lowercase()
+            } else {
+                pattern.clone()
+            };
+            let lp = p.replace('*', "%").replace('?', "_");
+            let pat = StringArray::new_scalar(lp);
+            ilike(col.as_ref(), &pat).ok()?
+        }
+        _ => return None,
+    };
+    Some(std::sync::Arc::new(out))
 }
 
 #[derive(Debug, Clone)]
@@ -99,12 +230,10 @@ where
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             spill_mgr: ShimSpillManager::default(),
-            warmup_pass_ctx: None,
             arrow_sheets: SheetStore::default(),
             has_edited: false,
             overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
-            mask_cache: std::sync::RwLock::new(None),
             staged_formulas: std::collections::HashMap::new(),
         }
     }
@@ -124,12 +253,10 @@ where
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             spill_mgr: ShimSpillManager::default(),
-            warmup_pass_ctx: None,
             arrow_sheets: SheetStore::default(),
             has_edited: false,
             overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
-            mask_cache: std::sync::RwLock::new(None),
             staged_formulas: std::collections::HashMap::new(),
         }
     }
@@ -800,6 +927,14 @@ where
                     return Ok(LiteralValue::Int(0));
                 }
             }
+            VertexKind::NamedScalar => {
+                let value = self.evaluate_named_scalar(vertex_id, sheet_id)?;
+                return Ok(value);
+            }
+            VertexKind::NamedArray => {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("Array named ranges not yet implemented"));
+            }
             VertexKind::InfiniteRange | VertexKind::Range | VertexKind::External => {
                 // Not directly evaluatable here; return stored or 0
                 if let Some(value) = self.graph.get_value(vertex_id) {
@@ -833,11 +968,11 @@ where
                 let sheet_id = anchor.sheet_id;
                 let h = rows.len() as u32;
                 let w = rows.first().map(|r| r.len()).unwrap_or(0) as u32;
-                // Bounds check to avoid out-of-range writes (align to PackedCoord capacity)
+                // Bounds check to avoid out-of-range writes (align to AbsCoord capacity)
                 const PACKED_MAX_ROW: u32 = 1_048_575; // 20-bit max
                 const PACKED_MAX_COL: u32 = 16_383; // 14-bit max
-                let end_row = anchor.coord.row.saturating_add(h).saturating_sub(1);
-                let end_col = anchor.coord.col.saturating_add(w).saturating_sub(1);
+                let end_row = anchor.coord.row().saturating_add(h).saturating_sub(1);
+                let end_col = anchor.coord.col().saturating_add(w).saturating_sub(1);
                 if end_row > PACKED_MAX_ROW || end_col > PACKED_MAX_COL {
                     let spill_err = ExcelError::new(ExcelErrorKind::Spill)
                         .with_message("Spill exceeds sheet bounds")
@@ -854,8 +989,8 @@ where
                     for c in 0..w {
                         targets.push(self.graph.make_cell_ref_internal(
                             sheet_id,
-                            anchor.coord.row + r,
-                            anchor.coord.col + c,
+                            anchor.coord.row() + r,
+                            anchor.coord.col() + c,
                         ));
                     }
                 }
@@ -920,8 +1055,8 @@ where
                     let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
                     self.mirror_value_to_overlay(
                         &sheet_name,
-                        anchor.coord.row,
-                        anchor.coord.col,
+                        anchor.coord.row(),
+                        anchor.coord.col(),
                         &other,
                     );
                 }
@@ -944,8 +1079,8 @@ where
                     let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
                     self.mirror_value_to_overlay(
                         &sheet_name,
-                        anchor.coord.row,
-                        anchor.coord.col,
+                        anchor.coord.row(),
+                        anchor.coord.col(),
                         &err_val,
                     );
                 }
@@ -954,20 +1089,85 @@ where
         }
     }
 
+    fn evaluate_named_scalar(
+        &mut self,
+        vertex_id: VertexId,
+        sheet_id: SheetId,
+    ) -> Result<LiteralValue, ExcelError> {
+        let named_range = self.graph.named_range_by_vertex(vertex_id).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Name)
+                .with_message("Named range metadata missing".to_string())
+        })?;
+
+        match &named_range.definition {
+            NamedDefinition::Cell(cell_ref) => {
+                if let Some(dep_vertex) = self.graph.get_vertex_for_cell(cell_ref) {
+                    let value = if let Some(existing) = self.graph.get_value(dep_vertex) {
+                        existing.clone()
+                    } else {
+                        let computed = self.evaluate_vertex(dep_vertex)?;
+                        self.graph.update_vertex_value(dep_vertex, computed.clone());
+                        computed
+                    };
+                    self.graph.update_vertex_value(vertex_id, value.clone());
+                    Ok(value)
+                } else {
+                    let empty = LiteralValue::Empty;
+                    self.graph.update_vertex_value(vertex_id, empty.clone());
+                    Ok(empty)
+                }
+            }
+            NamedDefinition::Formula { ast, .. } => {
+                let context_sheet = match named_range.scope {
+                    NameScope::Sheet(id) => id,
+                    NameScope::Workbook => sheet_id,
+                };
+                let sheet_name = self.graph.sheet_name(context_sheet);
+                let cell_ref = self
+                    .graph
+                    .get_cell_ref(vertex_id)
+                    .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
+                let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+                match interpreter.evaluate_ast(ast) {
+                    Ok(LiteralValue::Array(_)) => {
+                        let err = ExcelError::new(ExcelErrorKind::NImpl)
+                            .with_message("Array result in scalar named range".to_string());
+                        let err_val = LiteralValue::Error(err.clone());
+                        self.graph.update_vertex_value(vertex_id, err_val.clone());
+                        Ok(err_val)
+                    }
+                    Ok(value) => {
+                        self.graph.update_vertex_value(vertex_id, value.clone());
+                        Ok(value)
+                    }
+                    Err(err) => {
+                        let err_val = LiteralValue::Error(err.clone());
+                        self.graph.update_vertex_value(vertex_id, err_val.clone());
+                        Ok(err_val)
+                    }
+                }
+            }
+            NamedDefinition::Range(_) => Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("Array named ranges not yet implemented".to_string())),
+        }
+    }
+
     /// Evaluate only the necessary precedents for specific target cells (demand-driven)
-    pub fn evaluate_until(&mut self, targets: &[&str]) -> Result<EvalResult, ExcelError> {
+    pub fn evaluate_until(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<EvalResult, ExcelError> {
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = std::time::Instant::now();
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
-        for target in targets {
+        for (sheet, row, col) in targets {
             // For now, assume simple A1-style references on default sheet
             // TODO: Parse complex references with sheets
-            let (sheet, row, col) = Self::parse_a1_notation(target)?;
-            let sheet_id = self.graph.sheet_id_mut(&sheet);
-            let coord = Coord::new(row, col, true, true);
+            let sheet_id = self.graph.sheet_id_mut(sheet);
+            let coord = Coord::from_excel(*row, *col, true, true);
             target_addrs.push(CellRef::new(sheet_id, coord));
         }
 
@@ -985,32 +1185,6 @@ where
                 cycle_errors: 0,
                 elapsed: start.elapsed(),
             });
-        }
-
-        // Phase 1: Global warmup planning (no-op by default)
-        if self.config.warmup.warmup_enabled {
-            let mut pass_ctx = PassContext::new(&self.config.warmup);
-            let planner = PassPlanner::new(self.config.warmup.clone());
-
-            // Collect ASTs from target vertices for analysis
-            let mut target_asts = Vec::new();
-            for &vid in &target_vertex_ids {
-                if let Some(ast) = self.graph.get_formula(vid) {
-                    target_asts.push(ast);
-                }
-            }
-
-            // Analyze and plan warmup
-            let target_refs: Vec<&ASTNode> = target_asts.iter().collect();
-            let plan = planner.analyze_targets(&target_refs);
-
-            // Execute warmup
-            let executor = WarmupExecutor::new(self.config.warmup.clone());
-            let fctx = crate::traits::DefaultFunctionContext::new(self, None);
-            let _ = executor.execute(&plan, &mut pass_ctx, &fctx);
-
-            // Store pass context for use during evaluation (read-only)
-            self.warmup_pass_ctx = Some(pass_ctx);
         }
 
         // Build demand subgraph with virtual edges for compressed ranges
@@ -1062,12 +1236,96 @@ where
         }
 
         // Clear warmup context at end of evaluation
-        self.warmup_pass_ctx = None;
 
         // Clear dirty flags for evaluated vertices
         self.graph.clear_dirty_flags(&precedents_to_eval);
 
         // Re-dirty volatile vertices
+        self.graph.redirty_volatiles();
+
+        Ok(EvalResult {
+            computed_vertices,
+            cycle_errors,
+            elapsed: start.elapsed(),
+        })
+    }
+
+    /// Build a reusable evaluation plan that covers every formula vertex in the workbook.
+    pub fn build_recalc_plan(&self) -> Result<RecalcPlan, ExcelError> {
+        let mut vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
+        vertices.sort_unstable();
+        if vertices.is_empty() {
+            return Ok(RecalcPlan {
+                schedule: crate::engine::Schedule {
+                    layers: Vec::new(),
+                    cycles: Vec::new(),
+                },
+            });
+        }
+
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = scheduler.create_schedule(&vertices)?;
+        Ok(RecalcPlan { schedule })
+    }
+
+    /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
+    pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
+        if self.config.defer_graph_building {
+            self.build_graph_all()?;
+        }
+
+        let start = std::time::Instant::now();
+        let dirty_vertices = self.graph.get_evaluation_vertices();
+        if dirty_vertices.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices: 0,
+                cycle_errors: 0,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        let dirty_set: FxHashSet<VertexId> = dirty_vertices.iter().copied().collect();
+        let mut computed_vertices = 0;
+        let mut cycle_errors = 0;
+
+        if !plan.schedule.cycles.is_empty() {
+            let circ_error = LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Circ)
+                    .with_message("Circular dependency detected".to_string()),
+            );
+            for cycle in &plan.schedule.cycles {
+                if !cycle.iter().any(|v| dirty_set.contains(v)) {
+                    continue;
+                }
+                cycle_errors += 1;
+                for &vertex_id in cycle {
+                    if dirty_set.contains(&vertex_id) {
+                        self.graph
+                            .update_vertex_value(vertex_id, circ_error.clone());
+                    }
+                }
+            }
+        }
+
+        for layer in &plan.schedule.layers {
+            let work: Vec<VertexId> = layer
+                .vertices
+                .iter()
+                .copied()
+                .filter(|v| dirty_set.contains(v))
+                .collect();
+            if work.is_empty() {
+                continue;
+            }
+            let temp_layer = crate::engine::scheduler::Layer { vertices: work };
+            if self.thread_pool.is_some() && temp_layer.vertices.len() > 1 {
+                computed_vertices += self.evaluate_layer_parallel(&temp_layer)?;
+            } else {
+                computed_vertices += self.evaluate_layer_sequential(&temp_layer)?;
+            }
+        }
+
+        self.graph.clear_dirty_flags(&dirty_vertices);
         self.graph.redirty_volatiles();
 
         Ok(EvalResult {
@@ -1154,12 +1412,25 @@ where
         row: u32,
         col: u32,
     ) -> Result<Option<LiteralValue>, ExcelError> {
+        if row == 0 || col == 0 {
+            return Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Row and column must be >= 1".to_string()));
+        }
+
         if self.config.defer_graph_building {
             self.build_graph_for_sheets(std::iter::once(sheet))?;
         }
-        let addr = format!("{}!{}{}", sheet, Self::col_to_letters(col), row);
-        let _ = self.evaluate_until(&[addr.as_str()])?; // ignore detailed EvalResult here
-        Ok(self.get_cell_value(sheet, row, col))
+
+        let result = self.evaluate_cells(&[(sheet, row, col)])?;
+
+        match result.len() {
+            0 => Ok(None),
+            1 => {
+                let v = result.into_iter().next().unwrap();
+                Ok(v)
+            }
+            _ => unreachable!("evaluate_cells returned unexpected length"),
+        }
     }
 
     /// Convenience: demand-driven evaluation of multiple cells; accepts a slice of
@@ -1182,12 +1453,7 @@ where
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
         }
-        let addresses: Vec<String> = targets
-            .iter()
-            .map(|(s, r, c)| format!("{}!{}{}", s, Self::col_to_letters(*c), r))
-            .collect();
-        let addr_refs: Vec<&str> = addresses.iter().map(|s| s.as_str()).collect();
-        let _ = self.evaluate_until(&addr_refs)?;
+        self.evaluate_until(targets)?;
         Ok(targets
             .iter()
             .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
@@ -1224,7 +1490,7 @@ where
         let mut target_addrs = Vec::new();
         for (sheet, row, col) in targets {
             if let Some(sheet_id) = self.graph.sheet_id(sheet) {
-                let coord = Coord::new(*row, *col, true, true);
+                let coord = Coord::from_excel(*row, *col, true, true);
                 target_addrs.push(CellRef::new(sheet_id, coord));
             }
         }
@@ -1306,8 +1572,8 @@ where
                             format!(
                                 "{}!{}{}",
                                 sheet_name,
-                                Self::col_to_letters(cell_ref.coord.col),
-                                cell_ref.coord.row
+                                Self::col_to_letters(cell_ref.coord.col()),
+                                cell_ref.coord.row()
                             )
                         })
                 })
@@ -1530,14 +1796,8 @@ where
     }
 
     /// Helper: convert 1-based column index to Excel-style letters (1 -> A, 27 -> AA)
-    fn col_to_letters(mut col: u32) -> String {
-        let mut s = String::new();
-        while col > 0 {
-            let rem = ((col - 1) % 26) as u8;
-            s.push((b'A' + rem) as char);
-            col = (col - 1) / 26;
-        }
-        s.chars().rev().collect()
+    fn col_to_letters(col: u32) -> String {
+        col_letters_from_1based(col).expect("column index must be >= 1")
     }
 
     /// Evaluate all dirty/volatile vertices with cancellation support
@@ -1714,33 +1974,19 @@ where
     }
 
     fn parse_a1_notation(address: &str) -> Result<(String, u32, u32), ExcelError> {
-        let parts: Vec<&str> = address.split('!').collect();
-        let (sheet, cell_part) = if parts.len() == 2 {
-            (parts[0].to_string(), parts[1])
-        } else {
-            ("Sheet1".to_string(), address) // Assume default sheet if not specified
+        let mut parts = address.splitn(2, '!');
+        let first = parts.next().unwrap_or_default();
+        let remainder = parts.next();
+
+        let (sheet, cell_part) = match remainder {
+            Some(cell) => (first.to_string(), cell),
+            None => ("Sheet1".to_string(), first),
         };
 
-        let mut col_end = 0;
-        for (i, c) in cell_part.chars().enumerate() {
-            if c.is_alphabetic() {
-                col_end = i + 1;
-            } else {
-                break;
-            }
-        }
-
-        let col_str = &cell_part[..col_end];
-        let row_str = &cell_part[col_end..];
-
-        let row = row_str.parse::<u32>().map_err(|_| {
-            ExcelError::new(ExcelErrorKind::Ref).with_message(format!("Invalid row: {row_str}"))
+        let (row, col, _, _) = parse_a1_1based(cell_part).map_err(|err| {
+            ExcelError::new(ExcelErrorKind::Ref)
+                .with_message(format!("Invalid cell reference `{cell_part}`: {err}"))
         })?;
-
-        let mut col = 0;
-        for c in col_str.to_uppercase().chars() {
-            col = col * 26 + (c as u32 - 'A' as u32) + 1; // +1 for 1-based indexing
-        }
 
         Ok((sheet, row, col))
     }
@@ -1753,10 +1999,9 @@ where
                 if let Some(func) = self
                     .get_function("", name)
                     .or_else(|| crate::function_registry::get("", name))
+                    && func.caps().contains(crate::function::FnCaps::VOLATILE)
                 {
-                    if func.caps().contains(crate::function::FnCaps::VOLATILE) {
-                        return true;
-                    }
+                    return true;
                 }
                 args.iter()
                     .any(|arg| self.is_ast_volatile_with_provider(arg))
@@ -1983,6 +2228,42 @@ where
                     return Ok(LiteralValue::Int(0)); // Empty cells evaluate to 0
                 }
             }
+            VertexKind::NamedScalar => {
+                let named_range = self.graph.named_range_by_vertex(vertex_id).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Name)
+                        .with_message("Named range metadata missing".to_string())
+                })?;
+
+                return match &named_range.definition {
+                    NamedDefinition::Cell(cell_ref) => {
+                        if let Some(dep_vertex) = self.graph.get_vertex_for_cell(cell_ref)
+                            && let Some(existing) = self.graph.get_value(dep_vertex)
+                        {
+                            return Ok(existing.clone());
+                        }
+                        let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
+                        Ok(self
+                            .graph
+                            .get_cell_value(sheet_name, cell_ref.coord.row(), cell_ref.coord.col())
+                            .unwrap_or(LiteralValue::Empty))
+                    }
+                    NamedDefinition::Formula { ast, .. } => {
+                        let context_sheet = match named_range.scope {
+                            NameScope::Sheet(id) => id,
+                            NameScope::Workbook => sheet_id,
+                        };
+                        let sheet_name = self.graph.sheet_name(context_sheet);
+                        let cell_ref = self
+                            .graph
+                            .get_cell_ref(vertex_id)
+                            .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
+                        let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
+                        interpreter.evaluate_ast(ast)
+                    }
+                    NamedDefinition::Range(_) => Err(ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message("Array named ranges not yet implemented".to_string())),
+                };
+            }
             _ => {
                 return Ok(LiteralValue::Error(
                     ExcelError::new(formualizer_common::ExcelErrorKind::Na)
@@ -2047,267 +2328,6 @@ impl RowBoundsCache {
     }
 }
 
-// ───────────── Criteria Mask Cache (Arrow) ─────────────
-#[derive(Default)]
-struct MaskCache {
-    snapshot: u64,
-    cap: usize,
-    // Simple FIFO map for now; key -> mask
-    map: rustc_hash::FxHashMap<String, std::sync::Arc<arrow_array::BooleanArray>>,
-    order: std::collections::VecDeque<String>,
-    hits: u64,
-    misses: u64,
-}
-
-impl MaskCache {
-    fn new(snapshot: u64, cap: usize) -> Self {
-        Self {
-            snapshot,
-            cap,
-            map: Default::default(),
-            order: Default::default(),
-            hits: 0,
-            misses: 0,
-        }
-    }
-    fn clear_and_set_snapshot(&mut self, snap: u64) {
-        self.snapshot = snap;
-        self.map.clear();
-        self.order.clear();
-        self.hits = 0;
-        self.misses = 0;
-    }
-
-    fn key_for(
-        &self,
-        engine: &Engine<impl crate::traits::EvaluationContext>,
-        view: &crate::arrow_store::ArrowRangeView<'_>,
-        col_in_view: usize,
-        pred: &crate::args::CriteriaPredicate,
-    ) -> Option<String> {
-        let sheet_id = engine.graph.sheet_id(view.sheet_name())? as u32;
-        let abs_col = view.start_col().saturating_add(col_in_view);
-        let sr = view.start_row();
-        let er = view.end_row();
-        use crate::args::CriteriaPredicate as CP;
-        let sig = match pred {
-            CP::Gt(n) => format!("GT:{n}"),
-            CP::Ge(n) => format!("GE:{n}"),
-            CP::Lt(n) => format!("LT:{n}"),
-            CP::Le(n) => format!("LE:{n}"),
-            CP::Eq(v) => format!("EQ:{}", Self::fmt_lit(v)),
-            CP::Ne(v) => format!("NE:{}", Self::fmt_lit(v)),
-            CP::TextLike {
-                pattern,
-                case_insensitive,
-            } => {
-                let mut lp = pattern.replace('*', "%").replace('?', "_");
-                if *case_insensitive {
-                    lp = lp.to_ascii_lowercase();
-                }
-                format!("LIKE:{}:{}", if *case_insensitive { 'i' } else { 's' }, lp)
-            }
-            CP::IsBlank | CP::IsNumber | CP::IsText | CP::IsLogical => return None,
-        };
-        Some(format!("s{sheet_id}:c{abs_col}:r{sr}-{er}:{sig}"))
-    }
-
-    fn fmt_lit(v: &formualizer_common::LiteralValue) -> String {
-        use formualizer_common::LiteralValue as LV;
-        match v {
-            LV::Number(n) => format!("N:{n}"),
-            LV::Int(i) => format!("I:{i}"),
-            LV::Text(s) => format!("T:{}", s.to_ascii_lowercase()),
-            LV::Boolean(b) => format!("B:{}", if *b { 1 } else { 0 }),
-            LV::Empty => "E".to_string(),
-            LV::Error(_) => "ERR".to_string(),
-            LV::Date(_)
-            | LV::DateTime(_)
-            | LV::Time(_)
-            | LV::Duration(_)
-            | LV::Array(_)
-            | LV::Pending => "UNSUP".to_string(),
-        }
-    }
-
-    fn get_or_compute(
-        &mut self,
-        engine: &Engine<impl crate::traits::EvaluationContext>,
-        view: &crate::arrow_store::ArrowRangeView<'_>,
-        col_in_view: usize,
-        pred: &crate::args::CriteriaPredicate,
-    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
-        let key = self.key_for(engine, view, col_in_view, pred)?;
-        if let Some(m) = self.map.get(&key) {
-            self.hits = self.hits.saturating_add(1);
-            return Some(m.clone());
-        }
-        self.misses = self.misses.saturating_add(1);
-        let mask = Self::compute_mask(engine, view, col_in_view, pred)?;
-        // Insert with FIFO eviction
-        if self.map.len() >= self.cap && !self.map.contains_key(&key) {
-            if let Some(old) = self.order.pop_front() {
-                self.map.remove(&old);
-            }
-        }
-        self.order.push_back(key.clone());
-        self.map.insert(key, mask.clone());
-        Some(mask)
-    }
-
-    fn compute_mask(
-        engine: &Engine<impl crate::traits::EvaluationContext>,
-        view: &crate::arrow_store::ArrowRangeView<'_>,
-        col_in_view: usize,
-        pred: &crate::args::CriteriaPredicate,
-    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
-        use crate::compute_prelude::{boolean, cmp, concat_arrays};
-        use arrow::compute::kernels::comparison::{ilike, nilike};
-        use arrow_array::{
-            Array as _, ArrayRef, Float64Array, StringArray, builder::BooleanBuilder,
-        };
-
-        let (rows, _cols) = view.dims();
-        // Build the criterion column arrays by concatenating slices for the single column
-        let mut num_parts: Vec<std::sync::Arc<Float64Array>> = Vec::new();
-        for (_rs, _rl, cols_seg) in view.numbers_slices() {
-            if col_in_view < cols_seg.len() {
-                num_parts.push(cols_seg[col_in_view].clone());
-            }
-        }
-        let num_col: Option<std::sync::Arc<Float64Array>> = if num_parts.is_empty() {
-            None
-        } else if num_parts.len() == 1 {
-            Some(num_parts.remove(0))
-        } else {
-            let anys: Vec<&dyn arrow_array::Array> = num_parts
-                .iter()
-                .map(|a| a.as_ref() as &dyn arrow_array::Array)
-                .collect();
-            let conc: ArrayRef = concat_arrays(&anys).ok()?;
-            let fa = conc.as_any().downcast_ref::<Float64Array>()?.clone();
-            Some(std::sync::Arc::new(fa))
-        };
-
-        // Lowered text column for this view/column
-        let lowered_texts: Option<std::sync::Arc<StringArray>> = {
-            let cols = view.lowered_text_columns();
-            if col_in_view >= cols.len() {
-                None
-            } else {
-                let sa = cols[col_in_view]
-                    .as_any()
-                    .downcast_ref::<StringArray>()?
-                    .clone();
-                Some(std::sync::Arc::new(sa))
-            }
-        };
-
-        let out = match pred {
-            crate::args::CriteriaPredicate::Gt(n) => {
-                let col = num_col?;
-                cmp::gt(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
-            }
-            crate::args::CriteriaPredicate::Ge(n) => {
-                let col = num_col?;
-                cmp::gt_eq(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
-            }
-            crate::args::CriteriaPredicate::Lt(n) => {
-                let col = num_col?;
-                cmp::lt(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
-            }
-            crate::args::CriteriaPredicate::Le(n) => {
-                let col = num_col?;
-                cmp::lt_eq(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
-            }
-            crate::args::CriteriaPredicate::Eq(v) => match v {
-                formualizer_common::LiteralValue::Number(x) => {
-                    let col = num_col?;
-                    cmp::eq(col.as_ref(), &Float64Array::new_scalar(*x)).ok()?
-                }
-                formualizer_common::LiteralValue::Int(i) => {
-                    let col = num_col?;
-                    cmp::eq(col.as_ref(), &Float64Array::new_scalar(*i as f64)).ok()?
-                }
-                formualizer_common::LiteralValue::Text(t) => {
-                    let col = lowered_texts?;
-                    let pat = StringArray::new_scalar(t.to_ascii_lowercase());
-                    let mut m = ilike(col.as_ref(), &pat).ok()?;
-                    if t.is_empty() {
-                        // Treat nulls as equal to empty string
-                        let mut bb = BooleanBuilder::with_capacity(col.len());
-                        for i in 0..col.len() {
-                            bb.append_value(col.is_null(i));
-                        }
-                        let nulls = bb.finish();
-                        m = boolean::or_kleene(&m, &nulls).ok()?;
-                    }
-                    m
-                }
-                _ => return None,
-            },
-            crate::args::CriteriaPredicate::Ne(v) => match v {
-                formualizer_common::LiteralValue::Number(x) => {
-                    let col = num_col?;
-                    cmp::neq(col.as_ref(), &Float64Array::new_scalar(*x)).ok()?
-                }
-                formualizer_common::LiteralValue::Int(i) => {
-                    let col = num_col?;
-                    cmp::neq(col.as_ref(), &Float64Array::new_scalar(*i as f64)).ok()?
-                }
-                formualizer_common::LiteralValue::Text(t) => {
-                    let col = lowered_texts?;
-                    let pat = StringArray::new_scalar(t.to_ascii_lowercase());
-                    nilike(col.as_ref(), &pat).ok()?
-                }
-                _ => return None,
-            },
-            crate::args::CriteriaPredicate::TextLike {
-                pattern,
-                case_insensitive,
-            } => {
-                let col = lowered_texts?;
-                let p = if *case_insensitive {
-                    pattern.to_ascii_lowercase()
-                } else {
-                    pattern.clone()
-                };
-                let lp = p.replace('*', "%").replace('?', "_");
-                let pat = StringArray::new_scalar(lp);
-                ilike(col.as_ref(), &pat).ok()?
-            }
-            _ => return None,
-        };
-        Some(std::sync::Arc::new(out))
-    }
-}
-
-#[cfg(test)]
-impl<R> Engine<R>
-where
-    R: EvaluationContext,
-{
-    pub fn __mask_cache_stats(&self) -> (u64, u64, usize) {
-        if let Ok(g) = self.mask_cache.read() {
-            if let Some(c) = g.as_ref() {
-                return (c.hits, c.misses, c.map.len());
-            }
-        }
-        (0, 0, 0)
-    }
-    pub fn __mask_cache_clear(&self) {
-        if let Ok(mut g) = self.mask_cache.write() {
-            *g = None;
-        }
-    }
-    pub fn __mask_cache_set_cap(&mut self, cap: usize) {
-        if let Ok(mut g) = self.mask_cache.write() {
-            let snap = self.data_snapshot_id();
-            *g = Some(MaskCache::new(snap, cap));
-        }
-    }
-}
-
 // Phase 2 shim: in-process spill manager delegating to current graph methods.
 #[derive(Default)]
 pub struct ShimSpillManager {
@@ -2326,16 +2346,16 @@ impl ShimSpillManager {
         // Derive region from anchor + shape; enforce in-flight exclusivity only.
         let region = crate::engine::spill::Region {
             sheet_id: anchor_cell.sheet_id as u32,
-            row_start: anchor_cell.coord.row,
+            row_start: anchor_cell.coord.row(),
             row_end: anchor_cell
                 .coord
-                .row
+                .row()
                 .saturating_add(shape.rows)
                 .saturating_sub(1),
-            col_start: anchor_cell.coord.col,
+            col_start: anchor_cell.coord.col(),
             col_end: anchor_cell
                 .coord
-                .col
+                .col()
                 .saturating_add(shape.cols)
                 .saturating_sub(1),
         };
@@ -2427,7 +2447,7 @@ impl ShimSpillManager {
                     .cloned()
                     .unwrap_or(LiteralValue::Empty);
                 let sheet_name = engine.graph.sheet_name(cell.sheet_id).to_string();
-                engine.mirror_value_to_overlay(&sheet_name, cell.coord.row, cell.coord.col, &v);
+                engine.mirror_value_to_overlay(&sheet_name, cell.coord.row(), cell.coord.col(), &v);
             }
         }
         Ok(())
@@ -2559,10 +2579,8 @@ where
         // Prefer Arrow-backed used-region; fallback to graph if formulas intersect region
         let sheet_id = self.graph.sheet_id(sheet)?;
         let arrow_ok = self.sheet_store().sheet(sheet).is_some();
-        if arrow_ok {
-            if let Some(bounds) = self.arrow_used_row_bounds(sheet, start_col, end_col) {
-                return Some(bounds);
-            }
+        if arrow_ok && let Some(bounds) = self.arrow_used_row_bounds(sheet, start_col, end_col) {
+            return Some(bounds);
         }
         self.graph
             .used_row_bounds_for_columns(sheet_id, start_col, end_col)
@@ -2572,10 +2590,8 @@ where
         // Prefer Arrow-backed used-region; fallback to graph if formulas intersect region
         let sheet_id = self.graph.sheet_id(sheet)?;
         let arrow_ok = self.sheet_store().sheet(sheet).is_some();
-        if arrow_ok {
-            if let Some(bounds) = self.arrow_used_col_bounds(sheet, start_row, end_row) {
-                return Some(bounds);
-            }
+        if arrow_ok && let Some(bounds) = self.arrow_used_col_bounds(sheet, start_row, end_row) {
+            return Some(bounds);
         }
         self.graph
             .used_col_bounds_for_rows(sheet_id, start_row, end_row)
@@ -2712,7 +2728,7 @@ where
                         .map(|r| {
                             (sc..=ec)
                                 .map(|c| {
-                                    let coord = Coord::new(r, c, true, true);
+                                    let coord = Coord::from_excel(r, c, true, true);
                                     let addr = CellRef::new(sheet_id, coord);
                                     self.graph
                                         .get_vertex_id_for_address(&addr)
@@ -2739,19 +2755,16 @@ where
             ReferenceType::Cell { sheet, row, col } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
                 if let Some(sheet_id) = self.graph.sheet_id(sheet_name) {
-                    let coord = Coord::new(*row, *col, true, true);
+                    let coord = Coord::from_excel(*row, *col, true, true);
                     let addr = CellRef::new(sheet_id, coord);
-                    if let Some(vid) = self.graph.get_vertex_id_for_address(&addr) {
-                        if matches!(
+                    if let Some(vid) = self.graph.get_vertex_id_for_address(&addr)
+                        && matches!(
                             self.graph.get_vertex_kind(*vid),
                             VertexKind::FormulaScalar | VertexKind::FormulaArray
-                        ) {
-                            if let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col) {
-                                return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![
-                                    vec![v],
-                                ]))));
-                            }
-                        }
+                        )
+                        && let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col)
+                    {
+                        return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
                     }
                 }
                 if self.config.arrow_storage_enabled
@@ -2789,6 +2802,47 @@ where
                 ]]))))
             }
             ReferenceType::NamedRange(name) => {
+                if let Some(current_id) = self.graph.sheet_id(current_sheet)
+                    && let Some(named) = self.graph.resolve_name_entry(name, current_id)
+                {
+                    match &named.definition {
+                        NamedDefinition::Cell(cell_ref) => {
+                            let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
+                            let value = self
+                                .graph
+                                .get_cell_value(
+                                    sheet_name,
+                                    cell_ref.coord.row(),
+                                    cell_ref.coord.col(),
+                                )
+                                .unwrap_or(LiteralValue::Empty);
+                            let data = vec![vec![value]];
+                            return Ok(RangeView::from_borrowed(Box::leak(Box::new(data))));
+                        }
+                        NamedDefinition::Range(range_ref) => {
+                            let sheet_name = self.graph.sheet_name(range_ref.start.sheet_id);
+                            let mut rows = Vec::new();
+                            for row in range_ref.start.coord.row()..=range_ref.end.coord.row() {
+                                let mut line = Vec::new();
+                                for col in range_ref.start.coord.col()..=range_ref.end.coord.col() {
+                                    let value = self
+                                        .graph
+                                        .get_cell_value(sheet_name, row, col)
+                                        .unwrap_or(LiteralValue::Empty);
+                                    line.push(value);
+                                }
+                                rows.push(line);
+                            }
+                            return Ok(RangeView::from_borrowed(Box::leak(Box::new(rows))));
+                        }
+                        NamedDefinition::Formula { .. } => {
+                            if let Some(value) = self.graph.get_value(named.vertex) {
+                                let data = vec![vec![value]];
+                                return Ok(RangeView::from_borrowed(Box::leak(Box::new(data))));
+                            }
+                        }
+                    }
+                }
                 let data = self.resolver.resolve_named_range_reference(name)?;
                 Ok(RangeView::from_borrowed(Box::leak(Box::new(data))))
             }
@@ -2812,14 +2866,7 @@ where
         if view.dims().0 == 0 || view.dims().1 == 0 {
             return None;
         }
-        let snap = self.data_snapshot_id();
-        let mut guard = self.mask_cache.write().ok()?;
-        let cap = self.config.warmup.mask_cache_entries_cap;
-        let cache = guard.get_or_insert_with(|| MaskCache::new(snap, cap));
-        if cache.snapshot != snap {
-            cache.clear_and_set_snapshot(snap);
-        }
-        cache.get_or_compute(self, view, col_in_view, pred)
+        compute_criteria_mask(view, col_in_view, pred)
     }
 }
 
@@ -2851,7 +2898,7 @@ where
                 let c_off = idx % width;
                 let v = rows[r_off][c_off].clone();
                 let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
-                self.mirror_value_to_overlay(&sheet_name, cell.coord.row, cell.coord.col, &v);
+                self.mirror_value_to_overlay(&sheet_name, cell.coord.row(), cell.coord.col(), &v);
             }
         }
         Ok(())

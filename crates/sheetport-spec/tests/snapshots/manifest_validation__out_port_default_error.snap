@@ -1,0 +1,7 @@
+---
+source: crates/sheetport-spec/tests/manifest_validation.rs
+assertion_line: 26
+expression: err.issues()
+---
+- path: "ports[3].default"
+  message: "defaults may only be defined on `in` ports"

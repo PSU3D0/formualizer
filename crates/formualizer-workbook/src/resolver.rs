@@ -1,7 +1,7 @@
 use crate::traits::SpreadsheetReader;
 use formualizer_common::{
-    error::{ExcelError, ExcelErrorKind},
     LiteralValue,
+    error::{ExcelError, ExcelErrorKind},
 };
 use formualizer_eval::function::Function;
 use formualizer_eval::traits::{

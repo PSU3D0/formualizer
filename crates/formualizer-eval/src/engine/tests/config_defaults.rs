@@ -57,6 +57,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_config_can_be_customized() {
         let mut config = WarmupConfig::default();
 
@@ -75,8 +76,10 @@ mod tests {
 
     #[test]
     fn test_disabled_warmup_prevents_all_warmup_activity() {
-        let mut config = WarmupConfig::default();
-        config.warmup_enabled = false; // Disable warmup
+        let config = WarmupConfig {
+            warmup_enabled: false,
+            ..WarmupConfig::default()
+        };
 
         // When disabled, these settings shouldn't matter
         // This test documents the expectation that warmup_enabled=false

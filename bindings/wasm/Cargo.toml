@@ -1,7 +1,7 @@
 [package]
 name = "formualizer-wasm"
 version = "0.2.0"
-edition = "2021"
+edition = "2024"
 authors = ["Formualizer Contributors"]
 license = "MIT OR Apache-2.0"
 description = "WebAssembly bindings for Formualizer Excel formula parser"
@@ -13,19 +13,22 @@ keywords = ["excel", "formula", "parser", "wasm", "webassembly"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-wasm-bindgen = "0.2.95"
-wasm-bindgen-futures = "0.4.45"
-js-sys = "0.3.72"
-serde = { version = "1.0", features = ["derive"] }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = { version = "0.1", optional = true }
 formualizer-parse = { path = "../../crates/formualizer-parse" }
 formualizer-common = { path = "../../crates/formualizer-common" }
 formualizer-workbook = { path = "../../crates/formualizer-workbook", default-features = false, features = ["json"] }
 formualizer-eval = { path = "../../crates/formualizer-eval" }
+formualizer-sheetport = { path = "../../crates/formualizer-sheetport" }
+sheetport-spec = { path = "../../crates/sheetport-spec" }
+serde_json = { workspace = true }
 
 [dependencies.web-sys]
-version = "0.3.72"
+workspace = true
 features = [
   "console",
 ]
@@ -39,12 +42,6 @@ console_panic = ["console_error_panic_hook"]
 # Expose a local `json` feature and forward it to the workbook dependency
 json = ["formualizer-workbook/json"]
 
-[profile.release]
-opt-level = "z"     # Optimize for size
-lto = true          # Enable Link Time Optimization
-codegen-units = 1   # Single codegen unit for better optimization
-strip = true        # Strip symbols
-
 # Ensure getrandom works on wasm32-unknown-unknown by enabling the `js` feature
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }

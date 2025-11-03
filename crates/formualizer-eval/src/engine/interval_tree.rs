@@ -248,11 +248,11 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
         // Deduplicate keys by merging sets
         let mut dedup: Vec<(u32, std::collections::HashSet<T>)> = Vec::with_capacity(items.len());
         for (k, set) in items.into_iter() {
-            if let Some(last) = dedup.last_mut() {
-                if last.0 == k {
-                    last.1.extend(set);
-                    continue;
-                }
+            if let Some(last) = dedup.last_mut()
+                && last.0 == k
+            {
+                last.1.extend(set);
+                continue;
             }
             dedup.push((k, set));
         }
@@ -268,15 +268,15 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
             let right = build_balanced(&slice[mid + 1..]);
             // max_high is same as low (point interval); but need subtree max
             let mut max_high = *low;
-            if let Some(ref l) = left {
-                if l.max_high > max_high {
-                    max_high = l.max_high;
-                }
+            if let Some(ref l) = left
+                && l.max_high > max_high
+            {
+                max_high = l.max_high;
             }
-            if let Some(ref r) = right {
-                if r.max_high > max_high {
-                    max_high = r.max_high;
-                }
+            if let Some(ref r) = right
+                && r.max_high > max_high
+            {
+                max_high = r.max_high;
             }
             Some(Box::new(Node {
                 low: *low,

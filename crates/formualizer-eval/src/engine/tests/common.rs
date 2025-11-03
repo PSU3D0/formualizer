@@ -1,5 +1,5 @@
 //! Common test helpers
-use crate::engine::VertexId;
+use crate::engine::{EvalConfig, VertexId};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 pub fn create_cell_ref_ast(sheet: Option<&str>, row: u32, col: u32) -> ASTNode {
@@ -34,4 +34,18 @@ pub fn get_vertex_ids_in_order(graph: &crate::engine::DependencyGraph) -> Vec<Ve
     let mut vertex_ids: Vec<VertexId> = graph.cell_to_vertex().values().copied().collect();
     vertex_ids.sort(); // VertexIds are created sequentially, so sorting gives creation order
     vertex_ids
+}
+
+pub fn arrow_eval_config() -> EvalConfig {
+    EvalConfig {
+        arrow_storage_enabled: true,
+        arrow_fastpath_enabled: true,
+        delta_overlay_enabled: true,
+        write_formula_overlay_enabled: true,
+        ..Default::default()
+    }
+}
+
+pub fn eval_config_with_range_limit(limit: usize) -> EvalConfig {
+    EvalConfig::default().with_range_expansion_limit(limit)
 }

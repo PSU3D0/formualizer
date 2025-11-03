@@ -14,15 +14,21 @@ pub struct GraphInstrumentation {
 }
 
 // Type alias for complex return type
-type ExtractDependenciesResult =
-    Result<(Vec<VertexId>, Vec<ReferenceType>, Vec<CellRef>), ExcelError>;
+type ExtractDependenciesResult = Result<
+    (
+        Vec<VertexId>,
+        Vec<ReferenceType>,
+        Vec<CellRef>,
+        Vec<VertexId>,
+    ),
+    ExcelError,
+>;
 
 pub mod editor;
 pub mod snapshot;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
-use super::packed_coord::PackedCoord;
 use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
 use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
@@ -31,6 +37,7 @@ use crate::engine::topo::{
     pk::{DynamicTopo, PkConfig},
 };
 use crate::reference::{CellRef, Coord};
+use formualizer_common::Coord as AbsCoord;
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
 
 pub use editor::change_log::{ChangeEvent, ChangeLog};
@@ -100,10 +107,12 @@ fn is_valid_excel_name(name: &str) -> bool {
     let mut chars = name.chars();
 
     // First character must be letter, underscore, or backslash
-    if let Some(first) = chars.next() {
-        if !first.is_alphabetic() && first != '_' && first != '\\' {
-            return false;
-        }
+    if let Some(first) = chars.next()
+        && !first.is_alphabetic()
+        && first != '_'
+        && first != '\\'
+    {
+        return false;
     }
 
     // Remaining characters must be letters, digits, periods, or underscores
@@ -206,8 +215,22 @@ pub struct DependencyGraph {
     /// Sheet-scoped named ranges  
     sheet_named_ranges: FxHashMap<(SheetId, String), NamedRange>,
 
-    /// Reverse mapping: vertex -> names it uses
-    vertex_to_names: FxHashMap<VertexId, Vec<String>>,
+    /// Reverse mapping: vertex -> names it uses (by vertex id)
+    vertex_to_names: FxHashMap<VertexId, Vec<VertexId>>,
+
+    /// Lookup for name vertex -> (scope, name) to avoid map scans
+    name_vertex_lookup: FxHashMap<VertexId, (NameScope, String)>,
+
+    /// Pending formula vertices referencing names not yet defined
+    pending_name_links: FxHashMap<String, Vec<(SheetId, VertexId)>>,
+
+    /// Monotonic counter to assign synthetic coordinates to name vertices
+    name_vertex_seq: u32,
+
+    /// Mapping from cell vertices to named range vertices that depend on them
+    cell_to_name_dependents: FxHashMap<VertexId, FxHashSet<VertexId>>,
+    /// Cached list of cell dependencies per named range vertex (for teardown)
+    name_to_cell_dependencies: FxHashMap<VertexId, Vec<VertexId>>,
 
     // Evaluation configuration
     config: super::EvalConfig,
@@ -261,14 +284,36 @@ impl DependencyGraph {
         )
     }
 
+    fn next_name_coord(&mut self) -> AbsCoord {
+        let seq = self.name_vertex_seq;
+        self.name_vertex_seq = self.name_vertex_seq.wrapping_add(1);
+        let row = (seq / 16_384).min(0x000F_FFFF);
+        let col = seq % 16_384;
+        AbsCoord::new(row, col)
+    }
+
+    fn allocate_name_vertex(&mut self, scope: NameScope) -> VertexId {
+        let coord = self.next_name_coord();
+        let sheet_id = match scope {
+            NameScope::Sheet(id) => id,
+            NameScope::Workbook => self.default_sheet_id,
+        };
+        let vertex_id = self.store.allocate(coord, sheet_id, 0x01);
+        self.store.set_kind(vertex_id, VertexKind::NamedScalar);
+        self.store.set_dirty(vertex_id, true);
+        self.edges.add_vertex(coord, vertex_id.0);
+        self.dirty_vertices.insert(vertex_id);
+        vertex_id
+    }
+
     /// Ensure vertices exist for given coords; allocate missing in contiguous batches and add to edges/index.
     /// Returns a list suitable for edges.add_vertices_batch.
     pub fn ensure_vertices_batch(
         &mut self,
-        coords: &[(SheetId, PackedCoord)],
-    ) -> Vec<(PackedCoord, u32)> {
+        coords: &[(SheetId, AbsCoord)],
+    ) -> Vec<(AbsCoord, u32)> {
         use rustc_hash::FxHashMap;
-        let mut grouped: FxHashMap<SheetId, Vec<PackedCoord>> = FxHashMap::default();
+        let mut grouped: FxHashMap<SheetId, Vec<AbsCoord>> = FxHashMap::default();
         for (sid, pc) in coords.iter().copied() {
             let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
             if self.cell_to_vertex.contains_key(&addr) {
@@ -276,7 +321,7 @@ impl DependencyGraph {
             }
             grouped.entry(sid).or_default().push(pc);
         }
-        let mut add_batch: Vec<(PackedCoord, u32)> = Vec::new();
+        let mut add_batch: Vec<(AbsCoord, u32)> = Vec::new();
         for (sid, pcs) in grouped {
             if pcs.is_empty() {
                 continue;
@@ -325,8 +370,8 @@ impl DependencyGraph {
         self.data_store.store_asts_batch(asts, &self.sheet_reg)
     }
 
-    /// Lookup VertexId for a (SheetId, PackedCoord)
-    pub fn vid_for_sid_pc(&self, sid: SheetId, pc: PackedCoord) -> Option<VertexId> {
+    /// Lookup VertexId for a (SheetId, AbsCoord)
+    pub fn vid_for_sid_pc(&self, sid: SheetId, pc: AbsCoord) -> Option<VertexId> {
         let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
         self.cell_to_vertex.get(&addr).copied()
     }
@@ -378,8 +423,8 @@ impl DependencyGraph {
         self.store.all_vertices()
     }
 
-    /// Get current PackedCoord for a vertex
-    pub fn vertex_coord(&self, vid: VertexId) -> PackedCoord {
+    /// Get current AbsCoord for a vertex
+    pub fn vertex_coord(&self, vid: VertexId) -> AbsCoord {
         self.store.coord(vid)
     }
 
@@ -392,7 +437,7 @@ impl DependencyGraph {
     pub fn build_edges_from_adjacency(
         &mut self,
         adjacency: Vec<(u32, Vec<u32>)>,
-        coords: Vec<PackedCoord>,
+        coords: Vec<AbsCoord>,
         vertex_ids: Vec<u32>,
     ) {
         self.edges
@@ -406,29 +451,29 @@ impl DependencyGraph {
         end_col: u32,
     ) -> Option<(u32, u32)> {
         // Prefer sheet index when available
-        if let Some(index) = self.sheet_indexes.get(&sheet_id) {
-            if !index.is_empty() {
-                let mut min_r: Option<u32> = None;
-                let mut max_r: Option<u32> = None;
-                for vid in index.vertices_in_col_range(start_col, end_col) {
-                    let r = self.store.coord(vid).row();
-                    min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
-                    max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
-                }
-                return match (min_r, max_r) {
-                    (Some(a), Some(b)) => Some((a, b)),
-                    _ => None,
-                };
+        if let Some(index) = self.sheet_indexes.get(&sheet_id)
+            && !index.is_empty()
+        {
+            let mut min_r: Option<u32> = None;
+            let mut max_r: Option<u32> = None;
+            for vid in index.vertices_in_col_range(start_col, end_col) {
+                let r = self.store.coord(vid).row();
+                min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
+                max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
             }
+            return match (min_r, max_r) {
+                (Some(a), Some(b)) => Some((a, b)),
+                _ => None,
+            };
         }
         // Fallback: scan cell map for bounds on the fly
         let mut min_r: Option<u32> = None;
         let mut max_r: Option<u32> = None;
         for cref in self.cell_to_vertex.keys() {
             if cref.sheet_id == sheet_id {
-                let c = cref.coord.col;
+                let c = cref.coord.col();
                 if c >= start_col && c <= end_col {
-                    let r = cref.coord.row;
+                    let r = cref.coord.row();
                     min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
                     max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
                 }
@@ -446,17 +491,17 @@ impl DependencyGraph {
             return;
         };
         // If already present and non-empty, skip
-        if let Some(idx) = self.sheet_indexes.get(&sheet_id) {
-            if !idx.is_empty() {
-                return;
-            }
+        if let Some(idx) = self.sheet_indexes.get(&sheet_id)
+            && !idx.is_empty()
+        {
+            return;
         }
         let mut idx = SheetIndex::new();
         // Collect coords for this sheet
-        let mut batch: Vec<(PackedCoord, VertexId)> = Vec::with_capacity(self.cell_to_vertex.len());
+        let mut batch: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(self.cell_to_vertex.len());
         for (cref, vid) in &self.cell_to_vertex {
             if cref.sheet_id == sheet_id {
-                batch.push((PackedCoord::new(cref.coord.row, cref.coord.col), *vid));
+                batch.push((AbsCoord::new(cref.coord.row(), cref.coord.col()), *vid));
             }
         }
         // Use batch builder
@@ -475,29 +520,29 @@ impl DependencyGraph {
         start_row: u32,
         end_row: u32,
     ) -> Option<(u32, u32)> {
-        if let Some(index) = self.sheet_indexes.get(&sheet_id) {
-            if !index.is_empty() {
-                let mut min_c: Option<u32> = None;
-                let mut max_c: Option<u32> = None;
-                for vid in index.vertices_in_row_range(start_row, end_row) {
-                    let c = self.store.coord(vid).col();
-                    min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
-                    max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
-                }
-                return match (min_c, max_c) {
-                    (Some(a), Some(b)) => Some((a, b)),
-                    _ => None,
-                };
+        if let Some(index) = self.sheet_indexes.get(&sheet_id)
+            && !index.is_empty()
+        {
+            let mut min_c: Option<u32> = None;
+            let mut max_c: Option<u32> = None;
+            for vid in index.vertices_in_row_range(start_row, end_row) {
+                let c = self.store.coord(vid).col();
+                min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
+                max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
             }
+            return match (min_c, max_c) {
+                (Some(a), Some(b)) => Some((a, b)),
+                _ => None,
+            };
         }
         // Fallback: scan cell map on the fly
         let mut min_c: Option<u32> = None;
         let mut max_c: Option<u32> = None;
         for cref in self.cell_to_vertex.keys() {
             if cref.sheet_id == sheet_id {
-                let r = cref.coord.row;
+                let r = cref.coord.row();
                 if r >= start_row && r <= end_row {
-                    let c = cref.coord.col;
+                    let c = cref.coord.col();
                     min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
                     max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
                 }
@@ -539,6 +584,11 @@ impl DependencyGraph {
             named_ranges: FxHashMap::default(),
             sheet_named_ranges: FxHashMap::default(),
             vertex_to_names: FxHashMap::default(),
+            name_vertex_lookup: FxHashMap::default(),
+            pending_name_links: FxHashMap::default(),
+            name_vertex_seq: 0,
+            cell_to_name_dependents: FxHashMap::default(),
+            name_to_cell_dependencies: FxHashMap::default(),
             config: super::EvalConfig::default(),
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
@@ -696,43 +746,59 @@ impl DependencyGraph {
             }
         }
 
+        let mut final_definition = definition;
         // Extract dependencies if formula
-        let named_range = match definition {
-            NamedDefinition::Formula { ref ast, .. } => {
-                let (deps, range_deps, _) = self.extract_dependencies(
-                    ast,
-                    match scope {
-                        NameScope::Sheet(id) => id,
-                        NameScope::Workbook => self.default_sheet_id,
-                    },
-                )?;
-                NamedRange {
-                    definition: NamedDefinition::Formula {
-                        ast: ast.clone(),
-                        dependencies: deps,
-                        range_deps,
-                    },
-                    scope,
-                    dependents: FxHashSet::default(),
-                }
-            }
-            _ => NamedRange {
-                definition,
-                scope,
-                dependents: FxHashSet::default(),
-            },
+        if let NamedDefinition::Formula { ref ast, .. } = final_definition {
+            let (deps, range_deps, _, _) = self.extract_dependencies(
+                ast,
+                match scope {
+                    NameScope::Sheet(id) => id,
+                    NameScope::Workbook => self.default_sheet_id,
+                },
+            )?;
+            final_definition = NamedDefinition::Formula {
+                ast: ast.clone(),
+                dependencies: deps,
+                range_deps,
+            };
+        }
+
+        // Allocate vertex only after dependency extraction succeeds
+        let vertex_id = self.allocate_name_vertex(scope);
+
+        let named_range = NamedRange {
+            definition: final_definition,
+            scope,
+            dependents: FxHashSet::default(),
+            vertex: vertex_id,
         };
 
-        // Store
+        if matches!(named_range.definition, NamedDefinition::Range(_)) {
+            self.store.set_kind(vertex_id, VertexKind::NamedArray);
+        } else {
+            self.store.set_kind(vertex_id, VertexKind::NamedScalar);
+        }
+
+        let referenced_names =
+            self.rebuild_name_dependencies(vertex_id, &named_range.definition, scope);
+        if !referenced_names.is_empty() {
+            self.attach_vertex_to_names(vertex_id, &referenced_names);
+        }
+
+        let key = name.to_string();
+
         match scope {
             NameScope::Workbook => {
-                self.named_ranges.insert(name.to_string(), named_range);
+                self.named_ranges.insert(key.clone(), named_range);
             }
             NameScope::Sheet(id) => {
                 self.sheet_named_ranges
-                    .insert((id, name.to_string()), named_range);
+                    .insert((id, key.clone()), named_range);
             }
         }
+
+        self.name_vertex_lookup.insert(vertex_id, (scope, key));
+        self.resolve_pending_name_references(scope, name, vertex_id);
 
         Ok(())
     }
@@ -749,13 +815,27 @@ impl DependencyGraph {
         self.sheet_named_ranges.iter()
     }
 
-    /// Resolve a named range to its definition
-    pub fn resolve_name(&self, name: &str, current_sheet: SheetId) -> Option<&NamedDefinition> {
-        // Sheet scope takes precedence
+    pub fn resolve_name_entry(&self, name: &str, current_sheet: SheetId) -> Option<&NamedRange> {
         self.sheet_named_ranges
             .get(&(current_sheet, name.to_string()))
             .or_else(|| self.named_ranges.get(name))
+    }
+
+    /// Resolve a named range to its definition
+    pub fn resolve_name(&self, name: &str, current_sheet: SheetId) -> Option<&NamedDefinition> {
+        self.resolve_name_entry(name, current_sheet)
             .map(|nr| &nr.definition)
+    }
+
+    pub fn named_range_by_vertex(&self, vertex: VertexId) -> Option<&NamedRange> {
+        self.name_vertex_lookup
+            .get(&vertex)
+            .and_then(|(scope, name)| match scope {
+                NameScope::Workbook => self.named_ranges.get(name),
+                NameScope::Sheet(sheet_id) => {
+                    self.sheet_named_ranges.get(&(*sheet_id, name.clone()))
+                }
+            })
     }
 
     /// Update an existing named range definition
@@ -789,12 +869,35 @@ impl DependencyGraph {
                 NameScope::Sheet(id) => self.sheet_named_ranges.get_mut(&(id, name.to_string())),
             };
 
+            let mut update_data: Option<(VertexId, NameScope, NamedDefinition, bool)> = None;
             if let Some(named_range) = named_range {
-                // Update definition
                 named_range.definition = new_definition;
-
-                // Clear dependents (will be rebuilt on next evaluation)
                 named_range.dependents.clear();
+                let is_range = matches!(named_range.definition, NamedDefinition::Range(_));
+                update_data = Some((
+                    named_range.vertex,
+                    named_range.scope,
+                    named_range.definition.clone(),
+                    is_range,
+                ));
+            }
+
+            if let Some((vertex, scope_value, definition_snapshot, is_range)) = update_data {
+                self.detach_vertex_from_names(vertex);
+
+                if is_range {
+                    self.store.set_kind(vertex, VertexKind::NamedArray);
+                } else {
+                    self.store.set_kind(vertex, VertexKind::NamedScalar);
+                }
+                self.store.set_dirty(vertex, true);
+                self.dirty_vertices.insert(vertex);
+
+                let referenced_names =
+                    self.rebuild_name_dependencies(vertex, &definition_snapshot, scope_value);
+                if !referenced_names.is_empty() {
+                    self.attach_vertex_to_names(vertex, &referenced_names);
+                }
             }
 
             Ok(())
@@ -818,9 +921,13 @@ impl DependencyGraph {
                 self.mark_vertex_dirty(vertex_id);
                 // Remove from vertex_to_names mapping
                 if let Some(names) = self.vertex_to_names.get_mut(&vertex_id) {
-                    names.retain(|n| n != name);
+                    names.retain(|vid| *vid != named_range.vertex);
+                    if names.is_empty() {
+                        self.vertex_to_names.remove(&vertex_id);
+                    }
                 }
             }
+            self.mark_named_vertex_deleted(&named_range);
             Ok(())
         } else {
             Err(ExcelError::new(ExcelErrorKind::Name)
@@ -896,7 +1003,7 @@ impl DependencyGraph {
         } else {
             // Create new vertex
             created_placeholders.push(addr);
-            let packed_coord = PackedCoord::new(row, col);
+            let packed_coord = AbsCoord::new(row, col);
             let vertex_id = self.store.allocate(packed_coord, sheet_id, 0x01); // dirty flag
 
             // Add vertex coordinate for CSR
@@ -945,7 +1052,7 @@ impl DependencyGraph {
             self.store.set_kind(existing_id, VertexKind::Cell);
             return;
         }
-        let packed_coord = PackedCoord::new(row, col);
+        let packed_coord = AbsCoord::new(row, col);
         let vertex_id = self.store.allocate(packed_coord, sheet_id, 0x00); // not dirty
         self.edges.add_vertex(packed_coord, vertex_id.0);
         self.sheet_index_mut(sheet_id)
@@ -971,11 +1078,10 @@ impl DependencyGraph {
         let sheet_id = self.sheet_id_mut(sheet);
         self.reserve_cells(collected.len());
         let t_reserve = Instant::now();
-        let mut new_vertices: Vec<(PackedCoord, u32)> = Vec::with_capacity(collected.len());
-        let mut index_items: Vec<(PackedCoord, VertexId)> = Vec::with_capacity(collected.len());
+        let mut new_vertices: Vec<(AbsCoord, u32)> = Vec::with_capacity(collected.len());
+        let mut index_items: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(collected.len());
         // For new allocations, accumulate values and assign after a single batch store
-        let mut new_value_coords: Vec<(PackedCoord, VertexId)> =
-            Vec::with_capacity(collected.len());
+        let mut new_value_coords: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(collected.len());
         let mut new_value_literals: Vec<LiteralValue> = Vec::with_capacity(collected.len());
         // Detect fast path: during initial ingest, caller may guarantee most cells are new.
         let assume_new = self.first_load_assume_new
@@ -987,15 +1093,13 @@ impl DependencyGraph {
         for (row, col, value) in collected {
             let coord = Coord::new(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
-            if !assume_new {
-                if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
-                    let value_ref = self.data_store.store_value(value);
-                    self.vertex_values.insert(existing_id, value_ref);
-                    self.store.set_kind(existing_id, VertexKind::Cell);
-                    continue;
-                }
+            if !assume_new && let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
+                let value_ref = self.data_store.store_value(value);
+                self.vertex_values.insert(existing_id, value_ref);
+                self.store.set_kind(existing_id, VertexKind::Cell);
+                continue;
             }
-            let packed = PackedCoord::new(row, col);
+            let packed = AbsCoord::new(row, col);
             let vertex_id = self.store.allocate(packed, sheet_id, 0x00);
             self.store.set_kind(vertex_id, VertexKind::Cell);
             // Defer value arena storage to a single batch
@@ -1084,34 +1188,40 @@ impl DependencyGraph {
         } else {
             None
         };
-        let (new_dependencies, new_range_dependencies, mut created_placeholders) =
-            self.extract_dependencies(&ast, sheet_id)?;
+        let (
+            new_dependencies,
+            new_range_dependencies,
+            mut created_placeholders,
+            named_dependencies,
+        ) = self.extract_dependencies(&ast, sheet_id)?;
         if let (true, Some(t)) = (dbg, t_dep0) {
             let elapsed = t.elapsed().as_millis();
             // Only log if over threshold or sampled
             let do_log = (dep_ms_thresh > 0 && elapsed >= dep_ms_thresh)
-                || (sample_n > 0 && (row as usize % sample_n == 0));
+                || (sample_n > 0 && (row as usize).is_multiple_of(sample_n));
             if dep_ms_thresh == 0 && sample_n == 0 {
                 // default: very light sampling every 1000 rows
-                if (row % 1000) == 0 {
+                if row.is_multiple_of(1000) {
                     eprintln!(
-                        "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={} in {} ms",
+                        "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={}, names={} in {} ms",
                         self.sheet_name(sheet_id),
                         crate::reference::Coord::new(row, col, true, true),
                         new_dependencies.len(),
                         new_range_dependencies.len(),
                         created_placeholders.len(),
+                        named_dependencies.len(),
                         elapsed
                     );
                 }
             } else if do_log {
                 eprintln!(
-                    "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={} in {} ms",
+                    "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={}, names={} in {} ms",
                     self.sheet_name(sheet_id),
                     crate::reference::Coord::new(row, col, true, true),
                     new_dependencies.len(),
                     new_range_dependencies.len(),
                     created_placeholders.len(),
+                    named_dependencies.len(),
                     elapsed
                 );
             }
@@ -1125,8 +1235,17 @@ impl DependencyGraph {
                 .with_message("Self-reference detected".to_string()));
         }
 
+        for &name_vertex in &named_dependencies {
+            let mut visited = FxHashSet::default();
+            if self.name_depends_on_vertex(name_vertex, addr_vertex_id, &mut visited) {
+                return Err(ExcelError::new(ExcelErrorKind::Circ)
+                    .with_message("Circular reference through named range".to_string()));
+            }
+        }
+
         // Remove old dependencies first
         self.remove_dependent_edges(addr_vertex_id);
+        self.detach_vertex_from_names(addr_vertex_id);
 
         // Update vertex properties
         self.store
@@ -1140,6 +1259,10 @@ impl DependencyGraph {
 
         if volatile {
             self.store.set_volatile(addr_vertex_id, true);
+        }
+
+        if !named_dependencies.is_empty() {
+            self.attach_vertex_to_names(addr_vertex_id, &named_dependencies);
         }
 
         if let (true, Some(t)) = (dbg, t0) {
@@ -1194,7 +1317,10 @@ impl DependencyGraph {
         // Value cells don't get marked dirty themselves but are still affected
         let is_formula = matches!(
             self.store.kind(vertex_id),
-            VertexKind::FormulaScalar | VertexKind::FormulaArray
+            VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::NamedScalar
+                | VertexKind::NamedArray
         );
 
         if is_formula {
@@ -1209,6 +1335,12 @@ impl DependencyGraph {
             // Get dependents (vertices that depend on this vertex)
             let dependents = self.get_dependents(vertex_id);
             to_visit.extend(&dependents);
+
+            if let Some(name_set) = self.cell_to_name_dependents.get(&vertex_id) {
+                for &name_vertex in name_set {
+                    to_visit.push(name_vertex);
+                }
+            }
 
             // Check range dependencies
             let view = self.store.view(vertex_id);
@@ -1266,16 +1398,15 @@ impl DependencyGraph {
                             let range_sheet_name = sheet
                                 .as_deref()
                                 .unwrap_or_else(|| self.sheet_name(dirty_sheet_id));
-                            if let Some(range_sheet_id) = self.sheet_reg.get_id(range_sheet_name) {
-                                if range_sheet_id == dirty_sheet_id
-                                    && row >= start_row.unwrap_or(1)
-                                    && row <= end_row.unwrap_or(u32::MAX)
-                                    && col >= start_col.unwrap_or(1)
-                                    && col <= end_col.unwrap_or(u32::MAX)
-                                {
-                                    to_visit.push(dep_id);
-                                    break; // Found a matching range
-                                }
+                            if let Some(range_sheet_id) = self.sheet_reg.get_id(range_sheet_name)
+                                && range_sheet_id == dirty_sheet_id
+                                && row >= start_row.unwrap_or(1)
+                                && row <= end_row.unwrap_or(u32::MAX)
+                                && col >= start_col.unwrap_or(1)
+                                && col <= end_col.unwrap_or(u32::MAX)
+                            {
+                                to_visit.push(dep_id);
+                                break; // Found a matching range
                             }
                         }
                     }
@@ -1316,7 +1447,10 @@ impl DependencyGraph {
                 // Only include formula vertices
                 matches!(
                     self.store.kind(id),
-                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                    VertexKind::FormulaScalar
+                        | VertexKind::FormulaArray
+                        | VertexKind::NamedScalar
+                        | VertexKind::NamedArray
                 )
             })
             .collect();
@@ -1354,12 +1488,14 @@ impl DependencyGraph {
         let mut dependencies = FxHashSet::default();
         let mut range_dependencies = Vec::new();
         let mut created_placeholders = Vec::new();
+        let mut named_dependencies = Vec::new();
         self.extract_dependencies_recursive(
             ast,
             current_sheet_id,
             &mut dependencies,
             &mut range_dependencies,
             &mut created_placeholders,
+            &mut named_dependencies,
         )?;
 
         // Deduplicate range references
@@ -1370,10 +1506,14 @@ impl DependencyGraph {
             }
         }
 
+        named_dependencies.sort_unstable_by_key(|v| v.0);
+        named_dependencies.dedup_by_key(|v| v.0);
+
         Ok((
             dependencies.into_iter().collect(),
             deduped_ranges,
             created_placeholders,
+            named_dependencies,
         ))
     }
 
@@ -1384,6 +1524,7 @@ impl DependencyGraph {
         dependencies: &mut FxHashSet<VertexId>,
         range_dependencies: &mut Vec<ReferenceType>,
         created_placeholders: &mut Vec<CellRef>,
+        named_dependencies: &mut Vec<VertexId>,
     ) -> Result<(), ExcelError> {
         match &ast.node_type {
             ASTNodeType::Reference { reference, .. } => {
@@ -1447,75 +1588,9 @@ impl DependencyGraph {
                     }
                     ReferenceType::NamedRange(name) => {
                         // Resolve the named range
-                        if let Some(definition) = self.resolve_name(name, current_sheet_id) {
-                            // Clone the definition to avoid borrow issues
-                            let definition = definition.clone();
-
-                            match definition {
-                                NamedDefinition::Cell(cell_ref) => {
-                                    let vertex_id =
-                                        self.get_or_create_vertex(&cell_ref, created_placeholders);
-                                    dependencies.insert(vertex_id);
-                                }
-                                NamedDefinition::Range(range_ref) => {
-                                    // Calculate range size
-                                    let height = range_ref
-                                        .end
-                                        .coord
-                                        .row
-                                        .saturating_sub(range_ref.start.coord.row)
-                                        + 1;
-                                    let width = range_ref
-                                        .end
-                                        .coord
-                                        .col
-                                        .saturating_sub(range_ref.start.coord.col)
-                                        + 1;
-                                    let size = (width * height) as usize;
-
-                                    if size <= self.config.range_expansion_limit {
-                                        // Expand to individual cells
-                                        for row in
-                                            range_ref.start.coord.row..=range_ref.end.coord.row
-                                        {
-                                            for col in
-                                                range_ref.start.coord.col..=range_ref.end.coord.col
-                                            {
-                                                let coord = Coord::new(row, col, true, true);
-                                                let addr =
-                                                    CellRef::new(range_ref.start.sheet_id, coord);
-                                                let vertex_id = self.get_or_create_vertex(
-                                                    &addr,
-                                                    created_placeholders,
-                                                );
-                                                dependencies.insert(vertex_id);
-                                            }
-                                        }
-                                    } else {
-                                        // Keep as compressed range
-                                        let sheet_name = self.sheet_name(range_ref.start.sheet_id);
-                                        range_dependencies.push(ReferenceType::Range {
-                                            sheet: Some(sheet_name.to_string()),
-                                            start_row: Some(range_ref.start.coord.row),
-                                            start_col: Some(range_ref.start.coord.col),
-                                            end_row: Some(range_ref.end.coord.row),
-                                            end_col: Some(range_ref.end.coord.col),
-                                        });
-                                    }
-                                }
-                                NamedDefinition::Formula {
-                                    dependencies: formula_deps,
-                                    range_deps,
-                                    ..
-                                } => {
-                                    // Add pre-computed dependencies
-                                    dependencies.extend(formula_deps);
-                                    range_dependencies.extend(range_deps);
-                                }
-                            }
-
-                            // Note: We should track that this vertex uses this name for invalidation
-                            // This will be done after the vertex is created in set_cell_formula
+                        if let Some(named_range) = self.resolve_name_entry(name, current_sheet_id) {
+                            dependencies.insert(named_range.vertex);
+                            named_dependencies.push(named_range.vertex);
                         } else {
                             return Err(ExcelError::new(ExcelErrorKind::Name)
                                 .with_message(format!("Undefined name: {name}")));
@@ -1531,6 +1606,7 @@ impl DependencyGraph {
                     dependencies,
                     range_dependencies,
                     created_placeholders,
+                    named_dependencies,
                 )?;
                 self.extract_dependencies_recursive(
                     right,
@@ -1538,6 +1614,7 @@ impl DependencyGraph {
                     dependencies,
                     range_dependencies,
                     created_placeholders,
+                    named_dependencies,
                 )?;
             }
             ASTNodeType::UnaryOp { expr, .. } => {
@@ -1547,6 +1624,7 @@ impl DependencyGraph {
                     dependencies,
                     range_dependencies,
                     created_placeholders,
+                    named_dependencies,
                 )?;
             }
             ASTNodeType::Function { args, .. } => {
@@ -1557,6 +1635,7 @@ impl DependencyGraph {
                         dependencies,
                         range_dependencies,
                         created_placeholders,
+                        named_dependencies,
                     )?;
                 }
             }
@@ -1569,6 +1648,7 @@ impl DependencyGraph {
                             dependencies,
                             range_dependencies,
                             created_placeholders,
+                            named_dependencies,
                         )?;
                     }
                 }
@@ -1590,7 +1670,7 @@ impl DependencyGraph {
         }
 
         created_placeholders.push(*addr);
-        let packed_coord = PackedCoord::new(addr.coord.row, addr.coord.col);
+        let packed_coord = AbsCoord::new(addr.coord.row(), addr.coord.col());
         let vertex_id = self.store.allocate(packed_coord, addr.sheet_id, 0x00);
 
         // Add vertex coordinate for CSR
@@ -1618,7 +1698,7 @@ impl DependencyGraph {
                     Some(name) => self.resolve_existing_sheet_id(name)?,
                     None => current_sheet_id,
                 };
-                let coord = Coord::new(*row, *col, true, true);
+                let coord = Coord::from_excel(*row, *col, true, true);
                 let addr = CellRef::new(sheet_id, coord);
                 Ok(self.get_or_create_vertex(&addr, created_placeholders))
             }
@@ -1640,27 +1720,27 @@ impl DependencyGraph {
         // If PK enabled, update order using a short-lived adapter without holding &mut self
         // Track dependencies that should be skipped if rejecting cycle-creating edges
         let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
-        if self.pk_order.is_some() {
-            if let Some(mut pk) = self.pk_order.take() {
-                pk.ensure_nodes(std::iter::once(dependent));
-                pk.ensure_nodes(dependencies.iter().copied());
-                {
-                    let adapter = GraphAdapter { g: self };
-                    for &dep_id in dependencies {
-                        match pk.try_add_edge(&adapter, dep_id, dependent) {
-                            Ok(_) => {}
-                            Err(_cycle) => {
-                                if self.config.pk_reject_cycle_edges {
-                                    skip_deps.insert(dep_id);
-                                } else {
-                                    pk.rebuild_full(&adapter);
-                                }
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take()
+        {
+            pk.ensure_nodes(std::iter::once(dependent));
+            pk.ensure_nodes(dependencies.iter().copied());
+            {
+                let adapter = GraphAdapter { g: self };
+                for &dep_id in dependencies {
+                    match pk.try_add_edge(&adapter, dep_id, dependent) {
+                        Ok(_) => {}
+                        Err(_cycle) => {
+                            if self.config.pk_reject_cycle_edges {
+                                skip_deps.insert(dep_id);
+                            } else {
+                                pk.rebuild_full(&adapter);
                             }
                         }
                     }
-                } // drop adapter
-                self.pk_order = Some(pk);
-            }
+                }
+            } // drop adapter
+            self.pk_order = Some(pk);
         }
 
         // Now mutate engine edges; if rejecting cycles, re-check and skip those that would create cycles
@@ -1682,27 +1762,27 @@ impl DependencyGraph {
     fn add_dependent_edges_nobatch(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
         // If PK enabled, update order using a short-lived adapter without holding &mut self
         let mut skip_deps: rustc_hash::FxHashSet<VertexId> = rustc_hash::FxHashSet::default();
-        if self.pk_order.is_some() {
-            if let Some(mut pk) = self.pk_order.take() {
-                pk.ensure_nodes(std::iter::once(dependent));
-                pk.ensure_nodes(dependencies.iter().copied());
-                {
-                    let adapter = GraphAdapter { g: self };
-                    for &dep_id in dependencies {
-                        match pk.try_add_edge(&adapter, dep_id, dependent) {
-                            Ok(_) => {}
-                            Err(_cycle) => {
-                                if self.config.pk_reject_cycle_edges {
-                                    skip_deps.insert(dep_id);
-                                } else {
-                                    pk.rebuild_full(&adapter);
-                                }
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take()
+        {
+            pk.ensure_nodes(std::iter::once(dependent));
+            pk.ensure_nodes(dependencies.iter().copied());
+            {
+                let adapter = GraphAdapter { g: self };
+                for &dep_id in dependencies {
+                    match pk.try_add_edge(&adapter, dep_id, dependent) {
+                        Ok(_) => {}
+                        Err(_cycle) => {
+                            if self.config.pk_reject_cycle_edges {
+                                skip_deps.insert(dep_id);
+                            } else {
+                                pk.rebuild_full(&adapter);
                             }
                         }
                     }
                 }
-                self.pk_order = Some(pk);
             }
+            self.pk_order = Some(pk);
         }
 
         for &dep_id in dependencies {
@@ -1862,17 +1942,17 @@ impl DependencyGraph {
             return;
         }
         // If PK enabled attempt to add maintaining ordering; fallback to rebuild if cycle
-        if self.pk_order.is_some() {
-            if let Some(mut pk) = self.pk_order.take() {
-                pk.ensure_nodes(std::iter::once(dependent));
-                pk.ensure_nodes(std::iter::once(dependency));
-                let adapter = GraphAdapter { g: self };
-                if pk.try_add_edge(&adapter, dependency, dependent).is_err() {
-                    // Cycle: rebuild full (conservative)
-                    pk.rebuild_full(&adapter);
-                }
-                self.pk_order = Some(pk);
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take()
+        {
+            pk.ensure_nodes(std::iter::once(dependent));
+            pk.ensure_nodes(std::iter::once(dependency));
+            let adapter = GraphAdapter { g: self };
+            if pk.try_add_edge(&adapter, dependency, dependent).is_err() {
+                // Cycle: rebuild full (conservative)
+                pk.rebuild_full(&adapter);
             }
+            self.pk_order = Some(pk);
         }
         self.edges.add_edge(dependent, dependency);
         self.store.set_dirty(dependent, true);
@@ -2159,13 +2239,13 @@ impl DependencyGraph {
         let dependencies = self.edges.out_edges(vertex);
 
         self.edges.begin_batch();
-        if self.pk_order.is_some() {
-            if let Some(mut pk) = self.pk_order.take() {
-                for dep in &dependencies {
-                    pk.remove_edge(*dep, vertex);
-                }
-                self.pk_order = Some(pk);
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take()
+        {
+            for dep in &dependencies {
+                pk.remove_edge(*dep, vertex);
             }
+            self.pk_order = Some(pk);
         }
         for dep in dependencies {
             self.edges.remove_edge(vertex, dep);
@@ -2290,6 +2370,247 @@ impl DependencyGraph {
         }
     }
 
+    fn detach_vertex_from_names(&mut self, vertex: VertexId) {
+        if let Some(prior) = self.vertex_to_names.remove(&vertex) {
+            for name_vertex in prior {
+                if let Some((scope, name)) = self.name_vertex_lookup.get(&name_vertex).cloned() {
+                    match scope {
+                        NameScope::Workbook => {
+                            if let Some(entry) = self.named_ranges.get_mut(&name) {
+                                entry.dependents.remove(&vertex);
+                            }
+                        }
+                        NameScope::Sheet(sheet_id) => {
+                            if let Some(entry) =
+                                self.sheet_named_ranges.get_mut(&(sheet_id, name.clone()))
+                            {
+                                entry.dependents.remove(&vertex);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn attach_vertex_to_names(&mut self, vertex: VertexId, names: &[VertexId]) {
+        if names.is_empty() {
+            return;
+        }
+        let mut unique = FxHashSet::default();
+        let mut recorded = Vec::new();
+        for &name_vertex in names {
+            if !unique.insert(name_vertex) {
+                continue;
+            }
+            if let Some((scope, name)) = self.name_vertex_lookup.get(&name_vertex).cloned() {
+                match scope {
+                    NameScope::Workbook => {
+                        if let Some(entry) = self.named_ranges.get_mut(&name) {
+                            entry.dependents.insert(vertex);
+                        }
+                    }
+                    NameScope::Sheet(sheet_id) => {
+                        if let Some(entry) =
+                            self.sheet_named_ranges.get_mut(&(sheet_id, name.clone()))
+                        {
+                            entry.dependents.insert(vertex);
+                        }
+                    }
+                }
+                recorded.push(name_vertex);
+            }
+        }
+        if !recorded.is_empty() {
+            self.vertex_to_names.insert(vertex, recorded);
+        }
+    }
+
+    fn unregister_name_cell_dependencies(&mut self, name_vertex: VertexId) {
+        if let Some(prev) = self.name_to_cell_dependencies.remove(&name_vertex) {
+            for dep in prev {
+                if let Some(set) = self.cell_to_name_dependents.get_mut(&dep) {
+                    set.remove(&name_vertex);
+                    if set.is_empty() {
+                        self.cell_to_name_dependents.remove(&dep);
+                    }
+                }
+            }
+        }
+    }
+
+    fn register_name_cell_dependencies(
+        &mut self,
+        name_vertex: VertexId,
+        dependencies: &[VertexId],
+    ) {
+        self.unregister_name_cell_dependencies(name_vertex);
+        if dependencies.is_empty() {
+            return;
+        }
+        for dep in dependencies {
+            self.cell_to_name_dependents
+                .entry(*dep)
+                .or_default()
+                .insert(name_vertex);
+        }
+        self.name_to_cell_dependencies
+            .insert(name_vertex, dependencies.to_vec());
+    }
+
+    pub(crate) fn record_pending_name_reference(
+        &mut self,
+        sheet_id: SheetId,
+        name: &str,
+        formula_vertex: VertexId,
+    ) {
+        self.pending_name_links
+            .entry(name.to_string())
+            .or_default()
+            .push((sheet_id, formula_vertex));
+    }
+
+    fn resolve_pending_name_references(
+        &mut self,
+        scope: NameScope,
+        name: &str,
+        named_vertex: VertexId,
+    ) {
+        if let Some(mut entries) = self.pending_name_links.remove(name) {
+            let mut remaining: Vec<(SheetId, VertexId)> = Vec::new();
+            for (sheet_id, formula_vertex) in entries.drain(..) {
+                let attach = match scope {
+                    NameScope::Workbook => true,
+                    NameScope::Sheet(expected) => expected == sheet_id,
+                };
+                if attach {
+                    self.add_dependent_edges(formula_vertex, &[named_vertex]);
+                    self.attach_vertex_to_names(formula_vertex, &[named_vertex]);
+                } else {
+                    remaining.push((sheet_id, formula_vertex));
+                }
+            }
+            if !remaining.is_empty() {
+                self.pending_name_links.insert(name.to_string(), remaining);
+            }
+        }
+    }
+
+    fn name_depends_on_vertex(
+        &self,
+        name_vertex: VertexId,
+        target: VertexId,
+        visited: &mut FxHashSet<VertexId>,
+    ) -> bool {
+        if !visited.insert(name_vertex) {
+            return false;
+        }
+
+        for dependency in self.edges.out_edges(name_vertex).iter().copied() {
+            if dependency == target {
+                return true;
+            }
+
+            if matches!(
+                self.store.kind(dependency),
+                VertexKind::NamedScalar | VertexKind::NamedArray
+            ) && self.name_depends_on_vertex(dependency, target, visited)
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn rebuild_name_dependencies(
+        &mut self,
+        vertex: VertexId,
+        definition: &NamedDefinition,
+        scope: NameScope,
+    ) -> Vec<VertexId> {
+        self.remove_dependent_edges(vertex);
+        self.unregister_name_cell_dependencies(vertex);
+
+        let mut dependencies: Vec<VertexId> = Vec::new();
+        let mut range_dependencies: Vec<ReferenceType> = Vec::new();
+        let mut placeholders = Vec::new();
+
+        match definition {
+            NamedDefinition::Cell(cell_ref) => {
+                let vertex_id = self.get_or_create_vertex(cell_ref, &mut placeholders);
+                dependencies.push(vertex_id);
+            }
+            NamedDefinition::Range(range_ref) => {
+                let height = range_ref
+                    .end
+                    .coord
+                    .row()
+                    .saturating_sub(range_ref.start.coord.row())
+                    + 1;
+                let width = range_ref
+                    .end
+                    .coord
+                    .col()
+                    .saturating_sub(range_ref.start.coord.col())
+                    + 1;
+                let size = (width * height) as usize;
+
+                if size <= self.config.range_expansion_limit {
+                    for row in range_ref.start.coord.row()..=range_ref.end.coord.row() {
+                        for col in range_ref.start.coord.col()..=range_ref.end.coord.col() {
+                            let coord = Coord::new(row, col, true, true);
+                            let addr = CellRef::new(range_ref.start.sheet_id, coord);
+                            let vertex_id = self.get_or_create_vertex(&addr, &mut placeholders);
+                            dependencies.push(vertex_id);
+                        }
+                    }
+                } else {
+                    let sheet_name = self.sheet_name(range_ref.start.sheet_id).to_string();
+                    range_dependencies.push(ReferenceType::Range {
+                        sheet: Some(sheet_name),
+                        start_row: Some(range_ref.start.coord.row()),
+                        start_col: Some(range_ref.start.coord.col()),
+                        end_row: Some(range_ref.end.coord.row()),
+                        end_col: Some(range_ref.end.coord.col()),
+                    });
+                }
+            }
+            NamedDefinition::Formula {
+                dependencies: formula_deps,
+                range_deps,
+                ..
+            } => {
+                dependencies.extend(formula_deps.iter().copied());
+                range_dependencies.extend(range_deps.iter().cloned());
+            }
+        }
+
+        if !dependencies.is_empty() {
+            self.add_dependent_edges(vertex, &dependencies);
+        }
+        self.register_name_cell_dependencies(vertex, &dependencies);
+
+        if !range_dependencies.is_empty() {
+            let sheet_id = match scope {
+                NameScope::Sheet(id) => id,
+                NameScope::Workbook => self.default_sheet_id,
+            };
+            self.add_range_dependent_edges(vertex, &range_dependencies, sheet_id);
+        }
+
+        dependencies
+            .iter()
+            .filter(|vid| {
+                matches!(
+                    self.store.kind(**vid),
+                    VertexKind::NamedScalar | VertexKind::NamedArray
+                )
+            })
+            .copied()
+            .collect()
+    }
+
     // Removed: vertices() and get_vertex() methods - no longer needed with SoA
     // The old AoS Vertex struct has been eliminated in favor of direct
     // access to columnar data through the VertexStore
@@ -2316,8 +2637,8 @@ impl DependencyGraph {
             let mut min_c = u32::MAX;
             let mut max_c = 0u32;
             for cell in target_cells {
-                let r = cell.coord.row;
-                let c = cell.coord.col;
+                let r = cell.coord.row();
+                let c = cell.coord.col();
                 if r < min_r {
                     min_r = r;
                 }
@@ -2357,30 +2678,30 @@ impl DependencyGraph {
             }
 
             // If cell is occupied by another formula anchor, block regardless of value visibility
-            if let Some(&vid) = self.cell_to_vertex.get(cell) {
-                if vid != anchor {
-                    // Prevent clobbering formulas (array or scalar) in the target area
-                    match self.store.kind(vid) {
-                        VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                            return Err(ExcelError::new(ExcelErrorKind::Spill)
-                                .with_message("BlockedByFormula")
-                                .with_extra(ExcelErrorExtra::Spill {
-                                    expected_rows,
-                                    expected_cols,
-                                }));
-                        }
-                        _ => {
-                            // If a non-empty value exists (and not this anchor), block
-                            if let Some(vref) = self.vertex_values.get(&vid) {
-                                let v = self.data_store.retrieve_value(*vref);
-                                if !matches!(v, LiteralValue::Empty) {
-                                    return Err(ExcelError::new(ExcelErrorKind::Spill)
-                                        .with_message("BlockedByValue")
-                                        .with_extra(ExcelErrorExtra::Spill {
-                                            expected_rows,
-                                            expected_cols,
-                                        }));
-                                }
+            if let Some(&vid) = self.cell_to_vertex.get(cell)
+                && vid != anchor
+            {
+                // Prevent clobbering formulas (array or scalar) in the target area
+                match self.store.kind(vid) {
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                        return Err(ExcelError::new(ExcelErrorKind::Spill)
+                            .with_message("BlockedByFormula")
+                            .with_extra(ExcelErrorExtra::Spill {
+                                expected_rows,
+                                expected_cols,
+                            }));
+                    }
+                    _ => {
+                        // If a non-empty value exists (and not this anchor), block
+                        if let Some(vref) = self.vertex_values.get(&vid) {
+                            let v = self.data_store.retrieve_value(*vref);
+                            if !matches!(v, LiteralValue::Empty) {
+                                return Err(ExcelError::new(ExcelErrorKind::Spill)
+                                    .with_message("BlockedByValue")
+                                    .with_extra(ExcelErrorExtra::Spill {
+                                        expected_rows,
+                                        expected_cols,
+                                    }));
                             }
                         }
                     }
@@ -2430,8 +2751,8 @@ impl DependencyGraph {
                 let sheet = self.sheet_name(cell.sheet_id).to_string();
                 ops.push(Op {
                     sheet,
-                    row: cell.coord.row,
-                    col: cell.coord.col,
+                    row: cell.coord.row(),
+                    col: cell.coord.col(),
                     new_value: LiteralValue::Empty,
                 });
             }
@@ -2440,8 +2761,8 @@ impl DependencyGraph {
         // Writes for new values (row-major to match target rectangle)
         if !target_cells.is_empty() {
             let first = target_cells.first().copied().unwrap();
-            let row0 = first.coord.row;
-            let col0 = first.coord.col;
+            let row0 = first.coord.row();
+            let col0 = first.coord.col();
             let sheet = self.sheet_name(first.sheet_id).to_string();
             for (r_off, row_vals) in values.iter().enumerate() {
                 for (c_off, v) in row_vals.iter().enumerate() {
@@ -2480,15 +2801,15 @@ impl DependencyGraph {
 
         // Apply with optional injected fault
         for (applied, op) in ops.iter().enumerate() {
-            if let Some(n) = fault_after_ops {
-                if applied == n {
-                    for idx in (0..applied).rev() {
-                        let ((ref sheet, row, col), ref old) = old_values[idx];
-                        let _ = self.set_cell_value(sheet, row, col, old.value.clone());
-                    }
-                    return Err(ExcelError::new(ExcelErrorKind::Error)
-                        .with_message("Injected persistence fault during spill commit"));
+            if let Some(n) = fault_after_ops
+                && applied == n
+            {
+                for idx in (0..applied).rev() {
+                    let ((ref sheet, row, col), ref old) = old_values[idx];
+                    let _ = self.set_cell_value(sheet, row, col, old.value.clone());
                 }
+                return Err(ExcelError::new(ExcelErrorKind::Error)
+                    .with_message("Injected persistence fault during spill commit"));
             }
             let _ = self.set_cell_value(&op.sheet, op.row, op.col, op.new_value.clone());
         }
@@ -2515,8 +2836,8 @@ impl DependencyGraph {
                 let sheet = self.sheet_name(cell.sheet_id).to_string();
                 let _ = self.set_cell_value(
                     &sheet,
-                    cell.coord.row,
-                    cell.coord.col,
+                    cell.coord.row(),
+                    cell.coord.col(),
                     LiteralValue::Empty,
                 );
                 self.spill_cell_to_anchor.remove(&cell);
@@ -2621,6 +2942,20 @@ impl DependencyGraph {
                     dependents.push(vid);
                 }
             }
+            for named in self.named_ranges.values() {
+                let vid = named.vertex;
+                let out_edges = self.edges.out_edges(vid);
+                if out_edges.contains(&vertex_id) {
+                    dependents.push(vid);
+                }
+            }
+            for named in self.sheet_named_ranges.values() {
+                let vid = named.vertex;
+                let out_edges = self.edges.out_edges(vid);
+                if out_edges.contains(&vertex_id) {
+                    dependents.push(vid);
+                }
+            }
             dependents
         } else {
             // Fast path: use reverse edges from CSR
@@ -2671,13 +3006,13 @@ impl DependencyGraph {
 
         // Remove incoming edges (vertices that depend on this vertex)
         let dependents = self.get_dependents(id);
-        if self.pk_order.is_some() {
-            if let Some(mut pk) = self.pk_order.take() {
-                for dependent in &dependents {
-                    pk.remove_edge(id, *dependent);
-                }
-                self.pk_order = Some(pk);
+        if self.pk_order.is_some()
+            && let Some(mut pk) = self.pk_order.take()
+        {
+            for dependent in &dependents {
+                pk.remove_edge(id, *dependent);
             }
+            self.pk_order = Some(pk);
         }
         for dependent in dependents {
             self.edges.remove_edge(dependent, id);
@@ -2731,13 +3066,13 @@ impl DependencyGraph {
 
     /// Update vertex coordinate
     #[doc(hidden)]
-    pub fn set_coord(&mut self, id: VertexId, coord: PackedCoord) {
+    pub fn set_coord(&mut self, id: VertexId, coord: AbsCoord) {
         self.store.set_coord(id, coord);
     }
 
     /// Update edge cache coordinate
     #[doc(hidden)]
-    pub fn update_edge_coord(&mut self, id: VertexId, coord: PackedCoord) {
+    pub fn update_edge_coord(&mut self, id: VertexId, coord: AbsCoord) {
         self.edges.update_coord(id, coord);
     }
 
@@ -2800,7 +3135,7 @@ impl DependencyGraph {
     }
 
     /// Get coord for a vertex (public for VertexEditor)
-    pub fn get_coord(&self, id: VertexId) -> PackedCoord {
+    pub fn get_coord(&self, id: VertexId) -> AbsCoord {
         self.store.coord(id)
     }
 
@@ -2851,11 +3186,12 @@ impl DependencyGraph {
         }
 
         // Extract dependencies from AST
-        let (new_dependencies, new_range_dependencies, _) =
+        let (new_dependencies, new_range_dependencies, _, named_dependencies) =
             self.extract_dependencies(&ast, sheet_id)?;
 
         // Remove old dependencies first
         self.remove_dependent_edges(id);
+        self.detach_vertex_from_names(id);
 
         // Store the new formula
         let ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
@@ -2864,6 +3200,10 @@ impl DependencyGraph {
         // Add new dependency edges
         self.add_dependent_edges(id, &new_dependencies);
         self.add_range_dependent_edges(id, &new_range_dependencies, sheet_id);
+
+        if !named_dependencies.is_empty() {
+            self.attach_vertex_to_names(id, &named_dependencies);
+        }
 
         // Mark as formula vertex
         self.store.set_kind(id, VertexKind::FormulaScalar);
@@ -2939,6 +3279,19 @@ impl DependencyGraph {
         self.mark_vertex_dirty(vertex_id);
         // In a real implementation, we would store the error in the vertex value
         // For now, just mark it dirty so it will error on next evaluation
+    }
+
+    fn mark_named_vertex_deleted(&mut self, named_range: &NamedRange) {
+        self.detach_vertex_from_names(named_range.vertex);
+        self.remove_dependent_edges(named_range.vertex);
+        self.unregister_name_cell_dependencies(named_range.vertex);
+        self.store.mark_deleted(named_range.vertex, true);
+        self.vertex_values.remove(&named_range.vertex);
+        self.vertex_formulas.remove(&named_range.vertex);
+        self.dirty_vertices.remove(&named_range.vertex);
+        self.volatile_vertices.remove(&named_range.vertex);
+        self.vertex_to_names.remove(&named_range.vertex);
+        self.name_vertex_lookup.remove(&named_range.vertex);
     }
 }
 
@@ -3058,7 +3411,9 @@ impl DependencyGraph {
             .collect();
 
         for key in sheet_names_to_remove {
-            self.sheet_named_ranges.remove(&key);
+            if let Some(named_range) = self.sheet_named_ranges.remove(&key) {
+                self.mark_named_vertex_deleted(&named_range);
+            }
         }
 
         // Remove sheet index
@@ -3192,7 +3547,7 @@ impl DependencyGraph {
         self.begin_batch();
 
         // Collect all vertices in the source sheet
-        let source_vertices: Vec<(VertexId, PackedCoord)> = self
+        let source_vertices: Vec<(VertexId, AbsCoord)> = self
             .vertices_in_sheet(source_sheet_id)
             .map(|id| (id, self.store.coord(id)))
             .collect();
@@ -3234,38 +3589,41 @@ impl DependencyGraph {
 
         // Second pass: Copy formulas and update references
         for (old_id, _) in &source_vertices {
-            if let Some(&new_id) = vertex_mapping.get(old_id) {
-                if let Some(&ast_id) = self.vertex_formulas.get(old_id) {
-                    if let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg) {
-                        // Update internal sheet references from source to new sheet
-                        let updated_ast = update_internal_sheet_references(
-                            &ast,
-                            &source_name,
-                            new_name,
-                            source_sheet_id,
-                            new_sheet_id,
-                        );
+            if let Some(&new_id) = vertex_mapping.get(old_id)
+                && let Some(&ast_id) = self.vertex_formulas.get(old_id)
+                && let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg)
+            {
+                // Update internal sheet references from source to new sheet
+                let updated_ast = update_internal_sheet_references(
+                    &ast,
+                    &source_name,
+                    new_name,
+                    source_sheet_id,
+                    new_sheet_id,
+                );
 
-                        // Store updated formula
-                        let new_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
-                        self.vertex_formulas.insert(new_id, new_ast_id);
+                // Store updated formula
+                let new_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
+                self.vertex_formulas.insert(new_id, new_ast_id);
 
-                        // Extract and add dependencies
-                        if let Ok((deps, range_deps, _)) =
-                            self.extract_dependencies(&updated_ast, new_sheet_id)
-                        {
-                            // Map dependencies to new sheet where applicable
-                            let mapped_deps: Vec<VertexId> = deps
-                                .iter()
-                                .map(|&dep_id| {
-                                    // If dependency is in the source sheet, map to new vertex
-                                    vertex_mapping.get(&dep_id).copied().unwrap_or(dep_id)
-                                })
-                                .collect();
+                // Extract and add dependencies
+                if let Ok((deps, range_deps, _, name_vertices)) =
+                    self.extract_dependencies(&updated_ast, new_sheet_id)
+                {
+                    // Map dependencies to new sheet where applicable
+                    let mapped_deps: Vec<VertexId> = deps
+                        .iter()
+                        .map(|&dep_id| {
+                            // If dependency is in the source sheet, map to new vertex
+                            vertex_mapping.get(&dep_id).copied().unwrap_or(dep_id)
+                        })
+                        .collect();
 
-                            self.add_dependent_edges(new_id, &mapped_deps);
-                            self.add_range_dependent_edges(new_id, &range_deps, new_sheet_id);
-                        }
+                    self.add_dependent_edges(new_id, &mapped_deps);
+                    self.add_range_dependent_edges(new_id, &range_deps, new_sheet_id);
+
+                    if !name_vertices.is_empty() {
+                        self.attach_vertex_to_names(new_id, &name_vertices);
                     }
                 }
             }
@@ -3297,8 +3655,29 @@ impl DependencyGraph {
                 _ => {}
             }
 
+            // Reset runtime metadata for the duplicated name
+            named_range.dependents.clear();
+            let name_vertex = self.allocate_name_vertex(named_range.scope);
+            if matches!(named_range.definition, NamedDefinition::Range(_)) {
+                self.store.set_kind(name_vertex, VertexKind::NamedArray);
+            } else {
+                self.store.set_kind(name_vertex, VertexKind::NamedScalar);
+            }
+            named_range.vertex = name_vertex;
+
+            let referenced_names = self.rebuild_name_dependencies(
+                name_vertex,
+                &named_range.definition,
+                named_range.scope,
+            );
+            if !referenced_names.is_empty() {
+                self.attach_vertex_to_names(name_vertex, &referenced_names);
+            }
+
             self.sheet_named_ranges
-                .insert((new_sheet_id, name), named_range);
+                .insert((new_sheet_id, name.clone()), named_range);
+            self.name_vertex_lookup
+                .insert(name_vertex, (NameScope::Sheet(new_sheet_id), name));
         }
 
         // End batch operations

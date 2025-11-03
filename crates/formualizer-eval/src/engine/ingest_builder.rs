@@ -1,5 +1,5 @@
 use crate::engine::graph::DependencyGraph;
-use crate::engine::packed_coord::PackedCoord;
+use formualizer_common::Coord as AbsCoord;
 // use crate::engine::plan::RangeKey; // no longer needed directly here
 use crate::engine::EvalConfig;
 use crate::{SheetId, engine::vertex::VertexId};
@@ -110,7 +110,7 @@ impl<'g> BulkIngestBuilder<'g> {
         // Materialize per-sheet to keep caches warm and reduce cross-sheet churn
         // Accumulate a flat adjacency for a single-shot CSR build
         let mut edges_adj: Vec<(u32, Vec<u32>)> = Vec::new();
-        let mut coord_accum: Vec<PackedCoord> = Vec::new();
+        let mut coord_accum: Vec<AbsCoord> = Vec::new();
         let mut id_accum: Vec<u32> = Vec::new();
         for (_sid, stage) in self.sheets.drain() {
             let t_sheet0 = Instant::now();
@@ -165,12 +165,12 @@ impl<'g> BulkIngestBuilder<'g> {
 
                 // 3) Ensure targets and referenced cells exist using batch allocation when missing
                 // Union of targets and global_cells (dedup to cut redundant lookups)
-                let mut all_coords: Vec<(SheetId, PackedCoord)> =
+                let mut all_coords: Vec<(SheetId, AbsCoord)> =
                     Vec::with_capacity(plan.formula_targets.len() + plan.global_cells.len());
                 all_coords.extend(plan.formula_targets.iter().cloned());
                 all_coords.extend(plan.global_cells.iter().cloned());
-                // Deduplicate by (SheetId, PackedCoord)
-                let mut seen: rustc_hash::FxHashSet<(SheetId, PackedCoord)> =
+                // Deduplicate by (SheetId, AbsCoord)
+                let mut seen: rustc_hash::FxHashSet<(SheetId, AbsCoord)> =
                     rustc_hash::FxHashSet::default();
                 all_coords.retain(|tpl| seen.insert(*tpl));
 
@@ -228,6 +228,28 @@ impl<'g> BulkIngestBuilder<'g> {
                         self.g.add_range_deps_from_keys(tvid, rks, stage.id);
                     }
                     t_ranges_ms += tr0.elapsed().as_millis();
+                    if let Some(names) = plan.per_formula_names.get(fi)
+                        && !names.is_empty()
+                    {
+                        let mut name_vertices = Vec::new();
+                        let (formula_sheet, _) = plan
+                            .formula_targets
+                            .get(fi)
+                            .copied()
+                            .unwrap_or((stage.id, AbsCoord::new(1, 1)));
+                        for name in names {
+                            if let Some(named) = self.g.resolve_name_entry(name, formula_sheet) {
+                                row.push(named.vertex.0);
+                                name_vertices.push(named.vertex);
+                            } else {
+                                self.g
+                                    .record_pending_name_reference(formula_sheet, name, tvid);
+                            }
+                        }
+                        if !name_vertices.is_empty() {
+                            self.g.attach_vertex_to_names(tvid, &name_vertices);
+                        }
+                    }
                     // Always add adjacency row for target (may be empty)
                     edges_adj.push((tvid.0, row.into_vec()));
                 }

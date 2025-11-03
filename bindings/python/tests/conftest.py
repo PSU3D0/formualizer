@@ -1,6 +1,5 @@
 import pytest
 
-
 try:
     import openpyxl  # type: ignore
 except Exception:  # pragma: no cover - allow skipping if not present in dev env
@@ -27,4 +26,3 @@ def xlsx_builder(tmp_path):
         return path
 
     return _build
-

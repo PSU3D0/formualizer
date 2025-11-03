@@ -1,11 +1,11 @@
 [package]
 name = "formualizer-python"
 version = "0.1.2"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name = "formualizer"
+name = "formualizer_py"
 crate-type = ["cdylib", "rlib"]
 
 [features]
@@ -18,10 +18,12 @@ tracing = ["formualizer-eval/tracing", "formualizer-workbook/tracing"]
 tracing_chrome = ["tracing", "formualizer-eval/tracing_chrome"]
 
 [dependencies]
-pyo3 = { version = "0.24.0", features = ["extension-module", "chrono"] }
+pyo3 = { workspace = true, features = ["extension-module", "chrono"] }
 formualizer-parse = { path = "../../crates/formualizer-parse" }
 formualizer-common = { path = "../../crates/formualizer-common" }
 formualizer-eval = { path = "../../crates/formualizer-eval" }
 formualizer-workbook = { path = "../../crates/formualizer-workbook", features = ["calamine"] }
-chrono = "0.4"
-serde_json = "1.0"
+formualizer-sheetport = { path = "../../crates/formualizer-sheetport" }
+sheetport-spec = { path = "../../crates/sheetport-spec" }
+chrono = { workspace = true }
+serde_json = { workspace = true }

@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 pub mod asserts;
 pub mod ast_builders;
 pub mod consts;

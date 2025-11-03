@@ -48,16 +48,16 @@ mod tests {
 
         let equality_checks_before = get_comparisons();
 
+        const TARGET: &str = "A";
         let mut sum = 0.0;
         for i in 0..sum_range.len() {
-            if criteria_range1[i] == LiteralValue::Text("A".into()) {
-                if let LiteralValue::Number(val) = criteria_range2[i] {
-                    if val >= 0.0 {
-                        if let LiteralValue::Number(s) = sum_range[i] {
-                            sum += s;
-                        }
-                    }
-                }
+            if let LiteralValue::Text(t) = &criteria_range1[i]
+                && t == TARGET
+                && let LiteralValue::Number(val) = criteria_range2[i]
+                && val >= 0.0
+                && let LiteralValue::Number(s) = sum_range[i]
+            {
+                sum += s;
             }
         }
 
@@ -65,7 +65,7 @@ mod tests {
 
         let equality_checks_after = get_comparisons();
         assert!(
-            equality_checks_after > equality_checks_before || true,
+            equality_checks_after >= equality_checks_before,
             "Equality criteria should be evaluated first for early exit"
         );
     }
@@ -92,22 +92,20 @@ mod tests {
         let mut sum_general = 0.0;
 
         for i in 0..sum_range.len() {
-            if let LiteralValue::Text(t) = &text_range[i] {
-                if t.starts_with("ap") {
-                    if let LiteralValue::Number(s) = sum_range[i] {
-                        sum_anchored += s;
-                    }
-                }
+            if let LiteralValue::Text(t) = &text_range[i]
+                && t.starts_with("ap")
+                && let LiteralValue::Number(s) = sum_range[i]
+            {
+                sum_anchored += s;
             }
         }
 
         for i in 0..sum_range.len() {
-            if let LiteralValue::Text(t) = &text_range[i] {
-                if t.contains("a") {
-                    if let LiteralValue::Number(s) = sum_range[i] {
-                        sum_general += s;
-                    }
-                }
+            if let LiteralValue::Text(t) = &text_range[i]
+                && t.contains('a')
+                && let LiteralValue::Number(s) = sum_range[i]
+            {
+                sum_general += s;
             }
         }
 
@@ -137,12 +135,11 @@ mod tests {
 
         let mut sum = 0.0;
         for i in 0..sum_range.len() {
-            if let LiteralValue::Number(n) = num_range[i] {
-                if (20.0..=40.0).contains(&n) {
-                    if let LiteralValue::Number(s) = sum_range[i] {
-                        sum += s;
-                    }
-                }
+            if let LiteralValue::Number(n) = num_range[i]
+                && (20.0..=40.0).contains(&n)
+                && let LiteralValue::Number(s) = sum_range[i]
+            {
+                sum += s;
             }
         }
 
@@ -185,18 +182,15 @@ mod tests {
 
         let mut sum = 0.0;
         for i in 0..sum_range.len() {
-            if eq_range[i] == LiteralValue::Text("X".into()) {
-                if let LiteralValue::Text(t) = &wildcard_range[i] {
-                    if t.starts_with("abc") {
-                        if let LiteralValue::Number(n) = num_range[i] {
-                            if n >= 20.0 {
-                                if let LiteralValue::Number(s) = sum_range[i] {
-                                    sum += s;
-                                }
-                            }
-                        }
-                    }
-                }
+            if let LiteralValue::Text(eq_val) = &eq_range[i]
+                && eq_val == "X"
+                && let LiteralValue::Text(pattern) = &wildcard_range[i]
+                && pattern.starts_with("abc")
+                && let LiteralValue::Number(n) = num_range[i]
+                && n >= 20.0
+                && let LiteralValue::Number(s) = sum_range[i]
+            {
+                sum += s;
             }
         }
 
@@ -214,10 +208,11 @@ mod tests {
         let mut checks = 0;
         for i in 0..sum_range.len() {
             checks += 1;
-            if criteria_range[i] == LiteralValue::Text("match".into()) {
-                if let LiteralValue::Number(s) = sum_range[i] {
-                    sum += s;
-                }
+            if let LiteralValue::Text(value) = &criteria_range[i]
+                && value == "match"
+                && let LiteralValue::Number(s) = sum_range[i]
+            {
+                sum += s;
             }
         }
 
@@ -250,37 +245,25 @@ mod tests {
 
         let mut sum_original = 0.0;
         for i in 0..sum_range.len() {
-            let mut match_all = true;
-
-            if let LiteralValue::Number(n) = criteria1[i] {
-                if !(n > 10.0) {
-                    match_all = false;
-                }
-            } else {
-                match_all = false;
-            }
-
-            if match_all && criteria2[i] != LiteralValue::Text("A".into()) {
-                match_all = false;
-            }
-
-            if match_all {
-                if let LiteralValue::Number(s) = sum_range[i] {
-                    sum_original += s;
-                }
+            if let LiteralValue::Number(n) = criteria1[i]
+                && n > 10.0
+                && let LiteralValue::Text(label) = &criteria2[i]
+                && label == "A"
+                && let LiteralValue::Number(s) = sum_range[i]
+            {
+                sum_original += s;
             }
         }
 
         let mut sum_optimized = 0.0;
         for i in 0..sum_range.len() {
-            if criteria2[i] == LiteralValue::Text("A".into()) {
-                if let LiteralValue::Number(n) = criteria1[i] {
-                    if n > 10.0 {
-                        if let LiteralValue::Number(s) = sum_range[i] {
-                            sum_optimized += s;
-                        }
-                    }
-                }
+            if let LiteralValue::Text(label) = &criteria2[i]
+                && label == "A"
+                && let LiteralValue::Number(n) = criteria1[i]
+                && n > 10.0
+                && let LiteralValue::Number(s) = sum_range[i]
+            {
+                sum_optimized += s;
             }
         }
 

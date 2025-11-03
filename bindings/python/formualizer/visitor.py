@@ -4,7 +4,7 @@ Visitor utility for traversing AST nodes.
 This module provides a simple DFS traversal utility with early-exit capability.
 """
 
-from typing import Union, Callable, Any
+from typing import Callable, Union
 
 try:
     from . import PyASTNode

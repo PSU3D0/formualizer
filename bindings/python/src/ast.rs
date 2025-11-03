@@ -1,4 +1,4 @@
-use crate::reference::{reference_type_to_py, ReferenceLike};
+use crate::reference::{ReferenceLike, reference_type_to_py};
 use crate::token::PyToken;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType};

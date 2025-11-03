@@ -9,6 +9,7 @@ mod parser;
 mod reference;
 mod resolver;
 mod sheet; // retain for compatibility
+mod sheetport;
 mod token;
 mod tokenizer;
 mod value;
@@ -47,7 +48,7 @@ fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<wor
 
 /// The main formualizer Python module
 #[pymodule]
-fn formualizer(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register all submodules
     enums::register(m)?;
     errors::register(m)?;
@@ -60,6 +61,7 @@ fn formualizer(m: &Bound<'_, PyModule>) -> PyResult<()> {
     engine::register(m)?;
     workbook::register(m)?;
     sheet::register(m)?;
+    sheetport::register(m)?;
     // Convenience functions
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(parse, m)?)?;

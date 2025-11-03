@@ -1,5 +1,5 @@
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime};
-use formualizer_common::error::ExcelError;
+use formualizer_common::{RangeAddress, error::ExcelError};
 #[cfg(feature = "json")]
 use formualizer_workbook::JsonAdapter;
 use formualizer_workbook::{CellData, LiteralValue, SpreadsheetReader, SpreadsheetWriter};
@@ -175,6 +175,7 @@ fn json_value_variants_roundtrip() {
 #[cfg(feature = "json")]
 #[test]
 fn json_metadata_roundtrip() {
+    use formualizer_workbook::traits::NamedRangeScope;
     use formualizer_workbook::{MergedRange, NamedRange, TableDefinition};
     let mut adapter = JsonAdapter::new();
     adapter.create_sheet("Meta").unwrap();
@@ -203,8 +204,8 @@ fn json_metadata_roundtrip() {
         "Meta",
         vec![NamedRange {
             name: "R1".into(),
-            sheet: Some("Meta".into()),
-            range: (1, 1, 2, 2),
+            scope: NamedRangeScope::Workbook,
+            address: RangeAddress::new("Meta", 1, 1, 2, 2).unwrap(),
         }],
     );
 

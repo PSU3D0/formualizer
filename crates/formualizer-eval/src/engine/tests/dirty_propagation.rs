@@ -91,16 +91,16 @@ fn test_mark_dirty_propagation() {
     );
 
     // A2, A3, A4 should all be dirty
-    for i in 1..4 {
+    for (idx, &vertex_id) in vertex_ids.iter().enumerate().skip(1).take(3) {
         assert!(
-            graph.is_dirty(vertex_ids[i]),
+            graph.is_dirty(vertex_id),
             "A{} should be dirty after A1 changed",
-            i + 1
+            idx + 1
         );
         assert!(
-            graph.get_vertex_kind(vertex_ids[i]) == VertexKind::FormulaScalar,
+            graph.get_vertex_kind(vertex_id) == VertexKind::FormulaScalar,
             "A{} should be a formula",
-            i + 1
+            idx + 1
         );
     }
 
@@ -383,17 +383,13 @@ fn test_dirty_propagation_performance() {
     );
 
     // Verify all downstream vertices are dirty
-    for i in 1..20 {
+    for (idx, &vertex_id) in all_vertex_ids.iter().enumerate().skip(1) {
         // Skip A1 (it's a value)
+        assert!(graph.is_dirty(vertex_id), "A{} should be dirty", idx + 1);
         assert!(
-            graph.is_dirty(all_vertex_ids[i]),
-            "A{} should be dirty",
-            i + 1
-        );
-        assert!(
-            graph.get_vertex_kind(all_vertex_ids[i]) == VertexKind::FormulaScalar,
+            graph.get_vertex_kind(vertex_id) == VertexKind::FormulaScalar,
             "A{} should be a formula",
-            i + 1
+            idx + 1
         );
     }
 }

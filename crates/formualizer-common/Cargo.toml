@@ -10,5 +10,10 @@ readme = "README.md"
 keywords = ["excel", "formula", "spreadsheet", "engine", "arrow"]
 categories = ["data-structures"]
 
+[features]
+default = []
+serde = ["dep:serde"]
+
 [dependencies]
 chrono = { workspace = true }
+serde = { workspace = true, optional = true, features = ["derive"] }

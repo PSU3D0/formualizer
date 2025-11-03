@@ -306,7 +306,8 @@ mod tests {
     fn test_invalid_string_id() {
         let interner = StringInterner::new();
 
-        assert!(StringId::INVALID.0 == u32::MAX);
+        let invalid = StringId::INVALID;
+        assert_eq!(invalid.0, u32::MAX);
         assert!(!StringId::INVALID.is_valid());
         assert_eq!(interner.get(StringId::INVALID), None);
     }

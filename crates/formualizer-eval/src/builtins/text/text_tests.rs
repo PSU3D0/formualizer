@@ -441,7 +441,7 @@ mod tests {
         );
 
         // Two decimal places
-        let pi = lit(LiteralValue::Number(3.14159));
+        let pi = lit(LiteralValue::Number(std::f64::consts::PI));
         let dec_fmt = lit(LiteralValue::Text("0.00".into()));
         assert_eq!(
             f.dispatch(

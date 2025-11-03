@@ -3,12 +3,17 @@ use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::Parser;
 
+fn serial_eval_config() -> EvalConfig {
+    EvalConfig {
+        enable_parallel: false,
+        ..Default::default()
+    }
+}
+
 #[test]
 fn spill_exceeds_sheet_bounds() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false;
-    let mut engine = Engine::new(wb, cfg);
+    let mut engine = Engine::new(wb, serial_eval_config());
 
     // Anchor at last allowed column (zero-based max 16383), spilling 1x2 should exceed bounds
     engine
@@ -37,9 +42,7 @@ fn spill_exceeds_sheet_bounds() {
 #[test]
 fn spill_exceeds_sheet_bounds_rows() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false;
-    let mut engine = Engine::new(wb, cfg);
+    let mut engine = Engine::new(wb, serial_eval_config());
 
     // Anchor at last allowed row (zero-based max 1_048_575), spilling 2 rows should exceed bounds
     engine
@@ -63,9 +66,7 @@ fn spill_exceeds_sheet_bounds_rows() {
 #[test]
 fn spill_values_update_dependents() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false;
-    let mut engine = Engine::new(wb, cfg);
+    let mut engine = Engine::new(wb, serial_eval_config());
 
     // A1 spills 2x2
     engine
@@ -78,7 +79,7 @@ fn spill_values_update_dependents() {
     // Two-pass: first pass materializes spill cells; second pass updates dependents
     let _ = engine.evaluate_all().unwrap();
     // Demand-driven compute of C1 after spill is materialized
-    let _ = engine.evaluate_until(&["C1"]).unwrap();
+    let _ = engine.evaluate_until(&[("Sheet1", 1, 3)]).unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
         Some(LiteralValue::Number(4.0))
@@ -89,7 +90,7 @@ fn spill_values_update_dependents() {
         .set_cell_formula("Sheet1", 1, 1, Parser::from("={5,6;7,8}").parse().unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
-    let _ = engine.evaluate_until(&["C1"]).unwrap();
+    let _ = engine.evaluate_until(&[("Sheet1", 1, 3)]).unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
         Some(LiteralValue::Number(8.0))
@@ -99,9 +100,7 @@ fn spill_values_update_dependents() {
 #[test]
 fn scalar_after_array_clears_spill() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false;
-    let mut engine = Engine::new(wb, cfg);
+    let mut engine = Engine::new(wb, serial_eval_config());
 
     engine
         .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
@@ -136,9 +135,7 @@ fn scalar_after_array_clears_spill() {
 #[test]
 fn empty_cells_do_not_block_spill() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false;
-    let mut engine = Engine::new(wb, cfg);
+    let mut engine = Engine::new(wb, serial_eval_config());
 
     // Pre-fill B1 with Empty explicitly
     engine
@@ -162,9 +159,7 @@ fn empty_cells_do_not_block_spill() {
 #[test]
 fn non_empty_values_block_spill() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false;
-    let mut engine = Engine::new(wb, cfg);
+    let mut engine = Engine::new(wb, serial_eval_config());
 
     // Pre-fill B1 with a non-empty value
     engine
@@ -184,9 +179,7 @@ fn non_empty_values_block_spill() {
 #[test]
 fn overlapping_spills_conflict() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false;
-    let mut engine = Engine::new(wb, cfg);
+    let mut engine = Engine::new(wb, serial_eval_config());
 
     // A1 and A2 both try to spill 2x2 overlapping on A2:B3
     engine
@@ -209,9 +202,7 @@ fn overlapping_spills_conflict() {
 #[test]
 fn formula_cells_block_spill() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false;
-    let mut engine = Engine::new(wb, cfg);
+    let mut engine = Engine::new(wb, serial_eval_config());
 
     // Put a scalar formula in B1
     engine
@@ -233,9 +224,7 @@ fn formula_cells_block_spill() {
 #[test]
 fn overlapping_spills_firstwins_is_deterministic_sequential() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false;
-    let mut engine = Engine::new(wb, cfg);
+    let mut engine = Engine::new(wb, serial_eval_config());
 
     // Evaluate A1 first, then A2; A2 should conflict and show #SPILL! (FirstWins)
     engine
@@ -259,9 +248,7 @@ fn overlapping_spills_firstwins_is_deterministic_sequential() {
 #[test]
 fn spills_on_different_sheets_do_not_conflict() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = false;
-    let mut engine = Engine::new(wb, cfg);
+    let mut engine = Engine::new(wb, serial_eval_config());
     // Add Sheet2
     engine.graph.add_sheet("Sheet2").unwrap();
 

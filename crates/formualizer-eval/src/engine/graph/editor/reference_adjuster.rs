@@ -93,14 +93,14 @@ impl ReferenceAdjuster {
                 before,
                 count,
             } if cell_ref.sheet_id == *sheet_id => {
-                if coord.row_abs() || coord.row < *before {
+                if coord.row_abs() || coord.row() < *before {
                     // Absolute references or cells before insert point don't move
                     coord
                 } else {
                     // Shift down
                     Coord::new(
-                        coord.row + count,
-                        coord.col,
+                        coord.row() + count,
+                        coord.col(),
                         coord.row_abs(),
                         coord.col_abs(),
                     )
@@ -114,14 +114,14 @@ impl ReferenceAdjuster {
                 if coord.row_abs() {
                     // Absolute references don't adjust
                     coord
-                } else if coord.row >= *start && coord.row < start + count {
+                } else if coord.row() >= *start && coord.row() < start + count {
                     // Cell deleted
                     return None;
-                } else if coord.row >= start + count {
+                } else if coord.row() >= start + count {
                     // Shift up
                     Coord::new(
-                        coord.row - count,
-                        coord.col,
+                        coord.row() - count,
+                        coord.col(),
                         coord.row_abs(),
                         coord.col_abs(),
                     )
@@ -135,14 +135,14 @@ impl ReferenceAdjuster {
                 before,
                 count,
             } if cell_ref.sheet_id == *sheet_id => {
-                if coord.col_abs() || coord.col < *before {
+                if coord.col_abs() || coord.col() < *before {
                     // Absolute references or cells before insert point don't move
                     coord
                 } else {
                     // Shift right
                     Coord::new(
-                        coord.row,
-                        coord.col + count,
+                        coord.row(),
+                        coord.col() + count,
                         coord.row_abs(),
                         coord.col_abs(),
                     )
@@ -156,14 +156,14 @@ impl ReferenceAdjuster {
                 if coord.col_abs() {
                     // Absolute references don't adjust
                     coord
-                } else if coord.col >= *start && coord.col < start + count {
+                } else if coord.col() >= *start && coord.col() < start + count {
                     // Cell deleted
                     return None;
-                } else if coord.col >= start + count {
+                } else if coord.col() >= start + count {
                     // Shift left
                     Coord::new(
-                        coord.row,
-                        coord.col - count,
+                        coord.row(),
+                        coord.col() - count,
                         coord.row_abs(),
                         coord.col_abs(),
                     )
@@ -197,7 +197,7 @@ impl ReferenceAdjuster {
                         | ShiftOperation::InsertColumns { sheet_id, .. }
                         | ShiftOperation::DeleteColumns { sheet_id, .. } => *sheet_id,
                     },
-                    Coord::new(*row, *col, false, false), // Assume relative for now
+                    Coord::from_excel(*row, *col, false, false), // Assume relative for now
                 );
 
                 match self.adjust_cell_ref(&temp_ref, op) {
@@ -212,8 +212,8 @@ impl ReferenceAdjuster {
                     }
                     Some(adjusted) => ReferenceType::Cell {
                         sheet: sheet.clone(),
-                        row: adjusted.coord.row,
-                        col: adjusted.coord.col,
+                        row: adjusted.coord.row(),
+                        col: adjusted.coord.col(),
                     },
                 }
             }
@@ -523,24 +523,20 @@ mod tests {
         // Verify by checking the AST structure
         if let ASTNodeType::BinaryOp { left, right, .. } = &adjusted.node_type {
             if let ASTNodeType::Reference {
-                reference: left_ref,
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &left.node_type
             {
-                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = left_ref {
-                    assert_eq!(*row, 5); // A5 unchanged
-                    assert_eq!(*col, 1);
-                }
+                assert_eq!(*row, 5); // A5 unchanged
+                assert_eq!(*col, 1);
             }
             if let ASTNodeType::Reference {
-                reference: right_ref,
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &right.node_type
             {
-                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = right_ref {
-                    assert_eq!(*row, 12); // B10 -> B12
-                    assert_eq!(*col, 2);
-                }
+                assert_eq!(*row, 12); // B10 -> B12
+                assert_eq!(*col, 2);
             }
         }
     }
@@ -565,27 +561,21 @@ mod tests {
         // C1 -> #REF! (deleted), F1 -> D1 (shifted left by 2)
         if let ASTNodeType::BinaryOp { left, right, .. } = &adjusted.node_type {
             if let ASTNodeType::Reference {
-                reference: left_ref,
+                reference: formualizer_parse::parser::ReferenceType::Cell { sheet, row, col },
                 ..
             } = &left.node_type
             {
-                // C1 should become #REF! (marked with special sheet name)
-                if let formualizer_parse::parser::ReferenceType::Cell { sheet, row, col } = left_ref
-                {
-                    assert_eq!(sheet.as_deref(), Some("#REF"));
-                    assert_eq!(*row, 0);
-                    assert_eq!(*col, 0);
-                }
+                assert_eq!(sheet.as_deref(), Some("#REF"));
+                assert_eq!(*row, 0);
+                assert_eq!(*col, 0);
             }
             if let ASTNodeType::Reference {
-                reference: right_ref,
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &right.node_type
             {
-                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = right_ref {
-                    assert_eq!(*row, 1); // Row unchanged
-                    assert_eq!(*col, 4); // F1 (col 6) -> D1 (col 4)
-                }
+                assert_eq!(*row, 1); // Row unchanged
+                assert_eq!(*col, 4); // F1 (col 6) -> D1 (col 4)
             }
         }
     }
@@ -608,20 +598,17 @@ mod tests {
         );
 
         // Range should expand: A1:A10 -> A1:A13
-        if let ASTNodeType::Function { args, .. } = &adjusted.node_type {
-            if let Some(first_arg) = args.first() {
-                if let ASTNodeType::Reference { reference, .. } = &first_arg.node_type {
-                    if let formualizer_parse::parser::ReferenceType::Range {
-                        start_row,
-                        end_row,
-                        ..
-                    } = reference
-                    {
-                        assert_eq!(start_row.unwrap_or(0), 1); // A1 start unchanged
-                        assert_eq!(end_row.unwrap_or(0), 13); // A10 -> A13
-                    }
-                }
-            }
+        if let ASTNodeType::Function { args, .. } = &adjusted.node_type
+            && let Some(ASTNodeType::Reference {
+                reference:
+                    formualizer_parse::parser::ReferenceType::Range {
+                        start_row, end_row, ..
+                    },
+                ..
+            }) = args.first().map(|arg| &arg.node_type)
+        {
+            assert_eq!(start_row.unwrap_or(0), 1); // A1 start unchanged
+            assert_eq!(end_row.unwrap_or(0), 13); // A10 -> A13
         }
     }
 
@@ -636,24 +623,20 @@ mod tests {
         // A1 -> D3, B2 -> E4
         if let ASTNodeType::BinaryOp { left, right, .. } = &adjusted.node_type {
             if let ASTNodeType::Reference {
-                reference: left_ref,
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &left.node_type
             {
-                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = left_ref {
-                    assert_eq!(*row, 3); // A1 (1,1) -> D3 (3,4)
-                    assert_eq!(*col, 4);
-                }
+                assert_eq!(*row, 3); // A1 (1,1) -> D3 (3,4)
+                assert_eq!(*col, 4);
             }
             if let ASTNodeType::Reference {
-                reference: right_ref,
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
                 ..
             } = &right.node_type
             {
-                if let formualizer_parse::parser::ReferenceType::Cell { row, col, .. } = right_ref {
-                    assert_eq!(*row, 4); // B2 (2,2) -> E4 (4,5)
-                    assert_eq!(*col, 5);
-                }
+                assert_eq!(*row, 4); // B2 (2,2) -> E4 (4,5)
+                assert_eq!(*col, 5);
             }
         }
     }
@@ -681,8 +664,8 @@ mod tests {
         // Absolute row should not change
         assert!(result.is_some());
         let adjusted = result.unwrap();
-        assert_eq!(adjusted.coord.row, 5); // Row stays at 5
-        assert_eq!(adjusted.coord.col, 2); // Column unchanged
+        assert_eq!(adjusted.coord.row(), 5); // Row stays at 5
+        assert_eq!(adjusted.coord.col(), 2); // Column unchanged
         assert!(adjusted.coord.row_abs());
         assert!(!adjusted.coord.col_abs());
     }
@@ -710,8 +693,8 @@ mod tests {
         // Absolute column should not change
         assert!(result.is_some());
         let adjusted = result.unwrap();
-        assert_eq!(adjusted.coord.row, 5); // Row unchanged
-        assert_eq!(adjusted.coord.col, 2); // Column stays at 2 despite deletion
+        assert_eq!(adjusted.coord.row(), 5); // Row unchanged
+        assert_eq!(adjusted.coord.col(), 2); // Column stays at 2 despite deletion
         assert!(!adjusted.coord.row_abs());
         assert!(adjusted.coord.col_abs());
     }
@@ -737,8 +720,8 @@ mod tests {
 
         assert!(result1.is_some());
         let adj1 = result1.unwrap();
-        assert_eq!(adj1.coord.row, 7); // Row 5 -> 7 (shifted)
-        assert_eq!(adj1.coord.col, 1); // Column stays at 1 (absolute)
+        assert_eq!(adj1.coord.row(), 7); // Row 5 -> 7 (shifted)
+        assert_eq!(adj1.coord.col(), 1); // Column stays at 1 (absolute)
 
         // Test 2: B$10 (col relative, row absolute) with column deletion
         let mixed2 = CellRef::new(
@@ -757,8 +740,8 @@ mod tests {
 
         assert!(result2.is_some());
         let adj2 = result2.unwrap();
-        assert_eq!(adj2.coord.row, 10); // Row stays at 10 (absolute)
-        assert_eq!(adj2.coord.col, 2); // Column 3 -> 2 (shifted left)
+        assert_eq!(adj2.coord.row(), 10); // Row stays at 10 (absolute)
+        assert_eq!(adj2.coord.col(), 2); // Column 3 -> 2 (shifted left)
     }
 
     #[test]
@@ -783,8 +766,8 @@ mod tests {
             },
         );
         assert!(result1.is_some());
-        assert_eq!(result1.unwrap().coord.row, 1);
-        assert_eq!(result1.unwrap().coord.col, 1);
+        assert_eq!(result1.unwrap().coord.row(), 1);
+        assert_eq!(result1.unwrap().coord.col(), 1);
 
         // Delete columns
         let result2 = adjuster.adjust_cell_ref(
@@ -796,8 +779,8 @@ mod tests {
             },
         );
         assert!(result2.is_some());
-        assert_eq!(result2.unwrap().coord.row, 1);
-        assert_eq!(result2.unwrap().coord.col, 1);
+        assert_eq!(result2.unwrap().coord.row(), 1);
+        assert_eq!(result2.unwrap().coord.col(), 1);
     }
 
     #[test]
@@ -855,24 +838,23 @@ mod tests {
         );
 
         // Range should expand: B2:D10 -> B2:D13
-        if let ASTNodeType::Function { args, .. } = &adjusted.node_type {
-            if let Some(first_arg) = args.first() {
-                if let ASTNodeType::Reference { reference, .. } = &first_arg.node_type {
-                    if let formualizer_parse::parser::ReferenceType::Range {
+        if let ASTNodeType::Function { args, .. } = &adjusted.node_type
+            && let Some(ASTNodeType::Reference {
+                reference:
+                    formualizer_parse::parser::ReferenceType::Range {
                         start_row,
                         end_row,
                         start_col,
                         end_col,
                         ..
-                    } = reference
-                    {
-                        assert_eq!(*start_row, Some(2)); // Start unchanged
-                        assert_eq!(*end_row, Some(13)); // End expanded from 10 to 13
-                        assert_eq!(*start_col, Some(2)); // B column
-                        assert_eq!(*end_col, Some(4)); // D column
-                    }
-                }
-            }
+                    },
+                ..
+            }) = args.first().map(|arg| &arg.node_type)
+        {
+            assert_eq!(*start_row, Some(2)); // Start unchanged
+            assert_eq!(*end_row, Some(13)); // End expanded from 10 to 13
+            assert_eq!(*start_col, Some(2)); // B column
+            assert_eq!(*end_col, Some(4)); // D column
         }
     }
 
@@ -894,20 +876,17 @@ mod tests {
         );
 
         // Range should contract: A5:A20 -> A5:A15
-        if let ASTNodeType::Function { args, .. } = &adjusted.node_type {
-            if let Some(first_arg) = args.first() {
-                if let ASTNodeType::Reference { reference, .. } = &first_arg.node_type {
-                    if let formualizer_parse::parser::ReferenceType::Range {
-                        start_row,
-                        end_row,
-                        ..
-                    } = reference
-                    {
-                        assert_eq!(*start_row, Some(5)); // Start unchanged
-                        assert_eq!(*end_row, Some(15)); // End contracted from 20 to 15
-                    }
-                }
-            }
+        if let ASTNodeType::Function { args, .. } = &adjusted.node_type
+            && let Some(ASTNodeType::Reference {
+                reference:
+                    formualizer_parse::parser::ReferenceType::Range {
+                        start_row, end_row, ..
+                    },
+                ..
+            }) = args.first().map(|arg| &arg.node_type)
+        {
+            assert_eq!(*start_row, Some(5)); // Start unchanged
+            assert_eq!(*end_row, Some(15)); // End contracted from 20 to 15
         }
     }
 }

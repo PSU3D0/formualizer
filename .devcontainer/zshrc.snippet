@@ -1,0 +1,7 @@
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise activate)"
+  eval "$(mise hook-env)"
+fi
+
+alias ll='ls -alF'
+alias ta='tmux attach -t dev || tmux new -s dev'

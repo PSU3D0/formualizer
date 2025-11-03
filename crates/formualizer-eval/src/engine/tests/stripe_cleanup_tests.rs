@@ -9,6 +9,10 @@ use crate::engine::{DependencyGraph, EvalConfig, StripeKey, StripeType};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
+fn range_limit_config(limit: usize) -> EvalConfig {
+    EvalConfig::default().with_range_expansion_limit(limit)
+}
+
 /// Helper to create a SUM(range) AST node
 fn sum_range_ast(
     sheet: Option<&str>,
@@ -49,9 +53,7 @@ fn sum_range_ast(
 
 #[test]
 fn test_remove_dependent_edges_cleans_column_stripes() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16; // Force stripe usage
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(range_limit_config(16));
 
     // Create formula B1 = SUM(A1:A1000) - should create column stripe for column A
     graph
@@ -105,9 +107,7 @@ fn test_remove_dependent_edges_cleans_column_stripes() {
 
 #[test]
 fn test_remove_dependent_edges_cleans_row_stripes() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(range_limit_config(16));
 
     // Create formula A2 = SUM(A1:Z1) - should create row stripe for row 1
     graph
@@ -177,9 +177,7 @@ fn test_remove_dependent_edges_cleans_row_stripes() {
 
 #[test]
 fn test_remove_dependent_edges_cleans_block_stripes() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    config.enable_block_stripes = true;
+    let config = range_limit_config(16).with_block_stripes(true);
     let mut graph = DependencyGraph::new_with_config(config);
 
     // Create formula AA1 = SUM(A1:Z26) - should create block stripe
@@ -227,9 +225,7 @@ fn test_remove_dependent_edges_cleans_block_stripes() {
 
 #[test]
 fn test_remove_dependent_edges_handles_multiple_stripes() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    config.enable_block_stripes = true;
+    let config = range_limit_config(16).with_block_stripes(true);
     let mut graph = DependencyGraph::new_with_config(config);
 
     // Create formula that spans multiple stripes: B100 = SUM(A1:A500)
@@ -297,10 +293,11 @@ fn test_remove_dependent_edges_handles_multiple_stripes() {
                 stripe_type: StripeType::Block,
                 index: crate::engine::graph::block_index(block_row * 32, block_col * 32),
             };
-            if let Some(deps) = stripes.get(&block_key) {
-                if deps.contains(&formula_id) {
-                    found_formula_in_blocks = true;
-                }
+            if stripes
+                .get(&block_key)
+                .is_some_and(|deps| deps.contains(&formula_id))
+            {
+                found_formula_in_blocks = true;
             }
         }
     }
@@ -313,9 +310,7 @@ fn test_remove_dependent_edges_handles_multiple_stripes() {
 
 #[test]
 fn test_empty_stripes_are_removed() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(range_limit_config(16));
 
     // Create two formulas that depend on the same column
     // B1 = SUM(A1:A100)
@@ -403,9 +398,7 @@ fn test_empty_stripes_are_removed() {
 
 #[test]
 fn test_cross_sheet_stripe_cleanup() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(range_limit_config(16));
 
     graph.add_sheet("Sheet2").unwrap();
     graph.add_sheet("Sheet3").unwrap();
@@ -478,9 +471,7 @@ fn test_cross_sheet_stripe_cleanup() {
 
 #[test]
 fn test_mixed_stripe_types_cleanup() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    config.enable_block_stripes = true;
+    let config = range_limit_config(16).with_block_stripes(true);
     let mut graph = DependencyGraph::new_with_config(config);
 
     // Create formula that generates multiple stripe types
@@ -561,9 +552,7 @@ fn test_mixed_stripe_types_cleanup() {
 
 #[test]
 fn test_formula_replacement_doesnt_affect_other_formulas() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(range_limit_config(16));
 
     // Create two formulas using the same column stripe
     // B1 = SUM(A1:A100)

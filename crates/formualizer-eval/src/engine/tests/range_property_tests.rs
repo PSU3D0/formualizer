@@ -58,12 +58,17 @@ fn sum_range_ast(
     }
 }
 
+fn config_with_range_limit(limit: usize) -> EvalConfig {
+    EvalConfig {
+        range_expansion_limit: limit,
+        ..Default::default()
+    }
+}
+
 /// Test the core property for small ranges (expanded to individual cell dependencies)
 #[test]
 fn test_property_small_range_dependency_tracking() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 100; // Ensure small ranges are expanded
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(config_with_range_limit(100)); // Ensure small ranges are expanded
 
     // Test range: A1:C3 (3x3 = 9 cells)
     let start_row = 1;
@@ -143,9 +148,7 @@ fn test_property_small_range_dependency_tracking() {
 /// Test the core property for large ranges (using stripe-based tracking)
 #[test]
 fn test_property_large_range_stripe_tracking() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16; // Force stripe tracking for larger ranges
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(config_with_range_limit(16)); // Force stripe tracking for larger ranges
 
     // Test tall range: A1:A1000 (1000 cells)
     let start_row = 1;
@@ -222,9 +225,7 @@ fn test_property_large_range_stripe_tracking() {
 /// Test the core property for wide ranges
 #[test]
 fn test_property_wide_range_stripe_tracking() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(config_with_range_limit(16));
 
     // Test wide range: A1:Z1 (26 columns, 1 row)
     let start_row = 1;
@@ -301,9 +302,8 @@ fn test_property_wide_range_stripe_tracking() {
 /// Test the core property for square/dense ranges with block stripes
 #[test]
 fn test_property_dense_range_block_stripe_tracking() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    config.enable_block_stripes = true;
+    let mut config = config_with_range_limit(16);
+    config = config.with_block_stripes(true);
     let mut graph = DependencyGraph::new_with_config(config);
 
     // Test dense range: A1:Z26 (676 cells in a 26x26 square)
@@ -386,9 +386,7 @@ fn test_property_dense_range_block_stripe_tracking() {
 /// Test multiple overlapping ranges
 #[test]
 fn test_property_multiple_overlapping_ranges() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(config_with_range_limit(16));
 
     // Formula 1: D1 = SUM(A1:C100) - tall in columns A-C
     graph
@@ -481,9 +479,7 @@ fn test_property_multiple_overlapping_ranges() {
 /// Test cross-sheet range dependencies
 #[test]
 fn test_property_cross_sheet_ranges() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(config_with_range_limit(16));
 
     graph.add_sheet("Sheet2").unwrap();
 
@@ -539,9 +535,7 @@ fn test_property_cross_sheet_ranges() {
 /// Test edge cases and boundary conditions
 #[test]
 fn test_property_edge_cases() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4; // Small limit to test both expansion and stripe modes
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(config_with_range_limit(4)); // Small limit to test both expansion and stripe modes
 
     // Single cell range (edge case)
     graph
@@ -592,9 +586,7 @@ fn test_property_edge_cases() {
 /// Test behavior when formula is replaced (should clean up old dependencies)
 #[test]
 fn test_property_formula_replacement_cleanup() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 16;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(config_with_range_limit(16));
 
     let formula_row = 1;
     let formula_col = 1;

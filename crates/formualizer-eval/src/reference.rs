@@ -23,7 +23,7 @@
 use core::fmt;
 
 use crate::engine::sheet_registry::SheetRegistry; // `no_std`‑friendly; swap for `std::fmt` if you prefer
-use formualizer_common::{ExcelError, ExcelErrorKind};
+use formualizer_common::{ExcelError, ExcelErrorKind, RelativeCoord};
 use formualizer_parse::parser::ReferenceType;
 
 //------------------------------------------------------------------------------
@@ -32,119 +32,75 @@ use formualizer_parse::parser::ReferenceType;
 
 /// One 2‑D grid coordinate (row, column) **plus** absolute/relative flags.
 ///
-/// * `row` and `col` are *zero‑based* indices.
-/// * `flags` is a 2‑bit field: `bit0 = row_abs`, `bit1 = col_abs`.
+/// Internally delegates to `RelativeCoord` from `formualizer-common`, adding the
+/// historical API surface used throughout the evaluator.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct Coord {
-    pub row: u32,
-    pub col: u32,
-    flags: u8,
-}
+pub struct Coord(RelativeCoord);
 
 impl Coord {
-    /// Creates a new coordinate.
     #[inline]
-    pub const fn new(row: u32, col: u32, row_abs: bool, col_abs: bool) -> Self {
-        let flags = (row_abs as u8) | ((col_abs as u8) << 1);
-        Self { row, col, flags }
+    pub fn new(row: u32, col: u32, row_abs: bool, col_abs: bool) -> Self {
+        Self(RelativeCoord::new(row, col, row_abs, col_abs))
     }
 
-    /// Absolute/relative accessors.
     #[inline]
-    pub const fn row_abs(self) -> bool {
-        self.flags & 0b01 != 0
-    }
-    #[inline]
-    pub const fn col_abs(self) -> bool {
-        self.flags & 0b10 != 0
+    pub fn from_excel(row: u32, col: u32, row_abs: bool, col_abs: bool) -> Self {
+        let row0 = row.saturating_sub(1);
+        let col0 = col.saturating_sub(1);
+        Self(RelativeCoord::new(row0, col0, row_abs, col_abs))
     }
 
-    /// Returns a copy with modified row anchor.
     #[inline]
-    pub const fn with_row_abs(mut self, abs: bool) -> Self {
-        if abs {
-            self.flags |= 0b01
-        } else {
-            self.flags &= !0b01;
-        }
-        self
-    }
-    /// Returns a copy with modified col anchor.
-    #[inline]
-    pub const fn with_col_abs(mut self, abs: bool) -> Self {
-        if abs {
-            self.flags |= 0b10
-        } else {
-            self.flags &= !0b10;
-        }
-        self
+    pub fn row(self) -> u32 {
+        self.0.row()
     }
 
-    /// Offset by signed deltas *ignoring* anchor flags (internal helper).
     #[inline]
-    pub const fn offset(self, drow: i32, dcol: i32) -> Self {
-        Self {
-            row: ((self.row as i32) + drow) as u32,
-            col: ((self.col as i32) + dcol) as u32,
-            flags: self.flags,
-        }
+    pub fn col(self) -> u32 {
+        self.0.col()
     }
 
-    /// Re‐base this coordinate as if the *formula containing it* was copied
-    /// from `origin` to `target`.
+    #[inline]
+    pub fn row_abs(self) -> bool {
+        self.0.row_abs()
+    }
+
+    #[inline]
+    pub fn col_abs(self) -> bool {
+        self.0.col_abs()
+    }
+
+    #[inline]
+    pub fn with_row_abs(self, abs: bool) -> Self {
+        Self(self.0.with_row_abs(abs))
+    }
+
+    #[inline]
+    pub fn with_col_abs(self, abs: bool) -> Self {
+        Self(self.0.with_col_abs(abs))
+    }
+
+    #[inline]
+    pub fn offset(self, drow: i32, dcol: i32) -> Self {
+        Self(self.0.offset(drow, dcol))
+    }
+
     #[inline]
     pub fn rebase(self, origin: Coord, target: Coord) -> Self {
-        let drow = target.row as i32 - origin.row as i32;
-        let dcol = target.col as i32 - origin.col as i32;
-        let new_row = if self.row_abs() {
-            self.row
-        } else {
-            ((self.row as i32) + drow) as u32
-        };
-        let new_col = if self.col_abs() {
-            self.col
-        } else {
-            ((self.col as i32) + dcol) as u32
-        };
-        Self {
-            row: new_row,
-            col: new_col,
-            flags: self.flags,
-        }
+        Self(self.0.rebase(origin.0, target.0))
     }
 
-    // ---- helpers for column letter ↔ index -------------------------------------------------- //
-
-    /// Convert `col` into Excel‑style letters (0‑based ⇒ A, B, …, AA…).
-    pub fn col_to_letters(mut col: u32) -> String {
-        // worst‑case 16,384 cols ⇒ "XFD" (3 chars); keep 8‑char buffer for safety.
-        let mut buf = String::new();
-        loop {
-            let rem = (col % 26) as u8;
-            buf.push(char::from(b'A' + rem));
-            col /= 26;
-            if col == 0 {
-                break;
-            }
-            col -= 1; // shift because Excel letters are 1‑based internally
-        }
-        buf.chars().rev().collect()
+    #[inline]
+    pub fn into_inner(self) -> RelativeCoord {
+        self.0
     }
 
-    /// Convert Excel letters (e.g., "AA") back to 0‑based column index.
+    pub fn col_to_letters(col: u32) -> String {
+        RelativeCoord::col_to_letters(col)
+    }
+
     pub fn letters_to_col(s: &str) -> Option<u32> {
-        let mut col: u32 = 0;
-        for (i, ch) in s.bytes().enumerate() {
-            if !ch.is_ascii_uppercase() {
-                return None;
-            }
-            let val = (ch - b'A') as u32;
-            col = col * 26 + val;
-            if i != s.len() - 1 {
-                col += 1; // inverse of the post‑decrement above
-            }
-        }
-        Some(col)
+        RelativeCoord::letters_to_col(s)
     }
 }
 
@@ -212,12 +168,12 @@ impl fmt::Display for Coord {
         if self.col_abs() {
             write!(f, "$")?;
         }
-        write!(f, "{}", Self::col_to_letters(self.col))?;
+        write!(f, "{}", Self::col_to_letters(self.col()))?;
         if self.row_abs() {
             write!(f, "$")?;
         }
         // rows are 1‑based in A1 notation
-        write!(f, "{}", self.row + 1)
+        write!(f, "{}", self.row() + 1)
     }
 }
 

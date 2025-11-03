@@ -9,23 +9,14 @@
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
-use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{
+    ArgKind, ExcelError, ExcelErrorKind, LiteralValue, col_letters_from_1based,
+};
 use formualizer_macros::func_caps;
 
 /// Convert a column number to Excel letter notation (1 = A, 27 = AA, etc.)
-fn column_to_letters(mut col: u32) -> String {
-    if col == 0 {
-        return String::new();
-    }
-
-    let mut result = String::new();
-    while col > 0 {
-        col -= 1;
-        let remainder = col % 26;
-        result.push((b'A' + remainder as u8) as char);
-        col /= 26;
-    }
-    result.chars().rev().collect()
+fn column_to_letters(col: u32) -> String {
+    col_letters_from_1based(col).unwrap_or_default()
 }
 
 #[derive(Debug)]

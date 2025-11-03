@@ -1,12 +1,12 @@
-use crate::engine::{Engine, EvalConfig};
+use super::common::arrow_eval_config;
+use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
 
 #[test]
 fn used_row_bounds_cache_parity_and_edit_invalidation() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
+    let cfg = arrow_eval_config();
     let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
 
     let sheet = "S";
@@ -43,9 +43,7 @@ fn used_row_bounds_cache_parity_and_edit_invalidation() {
 
 #[test]
 fn used_row_bounds_cache_compaction_invalidation() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.delta_overlay_enabled = true;
+    let cfg = arrow_eval_config();
     let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
     let sheet = "S2";
     {
@@ -70,8 +68,7 @@ fn used_row_bounds_cache_compaction_invalidation() {
 
 #[test]
 fn used_row_bounds_snapshot_change_midpass() {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
+    let cfg = arrow_eval_config();
     let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
     let sheet = "S3";
     {

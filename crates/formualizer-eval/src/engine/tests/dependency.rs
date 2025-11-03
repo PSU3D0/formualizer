@@ -48,7 +48,7 @@ fn test_dependency_extraction_from_ast() {
     let a1_addr = graph
         .cell_to_vertex()
         .iter()
-        .find(|(addr, _)| addr.coord.row == 1 && addr.coord.col == 1 && addr.sheet_id == 0)
+        .find(|(addr, _)| addr.coord.row() == 1 && addr.coord.col() == 1 && addr.sheet_id == 0)
         .map(|(_, &id)| id)
         .unwrap();
 
@@ -63,7 +63,7 @@ fn test_dependency_extraction_from_ast() {
     let c3_addr = graph
         .cell_to_vertex()
         .iter()
-        .find(|(addr, _)| addr.coord.row == 3 && addr.coord.col == 3 && addr.sheet_id == 0)
+        .find(|(addr, _)| addr.coord.row() == 3 && addr.coord.col() == 3 && addr.sheet_id == 0)
         .map(|(_, &id)| id)
         .unwrap();
 
@@ -213,7 +213,7 @@ fn test_dependency_edge_management() {
     let b1_addr = graph
         .cell_to_vertex()
         .iter()
-        .find(|(addr, _)| addr.coord.row == 1 && addr.coord.col == 2)
+        .find(|(addr, _)| addr.coord.row() == 1 && addr.coord.col() == 2)
         .map(|(_, &id)| id)
         .unwrap();
 
@@ -427,14 +427,14 @@ fn test_relative_sheet_dependency() {
     let sheet2_a1_id = graph
         .cell_to_vertex()
         .iter()
-        .find(|(addr, _)| addr.sheet_id == 1 && addr.coord.row == 1 && addr.coord.col == 1)
+        .find(|(addr, _)| addr.sheet_id == 1 && addr.coord.row() == 1 && addr.coord.col() == 1)
         .map(|(_, &id)| id)
         .unwrap();
 
     let sheet2_b1_id = graph
         .cell_to_vertex()
         .iter()
-        .find(|(addr, _)| addr.sheet_id == 1 && addr.coord.row == 1 && addr.coord.col == 2)
+        .find(|(addr, _)| addr.sheet_id == 1 && addr.coord.row() == 1 && addr.coord.col() == 2)
         .map(|(_, &id)| id)
         .unwrap();
 

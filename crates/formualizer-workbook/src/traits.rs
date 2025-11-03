@@ -1,4 +1,4 @@
-use formualizer_common::LiteralValue;
+use formualizer_common::{LiteralValue, RangeAddress};
 #[cfg(feature = "json")]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -113,11 +113,21 @@ pub struct SheetData {
 }
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "json", serde(rename_all = "lowercase"))]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub enum NamedRangeScope {
+    #[default]
+    Workbook,
+    Sheet,
+}
+
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug)]
 pub struct NamedRange {
     pub name: String,
-    pub sheet: Option<String>,
-    pub range: (u32, u32, u32, u32), // (start_row, start_col, end_row, end_col)
+    #[cfg_attr(feature = "json", serde(default))]
+    pub scope: NamedRangeScope,
+    pub address: RangeAddress,
 }
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]

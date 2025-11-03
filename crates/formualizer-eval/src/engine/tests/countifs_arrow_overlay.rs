@@ -1,4 +1,5 @@
-use crate::engine::{Engine, EvalConfig};
+use super::common::arrow_eval_config;
+use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use crate::traits::FunctionProvider;
 use crate::traits::{ArgumentHandle, DefaultFunctionContext};
@@ -29,11 +30,7 @@ fn lit_text(s: &str) -> ASTNode {
 #[test]
 fn countifs_arrow_overlay_only_values() {
     // Ensures COUNTIFS sees overlay-injected values via Arrow-only read path
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_storage_enabled = true;
-    cfg.arrow_fastpath_enabled = true;
-    cfg.delta_overlay_enabled = true;
-    cfg.write_formula_overlay_enabled = true;
+    let cfg = arrow_eval_config();
     let mut engine = Engine::new(TestWorkbook::new(), cfg.clone());
 
     let sheet = "CFA";

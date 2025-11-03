@@ -437,7 +437,10 @@ mod tests {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IsNumberFn));
         let ctx = interp(&wb);
         let f = ctx.context.get_function("", "ISNUMBER").unwrap();
-        let num = ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(3.14)), None);
+        let num = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Number(std::f64::consts::PI)),
+            None,
+        );
         let date = ASTNode::new(
             ASTNodeType::Literal(LiteralValue::Date(
                 chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),

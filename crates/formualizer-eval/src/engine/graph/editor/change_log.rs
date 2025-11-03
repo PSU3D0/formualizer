@@ -7,9 +7,9 @@
 
 use crate::SheetId;
 use crate::engine::named_range::{NameScope, NamedDefinition};
-use crate::engine::packed_coord::PackedCoord;
 use crate::engine::vertex::VertexId;
 use crate::reference::CellRef;
+use formualizer_common::Coord as AbsCoord;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::ASTNode;
 
@@ -30,7 +30,7 @@ pub enum ChangeEvent {
     /// Vertex creation snapshot (for undo). Minimal for now.
     AddVertex {
         id: VertexId,
-        coord: PackedCoord,
+        coord: AbsCoord,
         sheet_id: SheetId,
         value: Option<LiteralValue>,
         formula: Option<ASTNode>,
@@ -44,7 +44,7 @@ pub enum ChangeEvent {
         old_formula: Option<ASTNode>,
         old_dependencies: Vec<VertexId>, // outgoing
         old_dependents: Vec<VertexId>,   // incoming
-        coord: Option<PackedCoord>,
+        coord: Option<AbsCoord>,
         sheet_id: Option<SheetId>,
         kind: Option<crate::engine::vertex::VertexKind>,
         flags: Option<u8>,
@@ -62,8 +62,8 @@ pub enum ChangeEvent {
     // Granular events for compound operations
     VertexMoved {
         id: VertexId,
-        old_coord: PackedCoord,
-        new_coord: PackedCoord,
+        old_coord: AbsCoord,
+        new_coord: AbsCoord,
     },
     FormulaAdjusted {
         id: VertexId,

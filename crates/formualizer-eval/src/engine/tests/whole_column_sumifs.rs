@@ -11,10 +11,14 @@ fn sumifs_whole_columns_different_used_regions() {
     // have different amounts of data (different used regions), which was causing
     // "range dims mismatch" errors before the padding fix.
 
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 100_000; // Allow large ranges
     let wb = TestWorkbook::new();
-    let mut engine = Engine::new(wb, config);
+    let mut engine = Engine::new(
+        wb,
+        EvalConfig {
+            range_expansion_limit: 100_000, // Allow large ranges
+            ..Default::default()
+        },
+    );
 
     // Set up data similar to the user's scenario:
     // Column P has data up to row 60256

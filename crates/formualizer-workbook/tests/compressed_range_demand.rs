@@ -8,8 +8,7 @@ use formualizer_parse::parser::Parser;
 // whole-column compressed ranges and computes nested formula precedents.
 #[test]
 fn io_compressed_range_demand_driven() {
-    let mut cfg = EvalConfig::default();
-    cfg.range_expansion_limit = 0; // keep infinite ranges compressed
+    let cfg = EvalConfig::default().with_range_expansion_limit(0); // keep infinite ranges compressed
     let wb = TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(wb, cfg);
 

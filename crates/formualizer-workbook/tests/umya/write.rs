@@ -10,7 +10,7 @@ fn umya_write_and_read_cells() {
     // For now, reuse build pattern: create an empty workbook via umya directly.
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("write_test.xlsx");
-    let mut book = umya_spreadsheet::new_file();
+    let book = umya_spreadsheet::new_file();
     umya_spreadsheet::writer::xlsx::write(&book, &path).unwrap();
 
     let mut adapter = UmyaAdapter::open_path(&path).expect("open");
@@ -32,14 +32,16 @@ fn umya_write_and_read_cells() {
         sheet.cells.get(&(1, 1)).unwrap().value,
         Some(LiteralValue::Number(11.0))
     );
-    assert!(sheet
-        .cells
-        .get(&(1, 2))
-        .unwrap()
-        .formula
-        .as_ref()
-        .unwrap()
-        .starts_with("=A1"));
+    assert!(
+        sheet
+            .cells
+            .get(&(1, 2))
+            .unwrap()
+            .formula
+            .as_ref()
+            .unwrap()
+            .starts_with("=A1")
+    );
 
     // Clear range
     adapter.clear_range("Data", (1, 1), (1, 1)).unwrap();

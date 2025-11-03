@@ -1,0 +1,62 @@
+[tools]
+uv = "latest"
+node = "lts"
+pnpm = "latest"
+"rust" = { version = "1.90.0", profile = "default" }
+"github:BurntSushi/ripgrep" = "latest"
+"npm:@anthropic-ai/claude-code" = "latest"
+"npm:@openai/codex" = "latest"
+"cargo:wasm-pack" = "latest"
+
+[settings]
+python.uv_venv_auto = true
+
+[env]
+_.path = ["./node_modules/.bin"]
+PYTHONUNBUFFERED = "1"
+
+[tasks.pnpm-install]
+description = "Install Node dependencies with pnpm"
+run = "pnpm install"
+sources = ["package.json", "pnpm-lock.yaml", "mise.toml"]
+outputs = ["node_modules/.pnpm"]
+
+[tasks.devcontainer-up]
+description = "[human-only] Start devcontainer locally"
+run = "devcontainer up --workspace-folder ."
+
+[tasks.devcontainer-build]
+description = "[human-only] Build devcontainer image"
+run = "devcontainer build --workspace-folder ."
+
+[tasks.wasm-install]
+description = "Install WASM binding dependencies"
+run = "pnpm install"
+dir = "bindings/wasm"
+
+[tasks.wasm-test]
+description = "Run WASM binding tests"
+run = "npm test"
+dir = "bindings/wasm"
+depends = ["wasm-install"]
+
+[tasks.rs-test]
+description = "Run Rust workspace tests"
+run = "cargo test --workspace"
+
+[tasks.py-tests]
+description = "Run Python bindings test suite via uv"
+run = "uv run -- python -m pytest -q bindings/python/tests"
+
+[tasks.rs-check]
+description = "Format and lint the Rust workspace"
+run = "cargo fmt --all && cargo clippy --workspace --all-targets"
+
+[tasks.fmt]
+description = "Format Rust and Python sources"
+run = "cargo fmt --all && uv tool run ruff format bindings/python"
+
+[tasks.test]
+description = "Run full project test suite"
+depends = ["pnpm-install", "rs-test", "py-tests", "wasm-test"]
+run = "true"

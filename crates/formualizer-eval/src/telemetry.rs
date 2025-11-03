@@ -1,5 +1,8 @@
-#[cfg(feature = "tracing")]
+#[cfg(any(feature = "tracing", feature = "tracing_chrome"))]
 use std::sync::OnceLock;
+
+#[cfg(feature = "tracing_chrome")]
+use std::sync::Mutex;
 
 /// Initialize tracing subscriber based on env vars.
 /// - FZ_TRACING_CHROME=/path/to/trace.json (requires feature `tracing_chrome`)
@@ -20,7 +23,9 @@ pub fn init_tracing_from_env() -> bool {
                     .file(path)
                     .build();
                 // keep guard alive for process lifetime
-                CHROME_GUARD.set(Some(guard)).ok();
+                if let Ok(mut slot) = CHROME_GUARD.get_or_init(|| Mutex::new(None)).lock() {
+                    *slot = Some(guard);
+                }
                 let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
                 registry().with(chrome_layer).with(fmt_layer).init();
                 return true;
@@ -54,7 +59,7 @@ fn install_fmt() {
 }
 
 #[cfg(feature = "tracing_chrome")]
-static CHROME_GUARD: OnceLock<Option<tracing_chrome::FlushGuard>> = OnceLock::new();
+static CHROME_GUARD: OnceLock<Mutex<Option<tracing_chrome::FlushGuard>>> = OnceLock::new();
 
 #[cfg(not(feature = "tracing"))]
 pub fn init_tracing_from_env() -> bool {

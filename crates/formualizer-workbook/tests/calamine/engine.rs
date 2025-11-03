@@ -90,7 +90,7 @@ fn stream_multi_sheet_cross_ref() {
         let _ = book.new_sheet("Data");
         let data = book.get_sheet_by_name_mut("Data").unwrap();
         data.get_cell_mut((4, 5)).set_value_number(21.0); // D5 on Data
-                                                          // On Sheet1 reference Data!D5
+        // On Sheet1 reference Data!D5
         let s1 = book.get_sheet_by_name_mut("Sheet1").unwrap();
         s1.get_cell_mut((1, 1)).set_formula("=Data!D5*2"); // A1
     });

@@ -1,8 +1,10 @@
-use crate::error::{col_to_a1, IoError};
-use crate::traits::{LoadStrategy, SpreadsheetReader};
+use crate::error::{IoError, col_to_a1};
+use crate::traits::{LoadStrategy, NamedRange, NamedRangeScope, SpreadsheetReader};
 use formualizer_eval::engine::Engine;
 use formualizer_eval::traits::EvaluationContext;
+use formualizer_eval::{reference::CellRef, reference::Coord};
 use formualizer_parse::parser;
+use rustc_hash::FxHashSet;
 use std::time::Instant;
 
 #[derive(Debug, Default)]
@@ -23,6 +25,8 @@ pub struct WorkbookLoader<B: SpreadsheetReader> {
     backend: B,
     strategy: LoadStrategy,
     stats: LoaderStats,
+    pending_named_ranges: Vec<NamedRange>,
+    seen_named_ranges: FxHashSet<(NamedRangeScope, String, String)>,
 }
 
 impl<B: SpreadsheetReader> WorkbookLoader<B> {
@@ -31,6 +35,8 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
             backend,
             strategy,
             stats: LoaderStats::default(),
+            pending_named_ranges: Vec::new(),
+            seen_named_ranges: FxHashSet::default(),
         }
     }
 
@@ -88,6 +94,10 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
         };
 
         engine.end_batch();
+
+        if result.is_ok() {
+            self.register_named_ranges(engine)?;
+        }
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
         self.stats.load_time_ms = if elapsed_ms == 0 { 1 } else { elapsed_ms };
@@ -164,6 +174,81 @@ impl<B: SpreadsheetReader> WorkbookLoader<B> {
         self.stats.sheets_loaded += 1;
         let insert_elapsed = t_insert_start.elapsed();
         self.stats.engine_insert_time_ms += insert_elapsed.as_millis() as u64;
+
+        self.collect_named_ranges(sheet, &sheet_data.named_ranges);
+        Ok(())
+    }
+
+    fn collect_named_ranges(&mut self, sheet: &str, ranges: &[NamedRange]) {
+        for named in ranges {
+            if named.address.sheet != sheet {
+                // Defer to the sheet the range references to avoid duplicating entries.
+                continue;
+            }
+            let key = (
+                named.scope.clone(),
+                named.address.sheet.clone(),
+                named.name.clone(),
+            );
+            if !self.seen_named_ranges.insert(key) {
+                continue;
+            }
+            self.pending_named_ranges.push(named.clone());
+        }
+    }
+
+    fn register_named_ranges<R>(&mut self, engine: &mut Engine<R>) -> Result<(), IoError>
+    where
+        R: EvaluationContext,
+    {
+        for named in self.pending_named_ranges.drain(..) {
+            let addr = &named.address;
+            let sheet_id = match engine.graph.sheet_id(&addr.sheet) {
+                Some(id) => id,
+                None => {
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!(
+                        name = %named.name,
+                        sheet = %addr.sheet,
+                        "named range references sheet that was not loaded; skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let sr0 = addr.start_row.saturating_sub(1);
+            let sc0 = addr.start_col.saturating_sub(1);
+            let er0 = addr.end_row.saturating_sub(1);
+            let ec0 = addr.end_col.saturating_sub(1);
+
+            let start_coord = Coord::new(sr0, sc0, true, true);
+            let end_coord = Coord::new(er0, ec0, true, true);
+            let start_ref = CellRef::new(sheet_id, start_coord);
+            let end_ref = CellRef::new(sheet_id, end_coord);
+
+            let definition = if sr0 == er0 && sc0 == ec0 {
+                formualizer_eval::engine::named_range::NamedDefinition::Cell(start_ref)
+            } else {
+                let range_ref = formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                formualizer_eval::engine::named_range::NamedDefinition::Range(range_ref)
+            };
+
+            let scope = match named.scope {
+                NamedRangeScope::Workbook => {
+                    formualizer_eval::engine::named_range::NameScope::Workbook
+                }
+                NamedRangeScope::Sheet => {
+                    formualizer_eval::engine::named_range::NameScope::Sheet(sheet_id)
+                }
+            };
+
+            engine
+                .graph
+                .define_name(&named.name, definition, scope)
+                .map_err(IoError::Engine)?;
+        }
+
+        self.seen_named_ranges.clear();
         Ok(())
     }
 }

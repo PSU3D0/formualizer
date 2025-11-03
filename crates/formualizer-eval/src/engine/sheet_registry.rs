@@ -93,11 +93,11 @@ impl SheetRegistry {
         let old_name = self.name_by_id[id as usize].clone();
 
         // Check if new name is already taken by another sheet
-        if let Some(&existing_id) = self.id_by_name.get(new_name) {
-            if existing_id != id {
-                return Err(ExcelError::new(ExcelErrorKind::Value)
-                    .with_message(format!("Sheet name '{new_name}' already exists")));
-            }
+        if let Some(&existing_id) = self.id_by_name.get(new_name)
+            && existing_id != id
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("Sheet name '{new_name}' already exists")));
         }
 
         // Remove old name mapping

@@ -17,10 +17,8 @@ pub mod vertex;
 pub mod csr_edges;
 pub mod debug_views;
 pub mod delta_edges;
-pub mod epoch_tracker;
 pub mod interval_tree;
 pub mod named_range;
-pub mod packed_coord;
 pub mod sheet_index;
 pub mod sheet_registry;
 pub mod topo;
@@ -29,21 +27,15 @@ pub mod vertex_store;
 // Phase 1: Arena modules
 pub mod arena;
 
-// Phase 1: Warmup modules
-pub mod cache;
-pub mod masks;
-pub mod metrics;
-pub mod pass_planner;
-pub mod reference_fingerprint;
+// Phase 1: Warmup configuration (kept for compatibility)
 pub mod tuning;
-pub mod warmup;
 
 #[cfg(test)]
 mod tests;
 
 use std::fmt::{Display, Formatter};
 
-pub use eval::{Engine, EvalResult};
+pub use eval::{Engine, EvalResult, RecalcPlan};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{
@@ -189,6 +181,56 @@ impl Default for EvalConfig {
             date_system: DateSystem::Excel1900,
             defer_graph_building: false,
         }
+    }
+}
+
+impl EvalConfig {
+    #[inline]
+    pub fn with_range_expansion_limit(mut self, limit: usize) -> Self {
+        self.range_expansion_limit = limit;
+        self
+    }
+
+    #[inline]
+    pub fn with_parallel(mut self, enable: bool) -> Self {
+        self.enable_parallel = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_block_stripes(mut self, enable: bool) -> Self {
+        self.enable_block_stripes = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_arrow_storage(mut self, enable: bool) -> Self {
+        self.arrow_storage_enabled = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_arrow_fastpath(mut self, enable: bool) -> Self {
+        self.arrow_fastpath_enabled = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_delta_overlay(mut self, enable: bool) -> Self {
+        self.delta_overlay_enabled = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_formula_overlay(mut self, enable: bool) -> Self {
+        self.write_formula_overlay_enabled = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_date_system(mut self, system: DateSystem) -> Self {
+        self.date_system = system;
+        self
     }
 }
 

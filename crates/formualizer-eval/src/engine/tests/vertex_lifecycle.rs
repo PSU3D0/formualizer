@@ -2,9 +2,9 @@ use crate::engine::graph::DependencyGraph;
 use crate::engine::graph::editor::{
     EditorError, VertexDataPatch, VertexEditor, VertexMeta, VertexMetaPatch,
 };
-use crate::engine::packed_coord::PackedCoord;
 use crate::engine::vertex::{VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
+use formualizer_common::Coord as AbsCoord;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parse;
 
@@ -90,13 +90,13 @@ fn test_vertex_move_updates_mappings() {
     let id = editor.set_cell_value(cell_ref(0, 0, 0), lit_num(42.0));
 
     // Move to new location (5, 10)
-    assert!(editor.move_vertex(id, PackedCoord::new(5, 10)).is_ok());
+    assert!(editor.move_vertex(id, AbsCoord::new(5, 10)).is_ok());
 
     // Drop editor to release borrow
     drop(editor);
 
     // Verify coordinate was updated
-    assert_eq!(graph.get_coord(id), PackedCoord::new(5, 10));
+    assert_eq!(graph.get_coord(id), AbsCoord::new(5, 10));
 
     // Value should be preserved
     assert_eq!(graph.get_value(id), Some(lit_num(42.0)));
@@ -155,7 +155,7 @@ fn test_move_vertex_with_dependencies() {
     let b1 = editor.set_cell_formula(cell_ref(0, 0, 1), formula);
 
     // Move A1 to new location
-    assert!(editor.move_vertex(a1, PackedCoord::new(5, 5)).is_ok());
+    assert!(editor.move_vertex(a1, AbsCoord::new(5, 5)).is_ok());
 
     // Drop editor to release borrow
     drop(editor);
@@ -174,7 +174,7 @@ fn test_patch_vertex_coord() {
 
     // Patch coordinate
     let patch = VertexMetaPatch {
-        coord: Some(PackedCoord::new(10, 20)),
+        coord: Some(AbsCoord::new(10, 20)),
         kind: None,
         dirty: None,
         volatile: None,
@@ -189,7 +189,7 @@ fn test_patch_vertex_coord() {
     drop(editor);
 
     // Verify coordinate changed
-    assert_eq!(graph.get_coord(id), PackedCoord::new(10, 20));
+    assert_eq!(graph.get_coord(id), AbsCoord::new(10, 20));
 }
 
 #[test]
@@ -271,7 +271,7 @@ fn test_move_nonexistent_vertex() {
     let mut editor = VertexEditor::new(&mut graph);
 
     let fake_id = VertexId::new(99999);
-    let result = editor.move_vertex(fake_id, PackedCoord::new(1, 1));
+    let result = editor.move_vertex(fake_id, AbsCoord::new(1, 1));
 
     assert!(result.is_err());
     match result {
@@ -343,7 +343,7 @@ fn test_batch_operations_with_lifecycle() {
     let v3 = editor.set_cell_value(cell_ref(0, 2, 0), lit_num(3.0));
 
     // Move one
-    editor.move_vertex(v1, PackedCoord::new(10, 10)).unwrap();
+    editor.move_vertex(v1, AbsCoord::new(10, 10)).unwrap();
 
     // Remove one
     editor.remove_vertex(v2).unwrap();
@@ -361,7 +361,7 @@ fn test_batch_operations_with_lifecycle() {
     drop(editor);
 
     // Verify results
-    assert_eq!(graph.get_coord(v1), PackedCoord::new(10, 10));
+    assert_eq!(graph.get_coord(v1), AbsCoord::new(10, 10));
     assert!(graph.is_deleted(v2));
     assert_eq!(graph.get_value(v3), Some(lit_num(30.0)));
 }

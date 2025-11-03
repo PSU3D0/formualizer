@@ -1,4 +1,5 @@
-use crate::engine::{packed_coord::PackedCoord, *};
+use crate::engine::*;
+use formualizer_common::Coord as AbsCoord;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
@@ -32,7 +33,7 @@ fn test_snapshot_vertex() {
     let snapshot = graph.snapshot_vertex(vertex_id);
 
     // Verify snapshot contents
-    assert_eq!(snapshot.coord, PackedCoord::new(1, 1));
+    assert_eq!(snapshot.coord, AbsCoord::new(1, 1));
     assert_eq!(snapshot.kind, VertexKind::Cell);
     assert_eq!(snapshot.sheet_id, graph.sheet_id("Sheet1").unwrap());
 
@@ -60,7 +61,7 @@ fn test_snapshot_vertex_with_formula() {
     let snapshot = graph.snapshot_vertex(formula_vertex);
 
     // Verify formula was captured
-    assert_eq!(snapshot.coord, PackedCoord::new(1, 0));
+    assert_eq!(snapshot.coord, AbsCoord::new(1, 0));
     assert_eq!(snapshot.kind, VertexKind::FormulaScalar);
 
     // Check dependencies are captured
@@ -258,7 +259,7 @@ fn test_snapshot_preserves_all_state() {
     let snapshot = graph.snapshot_vertex(vertex_id);
 
     // Verify all state is captured
-    assert_eq!(snapshot.coord, PackedCoord::new(2, 0));
+    assert_eq!(snapshot.coord, AbsCoord::new(2, 0));
     assert_eq!(snapshot.kind, VertexKind::FormulaScalar);
     assert_eq!(snapshot.out_edges.len(), 2, "Should have 2 dependencies");
 

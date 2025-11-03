@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 
 use formualizer_common::LiteralValue;
 
-use crate::value::PyLiteralValue;
+use crate::value::{literal_to_py, py_to_literal};
 use std::collections::HashMap;
 
 type SheetCellMap = HashMap<(u32, u32), CellData>;
@@ -118,16 +118,18 @@ impl PyWorkbook {
 
     pub fn set_value(
         &self,
+        _py: Python<'_>,
         sheet: &str,
         row: u32,
         col: u32,
-        value: PyLiteralValue,
+        value: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
+        let literal = py_to_literal(value)?;
         let mut wb = self
             .inner
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        wb.set_value(sheet, row, col, value.inner.clone())
+        wb.set_value(sheet, row, col, literal.clone())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         // Update compatibility cache
         let mut sheets = self.sheets.write().unwrap();
@@ -135,7 +137,7 @@ impl PyWorkbook {
         sheet_map.insert(
             (row, col),
             CellData {
-                value: Some(value.inner),
+                value: Some(literal),
                 formula: None,
             },
         );
@@ -162,7 +164,13 @@ impl PyWorkbook {
         Ok(())
     }
 
-    pub fn evaluate_cell(&self, sheet: &str, row: u32, col: u32) -> PyResult<PyLiteralValue> {
+    pub fn evaluate_cell(
+        &self,
+        py: Python<'_>,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> PyResult<PyObject> {
         let mut wb = self
             .inner
             .write()
@@ -170,17 +178,31 @@ impl PyWorkbook {
         let v = wb
             .evaluate_cell(sheet, row, col)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        Ok(PyLiteralValue { inner: v })
+        literal_to_py(py, &v)
     }
 
-    pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> PyResult<Option<PyLiteralValue>> {
+    pub fn get_value(
+        &self,
+        py: Python<'_>,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> PyResult<Option<PyObject>> {
+        if let Some(cached) = {
+            let sheets = self.sheets.read().unwrap();
+            sheets.get(sheet).and_then(|m| m.get(&(row, col)).cloned())
+        } && let Some(value) = cached.value
+        {
+            return Ok(Some(literal_to_py(py, &value)?));
+        }
         let wb = self
             .inner
             .read()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        Ok(wb
-            .get_value(sheet, row, col)
-            .map(|v| PyLiteralValue { inner: v }))
+        Ok(match wb.get_value(sheet, row, col) {
+            Some(v) => Some(literal_to_py(py, &v)?),
+            None => None,
+        })
     }
 
     pub fn get_formula(&self, sheet: &str, row: u32, col: u32) -> PyResult<Option<String>> {
@@ -236,6 +258,7 @@ impl PyWorkbook {
     // Batch ops
     pub fn set_values_batch(
         &self,
+        _py: Python<'_>,
         sheet: &str,
         start_row: u32,
         start_col: u32,
@@ -246,8 +269,7 @@ impl PyWorkbook {
             let list: &Bound<'_, pyo3::types::PyList> = row.downcast()?;
             let mut row_vals: Vec<LiteralValue> = Vec::with_capacity(list.len());
             for v in list.iter() {
-                let py_val: PyLiteralValue = v.extract()?;
-                row_vals.push(py_val.inner);
+                row_vals.push(py_to_literal(&v)?);
             }
             rows_vec.push(row_vals);
         }
@@ -364,10 +386,27 @@ pub struct CellData {
 
 #[pyclass(name = "Cell", module = "formualizer")]
 pub struct PyCell {
-    #[pyo3(get)]
-    pub value: PyLiteralValue,
-    #[pyo3(get)]
-    pub formula: Option<String>,
+    value: LiteralValue,
+    formula: Option<String>,
+}
+
+impl PyCell {
+    pub(crate) fn new(value: LiteralValue, formula: Option<String>) -> Self {
+        Self { value, formula }
+    }
+}
+
+#[pymethods]
+impl PyCell {
+    #[getter]
+    pub fn value(&self, py: Python<'_>) -> PyResult<PyObject> {
+        literal_to_py(py, &self.value)
+    }
+
+    #[getter]
+    pub fn formula(&self) -> Option<String> {
+        self.formula.clone()
+    }
 }
 
 #[pyclass(name = "RangeAddress", module = "formualizer")]
@@ -417,6 +456,28 @@ impl PyRangeAddress {
 
 // Non-Python methods for internal use
 impl PyWorkbook {
+    pub(crate) fn with_workbook<T, F>(&self, f: F) -> PyResult<T>
+    where
+        F: FnOnce(&formualizer_workbook::Workbook) -> PyResult<T>,
+    {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        f(&wb)
+    }
+
+    pub(crate) fn with_workbook_mut<T, F>(&self, f: F) -> PyResult<T>
+    where
+        F: FnOnce(&mut formualizer_workbook::Workbook) -> PyResult<T>,
+    {
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        f(&mut wb)
+    }
+
     pub(crate) fn sheet_names_snapshot(&self) -> PyResult<Vec<String>> {
         let wb = self
             .inner

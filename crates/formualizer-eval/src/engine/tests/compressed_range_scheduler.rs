@@ -19,9 +19,11 @@ use formualizer_parse::parser::Parser;
 
 #[test]
 fn demand_driven_enters_compressed_ranges() {
-    let mut cfg = EvalConfig::default();
     // Ensure infinite/whole-column ranges remain compressed
-    cfg.range_expansion_limit = 0;
+    let cfg = EvalConfig {
+        range_expansion_limit: 0,
+        ..Default::default()
+    };
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, cfg);
 
@@ -57,9 +59,11 @@ fn demand_driven_enters_compressed_ranges() {
 
 #[test]
 fn scheduler_layers_respect_range_formulas_first() {
-    let mut cfg = EvalConfig::default();
-    cfg.range_expansion_limit = 0;
-    cfg.enable_parallel = false; // deterministic for assertions
+    let cfg = EvalConfig {
+        range_expansion_limit: 0,
+        enable_parallel: false, // deterministic for assertions
+        ..Default::default()
+    };
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, cfg);
 
@@ -101,9 +105,11 @@ fn scheduler_layers_respect_range_formulas_first() {
 
 #[test]
 fn scheduler_layers_recursive_range_producers() {
-    let mut cfg = EvalConfig::default();
-    cfg.range_expansion_limit = 0;
-    cfg.enable_parallel = false;
+    let cfg = EvalConfig {
+        range_expansion_limit: 0,
+        enable_parallel: false,
+        ..Default::default()
+    };
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, cfg);
 

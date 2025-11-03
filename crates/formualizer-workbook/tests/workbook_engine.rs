@@ -74,6 +74,9 @@ fn value_edit_triggers_recompute_in_deferred_mode() {
     wb.set_value("S", 1, 1, LiteralValue::Int(3)).unwrap();
     wb.set_formula("S", 1, 2, "A1*2").unwrap();
 
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(3)));
+    assert_eq!(wb.get_formula("S", 1, 2), Some("A1*2".to_string()));
+
     let v = wb.evaluate_cell("S", 1, 2).unwrap();
     assert_eq!(v, LiteralValue::Number(6.0));
 
@@ -204,9 +207,10 @@ fn changelog_undo_redo_values() {
 #[test]
 fn changelog_with_formulas_non_deferred() {
     // Disable deferral so formula graph exists → logs capture formula edits
-    let mut cfg = EvalConfig::default();
-    cfg.defer_graph_building = false;
-    let mut wb = Workbook::new_with_config(cfg);
+    let mut wb = Workbook::new_with_config(EvalConfig {
+        defer_graph_building: false,
+        ..Default::default()
+    });
     wb.set_changelog_enabled(true);
     wb.add_sheet("S");
     wb.set_value("S", 1, 1, LiteralValue::Int(2)).unwrap();

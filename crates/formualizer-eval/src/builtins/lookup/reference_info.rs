@@ -57,7 +57,7 @@ impl Function for RowFn {
         if args.is_empty() {
             // Return current cell's row if available
             if let Some(cell_ref) = ctx.current_cell() {
-                return Ok(LiteralValue::Int(cell_ref.coord.row as i64));
+                return Ok(LiteralValue::Int(cell_ref.coord.row() as i64));
             }
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }
@@ -194,7 +194,7 @@ impl Function for ColumnFn {
         if args.is_empty() {
             // Return current cell's column if available
             if let Some(cell_ref) = ctx.current_cell() {
-                return Ok(LiteralValue::Int(cell_ref.coord.col as i64));
+                return Ok(LiteralValue::Int(cell_ref.coord.col() as i64));
             }
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }

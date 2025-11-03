@@ -77,21 +77,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_or_build_mask_returns_none_by_default() {
-        let ctx = DefaultContext;
-
-        // Create a dummy criteria key
-        let criteria_key = "test_criteria_key";
-
-        // Default implementation should return None
-        assert!(ctx.get_or_build_mask(criteria_key).is_none());
-
-        // Test with different keys
-        assert!(ctx.get_or_build_mask("another_key").is_none());
-        assert!(ctx.get_or_build_mask("").is_none());
-    }
-
-    #[test]
     fn test_hooks_do_not_affect_existing_behavior() {
         // This test ensures that adding these hooks doesn't break existing code
         // that relies on FunctionContext
@@ -112,7 +97,6 @@ mod tests {
                 col: 1,
             };
             // flats removed
-            assert!(ctx.get_or_build_mask("key").is_none());
         }
     }
 }

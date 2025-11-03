@@ -2,8 +2,18 @@ use crate::error::IoError;
 use crate::loader::WorkbookLoader;
 use crate::traits::{LoadStrategy, SpreadsheetReader, SpreadsheetWriter};
 use chrono::Timelike;
-use formualizer_common::{LiteralValue, RangeAddress};
+use formualizer_common::{
+    LiteralValue, RangeAddress,
+    error::{ExcelError, ExcelErrorKind},
+};
+use formualizer_eval::engine::named_range::NamedDefinition;
+use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::ptr;
+
+thread_local! {
+    static ACTIVE_WORKBOOK: Cell<*const Workbook> = const { Cell::new(ptr::null()) };
+}
 
 /// Minimal resolver for engine-backed workbook (cells/ranges via graph/arrow; functions via registry).
 #[derive(Default, Debug, Clone, Copy)]
@@ -41,9 +51,18 @@ impl formualizer_eval::traits::NamedRangeResolver for WBResolver {
         &self,
         _name: &str,
     ) -> Result<Vec<Vec<LiteralValue>>, formualizer_common::error::ExcelError> {
-        Err(formualizer_common::error::ExcelError::from(
-            formualizer_common::error::ExcelErrorKind::Name,
-        ))
+        ACTIVE_WORKBOOK.with(|cell| {
+            let ptr = cell.get();
+            if ptr.is_null() {
+                return Err(ExcelError::new(ExcelErrorKind::Name));
+            }
+            let workbook = unsafe { &*ptr };
+            if let Some(addr) = workbook.named_range_address(_name) {
+                Ok(workbook.read_range(&addr))
+            } else {
+                Err(ExcelError::new(ExcelErrorKind::Name))
+            }
+        })
     }
 }
 impl formualizer_eval::traits::TableResolver for WBResolver {
@@ -626,26 +645,115 @@ impl Workbook {
         row: u32,
         col: u32,
     ) -> Result<LiteralValue, IoError> {
-        Ok(self
-            .engine
-            .evaluate_cell(sheet, row, col)
-            .map_err(IoError::Engine)?
-            .unwrap_or(LiteralValue::Empty))
+        ACTIVE_WORKBOOK.with(|cell| {
+            let previous = cell.replace(self as *const _);
+            let result = self
+                .engine
+                .evaluate_cell(sheet, row, col)
+                .map_err(IoError::Engine)
+                .map(|value| value.unwrap_or(LiteralValue::Empty));
+            cell.set(previous);
+            result
+        })
     }
     pub fn evaluate_cells(
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<Vec<LiteralValue>, IoError> {
-        Ok(self
-            .engine
-            .evaluate_cells(targets)
-            .map_err(IoError::Engine)?
-            .into_iter()
-            .map(|v| v.unwrap_or(LiteralValue::Empty))
-            .collect())
+        ACTIVE_WORKBOOK.with(|cell| {
+            let previous = cell.replace(self as *const _);
+            let result = self
+                .engine
+                .evaluate_cells(targets)
+                .map_err(IoError::Engine)
+                .map(|values| {
+                    values
+                        .into_iter()
+                        .map(|v| v.unwrap_or(LiteralValue::Empty))
+                        .collect()
+                });
+            cell.set(previous);
+            result
+        })
     }
     pub fn evaluate_all(&mut self) -> Result<formualizer_eval::engine::EvalResult, IoError> {
-        self.engine.evaluate_all().map_err(IoError::Engine)
+        ACTIVE_WORKBOOK.with(|cell| {
+            let previous = cell.replace(self as *const _);
+            let result = self.engine.evaluate_all().map_err(IoError::Engine);
+            cell.set(previous);
+            result
+        })
+    }
+
+    pub fn evaluate_with_plan(
+        &mut self,
+        plan: &formualizer_eval::engine::RecalcPlan,
+    ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
+        ACTIVE_WORKBOOK.with(|cell| {
+            let previous = cell.replace(self as *const _);
+            let result = self
+                .engine
+                .evaluate_recalc_plan(plan)
+                .map_err(IoError::Engine);
+            cell.set(previous);
+            result
+        })
+    }
+
+    /// Resolve a named range (workbook-scoped or unique sheet-scoped) to an absolute address.
+    pub fn named_range_address(&self, name: &str) -> Option<RangeAddress> {
+        if let Some((_, named)) = self
+            .engine
+            .graph
+            .named_ranges_iter()
+            .find(|(n, _)| n.as_str() == name)
+        {
+            return self.named_definition_to_address(&named.definition);
+        }
+
+        let mut resolved: Option<RangeAddress> = None;
+        for ((_sheet_id, candidate), named) in self.engine.graph.sheet_named_ranges_iter() {
+            if candidate == name {
+                if let Some(address) = self.named_definition_to_address(&named.definition) {
+                    if resolved.is_some() {
+                        return None; // ambiguous sheet-scoped name
+                    }
+                    resolved = Some(address);
+                }
+            }
+        }
+        resolved
+    }
+
+    fn named_definition_to_address(&self, definition: &NamedDefinition) -> Option<RangeAddress> {
+        match definition {
+            NamedDefinition::Cell(cell) => {
+                let sheet = self.engine.graph.sheet_name(cell.sheet_id).to_string();
+                let row = cell.coord.row() + 1;
+                let col = cell.coord.col() + 1;
+                RangeAddress::new(sheet, row, col, row, col).ok()
+            }
+            NamedDefinition::Range(range) => {
+                if range.start.sheet_id != range.end.sheet_id {
+                    return None;
+                }
+                let sheet = self
+                    .engine
+                    .graph
+                    .sheet_name(range.start.sheet_id)
+                    .to_string();
+                let start_row = range.start.coord.row() + 1;
+                let start_col = range.start.coord.col() + 1;
+                let end_row = range.end.coord.row() + 1;
+                let end_col = range.end.coord.col() + 1;
+                RangeAddress::new(sheet, start_row, start_col, end_row, end_col).ok()
+            }
+            NamedDefinition::Formula { .. } => {
+                #[cfg(feature = "tracing")]
+                tracing::debug!("formula-backed named ranges are not yet supported");
+                None
+            }
+        }
     }
 
     // Persistence/transactions via SpreadsheetWriter (self implements writer)

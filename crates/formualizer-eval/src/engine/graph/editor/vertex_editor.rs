@@ -2,9 +2,9 @@ use crate::SheetId;
 use crate::engine::graph::DependencyGraph;
 use crate::engine::graph::editor::reference_adjuster::{ReferenceAdjuster, ShiftOperation};
 use crate::engine::named_range::{NameScope, NamedDefinition};
-use crate::engine::packed_coord::PackedCoord;
 use crate::engine::{ChangeEvent, ChangeLogger, VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
+use formualizer_common::Coord as AbsCoord;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::ASTNode;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Metadata for creating a new vertex
 #[derive(Debug, Clone)]
 pub struct VertexMeta {
-    pub coord: PackedCoord,
+    pub coord: AbsCoord,
     pub sheet_id: SheetId,
     pub kind: VertexKind,
     pub flags: u8,
@@ -21,7 +21,7 @@ pub struct VertexMeta {
 impl VertexMeta {
     pub fn new(row: u32, col: u32, sheet_id: SheetId, kind: VertexKind) -> Self {
         Self {
-            coord: PackedCoord::new(row, col),
+            coord: AbsCoord::new(row, col),
             sheet_id,
             kind,
             flags: 0,
@@ -48,7 +48,7 @@ impl VertexMeta {
 #[derive(Debug, Clone)]
 pub struct VertexMetaPatch {
     pub kind: Option<VertexKind>,
-    pub coord: Option<PackedCoord>,
+    pub coord: Option<AbsCoord>,
     pub dirty: Option<bool>,
     pub volatile: Option<bool>,
 }
@@ -137,7 +137,8 @@ impl std::fmt::Display for EditorError {
                 write!(
                     f,
                     "Target cell occupied at row {}, col {}",
-                    cell.coord.row, cell.coord.col
+                    cell.coord.row(),
+                    cell.coord.col()
                 )
             }
             EditorError::OutOfBounds { row, col } => {
@@ -522,7 +523,7 @@ impl<'g> VertexEditor<'g> {
     }
 
     /// Move a vertex to a new position
-    pub fn move_vertex(&mut self, id: VertexId, new_coord: PackedCoord) -> Result<(), EditorError> {
+    pub fn move_vertex(&mut self, id: VertexId, new_coord: AbsCoord) -> Result<(), EditorError> {
         // Check if vertex exists
         if !self.graph.vertex_exists(id) {
             return Err(EditorError::Excel(
@@ -669,7 +670,7 @@ impl<'g> VertexEditor<'g> {
         self.begin_batch();
 
         // 1. Collect vertices to shift (those at or after the insert point)
-        let vertices_to_shift: Vec<(VertexId, PackedCoord)> = self
+        let vertices_to_shift: Vec<(VertexId, AbsCoord)> = self
             .graph
             .vertices_in_sheet(sheet_id)
             .filter_map(|id| {
@@ -689,7 +690,7 @@ impl<'g> VertexEditor<'g> {
         }
         // 2. Shift vertices down (emit VertexMoved)
         for (id, old_coord) in vertices_to_shift {
-            let new_coord = PackedCoord::new(old_coord.row() + count, old_coord.col());
+            let new_coord = AbsCoord::new(old_coord.row() + count, old_coord.col());
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
@@ -773,7 +774,7 @@ impl<'g> VertexEditor<'g> {
             ));
         }
         // 2. Shift remaining vertices up (emit VertexMoved)
-        let vertices_to_shift: Vec<(VertexId, PackedCoord)> = self
+        let vertices_to_shift: Vec<(VertexId, AbsCoord)> = self
             .graph
             .vertices_in_sheet(sheet_id)
             .filter_map(|id| {
@@ -787,7 +788,7 @@ impl<'g> VertexEditor<'g> {
             .collect();
 
         for (id, old_coord) in vertices_to_shift {
-            let new_coord = PackedCoord::new(old_coord.row() - count, old_coord.col());
+            let new_coord = AbsCoord::new(old_coord.row() - count, old_coord.col());
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
@@ -850,7 +851,7 @@ impl<'g> VertexEditor<'g> {
         self.begin_batch();
 
         // 1. Collect vertices to shift (those at or after the insert point)
-        let vertices_to_shift: Vec<(VertexId, PackedCoord)> = self
+        let vertices_to_shift: Vec<(VertexId, AbsCoord)> = self
             .graph
             .vertices_in_sheet(sheet_id)
             .filter_map(|id| {
@@ -870,7 +871,7 @@ impl<'g> VertexEditor<'g> {
         }
         // 2. Shift vertices right (emit VertexMoved)
         for (id, old_coord) in vertices_to_shift {
-            let new_coord = PackedCoord::new(old_coord.row(), old_coord.col() + count);
+            let new_coord = AbsCoord::new(old_coord.row(), old_coord.col() + count);
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
@@ -954,7 +955,7 @@ impl<'g> VertexEditor<'g> {
             ));
         }
         // 2. Shift remaining vertices left (emit VertexMoved)
-        let vertices_to_shift: Vec<(VertexId, PackedCoord)> = self
+        let vertices_to_shift: Vec<(VertexId, AbsCoord)> = self
             .graph
             .vertices_in_sheet(sheet_id)
             .filter_map(|id| {
@@ -968,7 +969,7 @@ impl<'g> VertexEditor<'g> {
             .collect();
 
         for (id, old_coord) in vertices_to_shift {
-            let new_coord = PackedCoord::new(old_coord.row(), old_coord.col() - count);
+            let new_coord = AbsCoord::new(old_coord.row(), old_coord.col() - count);
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
@@ -1069,8 +1070,8 @@ impl<'g> VertexEditor<'g> {
         // Use the existing DependencyGraph API
         match self.graph.set_cell_value(
             &sheet_name,
-            cell_ref.coord.row,
-            cell_ref.coord.col,
+            cell_ref.coord.row(),
+            cell_ref.coord.col(),
             value.clone(),
         ) {
             Ok(summary) => {
@@ -1105,8 +1106,8 @@ impl<'g> VertexEditor<'g> {
         // Use the existing DependencyGraph API
         match self.graph.set_cell_formula(
             &sheet_name,
-            cell_ref.coord.row,
-            cell_ref.coord.col,
+            cell_ref.coord.row(),
+            cell_ref.coord.col(),
             formula.clone(),
         ) {
             Ok(summary) => {
@@ -1710,8 +1711,8 @@ mod tests {
         match &log.events()[0] {
             ChangeEvent::SetValue { addr, new, .. } => {
                 assert_eq!(addr.sheet_id, cell_ref.sheet_id);
-                assert_eq!(addr.coord.row, cell_ref.coord.row);
-                assert_eq!(addr.coord.col, cell_ref.coord.col);
+                assert_eq!(addr.coord.row(), cell_ref.coord.row());
+                assert_eq!(addr.coord.col(), cell_ref.coord.col());
                 assert_eq!(new, &value);
             }
             _ => panic!("Expected SetValue event"),
@@ -1748,8 +1749,8 @@ mod tests {
         match &log.events()[0] {
             ChangeEvent::SetFormula { addr, .. } => {
                 assert_eq!(addr.sheet_id, cell_ref.sheet_id);
-                assert_eq!(addr.coord.row, cell_ref.coord.row);
-                assert_eq!(addr.coord.col, cell_ref.coord.col);
+                assert_eq!(addr.coord.row(), cell_ref.coord.row());
+                assert_eq!(addr.coord.col(), cell_ref.coord.col());
             }
             _ => panic!("Expected SetFormula event"),
         }
@@ -1796,7 +1797,7 @@ mod tests {
         match &log.events()[0] {
             ChangeEvent::SetValue { addr, new, .. } => {
                 assert_eq!(addr.sheet_id, 0);
-                assert_eq!(addr.coord.row, 10);
+                assert_eq!(addr.coord.row(), 10);
                 if let LiteralValue::Text(msg) = new {
                     assert!(msg.contains("Row shift"));
                     assert!(msg.contains("start=10"));
@@ -1843,7 +1844,7 @@ mod tests {
         match &log.events()[0] {
             ChangeEvent::SetValue { addr, new, .. } => {
                 assert_eq!(addr.sheet_id, 0);
-                assert_eq!(addr.coord.col, 8);
+                assert_eq!(addr.coord.col(), 8);
                 if let LiteralValue::Text(msg) = new {
                     assert!(msg.contains("Column shift"));
                     assert!(msg.contains("start=8"));
@@ -1863,18 +1864,10 @@ mod tests {
         let vertex_id = editor.add_vertex(meta);
 
         // Move vertex returns Result
-        assert!(
-            editor
-                .move_vertex(vertex_id, PackedCoord::new(8, 12))
-                .is_ok()
-        );
+        assert!(editor.move_vertex(vertex_id, AbsCoord::new(8, 12)).is_ok());
 
         // Moving to same position should work
-        assert!(
-            editor
-                .move_vertex(vertex_id, PackedCoord::new(8, 12))
-                .is_ok()
-        );
+        assert!(editor.move_vertex(vertex_id, AbsCoord::new(8, 12)).is_ok());
     }
 
     #[test]

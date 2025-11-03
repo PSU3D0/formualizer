@@ -1,4 +1,5 @@
 //! Tests for the hybrid model of range dependency management.
+use super::common::eval_config_with_range_limit;
 use crate::engine::{DependencyGraph, EvalConfig, StripeKey, StripeType, VertexId, block_index};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
@@ -33,11 +34,13 @@ fn sum_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTNod
     }
 }
 
+fn graph_with_range_limit(limit: usize) -> DependencyGraph {
+    DependencyGraph::new_with_config(eval_config_with_range_limit(limit))
+}
+
 #[test]
 fn test_tiny_range_expands_to_cell_dependencies() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = graph_with_range_limit(4);
 
     // C1 = SUM(A1:A4) - size is 4, which is <= limit
     graph
@@ -70,7 +73,7 @@ fn test_tiny_range_expands_to_cell_dependencies() {
     let mut dep_addrs = Vec::new();
     for &dep_id in &dependencies {
         let cell_ref = graph.get_cell_ref(dep_id).unwrap();
-        dep_addrs.push((cell_ref.coord.row, cell_ref.coord.col));
+        dep_addrs.push((cell_ref.coord.row(), cell_ref.coord.col()));
     }
     dep_addrs.sort();
     let expected_addrs = vec![(1, 1), (2, 1), (3, 1), (4, 1)];
@@ -154,9 +157,7 @@ fn test_range_dependency_updates_on_formula_change() {
 
 #[test]
 fn test_large_range_creates_single_compressed_ref() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = graph_with_range_limit(4);
 
     // C1 = SUM(A1:A100) - size is 100, which is > limit
     graph
@@ -187,9 +188,7 @@ fn test_large_range_creates_single_compressed_ref() {
 
 #[test]
 fn test_tall_range_populates_column_stripe_index() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = graph_with_range_limit(4);
 
     // C1 = SUM(A1:A500)
     graph
@@ -215,9 +214,7 @@ fn test_tall_range_populates_column_stripe_index() {
 
 #[test]
 fn test_wide_range_populates_row_stripe_index() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = graph_with_range_limit(4);
 
     // C1 = SUM(A1:Z1)
     graph
@@ -243,9 +240,7 @@ fn test_wide_range_populates_row_stripe_index() {
 
 #[test]
 fn test_dense_range_populates_block_stripe_index() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    config.enable_block_stripes = true;
+    let config = eval_config_with_range_limit(4).with_block_stripes(true);
     let mut graph = DependencyGraph::new_with_config(config);
 
     // C1 = SUM(A1:Z26)
@@ -272,9 +267,7 @@ fn test_dense_range_populates_block_stripe_index() {
 
 #[test]
 fn test_formula_replacement_cleans_stripes() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = graph_with_range_limit(4);
 
     // B1 = SUM(A1:A500)
     graph
@@ -307,9 +300,7 @@ fn test_formula_replacement_cleans_stripes() {
 
 #[test]
 fn test_duplicate_range_refs_in_formula() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = graph_with_range_limit(4);
     // B1 = SUM(A1:A100) + COUNT(A1:A100)
     let formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
@@ -374,9 +365,7 @@ fn test_cross_sheet_implicit_range_stripes() {
 
 #[test]
 fn test_duplicate_vertex_not_pushed_twice() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = graph_with_range_limit(4);
 
     // Create overlapping ranges that hit the same stripe
     // B1 = SUM(A1:A500)
@@ -427,11 +416,12 @@ fn test_row_insertion_not_panicking() {
 
 #[test]
 fn test_threshold_stripe_interplay() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 5;
-    config.stripe_height = 4;
-    config.stripe_width = 4;
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = DependencyGraph::new_with_config(EvalConfig {
+        range_expansion_limit: 5,
+        stripe_height: 4,
+        stripe_width: 4,
+        ..Default::default()
+    });
 
     // Range size = 8, larger than expansion limit (5) - should create compressed dependency
     graph
@@ -461,9 +451,7 @@ fn test_overlapping_named_range_deduplication() {
     // Placeholder test for named range support
     // When named ranges are implemented, they should be deduplicated
     // with direct range references if they overlap
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 5; // Make sure range gets compressed
-    let mut graph = DependencyGraph::new_with_config(config);
+    let mut graph = graph_with_range_limit(5); // Make sure range gets compressed
 
     // For now, just test that the graph handles basic ranges correctly
     // B1 = SUM(A1:A10) (avoid self-reference) - size 10 > limit 5
