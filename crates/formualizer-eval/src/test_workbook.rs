@@ -10,7 +10,7 @@ use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
     ReferenceResolver, Resolver, Table, TableResolver,
 };
-use formualizer_common::{ExcelError, LiteralValue};
+use formualizer_common::{ExcelError, LiteralValue, parse_a1_1based};
 use formualizer_parse::{
     ExcelErrorKind,
     parser::{ReferenceType, TableReference},
@@ -376,21 +376,5 @@ impl Resolver for TestWorkbook {}
 
 /* ─────────────────────── A1 parser ───────────────────────── */
 fn parse_a1(a1: &str) -> Option<(u32, u32)> {
-    let s = a1.replace('$', "").to_uppercase();
-    let mut col = 0u32;
-    let mut row_str = String::new();
-    for ch in s.chars() {
-        if ch.is_ascii_alphabetic() {
-            col = col * 26 + (ch as u32 - 'A' as u32 + 1);
-        } else if ch.is_ascii_digit() {
-            row_str.push(ch);
-        } else {
-            return None;
-        }
-    }
-    if col == 0 || row_str.is_empty() {
-        return None;
-    }
-    let row = row_str.parse::<u32>().ok()?;
-    Some((col, row))
+    parse_a1_1based(a1).ok().map(|(row, col, _, _)| (col, row))
 }

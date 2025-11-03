@@ -5,12 +5,14 @@
 //! layout with anchor flags that preserve the `$A$1` semantics needed while parsing
 //! and adjusting formulas.
 
-use core::fmt;
+use core::{fmt, str::FromStr};
 
 const ROW_BITS: u32 = 20;
 const COL_BITS: u32 = 14;
 const ROW_MAX: u32 = (1 << ROW_BITS) - 1;
 const COL_MAX: u32 = (1 << COL_BITS) - 1;
+const ROW_MAX_1BASED: u32 = ROW_MAX + 1;
+const COL_MAX_1BASED: u32 = COL_MAX + 1;
 
 const ROW_SHIFT: u32 = 24;
 const COL_SHIFT: u32 = 10;
@@ -43,6 +45,66 @@ impl fmt::Display for CoordError {
             CoordError::NegativeCol(col) => write!(f, "col {col} is negative"),
             CoordError::ReservedBitsSet(bits) => {
                 write!(f, "coordinate contains reserved bits: {bits:#x}")
+            }
+        }
+    }
+}
+
+/// Errors that can occur while parsing A1-style references.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum A1ParseError {
+    Empty,
+    MissingColumn,
+    MissingRow,
+    InvalidColumnChar(char),
+    InvalidRowChar(char),
+    TrailingCharacters(String),
+    ColumnOutOfRange(u32),
+    RowOutOfRange(u32),
+}
+
+impl fmt::Display for A1ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            A1ParseError::Empty => write!(f, "reference is empty"),
+            A1ParseError::MissingColumn => write!(f, "reference must start with a column"),
+            A1ParseError::MissingRow => write!(f, "reference must include a row number"),
+            A1ParseError::InvalidColumnChar(ch) => {
+                write!(f, "invalid column character `{ch}`; expected A-Z")
+            }
+            A1ParseError::InvalidRowChar(ch) => {
+                write!(f, "invalid row character `{ch}`; expected 0-9")
+            }
+            A1ParseError::TrailingCharacters(rest) => {
+                write!(f, "unexpected trailing characters `{rest}`")
+            }
+            A1ParseError::ColumnOutOfRange(col) => {
+                write!(
+                    f,
+                    "column {col} is outside Excel's supported range (1..={})",
+                    COL_MAX_1BASED
+                )
+            }
+            A1ParseError::RowOutOfRange(row) => {
+                write!(
+                    f,
+                    "row {row} is outside Excel's supported range (1..={})",
+                    ROW_MAX_1BASED
+                )
+            }
+        }
+    }
+}
+
+impl From<CoordError> for A1ParseError {
+    fn from(value: CoordError) -> Self {
+        match value {
+            CoordError::RowOverflow(row) => A1ParseError::RowOutOfRange(row as u32 + 1),
+            CoordError::ColOverflow(col) => A1ParseError::ColumnOutOfRange(col as u32 + 1),
+            CoordError::NegativeRow(_) => A1ParseError::RowOutOfRange(0),
+            CoordError::NegativeCol(_) => A1ParseError::ColumnOutOfRange(0),
+            CoordError::ReservedBitsSet(bits) => {
+                A1ParseError::TrailingCharacters(format!("reserved bits {bits:#x}"))
             }
         }
     }
@@ -124,6 +186,16 @@ impl Coord {
     #[inline(always)]
     pub fn into_relative(self) -> RelativeCoord {
         RelativeCoord::new(self.row(), self.col(), true, true)
+    }
+
+    /// Parse an A1-style reference (e.g. `"A1"`, `"$B$12"`) into a [`Coord`].
+    pub fn try_from_a1(input: &str) -> Result<Self, A1ParseError> {
+        let (row, col, _, _) = parse_a1_components(input)?;
+        let row0 = row.checked_sub(1).ok_or(A1ParseError::RowOutOfRange(0))?;
+        let col0 = col
+            .checked_sub(1)
+            .ok_or(A1ParseError::ColumnOutOfRange(0))?;
+        Coord::try_new(row0, col0).map_err(A1ParseError::from)
     }
 }
 
@@ -288,6 +360,16 @@ impl RelativeCoord {
     pub fn letters_to_col(s: &str) -> Option<u32> {
         letters_to_column_index(s)
     }
+
+    /// Parse an A1-style reference into a [`RelativeCoord`].
+    pub fn try_from_a1(input: &str) -> Result<Self, A1ParseError> {
+        let (row, col, row_abs, col_abs) = parse_a1_components(input)?;
+        let row0 = row.checked_sub(1).ok_or(A1ParseError::RowOutOfRange(0))?;
+        let col0 = col
+            .checked_sub(1)
+            .ok_or(A1ParseError::ColumnOutOfRange(0))?;
+        RelativeCoord::try_new(row0, col0, row_abs, col_abs).map_err(A1ParseError::from)
+    }
 }
 
 impl fmt::Display for RelativeCoord {
@@ -337,11 +419,12 @@ fn letters_to_column_index(s: &str) -> Option<u32> {
         return None;
     }
     let mut col: u32 = 0;
-    for (idx, ch) in s.bytes().enumerate() {
-        if !ch.is_ascii_uppercase() {
+    for (idx, byte) in s.bytes().enumerate() {
+        let upper = byte.to_ascii_uppercase();
+        if !(b'A'..=b'Z').contains(&upper) {
             return None;
         }
-        let val = (ch - b'A') as u32;
+        let val = (upper - b'A') as u32;
         col = col.checked_mul(26)?;
         col = col.checked_add(val)?;
         if idx != s.len() - 1 {
@@ -349,6 +432,142 @@ fn letters_to_column_index(s: &str) -> Option<u32> {
         }
     }
     Some(col)
+}
+
+/// Convert a 1-based column index into its Excel letters (1 → "A").
+pub fn col_letters_from_1based(col: u32) -> Result<String, A1ParseError> {
+    if col == 0 || col > COL_MAX_1BASED {
+        return Err(A1ParseError::ColumnOutOfRange(col));
+    }
+    Ok(column_to_letters(col - 1))
+}
+
+/// Convert Excel column letters into a 1-based column index.
+pub fn col_index_from_letters_1based(col: &str) -> Result<u32, A1ParseError> {
+    if col.is_empty() {
+        return Err(A1ParseError::MissingColumn);
+    }
+    for ch in col.chars() {
+        if !ch.is_ascii_alphabetic() {
+            return Err(A1ParseError::InvalidColumnChar(ch));
+        }
+    }
+    match letters_to_column_index(col) {
+        Some(zero_based) if zero_based <= COL_MAX => Ok(zero_based + 1),
+        Some(zero_based) => Err(A1ParseError::ColumnOutOfRange(zero_based + 1)),
+        None => Err(A1ParseError::ColumnOutOfRange(COL_MAX_1BASED + 1)),
+    }
+}
+
+fn parse_a1_components(input: &str) -> Result<(u32, u32, bool, bool), A1ParseError> {
+    if input.is_empty() {
+        return Err(A1ParseError::Empty);
+    }
+
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let mut idx = 0usize;
+
+    let mut col_abs = false;
+    let mut row_abs = false;
+
+    if bytes[idx] == b'$' {
+        col_abs = true;
+        idx += 1;
+        if idx >= len {
+            return Err(A1ParseError::MissingColumn);
+        }
+    }
+
+    let col_start = idx;
+    while idx < len && bytes[idx].is_ascii_alphabetic() {
+        idx += 1;
+    }
+
+    if idx == col_start {
+        return Err(A1ParseError::MissingColumn);
+    }
+
+    let col_letters = &input[col_start..idx];
+
+    if idx < len && bytes[idx] == b'$' {
+        row_abs = true;
+        idx += 1;
+    }
+
+    if idx >= len {
+        return Err(A1ParseError::MissingRow);
+    }
+
+    let row_start = idx;
+    while idx < len && bytes[idx].is_ascii_digit() {
+        idx += 1;
+    }
+
+    if row_start == idx {
+        let invalid = input[row_start..].chars().next().unwrap_or('\0');
+        if invalid == '\0' {
+            return Err(A1ParseError::MissingRow);
+        }
+        return Err(A1ParseError::InvalidRowChar(invalid));
+    }
+
+    if idx != len {
+        return Err(A1ParseError::TrailingCharacters(input[idx..].to_string()));
+    }
+
+    let col = col_index_from_letters_1based(col_letters)?;
+    let row_str = &input[row_start..idx];
+    if !row_str.bytes().all(|b| b.is_ascii_digit()) {
+        let invalid = row_str.chars().find(|c| !c.is_ascii_digit()).unwrap();
+        return Err(A1ParseError::InvalidRowChar(invalid));
+    }
+    let row: u32 = row_str
+        .parse()
+        .map_err(|_| A1ParseError::RowOutOfRange(ROW_MAX_1BASED + 1))?;
+
+    if row == 0 || row > ROW_MAX_1BASED {
+        return Err(A1ParseError::RowOutOfRange(row));
+    }
+
+    Ok((row, col, row_abs, col_abs))
+}
+
+/// Parse an A1-style reference and return 1-based coordinates plus absolute flags.
+pub fn parse_a1_1based(input: &str) -> Result<(u32, u32, bool, bool), A1ParseError> {
+    parse_a1_components(input)
+}
+
+impl TryFrom<&str> for Coord {
+    type Error = A1ParseError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Coord::try_from_a1(value)
+    }
+}
+
+impl FromStr for Coord {
+    type Err = A1ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Coord::try_from_a1(s)
+    }
+}
+
+impl FromStr for RelativeCoord {
+    type Err = A1ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        RelativeCoord::try_from_a1(s)
+    }
+}
+
+impl TryFrom<&str> for RelativeCoord {
+    type Error = A1ParseError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        RelativeCoord::try_from_a1(value)
+    }
 }
 
 #[cfg(test)]
@@ -396,7 +615,7 @@ mod tests {
     #[test]
     fn relative_display() {
         let coord = RelativeCoord::new(5, 27, true, false);
-        assert_eq!(coord.to_string(), "$AB6");
+        assert_eq!(coord.to_string(), "AB$6");
         let coord = RelativeCoord::new(0, 0, false, false);
         assert_eq!(coord.to_string(), "A1");
     }
@@ -417,5 +636,69 @@ mod tests {
         let idx = RelativeCoord::letters_to_col(&letters).unwrap();
         assert_eq!(idx, 27);
         assert!(RelativeCoord::letters_to_col("a1").is_none());
+    }
+
+    #[test]
+    fn col_letters_from_1based_roundtrip() {
+        assert_eq!(col_letters_from_1based(1).unwrap(), "A");
+        assert_eq!(col_letters_from_1based(26).unwrap(), "Z");
+        assert_eq!(col_letters_from_1based(27).unwrap(), "AA");
+        assert_eq!(col_letters_from_1based(52).unwrap(), "AZ");
+        assert_eq!(col_letters_from_1based(53).unwrap(), "BA");
+    }
+
+    #[test]
+    fn col_index_from_letters_handles_lowercase() {
+        assert_eq!(col_index_from_letters_1based("a").unwrap(), 1);
+        assert_eq!(col_index_from_letters_1based("zz").unwrap(), 702);
+        assert_eq!(
+            col_index_from_letters_1based("XFD").unwrap(),
+            COL_MAX_1BASED
+        );
+        assert!(col_index_from_letters_1based("xfda").is_err());
+        assert!(col_index_from_letters_1based("!").is_err());
+    }
+
+    #[test]
+    fn parse_a1_components_basic() {
+        let (row, col, row_abs, col_abs) = parse_a1_1based("A1").unwrap();
+        assert_eq!((row, col, row_abs, col_abs), (1, 1, false, false));
+
+        let (row, col, row_abs, col_abs) = parse_a1_1based("$C$10").unwrap();
+        assert_eq!((row, col, row_abs, col_abs), (10, 3, true, true));
+
+        let (row, col, row_abs, col_abs) = parse_a1_1based("d$5").unwrap();
+        assert_eq!((row, col, row_abs, col_abs), (5, 4, true, false));
+    }
+
+    #[test]
+    fn parse_a1_components_errors() {
+        assert!(matches!(parse_a1_1based(""), Err(A1ParseError::Empty)));
+        assert!(matches!(
+            parse_a1_1based("$"),
+            Err(A1ParseError::MissingColumn)
+        ));
+        assert!(matches!(
+            parse_a1_1based("A"),
+            Err(A1ParseError::MissingRow)
+        ));
+        assert!(matches!(
+            parse_a1_1based("A0"),
+            Err(A1ParseError::RowOutOfRange(0))
+        ));
+        assert!(matches!(
+            parse_a1_1based("XFE1"),
+            Err(A1ParseError::ColumnOutOfRange(_))
+        ));
+    }
+
+    #[test]
+    fn coord_try_from_a1_matches_relative() {
+        let coord = Coord::try_from_a1("$B$2").unwrap();
+        assert_eq!((coord.row(), coord.col()), (1, 1));
+
+        let rel = RelativeCoord::try_from_a1("$B$2").unwrap();
+        assert!(rel.row_abs() && rel.col_abs());
+        assert_eq!((rel.row(), rel.col()), (1, 1));
     }
 }

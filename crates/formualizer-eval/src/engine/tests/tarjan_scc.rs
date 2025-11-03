@@ -1,6 +1,6 @@
 use super::common::get_vertex_ids_in_order;
 use crate::engine::{DependencyGraph, Scheduler, VertexId};
-use formualizer_common::LiteralValue;
+use formualizer_common::{LiteralValue, parse_a1_1based};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 /// Helper to create a cell reference AST node
@@ -47,21 +47,9 @@ fn create_binary_op_ast(left_ref: &str, right_ref: &str, op: &str) -> ASTNode {
 
 /// Helper to parse "A1" -> (1, 1), "B2" -> (2, 2), etc.
 fn parse_cell_ref(cell_ref: &str) -> (u32, u32) {
-    let chars: Vec<char> = cell_ref.chars().collect();
-    let mut col = 0u32;
-    let mut i = 0;
-
-    // Parse column letters (A=1, B=2, etc.)
-    while i < chars.len() && chars[i].is_alphabetic() {
-        col = col * 26 + (chars[i].to_ascii_uppercase() as u32 - 'A' as u32 + 1);
-        i += 1;
-    }
-
-    // Parse row number
-    let row_str: String = chars[i..].iter().collect();
-    let row = row_str.parse::<u32>().unwrap_or(1);
-
-    (row, col)
+    parse_a1_1based(cell_ref)
+        .map(|(row, col, _, _)| (row, col))
+        .unwrap_or((1, 1))
 }
 
 /// Create a test graph with realistic formulas and return vertex IDs by cell reference

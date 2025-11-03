@@ -3,11 +3,15 @@ use crate::types::{FormulaDialect, ParsingError};
 use crate::{ExcelError, LiteralValue};
 
 use crate::hasher::FormulaHasher;
+use formualizer_common::coord::{
+    col_index_from_letters_1based, col_letters_from_1based, parse_a1_1based,
+};
 use once_cell::sync::Lazy;
 use smallvec::SmallVec;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::hash::{Hash, Hasher};
+use std::str::FromStr;
 use std::sync::Arc;
 
 type VolatilityFn = dyn Fn(&str) -> bool + Send + Sync + 'static;
@@ -358,101 +362,30 @@ impl ReferenceType {
 
     /// Parse a cell reference like "A1" into (column, row) using byte-based parsing.
     fn parse_cell_reference(reference: &str) -> Result<(u32, u32), ParsingError> {
-        let bytes = reference.as_bytes();
-        let mut i = 0;
-
-        // Skip optional $ for absolute column reference
-        if i < bytes.len() && bytes[i] == b'$' {
-            i += 1;
-        }
-
-        // Parse column letters
-        let col_start = i;
-        while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
-            i += 1;
-        }
-
-        if i == col_start {
-            return Err(ParsingError::InvalidReference(format!(
-                "Invalid cell reference: {reference}"
-            )));
-        }
-
-        let col_str = &reference[col_start..i];
-        let col = Self::column_to_number(col_str)?;
-
-        // Skip optional $ for absolute row reference
-        if i < bytes.len() && bytes[i] == b'$' {
-            i += 1;
-        }
-
-        // Parse row number
-        let row_start = i;
-        while i < bytes.len() && bytes[i].is_ascii_digit() {
-            i += 1;
-        }
-
-        if i == row_start || i != bytes.len() {
-            return Err(ParsingError::InvalidReference(format!(
-                "Invalid cell reference: {reference}"
-            )));
-        }
-
-        let row_str = &reference[row_start..i];
-        let row = row_str
-            .parse::<u32>()
-            .map_err(|_| ParsingError::InvalidReference(format!("Invalid row: {row_str}")))?;
-
-        Ok((col, row))
+        parse_a1_1based(reference)
+            .map(|(row, col, _, _)| (col, row))
+            .map_err(|_| {
+                ParsingError::InvalidReference(format!("Invalid cell reference: {reference}"))
+            })
     }
 
     /// Convert a column letter (e.g., "A", "BC") to a column number (1-based) using byte operations.
     pub(crate) fn column_to_number(column: &str) -> Result<u32, ParsingError> {
-        let bytes = column.as_bytes();
-
-        // Excel column names have a practical limit (XFD = 16384 is the max in Excel)
-        // Anything longer than 3 characters is likely not a column reference
-        if bytes.is_empty() || bytes.len() > 3 {
-            return Err(ParsingError::InvalidReference(format!(
-                "Invalid column: {column}"
-            )));
-        }
-
-        let mut result = 0u32;
-
-        for &b in bytes {
-            if !b.is_ascii_alphabetic() {
-                return Err(ParsingError::InvalidReference(format!(
-                    "Invalid column: {column}"
-                )));
-            }
-            // Use checked arithmetic to prevent overflow
-            result = result
-                .checked_mul(26)
-                .and_then(|r| r.checked_add((b.to_ascii_uppercase() - b'A' + 1) as u32))
-                .ok_or_else(|| {
-                    ParsingError::InvalidReference(format!("Invalid column: {column}"))
-                })?;
-        }
-
-        Ok(result)
+        col_index_from_letters_1based(column)
+            .map_err(|_| ParsingError::InvalidReference(format!("Invalid column: {column}")))
     }
 
     /// Convert a column number to a column letter using lookup table for common values.
-    pub(crate) fn number_to_column(mut num: u32) -> String {
+    pub(crate) fn number_to_column(num: u32) -> String {
+        if num == 0 {
+            return String::new();
+        }
         // Use lookup table for common columns (1-702 covers A-ZZ)
         if num > 0 && num <= 702 {
             return COLUMN_LOOKUP[(num - 1) as usize].clone();
         }
 
-        // Fallback for larger column numbers
-        let mut result = String::with_capacity(3);
-        while num > 0 {
-            num -= 1;
-            result.insert(0, ((num % 26) as u8 + b'A') as char);
-            num /= 26;
-        }
-        result
+        col_letters_from_1based(num).unwrap_or_default()
     }
 }
 
@@ -542,6 +475,22 @@ impl Display for ReferenceType {
                 ReferenceType::NamedRange(name) => name.clone(),
             }
         )
+    }
+}
+
+impl TryFrom<&str> for ReferenceType {
+    type Error = ParsingError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        ReferenceType::from_string(value)
+    }
+}
+
+impl FromStr for ReferenceType {
+    type Err = ParsingError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ReferenceType::from_string(s)
     }
 }
 

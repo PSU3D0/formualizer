@@ -11,6 +11,7 @@ use crate::reference::{CellRef, Coord};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, Resolver};
 use chrono::Timelike;
+use formualizer_common::{col_letters_from_1based, parse_a1_1based};
 use formualizer_parse::parser::ReferenceType;
 use formualizer_parse::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
@@ -1710,17 +1711,8 @@ where
     }
 
     /// Helper: convert 1-based column index to Excel-style letters (1 -> A, 27 -> AA)
-    fn col_to_letters(mut col: u32) -> String {
-        if col == 0 {
-            panic!("Column index must be >= 1")
-        }
-        let mut s = String::new();
-        while col > 0 {
-            let rem = ((col - 1) % 26) as u8;
-            s.push((b'A' + rem) as char);
-            col = (col - 1) / 26;
-        }
-        s.chars().rev().collect()
+    fn col_to_letters(col: u32) -> String {
+        col_letters_from_1based(col).expect("column index must be >= 1")
     }
 
     /// Evaluate all dirty/volatile vertices with cancellation support
@@ -1897,33 +1889,19 @@ where
     }
 
     fn parse_a1_notation(address: &str) -> Result<(String, u32, u32), ExcelError> {
-        let parts: Vec<&str> = address.split('!').collect();
-        let (sheet, cell_part) = if parts.len() == 2 {
-            (parts[0].to_string(), parts[1])
-        } else {
-            ("Sheet1".to_string(), address) // Assume default sheet if not specified
+        let mut parts = address.splitn(2, '!');
+        let first = parts.next().unwrap_or_default();
+        let remainder = parts.next();
+
+        let (sheet, cell_part) = match remainder {
+            Some(cell) => (first.to_string(), cell),
+            None => ("Sheet1".to_string(), first),
         };
 
-        let mut col_end = 0;
-        for (i, c) in cell_part.chars().enumerate() {
-            if c.is_alphabetic() {
-                col_end = i + 1;
-            } else {
-                break;
-            }
-        }
-
-        let col_str = &cell_part[..col_end];
-        let row_str = &cell_part[col_end..];
-
-        let row = row_str.parse::<u32>().map_err(|_| {
-            ExcelError::new(ExcelErrorKind::Ref).with_message(format!("Invalid row: {row_str}"))
+        let (row, col, _, _) = parse_a1_1based(cell_part).map_err(|err| {
+            ExcelError::new(ExcelErrorKind::Ref)
+                .with_message(format!("Invalid cell reference `{cell_part}`: {err}"))
         })?;
-
-        let mut col = 0;
-        for c in col_str.to_uppercase().chars() {
-            col = col * 26 + (c as u32 - 'A' as u32) + 1; // +1 for 1-based indexing
-        }
 
         Ok((sheet, row, col))
     }
