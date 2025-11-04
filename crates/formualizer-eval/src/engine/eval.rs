@@ -1,5 +1,5 @@
 use crate::SheetId;
-use crate::arrow_store::SheetStore;
+use crate::arrow_store::{OverlayStats, SheetStore};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
@@ -301,6 +301,16 @@ where
     /// Access Arrow sheet store (mutable)
     pub fn sheet_store_mut(&mut self) -> &mut SheetStore {
         self.graph.sheet_store_mut()
+    }
+
+    /// Snapshot overlay instrumentation counters.
+    pub fn overlay_stats(&self) -> OverlayStats {
+        self.graph.sheet_store().overlay_stats().clone()
+    }
+
+    /// Current count of overlay entries across all chunks (computed on demand).
+    pub fn overlay_entry_gauge(&self) -> usize {
+        self.graph.sheet_store().overlay_entry_gauge()
     }
 
     /// Stage a formula text instead of inserting into the graph (used when deferring is enabled).

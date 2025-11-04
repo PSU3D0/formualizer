@@ -1,5 +1,5 @@
 use crate::SheetId;
-use crate::arrow_store::SheetStore;
+use crate::arrow_store::{OverlayPolicy, SheetStore};
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -571,7 +571,7 @@ impl DependencyGraph {
         let default_sheet_id = sheet_reg.id_for("Sheet1");
         let mut sheet_store = SheetStore::default();
         sheet_store.ensure_sheet_mut("Sheet1");
-        Self {
+        let mut this = Self {
             store: VertexStore::new(),
             edges: CsrMutableEdges::new(),
             data_store: DataStore::new(),
@@ -602,7 +602,9 @@ impl DependencyGraph {
             ensure_touched_sheets: FxHashSet::default(),
             #[cfg(test)]
             instr: GraphInstrumentation::default(),
-        }
+        };
+        this.apply_arrow_overlay_options();
+        this
     }
 
     pub fn new_with_config(config: super::EvalConfig) -> Self {
@@ -610,6 +612,7 @@ impl DependencyGraph {
             config: config.clone(),
             ..Self::new()
         };
+        g.apply_arrow_overlay_options();
         if config.use_dynamic_topo {
             // Seed with currently active vertices (likely empty at startup)
             let nodes = g
@@ -629,6 +632,15 @@ impl DependencyGraph {
             g.pk_order = Some(pk);
         }
         g
+    }
+
+    fn apply_arrow_overlay_options(&mut self) {
+        self.sheet_store
+            .set_default_chunk_rows(self.config.arrow_chunk_rows);
+        self.sheet_store.set_overlay_policy(OverlayPolicy {
+            abs_threshold: self.config.arrow_overlay_abs_threshold,
+            frac_den: self.config.arrow_overlay_frac_den,
+        });
     }
 
     /// When dynamic topology is enabled, compute layers for a subset using PK ordering.

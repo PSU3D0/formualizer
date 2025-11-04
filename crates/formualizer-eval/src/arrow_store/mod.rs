@@ -13,8 +13,60 @@ use once_cell::sync::OnceCell;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use std::collections::HashMap;
 
-const OVERLAY_COMPACTION_ABS_THRESHOLD: usize = 1024;
-const OVERLAY_COMPACTION_FRAC_DEN: usize = 50;
+pub const OVERLAY_COMPACTION_ABS_THRESHOLD: usize = 1024;
+pub const OVERLAY_COMPACTION_FRAC_DEN: usize = 50;
+
+#[derive(Debug, Clone, Copy)]
+pub struct OverlayPolicy {
+    pub abs_threshold: usize,
+    pub frac_den: usize,
+}
+
+impl Default for OverlayPolicy {
+    fn default() -> Self {
+        Self {
+            abs_threshold: OVERLAY_COMPACTION_ABS_THRESHOLD,
+            frac_den: OVERLAY_COMPACTION_FRAC_DEN,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ArrowStoreOptions {
+    pub default_chunk_rows: usize,
+    pub overlay_policy: OverlayPolicy,
+}
+
+impl Default for ArrowStoreOptions {
+    fn default() -> Self {
+        Self {
+            default_chunk_rows: 32 * 1024,
+            overlay_policy: OverlayPolicy::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OverlayStats {
+    pub overlay_sets: u64,
+    pub overlay_new_entries: u64,
+    pub chunk_compactions: u64,
+    pub overlay_entries_cleared: u64,
+}
+
+impl OverlayStats {
+    pub fn record_overlay_set(&mut self, is_new_entry: bool) {
+        self.overlay_sets += 1;
+        if is_new_entry {
+            self.overlay_new_entries += 1;
+        }
+    }
+
+    pub fn record_compaction(&mut self, cleared: usize) {
+        self.chunk_compactions += 1;
+        self.overlay_entries_cleared += cleared as u64;
+    }
+}
 
 /// Compact type tag per row (UInt8 backing)
 #[repr(u8)]
@@ -189,12 +241,60 @@ pub struct ArrowSheet {
     pub chunk_starts: Vec<usize>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct SheetStore {
     pub sheets: Vec<ArrowSheet>,
+    options: ArrowStoreOptions,
+    stats: OverlayStats,
+}
+
+impl Default for SheetStore {
+    fn default() -> Self {
+        Self {
+            sheets: Vec::new(),
+            options: ArrowStoreOptions::default(),
+            stats: OverlayStats::default(),
+        }
+    }
 }
 
 impl SheetStore {
+    pub fn overlay_stats(&self) -> &OverlayStats {
+        &self.stats
+    }
+
+    pub fn options(&self) -> &ArrowStoreOptions {
+        &self.options
+    }
+
+    pub fn options_mut(&mut self) -> &mut ArrowStoreOptions {
+        &mut self.options
+    }
+
+    pub fn set_default_chunk_rows(&mut self, rows: usize) {
+        self.options.default_chunk_rows = rows.max(1);
+    }
+
+    pub fn set_overlay_policy(&mut self, policy: OverlayPolicy) {
+        self.options.overlay_policy = OverlayPolicy {
+            abs_threshold: policy.abs_threshold,
+            frac_den: policy.frac_den.max(1),
+        };
+    }
+
+    pub fn overlay_entry_gauge(&self) -> usize {
+        self.sheets
+            .iter()
+            .map(|sheet| {
+                sheet
+                    .columns
+                    .iter()
+                    .map(|col| col.chunks.iter().map(|ch| ch.overlay.len()).sum::<usize>())
+                    .sum::<usize>()
+            })
+            .sum()
+    }
+
     pub fn sheet(&self, name: &str) -> Option<&ArrowSheet> {
         self.sheets.iter().find(|s| s.name.as_ref() == name)
     }
@@ -216,29 +316,33 @@ impl SheetStore {
         col: u32,
         value: &LiteralValue,
         date_system: DateSystem,
-    ) -> bool {
-        let sheet = self.ensure_sheet_mut(name);
-        let row0 = row.saturating_sub(1) as usize;
-        let col0 = col.saturating_sub(1) as usize;
-        if sheet.columns.len() <= col0 {
-            let missing = col0 + 1 - sheet.columns.len();
-            sheet.insert_columns(sheet.columns.len(), missing);
-        }
-        if sheet.nrows as usize <= row0 {
-            sheet.ensure_row_capacity(row0 + 1);
-        }
-        let Some((ch_idx, in_off)) = sheet.chunk_of_row(row0) else {
-            return false;
+    ) {
+        let policy = self.options.overlay_policy;
+        let default_chunk = self.options.default_chunk_rows;
+        let (is_new, compacted) = {
+            let sheet = self.ensure_sheet_mut(name);
+            let row0 = row.saturating_sub(1) as usize;
+            let col0 = col.saturating_sub(1) as usize;
+            if sheet.columns.len() <= col0 {
+                let missing = col0 + 1 - sheet.columns.len();
+                sheet.insert_columns(sheet.columns.len(), missing);
+            }
+            if sheet.nrows as usize <= row0 {
+                sheet.ensure_row_capacity(row0 + 1, default_chunk);
+            }
+            let Some((ch_idx, in_off)) = sheet.chunk_of_row(row0) else {
+                return;
+            };
+            let ov = OverlayValue::from_literal(value, date_system);
+            let ch = &mut sheet.columns[col0].chunks[ch_idx];
+            let is_new = ch.overlay.set(in_off, ov).is_none();
+            let compacted = sheet.maybe_compact_chunk(col0, ch_idx, policy);
+            (is_new, compacted)
         };
-        let ov = OverlayValue::from_literal(value, date_system);
-        let ch = &mut sheet.columns[col0].chunks[ch_idx];
-        ch.overlay.set(in_off, ov);
-        sheet.maybe_compact_chunk(
-            col0,
-            ch_idx,
-            OVERLAY_COMPACTION_ABS_THRESHOLD,
-            OVERLAY_COMPACTION_FRAC_DEN,
-        )
+        self.stats.record_overlay_set(is_new);
+        if let Some(cleared) = compacted {
+            self.stats.record_compaction(cleared);
+        }
     }
 
     pub fn read_cell_value(&self, name: &str, row: u32, col: u32) -> Option<LiteralValue> {
@@ -823,8 +927,8 @@ impl Overlay {
         self.map.get(&off)
     }
     #[inline]
-    pub fn set(&mut self, off: usize, v: OverlayValue) {
-        self.map.insert(off, v);
+    pub fn set(&mut self, off: usize, v: OverlayValue) -> Option<OverlayValue> {
+        self.map.insert(off, v)
     }
     #[inline]
     pub fn clear(&mut self) {
@@ -991,12 +1095,12 @@ impl ArrowSheet {
     }
 
     /// Ensure capacity to address at least target_rows rows by appending empty chunks.
-    pub fn ensure_row_capacity(&mut self, target_rows: usize) {
+    pub fn ensure_row_capacity(&mut self, target_rows: usize, default_chunk_rows: usize) {
         if target_rows as u32 <= self.nrows {
             return;
         }
-        // Determine chunk size from last chunk, fallback to 32k
-        let mut chunk_size = 32 * 1024;
+        // Determine chunk size from last chunk, fallback to configured default
+        let mut chunk_size = default_chunk_rows.max(1);
         if let Some(c0) = self.columns.first()
             && let Some(last) = c0.chunks.last()
         {
@@ -1164,26 +1268,26 @@ impl ArrowSheet {
         &mut self,
         col_idx: usize,
         ch_idx: usize,
-        abs_threshold: usize,
-        frac_den: usize,
-    ) -> bool {
+        policy: OverlayPolicy,
+    ) -> Option<usize> {
         if col_idx >= self.columns.len() || self.columns[col_idx].chunks.len() <= ch_idx {
-            return false;
+            return None;
         }
         let ch = &self.columns[col_idx].chunks[ch_idx];
         let len = ch.type_tag.len();
         if len == 0 {
-            return false;
+            return None;
         }
         let ov_len = ch.overlay.len();
-        let den = if frac_den.max(1) == 0 {
-            1
+        let frac_trigger = if policy.frac_den == usize::MAX {
+            usize::MAX
         } else {
-            frac_den.max(1)
+            let den = policy.frac_den.max(1);
+            (len / den).max(1)
         };
-        let trig = ov_len > (len / den) || ov_len > abs_threshold;
+        let trig = ov_len > frac_trigger || ov_len > policy.abs_threshold;
         if !trig {
-            return false;
+            return None;
         }
         // Rebuild: merge base lanes with overlays row-by-row
         let mut tag_b = UInt8Builder::with_capacity(len);
@@ -1376,13 +1480,14 @@ impl ArrowSheet {
         ch_mut.booleans = booleans;
         ch_mut.text = text;
         ch_mut.errors = errors;
+        let cleared = ch_mut.overlay.len();
         ch_mut.overlay.clear();
         ch_mut.meta.len = len;
         ch_mut.meta.non_null_num = non_num;
         ch_mut.meta.non_null_bool = non_bool;
         ch_mut.meta.non_null_text = non_text;
         ch_mut.meta.non_null_err = non_err;
-        true
+        Some(cleared)
     }
 
     /// Insert `count` rows before absolute 0-based row `before`.
@@ -2774,5 +2879,38 @@ mod tests {
         }
         assert_eq!(errs[4], Some(map_error_code(ExcelErrorKind::Div)));
         assert!(errs[3].is_none());
+    }
+
+    #[test]
+    fn overlay_policy_stats_and_gauge() {
+        let mut store = SheetStore::default();
+        store.set_default_chunk_rows(4);
+        store.set_overlay_policy(OverlayPolicy {
+            abs_threshold: 10,
+            frac_den: 4,
+        });
+        let sheet = "Stats";
+        let ds = crate::engine::DateSystem::Excel1900;
+
+        {
+            let sheet_mut = store.ensure_sheet_mut(sheet);
+            sheet_mut.insert_columns(0, 1);
+            sheet_mut.ensure_row_capacity(4, 4);
+        }
+
+        store.write_cell_value(sheet, 1, 1, &LiteralValue::Number(1.0), ds);
+        store.write_cell_value(sheet, 2, 1, &LiteralValue::Number(2.0), ds);
+
+        let stats = store.overlay_stats().clone();
+        assert_eq!(stats.overlay_sets, 2);
+        assert_eq!(stats.overlay_new_entries, 2);
+        assert_eq!(stats.chunk_compactions, 1);
+        assert_eq!(stats.overlay_entries_cleared, 2);
+        assert_eq!(store.overlay_entry_gauge(), 0);
+
+        let sheet = store.sheet(sheet).unwrap();
+        assert_eq!(sheet.columns[0].chunks[0].overlay.len(), 0);
+        assert_eq!(sheet.cell_value(0, 0), LiteralValue::Number(1.0));
+        assert_eq!(sheet.cell_value(1, 0), LiteralValue::Number(2.0));
     }
 }

@@ -159,3 +159,27 @@ fn bulk_update_noncontiguous_dense_triggers_rebuild_varied_chunk() {
     assert_eq!(av.get_cell(9, 0), LiteralValue::Number(10.0));
     assert_eq!(av.get_cell(59, 0), LiteralValue::Number(60.0));
 }
+
+#[test]
+fn overlay_compaction_respects_eval_config() {
+    let cfg = arrow_eval_config().with_overlay_compaction(usize::MAX, usize::MAX);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet("S", 1, 4);
+        for _ in 0..4 {
+            ab.append_row("S", &[LiteralValue::Empty]).unwrap();
+        }
+        ab.finish().unwrap();
+    }
+
+    let mut ub = engine.begin_bulk_update_arrow();
+    for r in 1..=4 {
+        ub.update_cell("S", r, 1, LiteralValue::Number(r as f64));
+    }
+    ub.finish().unwrap();
+
+    let sheet = engine.sheet_store().sheet("S").unwrap();
+    assert_eq!(sheet.columns[0].chunks[0].overlay.len(), 4);
+}

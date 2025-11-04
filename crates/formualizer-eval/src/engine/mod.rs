@@ -54,6 +54,7 @@ pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 
 // CalcObserver is defined below
 
+use crate::arrow_store::{OVERLAY_COMPACTION_ABS_THRESHOLD, OVERLAY_COMPACTION_FRAC_DEN};
 use crate::traits::EvaluationContext;
 use crate::traits::VolatileLevel;
 
@@ -136,6 +137,13 @@ pub struct EvalConfig {
     /// Ensures RangeView sees formula results directly from Arrow storage.
     pub write_formula_overlay_enabled: bool,
 
+    /// Default Arrow chunk height used when auto-growing sheets or when builders request 0.
+    pub arrow_chunk_rows: usize,
+    /// Absolute overlay entry threshold that forces chunk compaction.
+    pub arrow_overlay_abs_threshold: usize,
+    /// Fractional overlay threshold (len / frac_den) that forces chunk compaction.
+    pub arrow_overlay_frac_den: usize,
+
     /// Workbook date system: Excel 1900 (default) or 1904.
     pub date_system: DateSystem,
 
@@ -178,6 +186,9 @@ impl Default for EvalConfig {
             arrow_fastpath_enabled: true,
             delta_overlay_enabled: true,
             write_formula_overlay_enabled: true,
+            arrow_chunk_rows: 32 * 1024,
+            arrow_overlay_abs_threshold: OVERLAY_COMPACTION_ABS_THRESHOLD,
+            arrow_overlay_frac_den: OVERLAY_COMPACTION_FRAC_DEN,
             date_system: DateSystem::Excel1900,
             defer_graph_building: false,
         }
@@ -194,6 +205,19 @@ impl EvalConfig {
     #[inline]
     pub fn with_parallel(mut self, enable: bool) -> Self {
         self.enable_parallel = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_arrow_chunk_rows(mut self, rows: usize) -> Self {
+        self.arrow_chunk_rows = rows.max(1);
+        self
+    }
+
+    #[inline]
+    pub fn with_overlay_compaction(mut self, abs_threshold: usize, frac_den: usize) -> Self {
+        self.arrow_overlay_abs_threshold = abs_threshold;
+        self.arrow_overlay_frac_den = frac_den.max(1);
         self
     }
 
