@@ -2,6 +2,7 @@ use super::super::utils::{ARG_ANY_ONE, coerce_num, criteria_match};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
+use arrow_array::Array;
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
@@ -201,6 +202,63 @@ impl Function for CountIfFn {
         let v = args[0].value()?.into_owned();
         let matches = criteria_match(&pred, &v);
         Ok(LiteralValue::Number(if matches { 1.0 } else { 0.0 }))
+    }
+
+    fn eval_fold(
+        &self,
+        f: &mut dyn crate::function::FnFoldCtx,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        let args = f.args();
+        if args.len() != 2 {
+            return None;
+        }
+        let crit_value = match args[1].value() {
+            Ok(v) => v,
+            Err(e) => return Some(Ok(LiteralValue::Error(e))),
+        };
+        let pred = match crate::args::parse_criteria(crit_value.as_ref()) {
+            Ok(p) => p,
+            Err(e) => return Some(Ok(LiteralValue::Error(e))),
+        };
+        let mut arrow_total: i64 = 0;
+        let mut arrow_supported = false;
+        match f.with_arrow_range(0, &mut |ctx, view| {
+            let dims = view.dims();
+            if dims.0 == 0 || dims.1 == 0 {
+                arrow_supported = true;
+                return Ok(());
+            }
+            arrow_supported = true;
+            for col in 0..dims.1 {
+                match ctx.get_criteria_mask(view, col, &pred) {
+                    Some(mask) => {
+                        let arr = mask.as_ref();
+                        for i in 0..arr.len() {
+                            if arr.is_null(i) {
+                                continue;
+                            }
+                            if arr.value(i) {
+                                arrow_total += 1;
+                            }
+                        }
+                    }
+                    None => {
+                        arrow_supported = false;
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        }) {
+            Ok(true) => {
+                if arrow_supported {
+                    return Some(Ok(LiteralValue::Number(arrow_total as f64)));
+                }
+            }
+            Ok(false) => {}
+            Err(e) => return Some(Ok(LiteralValue::Error(e))),
+        }
+        None
     }
 }
 

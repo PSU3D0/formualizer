@@ -1,7 +1,9 @@
 use super::super::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
 use crate::args::ArgSchema;
-use crate::function::{FnFoldCtx, Function};
+use crate::function::{ArrowNumericChunk, FnFoldCtx, Function};
 use crate::traits::{ArgumentHandle, FunctionContext};
+use arrow::compute::kernels::aggregate::sum_array;
+use arrow_array::{Array, types::Float64Type};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
@@ -59,6 +61,17 @@ impl Function for SumFn {
 
     fn eval_fold(&self, f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
         let mut acc = 0.0f64;
+        {
+            let mut arrow_cb = |chunk: ArrowNumericChunk| -> Result<(), ExcelError> {
+                if let Some(part) = sum_array::<Float64Type, _>(chunk.values.as_ref()) {
+                    acc += part;
+                }
+                Ok(())
+            };
+            if let Err(e) = f.for_each_arrow_numeric_chunk(&mut arrow_cb) {
+                return Some(Ok(LiteralValue::Error(e)));
+            }
+        }
         // Stream numeric chunks using the fold context. Use a moderate default chunk size.
         let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
             for &n in chunk.data {
@@ -126,6 +139,16 @@ impl Function for CountFn {
 
     fn eval_fold(&self, f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
         let mut cnt: i64 = 0;
+        {
+            let mut arrow_cb = |chunk: ArrowNumericChunk| -> Result<(), ExcelError> {
+                let valid = (chunk.values.len() - chunk.values.null_count()) as i64;
+                cnt += valid;
+                Ok(())
+            };
+            if let Err(e) = f.for_each_arrow_numeric_chunk(&mut arrow_cb) {
+                return Some(Ok(LiteralValue::Error(e)));
+            }
+        }
         let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
             // Empty cells are excluded at packing time; all values here are numerics
             cnt += chunk.data.len() as i64;
@@ -200,6 +223,19 @@ impl Function for AverageFn {
     fn eval_fold(&self, f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
         let mut sum = 0.0f64;
         let mut cnt: i64 = 0;
+        {
+            let mut arrow_cb = |chunk: ArrowNumericChunk| -> Result<(), ExcelError> {
+                if let Some(part) = sum_array::<Float64Type, _>(chunk.values.as_ref()) {
+                    sum += part;
+                }
+                let valid = (chunk.values.len() - chunk.values.null_count()) as i64;
+                cnt += valid;
+                Ok(())
+            };
+            if let Err(e) = f.for_each_arrow_numeric_chunk(&mut arrow_cb) {
+                return Some(Ok(LiteralValue::Error(e)));
+            }
+        }
         let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
             for &n in chunk.data {
                 sum += n;

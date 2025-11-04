@@ -1,14 +1,15 @@
 use super::super::utils::{ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, coerce_num};
 use crate::args::ArgSchema;
-use crate::function::Function;
+use crate::function::{FnMapCtx, Function};
 use crate::traits::{ArgumentHandle, FunctionContext};
+use arrow_array::Array;
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
 #[derive(Debug)]
 pub struct AbsFn;
 impl Function for AbsFn {
-    func_caps!(PURE);
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
         "ABS"
     }
@@ -28,6 +29,45 @@ impl Function for AbsFn {
             LiteralValue::Error(e) => Ok(LiteralValue::Error(e.clone())),
             other => Ok(LiteralValue::Number(coerce_num(other)?.abs())),
         }
+    }
+
+    fn eval_map(&self, m: &mut dyn FnMapCtx) -> Option<Result<LiteralValue, ExcelError>> {
+        let mut arrow_result: Option<LiteralValue> = None;
+        match m.with_arrow_range(0, &mut |view| {
+            let (rows, cols) = view.dims();
+            if rows == 0 || cols == 0 {
+                arrow_result = Some(LiteralValue::Array(Vec::new()));
+                return Ok(());
+            }
+            let mut out = vec![vec![LiteralValue::Empty; cols]; rows];
+            for (row_start, row_len, cols_slices) in view.numbers_slices() {
+                for (col_idx, col) in cols_slices.iter().enumerate() {
+                    for offset in 0..row_len {
+                        let abs_row = row_start + offset;
+                        if col.is_valid(offset) {
+                            let v = col.value(offset);
+                            out[abs_row][col_idx] = LiteralValue::Number(v.abs());
+                        } else {
+                            let cell = view.get_cell(abs_row, col_idx);
+                            match cell {
+                                LiteralValue::Error(e) => return Err(e),
+                                _ => {
+                                    let num = coerce_num(&cell)?;
+                                    out[abs_row][col_idx] = LiteralValue::Number(num.abs());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            arrow_result = Some(LiteralValue::Array(out));
+            Ok(())
+        }) {
+            Ok(true) => return Some(Ok(arrow_result.unwrap_or(LiteralValue::Array(Vec::new())))),
+            Ok(false) => {}
+            Err(e) => return Some(Ok(LiteralValue::Error(e))),
+        }
+        None
     }
 }
 

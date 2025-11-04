@@ -7,6 +7,9 @@
 
 use core::{fmt, str::FromStr};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 const ROW_BITS: u32 = 20;
 const COL_BITS: u32 = 14;
 const ROW_MAX: u32 = (1 << ROW_BITS) - 1;
@@ -111,6 +114,8 @@ impl From<CoordError> for A1ParseError {
 }
 
 /// Absolute grid coordinate (row, column) with Excel-compatible bounds.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Coord(u64);
 
@@ -241,6 +246,8 @@ impl From<RelativeCoord> for Coord {
 /// Anchor bits mirror Excel semantics:
 /// * `row_abs = true` keeps the row fixed during rebasing.
 /// * `col_abs = true` keeps the column fixed during rebasing.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct RelativeCoord(u64);
 

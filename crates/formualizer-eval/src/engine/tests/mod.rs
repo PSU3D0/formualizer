@@ -43,6 +43,7 @@ mod spill_basic;
 mod spill_config_defaults;
 mod spill_edges;
 
+mod abs_arrow_fastpath;
 mod arrow_bulk_update;
 mod compressed_range_scheduler;
 mod config_defaults;

@@ -291,4 +291,25 @@ impl<'a, 'b> crate::function::FnMapCtx for SimpleMapCtx<'a, 'b> {
             LiteralValue::Array(rows)
         }
     }
+
+    fn with_arrow_range(
+        &mut self,
+        arg_index: usize,
+        f: &mut dyn FnMut(&crate::arrow_store::ArrowRangeView<'_>) -> Result<(), ExcelError>,
+    ) -> Result<bool, ExcelError> {
+        if !self.ctx.arrow_fastpath_enabled() {
+            return Ok(false);
+        }
+        let Some(arg) = self.args.get(arg_index) else {
+            return Ok(false);
+        };
+        let Ok(view) = arg.range_view() else {
+            return Ok(false);
+        };
+        let Some(av) = view.as_arrow() else {
+            return Ok(false);
+        };
+        f(av)?;
+        Ok(true)
+    }
 }

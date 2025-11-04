@@ -71,7 +71,18 @@ bitflags::bitflags! {
 // --- Fast-Path Evaluation Contexts ---
 
 use crate::traits::FunctionContext;
-use bumpalo::Bump;
+use arrow_array::Float64Array;
+use std::sync::Arc;
+
+/// Arrow-backed numeric chunk provided to fold functions.
+/// Each chunk corresponds to a contiguous row segment for a single argument column.
+pub struct ArrowNumericChunk {
+    pub arg_index: usize,
+    pub column_index: usize,
+    pub row_start: usize,
+    pub row_len: usize,
+    pub values: Arc<Float64Array>,
+}
 
 /// A simple slice of homogeneous values for efficient iteration
 pub struct SliceStripe<'a> {
@@ -99,24 +110,47 @@ pub trait FnFoldCtx {
 
     /// Access original argument handles (for functions needing parameter scalars like k in LARGE/SMALL)
     fn args(&self) -> &[ArgumentHandle<'_, '_>];
+
+    /// Access to the underlying function context for locale, masks, etc.
+    fn function_context(&self) -> &dyn FunctionContext;
+
+    /// Visit Arrow numeric chunks if the backend exposes them. Returns true when at least one chunk was produced.
+    fn for_each_arrow_numeric_chunk(
+        &mut self,
+        _f: &mut dyn FnMut(ArrowNumericChunk) -> Result<(), ExcelError>,
+    ) -> Result<bool, ExcelError> {
+        Ok(false)
+    }
+
+    /// Borrow the Arrow view for a specific argument if available.
+    /// Returns Ok(true) when the closure ran with an Arrow view, Ok(false) when arrow is unavailable.
+    fn with_arrow_range(
+        &mut self,
+        _arg_index: usize,
+        _f: &mut dyn FnMut(
+            &dyn FunctionContext,
+            &crate::arrow_store::ArrowRangeView<'_>,
+        ) -> Result<(), ExcelError>,
+    ) -> Result<bool, ExcelError> {
+        Ok(false)
+    }
 }
 
 /// Concrete implementation of FnFoldCtx
 pub struct SimpleFoldCtx<'a, 'b> {
     args: &'a [ArgumentHandle<'a, 'b>],
-    _ctx: &'a dyn FunctionContext,
+    ctx: &'a dyn FunctionContext,
     result: Option<LiteralValue>,
-    /// Temporary arena for allocating iteration data
-    arena: Bump,
+    arrow_consumed: Vec<bool>,
 }
 
 impl<'a, 'b> SimpleFoldCtx<'a, 'b> {
     pub fn new(args: &'a [ArgumentHandle<'a, 'b>], ctx: &'a dyn FunctionContext) -> Self {
         Self {
             args,
-            _ctx: ctx,
+            ctx,
             result: None,
-            arena: Bump::new(),
+            arrow_consumed: vec![false; args.len()],
         }
     }
 
@@ -131,7 +165,10 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
         min_chunk: usize,
         f: &mut dyn FnMut(crate::stripes::NumericChunk) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
-        for arg in self.args {
+        for (idx, arg) in self.args.iter().enumerate() {
+            if self.arrow_consumed.get(idx).copied().unwrap_or(false) {
+                continue;
+            }
             match arg.range_view() {
                 Ok(view) => {
                     view.numbers_chunked(
@@ -150,7 +187,7 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
                                 }
                                 other => crate::coercion::to_number_lenient_with_locale(
                                     other,
-                                    &self._ctx.locale(),
+                                    &self.ctx.locale(),
                                 )
                                 .ok(),
                             };
@@ -194,6 +231,68 @@ impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
     fn args(&self) -> &[ArgumentHandle<'_, '_>] {
         self.args
     }
+
+    fn function_context(&self) -> &dyn FunctionContext {
+        self.ctx
+    }
+
+    fn for_each_arrow_numeric_chunk(
+        &mut self,
+        f: &mut dyn FnMut(ArrowNumericChunk) -> Result<(), ExcelError>,
+    ) -> Result<bool, ExcelError> {
+        if !self.ctx.arrow_fastpath_enabled() {
+            return Ok(false);
+        }
+        let mut hit = false;
+        for (arg_index, arg) in self.args.iter().enumerate() {
+            let Ok(view) = arg.range_view() else {
+                continue;
+            };
+            let Some(av) = view.as_arrow() else {
+                continue;
+            };
+            hit = true;
+            for (row_start, row_len, cols) in av.numbers_slices() {
+                for (column_index, values) in cols.into_iter().enumerate() {
+                    if let Some(flag) = self.arrow_consumed.get_mut(arg_index) {
+                        *flag = true;
+                    }
+                    f(ArrowNumericChunk {
+                        arg_index,
+                        column_index,
+                        row_start,
+                        row_len,
+                        values,
+                    })?;
+                }
+            }
+        }
+        Ok(hit)
+    }
+
+    fn with_arrow_range(
+        &mut self,
+        arg_index: usize,
+        f: &mut dyn FnMut(
+            &dyn FunctionContext,
+            &crate::arrow_store::ArrowRangeView<'_>,
+        ) -> Result<(), ExcelError>,
+    ) -> Result<bool, ExcelError> {
+        if !self.ctx.arrow_fastpath_enabled() {
+            return Ok(false);
+        }
+        let Some(arg) = self.args.get(arg_index) else {
+            return Ok(false);
+        };
+        let Ok(view) = arg.range_view() else {
+            return Ok(false);
+        };
+        let Some(av) = view.as_arrow() else {
+            return Ok(false);
+        };
+        f(self.ctx, av)?;
+        Ok(true)
+    }
 }
 
 /// Context for `eval_map` (Element-wise operations).
@@ -215,6 +314,15 @@ pub trait FnMapCtx {
 
     /// Finalize and retrieve the output value (typically an Array). Implementations may move out internal buffers.
     fn finalize(&mut self) -> LiteralValue;
+
+    /// Borrow an Arrow range for the specified argument when available.
+    fn with_arrow_range(
+        &mut self,
+        _arg_index: usize,
+        _f: &mut dyn FnMut(&crate::arrow_store::ArrowRangeView<'_>) -> Result<(), ExcelError>,
+    ) -> Result<bool, ExcelError> {
+        Ok(false)
+    }
 }
 
 // Windowed functions use the trait from window_ctx module.
@@ -345,14 +453,12 @@ pub trait Function: Send + Sync + 'static {
         }
 
         // Try fast paths based on capabilities
-        // Commented out for now until we get `eval_scalar robustly working in real-world tests`
-        // if caps.contains(FnCaps::REDUCTION) {
-        //     // Create fold context and try eval_fold
-        //     let mut fold_ctx = SimpleFoldCtx::new(args, ctx);
-        //     if let Some(result) = self.eval_fold(&mut fold_ctx) {
-        //         return result;
-        //     }
-        // }
+        if caps.contains(FnCaps::REDUCTION) {
+            let mut fold_ctx = SimpleFoldCtx::new(args, ctx);
+            if let Some(result) = self.eval_fold(&mut fold_ctx) {
+                return result;
+            }
+        }
 
         if caps.contains(FnCaps::ELEMENTWISE) {
             // Minimal unary elementwise path: construct a simple map ctx and call eval_map
