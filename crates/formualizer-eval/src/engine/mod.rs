@@ -132,8 +132,8 @@ pub struct EvalConfig {
     /// Enable delta overlay for Arrow sheets (Phase C)
     pub delta_overlay_enabled: bool,
 
-    /// Mirror formula scalar results into Arrow overlay for Arrow-backed reads
-    /// This enables Arrow-only RangeView correctness without Hybrid fallback.
+    /// Mirror formula scalar results into Arrow overlay for Arrow-backed reads.
+    /// Ensures RangeView sees formula results directly from Arrow storage.
     pub write_formula_overlay_enabled: bool,
 
     /// Workbook date system: Excel 1900 (default) or 1904.

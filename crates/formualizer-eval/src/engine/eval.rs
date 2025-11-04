@@ -916,8 +916,7 @@ where
                         // Commit: write values to grid
                         // Default conflict policy is Error + FirstWins; reserve() enforces in-flight locks
                         // and plan_spill_region enforces overlap with committed formulas/spills/values.
-                        if let Err(e) = self.commit_spill(vertex_id, &targets, rows.clone())
-                        {
+                        if let Err(e) = self.commit_spill(vertex_id, &targets, rows.clone()) {
                             // If commit fails, mark as error
                             self.graph
                                 .update_vertex_value(vertex_id, LiteralValue::Error(e.clone()));
@@ -2491,8 +2490,7 @@ where
                 end_col,
             } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-                let sheet_id = self
-                    .graph
+                self.graph
                     .sheet_id(sheet_name)
                     .ok_or(ExcelError::new(ExcelErrorKind::Ref))?;
 
@@ -2559,96 +2557,30 @@ where
                 let er = er.unwrap_or(sr.saturating_sub(1));
                 let ec = ec.unwrap_or(sc.saturating_sub(1));
 
-                // Feature: Arrow-only RangeView resolution (no Hybrid/GraphSlice) when overlay mirroring is enabled.
-                if self.config.arrow_storage_enabled
-                    && self.config.delta_overlay_enabled
-                    && self.config.write_formula_overlay_enabled
-                {
-                    if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
-                        let sr0 = sr.saturating_sub(1) as usize;
-                        let sc0 = sc.saturating_sub(1) as usize;
-                        let er0 = er.saturating_sub(1) as usize;
-                        let ec0 = ec.saturating_sub(1) as usize;
-                        let av = asheet.range_view(sr0, sc0, er0, ec0);
-                        return Ok(RangeView::from_arrow(av));
-                    }
-                    // Materialize via graph when Arrow backend is absent.
-                    let rows = (sr..=er)
-                        .map(|r| {
-                            (sc..=ec)
-                                .map(|c| {
-                                    let coord = Coord::from_excel(r, c, true, true);
-                                    let addr = CellRef::new(sheet_id, coord);
-                                    self.graph
-                                        .get_vertex_id_for_address(&addr)
-                                        .and_then(|id| self.graph.get_value(*id))
-                                        .unwrap_or(LiteralValue::Empty)
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
-                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(rows))));
-                }
-
-                // Default behavior (no feature): prefer Hybrid when Arrow exists, otherwise GraphSlice
-                if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
-                    let sr0 = sr.saturating_sub(1) as usize;
-                    let sc0 = sc.saturating_sub(1) as usize;
-                    let er0 = er.saturating_sub(1) as usize;
-                    let ec0 = ec.saturating_sub(1) as usize;
-                    let av = asheet.range_view(sr0, sc0, er0, ec0);
-                    return Ok(RangeView::from_hybrid(&self.graph, sheet_id, sr, sc, av));
-                }
-                Ok(RangeView::from_graph(&self.graph, sheet_id, sr, sc, er, ec))
+                let asheet = self.sheet_store().sheet(sheet_name).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message(format!("Sheet '{sheet_name}' missing from Arrow store"))
+                })?;
+                let sr0 = sr.saturating_sub(1) as usize;
+                let sc0 = sc.saturating_sub(1) as usize;
+                let er0 = er.saturating_sub(1) as usize;
+                let ec0 = ec.saturating_sub(1) as usize;
+                let av = asheet.range_view(sr0, sc0, er0, ec0);
+                Ok(RangeView::from_arrow(av))
             }
             ReferenceType::Cell { sheet, row, col } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-                if let Some(sheet_id) = self.graph.sheet_id(sheet_name) {
-                    let coord = Coord::from_excel(*row, *col, true, true);
-                    let addr = CellRef::new(sheet_id, coord);
-                    if let Some(vid) = self.graph.get_vertex_id_for_address(&addr)
-                        && matches!(
-                            self.graph.get_vertex_kind(*vid),
-                            VertexKind::FormulaScalar | VertexKind::FormulaArray
-                        )
-                        && let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col)
-                    {
-                        return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
-                    }
-                }
-                if self.config.arrow_storage_enabled
-                    && self.config.delta_overlay_enabled
-                    && self.config.write_formula_overlay_enabled
-                {
-                    if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
-                        let r0 = row.saturating_sub(1) as usize;
-                        let c0 = col.saturating_sub(1) as usize;
-                        let av = asheet.range_view(r0, c0, r0, c0);
-                        let v = av.get_cell(0, 0);
-                        return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
-                    }
-                    // No Arrow: use graph value if present
-                    let v = self
-                        .graph
-                        .get_cell_value(sheet_name, *row, *col)
-                        .unwrap_or(LiteralValue::Empty);
-                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
-                }
-
-                // Default behavior
-                if let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col) {
-                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
-                }
-                if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
-                    let r0 = row.saturating_sub(1) as usize;
-                    let c0 = col.saturating_sub(1) as usize;
-                    let av = asheet.range_view(r0, c0, r0, c0);
-                    let v = av.get_cell(0, 0);
-                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
-                }
-                Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![
-                    LiteralValue::Empty,
-                ]]))))
+                self.graph
+                    .sheet_id(sheet_name)
+                    .ok_or(ExcelError::new(ExcelErrorKind::Ref))?;
+                let asheet = self.sheet_store().sheet(sheet_name).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message(format!("Sheet '{sheet_name}' missing from Arrow store"))
+                })?;
+                let r0 = row.saturating_sub(1) as usize;
+                let c0 = col.saturating_sub(1) as usize;
+                let av = asheet.range_view(r0, c0, r0, c0);
+                Ok(RangeView::from_arrow(av))
             }
             ReferenceType::NamedRange(name) => {
                 if let Some(current_id) = self.graph.sheet_id(current_sheet)
@@ -2657,32 +2589,29 @@ where
                     match &named.definition {
                         NamedDefinition::Cell(cell_ref) => {
                             let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
-                            let value = self
-                                .graph
-                                .get_cell_value(
-                                    sheet_name,
-                                    cell_ref.coord.row(),
-                                    cell_ref.coord.col(),
-                                )
-                                .unwrap_or(LiteralValue::Empty);
-                            let data = vec![vec![value]];
-                            return Ok(RangeView::from_borrowed(Box::leak(Box::new(data))));
+                            let asheet = self.sheet_store().sheet(sheet_name).ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                                    "Named range '{name}' references missing sheet '{sheet_name}'"
+                                ))
+                            })?;
+                            let r0 = cell_ref.coord.row().saturating_sub(1) as usize;
+                            let c0 = cell_ref.coord.col().saturating_sub(1) as usize;
+                            let av = asheet.range_view(r0, c0, r0, c0);
+                            return Ok(RangeView::from_arrow(av));
                         }
                         NamedDefinition::Range(range_ref) => {
                             let sheet_name = self.graph.sheet_name(range_ref.start.sheet_id);
-                            let mut rows = Vec::new();
-                            for row in range_ref.start.coord.row()..=range_ref.end.coord.row() {
-                                let mut line = Vec::new();
-                                for col in range_ref.start.coord.col()..=range_ref.end.coord.col() {
-                                    let value = self
-                                        .graph
-                                        .get_cell_value(sheet_name, row, col)
-                                        .unwrap_or(LiteralValue::Empty);
-                                    line.push(value);
-                                }
-                                rows.push(line);
-                            }
-                            return Ok(RangeView::from_borrowed(Box::leak(Box::new(rows))));
+                            let asheet = self.sheet_store().sheet(sheet_name).ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                                    "Named range '{name}' references missing sheet '{sheet_name}'"
+                                ))
+                            })?;
+                            let sr = range_ref.start.coord.row().saturating_sub(1) as usize;
+                            let sc = range_ref.start.coord.col().saturating_sub(1) as usize;
+                            let er = range_ref.end.coord.row().saturating_sub(1) as usize;
+                            let ec = range_ref.end.coord.col().saturating_sub(1) as usize;
+                            let av = asheet.range_view(sr, sc, er, ec);
+                            return Ok(RangeView::from_arrow(av));
                         }
                         NamedDefinition::Formula { .. } => {
                             if let Some(value) = self.graph.get_value(named.vertex) {

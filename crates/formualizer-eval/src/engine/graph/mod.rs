@@ -1,5 +1,5 @@
-use crate::arrow_store::SheetStore;
 use crate::SheetId;
+use crate::arrow_store::SheetStore;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -569,11 +569,13 @@ impl DependencyGraph {
     pub fn new() -> Self {
         let mut sheet_reg = SheetRegistry::new();
         let default_sheet_id = sheet_reg.id_for("Sheet1");
+        let mut sheet_store = SheetStore::default();
+        sheet_store.ensure_sheet_mut("Sheet1");
         Self {
             store: VertexStore::new(),
             edges: CsrMutableEdges::new(),
             data_store: DataStore::new(),
-            sheet_store: SheetStore::default(),
+            sheet_store,
             vertex_formulas: FxHashMap::default(),
             named_value_cache: FxHashMap::default(),
             cell_to_vertex: FxHashMap::default(),

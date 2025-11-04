@@ -1,7 +1,5 @@
-use crate::SheetId as EngineSheetId;
 use crate::args::CoercionPolicy;
 use crate::arrow_store;
-use crate::engine::DependencyGraph;
 use crate::stripes::NumericChunk;
 use formualizer_common::{ExcelError, LiteralValue};
 
@@ -13,27 +11,10 @@ pub struct RangeView<'a> {
 }
 
 enum RangeBacking<'a> {
-    /// Borrowed 2D rows without cloning
+    /// Borrowed 2D rows without cloning (array literals, tests)
     Borrowed2D(&'a [Vec<LiteralValue>]),
-    /// Slice over the graph (values fetched on demand)
-    GraphSlice {
-        graph: &'a DependencyGraph,
-        sheet_id: EngineSheetId,
-        sr: u32,
-        sc: u32,
-        er: u32,
-        ec: u32,
-    },
-    /// Arrow-backed range view
+    /// Arrow-backed range view (authoritative storage)
     Arrow(arrow_store::ArrowRangeView<'a>),
-    /// Hybrid view: prefers graph values (formulas/edits) and falls back to Arrow base values
-    Hybrid {
-        graph: &'a DependencyGraph,
-        sheet_id: EngineSheetId,
-        sr: u32,
-        sc: u32,
-        arrow: arrow_store::ArrowRangeView<'a>,
-    },
 }
 
 impl<'a> core::fmt::Debug for RangeView<'a> {
@@ -68,34 +49,6 @@ impl<'a> RangeView<'a> {
         let (rows, cols) = av.dims();
         Self {
             backing: RangeBacking::Arrow(av),
-            rows,
-            cols,
-        }
-    }
-
-    pub fn from_graph(
-        graph: &'a DependencyGraph,
-        sheet_id: EngineSheetId,
-        sr: u32,
-        sc: u32,
-        er: u32,
-        ec: u32,
-    ) -> Self {
-        // Normalize empty
-        let (rows, cols) = if er < sr || ec < sc {
-            (0, 0)
-        } else {
-            ((er - sr + 1) as usize, (ec - sc + 1) as usize)
-        };
-        Self {
-            backing: RangeBacking::GraphSlice {
-                graph,
-                sheet_id,
-                sr,
-                sc,
-                er,
-                ec,
-            },
             rows,
             cols,
         }
@@ -147,9 +100,7 @@ impl<'a> RangeView<'a> {
                     }
                 }
             }
-            RangeBacking::GraphSlice { .. } => RangeKind::Mixed, // unknown a priori
             RangeBacking::Arrow(_) => RangeKind::Mixed, // probe conservatively; mixed possible
-            RangeBacking::Hybrid { .. } => RangeKind::Mixed,
         }
     }
 
@@ -177,42 +128,7 @@ impl<'a> RangeView<'a> {
 
         match &self.backing {
             RangeBacking::Borrowed2D(rows) => rows[row][col].clone(),
-            RangeBacking::GraphSlice {
-                graph,
-                sheet_id,
-                sr,
-                sc,
-                ..
-            } => {
-                let actual_row = sr + row as u32;
-                let actual_col = sc + col as u32;
-                let coord = crate::reference::Coord::new(actual_row, actual_col, true, true);
-                let addr = crate::reference::CellRef::new(*sheet_id, coord);
-                graph
-                    .get_vertex_id_for_address(&addr)
-                    .and_then(|id| graph.get_value(*id))
-                    .unwrap_or(LiteralValue::Empty)
-            }
             RangeBacking::Arrow(av) => av.get_cell(row, col),
-            RangeBacking::Hybrid {
-                graph,
-                sheet_id,
-                sr,
-                sc,
-                arrow,
-            } => {
-                // Compute absolute address
-                let abs_row = sr.saturating_add(row as u32);
-                let abs_col = sc.saturating_add(col as u32);
-                let coord = crate::reference::Coord::new(abs_row, abs_col, true, true);
-                let addr = crate::reference::CellRef::new(*sheet_id, coord);
-                if let Some(vid) = graph.get_vertex_id_for_address(&addr)
-                    && let Some(v) = graph.get_value(*vid)
-                {
-                    return v;
-                }
-                arrow.get_cell(row, col)
-            }
         }
     }
 
@@ -229,46 +145,11 @@ impl<'a> RangeView<'a> {
                     }
                 }
             }
-            RangeBacking::GraphSlice {
-                graph,
-                sheet_id,
-                sr,
-                sc,
-                er,
-                ec,
-            } => {
-                if *er < *sr || *ec < *sc {
-                    return Ok(());
-                }
-                let mut row = *sr;
-                while row <= *er {
-                    let mut col = *sc;
-                    while col <= *ec {
-                        let coord = crate::reference::Coord::new(row, col, true, true);
-                        let addr = crate::reference::CellRef::new(*sheet_id, coord);
-                        let v = graph
-                            .get_vertex_id_for_address(&addr)
-                            .and_then(|id| graph.get_value(*id))
-                            .unwrap_or(LiteralValue::Empty);
-                        f(&v)?;
-                        col += 1;
-                    }
-                    row += 1;
-                }
-            }
             RangeBacking::Arrow(av) => {
                 for r in 0..self.rows {
                     for c in 0..self.cols {
                         let tmp = av.get_cell(r, c);
                         f(&tmp)?;
-                    }
-                }
-            }
-            RangeBacking::Hybrid { .. } => {
-                for r in 0..self.rows {
-                    for c in 0..self.cols {
-                        let v = self.get_cell(r, c);
-                        f(&v)?;
                     }
                 }
             }
@@ -287,53 +168,12 @@ impl<'a> RangeView<'a> {
                     f(&r[..])?;
                 }
             }
-            RangeBacking::GraphSlice {
-                graph,
-                sheet_id,
-                sr,
-                sc,
-                er,
-                ec,
-            } => {
-                if *er < *sr || *ec < *sc {
-                    return Ok(());
-                }
-                let cols = (*ec - *sc + 1) as usize;
-                let mut buf: Vec<LiteralValue> = Vec::with_capacity(cols);
-                let mut row = *sr;
-                while row <= *er {
-                    buf.clear();
-                    let mut col = *sc;
-                    while col <= *ec {
-                        let coord = crate::reference::Coord::new(row, col, true, true);
-                        let addr = crate::reference::CellRef::new(*sheet_id, coord);
-                        let v = graph
-                            .get_vertex_id_for_address(&addr)
-                            .and_then(|id| graph.get_value(*id))
-                            .unwrap_or(LiteralValue::Empty);
-                        buf.push(v);
-                        col += 1;
-                    }
-                    f(&buf[..])?;
-                    row += 1;
-                }
-            }
             RangeBacking::Arrow(av) => {
                 let mut buf: Vec<LiteralValue> = Vec::with_capacity(self.cols);
                 for r in 0..self.rows {
                     buf.clear();
                     for c in 0..self.cols {
                         buf.push(av.get_cell(r, c));
-                    }
-                    f(&buf[..])?;
-                }
-            }
-            RangeBacking::Hybrid { .. } => {
-                let mut buf: Vec<LiteralValue> = Vec::with_capacity(self.cols);
-                for r in 0..self.rows {
-                    buf.clear();
-                    for c in 0..self.cols {
-                        buf.push(self.get_cell(r, c));
                     }
                     f(&buf[..])?;
                 }
@@ -361,53 +201,12 @@ impl<'a> RangeView<'a> {
                     f(&col_buf[..])?;
                 }
             }
-            RangeBacking::GraphSlice {
-                graph,
-                sheet_id,
-                sr,
-                sc,
-                er,
-                ec,
-            } => {
-                if *er < *sr || *ec < *sc {
-                    return Ok(());
-                }
-                let rows = (*er - *sr + 1) as usize;
-                let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(rows);
-                let mut col = *sc;
-                while col <= *ec {
-                    col_buf.clear();
-                    let mut row = *sr;
-                    while row <= *er {
-                        let coord = crate::reference::Coord::new(row, col, true, true);
-                        let addr = crate::reference::CellRef::new(*sheet_id, coord);
-                        let v = graph
-                            .get_vertex_id_for_address(&addr)
-                            .and_then(|id| graph.get_value(*id))
-                            .unwrap_or(LiteralValue::Empty);
-                        col_buf.push(v);
-                        row += 1;
-                    }
-                    f(&col_buf[..])?;
-                    col += 1;
-                }
-            }
             RangeBacking::Arrow(av) => {
                 let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(self.rows);
                 for c in 0..self.cols {
                     col_buf.clear();
                     for r in 0..self.rows {
                         col_buf.push(av.get_cell(r, c));
-                    }
-                    f(&col_buf[..])?;
-                }
-            }
-            RangeBacking::Hybrid { .. } => {
-                let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(self.rows);
-                for c in 0..self.cols {
-                    col_buf.clear();
-                    for r in 0..self.rows {
-                        col_buf.push(self.get_cell(r, c));
                     }
                     f(&col_buf[..])?;
                 }
@@ -420,7 +219,6 @@ impl<'a> RangeView<'a> {
     pub fn as_arrow(&self) -> Option<&arrow_store::ArrowRangeView<'a>> {
         match &self.backing {
             RangeBacking::Arrow(av) => Some(av),
-            RangeBacking::Hybrid { arrow, .. } => Some(arrow),
             _ => None,
         }
     }
@@ -476,31 +274,7 @@ impl<'a> RangeView<'a> {
                 }
                 flush(&mut buf)?;
             }
-            RangeBacking::GraphSlice { .. } => {
-                self.for_each_cell(&mut |v| {
-                    if let Some(n) = pack_numeric(v, policy)? {
-                        buf.push(n);
-                        if buf.len() >= min_chunk {
-                            flush(&mut buf)?;
-                        }
-                    }
-                    Ok(())
-                })?;
-                flush(&mut buf)?;
-            }
             RangeBacking::Arrow(_) => {
-                self.for_each_cell(&mut |v| {
-                    if let Some(n) = pack_numeric(v, policy)? {
-                        buf.push(n);
-                        if buf.len() >= min_chunk {
-                            flush(&mut buf)?;
-                        }
-                    }
-                    Ok(())
-                })?;
-                flush(&mut buf)?;
-            }
-            RangeBacking::Hybrid { .. } => {
                 self.for_each_cell(&mut |v| {
                     if let Some(n) = pack_numeric(v, policy)? {
                         buf.push(n);
@@ -515,29 +289,6 @@ impl<'a> RangeView<'a> {
         }
 
         Ok(())
-    }
-}
-
-impl<'a> RangeView<'a> {
-    pub fn from_hybrid(
-        graph: &'a DependencyGraph,
-        sheet_id: EngineSheetId,
-        sr: u32,
-        sc: u32,
-        arrow: arrow_store::ArrowRangeView<'a>,
-    ) -> Self {
-        let (rows, cols) = arrow.dims();
-        Self {
-            backing: RangeBacking::Hybrid {
-                graph,
-                sheet_id,
-                sr,
-                sc,
-                arrow,
-            },
-            rows,
-            cols,
-        }
     }
 }
 
@@ -629,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_slice_row_iteration_and_sum() {
+    fn arrow_range_row_iteration_and_sum() {
         use crate::engine::{Engine, EvalConfig};
         use crate::test_workbook::TestWorkbook;
         let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
@@ -647,8 +398,11 @@ mod tests {
             .set_cell_value(&sheet, 2, 2, LiteralValue::Int(4))
             .unwrap();
 
-        let sheet_id = engine.default_sheet_id();
-        let view = RangeView::from_graph(&engine.graph, sheet_id, 1, 1, 2, 2);
+        let arrow_sheet = engine
+            .sheet_store()
+            .sheet(&sheet)
+            .expect("default sheet present in Arrow store");
+        let view = RangeView::from_arrow(arrow_sheet.range_view(0, 0, 1, 1));
         assert_eq!(view.dims(), (2, 2));
         let mut rows_sum = Vec::new();
         view.for_each_row(&mut |row| {
@@ -667,7 +421,7 @@ mod tests {
         assert_eq!(rows_sum, vec![3.0, 7.0]);
 
         let mut sum = 0.0;
-        RangeView::from_graph(&engine.graph, sheet_id, 1, 1, 2, 2)
+        RangeView::from_arrow(arrow_sheet.range_view(0, 0, 1, 1))
             .numbers_chunked(CoercionPolicy::NumberLenientText, 2, &mut |chunk| {
                 for &n in chunk.data {
                     sum += n;

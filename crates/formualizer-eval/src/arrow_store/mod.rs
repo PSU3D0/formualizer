@@ -789,13 +789,11 @@ impl OverlayValue {
             }
             LiteralValue::Date(d) => {
                 let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                let serial =
-                    crate::builtins::datetime::datetime_to_serial_for(date_system, &dt);
+                let serial = crate::builtins::datetime::datetime_to_serial_for(date_system, &dt);
                 OverlayValue::Number(serial)
             }
             LiteralValue::DateTime(dt) => {
-                let serial =
-                    crate::builtins::datetime::datetime_to_serial_for(date_system, dt);
+                let serial = crate::builtins::datetime::datetime_to_serial_for(date_system, dt);
                 OverlayValue::Number(serial)
             }
             LiteralValue::Time(t) => {

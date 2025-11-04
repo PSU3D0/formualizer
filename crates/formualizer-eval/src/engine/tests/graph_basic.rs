@@ -63,9 +63,7 @@ fn test_sheet_store_tracks_cell_values() {
 
     // Turn the cell into a formula and write back a computed result.
     let ast = formualizer_parse::parser::ASTNode {
-        node_type: formualizer_parse::parser::ASTNodeType::Literal(
-            LiteralValue::Number(10.0),
-        ),
+        node_type: formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(10.0)),
         source_token: None,
         contains_volatile: false,
     };
