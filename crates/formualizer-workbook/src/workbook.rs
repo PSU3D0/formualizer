@@ -145,7 +145,6 @@ impl Workbook {
             self.undo
                 .undo(&mut self.engine.graph, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            self.resync_all_overlays();
         }
         Ok(())
     }
@@ -154,106 +153,8 @@ impl Workbook {
             self.undo
                 .redo(&mut self.engine.graph, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            self.resync_all_overlays();
         }
         Ok(())
-    }
-
-    fn resync_all_overlays(&mut self) {
-        // Heavy but simple: walk all sheets and rebuild overlay values from graph
-        let sheet_names: Vec<String> = self
-            .engine
-            .sheet_store()
-            .sheets
-            .iter()
-            .map(|s| s.name.as_ref().to_string())
-            .collect();
-        for s in sheet_names {
-            self.resync_overlay_for_sheet(&s);
-        }
-    }
-    fn resync_overlay_for_sheet(&mut self, sheet: &str) {
-        if let Some(asheet) = self.engine.sheet_store().sheet(sheet) {
-            let rows = asheet.nrows as usize;
-            let cols = asheet.columns.len();
-            for r0 in 0..rows {
-                let r = (r0 as u32) + 1;
-                for c0 in 0..cols {
-                    let c = (c0 as u32) + 1;
-                    let v = self
-                        .engine
-                        .graph
-                        .get_cell_value(sheet, r, c)
-                        .unwrap_or(LiteralValue::Empty);
-                    self.mirror_value_to_overlay(sheet, r, c, &v);
-                }
-            }
-        }
-        // No Arrow sheet: nothing to sync
-    }
-    fn mirror_value_to_overlay(&mut self, sheet: &str, row: u32, col: u32, value: &LiteralValue) {
-        use formualizer_eval::arrow_store::OverlayValue;
-        if !(self.engine.config.arrow_storage_enabled && self.engine.config.delta_overlay_enabled) {
-            return;
-        }
-        let date_system = self.engine.config.date_system;
-        let asheet = match self.engine.sheet_store_mut().sheet_mut(sheet) {
-            Some(s) => s,
-            None => return,
-        };
-        let row0 = row.saturating_sub(1) as usize;
-        let col0 = col.saturating_sub(1) as usize;
-        if col0 >= asheet.columns.len() {
-            return;
-        }
-        if row0 >= asheet.nrows as usize {
-            asheet.ensure_row_capacity(row0 + 1);
-        }
-        if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
-            let ov = match value {
-                LiteralValue::Empty => OverlayValue::Empty,
-                LiteralValue::Int(i) => OverlayValue::Number(*i as f64),
-                LiteralValue::Number(n) => OverlayValue::Number(*n),
-                LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
-                LiteralValue::Text(s) => OverlayValue::Text(std::sync::Arc::from(s.clone())),
-                LiteralValue::Error(e) => {
-                    OverlayValue::Error(formualizer_eval::arrow_store::map_error_code(e.kind))
-                }
-                LiteralValue::Date(d) => {
-                    let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                    let serial = formualizer_eval::builtins::datetime::datetime_to_serial_for(
-                        date_system,
-                        &dt,
-                    );
-                    OverlayValue::Number(serial)
-                }
-                LiteralValue::DateTime(dt) => {
-                    let serial = formualizer_eval::builtins::datetime::datetime_to_serial_for(
-                        date_system,
-                        dt,
-                    );
-                    OverlayValue::Number(serial)
-                }
-                LiteralValue::Time(t) => {
-                    let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
-                }
-                LiteralValue::Duration(d) => {
-                    let serial = d.num_seconds() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
-                }
-                LiteralValue::Pending => OverlayValue::Pending,
-                LiteralValue::Array(_) => {
-                    OverlayValue::Error(formualizer_eval::arrow_store::map_error_code(
-                        formualizer_common::ExcelErrorKind::Value,
-                    ))
-                }
-            };
-            let colref = &mut asheet.columns[col0];
-            let ch = &mut colref.chunks[ch_idx];
-            ch.overlay.set(in_off, ov);
-            // skip compaction here (optional)
-        }
     }
 
     // Sheets
@@ -323,7 +224,6 @@ impl Workbook {
                 );
                 editor.set_cell_value(cell, value.clone());
             }
-            self.mirror_value_to_overlay(sheet, row, col, &value);
             self.engine.mark_data_edited();
             Ok(())
         } else {
@@ -435,7 +335,6 @@ impl Workbook {
                 .graph
                 .sheet_id(sheet)
                 .unwrap_or_else(|| self.engine.graph.add_sheet(sheet).unwrap());
-            let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
             let mut staged_forms: Vec<(u32, u32, String)> = Vec::new();
             {
                 let mut editor = formualizer_eval::engine::VertexEditor::with_logger(
@@ -449,7 +348,6 @@ impl Workbook {
                     );
                     if let Some(v) = d.value.clone() {
                         editor.set_cell_value(cell, v.clone());
-                        overlay_ops.push((r, c, v));
                     }
                     if let Some(f) = d.formula.as_ref() {
                         if self.engine.config.defer_graph_building {
@@ -466,9 +364,6 @@ impl Workbook {
                         }
                     }
                 }
-            }
-            for (r, c, v) in overlay_ops {
-                self.mirror_value_to_overlay(sheet, r, c, &v);
             }
             for (r, c, f) in staged_forms {
                 self.engine.stage_formula_text(sheet, r, c, f);
@@ -517,7 +412,6 @@ impl Workbook {
                 .graph
                 .sheet_id(sheet)
                 .unwrap_or_else(|| self.engine.graph.add_sheet(sheet).unwrap());
-            let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
             {
                 let mut editor = formualizer_eval::engine::VertexEditor::with_logger(
                     &mut self.engine.graph,
@@ -532,12 +426,8 @@ impl Workbook {
                             formualizer_eval::reference::Coord::new(r, c, true, true),
                         );
                         editor.set_cell_value(cell, v.clone());
-                        overlay_ops.push((r, c, v.clone()));
                     }
                 }
-            }
-            for (r, c, v) in overlay_ops {
-                self.mirror_value_to_overlay(sheet, r, c, &v);
             }
             self.engine.mark_data_edited();
             Ok(())

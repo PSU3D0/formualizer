@@ -1,4 +1,5 @@
 use crate::compute_prelude::{concat_arrays, zip_select};
+use crate::engine::DateSystem;
 use arrow_array::Array;
 use arrow_array::new_null_array;
 use arrow_schema::DataType;
@@ -11,6 +12,9 @@ use once_cell::sync::OnceCell;
 
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use std::collections::HashMap;
+
+const OVERLAY_COMPACTION_ABS_THRESHOLD: usize = 1024;
+const OVERLAY_COMPACTION_FRAC_DEN: usize = 50;
 
 /// Compact type tag per row (UInt8 backing)
 #[repr(u8)]
@@ -196,6 +200,76 @@ impl SheetStore {
     }
     pub fn sheet_mut(&mut self, name: &str) -> Option<&mut ArrowSheet> {
         self.sheets.iter_mut().find(|s| s.name.as_ref() == name)
+    }
+
+    pub fn ensure_sheet_mut(&mut self, name: &str) -> &mut ArrowSheet {
+        if self.sheet(name).is_none() {
+            self.sheets.push(ArrowSheet::empty(name));
+        }
+        self.sheet_mut(name).expect("sheet must exist after ensure")
+    }
+
+    pub fn write_cell_value(
+        &mut self,
+        name: &str,
+        row: u32,
+        col: u32,
+        value: &LiteralValue,
+        date_system: DateSystem,
+    ) -> bool {
+        let sheet = self.ensure_sheet_mut(name);
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        if sheet.columns.len() <= col0 {
+            let missing = col0 + 1 - sheet.columns.len();
+            sheet.insert_columns(sheet.columns.len(), missing);
+        }
+        if sheet.nrows as usize <= row0 {
+            sheet.ensure_row_capacity(row0 + 1);
+        }
+        let Some((ch_idx, in_off)) = sheet.chunk_of_row(row0) else {
+            return false;
+        };
+        let ov = OverlayValue::from_literal(value, date_system);
+        let ch = &mut sheet.columns[col0].chunks[ch_idx];
+        ch.overlay.set(in_off, ov);
+        sheet.maybe_compact_chunk(
+            col0,
+            ch_idx,
+            OVERLAY_COMPACTION_ABS_THRESHOLD,
+            OVERLAY_COMPACTION_FRAC_DEN,
+        )
+    }
+
+    pub fn read_cell_value(&self, name: &str, row: u32, col: u32) -> Option<LiteralValue> {
+        let sheet = self.sheet(name)?;
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        Some(sheet.cell_value(row0, col0))
+    }
+
+    pub fn remove_sheet(&mut self, name: &str) {
+        if let Some(pos) = self.sheets.iter().position(|s| s.name.as_ref() == name) {
+            self.sheets.remove(pos);
+        }
+    }
+
+    pub fn rename_sheet(&mut self, old: &str, new: &str) {
+        if let Some(sheet) = self.sheet_mut(old) {
+            sheet.name = Arc::from(new.to_string());
+        }
+    }
+
+    pub fn duplicate_sheet(&mut self, source: &str, target: &str) {
+        if let Some(sheet) = self.sheet(source) {
+            let mut clone = sheet.clone();
+            clone.name = Arc::from(target.to_string());
+            if let Some(pos) = self.sheets.iter().position(|s| s.name.as_ref() == target) {
+                self.sheets[pos] = clone;
+            } else {
+                self.sheets.push(clone);
+            }
+        }
     }
 }
 
@@ -702,6 +776,44 @@ pub struct Overlay {
     map: HashMap<usize, OverlayValue>,
 }
 
+impl OverlayValue {
+    pub fn from_literal(value: &LiteralValue, date_system: DateSystem) -> Self {
+        match value {
+            LiteralValue::Empty => OverlayValue::Empty,
+            LiteralValue::Int(i) => OverlayValue::Number(*i as f64),
+            LiteralValue::Number(n) => OverlayValue::Number(*n),
+            LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
+            LiteralValue::Text(s) => OverlayValue::Text(Arc::from(s.clone())),
+            LiteralValue::Error(e) => {
+                OverlayValue::Error(crate::arrow_store::map_error_code(e.kind))
+            }
+            LiteralValue::Date(d) => {
+                let dt = d.and_hms_opt(0, 0, 0).unwrap();
+                let serial =
+                    crate::builtins::datetime::datetime_to_serial_for(date_system, &dt);
+                OverlayValue::Number(serial)
+            }
+            LiteralValue::DateTime(dt) => {
+                let serial =
+                    crate::builtins::datetime::datetime_to_serial_for(date_system, dt);
+                OverlayValue::Number(serial)
+            }
+            LiteralValue::Time(t) => {
+                let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
+                OverlayValue::Number(serial)
+            }
+            LiteralValue::Duration(d) => {
+                let serial = d.num_seconds() as f64 / 86_400.0;
+                OverlayValue::Number(serial)
+            }
+            LiteralValue::Pending => OverlayValue::Pending,
+            LiteralValue::Array(_) => OverlayValue::Error(crate::arrow_store::map_error_code(
+                formualizer_common::ExcelErrorKind::Value,
+            )),
+        }
+    }
+}
+
 impl Overlay {
     pub fn new() -> Self {
         Self {
@@ -748,6 +860,15 @@ pub struct ArrowRangeView<'a> {
 }
 
 impl ArrowSheet {
+    pub fn empty(name: &str) -> Self {
+        Self {
+            name: Arc::from(name),
+            columns: Vec::new(),
+            nrows: 0,
+            chunk_starts: Vec::new(),
+        }
+    }
+
     /// Return a summary of each column's chunk counts, total rows, and lane presence.
     pub fn shape(&self) -> Vec<ColumnShape> {
         self.columns
@@ -784,6 +905,90 @@ impl ArrowSheet {
             rows,
             cols,
             chunk_starts: &self.chunk_starts,
+        }
+    }
+
+    pub fn cell_value(&self, row0: usize, col0: usize) -> LiteralValue {
+        if row0 >= self.nrows as usize || col0 >= self.columns.len() {
+            return LiteralValue::Empty;
+        }
+        if self.chunk_starts.is_empty() {
+            return LiteralValue::Empty;
+        }
+        let (ch_idx, in_off) = match self.chunk_of_row(row0) {
+            Some(pos) => pos,
+            None => return LiteralValue::Empty,
+        };
+        if ch_idx >= self.columns[col0].chunks.len() {
+            return LiteralValue::Empty;
+        }
+        let ch = &self.columns[col0].chunks[ch_idx];
+        if let Some(ov) = ch.overlay.get(in_off) {
+            return match ov {
+                OverlayValue::Empty => LiteralValue::Empty,
+                OverlayValue::Number(n) => LiteralValue::Number(*n),
+                OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
+                OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
+                OverlayValue::Error(code) => {
+                    let kind = unmap_error_code(*code);
+                    LiteralValue::Error(ExcelError::new(kind))
+                }
+                OverlayValue::Pending => LiteralValue::Pending,
+            };
+        }
+        let tag_u8 = ch.type_tag.value(in_off);
+        match TypeTag::from_u8(tag_u8) {
+            TypeTag::Empty => LiteralValue::Empty,
+            TypeTag::Number | TypeTag::DateTime | TypeTag::Duration => {
+                if let Some(arr) = &ch.numbers {
+                    if arr.is_null(in_off) {
+                        LiteralValue::Empty
+                    } else {
+                        let nums = arr.as_any().downcast_ref::<Float64Array>().unwrap();
+                        LiteralValue::Number(nums.value(in_off))
+                    }
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            TypeTag::Boolean => {
+                if let Some(arr) = &ch.booleans {
+                    if arr.is_null(in_off) {
+                        LiteralValue::Empty
+                    } else {
+                        let ba = arr.as_any().downcast_ref::<BooleanArray>().unwrap();
+                        LiteralValue::Boolean(ba.value(in_off))
+                    }
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            TypeTag::Text => {
+                if let Some(arr) = &ch.text {
+                    if arr.is_null(in_off) {
+                        LiteralValue::Empty
+                    } else {
+                        let sa = arr.as_any().downcast_ref::<StringArray>().unwrap();
+                        LiteralValue::Text(sa.value(in_off).to_string())
+                    }
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            TypeTag::Error => {
+                if let Some(arr) = &ch.errors {
+                    if arr.is_null(in_off) {
+                        LiteralValue::Empty
+                    } else {
+                        let ea = arr.as_any().downcast_ref::<UInt8Array>().unwrap();
+                        let kind = unmap_error_code(ea.value(in_off));
+                        LiteralValue::Error(ExcelError::new(kind))
+                    }
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            TypeTag::Pending => LiteralValue::Pending,
         }
     }
 

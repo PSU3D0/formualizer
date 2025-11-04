@@ -18,7 +18,7 @@ fn test_vertex_creation_and_lookup() {
 
     // Test that we can look up the value
     let value = graph.get_cell_value("Sheet1", 1, 1);
-    assert_eq!(value, Some(LiteralValue::Int(42)));
+    assert_eq!(value, Some(LiteralValue::Number(42.0)));
 
     // Test that non-existent cells return None
     let empty_value = graph.get_cell_value("Sheet1", 2, 2);
@@ -49,6 +49,39 @@ fn test_vertex_creation_and_lookup() {
     assert_eq!(
         graph.get_value(vertex_id),
         Some(LiteralValue::Number(std::f64::consts::PI))
+    );
+}
+
+#[test]
+fn test_sheet_store_tracks_cell_values() {
+    let mut graph = DependencyGraph::new();
+    graph
+        .set_cell_value("Sheet1", 2, 2, LiteralValue::Number(5.0))
+        .unwrap();
+    let sheet = graph.sheet_store().sheet("Sheet1").expect("sheet exists");
+    assert_eq!(sheet.cell_value(1, 1), LiteralValue::Number(5.0));
+
+    // Turn the cell into a formula and write back a computed result.
+    let ast = formualizer_parse::parser::ASTNode {
+        node_type: formualizer_parse::parser::ASTNodeType::Literal(
+            LiteralValue::Number(10.0),
+        ),
+        source_token: None,
+        contains_volatile: false,
+    };
+    let summary = graph.set_cell_formula("Sheet1", 2, 2, ast).unwrap();
+    assert_eq!(summary.affected_vertices.len(), 1);
+    let vertex_id = summary.affected_vertices[0];
+    graph.update_vertex_value(vertex_id, LiteralValue::Text("done".to_string()));
+
+    let sheet = graph.sheet_store().sheet("Sheet1").expect("sheet exists");
+    assert_eq!(
+        sheet.cell_value(1, 1),
+        LiteralValue::Text("done".to_string())
+    );
+    assert_eq!(
+        graph.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Text("done".to_string()))
     );
 }
 
@@ -90,15 +123,15 @@ fn test_cell_address_mapping() {
     // Verify values are correct
     assert_eq!(
         graph.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Int(1))
+        Some(LiteralValue::Number(1.0))
     );
     assert_eq!(
         graph.get_cell_value("Sheet1", 2, 2),
-        Some(LiteralValue::Int(2))
+        Some(LiteralValue::Number(2.0))
     );
     assert_eq!(
         graph.get_cell_value("Sheet2", 1, 1),
-        Some(LiteralValue::Int(3))
+        Some(LiteralValue::Number(3.0))
     );
 }
 
@@ -112,7 +145,7 @@ fn test_vertex_kind_transitions() {
         .unwrap();
     assert_eq!(
         graph.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Int(42))
+        Some(LiteralValue::Number(42.0))
     );
 
     // Transition to a formula (we'll use a simple literal AST for now)
@@ -164,7 +197,7 @@ fn test_placeholder_creation() {
     assert_eq!(summary.created_placeholders.len(), 2);
 
     let a1_addr = CellRef::new(0, Coord::new(1, 1, true, true));
-    let b1_addr = CellRef::new(0, Coord::new(1, 2, true, true));
+    let b1_addr = CellRef::new(0, Coord::from_excel(1, 2, true, true));
 
     assert!(summary.created_placeholders.contains(&a1_addr));
     assert!(summary.created_placeholders.contains(&b1_addr));

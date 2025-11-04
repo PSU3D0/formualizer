@@ -8,7 +8,6 @@ use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, Resolver};
-use chrono::Timelike;
 use formualizer_common::{col_letters_from_1based, parse_a1_1based};
 use formualizer_parse::parser::ReferenceType;
 use formualizer_parse::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
@@ -25,12 +24,8 @@ pub struct Engine<R> {
     pub recalc_epoch: u64,
     snapshot_id: std::sync::atomic::AtomicU64,
     spill_mgr: ShimSpillManager,
-    /// Arrow-backed storage for sheet values (Phase A)
-    arrow_sheets: SheetStore,
     /// True if any edit after bulk load; disables Arrow reads for parity
     has_edited: bool,
-    /// Overlay compaction counter (Phase C instrumentation)
-    overlay_compactions: u64,
     // Pass-scoped cache for Arrow used-row bounds per column
     row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
@@ -230,9 +225,7 @@ where
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             spill_mgr: ShimSpillManager::default(),
-            arrow_sheets: SheetStore::default(),
             has_edited: false,
-            overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
             staged_formulas: std::collections::HashMap::new(),
         }
@@ -253,9 +246,7 @@ where
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             spill_mgr: ShimSpillManager::default(),
-            arrow_sheets: SheetStore::default(),
             has_edited: false,
-            overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
             staged_formulas: std::collections::HashMap::new(),
         }
@@ -304,12 +295,12 @@ where
 
     /// Access Arrow sheet store (read-only)
     pub fn sheet_store(&self) -> &SheetStore {
-        &self.arrow_sheets
+        self.graph.sheet_store()
     }
 
     /// Access Arrow sheet store (mutable)
     pub fn sheet_store_mut(&mut self) -> &mut SheetStore {
-        &mut self.arrow_sheets
+        self.graph.sheet_store_mut()
     }
 
     /// Stage a formula text instead of inserting into the graph (used when deferring is enabled).
@@ -445,9 +436,11 @@ where
                 reason: "Unknown sheet".to_string(),
             },
         )?;
-        let mut editor = VertexEditor::new(&mut self.graph);
-        let summary = editor.insert_rows(sheet_id, before, count)?;
-        if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
+        let summary = {
+            let mut editor = VertexEditor::new(&mut self.graph);
+            editor.insert_rows(sheet_id, before, count)?
+        };
+        if let Some(asheet) = self.sheet_store_mut().sheet_mut(sheet) {
             let before0 = before.saturating_sub(1) as usize;
             asheet.insert_rows(before0, count as usize);
         }
@@ -472,9 +465,11 @@ where
                 reason: "Unknown sheet".to_string(),
             },
         )?;
-        let mut editor = VertexEditor::new(&mut self.graph);
-        let summary = editor.delete_rows(sheet_id, start, count)?;
-        if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
+        let summary = {
+            let mut editor = VertexEditor::new(&mut self.graph);
+            editor.delete_rows(sheet_id, start, count)?
+        };
+        if let Some(asheet) = self.sheet_store_mut().sheet_mut(sheet) {
             let start0 = start.saturating_sub(1) as usize;
             asheet.delete_rows(start0, count as usize);
         }
@@ -499,9 +494,11 @@ where
                 reason: "Unknown sheet".to_string(),
             },
         )?;
-        let mut editor = VertexEditor::new(&mut self.graph);
-        let summary = editor.insert_columns(sheet_id, before, count)?;
-        if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
+        let summary = {
+            let mut editor = VertexEditor::new(&mut self.graph);
+            editor.insert_columns(sheet_id, before, count)?
+        };
+        if let Some(asheet) = self.sheet_store_mut().sheet_mut(sheet) {
             let before0 = before.saturating_sub(1) as usize;
             asheet.insert_columns(before0, count as usize);
         }
@@ -526,9 +523,11 @@ where
                 reason: "Unknown sheet".to_string(),
             },
         )?;
-        let mut editor = VertexEditor::new(&mut self.graph);
-        let summary = editor.delete_columns(sheet_id, start, count)?;
-        if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
+        let summary = {
+            let mut editor = VertexEditor::new(&mut self.graph);
+            editor.delete_columns(sheet_id, start, count)?
+        };
+        if let Some(asheet) = self.sheet_store_mut().sheet_mut(sheet) {
             let start0 = start.saturating_sub(1) as usize;
             asheet.delete_columns(start0, count as usize);
         }
@@ -718,75 +717,6 @@ where
         }
     }
 
-    /// Mirror a single cell value into the Arrow overlay if enabled.
-    /// Handles capacity growth, per-chunk overlay set, and heuristic compaction.
-    fn mirror_value_to_overlay(&mut self, sheet: &str, row: u32, col: u32, value: &LiteralValue) {
-        if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
-            return;
-        }
-        let asheet = match self.arrow_sheets.sheet_mut(sheet) {
-            Some(s) => s,
-            None => return,
-        };
-        let row0 = row.saturating_sub(1) as usize;
-        let col0 = col.saturating_sub(1) as usize;
-        if col0 >= asheet.columns.len() {
-            return;
-        }
-        if row0 >= asheet.nrows as usize {
-            asheet.ensure_row_capacity(row0 + 1);
-        }
-        if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
-            use crate::arrow_store::OverlayValue;
-            let ov = match value {
-                LiteralValue::Empty => OverlayValue::Empty,
-                LiteralValue::Int(i) => OverlayValue::Number(*i as f64),
-                LiteralValue::Number(n) => OverlayValue::Number(*n),
-                LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
-                LiteralValue::Text(s) => OverlayValue::Text(std::sync::Arc::from(s.clone())),
-                LiteralValue::Error(e) => {
-                    OverlayValue::Error(crate::arrow_store::map_error_code(e.kind))
-                }
-                LiteralValue::Date(d) => {
-                    let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                    let serial = crate::builtins::datetime::datetime_to_serial_for(
-                        self.config.date_system,
-                        &dt,
-                    );
-                    OverlayValue::Number(serial)
-                }
-                LiteralValue::DateTime(dt) => {
-                    let serial = crate::builtins::datetime::datetime_to_serial_for(
-                        self.config.date_system,
-                        dt,
-                    );
-                    OverlayValue::Number(serial)
-                }
-                LiteralValue::Time(t) => {
-                    let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
-                }
-                LiteralValue::Duration(d) => {
-                    let serial = d.num_seconds() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
-                }
-                LiteralValue::Pending => OverlayValue::Pending,
-                LiteralValue::Array(_) => OverlayValue::Error(crate::arrow_store::map_error_code(
-                    formualizer_common::ExcelErrorKind::Value,
-                )),
-            };
-            let colref = &mut asheet.columns[col0];
-            let ch = &mut colref.chunks[ch_idx];
-            ch.overlay.set(in_off, ov);
-            // Heuristic compaction: > len/50 or > 1024
-            let abs_threshold = 1024usize;
-            let frac_den = 50usize;
-            if asheet.maybe_compact_chunk(col0, ch_idx, abs_threshold, frac_den) {
-                self.overlay_compactions = self.overlay_compactions.saturating_add(1);
-            }
-        }
-    }
-
     /// Set a cell value
     pub fn set_cell_value(
         &mut self,
@@ -796,8 +726,6 @@ where
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
         self.graph.set_cell_value(sheet, row, col, value.clone())?;
-        // Mirror into Arrow overlay when enabled
-        self.mirror_value_to_overlay(sheet, row, col, &value);
         // Advance snapshot to reflect external mutation
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -840,27 +768,6 @@ where
 
     /// Get a cell value
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
-        // Prefer Arrow for non-formula cells. For formula cells, use graph value.
-        if let Some(sheet_id) = self.graph.sheet_id(sheet) {
-            // If a formula exists at this address, return graph value
-            let coord = Coord::new(row, col, true, true);
-            let addr = CellRef::new(sheet_id, coord);
-            if let Some(vid) = self.graph.get_vertex_id_for_address(&addr) {
-                match self.graph.get_vertex_kind(*vid) {
-                    VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                        return self.graph.get_cell_value(sheet, row, col);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        if let Some(asheet) = self.sheet_store().sheet(sheet) {
-            let r0 = row.saturating_sub(1) as usize;
-            let c0 = col.saturating_sub(1) as usize;
-            let av = asheet.range_view(r0, c0, r0, c0);
-            let v = av.get_cell(0, 0);
-            return Some(v);
-        }
         self.graph.get_cell_value(sheet, row, col)
     }
 
@@ -1009,8 +916,7 @@ where
                         // Commit: write values to grid
                         // Default conflict policy is Error + FirstWins; reserve() enforces in-flight locks
                         // and plan_spill_region enforces overlap with committed formulas/spills/values.
-                        if let Err(e) =
-                            self.commit_spill_and_mirror(vertex_id, &targets, rows.clone())
+                        if let Err(e) = self.commit_spill(vertex_id, &targets, rows.clone())
                         {
                             // If commit fails, mark as error
                             self.graph
@@ -1043,23 +949,6 @@ where
                 // Scalar result: store value and ensure any previous spill is cleared
                 self.graph.clear_spill_region(vertex_id);
                 self.graph.update_vertex_value(vertex_id, other.clone());
-                // Optionally mirror into Arrow overlay for Arrow-backed reads
-                if self.config.arrow_storage_enabled
-                    && self.config.delta_overlay_enabled
-                    && self.config.write_formula_overlay_enabled
-                {
-                    let anchor = self
-                        .graph
-                        .get_cell_ref(vertex_id)
-                        .expect("cell ref for vertex");
-                    let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
-                    self.mirror_value_to_overlay(
-                        &sheet_name,
-                        anchor.coord.row(),
-                        anchor.coord.col(),
-                        &other,
-                    );
-                }
                 Ok(other)
             }
             Err(e) => {
@@ -1068,22 +957,6 @@ where
                 self.graph.clear_spill_region(vertex_id);
                 let err_val = LiteralValue::Error(e.clone());
                 self.graph.update_vertex_value(vertex_id, err_val.clone());
-                if self.config.arrow_storage_enabled
-                    && self.config.delta_overlay_enabled
-                    && self.config.write_formula_overlay_enabled
-                {
-                    let anchor = self
-                        .graph
-                        .get_cell_ref(vertex_id)
-                        .expect("cell ref for vertex");
-                    let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
-                    self.mirror_value_to_overlay(
-                        &sheet_name,
-                        anchor.coord.row(),
-                        anchor.coord.col(),
-                        &err_val,
-                    );
-                }
                 Ok(err_val)
             }
         }
@@ -2426,30 +2299,6 @@ impl ShimSpillManager {
         }
         commit_res.map(|_| ())?;
 
-        // Mirror into Arrow overlay when enabled
-        if engine.config.arrow_storage_enabled
-            && engine.config.delta_overlay_enabled
-            && engine.config.write_formula_overlay_enabled
-        {
-            // Expect targets to be a contiguous rectangle row-major starting at some anchor
-            for (idx, cell) in targets.iter().enumerate() {
-                let (r_off, c_off) = {
-                    if rows.is_empty() || rows[0].is_empty() {
-                        (0usize, 0usize)
-                    } else {
-                        let width = rows[0].len();
-                        (idx / width, idx % width)
-                    }
-                };
-                let v = rows
-                    .get(r_off)
-                    .and_then(|r| r.get(c_off))
-                    .cloned()
-                    .unwrap_or(LiteralValue::Empty);
-                let sheet_name = engine.graph.sheet_name(cell.sheet_id).to_string();
-                engine.mirror_value_to_overlay(&sheet_name, cell.coord.row(), cell.coord.col(), &v);
-            }
-        }
         Ok(())
     }
 }
@@ -2875,7 +2724,7 @@ where
     R: EvaluationContext,
 {
     /// Helper: commit spill via shim and mirror resulting cells into Arrow overlay when enabled.
-    fn commit_spill_and_mirror(
+    fn commit_spill(
         &mut self,
         anchor_vertex: VertexId,
         targets: &[CellRef],
@@ -2885,22 +2734,6 @@ where
         self.spill_mgr
             .commit_array(&mut self.graph, anchor_vertex, targets, rows.clone())?;
 
-        if self.config.arrow_storage_enabled
-            && self.config.delta_overlay_enabled
-            && self.config.write_formula_overlay_enabled
-        {
-            for (idx, cell) in targets.iter().enumerate() {
-                if rows.is_empty() || rows[0].is_empty() {
-                    break;
-                }
-                let width = rows[0].len();
-                let r_off = idx / width;
-                let c_off = idx % width;
-                let v = rows[r_off][c_off].clone();
-                let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
-                self.mirror_value_to_overlay(&sheet_name, cell.coord.row(), cell.coord.col(), &v);
-            }
-        }
         Ok(())
     }
 }

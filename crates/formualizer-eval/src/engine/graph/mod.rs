@@ -1,3 +1,4 @@
+use crate::arrow_store::SheetStore;
 use crate::SheetId;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
@@ -27,7 +28,7 @@ type ExtractDependenciesResult = Result<
 pub mod editor;
 pub mod snapshot;
 
-use super::arena::{AstNodeId, DataStore, ValueRef};
+use super::arena::{AstNodeId, DataStore};
 use super::delta_edges::CsrMutableEdges;
 use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
@@ -182,8 +183,9 @@ pub struct DependencyGraph {
 
     // Arena-based value and formula storage
     data_store: DataStore,
-    vertex_values: FxHashMap<VertexId, ValueRef>,
+    sheet_store: SheetStore,
     vertex_formulas: FxHashMap<VertexId, AstNodeId>,
+    named_value_cache: FxHashMap<VertexId, LiteralValue>,
 
     // Address mappings using fast hashing
     cell_to_vertex: FxHashMap<CellRef, VertexId>,
@@ -393,7 +395,7 @@ impl DependencyGraph {
         }
         self.store
             .set_kind(vid, crate::engine::vertex::VertexKind::FormulaScalar);
-        self.vertex_values.remove(&vid);
+        self.named_value_cache.remove(&vid);
         self.vertex_formulas.insert(vid, ast_id);
         if volatile {
             self.store.set_volatile(vid, true);
@@ -571,8 +573,9 @@ impl DependencyGraph {
             store: VertexStore::new(),
             edges: CsrMutableEdges::new(),
             data_store: DataStore::new(),
-            vertex_values: FxHashMap::default(),
+            sheet_store: SheetStore::default(),
             vertex_formulas: FxHashMap::default(),
+            named_value_cache: FxHashMap::default(),
             cell_to_vertex: FxHashMap::default(),
             dirty_vertices: FxHashSet::default(),
             volatile_vertices: FxHashSet::default(),
@@ -970,6 +973,41 @@ impl DependencyGraph {
         self.sheet_indexes.get(&sheet_id)
     }
 
+    /// Access the Arrow-backed sheet store.
+    pub fn sheet_store(&self) -> &SheetStore {
+        &self.sheet_store
+    }
+
+    /// Mutable access to the Arrow-backed sheet store.
+    pub fn sheet_store_mut(&mut self) -> &mut SheetStore {
+        &mut self.sheet_store
+    }
+
+    fn write_cell_arrow(&mut self, sheet_id: SheetId, row: u32, col: u32, value: &LiteralValue) {
+        let sheet_name = self.sheet_name(sheet_id).to_string();
+        self.sheet_store
+            .write_cell_value(&sheet_name, row, col, value, self.config.date_system);
+    }
+
+    fn read_cell_arrow(&self, sheet_id: SheetId, row: u32, col: u32) -> Option<LiteralValue> {
+        let sheet_name = self.sheet_name(sheet_id);
+        self.sheet_store.read_cell_value(sheet_name, row, col)
+    }
+
+    fn value_for_vertex_cell(&self, vertex_id: VertexId) -> Option<LiteralValue> {
+        let coord = self.store.coord(vertex_id);
+        let sheet_id = self.store.sheet_id(vertex_id);
+        let value = self.read_cell_arrow(sheet_id, coord.row(), coord.col())?;
+        if matches!(
+            self.store.kind(vertex_id),
+            VertexKind::FormulaScalar | VertexKind::FormulaArray
+        ) && matches!(value, LiteralValue::Pending)
+        {
+            return None;
+        }
+        Some(value)
+    }
+
     /// Set a value in a cell, returns affected vertex IDs
     pub fn set_cell_value(
         &mut self,
@@ -997,8 +1035,8 @@ impl DependencyGraph {
 
             // Update to value kind
             self.store.set_kind(existing_id, VertexKind::Cell);
-            let value_ref = self.data_store.store_value(value);
-            self.vertex_values.insert(existing_id, value_ref);
+            self.named_value_cache.remove(&existing_id);
+            self.write_cell_arrow(sheet_id, row, col, &value);
             existing_id
         } else {
             // Create new vertex
@@ -1014,8 +1052,7 @@ impl DependencyGraph {
                 .add_vertex(packed_coord, vertex_id);
 
             self.store.set_kind(vertex_id, VertexKind::Cell);
-            let value_ref = self.data_store.store_value(value);
-            self.vertex_values.insert(vertex_id, value_ref);
+            self.write_cell_arrow(sheet_id, row, col, &value);
             self.cell_to_vertex.insert(addr, vertex_id);
             vertex_id
         };
@@ -1029,7 +1066,6 @@ impl DependencyGraph {
     /// Reserve capacity hints for upcoming bulk cell inserts (values only for now).
     pub fn reserve_cells(&mut self, additional: usize) {
         self.store.reserve(additional);
-        self.vertex_values.reserve(additional);
         self.cell_to_vertex.reserve(additional);
         // sheet_indexes: cannot easily reserve per-sheet without distribution; skip.
     }
@@ -1047,8 +1083,9 @@ impl DependencyGraph {
         let addr = CellRef::new(sheet_id, coord);
         if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
             // Overwrite existing value vertex only (ignore formulas in bulk path)
-            let value_ref = self.data_store.store_value(value);
-            self.vertex_values.insert(existing_id, value_ref);
+            self.named_value_cache.remove(&existing_id);
+            self.store.set_kind(existing_id, VertexKind::Cell);
+            self.write_cell_arrow(sheet_id, row, col, &value);
             self.store.set_kind(existing_id, VertexKind::Cell);
             return;
         }
@@ -1058,8 +1095,7 @@ impl DependencyGraph {
         self.sheet_index_mut(sheet_id)
             .add_vertex(packed_coord, vertex_id);
         self.store.set_kind(vertex_id, VertexKind::Cell);
-        let value_ref = self.data_store.store_value(value);
-        self.vertex_values.insert(vertex_id, value_ref);
+        self.write_cell_arrow(sheet_id, row, col, &value);
         self.cell_to_vertex.insert(addr, vertex_id);
     }
 
@@ -1080,9 +1116,6 @@ impl DependencyGraph {
         let t_reserve = Instant::now();
         let mut new_vertices: Vec<(AbsCoord, u32)> = Vec::with_capacity(collected.len());
         let mut index_items: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(collected.len());
-        // For new allocations, accumulate values and assign after a single batch store
-        let mut new_value_coords: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(collected.len());
-        let mut new_value_literals: Vec<LiteralValue> = Vec::with_capacity(collected.len());
         // Detect fast path: during initial ingest, caller may guarantee most cells are new.
         let assume_new = self.first_load_assume_new
             && self
@@ -1094,28 +1127,18 @@ impl DependencyGraph {
             let coord = Coord::new(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
             if !assume_new && let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
-                let value_ref = self.data_store.store_value(value);
-                self.vertex_values.insert(existing_id, value_ref);
+                self.named_value_cache.remove(&existing_id);
+                self.write_cell_arrow(sheet_id, row, col, &value);
                 self.store.set_kind(existing_id, VertexKind::Cell);
                 continue;
             }
             let packed = AbsCoord::new(row, col);
             let vertex_id = self.store.allocate(packed, sheet_id, 0x00);
             self.store.set_kind(vertex_id, VertexKind::Cell);
-            // Defer value arena storage to a single batch
-            new_value_coords.push((packed, vertex_id));
-            new_value_literals.push(value);
+            self.write_cell_arrow(sheet_id, row, col, &value);
             self.cell_to_vertex.insert(addr, vertex_id);
             new_vertices.push((packed, vertex_id.0));
             index_items.push((packed, vertex_id));
-        }
-        // Perform a single batch store for newly allocated values
-        if !new_value_literals.is_empty() {
-            let vrefs = self.data_store.store_values_batch(new_value_literals);
-            debug_assert_eq!(vrefs.len(), new_value_coords.len());
-            for (i, (_pc, vid)) in new_value_coords.iter().enumerate() {
-                self.vertex_values.insert(*vid, vrefs[i]);
-            }
         }
         let t_after_alloc = Instant::now();
         if !new_vertices.is_empty() {
@@ -1253,9 +1276,11 @@ impl DependencyGraph {
         let ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
         self.vertex_formulas.insert(addr_vertex_id, ast_id);
         self.store.set_dirty(addr_vertex_id, true);
+        // Reset Arrow cell payload so reads return Pending until evaluation writes a result.
+        self.write_cell_arrow(sheet_id, row, col, &LiteralValue::Pending);
 
         // Clear any cached value since this is now a formula
-        self.vertex_values.remove(&addr_vertex_id);
+        self.named_value_cache.remove(&addr_vertex_id);
 
         if volatile {
             self.store.set_volatile(addr_vertex_id, true);
@@ -1299,12 +1324,9 @@ impl DependencyGraph {
         let coord = Coord::new(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
 
-        self.cell_to_vertex.get(&addr).and_then(|&vertex_id| {
-            // Check values hashmap (stores both cell values and formula results)
-            self.vertex_values
-                .get(&vertex_id)
-                .map(|&value_ref| self.data_store.retrieve_value(value_ref))
-        })
+        self.cell_to_vertex
+            .get(&addr)
+            .and_then(|&vertex_id| self.value_for_vertex_cell(vertex_id))
     }
 
     /// Mark vertex dirty and propagate to dependents
@@ -1868,7 +1890,7 @@ impl DependencyGraph {
             }
             self.store.set_kind(tvid, VertexKind::FormulaScalar);
             self.store.set_dirty(tvid, true);
-            self.vertex_values.remove(&tvid);
+            self.named_value_cache.remove(&tvid);
             self.vertex_formulas.insert(tvid, ast_ids[i]);
             if vol_flags.get(i).copied().unwrap_or(false) {
                 self.store.set_volatile(tvid, true);
@@ -2617,8 +2639,16 @@ impl DependencyGraph {
 
     /// Updates the cached value of a formula vertex.
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
-        let value_ref = self.data_store.store_value(value);
-        self.vertex_values.insert(vertex_id, value_ref);
+        match self.store.kind(vertex_id) {
+            VertexKind::NamedScalar | VertexKind::NamedArray => {
+                self.named_value_cache.insert(vertex_id, value);
+            }
+            _ => {
+                let coord = self.store.coord(vertex_id);
+                let sheet_id = self.store.sheet_id(vertex_id);
+                self.write_cell_arrow(sheet_id, coord.row(), coord.col(), &value);
+            }
+        }
     }
 
     /// Plan a spill region for an anchor; returns #SPILL! if blocked
@@ -2692,10 +2722,8 @@ impl DependencyGraph {
                             }));
                     }
                     _ => {
-                        // If a non-empty value exists (and not this anchor), block
-                        if let Some(vref) = self.vertex_values.get(&vid) {
-                            let v = self.data_store.retrieve_value(*vref);
-                            if !matches!(v, LiteralValue::Empty) {
+                        if let Some(value) = self.value_for_vertex_cell(vid) {
+                            if !matches!(value, LiteralValue::Empty) {
                                 return Err(ExcelError::new(ExcelErrorKind::Spill)
                                     .with_message("BlockedByValue")
                                     .with_extra(ExcelErrorExtra::Spill {
@@ -2873,9 +2901,12 @@ impl DependencyGraph {
 
     /// Get the value stored for a vertex
     pub fn get_value(&self, vertex_id: VertexId) -> Option<LiteralValue> {
-        self.vertex_values
-            .get(&vertex_id)
-            .map(|&value_ref| self.data_store.retrieve_value(value_ref))
+        match self.store.kind(vertex_id) {
+            VertexKind::NamedScalar | VertexKind::NamedArray => {
+                self.named_value_cache.get(&vertex_id).cloned()
+            }
+            _ => self.value_for_vertex_cell(vertex_id),
+        }
     }
 
     /// Get the cell reference for a vertex
@@ -2974,7 +3005,7 @@ impl DependencyGraph {
         let flags = self.store.flags(id);
 
         // Get value and formula references
-        let value_ref = self.vertex_values.get(&id).copied();
+        let value = self.get_value(id);
         let formula_ref = self.vertex_formulas.get(&id).copied();
 
         // Get outgoing edges (dependencies)
@@ -2985,7 +3016,7 @@ impl DependencyGraph {
             sheet_id,
             kind,
             flags,
-            value_ref,
+            value,
             formula_ref,
             out_edges,
         }
@@ -3026,16 +3057,23 @@ impl DependencyGraph {
     #[doc(hidden)]
     pub fn mark_as_ref_error(&mut self, id: VertexId) {
         let error = LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref));
-        let value_ref = self.data_store.store_value(error);
-        self.vertex_values.insert(id, value_ref);
+        match self.store.kind(id) {
+            VertexKind::NamedScalar | VertexKind::NamedArray => {
+                self.named_value_cache.insert(id, error.clone());
+            }
+            _ => {
+                let coord = self.store.coord(id);
+                let sheet_id = self.store.sheet_id(id);
+                self.write_cell_arrow(sheet_id, coord.row(), coord.col(), &error);
+            }
+        }
         self.store.set_dirty(id, true);
         self.dirty_vertices.insert(id);
     }
 
     /// Check if a vertex has a #REF! error
     pub fn is_ref_error(&self, id: VertexId) -> bool {
-        if let Some(value_ref) = self.vertex_values.get(&id) {
-            let value = self.data_store.retrieve_value(*value_ref);
+        if let Some(value) = self.get_value(id) {
             if let LiteralValue::Error(err) = value {
                 return err.kind == ExcelErrorKind::Ref;
             }
@@ -3286,7 +3324,7 @@ impl DependencyGraph {
         self.remove_dependent_edges(named_range.vertex);
         self.unregister_name_cell_dependencies(named_range.vertex);
         self.store.mark_deleted(named_range.vertex, true);
-        self.vertex_values.remove(&named_range.vertex);
+        self.named_value_cache.remove(&named_range.vertex);
         self.vertex_formulas.remove(&named_range.vertex);
         self.dirty_vertices.remove(&named_range.vertex);
         self.volatile_vertices.remove(&named_range.vertex);
@@ -3320,6 +3358,9 @@ impl DependencyGraph {
         // Create new sheet
         let sheet_id = self.sheet_reg.id_for(name);
 
+        // Ensure Arrow sheet exists
+        self.sheet_store.ensure_sheet_mut(name);
+
         // Initialize sheet index for the new sheet
         self.sheet_indexes.entry(sheet_id).or_default();
 
@@ -3346,6 +3387,8 @@ impl DependencyGraph {
         if self.sheet_reg.name(sheet_id).is_empty() {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Sheet does not exist"));
         }
+
+        let sheet_name = self.sheet_name(sheet_id).to_string();
 
         // Prevent removing the last sheet
         let sheet_count = self.sheet_reg.all_sheets().len();
@@ -3396,7 +3439,7 @@ impl DependencyGraph {
 
             // Remove formula and value data
             self.vertex_formulas.remove(&vertex_id);
-            self.vertex_values.remove(&vertex_id);
+            self.named_value_cache.remove(&vertex_id);
 
             // Mark as deleted in store
             self.mark_deleted(vertex_id, true);
@@ -3429,6 +3472,9 @@ impl DependencyGraph {
 
         // Remove the sheet from the registry
         self.sheet_reg.remove(sheet_id)?;
+
+        // Remove Arrow sheet
+        self.sheet_store.remove_sheet(&sheet_name);
 
         // End batch operations
         self.end_batch();
@@ -3477,6 +3523,7 @@ impl DependencyGraph {
 
         // Update sheet registry
         self.sheet_reg.rename(sheet_id, new_name)?;
+        self.sheet_store.rename_sheet(&old_name, new_name);
 
         // Update all formulas that reference the old sheet name
         // This requires parsing and updating AST nodes
@@ -3543,6 +3590,11 @@ impl DependencyGraph {
         // Create the new sheet
         let new_sheet_id = self.add_sheet(new_name)?;
 
+        // Clone Arrow sheet data
+        let source_sheet_name = self.sheet_name(source_sheet_id).to_string();
+        self.sheet_store
+            .duplicate_sheet(&source_sheet_name, new_name);
+
         // Begin batch operations
         self.begin_batch();
 
@@ -3573,11 +3625,6 @@ impl DependencyGraph {
 
             // Set vertex kind
             self.store.set_kind(new_id, kind);
-
-            // Copy value or formula
-            if let Some(&value_ref) = self.vertex_values.get(old_id) {
-                self.vertex_values.insert(new_id, value_ref);
-            }
 
             // Store mapping
             vertex_mapping.insert(*old_id, new_id);
