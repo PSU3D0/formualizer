@@ -63,30 +63,92 @@ fn compute_criteria_mask(
 ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
     use crate::compute_prelude::{boolean, cmp, concat_arrays};
     use arrow::compute::kernels::comparison::{ilike, nilike};
-    use arrow_array::{Array as _, ArrayRef, Float64Array, StringArray, builder::BooleanBuilder};
+    use arrow_array::{Array as _, ArrayRef, BooleanArray, Float64Array, StringArray, builder::BooleanBuilder};
 
-    // Build the criterion column arrays by concatenating slices for the single column
-    let mut num_parts: Vec<std::sync::Arc<Float64Array>> = Vec::new();
-    for (_rs, _rl, cols_seg) in view.numbers_slices() {
-        if col_in_view < cols_seg.len() {
-            num_parts.push(cols_seg[col_in_view].clone());
+    // Helper: apply a numeric predicate to a single Float64Array chunk
+    fn apply_numeric_pred(
+        chunk: &Float64Array,
+        pred: &crate::args::CriteriaPredicate,
+    ) -> Option<BooleanArray> {
+        match pred {
+            crate::args::CriteriaPredicate::Gt(n) => {
+                cmp::gt(chunk, &Float64Array::new_scalar(*n)).ok()
+            }
+            crate::args::CriteriaPredicate::Ge(n) => {
+                cmp::gt_eq(chunk, &Float64Array::new_scalar(*n)).ok()
+            }
+            crate::args::CriteriaPredicate::Lt(n) => {
+                cmp::lt(chunk, &Float64Array::new_scalar(*n)).ok()
+            }
+            crate::args::CriteriaPredicate::Le(n) => {
+                cmp::lt_eq(chunk, &Float64Array::new_scalar(*n)).ok()
+            }
+            crate::args::CriteriaPredicate::Eq(v) => match v {
+                formualizer_common::LiteralValue::Number(x) => {
+                    cmp::eq(chunk, &Float64Array::new_scalar(*x)).ok()
+                }
+                formualizer_common::LiteralValue::Int(i) => {
+                    cmp::eq(chunk, &Float64Array::new_scalar(*i as f64)).ok()
+                }
+                _ => None,
+            },
+            crate::args::CriteriaPredicate::Ne(v) => match v {
+                formualizer_common::LiteralValue::Number(x) => {
+                    cmp::neq(chunk, &Float64Array::new_scalar(*x)).ok()
+                }
+                formualizer_common::LiteralValue::Int(i) => {
+                    cmp::neq(chunk, &Float64Array::new_scalar(*i as f64)).ok()
+                }
+                _ => None,
+            },
+            _ => None,
         }
     }
-    let num_col: Option<std::sync::Arc<Float64Array>> = if num_parts.is_empty() {
-        None
-    } else if num_parts.len() == 1 {
-        Some(num_parts.remove(0))
-    } else {
-        let anys: Vec<&dyn arrow_array::Array> = num_parts
-            .iter()
-            .map(|a| a.as_ref() as &dyn arrow_array::Array)
-            .collect();
-        let conc: ArrayRef = concat_arrays(&anys).ok()?;
-        let fa = conc.as_any().downcast_ref::<Float64Array>()?.clone();
-        Some(std::sync::Arc::new(fa))
-    };
 
-    // Lowered text column for this view/column
+    // Check if this is a numeric predicate that can be applied per-chunk
+    let is_numeric_pred = matches!(
+        pred,
+        crate::args::CriteriaPredicate::Gt(_)
+            | crate::args::CriteriaPredicate::Ge(_)
+            | crate::args::CriteriaPredicate::Lt(_)
+            | crate::args::CriteriaPredicate::Le(_)
+            | crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Number(_))
+            | crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Int(_))
+            | crate::args::CriteriaPredicate::Ne(formualizer_common::LiteralValue::Number(_))
+            | crate::args::CriteriaPredicate::Ne(formualizer_common::LiteralValue::Int(_))
+    );
+
+    // OPTIMIZED PATH: For numeric predicates, apply per-chunk and concatenate boolean masks.
+    // This avoids materializing the full numeric column (64-bit per element) and instead
+    // concatenates boolean masks (1-bit per element) - a 64x memory reduction.
+    if is_numeric_pred {
+        let mut bool_parts: Vec<BooleanArray> = Vec::new();
+        for (_rs, _rl, cols_seg) in view.numbers_slices() {
+            if col_in_view < cols_seg.len() {
+                let chunk = cols_seg[col_in_view].as_ref();
+                let mask = apply_numeric_pred(chunk, pred)?;
+                bool_parts.push(mask);
+            }
+        }
+
+        if bool_parts.is_empty() {
+            return None;
+        } else if bool_parts.len() == 1 {
+            return Some(std::sync::Arc::new(bool_parts.remove(0)));
+        } else {
+            // Concatenate boolean masks (much cheaper than concatenating Float64 arrays)
+            let anys: Vec<&dyn arrow_array::Array> = bool_parts
+                .iter()
+                .map(|a| a as &dyn arrow_array::Array)
+                .collect();
+            let conc: ArrayRef = concat_arrays(&anys).ok()?;
+            let ba = conc.as_any().downcast_ref::<BooleanArray>()?.clone();
+            return Some(std::sync::Arc::new(ba));
+        }
+    }
+
+    // FALLBACK PATH: For text predicates, use the pre-lowered text columns
+    // (which are already concatenated by the view)
     let lowered_texts: Option<std::sync::Arc<StringArray>> = {
         let cols = view.lowered_text_columns();
         if col_in_view >= cols.len() {
@@ -101,64 +163,26 @@ fn compute_criteria_mask(
     };
 
     let out = match pred {
-        crate::args::CriteriaPredicate::Gt(n) => {
-            let col = num_col?;
-            cmp::gt(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
-        }
-        crate::args::CriteriaPredicate::Ge(n) => {
-            let col = num_col?;
-            cmp::gt_eq(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
-        }
-        crate::args::CriteriaPredicate::Lt(n) => {
-            let col = num_col?;
-            cmp::lt(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
-        }
-        crate::args::CriteriaPredicate::Le(n) => {
-            let col = num_col?;
-            cmp::lt_eq(col.as_ref(), &Float64Array::new_scalar(*n)).ok()?
-        }
-        crate::args::CriteriaPredicate::Eq(v) => match v {
-            formualizer_common::LiteralValue::Number(x) => {
-                let col = num_col?;
-                cmp::eq(col.as_ref(), &Float64Array::new_scalar(*x)).ok()?
-            }
-            formualizer_common::LiteralValue::Int(i) => {
-                let col = num_col?;
-                cmp::eq(col.as_ref(), &Float64Array::new_scalar(*i as f64)).ok()?
-            }
-            formualizer_common::LiteralValue::Text(t) => {
-                let col = lowered_texts?;
-                let pat = StringArray::new_scalar(t.to_ascii_lowercase());
-                let mut m = ilike(col.as_ref(), &pat).ok()?;
-                if t.is_empty() {
-                    // Treat nulls as equal to empty string
-                    let mut bb = BooleanBuilder::with_capacity(col.len());
-                    for i in 0..col.len() {
-                        bb.append_value(col.is_null(i));
-                    }
-                    let nulls = bb.finish();
-                    m = boolean::or_kleene(&m, &nulls).ok()?;
+        crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Text(t)) => {
+            let col = lowered_texts?;
+            let pat = StringArray::new_scalar(t.to_ascii_lowercase());
+            let mut m = ilike(col.as_ref(), &pat).ok()?;
+            if t.is_empty() {
+                // Treat nulls as equal to empty string
+                let mut bb = BooleanBuilder::with_capacity(col.len());
+                for i in 0..col.len() {
+                    bb.append_value(col.is_null(i));
                 }
-                m
+                let nulls = bb.finish();
+                m = boolean::or_kleene(&m, &nulls).ok()?;
             }
-            _ => return None,
-        },
-        crate::args::CriteriaPredicate::Ne(v) => match v {
-            formualizer_common::LiteralValue::Number(x) => {
-                let col = num_col?;
-                cmp::neq(col.as_ref(), &Float64Array::new_scalar(*x)).ok()?
-            }
-            formualizer_common::LiteralValue::Int(i) => {
-                let col = num_col?;
-                cmp::neq(col.as_ref(), &Float64Array::new_scalar(*i as f64)).ok()?
-            }
-            formualizer_common::LiteralValue::Text(t) => {
-                let col = lowered_texts?;
-                let pat = StringArray::new_scalar(t.to_ascii_lowercase());
-                nilike(col.as_ref(), &pat).ok()?
-            }
-            _ => return None,
-        },
+            m
+        }
+        crate::args::CriteriaPredicate::Ne(formualizer_common::LiteralValue::Text(t)) => {
+            let col = lowered_texts?;
+            let pat = StringArray::new_scalar(t.to_ascii_lowercase());
+            nilike(col.as_ref(), &pat).ok()?
+        }
         crate::args::CriteriaPredicate::TextLike {
             pattern,
             case_insensitive,
@@ -173,6 +197,7 @@ fn compute_criteria_mask(
             let pat = StringArray::new_scalar(lp);
             ilike(col.as_ref(), &pat).ok()?
         }
+        // Numeric predicates are handled in the optimized path above
         _ => return None,
     };
     Some(std::sync::Arc::new(out))

@@ -350,3 +350,76 @@ fn sumifs_arrow_fastpath_large_numeric_criteria() {
         _ => panic!("expected number"),
     }
 }
+
+/// Test multi-chunk criteria mask computation with configurable chunk size.
+/// This exercises the `compute_criteria_mask` concatenation path extensively.
+/// The test verifies correctness with many chunks.
+#[test]
+fn sumifs_multi_chunk_criteria_mask_correctness() {
+    let config = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::new(), config.clone());
+
+    // Use small chunk size (100 rows) to force many chunks
+    let chunk_rows = 100usize;
+    let total_rows = 1000u32; // 10 chunks
+
+    let mut ab = engine.begin_bulk_ingest_arrow();
+    ab.add_sheet("Sheet1", 3, chunk_rows);
+
+    // Build data: sum_col, crit1 (mod 3), crit2 (threshold test)
+    for i in 0..total_rows {
+        let sum_val = LiteralValue::Int((i + 1) as i64);
+        let crit1_val = LiteralValue::Int((i % 3) as i64);
+        let crit2_val = LiteralValue::Int(i as i64);
+        ab.append_row("Sheet1", &[sum_val, crit1_val, crit2_val])
+            .unwrap();
+    }
+    ab.finish().unwrap();
+
+    // SUMIFS(sum_col, crit1_col, "=1", crit2_col, ">=500")
+    // Matches rows where i%3=1 AND i>=500
+    let sum_rng = range_ref("Sheet1", 1, 1, total_rows, 1);
+    let c1_rng = range_ref("Sheet1", 1, 2, total_rows, 2);
+    let c1 = lit_text("=1");
+    let c2_rng = range_ref("Sheet1", 1, 3, total_rows, 3);
+    let c2 = lit_text(">=500");
+
+    let fun = engine.get_function("", "SUMIFS").expect("SUMIFS available");
+
+    // Fast path
+    let fast_result = {
+        let interp = crate::interpreter::Interpreter::new(&engine, "Sheet1");
+        let args = vec![
+            ArgumentHandle::new(&sum_rng, &interp),
+            ArgumentHandle::new(&c1_rng, &interp),
+            ArgumentHandle::new(&c1, &interp),
+            ArgumentHandle::new(&c2_rng, &interp),
+            ArgumentHandle::new(&c2, &interp),
+        ];
+        let fctx = DefaultFunctionContext::new(&engine, None);
+        fun.dispatch(&args, &fctx).unwrap()
+    };
+
+    // Disable fastpath and compare
+    engine.config = config.with_arrow_fastpath(false);
+    let slow_result = {
+        let interp = crate::interpreter::Interpreter::new(&engine, "Sheet1");
+        let args = vec![
+            ArgumentHandle::new(&sum_rng, &interp),
+            ArgumentHandle::new(&c1_rng, &interp),
+            ArgumentHandle::new(&c1, &interp),
+            ArgumentHandle::new(&c2_rng, &interp),
+            ArgumentHandle::new(&c2, &interp),
+        ];
+        let fctx = DefaultFunctionContext::new(&engine, None);
+        fun.dispatch(&args, &fctx).unwrap()
+    };
+
+    // Verify correctness: both paths must produce the same result
+    assert_eq!(fast_result, slow_result);
+    // Verify we got a non-trivial result
+    match fast_result {
+        LiteralValue::Number(n) => assert!(n > 0.0),
+        _ => panic!("expected number"),
+    }
+}
