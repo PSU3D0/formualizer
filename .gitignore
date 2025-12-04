@@ -6,3 +6,5 @@ repomix-output.xml
 
 *coverage*
 *.xlsx
+
+!docs/range-centric-engine-tdd-enriched.md
