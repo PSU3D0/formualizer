@@ -814,6 +814,36 @@ where
         }
     }
 
+    fn resolve_sheet_locator_for_write(
+        &mut self,
+        loc: formualizer_common::SheetLocator<'_>,
+        current_sheet: &str,
+    ) -> Result<SheetId, ExcelError> {
+        Ok(match loc {
+            formualizer_common::SheetLocator::Id(id) => id,
+            formualizer_common::SheetLocator::Name(name) => self.graph.sheet_id_mut(name.as_ref()),
+            formualizer_common::SheetLocator::Current => self.graph.sheet_id_mut(current_sheet),
+        })
+    }
+
+    fn resolve_sheet_locator_for_read(
+        &self,
+        loc: formualizer_common::SheetLocator<'_>,
+        current_sheet: &str,
+    ) -> Result<SheetId, ExcelError> {
+        match loc {
+            formualizer_common::SheetLocator::Id(id) => Ok(id),
+            formualizer_common::SheetLocator::Name(name) => self
+                .graph
+                .sheet_id(name.as_ref())
+                .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref)),
+            formualizer_common::SheetLocator::Current => self
+                .graph
+                .sheet_id(current_sheet)
+                .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref)),
+        }
+    }
+
     /// Set a cell value
     pub fn set_cell_value(
         &mut self,
@@ -830,6 +860,84 @@ where
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.has_edited = true;
         Ok(())
+    }
+
+    pub fn set_cell_value_ref(
+        &mut self,
+        cell: formualizer_common::SheetCellRef<'_>,
+        current_sheet: &str,
+        value: LiteralValue,
+    ) -> Result<(), ExcelError> {
+        let owned = cell.into_owned();
+        let sheet_id = self.resolve_sheet_locator_for_write(owned.sheet, current_sheet)?;
+        let sheet_name = self.graph.sheet_name(sheet_id).to_string();
+        self.set_cell_value(
+            &sheet_name,
+            owned.coord.row() + 1,
+            owned.coord.col() + 1,
+            value,
+        )
+    }
+
+    pub fn set_cell_formula_ref(
+        &mut self,
+        cell: formualizer_common::SheetCellRef<'_>,
+        current_sheet: &str,
+        ast: ASTNode,
+    ) -> Result<(), ExcelError> {
+        let owned = cell.into_owned();
+        let sheet_id = self.resolve_sheet_locator_for_write(owned.sheet, current_sheet)?;
+        let sheet_name = self.graph.sheet_name(sheet_id).to_string();
+        self.set_cell_formula(
+            &sheet_name,
+            owned.coord.row() + 1,
+            owned.coord.col() + 1,
+            ast,
+        )
+    }
+
+    pub fn get_cell_value_ref(
+        &self,
+        cell: formualizer_common::SheetCellRef<'_>,
+        current_sheet: &str,
+    ) -> Result<Option<LiteralValue>, ExcelError> {
+        let owned = cell.into_owned();
+        let sheet_id = self.resolve_sheet_locator_for_read(owned.sheet, current_sheet)?;
+        let sheet_name = self.graph.sheet_name(sheet_id);
+        Ok(self.get_cell_value(sheet_name, owned.coord.row() + 1, owned.coord.col() + 1))
+    }
+
+    pub fn resolve_range_view_sheet_ref<'c>(
+        &'c self,
+        r: &formualizer_common::SheetRef<'_>,
+        current_sheet: &str,
+    ) -> Result<RangeView<'c>, ExcelError> {
+        use formualizer_common::SheetLocator;
+
+        let sheet_to_opt_name = |loc: SheetLocator<'_>| -> Result<Option<String>, ExcelError> {
+            match loc {
+                SheetLocator::Current => Ok(None),
+                SheetLocator::Name(name) => Ok(Some(name.as_ref().to_string())),
+                SheetLocator::Id(id) => Ok(Some(self.graph.sheet_name(id).to_string())),
+            }
+        };
+
+        let rt = match r {
+            formualizer_common::SheetRef::Cell(cell) => ReferenceType::Cell {
+                sheet: sheet_to_opt_name(cell.sheet.clone())?,
+                row: cell.coord.row() + 1,
+                col: cell.coord.col() + 1,
+            },
+            formualizer_common::SheetRef::Range(range) => ReferenceType::Range {
+                sheet: sheet_to_opt_name(range.sheet.clone())?,
+                start_row: range.start_row.map(|b| b.index + 1),
+                start_col: range.start_col.map(|b| b.index + 1),
+                end_row: range.end_row.map(|b| b.index + 1),
+                end_col: range.end_col.map(|b| b.index + 1),
+            },
+        };
+
+        crate::traits::EvaluationContext::resolve_range_view(self, &rt, current_sheet)
     }
 
     /// Set a cell formula
@@ -1695,111 +1803,104 @@ where
                     let mut er = r.end_row.map(|b| b.index + 1);
                     let mut ec = r.end_col.map(|b| b.index + 1);
 
-                        if sr.is_none() && er.is_none() {
-                            let scv = sc.unwrap_or(1);
-                            let ecv = ec.unwrap_or(scv);
-                            if let Some((min_r, max_r)) =
-                                self.used_rows_for_columns(sheet_name, scv, ecv)
-                            {
-                                sr = Some(min_r);
-                                er = Some(max_r);
-                            } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                                sr = Some(1);
-                                er = Some(max_rows);
-                            }
+                    if sr.is_none() && er.is_none() {
+                        let scv = sc.unwrap_or(1);
+                        let ecv = ec.unwrap_or(scv);
+                        if let Some((min_r, max_r)) =
+                            self.used_rows_for_columns(sheet_name, scv, ecv)
+                        {
+                            sr = Some(min_r);
+                            er = Some(max_r);
+                        } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
+                            sr = Some(1);
+                            er = Some(max_rows);
                         }
-                        if sc.is_none() && ec.is_none() {
-                            let srv = sr.unwrap_or(1);
-                            let erv = er.unwrap_or(srv);
-                            if let Some((min_c, max_c)) =
-                                self.used_cols_for_rows(sheet_name, srv, erv)
-                            {
-                                sc = Some(min_c);
-                                ec = Some(max_c);
-                            } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                                sc = Some(1);
-                                ec = Some(max_cols);
-                            }
+                    }
+                    if sc.is_none() && ec.is_none() {
+                        let srv = sr.unwrap_or(1);
+                        let erv = er.unwrap_or(srv);
+                        if let Some((min_c, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv)
+                        {
+                            sc = Some(min_c);
+                            ec = Some(max_c);
+                        } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
+                            sc = Some(1);
+                            ec = Some(max_cols);
                         }
-                        if sr.is_some() && er.is_none() {
-                            let scv = sc.unwrap_or(1);
-                            let ecv = ec.unwrap_or(scv);
-                            if let Some((_, max_r)) =
-                                self.used_rows_for_columns(sheet_name, scv, ecv)
-                            {
-                                er = Some(max_r);
-                            } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                                er = Some(max_rows);
-                            }
+                    }
+                    if sr.is_some() && er.is_none() {
+                        let scv = sc.unwrap_or(1);
+                        let ecv = ec.unwrap_or(scv);
+                        if let Some((_, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
+                            er = Some(max_r);
+                        } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
+                            er = Some(max_rows);
                         }
-                        if er.is_some() && sr.is_none() {
-                            let scv = sc.unwrap_or(1);
-                            let ecv = ec.unwrap_or(scv);
-                            if let Some((min_r, _)) =
-                                self.used_rows_for_columns(sheet_name, scv, ecv)
-                            {
-                                sr = Some(min_r);
-                            } else {
-                                sr = Some(1);
-                            }
+                    }
+                    if er.is_some() && sr.is_none() {
+                        let scv = sc.unwrap_or(1);
+                        let ecv = ec.unwrap_or(scv);
+                        if let Some((min_r, _)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
+                            sr = Some(min_r);
+                        } else {
+                            sr = Some(1);
                         }
-                        if sc.is_some() && ec.is_none() {
-                            let srv = sr.unwrap_or(1);
-                            let erv = er.unwrap_or(srv);
-                            if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv)
-                            {
-                                ec = Some(max_c);
-                            } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                                ec = Some(max_cols);
-                            }
+                    }
+                    if sc.is_some() && ec.is_none() {
+                        let srv = sr.unwrap_or(1);
+                        let erv = er.unwrap_or(srv);
+                        if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
+                            ec = Some(max_c);
+                        } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
+                            ec = Some(max_cols);
                         }
-                        if ec.is_some() && sc.is_none() {
-                            let srv = sr.unwrap_or(1);
-                            let erv = er.unwrap_or(srv);
-                            if let Some((min_c, _)) = self.used_cols_for_rows(sheet_name, srv, erv)
-                            {
-                                sc = Some(min_c);
-                            } else {
-                                sc = Some(1);
-                            }
+                    }
+                    if ec.is_some() && sc.is_none() {
+                        let srv = sr.unwrap_or(1);
+                        let erv = er.unwrap_or(srv);
+                        if let Some((min_c, _)) = self.used_cols_for_rows(sheet_name, srv, erv) {
+                            sc = Some(min_c);
+                        } else {
+                            sc = Some(1);
                         }
+                    }
 
-                        let sr = sr.unwrap_or(1);
-                        let sc = sc.unwrap_or(1);
-                        let er = er.unwrap_or(sr.saturating_sub(1));
-                        let ec = ec.unwrap_or(sc.saturating_sub(1));
-                        if er < sr || ec < sc {
-                            continue;
-                        }
+                    let sr = sr.unwrap_or(1);
+                    let sc = sc.unwrap_or(1);
+                    let er = er.unwrap_or(sr.saturating_sub(1));
+                    let ec = ec.unwrap_or(sc.saturating_sub(1));
+                    if er < sr || ec < sc {
+                        continue;
+                    }
 
-                        if let Some(index) = self.graph.sheet_index(sheet_id) {
-                            let sr0 = sr.saturating_sub(1);
-                            let er0 = er.saturating_sub(1);
-                            let sc0 = sc.saturating_sub(1);
-                            let ec0 = ec.saturating_sub(1);
-                            // enumerate vertices in col range, filter row and kind
-                            for u in index.vertices_in_col_range(sc0, ec0) {
-                                let pc = self.graph.vertex_coord(u);
-                                let row0 = pc.row();
-                                if row0 < sr0 || row0 > er0 {
-                                    continue;
-                                }
-                                match self.graph.get_vertex_kind(u) {
-                                    VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                                        // only link and schedule if producer is dirty/volatile
-                                        if (self.graph.is_dirty(u) || self.graph.is_volatile(u))
-                                            && u != v
-                                        {
-                                            vdeps.entry(v).or_default().push(u);
-                                            if !visited.contains(&u) {
-                                                stack.push(u);
-                                            }
+                    if let Some(index) = self.graph.sheet_index(sheet_id) {
+                        let sr0 = sr.saturating_sub(1);
+                        let er0 = er.saturating_sub(1);
+                        let sc0 = sc.saturating_sub(1);
+                        let ec0 = ec.saturating_sub(1);
+                        // enumerate vertices in col range, filter row and kind
+                        for u in index.vertices_in_col_range(sc0, ec0) {
+                            let pc = self.graph.vertex_coord(u);
+                            let row0 = pc.row();
+                            if row0 < sr0 || row0 > er0 {
+                                continue;
+                            }
+                            match self.graph.get_vertex_kind(u) {
+                                VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                                    // only link and schedule if producer is dirty/volatile
+                                    if (self.graph.is_dirty(u) || self.graph.is_volatile(u))
+                                        && u != v
+                                    {
+                                        vdeps.entry(v).or_default().push(u);
+                                        if !visited.contains(&u) {
+                                            stack.push(u);
                                         }
                                     }
-                                    _ => {}
                                 }
+                                _ => {}
                             }
                         }
+                    }
                 }
             }
         }
@@ -1901,7 +2002,7 @@ where
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
         for target in targets {
-            let (sheet, row, col) = Self::parse_a1_notation(target)?;
+            let (sheet, row, col) = self.parse_a1_notation(target)?;
             let sheet_id = self.graph.sheet_id_mut(&sheet);
             let coord = Coord::from_excel(row, col, true, true);
             target_addrs.push(CellRef::new(sheet_id, coord));
@@ -1992,14 +2093,14 @@ where
         })
     }
 
-    fn parse_a1_notation(address: &str) -> Result<(String, u32, u32), ExcelError> {
+    fn parse_a1_notation(&self, address: &str) -> Result<(String, u32, u32), ExcelError> {
         let mut parts = address.splitn(2, '!');
         let first = parts.next().unwrap_or_default();
         let remainder = parts.next();
 
         let (sheet, cell_part) = match remainder {
             Some(cell) => (first.to_string(), cell),
-            None => ("Sheet1".to_string(), first),
+            None => (self.default_sheet_name().to_string(), first),
         };
 
         let (row, col, _, _) = parse_a1_1based(cell_part).map_err(|err| {
@@ -2548,7 +2649,7 @@ where
         row: u32,
         col: u32,
     ) -> Result<LiteralValue, ExcelError> {
-        let sheet_name = sheet.unwrap_or("Sheet1"); // FIXME: This should use the current sheet context
+        let sheet_name = sheet.unwrap_or_else(|| self.default_sheet_name()); // FIXME: should use formula current-sheet context
         // Prefer engine's unified accessor which consults Arrow store for base values
         // and falls back to graph for formulas and stored values.
         if let Some(v) = self.get_cell_value(sheet_name, row, col) {

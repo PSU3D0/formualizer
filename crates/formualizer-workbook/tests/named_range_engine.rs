@@ -13,7 +13,7 @@ fn named_range_formula_recalculates_and_marks_dirty() {
     workbook
         .engine_mut()
         .graph
-        .set_cell_value("Sheet1", 0, 0, LiteralValue::Number(10.0))
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
         .expect("set seed value");
 
     let input_ref = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
@@ -31,7 +31,7 @@ fn named_range_formula_recalculates_and_marks_dirty() {
     workbook
         .engine_mut()
         .graph
-        .set_cell_formula("Sheet1", 0, 1, formula_ast)
+        .set_cell_formula("Sheet1", 1, 2, formula_ast)
         .expect("set formula");
 
     workbook.evaluate_all().expect("initial evaluation");
@@ -39,7 +39,7 @@ fn named_range_formula_recalculates_and_marks_dirty() {
     let initial_output = workbook
         .engine()
         .graph
-        .get_cell_value("Sheet1", 0, 1)
+        .get_cell_value("Sheet1", 1, 2)
         .expect("output cell present");
     assert!(
         matches!(initial_output, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9),
@@ -67,7 +67,7 @@ fn named_range_formula_recalculates_and_marks_dirty() {
     workbook
         .engine_mut()
         .graph
-        .set_cell_value("Sheet1", 0, 0, LiteralValue::Number(25.0))
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(25.0))
         .expect("mutate named input");
 
     let pending = workbook.engine().graph.get_evaluation_vertices();
@@ -91,7 +91,7 @@ fn named_range_formula_recalculates_and_marks_dirty() {
     let updated_output = workbook
         .engine()
         .graph
-        .get_cell_value("Sheet1", 0, 1)
+        .get_cell_value("Sheet1", 1, 2)
         .expect("output cell after mutation");
     assert!(
         matches!(updated_output, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9),

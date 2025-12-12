@@ -1,5 +1,5 @@
-use super::*;
 use super::ast_utils::{update_internal_sheet_references, update_sheet_references_in_ast};
+use super::*;
 
 impl DependencyGraph {
     /// Add a new sheet to the workbook.
@@ -25,7 +25,7 @@ impl DependencyGraph {
         let sheet_count = self.sheet_reg.all_sheets().len();
         if sheet_count <= 1 {
             return Err(
-                ExcelError::new(ExcelErrorKind::Value).with_message("Cannot remove the last sheet"),
+                ExcelError::new(ExcelErrorKind::Value).with_message("Cannot remove the last sheet")
             );
         }
 
@@ -143,7 +143,7 @@ impl DependencyGraph {
         let source_name = self.sheet_reg.name(source_sheet_id).to_string();
         if source_name.is_empty() {
             return Err(
-                ExcelError::new(ExcelErrorKind::Value).with_message("Source sheet does not exist"),
+                ExcelError::new(ExcelErrorKind::Value).with_message("Source sheet does not exist")
             );
         }
 
@@ -170,7 +170,8 @@ impl DependencyGraph {
 
             let new_id = self.store.allocate(*coord, new_sheet_id, 0x01);
             self.edges.add_vertex(*coord, new_id.0);
-            self.sheet_index_mut(new_sheet_id).add_vertex(*coord, new_id);
+            self.sheet_index_mut(new_sheet_id)
+                .add_vertex(*coord, new_id);
 
             self.store.set_kind(new_id, kind);
 
@@ -250,8 +251,11 @@ impl DependencyGraph {
             }
             named_range.vertex = name_vertex;
 
-            let referenced_names =
-                self.rebuild_name_dependencies(name_vertex, &named_range.definition, named_range.scope);
+            let referenced_names = self.rebuild_name_dependencies(
+                name_vertex,
+                &named_range.definition,
+                named_range.scope,
+            );
             if !referenced_names.is_empty() {
                 self.attach_vertex_to_names(name_vertex, &referenced_names);
             }

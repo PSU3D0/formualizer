@@ -272,7 +272,7 @@ pub fn register_builtins() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::{ArgumentHandle, DefaultFunctionContext};
+    use crate::traits::ArgumentHandle;
     use crate::{interpreter::Interpreter, test_workbook::TestWorkbook};
     use formualizer_parse::LiteralValue;
     use std::sync::{
@@ -332,7 +332,7 @@ mod tests {
 
         let ctx = interp(&wb);
         let t = ctx.context.get_function("", "TRUE").unwrap();
-        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         assert_eq!(
             t.eval_scalar(&[], &fctx).unwrap(),
             LiteralValue::Boolean(true)
@@ -351,7 +351,7 @@ mod tests {
             .with_function(std::sync::Arc::new(AndFn))
             .with_function(std::sync::Arc::new(OrFn));
         let ctx = interp(&wb);
-        let fctx = crate::traits::DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
 
         let and = ctx.context.get_function("", "AND").unwrap();
         let or = ctx.context.get_function("", "OR").unwrap();
@@ -398,7 +398,7 @@ mod tests {
             .with_function(Arc::new(AndFn))
             .with_function(Arc::new(CountFn(counter.clone())));
         let ctx = interp(&wb);
-        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         let and = ctx.context.get_function("", "AND").unwrap();
 
         // Build args: FALSE, COUNTING()
@@ -433,7 +433,7 @@ mod tests {
             .with_function(Arc::new(OrFn))
             .with_function(Arc::new(CountFn(counter.clone())));
         let ctx = interp(&wb);
-        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         let or = ctx.context.get_function("", "OR").unwrap();
 
         // Build args: TRUE, COUNTING()
@@ -468,7 +468,7 @@ mod tests {
             .with_function(Arc::new(OrFn))
             .with_function(Arc::new(CountFn(counter.clone())));
         let ctx = interp(&wb);
-        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         let or = ctx.context.get_function("", "OR").unwrap();
 
         // First arg is an array literal with first element 1 (truey), then zeros.
@@ -512,7 +512,7 @@ mod tests {
             .with_function(Arc::new(AndFn))
             .with_function(Arc::new(ErrorFn(err_counter.clone())));
         let ctx = interp(&wb);
-        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         let and = ctx.context.get_function("", "AND").unwrap();
 
         // AND(1, ERRORFN(), 1) => #VALUE!
@@ -551,7 +551,7 @@ mod tests {
             .with_function(Arc::new(OrFn))
             .with_function(Arc::new(ErrorFn(err_counter.clone())));
         let ctx = interp(&wb);
-        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         let or = ctx.context.get_function("", "OR").unwrap();
 
         // OR(TRUE, ERRORFN()) => TRUE and ERRORFN not evaluated

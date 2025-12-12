@@ -89,6 +89,9 @@ pub struct EvalConfig {
     pub max_eval_time: Option<std::time::Duration>,
     pub max_memory_mb: Option<usize>,
 
+    /// Default sheet name used when no sheet is provided.
+    pub default_sheet_name: String,
+
     /// Stable workbook seed used for deterministic RNG composition
     pub workbook_seed: u64,
 
@@ -152,6 +155,8 @@ impl Default for EvalConfig {
             max_vertices: None,
             max_eval_time: None,
             max_memory_mb: None,
+
+            default_sheet_name: format!("Sheet{}", 1),
 
             // Deterministic RNG seed (matches traits default)
             workbook_seed: 0xF0F0_D0D0_AAAA_5555,

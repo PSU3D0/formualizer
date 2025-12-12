@@ -37,7 +37,7 @@ fn to_values_flat(
 ) -> Result<Vec<LiteralValue>, ExcelError> {
     if let Ok(r) = arg.as_reference_or_eval() {
         let mut out = Vec::new();
-        let sheet = "Sheet1"; // TODO: propagate actual sheet if present in reference
+        let sheet = ctx.current_sheet();
         let rv = ctx.resolve_range_view(&r, sheet)?;
         rv.for_each_cell(&mut |v| {
             out.push(v.clone());
@@ -55,7 +55,7 @@ fn to_rows_2d(
 ) -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
     if let Ok(r) = arg.as_reference_or_eval() {
         let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
-        let sheet = "Sheet1";
+        let sheet = ctx.current_sheet();
         let rv = ctx.resolve_range_view(&r, sheet)?;
         rv.for_each_row(&mut |row| {
             rows.push(row.to_vec());

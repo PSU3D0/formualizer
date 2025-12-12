@@ -1902,3 +1902,60 @@ mod sheet_ref_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod semantics_regressions {
+    use crate::parser::{ASTNodeType, Parser, ReferenceType};
+    use crate::tokenizer::Tokenizer;
+
+    #[test]
+    fn exponent_is_right_associative() {
+        let t = Tokenizer::new("=2^3^2").unwrap();
+        let mut p = Parser::new(t.items, false);
+        let ast = p.parse().unwrap();
+
+        match ast.node_type {
+            ASTNodeType::BinaryOp { op, left: _, right } => {
+                assert_eq!(op, "^");
+                // Expected: 2^(3^2)
+                match right.node_type {
+                    ASTNodeType::BinaryOp { op: op2, .. } => assert_eq!(op2, "^"),
+                    other => panic!("expected right child to be exponent, got {other:?}"),
+                }
+            }
+            other => panic!("expected BinaryOp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unary_minus_binds_less_tightly_than_exponent() {
+        let t = Tokenizer::new("=-2^2").unwrap();
+        let mut p = Parser::new(t.items, false);
+        let ast = p.parse().unwrap();
+
+        // Expected: -(2^2)
+        match ast.node_type {
+            ASTNodeType::UnaryOp { op, expr } => {
+                assert_eq!(op, "-");
+                match expr.node_type {
+                    ASTNodeType::BinaryOp { op: op2, .. } => assert_eq!(op2, "^"),
+                    other => panic!("expected exponent under unary, got {other:?}"),
+                }
+            }
+            other => panic!("expected UnaryOp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quoted_sheet_name_allows_escaped_single_quote() {
+        let r = ReferenceType::from_string("'Bob''s Sheet'!A1").unwrap();
+        assert_eq!(
+            r,
+            ReferenceType::Cell {
+                sheet: Some("Bob's Sheet".to_string()),
+                row: 1,
+                col: 1,
+            }
+        );
+    }
+}

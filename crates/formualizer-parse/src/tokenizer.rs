@@ -35,7 +35,7 @@ static ERROR_CODES: &[&str] = &[
 ];
 
 /// Represents operator associativity.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Associativity {
     Left,
     Right,
@@ -176,11 +176,21 @@ impl Token {
             self.value.as_str()
         };
 
+        // Higher number => tighter binding.
+        // Excel precedence (high to low, simplified):
+        //   reference ops (:
+        //   postfix %
+        //   exponent ^ (right-assoc)
+        //   prefix unary +/-(...) (binds looser than ^)
+        //   */
+        //   +-
+        //   &
+        //   comparisons
         match op {
             ":" | " " | "," => Some((8, Associativity::Left)),
-            "u" => Some((7, Associativity::Right)),
-            "%" => Some((6, Associativity::Left)),
-            "^" => Some((5, Associativity::Left)),
+            "%" => Some((7, Associativity::Left)),
+            "^" => Some((6, Associativity::Right)),
+            "u" => Some((5, Associativity::Right)),
             "*" | "/" => Some((4, Associativity::Left)),
             "+" | "-" => Some((3, Associativity::Left)),
             "&" => Some((2, Associativity::Left)),

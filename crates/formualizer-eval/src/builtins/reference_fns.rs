@@ -161,7 +161,8 @@ impl Function for IndexFn {
     ) -> Result<LiteralValue, ExcelError> {
         if let Some(Ok(r)) = self.eval_reference(args, ctx) {
             // Materialize to value
-            match ctx.resolve_range_view(&r, "Sheet1") {
+            let current_sheet = ctx.current_sheet();
+            match ctx.resolve_range_view(&r, current_sheet) {
                 Ok(rv) => {
                     let (rows, cols) = rv.dims();
                     if rows == 1 && cols == 1 {
@@ -302,7 +303,8 @@ impl Function for OffsetFn {
         ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if let Some(Ok(r)) = self.eval_reference(args, ctx) {
-            match ctx.resolve_range_view(&r, "Sheet1") {
+            let current_sheet = ctx.current_sheet();
+            match ctx.resolve_range_view(&r, current_sheet) {
                 Ok(rv) => {
                     let (rows, cols) = rv.dims();
                     if rows == 1 && cols == 1 {

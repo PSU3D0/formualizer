@@ -720,21 +720,30 @@ impl ReferenceType {
         let bytes = reference.as_bytes();
         let mut i = 0;
 
-        // Handle quoted sheet names
+        // Handle quoted sheet names.
+        // Excel escapes a single quote inside a quoted sheet name by doubling it.
+        // Example: 'Bob''s Sheet'!A1
         if i < bytes.len() && bytes[i] == b'\'' {
             i += 1;
             let start = i;
 
-            // Find closing quote
             while i < bytes.len() {
                 if bytes[i] == b'\'' {
-                    // Check if next char is '!'
+                    // Escaped quote inside sheet name: ''
+                    if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                        i += 2;
+                        continue;
+                    }
+
+                    // Closing quote followed by '!'
                     if i + 1 < bytes.len() && bytes[i + 1] == b'!' {
-                        let sheet = String::from(&reference[start..i]);
+                        let raw = &reference[start..i];
+                        let sheet = raw.replace("''", "'");
                         let ref_part = String::from(&reference[i + 2..]);
                         return (Some(sheet), ref_part);
                     }
                 }
+
                 i += 1;
             }
         }
@@ -1607,13 +1616,42 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<ASTNode, ParserError> {
-        self.parse_binary_op(0)
+        self.parse_bp(0)
     }
 
-    fn parse_binary_op(&mut self, min_precedence: u8) -> Result<ASTNode, ParserError> {
-        let mut left = self.parse_unary_op()?;
+    // Pratt-style precedence parser. `min_precedence` is the minimum binding power
+    // an operator must have to be consumed at this level.
+    fn parse_bp(&mut self, min_precedence: u8) -> Result<ASTNode, ParserError> {
+        let mut left = self.parse_prefix()?;
 
-        while self.position < self.tokens.len() {
+        loop {
+            if self.position >= self.tokens.len() {
+                break;
+            }
+
+            // Postfix operators (e.g. percent).
+            if self.tokens[self.position].token_type == TokenType::OpPostfix {
+                let (precedence, _) = self.tokens[self.position]
+                    .get_precedence()
+                    .unwrap_or((0, Associativity::Left));
+                if precedence < min_precedence {
+                    break;
+                }
+
+                let op_token = self.tokens[self.position].clone();
+                self.position += 1;
+                let contains_volatile = left.contains_volatile;
+                left = ASTNode::new_with_volatile(
+                    ASTNodeType::UnaryOp {
+                        op: op_token.value.clone(),
+                        expr: Box::new(left),
+                    },
+                    Some(op_token),
+                    contains_volatile,
+                );
+                continue;
+            }
+
             let token = &self.tokens[self.position];
             if token.token_type != TokenType::OpInfix {
                 break;
@@ -1634,7 +1672,7 @@ impl Parser {
                 precedence
             };
 
-            let right = self.parse_binary_op(next_min_precedence)?;
+            let right = self.parse_bp(next_min_precedence)?;
             let contains_volatile = left.contains_volatile || right.contains_volatile;
             left = ASTNode::new_with_volatile(
                 ASTNodeType::BinaryOp {
@@ -1650,13 +1688,20 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_unary_op(&mut self) -> Result<ASTNode, ParserError> {
+    fn parse_prefix(&mut self) -> Result<ASTNode, ParserError> {
         if self.position < self.tokens.len()
             && self.tokens[self.position].token_type == TokenType::OpPrefix
         {
             let op_token = self.tokens[self.position].clone();
             self.position += 1;
-            let expr = self.parse_unary_op()?;
+
+            // Prefix unary binds looser than exponent, so parse the RHS with
+            // min_precedence equal to unary's precedence.
+            let (precedence, _) = op_token
+                .get_precedence()
+                .unwrap_or((0, Associativity::Right));
+
+            let expr = self.parse_bp(precedence)?;
             let contains_volatile = expr.contains_volatile;
             return Ok(ASTNode::new_with_volatile(
                 ASTNodeType::UnaryOp {
@@ -1667,29 +1712,8 @@ impl Parser {
                 contains_volatile,
             ));
         }
-        self.parse_postfix_op()
-    }
 
-    fn parse_postfix_op(&mut self) -> Result<ASTNode, ParserError> {
-        let mut expr = self.parse_primary()?;
-
-        while self.position < self.tokens.len()
-            && self.tokens[self.position].token_type == TokenType::OpPostfix
-        {
-            let op_token = self.tokens[self.position].clone();
-            self.position += 1;
-            let contains_volatile = expr.contains_volatile;
-            expr = ASTNode::new_with_volatile(
-                ASTNodeType::UnaryOp {
-                    op: op_token.value.clone(),
-                    expr: Box::new(expr),
-                },
-                Some(op_token),
-                contains_volatile,
-            );
-        }
-
-        Ok(expr)
+        self.parse_primary()
     }
 
     fn parse_primary(&mut self) -> Result<ASTNode, ParserError> {

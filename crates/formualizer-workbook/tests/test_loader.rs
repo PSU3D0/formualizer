@@ -265,7 +265,10 @@ fn test_loader_registers_named_ranges() {
         .expect("local name registered");
     match local {
         NamedDefinition::Range(range) => {
-            assert_eq!(format!("{}", range), "$A$2:$B$2");
+            assert_eq!(range.start.sheet_id, sheet_id);
+            assert_eq!(range.end.sheet_id, sheet_id);
+            assert_eq!(format!("{}", range.start.coord), "$A$2");
+            assert_eq!(format!("{}", range.end.coord), "$B$2");
         }
         other => panic!("expected range definition, got {:?}", other),
     }

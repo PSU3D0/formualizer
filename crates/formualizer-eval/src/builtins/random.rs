@@ -37,7 +37,6 @@ pub fn register_builtins() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::DefaultFunctionContext;
     use crate::{interpreter::Interpreter, test_workbook::TestWorkbook};
     use formualizer_parse::LiteralValue;
 
@@ -63,7 +62,7 @@ mod tests {
         let ctx = interp(&wb);
 
         let f = ctx.context.get_function("", "RAND").unwrap();
-        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         let result = f.eval_scalar(&[], &fctx).unwrap();
         match result {
             LiteralValue::Number(n) => assert!((0.0..1.0).contains(&n)),
@@ -76,7 +75,7 @@ mod tests {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(RandBetweenFn));
         let ctx = interp(&wb);
         let f = ctx.context.get_function("", "RANDBETWEEN").unwrap();
-        let fctx = DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         // Build two scalar args 1 and 3
         let lo = formualizer_parse::ASTNode::new(
             formualizer_parse::ASTNodeType::Literal(LiteralValue::Int(1)),

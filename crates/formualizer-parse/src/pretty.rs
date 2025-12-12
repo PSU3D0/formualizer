@@ -1,5 +1,5 @@
 use crate::parser::{ASTNode, ASTNodeType, Parser, ParserError};
-use crate::tokenizer::Tokenizer;
+use crate::tokenizer::{Associativity, Tokenizer};
 
 /// Pretty-prints an AST node according to canonical formatting rules.
 ///
@@ -11,6 +11,121 @@ use crate::tokenizer::Tokenizer;
 /// - References printed via .normalise()
 /// - Array literals: {1, 2; 3, 4}
 pub fn pretty_print(ast: &ASTNode) -> String {
+    pretty_print_node(ast)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+}
+
+fn infix_info(op: &str) -> (u8, Associativity) {
+    match op {
+        ":" | " " | "," => (8, Associativity::Left),
+        "^" => (6, Associativity::Right),
+        "*" | "/" => (4, Associativity::Left),
+        "+" | "-" => (3, Associativity::Left),
+        "&" => (2, Associativity::Left),
+        "=" | "<" | ">" | "<=" | ">=" | "<>" => (1, Associativity::Left),
+        _ => (0, Associativity::Left),
+    }
+}
+
+fn unary_precedence(op: &str) -> u8 {
+    if op == "%" {
+        7
+    } else {
+        // Prefix unary.
+        5
+    }
+}
+
+fn node_precedence(ast: &ASTNode) -> u8 {
+    match &ast.node_type {
+        ASTNodeType::BinaryOp { op, .. } => infix_info(op).0,
+        ASTNodeType::UnaryOp { op, .. } => unary_precedence(op),
+        // Treat everything else as an atom.
+        _ => 9,
+    }
+}
+
+fn child_needs_parens(
+    child: &ASTNode,
+    parent_op: &str,
+    parent_prec: u8,
+    parent_assoc: Associativity,
+    side: Side,
+) -> bool {
+    let child_prec = node_precedence(child);
+    if child_prec < parent_prec {
+        return true;
+    }
+    if child_prec > parent_prec {
+        return false;
+    }
+
+    // Same precedence: associativity and mixed operators matter.
+    match side {
+        Side::Left => {
+            if parent_assoc == Associativity::Right {
+                // Right-assoc ops (e.g. '^'): parenthesize left child if it could re-associate.
+                matches!(child.node_type, ASTNodeType::BinaryOp { .. })
+            } else {
+                false
+            }
+        }
+        Side::Right => {
+            if parent_assoc == Associativity::Left {
+                if let ASTNodeType::BinaryOp { op: child_op, .. } = &child.node_type {
+                    if child_op != parent_op {
+                        return true;
+                    }
+
+                    // Even with same op, some operators are not associative.
+                    if parent_op == "-" || parent_op == "/" {
+                        return true;
+                    }
+                }
+                false
+            } else {
+                // Right-assoc ops: parenthesize if mixing ops at same precedence.
+                if let ASTNodeType::BinaryOp { op: child_op, .. } = &child.node_type {
+                    return child_op != parent_op;
+                }
+                false
+            }
+        }
+    }
+}
+
+fn unary_operand_needs_parens(unary_op: &str, operand: &ASTNode) -> bool {
+    match unary_op {
+        "%" => matches!(operand.node_type, ASTNodeType::BinaryOp { .. }),
+        _ => {
+            let operand_prec = node_precedence(operand);
+            operand_prec < unary_precedence(unary_op)
+                && matches!(operand.node_type, ASTNodeType::BinaryOp { .. })
+        }
+    }
+}
+
+fn pretty_child(
+    child: &ASTNode,
+    parent_op: &str,
+    parent_prec: u8,
+    parent_assoc: Associativity,
+    side: Side,
+) -> String {
+    let s = pretty_print_node(child);
+    if child_needs_parens(child, parent_op, parent_prec, parent_assoc, side) {
+        format!("({s})")
+    } else {
+        s
+    }
+}
+
+fn pretty_print_node(ast: &ASTNode) -> String {
     match &ast.node_type {
         ASTNodeType::Literal(value) => match value {
             // Quote and escape text literals to preserve Excel semantics
@@ -22,20 +137,35 @@ pub fn pretty_print(ast: &ASTNode) -> String {
         },
         ASTNodeType::Reference { reference, .. } => reference.normalise(),
         ASTNodeType::UnaryOp { op, expr } => {
-            format!("{}{}", op, pretty_print(expr))
+            let inner = pretty_print_node(expr);
+            let inner = if unary_operand_needs_parens(op, expr) {
+                format!("({inner})")
+            } else {
+                inner
+            };
+
+            if op == "%" {
+                format!("{inner}%")
+            } else {
+                format!("{op}{inner}")
+            }
         }
         ASTNodeType::BinaryOp { op, left, right } => {
+            let (prec, assoc) = infix_info(op);
+            let left_s = pretty_child(left, op, prec, assoc, Side::Left);
+            let right_s = pretty_child(right, op, prec, assoc, Side::Right);
+
             // Special handling for range operator ':'
             if op == ":" {
-                format!("{}:{}", pretty_print(left), pretty_print(right))
+                format!("{left_s}:{right_s}")
             } else {
-                format!("{} {} {}", pretty_print(left), op, pretty_print(right))
+                format!("{left_s} {op} {right_s}")
             }
         }
         ASTNodeType::Function { name, args } => {
             let args_str = args
                 .iter()
-                .map(pretty_print)
+                .map(pretty_print_node)
                 .collect::<Vec<String>>()
                 .join(", ");
 
@@ -46,7 +176,7 @@ pub fn pretty_print(ast: &ASTNode) -> String {
                 .iter()
                 .map(|row| {
                     row.iter()
-                        .map(pretty_print)
+                        .map(pretty_print_node)
                         .collect::<Vec<String>>()
                         .join(", ")
                 })
@@ -145,6 +275,13 @@ mod tests {
         let formula = "=a1 + b2 *     3";
         let pretty = pretty_parse_render(formula).unwrap();
         assert_eq!(pretty, "=A1 + B2 * 3");
+    }
+
+    #[test]
+    fn test_pretty_print_inserts_parentheses_when_needed() {
+        let formula = "=(a1+b2)*c3";
+        let pretty = pretty_parse_render(formula).unwrap();
+        assert_eq!(pretty, "=(A1 + B2) * C3");
     }
 
     #[test]

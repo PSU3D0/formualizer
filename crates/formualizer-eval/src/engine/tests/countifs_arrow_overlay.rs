@@ -68,7 +68,8 @@ fn countifs_arrow_overlay_only_values() {
             ArgumentHandle::new(&col_ref, &interp),
             ArgumentHandle::new(&crit, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
     assert_eq!(got, LiteralValue::Number(2.0));

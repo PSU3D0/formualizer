@@ -1388,9 +1388,7 @@ impl<'g> VertexEditor<'g> {
         for formula_id in all_formula_vertices {
             if let Some(formula) = self.graph.get_formula(formula_id) {
                 let formula_sheet_id = self.graph.get_vertex_sheet_id(formula_id);
-                if let Some(adjusted) =
-                    adjuster.adjust_if_references(&formula, formula_sheet_id)
-                {
+                if let Some(adjusted) = adjuster.adjust_if_references(&formula, formula_sheet_id) {
                     self.graph.update_vertex_formula(formula_id, adjusted)?;
                 }
             }
@@ -1530,7 +1528,6 @@ enum CellData {
     Value(LiteralValue),
     Formula(ASTNode),
 }
-
 
 impl<'g> Drop for VertexEditor<'g> {
     fn drop(&mut self) {

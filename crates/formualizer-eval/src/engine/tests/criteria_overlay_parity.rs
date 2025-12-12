@@ -75,7 +75,8 @@ fn sumif_overlay_and_fastpath_parity() {
             ArgumentHandle::new(&crit_y, &interp),
             ArgumentHandle::new(&sum_rng, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 
@@ -132,7 +133,8 @@ fn sumifs_overlay_and_fastpath_parity() {
             ArgumentHandle::new(&c2_rng, &interp),
             ArgumentHandle::new(&c2_eq_aa, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 
@@ -146,7 +148,8 @@ fn sumifs_overlay_and_fastpath_parity() {
             ArgumentHandle::new(&c2_rng, &interp),
             ArgumentHandle::new(&c2_eq_aa, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 

@@ -26,6 +26,10 @@ mod tests {
         fn locale(&self) -> crate::locale::Locale {
             crate::locale::Locale::invariant()
         }
+
+        fn current_sheet(&self) -> &str {
+            "Sheet"
+        }
         fn timezone(&self) -> &crate::timezone::TimeZoneSpec {
             &crate::timezone::TimeZoneSpec::Utc
         }

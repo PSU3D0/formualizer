@@ -153,7 +153,8 @@ impl Function for MatchFn {
         let arr_ref = args[1].as_reference_or_eval().ok();
         let mut values: Vec<LiteralValue> = Vec::new();
         if let Some(r) = arr_ref {
-            match ctx.resolve_range_view(&r, "Sheet1") {
+            let current_sheet = ctx.current_sheet();
+            match ctx.resolve_range_view(&r, current_sheet) {
                 Ok(rv) => {
                     if let Err(e) = rv.for_each_cell(&mut |v| {
                         values.push(v.clone());
@@ -327,6 +328,8 @@ impl Function for VLookupFn {
             } => (sheet.clone(), *sr, *sc, *er, *ec),
             _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))),
         };
+        let current_sheet = ctx.current_sheet();
+        let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
         let width = ec - sc + 1;
         if col_index as u32 > width {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)));
@@ -334,7 +337,7 @@ impl Function for VLookupFn {
         // Collect first column
         let mut first_col: Vec<LiteralValue> = Vec::new();
         {
-            let rv = ctx.resolve_range_view(&table_ref, sheet.as_deref().unwrap_or("Sheet1"))?;
+            let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
             let col_offset = 0usize;
             rv.for_each_row(&mut |row| {
                 let v = row.get(col_offset).cloned().unwrap_or(LiteralValue::Empty);
@@ -365,7 +368,7 @@ impl Function for VLookupFn {
             None => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
         };
         // Retrieve target by re-iterating rows (acceptable initial implementation)
-        let rv = ctx.resolve_range_view(&table_ref, sheet.as_deref().unwrap_or("Sheet1"))?;
+        let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
         let mut current = 0usize;
         let target_col_idx = ((sc + (col_index as u32) - 1) - sc) as usize; // zero-based within slice
         let mut out: Option<LiteralValue> = None;
@@ -488,13 +491,15 @@ impl Function for HLookupFn {
             } => (sheet.clone(), *sr, *sc, *er, *ec),
             _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))),
         };
+        let current_sheet = ctx.current_sheet();
+        let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
         let height = er - sr + 1;
         if row_index as u32 > height {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)));
         }
         let mut first_row: Vec<LiteralValue> = Vec::new();
         {
-            let rv = ctx.resolve_range_view(&table_ref, sheet.as_deref().unwrap_or("Sheet1"))?;
+            let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
             let mut row_counter = 0usize;
             rv.for_each_row(&mut |row| {
                 if row_counter == 0 {
@@ -524,7 +529,7 @@ impl Function for HLookupFn {
         };
         let target_row_rel = (row_index as usize) - 1; // zero-based
         let target_col_rel = col_idx; // zero-based within row slice
-        let rv = ctx.resolve_range_view(&table_ref, sheet.as_deref().unwrap_or("Sheet1"))?;
+        let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
         let mut collected: Option<LiteralValue> = None;
         let mut r_counter = 0usize;
         rv.for_each_row(&mut |row| {

@@ -105,7 +105,7 @@ fn materialize_rows_2d(
 ) -> Result<Vec<Vec<formualizer_common::LiteralValue>>, ExcelError> {
     if let Ok(r) = arg.as_reference_or_eval() {
         let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
-        let sheet = "Sheet1"; // TODO propagate sheet
+        let sheet = ctx.current_sheet();
         let rv = ctx.resolve_range_view(&r, sheet)?;
         rv.for_each_row(&mut |row| {
             rows.push(row.to_vec());

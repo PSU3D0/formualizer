@@ -103,9 +103,7 @@ impl Default for Workbook {
 }
 
 impl Workbook {
-    pub fn new_with_config(mut config: formualizer_eval::engine::EvalConfig) -> Self {
-        // Default to deferred graph building unless explicitly disabled
-        config.defer_graph_building = true;
+    pub fn new_with_config(config: formualizer_eval::engine::EvalConfig) -> Self {
         let engine = formualizer_eval::engine::Engine::new(WBResolver, config);
         Self {
             engine,
@@ -115,7 +113,9 @@ impl Workbook {
         }
     }
     pub fn new() -> Self {
-        Self::new_with_config(formualizer_eval::engine::EvalConfig::default())
+        let mut cfg = formualizer_eval::engine::EvalConfig::default();
+        cfg.defer_graph_building = true;
+        Self::new_with_config(cfg)
     }
 
     pub fn engine(&self) -> &formualizer_eval::engine::Engine<WBResolver> {
@@ -314,7 +314,7 @@ impl Workbook {
                 .unwrap_or_else(|| self.engine.graph.add_sheet(sheet).unwrap());
             let cell = formualizer_eval::reference::CellRef::new(
                 sheet_id,
-                formualizer_eval::reference::Coord::new(row, col, true, true),
+                formualizer_eval::reference::Coord::from_excel(row, col, true, true),
             );
             {
                 let mut editor = formualizer_eval::engine::VertexEditor::with_logger(
@@ -359,7 +359,7 @@ impl Workbook {
                     .unwrap_or_else(|| self.engine.graph.add_sheet(sheet).unwrap());
                 let cell = formualizer_eval::reference::CellRef::new(
                     sheet_id,
-                    formualizer_eval::reference::Coord::new(row, col, true, true),
+                    formualizer_eval::reference::Coord::from_excel(row, col, true, true),
                 );
                 {
                     let mut editor = formualizer_eval::engine::VertexEditor::with_logger(
@@ -445,7 +445,7 @@ impl Workbook {
                 for ((r, c), d) in cells.into_iter() {
                     let cell = formualizer_eval::reference::CellRef::new(
                         sheet_id,
-                        formualizer_eval::reference::Coord::new(r, c, true, true),
+                        formualizer_eval::reference::Coord::from_excel(r, c, true, true),
                     );
                     if let Some(v) = d.value.clone() {
                         editor.set_cell_value(cell, v.clone());
@@ -589,7 +589,7 @@ impl Workbook {
                         let c = start_col + ci as u32;
                         let cell = formualizer_eval::reference::CellRef::new(
                             sheet_id,
-                            formualizer_eval::reference::Coord::new(r, c, true, true),
+                            formualizer_eval::reference::Coord::from_excel(r, c, true, true),
                         );
                         let with_eq = if f.starts_with('=') {
                             f.clone()

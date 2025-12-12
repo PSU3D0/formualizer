@@ -107,7 +107,21 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     pub fn range(&self) -> Result<Box<dyn Range>, ExcelError> {
         match &self.node.node_type {
             ASTNodeType::Reference { reference, .. } => {
-                self.interp.context.resolve_range_like(reference)
+                // Prefer RangeView since it has explicit current-sheet context.
+                let view = self
+                    .interp
+                    .context
+                    .resolve_range_view(reference, self.interp.current_sheet())?;
+                let (rows, cols) = view.dims();
+                let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
+                view.for_each_row(&mut |row| {
+                    let row_data: Vec<LiteralValue> = (0..cols)
+                        .map(|c| row.get(c).cloned().unwrap_or(LiteralValue::Empty))
+                        .collect();
+                    out.push(row_data);
+                    Ok(())
+                })?;
+                Ok(Box::new(InMemoryRange::new(out)))
             }
             ASTNodeType::Array(rows) => {
                 let mut materialized = Vec::new();
@@ -252,8 +266,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         .iter()
                         .map(|n| ArgumentHandle::new(n, self.interp))
                         .collect();
-                    let fctx =
-                        crate::traits::DefaultFunctionContext::new(self.interp.context, None);
+                    let fctx = crate::traits::DefaultFunctionContext::new_with_sheet(
+                        self.interp.context,
+                        None,
+                        self.interp.current_sheet(),
+                    );
                     if let Some(res) = fun.eval_reference(&handles, &fctx) {
                         res
                     } else {
@@ -726,6 +743,9 @@ pub trait FunctionContext {
     fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool>;
     fn chunk_hint(&self) -> Option<usize>;
 
+    /// Current formula sheet name.
+    fn current_sheet(&self) -> &str;
+
     fn volatile_level(&self) -> VolatileLevel;
     fn workbook_seed(&self) -> u64;
     fn recalc_epoch(&self) -> u64;
@@ -784,17 +804,38 @@ pub trait FunctionContext {
 pub struct DefaultFunctionContext<'a> {
     pub base: &'a dyn EvaluationContext,
     pub current: Option<CellRef>,
+    pub current_sheet: &'a str,
 }
 
 impl<'a> DefaultFunctionContext<'a> {
-    pub fn new(base: &'a dyn EvaluationContext, current: Option<CellRef>) -> Self {
-        Self { base, current }
+    pub fn new(
+        base: &'a dyn EvaluationContext,
+        current: Option<CellRef>,
+        current_sheet: &'a str,
+    ) -> Self {
+        Self {
+            base,
+            current,
+            current_sheet,
+        }
+    }
+
+    pub fn new_with_sheet(
+        base: &'a dyn EvaluationContext,
+        current: Option<CellRef>,
+        current_sheet: &'a str,
+    ) -> Self {
+        Self::new(base, current, current_sheet)
     }
 }
 
 impl<'a> FunctionContext for DefaultFunctionContext<'a> {
     fn locale(&self) -> crate::locale::Locale {
         self.base.locale()
+    }
+
+    fn current_sheet(&self) -> &str {
+        self.current_sheet
     }
     fn timezone(&self) -> &crate::timezone::TimeZoneSpec {
         self.base.timezone()

@@ -59,7 +59,11 @@ impl<'a> Interpreter<'a> {
                     // Build handles; allow function to decide reference semantics
                     let handles: Vec<ArgumentHandle> =
                         args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
-                    let fctx = DefaultFunctionContext::new(self.context, None);
+                    let fctx = DefaultFunctionContext::new_with_sheet(
+                        self.context,
+                        None,
+                        self.current_sheet,
+                    );
                     if let Some(res) = fun.eval_reference(&handles, &fctx) {
                         res
                     } else {
@@ -223,7 +227,11 @@ impl<'a> Interpreter<'a> {
                     {
                         let handles: Vec<ArgumentHandle> =
                             args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
-                        let fctx = DefaultFunctionContext::new(self.context, self.current_cell);
+                        let fctx = DefaultFunctionContext::new_with_sheet(
+                            self.context,
+                            self.current_cell,
+                            self.current_sheet,
+                        );
                         let mut w = crate::window_ctx::SimpleWindowCtx::new(
                             &handles,
                             &fctx,
@@ -385,7 +393,11 @@ impl<'a> Interpreter<'a> {
             let handles: Vec<ArgumentHandle> =
                 args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
             // Use the function's built-in dispatch method with a narrow FunctionContext
-            let fctx = DefaultFunctionContext::new(self.context, self.current_cell);
+            let fctx = DefaultFunctionContext::new_with_sheet(
+                self.context,
+                self.current_cell,
+                self.current_sheet,
+            );
             fun.dispatch(&handles, &fctx)
         } else {
             // Include the function name in the error message for better debugging
@@ -397,7 +409,7 @@ impl<'a> Interpreter<'a> {
     }
 
     pub fn function_context(&self, cell_ref: Option<&CellRef>) -> DefaultFunctionContext<'_> {
-        DefaultFunctionContext::new(self.context, cell_ref.cloned())
+        DefaultFunctionContext::new_with_sheet(self.context, cell_ref.cloned(), self.current_sheet)
     }
 
     // Test-only helpers removed: interpreter no longer maintains subexpression cache

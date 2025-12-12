@@ -13,14 +13,13 @@ pub struct GraphInstrumentation {
     pub stripe_removes: u64,
 }
 
-
+mod ast_utils;
 pub mod editor;
-pub mod snapshot;
 mod formula_analysis;
 mod names;
 mod range_deps;
-mod ast_utils;
 mod sheets;
+pub mod snapshot;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
@@ -80,7 +79,6 @@ const BLOCK_W: u32 = 256;
 pub fn block_index(row: u32, col: u32) -> u32 {
     (row / BLOCK_H) << 16 | (col / BLOCK_W)
 }
-
 
 /// A summary of the results of a mutating operation on the graph.
 /// This serves as a "changelog" to the application layer.
@@ -454,9 +452,14 @@ impl DependencyGraph {
         false
     }
     pub fn new() -> Self {
+        Self::new_with_config(super::EvalConfig::default())
+    }
+
+    pub fn new_with_config(config: super::EvalConfig) -> Self {
         let mut sheet_reg = SheetRegistry::new();
-        let default_sheet_id = sheet_reg.id_for("Sheet1");
-        Self {
+        let default_sheet_id = sheet_reg.id_for(&config.default_sheet_name);
+
+        let mut g = Self {
             store: VertexStore::new(),
             edges: CsrMutableEdges::new(),
             data_store: DataStore::new(),
@@ -478,7 +481,7 @@ impl DependencyGraph {
             name_vertex_seq: 0,
             cell_to_name_dependents: FxHashMap::default(),
             name_to_cell_dependencies: FxHashMap::default(),
-            config: super::EvalConfig::default(),
+            config: config.clone(),
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
             spill_cell_to_anchor: FxHashMap::default(),
@@ -486,14 +489,8 @@ impl DependencyGraph {
             ensure_touched_sheets: FxHashSet::default(),
             #[cfg(test)]
             instr: GraphInstrumentation::default(),
-        }
-    }
-
-    pub fn new_with_config(config: super::EvalConfig) -> Self {
-        let mut g = Self {
-            config: config.clone(),
-            ..Self::new()
         };
+
         if config.use_dynamic_topo {
             // Seed with currently active vertices (likely empty at startup)
             let nodes = g
@@ -512,6 +509,7 @@ impl DependencyGraph {
             pk.rebuild_full(&adapter);
             g.pk_order = Some(pk);
         }
+
         g
     }
 
@@ -595,11 +593,10 @@ impl DependencyGraph {
         &self.sheet_reg
     }
 
-    /// Converts a `CellRef` to a fully qualified A1-style string (e.g., "Sheet1!A1").
+    /// Converts a `CellRef` to a fully qualified A1-style string (e.g., "SheetName!A1").
     pub fn to_a1(&self, cell_ref: CellRef) -> String {
         format!("{}!{}", self.sheet_name(cell_ref.sheet_id), cell_ref.coord)
     }
-
 
     pub(crate) fn vertex_len(&self) -> usize {
         self.store.len()
@@ -940,6 +937,60 @@ impl DependencyGraph {
         })
     }
 
+    pub fn set_cell_value_ref(
+        &mut self,
+        cell: formualizer_common::SheetCellRef<'_>,
+        value: LiteralValue,
+    ) -> Result<OperationSummary, ExcelError> {
+        let owned = cell.into_owned();
+        let sheet_id = match owned.sheet {
+            formualizer_common::SheetLocator::Id(id) => id,
+            formualizer_common::SheetLocator::Name(name) => self.sheet_id_mut(name.as_ref()),
+            formualizer_common::SheetLocator::Current => self.default_sheet_id,
+        };
+        let sheet_name = self.sheet_name(sheet_id).to_string();
+        self.set_cell_value(
+            &sheet_name,
+            owned.coord.row() + 1,
+            owned.coord.col() + 1,
+            value,
+        )
+    }
+
+    pub fn set_cell_formula_ref(
+        &mut self,
+        cell: formualizer_common::SheetCellRef<'_>,
+        ast: ASTNode,
+    ) -> Result<OperationSummary, ExcelError> {
+        let owned = cell.into_owned();
+        let sheet_id = match owned.sheet {
+            formualizer_common::SheetLocator::Id(id) => id,
+            formualizer_common::SheetLocator::Name(name) => self.sheet_id_mut(name.as_ref()),
+            formualizer_common::SheetLocator::Current => self.default_sheet_id,
+        };
+        let sheet_name = self.sheet_name(sheet_id).to_string();
+        self.set_cell_formula(
+            &sheet_name,
+            owned.coord.row() + 1,
+            owned.coord.col() + 1,
+            ast,
+        )
+    }
+
+    pub fn get_cell_value_ref(
+        &self,
+        cell: formualizer_common::SheetCellRef<'_>,
+    ) -> Option<LiteralValue> {
+        let owned = cell.into_owned();
+        let sheet_id = match owned.sheet {
+            formualizer_common::SheetLocator::Id(id) => id,
+            formualizer_common::SheetLocator::Name(name) => self.sheet_id(name.as_ref())?,
+            formualizer_common::SheetLocator::Current => self.default_sheet_id,
+        };
+        let sheet_name = self.sheet_name(sheet_id);
+        self.get_cell_value(sheet_name, owned.coord.row() + 1, owned.coord.col() + 1)
+    }
+
     /// Get current value from a cell
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
         let sheet_id = self.sheet_reg.get_id(sheet)?;
@@ -1119,7 +1170,6 @@ impl DependencyGraph {
         }
     }
 
-
     fn get_or_create_vertex(
         &mut self,
         addr: &CellRef,
@@ -1144,7 +1194,6 @@ impl DependencyGraph {
         self.cell_to_vertex.insert(*addr, vertex_id);
         vertex_id
     }
-
 
     fn add_dependent_edges(&mut self, dependent: VertexId, dependencies: &[VertexId]) {
         // Batch to avoid repeated CSR rebuilds and keep reverse edges current
@@ -2117,8 +2166,6 @@ impl DependencyGraph {
     }
 
     // ========== Phase 2: Structural Operations ==========
-
 }
 
 // ========== Sheet Management Operations ==========
-

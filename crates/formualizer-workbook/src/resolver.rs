@@ -36,7 +36,9 @@ impl<B: SpreadsheetReader> RangeResolver for IoResolver<B> {
         er: Option<u32>,
         ec: Option<u32>,
     ) -> Result<Box<dyn Range>, ExcelError> {
-        let sheet_name = sheet.unwrap_or("Sheet1");
+        let sheet_name = sheet.ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Ref).with_message("Missing sheet name")
+        })?;
         let (sr, sc, er, ec) = normalize_range(sr, sc, er, ec)?;
 
         // Read from backend with interior mutability

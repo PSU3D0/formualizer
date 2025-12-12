@@ -817,7 +817,7 @@ mod tests_sinh {
         let f = ctx.context.get_function("", "SINH").unwrap();
         let a0 = make_num_ast(1.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        let fctx = crate::traits::DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         match f.dispatch(&args, &fctx).unwrap() {
             LiteralValue::Number(n) => assert_close(n, (1.0f64).sinh()),
             v => panic!("unexpected {v:?}"),

@@ -450,10 +450,7 @@ impl RelativeReferenceAdjuster {
                     col: new_col0 + 1,
                 }
             }
-            (
-                ReferenceType::Range { sheet, .. },
-                crate::reference::SharedRef::Range(range),
-            ) => {
+            (ReferenceType::Range { sheet, .. }, crate::reference::SharedRef::Range(range)) => {
                 let owned = range.into_owned();
 
                 let adj_axis = |b: formualizer_common::AxisBound, off: i32| {
@@ -531,11 +528,7 @@ impl MoveReferenceAdjuster {
         formula_sheet_id: crate::SheetId,
     ) -> Option<ASTNode> {
         let (adjusted, changed) = self.adjust_ast_inner(formula, formula_sheet_id);
-        if changed {
-            Some(adjusted)
-        } else {
-            None
-        }
+        if changed { Some(adjusted) } else { None }
     }
 
     fn adjust_ast_inner(&self, ast: &ASTNode, formula_sheet_id: crate::SheetId) -> (ASTNode, bool) {

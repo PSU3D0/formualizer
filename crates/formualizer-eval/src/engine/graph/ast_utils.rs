@@ -1,7 +1,11 @@
 use super::*;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
-pub(super) fn update_sheet_references_in_ast(ast: &ASTNode, old_name: &str, new_name: &str) -> ASTNode {
+pub(super) fn update_sheet_references_in_ast(
+    ast: &ASTNode,
+    old_name: &str,
+    new_name: &str,
+) -> ASTNode {
     match &ast.node_type {
         ASTNodeType::Reference { reference, .. } => {
             let updated_ref = match reference {

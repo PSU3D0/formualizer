@@ -515,7 +515,7 @@ mod tests {
     fn test_sum_basic() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
         let ctx = interp(&wb);
-        let fctx = crate::traits::DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
 
         // Test basic SUM functionality by creating ArgumentHandles manually
         let dummy_ast_1 = formualizer_parse::parser::ASTNode::new(
@@ -570,7 +570,7 @@ mod tests_count {
         let node = ASTNode::new(ASTNodeType::Literal(arr), None);
         let args = vec![ArgumentHandle::new(&node, &ctx)];
         let f = ctx.context.get_function("", "COUNT").unwrap();
-        let fctx = crate::traits::DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         assert_eq!(f.dispatch(&args, &fctx).unwrap(), LiteralValue::Number(3.0));
     }
 
@@ -589,7 +589,7 @@ mod tests_count {
         ];
         let f = ctx.context.get_function("", "COUNT").unwrap();
         // Two from array + scalar 10 = 3
-        let fctx = crate::traits::DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         assert_eq!(f.dispatch(&args, &fctx).unwrap(), LiteralValue::Number(3.0));
     }
 
@@ -605,7 +605,7 @@ mod tests_count {
         );
         let args = vec![ArgumentHandle::new(&err, &ctx)];
         let f = ctx.context.get_function("", "COUNT").unwrap();
-        let fctx = crate::traits::DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         match f.dispatch(&args, &fctx).unwrap() {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("unexpected {v:?}"),
@@ -674,7 +674,7 @@ mod tests_average {
         let node = ASTNode::new(ASTNodeType::Literal(arr), None);
         let args = vec![ArgumentHandle::new(&node, &ctx)];
         let f = ctx.context.get_function("", "AVERAGE").unwrap();
-        let fctx = crate::traits::DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         match f.dispatch(&args, &fctx).unwrap() {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("expected #DIV/0!, got {v:?}"),
@@ -693,7 +693,7 @@ mod tests_average {
         );
         let args = vec![ArgumentHandle::new(&err, &ctx)];
         let f = ctx.context.get_function("", "AVERAGE").unwrap();
-        let fctx = crate::traits::DefaultFunctionContext::new(ctx.context, None);
+        let fctx = ctx.function_context(None);
         match f.dispatch(&args, &fctx).unwrap() {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("unexpected {v:?}"),

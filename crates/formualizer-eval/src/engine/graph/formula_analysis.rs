@@ -135,7 +135,9 @@ impl DependencyGraph {
                                 let sheet_id = match owned.sheet {
                                     SharedSheetLocator::Id(id) => id,
                                     SharedSheetLocator::Current => current_sheet_id,
-                                    SharedSheetLocator::Name(name) => self.sheet_id_mut(name.as_ref()),
+                                    SharedSheetLocator::Name(name) => {
+                                        self.sheet_id_mut(name.as_ref())
+                                    }
                                 };
                                 range_dependencies.push(SharedRangeRef {
                                     sheet: SharedSheetLocator::Id(sheet_id),

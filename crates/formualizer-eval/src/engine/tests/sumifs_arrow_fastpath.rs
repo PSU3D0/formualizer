@@ -92,7 +92,8 @@ fn countifs_hybrid_formula_and_base_text() {
             ArgumentHandle::new(&col_ref, &interp),
             ArgumentHandle::new(&crit, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
     assert_eq!(got, LiteralValue::Number(2.0));
@@ -137,7 +138,8 @@ fn sumifs_arrow_fastpath_parity_small() {
             ArgumentHandle::new(&c2_rng, &interp),
             ArgumentHandle::new(&c2, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 
@@ -152,7 +154,8 @@ fn sumifs_arrow_fastpath_parity_small() {
             ArgumentHandle::new(&c2_rng, &interp),
             ArgumentHandle::new(&c2, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 
@@ -253,7 +256,8 @@ fn sumifs_text_and_date_window_parity() {
             ArgumentHandle::new(&r_rng, &interp),
             ArgumentHandle::new(&crit_end, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 
@@ -271,7 +275,8 @@ fn sumifs_text_and_date_window_parity() {
             ArgumentHandle::new(&r_rng, &interp),
             ArgumentHandle::new(&crit_end, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 
@@ -323,7 +328,8 @@ fn sumifs_arrow_fastpath_large_numeric_criteria() {
             ArgumentHandle::new(&c3_rng, &interp),
             ArgumentHandle::new(&c3, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 
@@ -339,7 +345,8 @@ fn sumifs_arrow_fastpath_large_numeric_criteria() {
             ArgumentHandle::new(&c3_rng, &interp),
             ArgumentHandle::new(&c3, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 
@@ -396,7 +403,8 @@ fn sumifs_multi_chunk_criteria_mask_correctness() {
             ArgumentHandle::new(&c2_rng, &interp),
             ArgumentHandle::new(&c2, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 
@@ -411,7 +419,8 @@ fn sumifs_multi_chunk_criteria_mask_correctness() {
             ArgumentHandle::new(&c2_rng, &interp),
             ArgumentHandle::new(&c2, &interp),
         ];
-        let fctx = DefaultFunctionContext::new(&engine, None);
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
         fun.dispatch(&args, &fctx).unwrap()
     };
 

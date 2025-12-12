@@ -39,6 +39,18 @@ impl TestWorkbook {
         Self::default()
     }
 
+    fn default_sheet_name(&self) -> &str {
+        const FALLBACK: &str = "Sheet1";
+        if self.sheets.contains_key(FALLBACK) {
+            return FALLBACK;
+        }
+        self.sheets
+            .keys()
+            .min()
+            .map(|s| s.as_str())
+            .unwrap_or(FALLBACK)
+    }
+
     /* ─────────────── cell helpers ─────────────── */
     pub fn with_cell<S: Into<String>>(mut self, sheet: S, row: u32, col: u32, v: V) -> Self {
         let sh = self.sheets.entry(sheet.into()).or_default();
@@ -202,7 +214,7 @@ impl TestWorkbook {
 
     /* ─────────────── interpreter shortcut ─────── */
     pub fn interpreter(&self) -> crate::interpreter::Interpreter<'_> {
-        crate::interpreter::Interpreter::new(self, "Sheet1")
+        crate::interpreter::Interpreter::new(self, self.default_sheet_name())
     }
 }
 
@@ -211,13 +223,43 @@ impl EvaluationContext for TestWorkbook {
     fn resolve_range_view<'c>(
         &'c self,
         reference: &ReferenceType,
-        _current_sheet: &str,
+        current_sheet: &str,
     ) -> Result<RangeView<'c>, ExcelError> {
         use formualizer_parse::parser::ReferenceType as RT;
+
+        fn qualify_reference(reference: &RT, current_sheet: &str) -> RT {
+            match reference {
+                RT::Cell {
+                    sheet: None,
+                    row,
+                    col,
+                } => RT::Cell {
+                    sheet: Some(current_sheet.to_string()),
+                    row: *row,
+                    col: *col,
+                },
+                RT::Range {
+                    sheet: None,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                } => RT::Range {
+                    sheet: Some(current_sheet.to_string()),
+                    start_row: *start_row,
+                    start_col: *start_col,
+                    end_row: *end_row,
+                    end_col: *end_col,
+                },
+                _ => reference.clone(),
+            }
+        }
+
         match reference {
             // Preserve #REF! for invalid single-cell references by embedding as a 1x1 value
             RT::Cell { sheet, row, col } => {
-                let v = match self.resolve_cell_reference(sheet.as_deref(), *row, *col) {
+                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                let v = match self.resolve_cell_reference(Some(sheet_name), *row, *col) {
                     Ok(val) => val,
                     Err(e) => V::Error(e),
                 };
@@ -231,7 +273,8 @@ impl EvaluationContext for TestWorkbook {
             }
             // Tables and rectangular ranges: materialize via generic path
             _ => {
-                let range_box = self.resolve_range_like(reference)?;
+                let qualified = qualify_reference(reference, current_sheet);
+                let range_box = self.resolve_range_like(&qualified)?;
                 let owned: Vec<Vec<V>> = range_box.materialise().into_owned();
                 Ok(RangeView::from_borrowed(Box::leak(Box::new(owned))))
             }
@@ -296,7 +339,7 @@ impl ReferenceResolver for TestWorkbook {
         row: u32,
         col: u32,
     ) -> Result<V, ExcelError> {
-        let sheet_name = sheet.unwrap_or("Sheet1");
+        let sheet_name = sheet.unwrap_or(self.default_sheet_name());
         self.sheets
             .get(sheet_name)
             .and_then(|sh| sh.cells.get(&(row, col)).cloned())
@@ -317,7 +360,7 @@ impl RangeResolver for TestWorkbook {
             (Some(sr), Some(sc), Some(er), Some(ec)) => (sr, sc, er, ec),
             _ => return Err(ExcelError::from(ExcelErrorKind::NImpl)),
         };
-        let sheet_name = sheet.unwrap_or("Sheet1");
+        let sheet_name = sheet.unwrap_or(self.default_sheet_name());
         let sh = self
             .sheets
             .get(sheet_name)

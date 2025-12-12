@@ -29,9 +29,7 @@ impl DependencyGraph {
     }
 
     #[cfg(test)]
-    pub(crate) fn stripe_to_dependents(
-        &self,
-    ) -> &FxHashMap<StripeKey, FxHashSet<VertexId>> {
+    pub(crate) fn stripe_to_dependents(&self) -> &FxHashMap<StripeKey, FxHashSet<VertexId>> {
         &self.stripe_to_dependents
     }
 
@@ -45,7 +43,8 @@ impl DependencyGraph {
             return;
         }
 
-        self.formula_to_range_deps.insert(dependent, ranges.to_vec());
+        self.formula_to_range_deps
+            .insert(dependent, ranges.to_vec());
 
         for range in ranges {
             let sheet_id = match range.sheet {
@@ -59,13 +58,9 @@ impl DependencyGraph {
             let e_col = range.end_col.map(|b| b.index);
 
             let col_stripes = (s_row.is_none() && e_row.is_none())
-                || (s_col.is_some()
-                    && e_col.is_some()
-                    && (s_row.is_none() || e_row.is_none()));
+                || (s_col.is_some() && e_col.is_some() && (s_row.is_none() || e_row.is_none()));
             let row_stripes = (s_col.is_none() && e_col.is_none())
-                || (s_row.is_some()
-                    && e_row.is_some()
-                    && (s_col.is_none() || e_col.is_none()));
+                || (s_row.is_some() && e_row.is_some() && (s_col.is_none() || e_col.is_none()));
 
             if col_stripes && !row_stripes {
                 let sc = s_col.unwrap_or(0);
@@ -215,7 +210,8 @@ impl DependencyGraph {
                     let sc = mk_axis(start.col());
                     let er = mk_axis(end.row());
                     let ec = mk_axis(end.col());
-                    SharedRangeRef::from_parts(sheet_loc, Some(sr), Some(sc), Some(er), Some(ec)).ok()
+                    SharedRangeRef::from_parts(sheet_loc, Some(sr), Some(sc), Some(er), Some(ec))
+                        .ok()
                 }
                 RK::WholeRow { row, .. } => {
                     let r0 = row.saturating_sub(1);
@@ -249,7 +245,8 @@ impl DependencyGraph {
             return;
         }
 
-        self.formula_to_range_deps.insert(dependent, shared_ranges.clone());
+        self.formula_to_range_deps
+            .insert(dependent, shared_ranges.clone());
 
         for range in &shared_ranges {
             let sheet_id = match range.sheet {
