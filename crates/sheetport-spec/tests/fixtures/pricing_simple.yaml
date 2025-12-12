@@ -1,0 +1,32 @@
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: pricing-simple
+  name: Pricing Simple
+  description: Minimal pricing model with typed inputs and outputs.
+  workbook:
+    uri: file://Samples/Pricing.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: unit_price
+    dir: in
+    shape: scalar
+    location: { a1: Inputs!B2 }
+    schema: { type: number }
+    constraints: { min: 0 }
+    units: { currency: USD }
+
+  - id: quantity
+    dir: in
+    shape: scalar
+    location: { a1: Inputs!B3 }
+    schema: { type: integer }
+    constraints: { min: 0 }
+
+  - id: total
+    dir: out
+    shape: scalar
+    location: { a1: Outputs!B2 }
+    schema: { type: number }
+    units: { currency: USD }

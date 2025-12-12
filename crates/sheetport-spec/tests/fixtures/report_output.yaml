@@ -1,0 +1,30 @@
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: risk-report
+  name: Risk Report
+  description: Record output with field-level constraints.
+  workbook:
+    uri: file://Samples/RiskReport.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: report
+    dir: out
+    shape: record
+    location: { a1: Outputs!B1:B3 }
+    schema:
+      kind: record
+      fields:
+        status:
+          type: string
+          location: { a1: Outputs!B1 }
+          constraints:
+            enum: [OK, WARN, FAIL]
+        risk_score:
+          type: number
+          location: { a1: Outputs!B2 }
+          constraints: { min: 0, max: 1 }
+        as_of:
+          type: date
+          location: { a1: Outputs!B3 }

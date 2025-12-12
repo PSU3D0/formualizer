@@ -13,6 +13,24 @@ fn supply_planning_fixture_validates() {
 }
 
 #[test]
+fn pricing_simple_fixture_validates() {
+    let manifest = load_fixture("pricing_simple");
+    manifest.validate().expect("fixture should validate");
+}
+
+#[test]
+fn inventory_until_marker_fixture_validates() {
+    let manifest = load_fixture("inventory_until_marker");
+    manifest.validate().expect("fixture should validate");
+}
+
+#[test]
+fn report_output_fixture_validates() {
+    let manifest = load_fixture("report_output");
+    manifest.validate().expect("fixture should validate");
+}
+
+#[test]
 fn out_port_default_rejected() {
     let mut manifest = load_fixture("supply_planning");
     let port = manifest

@@ -1,0 +1,27 @@
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: inventory-until-marker
+  name: Inventory Until Marker
+  description: Layout-driven inventory table terminated by an explicit marker row.
+  workbook:
+    uri: file://Samples/Inventory.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: inventory
+    dir: in
+    shape: table
+    location:
+      layout:
+        sheet: Inventory
+        header_row: 1
+        anchor_col: A
+        terminate: until_marker
+        marker_text: END
+    schema:
+      kind: table
+      columns:
+        - { name: sku, type: string, col: A }
+        - { name: qty, type: integer, col: B }
+      keys: [sku]
