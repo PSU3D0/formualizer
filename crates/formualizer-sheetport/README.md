@@ -6,8 +6,9 @@ primitives so a workbook plus manifest behaves like a pure function.
 
 ## Scope
 
-- Resolve every manifest selector (`a1`, named ranges, tables, structured
-  references, header-based layouts) into workbook coordinates.
+- Enforce manifest conformance profile (`core-v0` only; `full-v0` rejected).
+- Resolve supported selectors under `core-v0` (`a1`, named ranges, header-based
+  layouts) into workbook coordinates.
 - Coerce values into typed inputs/outputs in accordance with manifest schemas,
   including default application and constraint checking. Violations surface as
   `SheetPortError::ConstraintViolation` with detailed paths so callers can

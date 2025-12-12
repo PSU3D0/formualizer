@@ -145,19 +145,19 @@ fn record_field_constraints_validated() {
         .enumerate()
         .find(|(_, port)| port.id == "planning_window")
         .expect("planning_window port present");
-    if let sheetport_spec::Schema::Record(record) = &mut port.schema {
-        if let Some(field) = record.fields.get_mut("month") {
-            let mut constraints = field.constraints.clone().unwrap_or(Constraints {
-                min: None,
-                max: None,
-                r#enum: None,
-                pattern: None,
-                nullable: None,
-            });
-            constraints.min = Some(20.0);
-            constraints.max = Some(10.0);
-            field.constraints = Some(constraints);
-        }
+    if let sheetport_spec::Schema::Record(record) = &mut port.schema
+        && let Some(field) = record.fields.get_mut("month")
+    {
+        let mut constraints = field.constraints.clone().unwrap_or(Constraints {
+            min: None,
+            max: None,
+            r#enum: None,
+            pattern: None,
+            nullable: None,
+        });
+        constraints.min = Some(20.0);
+        constraints.max = Some(10.0);
+        field.constraints = Some(constraints);
     }
 
     let err = manifest.validate().expect_err("validation should fail");

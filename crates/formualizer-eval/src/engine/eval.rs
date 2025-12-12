@@ -1040,7 +1040,6 @@ where
         Some((ast, v))
     }
 
-
     /// Begin batch operations - defer CSR rebuilds for better performance
     pub fn begin_batch(&mut self) {
         self.graph.begin_batch();
@@ -2275,10 +2274,12 @@ where
                 layer
                     .vertices
                     .par_iter()
-                    .map(|&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
-                        Ok(v) => Ok((vertex_id, v)),
-                        Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                    })
+                    .map(
+                        |&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
+                            Ok(v) => Ok((vertex_id, v)),
+                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
+                        },
+                    )
                     .collect()
             });
 
@@ -2624,8 +2625,12 @@ where
         // Anchor semantics are handled separately by rewrite/adjustment passes.
         let sr = match reference {
             ReferenceType::Cell { sheet, row, col } => {
-                let row0 = row.checked_sub(1).ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
-                let col0 = col.checked_sub(1).ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                let row0 = row
+                    .checked_sub(1)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                let col0 = col
+                    .checked_sub(1)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
                 let sheet_loc = match sheet.as_deref() {
                     Some(name) => SheetLocator::from_name(name),
                     None => SheetLocator::Current,
@@ -2646,7 +2651,10 @@ where
                 };
 
                 fn bound_from_1based(v: Option<u32>) -> Option<formualizer_common::AxisBound> {
-                    v.and_then(|x| x.checked_sub(1).map(|i| formualizer_common::AxisBound::new(i, true)))
+                    v.and_then(|x| {
+                        x.checked_sub(1)
+                            .map(|i| formualizer_common::AxisBound::new(i, true))
+                    })
                 }
 
                 let sr = bound_from_1based(*start_row);

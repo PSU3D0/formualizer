@@ -961,10 +961,10 @@ impl ArrowSheet {
             lazy_null_booleans: OnceCell::new(),
             lazy_null_text: OnceCell::new(),
             lazy_null_errors: OnceCell::new(),
-             lowered_text: OnceCell::new(),
-             overlay,
-             computed_overlay,
-         }
+            lowered_text: OnceCell::new(),
+            overlay,
+            computed_overlay,
+        }
     }
 
     /// Heuristic compaction: rebuilds a chunk's base arrays by applying its overlay when
@@ -1410,7 +1410,11 @@ impl<'a> ArrowRangeView<'a> {
         let row_start = self.chunk_starts[ch_idx];
         let in_off = abs_row - row_start;
         // Overlay takes precedence: user edits over computed over base.
-        if let Some(ov) = ch.overlay.get(in_off).or_else(|| ch.computed_overlay.get(in_off)) {
+        if let Some(ov) = ch
+            .overlay
+            .get(in_off)
+            .or_else(|| ch.computed_overlay.get(in_off))
+        {
             return match ov {
                 OverlayValue::Empty => LiteralValue::Empty,
                 OverlayValue::Number(n) => LiteralValue::Number(*n),

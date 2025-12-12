@@ -7,10 +7,17 @@ use crate::value::{PortValue, TableRow, TableValue};
 use chrono::{NaiveDate, NaiveDateTime};
 use serde_json::Value as JsonValue;
 use sheetport_spec::{
-    Constraints, Direction, Manifest, Port, RecordSchema, Schema, Shape, TableSchema, Units,
-    ValueType,
+    Constraints, Direction, Manifest, ManifestIssue, Port, Profile, RecordSchema, Schema, Shape,
+    TableSchema, Units, ValueType,
 };
 use std::collections::BTreeMap;
+
+fn profile_label(profile: Profile) -> &'static str {
+    match profile {
+        Profile::CoreV0 => "core-v0",
+        Profile::FullV0 => "full-v0",
+    }
+}
 
 /// Bound manifest along with per-port selector metadata.
 #[derive(Debug, Clone)]
@@ -23,6 +30,20 @@ impl ManifestBindings {
     /// Validate and bind a manifest into runtime-friendly structures.
     pub fn new(manifest: Manifest) -> Result<Self, SheetPortError> {
         manifest.validate()?;
+
+        let profile = manifest.effective_profile();
+        if profile != Profile::CoreV0 {
+            return Err(SheetPortError::InvalidManifest {
+                issues: vec![ManifestIssue::new(
+                    "capabilities.profile",
+                    format!(
+                        "profile `{}` is not supported by this runtime (supported: core-v0)",
+                        profile_label(profile)
+                    ),
+                )],
+            });
+        }
+
         let mut bindings = Vec::with_capacity(manifest.ports.len());
         for (idx, port) in manifest.ports.iter().enumerate() {
             bindings.push(PortBinding::bind(idx, port)?);

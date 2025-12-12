@@ -101,11 +101,11 @@ impl Manifest {
             tags.dedup();
         }
 
-        if let Some(capabilities) = &mut self.capabilities {
-            if let Some(features) = &mut capabilities.features {
-                features.sort();
-                features.dedup();
-            }
+        if let Some(capabilities) = &mut self.capabilities
+            && let Some(features) = &mut capabilities.features
+        {
+            features.sort();
+            features.dedup();
         }
 
         self.ports.sort_by(|a, b| a.id.cmp(&b.id));

@@ -513,9 +513,7 @@ where
                         let excel_row = (row + start_row + 1) as u32;
                         let excel_col = (col + start_col + 1) as u32;
                         if debug && parsed_n < 16 {
-                            eprintln!(
-                                "[fz][load] formula R{excel_row}C{excel_col} = {formula:?}"
-                            );
+                            eprintln!("[fz][load] formula R{excel_row}C{excel_col} = {formula:?}");
                         }
                         engine.stage_formula_text(n, excel_row, excel_col, formula.clone());
                         parsed_n += 1;

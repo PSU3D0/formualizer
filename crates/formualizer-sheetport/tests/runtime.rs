@@ -108,3 +108,190 @@ ports:
         other => panic!("unexpected output value: {other:?}"),
     }
 }
+
+#[test]
+fn sheetport_rejects_unsupported_profile() {
+    let manifest_yaml = r#"
+ spec: fio
+ spec_version: "0.3.0"
+ capabilities: { profile: full-v0 }
+ manifest: { id: profile-test, name: Profile Test }
+ ports:
+   - id: input_a
+     dir: in
+     shape: scalar
+     location:
+       a1: Sheet!A1
+     schema:
+       type: number
+ "#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet");
+
+    let err = match SheetPort::new(&mut workbook, manifest) {
+        Ok(_) => panic!("expected unsupported profile error"),
+        Err(err) => err,
+    };
+    match err {
+        formualizer_sheetport::SheetPortError::InvalidManifest { issues } => {
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.path == "capabilities.profile"),
+                "expected profile issue, got {issues:#?}"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn sheetport_rejects_struct_ref_under_core_profile() {
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: core-structref, name: Core StructRef }
+ports:
+  - id: input_a
+    dir: in
+    shape: scalar
+    location: { struct_ref: "Tbl[Col]" }
+    schema: { type: number }
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet");
+
+    let err = match SheetPort::new(&mut workbook, manifest) {
+        Ok(_) => panic!("expected invalid manifest"),
+        Err(err) => err,
+    };
+    match err {
+        formualizer_sheetport::SheetPortError::InvalidManifest { issues } => {
+            assert!(
+                issues.iter().any(|issue| issue.path == "ports[0].location"),
+                "expected location issue, got {issues:#?}"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn sheetport_rejects_table_selector_under_core_profile() {
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: core-table, name: Core Table }
+ports:
+  - id: input_t
+    dir: in
+    shape: table
+    location:
+      table:
+        name: Tbl
+    schema:
+      kind: table
+      columns:
+        - { name: a, type: number }
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet");
+
+    let err = match SheetPort::new(&mut workbook, manifest) {
+        Ok(_) => panic!("expected invalid manifest"),
+        Err(err) => err,
+    };
+    match err {
+        formualizer_sheetport::SheetPortError::InvalidManifest { issues } => {
+            assert!(
+                issues.iter().any(|issue| issue.path == "ports[0].location"),
+                "expected location issue, got {issues:#?}"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn sheetport_rejects_scalar_layout_selector() {
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: core-scalar-layout, name: Core Scalar Layout }
+ports:
+  - id: input_a
+    dir: in
+    shape: scalar
+    location:
+      layout:
+        sheet: Sheet
+        header_row: 1
+        anchor_col: A
+        terminate: first_blank_row
+    schema: { type: number }
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet");
+
+    let err = match SheetPort::new(&mut workbook, manifest) {
+        Ok(_) => panic!("expected invalid manifest"),
+        Err(err) => err,
+    };
+    match err {
+        formualizer_sheetport::SheetPortError::InvalidManifest { issues } => {
+            assert!(
+                issues.iter().any(|issue| issue.path == "ports[0].location"),
+                "expected location issue, got {issues:#?}"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn sheetport_rejects_record_field_struct_ref_under_core_profile() {
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: core-record-field, name: Core Record Field }
+ports:
+  - id: rec
+    dir: in
+    shape: record
+    location: { a1: Sheet!A1:B1 }
+    schema:
+      kind: record
+      fields:
+        a:
+          type: number
+          location: { struct_ref: "Tbl[Col]" }
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet");
+
+    let err = match SheetPort::new(&mut workbook, manifest) {
+        Ok(_) => panic!("expected invalid manifest"),
+        Err(err) => err,
+    };
+    match err {
+        formualizer_sheetport::SheetPortError::InvalidManifest { issues } => {
+            assert!(
+                issues
+                    .iter()
+                    .any(|issue| issue.path == "ports[0].schema.fields.a.location"),
+                "expected field location issue, got {issues:#?}"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}

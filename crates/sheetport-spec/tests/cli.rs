@@ -1,12 +1,12 @@
 use std::io::Write;
 
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use tempfile::NamedTempFile;
 
 #[test]
 fn cli_reports_success() {
-    let mut cmd = Command::cargo_bin("fio-lint").unwrap();
+    let mut cmd = cargo_bin_cmd!("fio-lint");
     cmd.arg("tests/fixtures/supply_planning.yaml")
         .assert()
         .success()
@@ -15,7 +15,7 @@ fn cli_reports_success() {
 
 #[test]
 fn cli_normalize_outputs_yaml() {
-    let mut cmd = Command::cargo_bin("fio-lint").unwrap();
+    let mut cmd = cargo_bin_cmd!("fio-lint");
     cmd.arg("tests/fixtures/supply_planning.yaml")
         .arg("--normalize")
         .assert()
@@ -36,7 +36,7 @@ ports: []
     )
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("fio-lint").unwrap();
+    let mut cmd = cargo_bin_cmd!("fio-lint");
     cmd.arg(file.path())
         .assert()
         .failure()

@@ -423,21 +423,27 @@ fn eval_options_control_rng_behavior() -> Result<(), SheetPortError> {
         .set_volatile_level(VolatileLevel::OnRecalc);
     sheetport.workbook_mut().engine_mut().set_workbook_seed(1);
 
-    let mut first_opts = EvalOptions::default();
-    first_opts.rng_seed = Some(1);
+    let first_opts = EvalOptions {
+        rng_seed: Some(1),
+        ..EvalOptions::default()
+    };
 
     let first = scalar_number(&sheetport.evaluate_once(first_opts.clone())?, "rng_value");
 
     set_formula(sheetport.workbook_mut(), "Random", 1, 1, "RAND()")?;
 
-    let mut second_opts = EvalOptions::default();
-    second_opts.rng_seed = Some(2);
+    let second_opts = EvalOptions {
+        rng_seed: Some(2),
+        ..EvalOptions::default()
+    };
     let second = scalar_number(&sheetport.evaluate_once(second_opts.clone())?, "rng_value");
     assert_ne!(first, second, "rng_seed should influence volatile outputs");
 
-    let mut frozen = EvalOptions::default();
-    frozen.freeze_volatile = true;
-    frozen.rng_seed = Some(5);
+    let frozen = EvalOptions {
+        freeze_volatile: true,
+        rng_seed: Some(5),
+        ..EvalOptions::default()
+    };
 
     let frozen_first = scalar_number(&sheetport.evaluate_once(frozen.clone())?, "rng_value");
     let frozen_second = scalar_number(&sheetport.evaluate_once(frozen.clone())?, "rng_value");
@@ -674,6 +680,220 @@ fn layout_table_stops_at_first_blank_row() -> Result<(), SheetPortError> {
         }
         other => panic!("expected inventory table, got {other:?}"),
     }
+    Ok(())
+}
+
+#[test]
+fn layout_table_until_marker_stops_before_marker() -> Result<(), SheetPortError> {
+    let mut workbook = build_workbook()?;
+
+    // Marker directly after last data row.
+    set_value(
+        &mut workbook,
+        "Inventory",
+        4,
+        1,
+        LiteralValue::Text("END".into()),
+    )?;
+
+    // Extra data after marker that must not be included.
+    set_value(
+        &mut workbook,
+        "Inventory",
+        5,
+        1,
+        LiteralValue::Text("SKU-EXTRA".into()),
+    )?;
+
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: until-marker, name: Until Marker }
+ports:
+  - id: sku_inventory
+    dir: in
+    shape: table
+    location:
+      layout:
+        sheet: Inventory
+        header_row: 1
+        anchor_col: A
+        terminate: until_marker
+        marker_text: END
+    schema:
+      kind: table
+      columns:
+        - { name: sku, type: string, col: A }
+        - { name: description, type: string, col: B }
+        - { name: on_hand, type: integer, col: C }
+        - { name: safety_stock, type: integer, col: D }
+        - { name: lead_time_days, type: integer, col: E }
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+
+    let inputs = sheetport.read_inputs()?;
+    match inputs.get("sku_inventory") {
+        Some(PortValue::Table(table)) => {
+            assert_eq!(table.rows.len(), 2);
+            assert_eq!(
+                table.rows[0].values.get("sku"),
+                Some(&LiteralValue::Text("SKU-001".into()))
+            );
+            assert_eq!(
+                table.rows[1].values.get("sku"),
+                Some(&LiteralValue::Text("SKU-002".into()))
+            );
+        }
+        other => panic!("expected inventory table, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn layout_table_sheet_end_terminates_at_sheet_end_or_falls_back() -> Result<(), SheetPortError> {
+    let mut workbook = build_workbook()?;
+
+    // Place data after a blank row so `sheet_end` differs from `first_blank_row` when
+    // sheet dimensions are available.
+    set_value(
+        &mut workbook,
+        "Inventory",
+        5,
+        1,
+        LiteralValue::Text("SKU-EXTRA".into()),
+    )?;
+    set_value(
+        &mut workbook,
+        "Inventory",
+        5,
+        2,
+        LiteralValue::Text("Spare Parts".into()),
+    )?;
+    set_value(&mut workbook, "Inventory", 5, 3, LiteralValue::Int(5))?;
+    set_value(&mut workbook, "Inventory", 5, 4, LiteralValue::Int(2))?;
+    set_value(&mut workbook, "Inventory", 5, 5, LiteralValue::Int(1))?;
+
+    let has_dimensions = workbook.sheet_dimensions("Inventory").is_some();
+
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: sheet-end, name: Sheet End }
+ports:
+  - id: sku_inventory
+    dir: in
+    shape: table
+    location:
+      layout:
+        sheet: Inventory
+        header_row: 1
+        anchor_col: A
+        terminate: sheet_end
+    schema:
+      kind: table
+      columns:
+        - { name: sku, type: string, col: A }
+        - { name: description, type: string, col: B }
+        - { name: on_hand, type: integer, col: C }
+        - { name: safety_stock, type: integer, col: D }
+        - { name: lead_time_days, type: integer, col: E }
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+
+    let inputs = sheetport.read_inputs()?;
+    match inputs.get("sku_inventory") {
+        Some(PortValue::Table(table)) => {
+            if has_dimensions {
+                assert!(
+                    table.rows.len() >= 4,
+                    "expected blank row + extra row included"
+                );
+                assert_eq!(table.rows[2].values.get("sku"), Some(&LiteralValue::Empty));
+                assert_eq!(
+                    table.rows[3].values.get("sku"),
+                    Some(&LiteralValue::Text("SKU-EXTRA".into()))
+                );
+            } else {
+                assert_eq!(
+                    table.rows.len(),
+                    2,
+                    "sheet_end falls back when dimensions are unavailable"
+                );
+            }
+        }
+        other => panic!("expected inventory table, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn enum_constraints_use_exact_json_equality() -> Result<(), SheetPortError> {
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet");
+    workbook
+        .set_value("Sheet", 1, 1, LiteralValue::Number(5.0))
+        .map_err(SheetPortError::from)?;
+
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: enum-test, name: Enum Test }
+ports:
+  - id: x
+    dir: in
+    shape: scalar
+    location: { a1: Sheet!A1 }
+    schema: { type: integer }
+    constraints: { enum: [5] }
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+    let err = match sheetport.read_inputs() {
+        Ok(_) => panic!("expected enum constraint violation"),
+        Err(err) => err,
+    };
+    let violations = expect_constraint(err);
+    assert!(
+        violations.iter().any(|v| v.path == "x"),
+        "expected violation on x, got {violations:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn enum_constraints_accept_exact_float_match() -> Result<(), SheetPortError> {
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet");
+    workbook
+        .set_value("Sheet", 1, 1, LiteralValue::Number(5.0))
+        .map_err(SheetPortError::from)?;
+
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: enum-test-float, name: Enum Test Float }
+ports:
+  - id: x
+    dir: in
+    shape: scalar
+    location: { a1: Sheet!A1 }
+    schema: { type: integer }
+    constraints: { enum: [5.0] }
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+    let inputs = sheetport.read_inputs()?;
+    assert_scalar(
+        &inputs,
+        "x",
+        |v| matches!(v, LiteralValue::Number(n) if (*n - 5.0).abs() < f64::EPSILON),
+    );
     Ok(())
 }
 
