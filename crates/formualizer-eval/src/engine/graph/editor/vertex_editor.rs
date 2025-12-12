@@ -1,6 +1,8 @@
 use crate::SheetId;
 use crate::engine::graph::DependencyGraph;
-use crate::engine::graph::editor::reference_adjuster::{ReferenceAdjuster, ShiftOperation};
+use crate::engine::graph::editor::reference_adjuster::{
+    MoveReferenceAdjuster, ReferenceAdjuster, RelativeReferenceAdjuster, ShiftOperation,
+};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::{ChangeEvent, ChangeLogger, VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
@@ -1295,7 +1297,7 @@ impl<'g> VertexEditor<'g> {
                 CellData::Formula(formula) => {
                     // Adjust relative references in formula
                     let adjuster = RelativeReferenceAdjuster::new(row_offset, col_offset);
-                    let adjusted = adjuster.adjust_formula(&formula, sheet_id, to_sheet_id);
+                    let adjusted = adjuster.adjust_formula(&formula);
 
                     let cell_ref =
                         self.graph
@@ -1368,20 +1370,27 @@ impl<'g> VertexEditor<'g> {
         // Find all formulas that reference the moved range
         let all_formula_vertices: Vec<_> = self.graph.vertices_with_formulas().collect();
 
+        let from_sheet_name = self.graph.sheet_name(sheet_id).to_string();
+        let to_sheet_name = self.graph.sheet_name(to_sheet_id).to_string();
+        let adjuster = MoveReferenceAdjuster::new(
+            sheet_id,
+            from_sheet_name,
+            from_start_row,
+            from_start_col,
+            from_end_row,
+            from_end_col,
+            to_sheet_id,
+            to_sheet_name,
+            row_offset,
+            col_offset,
+        );
+
         for formula_id in all_formula_vertices {
             if let Some(formula) = self.graph.get_formula(formula_id) {
-                let adjuster = MoveReferenceAdjuster::new(
-                    sheet_id,
-                    from_start_row,
-                    from_start_col,
-                    from_end_row,
-                    from_end_col,
-                    to_sheet_id,
-                    row_offset,
-                    col_offset,
-                );
-
-                if let Some(adjusted) = adjuster.adjust_if_references(&formula) {
+                let formula_sheet_id = self.graph.get_vertex_sheet_id(formula_id);
+                if let Some(adjusted) =
+                    adjuster.adjust_if_references(&formula, formula_sheet_id)
+                {
                     self.graph.update_vertex_formula(formula_id, adjusted)?;
                 }
             }
@@ -1522,74 +1531,6 @@ enum CellData {
     Formula(ASTNode),
 }
 
-/// Helper for adjusting relative references when copying
-struct RelativeReferenceAdjuster {
-    row_offset: i32,
-    col_offset: i32,
-}
-
-impl RelativeReferenceAdjuster {
-    fn new(row_offset: i32, col_offset: i32) -> Self {
-        Self {
-            row_offset,
-            col_offset,
-        }
-    }
-
-    fn adjust_formula(
-        &self,
-        formula: &ASTNode,
-        _from_sheet: SheetId,
-        _to_sheet: SheetId,
-    ) -> ASTNode {
-        // This would recursively adjust relative references in the formula
-        // For now, just clone the formula
-        formula.clone()
-    }
-}
-
-/// Helper for adjusting references when moving ranges
-struct MoveReferenceAdjuster {
-    from_sheet_id: SheetId,
-    from_start_row: u32,
-    from_start_col: u32,
-    from_end_row: u32,
-    from_end_col: u32,
-    to_sheet_id: SheetId,
-    row_offset: i32,
-    col_offset: i32,
-}
-
-impl MoveReferenceAdjuster {
-    fn new(
-        from_sheet_id: SheetId,
-        from_start_row: u32,
-        from_start_col: u32,
-        from_end_row: u32,
-        from_end_col: u32,
-        to_sheet_id: SheetId,
-        row_offset: i32,
-        col_offset: i32,
-    ) -> Self {
-        Self {
-            from_sheet_id,
-            from_start_row,
-            from_start_col,
-            from_end_row,
-            from_end_col,
-            to_sheet_id,
-            row_offset,
-            col_offset,
-        }
-    }
-
-    fn adjust_if_references(&self, formula: &ASTNode) -> Option<ASTNode> {
-        // This would check if the formula references the moved range
-        // and adjust those references accordingly
-        // For now, return None (no adjustment needed)
-        None
-    }
-}
 
 impl<'g> Drop for VertexEditor<'g> {
     fn drop(&mut self) {

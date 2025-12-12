@@ -421,31 +421,53 @@ impl RelativeReferenceAdjuster {
     ) -> formualizer_parse::parser::ReferenceType {
         use formualizer_parse::parser::ReferenceType;
 
-        match reference {
-            ReferenceType::Cell { sheet, row, col } => {
-                // Only adjust relative references
-                // TODO: Check for absolute references when we have that info
-                let new_row = (*row as i32 + self.row_offset).max(1) as u32;
-                let new_col = (*col as i32 + self.col_offset).max(1) as u32;
+        let Some(shared) = reference.to_sheet_ref_lossy() else {
+            return reference.clone();
+        };
+
+        match (reference, shared) {
+            (ReferenceType::Cell { sheet, .. }, crate::reference::SharedRef::Cell(cell)) => {
+                let owned = cell.into_owned();
+                let row0 = owned.coord.row();
+                let col0 = owned.coord.col();
+                let row_abs = owned.coord.row_abs();
+                let col_abs = owned.coord.col_abs();
+
+                let new_row0 = if row_abs {
+                    row0
+                } else {
+                    (row0 as i32 + self.row_offset).max(0) as u32
+                };
+                let new_col0 = if col_abs {
+                    col0
+                } else {
+                    (col0 as i32 + self.col_offset).max(0) as u32
+                };
 
                 ReferenceType::Cell {
                     sheet: sheet.clone(),
-                    row: new_row,
-                    col: new_col,
+                    row: new_row0 + 1,
+                    col: new_col0 + 1,
                 }
             }
-            ReferenceType::Range {
-                sheet,
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-            } => {
-                // Adjust range boundaries
-                let adj_start_row = start_row.map(|r| (r as i32 + self.row_offset).max(1) as u32);
-                let adj_start_col = start_col.map(|c| (c as i32 + self.col_offset).max(1) as u32);
-                let adj_end_row = end_row.map(|r| (r as i32 + self.row_offset).max(1) as u32);
-                let adj_end_col = end_col.map(|c| (c as i32 + self.col_offset).max(1) as u32);
+            (
+                ReferenceType::Range { sheet, .. },
+                crate::reference::SharedRef::Range(range),
+            ) => {
+                let owned = range.into_owned();
+
+                let adj_axis = |b: formualizer_common::AxisBound, off: i32| {
+                    if b.abs {
+                        b.index
+                    } else {
+                        (b.index as i32 + off).max(0) as u32
+                    }
+                };
+
+                let adj_start_row = owned.start_row.map(|b| adj_axis(b, self.row_offset) + 1);
+                let adj_start_col = owned.start_col.map(|b| adj_axis(b, self.col_offset) + 1);
+                let adj_end_row = owned.end_row.map(|b| adj_axis(b, self.row_offset) + 1);
+                let adj_end_col = owned.end_col.map(|b| adj_axis(b, self.col_offset) + 1);
 
                 ReferenceType::Range {
                     sheet: sheet.clone(),
@@ -456,6 +478,285 @@ impl RelativeReferenceAdjuster {
                 }
             }
             _ => reference.clone(),
+        }
+    }
+}
+
+/// Helper for adjusting references to moved ranges.
+/// This is used when a block of cells is moved; any formula references to cells
+/// fully inside the source rectangle are translated to the destination.
+pub struct MoveReferenceAdjuster {
+    from_sheet_id: crate::SheetId,
+    from_sheet_name: String,
+    from_start_row: u32,
+    from_start_col: u32,
+    from_end_row: u32,
+    from_end_col: u32,
+    to_sheet_id: crate::SheetId,
+    to_sheet_name: String,
+    row_offset: i32,
+    col_offset: i32,
+}
+
+impl MoveReferenceAdjuster {
+    pub fn new(
+        from_sheet_id: crate::SheetId,
+        from_sheet_name: String,
+        from_start_row: u32,
+        from_start_col: u32,
+        from_end_row: u32,
+        from_end_col: u32,
+        to_sheet_id: crate::SheetId,
+        to_sheet_name: String,
+        row_offset: i32,
+        col_offset: i32,
+    ) -> Self {
+        Self {
+            from_sheet_id,
+            from_sheet_name,
+            from_start_row,
+            from_start_col,
+            from_end_row,
+            from_end_col,
+            to_sheet_id,
+            to_sheet_name,
+            row_offset,
+            col_offset,
+        }
+    }
+
+    pub fn adjust_if_references(
+        &self,
+        formula: &ASTNode,
+        formula_sheet_id: crate::SheetId,
+    ) -> Option<ASTNode> {
+        let (adjusted, changed) = self.adjust_ast_inner(formula, formula_sheet_id);
+        if changed {
+            Some(adjusted)
+        } else {
+            None
+        }
+    }
+
+    fn adjust_ast_inner(&self, ast: &ASTNode, formula_sheet_id: crate::SheetId) -> (ASTNode, bool) {
+        match &ast.node_type {
+            ASTNodeType::Reference {
+                original,
+                reference,
+            } => {
+                let (adjusted_ref, changed) = self.adjust_reference(reference, formula_sheet_id);
+                if !changed {
+                    return (ast.clone(), false);
+                }
+                (
+                    ASTNode {
+                        node_type: ASTNodeType::Reference {
+                            original: original.clone(),
+                            reference: adjusted_ref,
+                        },
+                        source_token: ast.source_token.clone(),
+                        contains_volatile: ast.contains_volatile,
+                    },
+                    true,
+                )
+            }
+            ASTNodeType::BinaryOp { op, left, right } => {
+                let (l_adj, l_ch) = self.adjust_ast_inner(left, formula_sheet_id);
+                let (r_adj, r_ch) = self.adjust_ast_inner(right, formula_sheet_id);
+                if !l_ch && !r_ch {
+                    return (ast.clone(), false);
+                }
+                (
+                    ASTNode {
+                        node_type: ASTNodeType::BinaryOp {
+                            op: op.clone(),
+                            left: Box::new(l_adj),
+                            right: Box::new(r_adj),
+                        },
+                        source_token: ast.source_token.clone(),
+                        contains_volatile: ast.contains_volatile,
+                    },
+                    true,
+                )
+            }
+            ASTNodeType::UnaryOp { op, expr } => {
+                let (e_adj, e_ch) = self.adjust_ast_inner(expr, formula_sheet_id);
+                if !e_ch {
+                    return (ast.clone(), false);
+                }
+                (
+                    ASTNode {
+                        node_type: ASTNodeType::UnaryOp {
+                            op: op.clone(),
+                            expr: Box::new(e_adj),
+                        },
+                        source_token: ast.source_token.clone(),
+                        contains_volatile: ast.contains_volatile,
+                    },
+                    true,
+                )
+            }
+            ASTNodeType::Function { name, args } => {
+                let mut any = false;
+                let new_args: Vec<_> = args
+                    .iter()
+                    .map(|a| {
+                        let (adj, ch) = self.adjust_ast_inner(a, formula_sheet_id);
+                        any |= ch;
+                        adj
+                    })
+                    .collect();
+                if !any {
+                    return (ast.clone(), false);
+                }
+                (
+                    ASTNode {
+                        node_type: ASTNodeType::Function {
+                            name: name.clone(),
+                            args: new_args,
+                        },
+                        source_token: ast.source_token.clone(),
+                        contains_volatile: ast.contains_volatile,
+                    },
+                    true,
+                )
+            }
+            ASTNodeType::Array(rows) => {
+                let mut any = false;
+                let new_rows: Vec<_> = rows
+                    .iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|c| {
+                                let (adj, ch) = self.adjust_ast_inner(c, formula_sheet_id);
+                                any |= ch;
+                                adj
+                            })
+                            .collect()
+                    })
+                    .collect();
+                if !any {
+                    return (ast.clone(), false);
+                }
+                (
+                    ASTNode {
+                        node_type: ASTNodeType::Array(new_rows),
+                        source_token: ast.source_token.clone(),
+                        contains_volatile: ast.contains_volatile,
+                    },
+                    true,
+                )
+            }
+            _ => (ast.clone(), false),
+        }
+    }
+
+    fn adjust_reference(
+        &self,
+        reference: &formualizer_parse::parser::ReferenceType,
+        formula_sheet_id: crate::SheetId,
+    ) -> (formualizer_parse::parser::ReferenceType, bool) {
+        use formualizer_parse::parser::ReferenceType;
+
+        let sheet_matches_source = |sheet: &Option<String>| {
+            if let Some(name) = sheet.as_deref() {
+                name == self.from_sheet_name
+            } else {
+                formula_sheet_id == self.from_sheet_id
+            }
+        };
+
+        if !sheet_matches_source(match reference {
+            ReferenceType::Cell { sheet, .. } => sheet,
+            ReferenceType::Range { sheet, .. } => sheet,
+            _ => &None,
+        }) {
+            return (reference.clone(), false);
+        }
+
+        let Some(shared) = reference.to_sheet_ref_lossy() else {
+            return (reference.clone(), false);
+        };
+
+        match (reference, shared) {
+            (ReferenceType::Cell { sheet, .. }, crate::reference::SharedRef::Cell(cell)) => {
+                let owned = cell.into_owned();
+                let row0 = owned.coord.row();
+                let col0 = owned.coord.col();
+
+                if row0 < self.from_start_row
+                    || row0 > self.from_end_row
+                    || col0 < self.from_start_col
+                    || col0 > self.from_end_col
+                {
+                    return (reference.clone(), false);
+                }
+
+                let new_row0 = (row0 as i32 + self.row_offset).max(0) as u32;
+                let new_col0 = (col0 as i32 + self.col_offset).max(0) as u32;
+
+                let new_sheet = if self.to_sheet_id != self.from_sheet_id {
+                    Some(self.to_sheet_name.clone())
+                } else {
+                    sheet.clone()
+                };
+
+                (
+                    ReferenceType::Cell {
+                        sheet: new_sheet,
+                        row: new_row0 + 1,
+                        col: new_col0 + 1,
+                    },
+                    true,
+                )
+            }
+            (ReferenceType::Range { sheet, .. }, crate::reference::SharedRef::Range(range)) => {
+                let owned = range.into_owned();
+                let (Some(sr), Some(sc), Some(er), Some(ec)) = (
+                    owned.start_row,
+                    owned.start_col,
+                    owned.end_row,
+                    owned.end_col,
+                ) else {
+                    return (reference.clone(), false);
+                };
+
+                let sr0 = sr.index;
+                let sc0 = sc.index;
+                let er0 = er.index;
+                let ec0 = ec.index;
+
+                let fully_contained = sr0 >= self.from_start_row
+                    && er0 <= self.from_end_row
+                    && sc0 >= self.from_start_col
+                    && ec0 <= self.from_end_col;
+                if !fully_contained {
+                    return (reference.clone(), false);
+                }
+
+                let new_sr0 = (sr0 as i32 + self.row_offset).max(0) as u32;
+                let new_er0 = (er0 as i32 + self.row_offset).max(0) as u32;
+                let new_sc0 = (sc0 as i32 + self.col_offset).max(0) as u32;
+                let new_ec0 = (ec0 as i32 + self.col_offset).max(0) as u32;
+
+                let new_sheet = if self.to_sheet_id != self.from_sheet_id {
+                    Some(self.to_sheet_name.clone())
+                } else {
+                    sheet.clone()
+                };
+
+                (
+                    ReferenceType::Range {
+                        sheet: new_sheet,
+                        start_row: Some(new_sr0 + 1),
+                        start_col: Some(new_sc0 + 1),
+                        end_row: Some(new_er0 + 1),
+                        end_col: Some(new_ec0 + 1),
+                    },
+                    true,
+                )
+            }
+            _ => (reference.clone(), false),
         }
     }
 }
