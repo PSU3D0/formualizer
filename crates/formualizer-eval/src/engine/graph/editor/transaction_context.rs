@@ -402,7 +402,8 @@ mod tests {
     }
 
     fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
-        CellRef::new(sheet_id, Coord::new(row, col, false, false))
+        // Test helpers use Excel 1-based coords.
+        CellRef::new(sheet_id, Coord::from_excel(row, col, false, false))
     }
 
     #[test]

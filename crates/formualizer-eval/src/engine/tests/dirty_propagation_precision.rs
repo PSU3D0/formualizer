@@ -1,7 +1,6 @@
 //! Tests for the precision of dirty propagation.
 
-use super::common::eval_config_with_range_limit;
-use crate::CellRef;
+use super::common::{abs_cell_ref, eval_config_with_range_limit};
 use crate::engine::DependencyGraph;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
@@ -41,7 +40,7 @@ fn test_change_outside_range_in_same_stripe_does_not_dirty() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
     // Clear dirty flags

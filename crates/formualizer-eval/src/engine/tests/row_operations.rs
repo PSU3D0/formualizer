@@ -23,8 +23,8 @@ fn test_insert_rows() {
     // Use editor to insert rows
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Insert 2 rows before row 2
-    let summary = editor.insert_rows(0, 2, 2).unwrap();
+    // Insert 2 rows before row 2 (public). Editor uses 0-based rows.
+    let summary = editor.insert_rows(0, 1, 2).unwrap();
 
     // Drop editor to release borrow
     drop(editor);
@@ -62,8 +62,8 @@ fn test_delete_rows() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Delete rows 2-3
-    let summary = editor.delete_rows(0, 2, 2).unwrap();
+    // Delete rows 2-3 (public). Editor uses 0-based rows.
+    let summary = editor.delete_rows(0, 1, 2).unwrap();
 
     drop(editor);
 
@@ -97,8 +97,8 @@ fn test_insert_rows_adjusts_formulas() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Insert row before row 2
-    editor.insert_rows(0, 2, 1).unwrap();
+    // Insert row before row 2 (public). Editor uses 0-based rows.
+    editor.insert_rows(0, 1, 1).unwrap();
 
     drop(editor);
 
@@ -124,8 +124,8 @@ fn test_delete_row_creates_ref_error() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Delete row 2
-    editor.delete_rows(0, 2, 1).unwrap();
+    // Delete row 2 (public). Editor uses 0-based rows.
+    editor.delete_rows(0, 1, 1).unwrap();
 
     drop(editor);
 
@@ -156,8 +156,8 @@ fn test_insert_rows_with_absolute_references() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Insert rows before row 3
-    editor.insert_rows(0, 3, 2).unwrap();
+    // Insert rows before row 3 (public). Editor uses 0-based rows.
+    editor.insert_rows(0, 2, 2).unwrap();
 
     drop(editor);
 
@@ -182,14 +182,15 @@ fn test_multiple_row_operations() {
 
     editor.begin_batch();
 
-    // Insert 2 rows at row 3
-    editor.insert_rows(0, 3, 2).unwrap();
+    // Insert 2 rows at row 3 (public). Editor uses 0-based rows.
+    editor.insert_rows(0, 2, 2).unwrap();
 
-    // Delete 1 row at row 8 (which is now row 10 after insertion)
-    editor.delete_rows(0, 10, 1).unwrap();
+    // Delete 1 row at row 8 (public), now row 10 after insertion.
+    // Editor uses 0-based rows, so delete internal row 9.
+    editor.delete_rows(0, 9, 1).unwrap();
 
-    // Insert 1 row at row 1
-    editor.insert_rows(0, 1, 1).unwrap();
+    // Insert 1 row at row 1 (public). Editor uses 0-based rows.
+    editor.insert_rows(0, 0, 1).unwrap();
 
     editor.commit_batch();
 

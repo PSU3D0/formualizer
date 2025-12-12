@@ -212,8 +212,9 @@ impl ReferenceAdjuster {
                     }
                     Some(adjusted) => ReferenceType::Cell {
                         sheet: sheet.clone(),
-                        row: adjusted.coord.row(),
-                        col: adjusted.coord.col(),
+                        // Convert internal 0-based coords back to Excel 1-based.
+                        row: adjusted.coord.row() + 1,
+                        col: adjusted.coord.col() + 1,
                     },
                 }
             }

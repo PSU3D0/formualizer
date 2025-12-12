@@ -209,11 +209,11 @@ mod tests {
         let (a1_cell, a2_cell) = (
             CellRef {
                 sheet_id: 0,
-                coord: Coord::new(1, 1, true, true),
+                coord: Coord::new(0, 0, true, true), // A1 internal
             },
             CellRef {
                 sheet_id: 0,
-                coord: Coord::new(2, 1, true, true),
+                coord: Coord::new(1, 0, true, true), // A2 internal
             },
         );
         let a2_id;

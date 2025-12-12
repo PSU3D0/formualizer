@@ -979,7 +979,8 @@ impl DependencyGraph {
         value: LiteralValue,
     ) -> Result<OperationSummary, ExcelError> {
         let sheet_id = self.sheet_id_mut(sheet);
-        let coord = Coord::new(row, col, true, true); // Assuming absolute reference for direct sets
+        // External API is 1-based; store 0-based coords internally.
+        let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
         let mut created_placeholders = Vec::new();
 
@@ -1003,7 +1004,7 @@ impl DependencyGraph {
         } else {
             // Create new vertex
             created_placeholders.push(addr);
-            let packed_coord = AbsCoord::new(row, col);
+            let packed_coord = AbsCoord::from_excel(row, col);
             let vertex_id = self.store.allocate(packed_coord, sheet_id, 0x01); // dirty flag
 
             // Add vertex coordinate for CSR
@@ -1043,7 +1044,7 @@ impl DependencyGraph {
         value: LiteralValue,
     ) {
         let sheet_id = self.sheet_id_mut(sheet);
-        let coord = Coord::new(row, col, true, true);
+        let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
         if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
             // Overwrite existing value vertex only (ignore formulas in bulk path)
@@ -1052,7 +1053,7 @@ impl DependencyGraph {
             self.store.set_kind(existing_id, VertexKind::Cell);
             return;
         }
-        let packed_coord = AbsCoord::new(row, col);
+        let packed_coord = AbsCoord::from_excel(row, col);
         let vertex_id = self.store.allocate(packed_coord, sheet_id, 0x00); // not dirty
         self.edges.add_vertex(packed_coord, vertex_id.0);
         self.sheet_index_mut(sheet_id)
@@ -1091,7 +1092,7 @@ impl DependencyGraph {
                 .unwrap_or(false);
 
         for (row, col, value) in collected {
-            let coord = Coord::new(row, col, true, true);
+            let coord = Coord::from_excel(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
             if !assume_new && let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
                 let value_ref = self.data_store.store_value(value);
@@ -1099,7 +1100,7 @@ impl DependencyGraph {
                 self.store.set_kind(existing_id, VertexKind::Cell);
                 continue;
             }
-            let packed = AbsCoord::new(row, col);
+            let packed = AbsCoord::from_excel(row, col);
             let vertex_id = self.store.allocate(packed, sheet_id, 0x00);
             self.store.set_kind(vertex_id, VertexKind::Cell);
             // Defer value arena storage to a single batch
@@ -1179,7 +1180,7 @@ impl DependencyGraph {
             None
         };
         let sheet_id = self.sheet_id_mut(sheet);
-        let coord = Coord::new(row, col, true, true);
+        let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
 
         // Extract dependencies from AST, creating placeholders if needed
@@ -1205,7 +1206,7 @@ impl DependencyGraph {
                     eprintln!(
                         "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={}, names={} in {} ms",
                         self.sheet_name(sheet_id),
-                        crate::reference::Coord::new(row, col, true, true),
+                        crate::reference::Coord::from_excel(row, col, true, true),
                         new_dependencies.len(),
                         new_range_dependencies.len(),
                         created_placeholders.len(),
@@ -1217,7 +1218,7 @@ impl DependencyGraph {
                 eprintln!(
                     "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={}, names={} in {} ms",
                     self.sheet_name(sheet_id),
-                    crate::reference::Coord::new(row, col, true, true),
+                    crate::reference::Coord::from_excel(row, col, true, true),
                     new_dependencies.len(),
                     new_range_dependencies.len(),
                     created_placeholders.len(),
@@ -1272,7 +1273,7 @@ impl DependencyGraph {
                 eprintln!(
                     "[fz][set] {}!{} total {} ms",
                     self.sheet_name(sheet_id),
-                    crate::reference::Coord::new(row, col, true, true),
+                    crate::reference::Coord::from_excel(row, col, true, true),
                     elapsed
                 );
             }
@@ -1296,7 +1297,7 @@ impl DependencyGraph {
     /// Get current value from a cell
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
         let sheet_id = self.sheet_reg.get_id(sheet)?;
-        let coord = Coord::new(row, col, true, true);
+        let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
 
         self.cell_to_vertex.get(&addr).and_then(|&vertex_id| {
@@ -1400,10 +1401,10 @@ impl DependencyGraph {
                                 .unwrap_or_else(|| self.sheet_name(dirty_sheet_id));
                             if let Some(range_sheet_id) = self.sheet_reg.get_id(range_sheet_name)
                                 && range_sheet_id == dirty_sheet_id
-                                && row >= start_row.unwrap_or(1)
-                                && row <= end_row.unwrap_or(u32::MAX)
-                                && col >= start_col.unwrap_or(1)
-                                && col <= end_col.unwrap_or(u32::MAX)
+                                && row >= start_row.map(|r| r.saturating_sub(1)).unwrap_or(0)
+                                && row <= end_row.map(|r| r.saturating_sub(1)).unwrap_or(u32::MAX)
+                                && col >= start_col.map(|c| c.saturating_sub(1)).unwrap_or(0)
+                                && col <= end_col.map(|c| c.saturating_sub(1)).unwrap_or(u32::MAX)
                             {
                                 to_visit.push(dep_id);
                                 break; // Found a matching range
@@ -1573,7 +1574,7 @@ impl DependencyGraph {
                                 };
                                 for row in sr..=er {
                                     for col in sc..=ec {
-                                        let coord = Coord::new(row, col, true, true);
+                                        let coord = Coord::from_excel(row, col, true, true);
                                         let addr = CellRef::new(sheet_id, coord);
                                         let vertex_id =
                                             self.get_or_create_vertex(&addr, created_placeholders);
@@ -1898,10 +1899,10 @@ impl DependencyGraph {
                     match rk {
                         RK::Rect { sheet, start, end } => range_refs.push(ReferenceType::Range {
                             sheet: Some(self.sheet_name(*sheet).to_string()),
-                            start_row: Some(start.row()),
-                            start_col: Some(start.col()),
-                            end_row: Some(end.row()),
-                            end_col: Some(end.col()),
+                            start_row: Some(start.row() + 1),
+                            start_col: Some(start.col() + 1),
+                            end_row: Some(end.row() + 1),
+                            end_col: Some(end.col() + 1),
                         }),
                         RK::WholeRow { sheet, row } => range_refs.push(ReferenceType::Range {
                             sheet: Some(self.sheet_name(*sheet).to_string()),
@@ -1920,10 +1921,10 @@ impl DependencyGraph {
                         RK::OpenRect { sheet, start, end } => {
                             range_refs.push(ReferenceType::Range {
                                 sheet: Some(self.sheet_name(*sheet).to_string()),
-                                start_row: start.map(|p| p.row()),
-                                start_col: start.map(|p| p.col()),
-                                end_row: end.map(|p| p.row()),
-                                end_col: end.map(|p| p.col()),
+                                start_row: start.map(|p| p.row() + 1),
+                                start_col: start.map(|p| p.col() + 1),
+                                end_row: end.map(|p| p.row() + 1),
+                                end_col: end.map(|p| p.col() + 1),
                             })
                         }
                     }
@@ -1984,16 +1985,27 @@ impl DependencyGraph {
                     Some(name) => self.sheet_id_mut(name),
                     None => current_sheet_id,
                 };
-                let s_row = *start_row;
-                let e_row = *end_row;
-                let s_col = *start_col;
-                let e_col = *end_col;
 
-                // Decide coarse stripes for invalidation
-                let col_stripes = (s_row.is_none() && e_row.is_none())
-                    || (s_col.is_some() && e_col.is_some() && (s_row.is_none() || e_row.is_none())); // partial rows, fixed columns
-                let row_stripes = (s_col.is_none() && e_col.is_none())
-                    || (s_row.is_some() && e_row.is_some() && (s_col.is_none() || e_col.is_none())); // partial cols, fixed rows
+                // Bounds from the parser are 1-based; convert to 0-based for internal indexing.
+                let s_row1 = *start_row;
+                let e_row1 = *end_row;
+                let s_col1 = *start_col;
+                let e_col1 = *end_col;
+
+                let s_row = s_row1.map(|r| r.saturating_sub(1));
+                let e_row = e_row1.map(|r| r.saturating_sub(1));
+                let s_col = s_col1.map(|c| c.saturating_sub(1));
+                let e_col = e_col1.map(|c| c.saturating_sub(1));
+
+                // Decide coarse stripes for invalidation based on boundedness.
+                let col_stripes = (s_row1.is_none() && e_row1.is_none())
+                    || (s_col1.is_some()
+                        && e_col1.is_some()
+                        && (s_row1.is_none() || e_row1.is_none())); // partial rows, fixed columns
+                let row_stripes = (s_col1.is_none() && e_col1.is_none())
+                    || (s_row1.is_some()
+                        && e_row1.is_some()
+                        && (s_col1.is_none() || e_col1.is_none())); // partial cols, fixed rows
 
                 if col_stripes && !row_stripes {
                     let sc = s_col.unwrap_or(1);
@@ -2043,8 +2055,8 @@ impl DependencyGraph {
                 }
 
                 // Finite rectangle (or ambiguous): fall back to block/row/col heuristic
-                let start_row = s_row.unwrap_or(1);
-                let start_col = s_col.unwrap_or(1);
+                let start_row = s_row.unwrap_or(0);
+                let start_col = s_col.unwrap_or(0);
                 let end_row = e_row.unwrap_or(start_row);
                 let end_col = e_col.unwrap_or(start_col);
 
@@ -2136,10 +2148,10 @@ impl DependencyGraph {
             match k {
                 RK::Rect { sheet, start, end } => ranges.push(ReferenceType::Range {
                     sheet: Some(self.sheet_name(*sheet).to_string()),
-                    start_row: Some(start.row()),
-                    start_col: Some(start.col()),
-                    end_row: Some(end.row()),
-                    end_col: Some(end.col()),
+                    start_row: Some(start.row() + 1),
+                    start_col: Some(start.col() + 1),
+                    end_row: Some(end.row() + 1),
+                    end_col: Some(end.col() + 1),
                 }),
                 RK::WholeRow { sheet, row } => ranges.push(ReferenceType::Range {
                     sheet: Some(self.sheet_name(*sheet).to_string()),
@@ -2157,10 +2169,10 @@ impl DependencyGraph {
                 }),
                 RK::OpenRect { sheet, start, end } => ranges.push(ReferenceType::Range {
                     sheet: Some(self.sheet_name(*sheet).to_string()),
-                    start_row: start.map(|p| p.row()),
-                    start_col: start.map(|p| p.col()),
-                    end_row: end.map(|p| p.row()),
-                    end_col: end.map(|p| p.col()),
+                    start_row: start.map(|p| p.row() + 1),
+                    start_col: start.map(|p| p.col() + 1),
+                    end_row: end.map(|p| p.row() + 1),
+                    end_col: end.map(|p| p.col() + 1),
                 }),
             }
         }
@@ -2286,7 +2298,7 @@ impl DependencyGraph {
                             && (s_col.is_none() || e_col.is_none()));
 
                     if col_stripes && !row_stripes {
-                        let sc = s_col.unwrap_or(1);
+                        let sc = s_col.unwrap_or(0);
                         let ec = e_col.unwrap_or(sc);
                         for col in sc..=ec {
                             keys_to_clean.insert(StripeKey {
@@ -2296,7 +2308,7 @@ impl DependencyGraph {
                             });
                         }
                     } else if row_stripes && !col_stripes {
-                        let sr = s_row.unwrap_or(1);
+                        let sr = s_row.unwrap_or(0);
                         let er = e_row.unwrap_or(sr);
                         for row in sr..=er {
                             keys_to_clean.insert(StripeKey {
@@ -2786,8 +2798,9 @@ impl DependencyGraph {
 
         // Capture old values before applying
         for op in &ops {
+            // op.row/op.col are internal 0-based; get_cell_value is a public 1-based API.
             let old = self
-                .get_cell_value(&op.sheet, op.row, op.col)
+                .get_cell_value(&op.sheet, op.row + 1, op.col + 1)
                 .unwrap_or(LiteralValue::Empty);
             let present = true; // unified model: we always treat as present
             old_values.push((
@@ -2806,12 +2819,12 @@ impl DependencyGraph {
             {
                 for idx in (0..applied).rev() {
                     let ((ref sheet, row, col), ref old) = old_values[idx];
-                    let _ = self.set_cell_value(sheet, row, col, old.value.clone());
+                    let _ = self.set_cell_value(sheet, row + 1, col + 1, old.value.clone());
                 }
                 return Err(ExcelError::new(ExcelErrorKind::Error)
                     .with_message("Injected persistence fault during spill commit"));
             }
-            let _ = self.set_cell_value(&op.sheet, op.row, op.col, op.new_value.clone());
+            let _ = self.set_cell_value(&op.sheet, op.row + 1, op.col + 1, op.new_value.clone());
         }
 
         // Update spill ownership maps only on success
@@ -2836,8 +2849,8 @@ impl DependencyGraph {
                 let sheet = self.sheet_name(cell.sheet_id).to_string();
                 let _ = self.set_cell_value(
                     &sheet,
-                    cell.coord.row(),
-                    cell.coord.col(),
+                    cell.coord.row() + 1,
+                    cell.coord.col() + 1,
                     LiteralValue::Empty,
                 );
                 self.spill_cell_to_anchor.remove(&cell);
@@ -2892,10 +2905,11 @@ impl DependencyGraph {
         CellRef::new(sheet_id, coord)
     }
 
-    /// Create a cell reference from sheet name and coordinates
+    /// Create a cell reference from sheet name and Excel 1-based coordinates.
     pub fn make_cell_ref(&self, sheet_name: &str, row: u32, col: u32) -> CellRef {
         let sheet_id = self.sheet_reg.get_id(sheet_name).unwrap_or(0);
-        self.make_cell_ref_internal(sheet_id, row, col)
+        let coord = Coord::from_excel(row, col, true, true);
+        CellRef::new(sheet_id, coord)
     }
 
     /// Check if a vertex is dirty

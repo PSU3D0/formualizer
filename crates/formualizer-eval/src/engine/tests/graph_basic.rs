@@ -1,8 +1,5 @@
-use super::common::get_vertex_ids_in_order;
-use crate::{
-    CellRef, Coord,
-    engine::{DependencyGraph, VertexKind},
-};
+use super::common::{abs_cell_ref, get_vertex_ids_in_order};
+use crate::engine::{DependencyGraph, VertexKind};
 use formualizer_common::LiteralValue;
 
 #[test]
@@ -40,10 +37,7 @@ fn test_vertex_creation_and_lookup() {
 
     // Verify internal structure
     assert_eq!(graph.vertex_len(), 1); // Only A1 exists
-    let vertex_id = *graph
-        .cell_to_vertex()
-        .get(&CellRef::new(0, Coord::new(1, 1, true, true)))
-        .unwrap();
+    let vertex_id = *graph.cell_to_vertex().get(&abs_cell_ref(0, 1, 1)).unwrap();
     assert_eq!(graph.get_vertex_sheet_id(vertex_id), 0);
     assert_eq!(graph.get_vertex_kind(vertex_id), VertexKind::Cell);
     assert_eq!(
@@ -57,9 +51,9 @@ fn test_cell_address_mapping() {
     let mut graph = DependencyGraph::new();
 
     // Create vertices in different sheets and positions
-    let addr1 = CellRef::new(0, Coord::new(1, 1, true, true));
-    let addr2 = CellRef::new(0, Coord::new(2, 2, true, true));
-    let addr3 = CellRef::new(1, Coord::new(1, 1, true, true));
+    let addr1 = abs_cell_ref(0, 1, 1);
+    let addr2 = abs_cell_ref(0, 2, 2);
+    let addr3 = abs_cell_ref(1, 1, 1);
 
     graph
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
@@ -163,8 +157,8 @@ fn test_placeholder_creation() {
     // Both A1 and B1 are created as placeholders initially
     assert_eq!(summary.created_placeholders.len(), 2);
 
-    let a1_addr = CellRef::new(0, Coord::new(1, 1, true, true));
-    let b1_addr = CellRef::new(0, Coord::new(1, 2, true, true));
+    let a1_addr = abs_cell_ref(0, 1, 1);
+    let b1_addr = abs_cell_ref(0, 1, 2);
 
     assert!(summary.created_placeholders.contains(&a1_addr));
     assert!(summary.created_placeholders.contains(&b1_addr));

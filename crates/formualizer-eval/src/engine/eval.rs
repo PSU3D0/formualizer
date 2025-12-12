@@ -63,7 +63,9 @@ fn compute_criteria_mask(
 ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
     use crate::compute_prelude::{boolean, cmp, concat_arrays};
     use arrow::compute::kernels::comparison::{ilike, nilike};
-    use arrow_array::{Array as _, ArrayRef, BooleanArray, Float64Array, StringArray, builder::BooleanBuilder};
+    use arrow_array::{
+        Array as _, ArrayRef, BooleanArray, Float64Array, StringArray, builder::BooleanBuilder,
+    };
 
     // Helper: apply a numeric predicate to a single Float64Array chunk
     fn apply_numeric_pred(
@@ -868,7 +870,7 @@ where
         // Prefer Arrow for non-formula cells. For formula cells, use graph value.
         if let Some(sheet_id) = self.graph.sheet_id(sheet) {
             // If a formula exists at this address, return graph value
-            let coord = Coord::new(row, col, true, true);
+            let coord = Coord::from_excel(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
             if let Some(vid) = self.graph.get_vertex_id_for_address(&addr) {
                 match self.graph.get_vertex_kind(*vid) {
@@ -898,7 +900,7 @@ where
     ) -> Option<(Option<formualizer_parse::ASTNode>, Option<LiteralValue>)> {
         let v = self.get_cell_value(sheet, row, col);
         let sheet_id = self.graph.sheet_id(sheet)?;
-        let coord = Coord::new(row, col, true, true);
+        let coord = Coord::from_excel(row, col, true, true);
         let cell = CellRef::new(sheet_id, coord);
         let vid = self.graph.get_vertex_for_cell(&cell)?;
         let ast = self.graph.get_formula(vid);
@@ -1080,8 +1082,8 @@ where
                     let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
                     self.mirror_value_to_overlay(
                         &sheet_name,
-                        anchor.coord.row(),
-                        anchor.coord.col(),
+                        anchor.coord.row() + 1,
+                        anchor.coord.col() + 1,
                         &other,
                     );
                 }
@@ -1104,8 +1106,8 @@ where
                     let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
                     self.mirror_value_to_overlay(
                         &sheet_name,
-                        anchor.coord.row(),
-                        anchor.coord.col(),
+                        anchor.coord.row() + 1,
+                        anchor.coord.col() + 1,
                         &err_val,
                     );
                 }
@@ -1598,7 +1600,7 @@ where
                                 "{}!{}{}",
                                 sheet_name,
                                 Self::col_to_letters(cell_ref.coord.col()),
-                                cell_ref.coord.row()
+                                cell_ref.coord.row() + 1
                             )
                         })
                 })
@@ -1706,7 +1708,7 @@ where
                             let scv = sc.unwrap_or(1);
                             let ecv = ec.unwrap_or(scv);
                             if let Some((min_r, max_r)) =
-                                self.graph.used_row_bounds_for_columns(sheet_id, scv, ecv)
+                                self.used_rows_for_columns(sheet_name, scv, ecv)
                             {
                                 sr = Some(min_r);
                                 er = Some(max_r);
@@ -1719,7 +1721,7 @@ where
                             let srv = sr.unwrap_or(1);
                             let erv = er.unwrap_or(srv);
                             if let Some((min_c, max_c)) =
-                                self.graph.used_col_bounds_for_rows(sheet_id, srv, erv)
+                                self.used_cols_for_rows(sheet_name, srv, erv)
                             {
                                 sc = Some(min_c);
                                 ec = Some(max_c);
@@ -1732,7 +1734,7 @@ where
                             let scv = sc.unwrap_or(1);
                             let ecv = ec.unwrap_or(scv);
                             if let Some((_, max_r)) =
-                                self.graph.used_row_bounds_for_columns(sheet_id, scv, ecv)
+                                self.used_rows_for_columns(sheet_name, scv, ecv)
                             {
                                 er = Some(max_r);
                             } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
@@ -1743,7 +1745,7 @@ where
                             let scv = sc.unwrap_or(1);
                             let ecv = ec.unwrap_or(scv);
                             if let Some((min_r, _)) =
-                                self.graph.used_row_bounds_for_columns(sheet_id, scv, ecv)
+                                self.used_rows_for_columns(sheet_name, scv, ecv)
                             {
                                 sr = Some(min_r);
                             } else {
@@ -1753,8 +1755,7 @@ where
                         if sc.is_some() && ec.is_none() {
                             let srv = sr.unwrap_or(1);
                             let erv = er.unwrap_or(srv);
-                            if let Some((_, max_c)) =
-                                self.graph.used_col_bounds_for_rows(sheet_id, srv, erv)
+                            if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv)
                             {
                                 ec = Some(max_c);
                             } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
@@ -1764,8 +1765,7 @@ where
                         if ec.is_some() && sc.is_none() {
                             let srv = sr.unwrap_or(1);
                             let erv = er.unwrap_or(srv);
-                            if let Some((min_c, _)) =
-                                self.graph.used_col_bounds_for_rows(sheet_id, srv, erv)
+                            if let Some((min_c, _)) = self.used_cols_for_rows(sheet_name, srv, erv)
                             {
                                 sc = Some(min_c);
                             } else {
@@ -1782,11 +1782,15 @@ where
                         }
 
                         if let Some(index) = self.graph.sheet_index(sheet_id) {
+                            let sr0 = sr.saturating_sub(1);
+                            let er0 = er.saturating_sub(1);
+                            let sc0 = sc.saturating_sub(1);
+                            let ec0 = ec.saturating_sub(1);
                             // enumerate vertices in col range, filter row and kind
-                            for u in index.vertices_in_col_range(sc, ec) {
+                            for u in index.vertices_in_col_range(sc0, ec0) {
                                 let pc = self.graph.vertex_coord(u);
-                                let row = pc.row();
-                                if row < sr || row > er {
+                                let row0 = pc.row();
+                                if row0 < sr0 || row0 > er0 {
                                     continue;
                                 }
                                 match self.graph.get_vertex_kind(u) {
@@ -1909,7 +1913,7 @@ where
         for target in targets {
             let (sheet, row, col) = Self::parse_a1_notation(target)?;
             let sheet_id = self.graph.sheet_id_mut(&sheet);
-            let coord = Coord::new(row, col, true, true);
+            let coord = Coord::from_excel(row, col, true, true);
             target_addrs.push(CellRef::new(sheet_id, coord));
         }
 
@@ -2472,7 +2476,12 @@ impl ShimSpillManager {
                     .cloned()
                     .unwrap_or(LiteralValue::Empty);
                 let sheet_name = engine.graph.sheet_name(cell.sheet_id).to_string();
-                engine.mirror_value_to_overlay(&sheet_name, cell.coord.row(), cell.coord.col(), &v);
+                engine.mirror_value_to_overlay(
+                    &sheet_name,
+                    cell.coord.row() + 1,
+                    cell.coord.col() + 1,
+                    &v,
+                );
             }
         }
         Ok(())
@@ -2607,8 +2616,11 @@ where
         if arrow_ok && let Some(bounds) = self.arrow_used_row_bounds(sheet, start_col, end_col) {
             return Some(bounds);
         }
+        let sc0 = start_col.saturating_sub(1);
+        let ec0 = end_col.saturating_sub(1);
         self.graph
-            .used_row_bounds_for_columns(sheet_id, start_col, end_col)
+            .used_row_bounds_for_columns(sheet_id, sc0, ec0)
+            .map(|(a0, b0)| (a0 + 1, b0 + 1))
     }
 
     fn used_cols_for_rows(&self, sheet: &str, start_row: u32, end_row: u32) -> Option<(u32, u32)> {
@@ -2618,8 +2630,11 @@ where
         if arrow_ok && let Some(bounds) = self.arrow_used_col_bounds(sheet, start_row, end_row) {
             return Some(bounds);
         }
+        let sr0 = start_row.saturating_sub(1);
+        let er0 = end_row.saturating_sub(1);
         self.graph
-            .used_col_bounds_for_rows(sheet_id, start_row, end_row)
+            .used_col_bounds_for_rows(sheet_id, sr0, er0)
+            .map(|(a0, b0)| (a0 + 1, b0 + 1))
     }
 
     fn sheet_bounds(&self, sheet: &str) -> Option<(u32, u32)> {
@@ -2773,9 +2788,22 @@ where
                     let er0 = er.saturating_sub(1) as usize;
                     let ec0 = ec.saturating_sub(1) as usize;
                     let av = asheet.range_view(sr0, sc0, er0, ec0);
-                    return Ok(RangeView::from_hybrid(&self.graph, sheet_id, sr, sc, av));
+                    return Ok(RangeView::from_hybrid(
+                        &self.graph,
+                        sheet_id,
+                        sr.saturating_sub(1),
+                        sc.saturating_sub(1),
+                        av,
+                    ));
                 }
-                Ok(RangeView::from_graph(&self.graph, sheet_id, sr, sc, er, ec))
+                Ok(RangeView::from_graph(
+                    &self.graph,
+                    sheet_id,
+                    sr.saturating_sub(1),
+                    sc.saturating_sub(1),
+                    er.saturating_sub(1),
+                    ec.saturating_sub(1),
+                ))
             }
             ReferenceType::Cell { sheet, row, col } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
@@ -2923,7 +2951,12 @@ where
                 let c_off = idx % width;
                 let v = rows[r_off][c_off].clone();
                 let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
-                self.mirror_value_to_overlay(&sheet_name, cell.coord.row(), cell.coord.col(), &v);
+                self.mirror_value_to_overlay(
+                    &sheet_name,
+                    cell.coord.row() + 1,
+                    cell.coord.col() + 1,
+                    &v,
+                );
             }
         }
         Ok(())

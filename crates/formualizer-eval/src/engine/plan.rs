@@ -66,7 +66,7 @@ where
 
     for (i, (sheet_name, row, col, ast)) in formulas.enumerate() {
         let sheet_id = sheet_reg.id_for(sheet_name);
-        let target = (sheet_id, AbsCoord::new(row, col));
+        let target = (sheet_id, AbsCoord::from_excel(row, col));
         plan.formula_targets.push(target);
 
         let mut flags: FormulaFlags = 0;
@@ -89,7 +89,7 @@ where
                         .as_deref()
                         .map(|name| sheet_reg.id_for(name))
                         .unwrap_or(sheet_id);
-                    let key = (dep_sheet, AbsCoord::new(row, col));
+                    let key = (dep_sheet, AbsCoord::from_excel(row, col));
                     let idx = match cell_index.get(&key) {
                         Some(&idx) => idx,
                         None => {

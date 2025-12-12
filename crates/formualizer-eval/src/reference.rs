@@ -183,13 +183,12 @@ impl fmt::Display for Coord {
 
 /// Sheet identifier inside a workbook.
 ///
-/// A `SheetId` of `0` is a special value representing the sheet
-/// that contains the reference itself.
+/// Sheet ids are assigned by the engine/registry and have no sentinel values.
 pub type SheetId = u16; // 65,535 sheets should be enough for anyone.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CellRef {
-    pub sheet_id: SheetId, // 0 == current sheet fast‑path
+    pub sheet_id: SheetId,
     pub coord: Coord,
 }
 
@@ -224,9 +223,8 @@ impl CellRef {
 
 impl fmt::Display for CellRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.sheet_id != 0 {
-            write!(f, "Sheet{}!", self.sheet_id)?; // caller can map id→name if needed
-        }
+        // Always include the sheet id; there is no longer a "current sheet" sentinel.
+        write!(f, "Sheet{}!", self.sheet_id)?;
         write!(f, "{}", self.coord)
     }
 }
@@ -291,6 +289,6 @@ mod tests {
         let a1 = CellRef::new(0, Coord::new(0, 0, false, false));
         let b2 = CellRef::new(0, Coord::new(1, 1, false, false));
         let r = RangeRef::new(a1, b2);
-        assert_eq!(r.to_string(), "A1:B2");
+        assert_eq!(r.to_string(), "Sheet0!A1:B2");
     }
 }

@@ -1,7 +1,7 @@
 //! Tests for striped dirty propagation (Milestone 5.3)
 
-use super::common::eval_config_with_range_limit;
-use crate::{CellRef, engine::DependencyGraph};
+use super::common::{abs_cell_ref, eval_config_with_range_limit};
+use crate::engine::DependencyGraph;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -45,7 +45,7 @@ fn test_change_in_tiny_range_dirties_dependent() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
     // Set initial values and clear dirty flags
@@ -77,7 +77,7 @@ fn test_change_in_large_tall_range_dirties_dependent() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
     // Clear dirty flags
@@ -106,7 +106,7 @@ fn test_change_in_large_wide_range_dirties_dependent() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
     // Clear dirty flags
@@ -135,7 +135,7 @@ fn test_change_outside_range_does_not_dirty_dependent() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
     // Clear dirty flags
@@ -179,7 +179,7 @@ fn test_multi_stripe_border_cell_edit() {
         .unwrap();
 
     let c1_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 3))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 3))
         .unwrap();
 
     // Clear dirty flags
@@ -234,7 +234,7 @@ fn prop_any_cell_change_in_range_dirties_dependent() {
         .unwrap();
 
     let formula_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 100))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 100))
         .unwrap();
 
     // Test various coordinates within the range
@@ -280,10 +280,10 @@ fn test_multiple_ranges_same_stripe() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
     let c1_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 3))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 3))
         .unwrap();
 
     // Clear dirty flags
@@ -318,7 +318,7 @@ fn test_cross_sheet_stripe_isolation() {
         .unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 2))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
     // Clear dirty flags

@@ -15,16 +15,16 @@ fn spill_exceeds_sheet_bounds() {
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, serial_eval_config());
 
-    // Anchor at last allowed column (zero-based max 16383), spilling 1x2 should exceed bounds
+    // Anchor at last allowed column (1-based max 16384); spilling 1x2 exceeds bounds
     engine
-        .set_cell_value("Sheet1", 1, 16383, LiteralValue::Int(0))
+        .set_cell_value("Sheet1", 1, 16384, LiteralValue::Int(0))
         .unwrap();
-    // Array that would require col 16384 (out of bounds)
+    // Array that would require col 16385 (out of bounds)
     engine
-        .set_cell_formula("Sheet1", 1, 16383, Parser::from("={1,2}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 16384, Parser::from("={1,2}").parse().unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
-    match engine.get_cell_value("Sheet1", 1, 16383) {
+    match engine.get_cell_value("Sheet1", 1, 16384) {
         Some(LiteralValue::Error(e)) => {
             assert_eq!(e, "#SPILL!");
             if let formualizer_common::ExcelErrorExtra::Spill {
@@ -44,20 +44,20 @@ fn spill_exceeds_sheet_bounds_rows() {
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, serial_eval_config());
 
-    // Anchor at last allowed row (zero-based max 1_048_575), spilling 2 rows should exceed bounds
+    // Anchor at last allowed row (1-based max 1_048_576); spilling 2 rows exceeds bounds
     engine
-        .set_cell_value("Sheet1", 1_048_575, 1, LiteralValue::Int(0))
+        .set_cell_value("Sheet1", 1_048_576, 1, LiteralValue::Int(0))
         .unwrap();
     engine
         .set_cell_formula(
             "Sheet1",
-            1_048_575,
+            1_048_576,
             1,
             Parser::from("={1;2}").parse().unwrap(),
         )
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
-    match engine.get_cell_value("Sheet1", 1_048_575, 1) {
+    match engine.get_cell_value("Sheet1", 1_048_576, 1) {
         Some(LiteralValue::Error(e)) => assert_eq!(e, "#SPILL!"),
         v => panic!("expected #SPILL!, got {v:?}"),
     }

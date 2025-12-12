@@ -23,8 +23,9 @@ fn test_insert_columns() {
     // Use editor to insert columns
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Insert 2 columns before column 2 (B)
-    let summary = editor.insert_columns(0, 2, 2).unwrap();
+    // Insert 2 columns before column 2 (B).
+    // VertexEditor uses internal 0-based indices for structural edits.
+    let summary = editor.insert_columns(0, 1, 2).unwrap();
 
     // Drop editor to release borrow
     drop(editor);
@@ -62,8 +63,8 @@ fn test_delete_columns() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Delete columns 2-3 (B and C)
-    let summary = editor.delete_columns(0, 2, 2).unwrap();
+    // Delete columns 2-3 (B and C). Editor uses 0-based cols.
+    let summary = editor.delete_columns(0, 1, 2).unwrap();
 
     drop(editor);
 
@@ -97,8 +98,8 @@ fn test_insert_columns_adjusts_formulas() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Insert column before column 2 (B)
-    editor.insert_columns(0, 2, 1).unwrap();
+    // Insert column before column 2 (B). Editor uses 0-based cols.
+    editor.insert_columns(0, 1, 1).unwrap();
 
     drop(editor);
 
@@ -124,8 +125,8 @@ fn test_delete_column_creates_ref_error() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Delete column 2 (B)
-    editor.delete_columns(0, 2, 1).unwrap();
+    // Delete column 2 (B). Editor uses 0-based cols.
+    editor.delete_columns(0, 1, 1).unwrap();
 
     drop(editor);
 
@@ -156,8 +157,8 @@ fn test_insert_columns_with_absolute_references() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Insert columns before column 3
-    editor.insert_columns(0, 3, 2).unwrap();
+    // Insert columns before column 3 (C). Editor uses 0-based cols.
+    editor.insert_columns(0, 2, 2).unwrap();
 
     drop(editor);
 
@@ -182,14 +183,15 @@ fn test_multiple_column_operations() {
 
     editor.begin_batch();
 
-    // Insert 2 columns at column 3
-    editor.insert_columns(0, 3, 2).unwrap();
+    // Insert 2 columns at column 3 (public). Editor uses 0-based cols.
+    editor.insert_columns(0, 2, 2).unwrap();
 
-    // Delete 1 column at column 8 (which is now column 10 after insertion)
-    editor.delete_columns(0, 10, 1).unwrap();
+    // Delete 1 column at column 8 (public), now column 10 after insertion.
+    // Editor expects 0-based cols, so delete internal col 9.
+    editor.delete_columns(0, 9, 1).unwrap();
 
-    // Insert 1 column at column 1
-    editor.insert_columns(0, 1, 1).unwrap();
+    // Insert 1 column at column 1 (public). Editor uses 0-based cols.
+    editor.insert_columns(0, 0, 1).unwrap();
 
     editor.commit_batch();
 
@@ -223,11 +225,11 @@ fn test_mixed_row_column_operations() {
 
     editor.begin_batch();
 
-    // Insert 1 row before row 2
-    editor.insert_rows(0, 2, 1).unwrap();
+    // Insert 1 row before row 2 (public). Editor uses 0-based rows.
+    editor.insert_rows(0, 1, 1).unwrap();
 
-    // Insert 1 column before column 2
-    editor.insert_columns(0, 2, 1).unwrap();
+    // Insert 1 column before column 2 (public). Editor uses 0-based cols.
+    editor.insert_columns(0, 1, 1).unwrap();
 
     editor.commit_batch();
 
@@ -269,8 +271,8 @@ fn test_delete_columns_with_dependencies() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Delete column B (column 2)
-    editor.delete_columns(0, 2, 1).unwrap();
+    // Delete column B (public col 2). Editor uses 0-based cols.
+    editor.delete_columns(0, 1, 1).unwrap();
 
     drop(editor);
 

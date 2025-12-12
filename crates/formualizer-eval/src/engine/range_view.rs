@@ -648,7 +648,7 @@ mod tests {
             .unwrap();
 
         let sheet_id = engine.default_sheet_id();
-        let view = RangeView::from_graph(&engine.graph, sheet_id, 1, 1, 2, 2);
+        let view = RangeView::from_graph(&engine.graph, sheet_id, 0, 0, 1, 1);
         assert_eq!(view.dims(), (2, 2));
         let mut rows_sum = Vec::new();
         view.for_each_row(&mut |row| {
@@ -667,7 +667,7 @@ mod tests {
         assert_eq!(rows_sum, vec![3.0, 7.0]);
 
         let mut sum = 0.0;
-        RangeView::from_graph(&engine.graph, sheet_id, 1, 1, 2, 2)
+        RangeView::from_graph(&engine.graph, sheet_id, 0, 0, 1, 1)
             .numbers_chunked(CoercionPolicy::NumberLenientText, 2, &mut |chunk| {
                 for &n in chunk.data {
                     sum += n;

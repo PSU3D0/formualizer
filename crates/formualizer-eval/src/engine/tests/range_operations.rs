@@ -19,8 +19,8 @@ fn test_set_range_values() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Set a 3x3 range starting at A1
-    let summary = editor.set_range_values(0, 1, 1, &values).unwrap();
+    // Set a 3x3 range starting at A1. Editor uses 0-based coords.
+    let summary = editor.set_range_values(0, 0, 0, &values).unwrap();
 
     drop(editor);
 
@@ -46,8 +46,8 @@ fn test_clear_range() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Clear the range
-    let summary = editor.clear_range(0, 1, 1, 3, 3).unwrap();
+    // Clear the range (A1:C3). Editor uses 0-based coords.
+    let summary = editor.clear_range(0, 0, 0, 2, 2).unwrap();
 
     drop(editor);
 
@@ -75,8 +75,8 @@ fn test_copy_range() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Copy A1:B2 to D4
-    let summary = editor.copy_range(0, 1, 1, 2, 2, 0, 4, 4).unwrap();
+    // Copy A1:B2 to D4. Editor uses 0-based coords.
+    let summary = editor.copy_range(0, 0, 0, 1, 1, 0, 3, 3).unwrap();
 
     drop(editor);
 
@@ -113,8 +113,8 @@ fn test_set_range_values_partial_overlap() {
         vec![lit_num(3.0), lit_num(4.0)],
     ];
 
-    // Set A1:B2, should overwrite existing values
-    let summary = editor.set_range_values(0, 1, 1, &values).unwrap();
+    // Set A1:B2, should overwrite existing values. Editor uses 0-based coords.
+    let summary = editor.set_range_values(0, 0, 0, &values).unwrap();
 
     drop(editor);
 
@@ -142,8 +142,8 @@ fn test_copy_range_with_absolute_references() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Copy B2 to D4
-    let summary = editor.copy_range(0, 2, 2, 2, 2, 0, 4, 4).unwrap();
+    // Copy B2 to D4. Editor uses 0-based coords.
+    let summary = editor.copy_range(0, 1, 1, 1, 1, 0, 3, 3).unwrap();
 
     drop(editor);
 
@@ -176,8 +176,8 @@ fn test_clear_range_with_formulas() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Clear A1:C1
-    let summary = editor.clear_range(0, 1, 1, 1, 3).unwrap();
+    // Clear A1:C1. Editor uses 0-based coords.
+    let summary = editor.clear_range(0, 0, 0, 0, 2).unwrap();
 
     drop(editor);
 
@@ -209,8 +209,8 @@ fn test_move_range() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    // Move A1:B2 to D4
-    let summary = editor.move_range(0, 1, 1, 2, 2, 0, 4, 4).unwrap();
+    // Move A1:B2 to D4. Editor uses 0-based coords.
+    let summary = editor.move_range(0, 0, 0, 1, 1, 0, 3, 3).unwrap();
 
     drop(editor);
 
@@ -247,7 +247,7 @@ fn test_set_range_values_large() {
 
     let mut editor = VertexEditor::new(&mut graph);
 
-    let summary = editor.set_range_values(0, 1, 1, &values).unwrap();
+    let summary = editor.set_range_values(0, 0, 0, &values).unwrap();
 
     drop(editor);
 

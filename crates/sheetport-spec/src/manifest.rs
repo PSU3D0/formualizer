@@ -303,10 +303,7 @@ impl Manifest {
                         && matches!(field.location, FieldSelector::StructRef(_))
                     {
                         issues.push(ManifestIssue::new(
-                            format!(
-                                "ports[{}].schema.fields.{}.location",
-                                idx, field_name
-                            ),
+                            format!("ports[{}].schema.fields.{}.location", idx, field_name),
                             format!(
                                 "structured references are not permitted under profile `{}`",
                                 profile_label(profile)
@@ -822,13 +819,13 @@ fn validate_port_selector(
                     profile_label(profile)
                 ),
             )),
-            Selector::A1(_) | Selector::Name(_) | Selector::StructRef(_) => issues.push(
-                ManifestIssue::new(
+            Selector::A1(_) | Selector::Name(_) | Selector::StructRef(_) => {
+                issues.push(ManifestIssue::new(
                     &path,
                     "table ports must use `layout` selectors (or `table` selectors under full-v0)"
                         .to_string(),
-                ),
-            ),
+                ))
+            }
         },
     }
 }
@@ -911,15 +908,24 @@ fn validate_enum_candidate(vt: ValueType, candidate: &JsonValue) -> Result<(), S
     match vt {
         ValueType::String => match candidate {
             J::String(_) => Ok(()),
-            other => Err(format!("enum value `{}` is not a string", value_sort_key(other))),
+            other => Err(format!(
+                "enum value `{}` is not a string",
+                value_sort_key(other)
+            )),
         },
         ValueType::Boolean => match candidate {
             J::Bool(_) => Ok(()),
-            other => Err(format!("enum value `{}` is not a boolean", value_sort_key(other))),
+            other => Err(format!(
+                "enum value `{}` is not a boolean",
+                value_sort_key(other)
+            )),
         },
         ValueType::Number => match candidate {
             J::Number(n) if n.as_f64().is_some() => Ok(()),
-            other => Err(format!("enum value `{}` is not numeric", value_sort_key(other))),
+            other => Err(format!(
+                "enum value `{}` is not numeric",
+                value_sort_key(other)
+            )),
         },
         ValueType::Integer => match candidate {
             J::Number(n) => {
@@ -935,10 +941,16 @@ fn validate_enum_candidate(vt: ValueType, candidate: &JsonValue) -> Result<(), S
                         ))
                     }
                 } else {
-                    Err(format!("enum value `{}` is not numeric", value_sort_key(candidate)))
+                    Err(format!(
+                        "enum value `{}` is not numeric",
+                        value_sort_key(candidate)
+                    ))
                 }
             }
-            other => Err(format!("enum value `{}` is not numeric", value_sort_key(other))),
+            other => Err(format!(
+                "enum value `{}` is not numeric",
+                value_sort_key(other)
+            )),
         },
         ValueType::Date => match candidate {
             J::String(s) if parse_date_string(s) => Ok(()),

@@ -5,9 +5,10 @@ use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
 // Helper to create a simple formula AST
 fn simple_formula(row: u32, col: u32) -> ASTNode {
+    // `ReferenceType` uses Excel 1-based coords.
     ASTNode {
         node_type: ASTNodeType::Reference {
-            original: format!("A{}", row + 1),
+            original: format!("A{row}"),
             reference: formualizer_parse::parser::ReferenceType::Cell {
                 sheet: None,
                 row,
@@ -33,7 +34,7 @@ fn test_snapshot_vertex() {
     let snapshot = graph.snapshot_vertex(vertex_id);
 
     // Verify snapshot contents
-    assert_eq!(snapshot.coord, AbsCoord::new(1, 1));
+    assert_eq!(snapshot.coord, AbsCoord::new(0, 0));
     assert_eq!(snapshot.kind, VertexKind::Cell);
     assert_eq!(snapshot.sheet_id, graph.sheet_id("Sheet1").unwrap());
 
@@ -47,13 +48,13 @@ fn test_snapshot_vertex_with_formula() {
 
     // Create dependencies
     graph
-        .set_cell_value("Sheet1", 0, 0, LiteralValue::Number(10.0))
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
         .unwrap();
 
     // Create formula cell
-    let formula = simple_formula(0, 0);
+    let formula = simple_formula(1, 1);
     let result = graph
-        .set_cell_formula("Sheet1", 1, 0, formula.clone())
+        .set_cell_formula("Sheet1", 2, 1, formula.clone())
         .unwrap();
     let formula_vertex = result.affected_vertices[0];
 
@@ -73,8 +74,8 @@ fn test_mark_as_ref_error() {
     let mut graph = DependencyGraph::new();
 
     // Create a formula cell
-    let formula = simple_formula(0, 0);
-    let result = graph.set_cell_formula("Sheet1", 1, 1, formula).unwrap();
+    let formula = simple_formula(1, 1);
+    let result = graph.set_cell_formula("Sheet1", 1, 2, formula).unwrap();
     let vertex_id = result.affected_vertices[0];
 
     // Mark as REF error
@@ -102,13 +103,13 @@ fn test_remove_all_edges() {
     // B1 = A1 * 2
     // C1 = B1 + A1
     graph
-        .set_cell_value("Sheet1", 0, 0, LiteralValue::Number(10.0))
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
         .unwrap();
 
     let b1_formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
             op: "*".to_string(),
-            left: Box::new(simple_formula(0, 0)),
+            left: Box::new(simple_formula(1, 1)),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Literal(LiteralValue::Number(2.0)),
                 source_token: None,
@@ -118,19 +119,19 @@ fn test_remove_all_edges() {
         source_token: None,
         contains_volatile: false,
     };
-    let b1_result = graph.set_cell_formula("Sheet1", 0, 1, b1_formula).unwrap();
+    let b1_result = graph.set_cell_formula("Sheet1", 1, 2, b1_formula).unwrap();
     let b1_vertex = b1_result.affected_vertices[0];
 
     let c1_formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
             op: "+".to_string(),
-            left: Box::new(simple_formula(0, 1)),  // B1
-            right: Box::new(simple_formula(0, 0)), // A1
+            left: Box::new(simple_formula(1, 2)),  // B1
+            right: Box::new(simple_formula(1, 1)), // A1
         },
         source_token: None,
         contains_volatile: false,
     };
-    graph.set_cell_formula("Sheet1", 0, 2, c1_formula).unwrap();
+    graph.set_cell_formula("Sheet1", 1, 3, c1_formula).unwrap();
 
     // Verify B1 has dependencies and dependents before removal
     let b1_deps = graph.get_dependencies(b1_vertex);
@@ -157,7 +158,7 @@ fn test_mark_dependents_dirty() {
 
     // Create dependency chain: A1 -> B1 -> C1 -> D1
     let a1_result = graph
-        .set_cell_value("Sheet1", 0, 0, LiteralValue::Number(5.0))
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
         .unwrap();
     let a1_vertex = a1_result.affected_vertices[0];
 
@@ -165,7 +166,7 @@ fn test_mark_dependents_dirty() {
     let b1_formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
             op: "*".to_string(),
-            left: Box::new(simple_formula(0, 0)),
+            left: Box::new(simple_formula(1, 1)),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Literal(LiteralValue::Number(2.0)),
                 source_token: None,
@@ -175,14 +176,14 @@ fn test_mark_dependents_dirty() {
         source_token: None,
         contains_volatile: false,
     };
-    let b1_result = graph.set_cell_formula("Sheet1", 0, 1, b1_formula).unwrap();
+    let b1_result = graph.set_cell_formula("Sheet1", 1, 2, b1_formula).unwrap();
     let b1_vertex = b1_result.affected_vertices[0];
 
     // C1 = B1 + 1
     let c1_formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
             op: "+".to_string(),
-            left: Box::new(simple_formula(0, 1)),
+            left: Box::new(simple_formula(1, 2)),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Literal(LiteralValue::Number(1.0)),
                 source_token: None,
@@ -192,12 +193,12 @@ fn test_mark_dependents_dirty() {
         source_token: None,
         contains_volatile: false,
     };
-    let c1_result = graph.set_cell_formula("Sheet1", 0, 2, c1_formula).unwrap();
+    let c1_result = graph.set_cell_formula("Sheet1", 1, 3, c1_formula).unwrap();
     let c1_vertex = c1_result.affected_vertices[0];
 
     // D1 = C1
-    let d1_formula = simple_formula(0, 2);
-    let d1_result = graph.set_cell_formula("Sheet1", 0, 3, d1_formula).unwrap();
+    let d1_formula = simple_formula(1, 3);
+    let d1_result = graph.set_cell_formula("Sheet1", 1, 4, d1_formula).unwrap();
     let d1_vertex = d1_result.affected_vertices[0];
 
     // Clear dirty flags manually to simulate evaluation completion
@@ -234,8 +235,8 @@ fn test_snapshot_preserves_all_state() {
     let formula = ASTNode {
         node_type: ASTNodeType::BinaryOp {
             op: "+".to_string(),
-            left: Box::new(simple_formula(0, 0)),
-            right: Box::new(simple_formula(1, 0)),
+            left: Box::new(simple_formula(1, 1)),
+            right: Box::new(simple_formula(2, 1)),
         },
         source_token: None,
         contains_volatile: false,
@@ -243,13 +244,13 @@ fn test_snapshot_preserves_all_state() {
 
     // First create the dependencies
     graph
-        .set_cell_value("Sheet1", 0, 0, LiteralValue::Number(10.0))
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 1, 0, LiteralValue::Number(20.0))
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(20.0))
         .unwrap();
 
-    let result = graph.set_cell_formula("Sheet1", 2, 0, formula).unwrap();
+    let result = graph.set_cell_formula("Sheet1", 3, 1, formula).unwrap();
     let vertex_id = result.affected_vertices[0];
 
     // Mark as volatile

@@ -317,7 +317,9 @@ impl<'a> SheetRangeRef<'a> {
                 return Err(SheetAddressError::RangeOrder);
             }
         }
-        Ok(SheetRangeRef::new(sheet, start_row, start_col, end_row, end_col))
+        Ok(SheetRangeRef::new(
+            sheet, start_row, start_col, end_row, end_col,
+        ))
     }
 
     /// Borrowing variant preserving the sheet locator lifetime.

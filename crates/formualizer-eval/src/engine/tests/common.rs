@@ -1,5 +1,6 @@
 //! Common test helpers
 use crate::engine::{EvalConfig, VertexId};
+use crate::{CellRef, Coord, SheetId};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 pub fn create_cell_ref_ast(sheet: Option<&str>, row: u32, col: u32) -> ASTNode {
@@ -27,6 +28,11 @@ pub fn create_binary_op_ast(left: ASTNode, right: ASTNode, op: &str) -> ASTNode 
         source_token: None,
         contains_volatile: false,
     }
+}
+
+/// Build an absolute cell ref from Excel 1-based coords.
+pub fn abs_cell_ref(sheet_id: SheetId, row: u32, col: u32) -> CellRef {
+    CellRef::new(sheet_id, Coord::from_excel(row, col, true, true))
 }
 
 /// Helper to get all vertex IDs from a graph in creation order

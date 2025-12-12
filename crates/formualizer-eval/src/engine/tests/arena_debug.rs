@@ -45,10 +45,7 @@ fn test_simple_sum_with_arena() {
     let graph = &engine.graph;
     let vertex_id = *graph
         .cell_to_vertex()
-        .get(&crate::reference::CellRef::new(
-            graph.sheet_id("Sheet1").unwrap(),
-            crate::reference::Coord::new(4, 1, true, true),
-        ))
+        .get(&graph.make_cell_ref("Sheet1", 4, 1))
         .expect("Formula vertex should exist");
 
     let retrieved_ast = graph.get_formula(vertex_id);
@@ -82,10 +79,7 @@ fn test_cross_sheet_simple() {
     let graph = &engine.graph;
     let vertex_id = *graph
         .cell_to_vertex()
-        .get(&crate::reference::CellRef::new(
-            graph.sheet_id("Sheet1").unwrap(),
-            crate::reference::Coord::new(1, 1, true, true),
-        ))
+        .get(&graph.make_cell_ref("Sheet1", 1, 1))
         .expect("Formula vertex should exist");
 
     let retrieved_ast = graph.get_formula(vertex_id);

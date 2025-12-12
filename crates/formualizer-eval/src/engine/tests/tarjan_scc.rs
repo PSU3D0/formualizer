@@ -1,4 +1,4 @@
-use super::common::get_vertex_ids_in_order;
+use super::common::{abs_cell_ref, get_vertex_ids_in_order};
 use crate::engine::{DependencyGraph, Scheduler, VertexId};
 use formualizer_common::{LiteralValue, parse_a1_1based};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
@@ -211,20 +211,11 @@ fn test_tarjan_self_loops() {
     let scc_singles: Vec<_> = sccs.iter().filter(|scc| scc.len() == 1).collect();
     assert_eq!(scc_singles.len(), 2);
 
-    let a1_id = *graph
-        .cell_to_vertex()
-        .get(&crate::CellRef::new_absolute(0, 1, 1))
-        .unwrap();
+    let a1_id = *graph.cell_to_vertex().get(&abs_cell_ref(0, 1, 1)).unwrap();
     assert!(scc_singles.iter().any(|scc| scc[0] == a1_id));
 
-    let c1_id = *graph
-        .cell_to_vertex()
-        .get(&crate::CellRef::new_absolute(0, 1, 3))
-        .unwrap();
-    let d1_id = *graph
-        .cell_to_vertex()
-        .get(&crate::CellRef::new_absolute(0, 1, 4))
-        .unwrap();
+    let c1_id = *graph.cell_to_vertex().get(&abs_cell_ref(0, 1, 3)).unwrap();
+    let d1_id = *graph.cell_to_vertex().get(&abs_cell_ref(0, 1, 4)).unwrap();
     assert!(scc_with_cycle.contains(&c1_id));
     assert!(scc_with_cycle.contains(&d1_id));
 }

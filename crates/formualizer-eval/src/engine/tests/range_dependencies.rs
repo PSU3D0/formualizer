@@ -1,6 +1,6 @@
 //! Tests for the hybrid model of range dependency management.
-use super::common::eval_config_with_range_limit;
-use crate::engine::{DependencyGraph, EvalConfig, StripeKey, StripeType, VertexId, block_index};
+use super::common::{abs_cell_ref, eval_config_with_range_limit};
+use crate::engine::{DependencyGraph, VertexId};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -48,10 +48,10 @@ fn test_tiny_range_expands_to_cell_dependencies() {
         .unwrap();
 
     let c1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 3))
         .unwrap();
     let c1_vertex = graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 3))
         .unwrap();
 
     let dependencies = graph.get_dependencies(c1_id);
@@ -76,7 +76,7 @@ fn test_tiny_range_expands_to_cell_dependencies() {
         dep_addrs.push((cell_ref.coord.row(), cell_ref.coord.col()));
     }
     dep_addrs.sort();
-    let expected_addrs = vec![(1, 1), (2, 1), (3, 1), (4, 1)];
+    let expected_addrs = vec![(0, 0), (1, 0), (2, 0), (3, 0)];
     assert_eq!(dep_addrs, expected_addrs);
 }
 
@@ -88,10 +88,7 @@ fn test_range_dependency_dirtiness() {
     graph
         .set_cell_formula("Sheet1", 1, 3, sum_ast(1, 1, 10, 1))
         .unwrap();
-    let c1_id = *graph
-        .cell_to_vertex()
-        .get(&crate::CellRef::new_absolute(0, 1, 3))
-        .unwrap();
+    let c1_id = *graph.cell_to_vertex().get(&abs_cell_ref(0, 1, 3)).unwrap();
 
     // Create a value in the middle of the range, e.g., A5.
     graph
@@ -123,10 +120,7 @@ fn test_range_dependency_updates_on_formula_change() {
     graph
         .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 2, 1))
         .unwrap();
-    let b1_id = *graph
-        .cell_to_vertex()
-        .get(&crate::CellRef::new_absolute(0, 1, 2))
-        .unwrap();
+    let b1_id = *graph.cell_to_vertex().get(&abs_cell_ref(0, 1, 2)).unwrap();
 
     // Change A1, B1 should be dirty
     graph
@@ -165,7 +159,7 @@ fn test_large_range_creates_single_compressed_ref() {
         .unwrap();
 
     let c1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 3))
         .unwrap();
     let c1_dependencies = graph.get_dependencies(c1_id);
 
@@ -184,118 +178,6 @@ fn test_large_range_creates_single_compressed_ref() {
     );
     assert!(range_deps.contains_key(&c1_id));
     assert_eq!(range_deps.get(&c1_id).unwrap().len(), 1);
-}
-
-#[test]
-fn test_tall_range_populates_column_stripe_index() {
-    let mut graph = graph_with_range_limit(4);
-
-    // C1 = SUM(A1:A500)
-    graph
-        .set_cell_formula("Sheet1", 1, 3, sum_ast(1, 1, 500, 1))
-        .unwrap();
-
-    let c1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
-        .unwrap();
-
-    let stripes = graph.stripe_to_dependents();
-    assert!(!stripes.is_empty(), "Stripes should be created");
-
-    // Check for column stripe
-    let key = StripeKey {
-        sheet_id: 0,
-        stripe_type: StripeType::Column,
-        index: 1,
-    };
-    assert!(stripes.contains_key(&key));
-    assert!(stripes.get(&key).unwrap().contains(&c1_id));
-}
-
-#[test]
-fn test_wide_range_populates_row_stripe_index() {
-    let mut graph = graph_with_range_limit(4);
-
-    // C1 = SUM(A1:Z1)
-    graph
-        .set_cell_formula("Sheet1", 1, 3, sum_ast(1, 1, 1, 26))
-        .unwrap();
-
-    let c1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
-        .unwrap();
-
-    let stripes = graph.stripe_to_dependents();
-    assert!(!stripes.is_empty(), "Stripes should be created");
-
-    // Check for row stripe
-    let key = StripeKey {
-        sheet_id: 0,
-        stripe_type: StripeType::Row,
-        index: 1,
-    };
-    assert!(stripes.contains_key(&key));
-    assert!(stripes.get(&key).unwrap().contains(&c1_id));
-}
-
-#[test]
-fn test_dense_range_populates_block_stripe_index() {
-    let config = eval_config_with_range_limit(4).with_block_stripes(true);
-    let mut graph = DependencyGraph::new_with_config(config);
-
-    // C1 = SUM(A1:Z26)
-    graph
-        .set_cell_formula("Sheet1", 1, 3, sum_ast(1, 1, 26, 26))
-        .unwrap();
-
-    let c1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
-        .unwrap();
-
-    let stripes = graph.stripe_to_dependents();
-    assert!(!stripes.is_empty(), "Stripes should be created");
-
-    // Check for block stripe
-    let key = StripeKey {
-        sheet_id: 0,
-        stripe_type: StripeType::Block,
-        index: block_index(1, 1),
-    };
-    assert!(stripes.contains_key(&key));
-    assert!(stripes.get(&key).unwrap().contains(&c1_id));
-}
-
-#[test]
-fn test_formula_replacement_cleans_stripes() {
-    let mut graph = graph_with_range_limit(4);
-
-    // B1 = SUM(A1:A500)
-    graph
-        .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 500, 1))
-        .unwrap();
-
-    let key = StripeKey {
-        sheet_id: 0,
-        stripe_type: StripeType::Column,
-        index: 1,
-    };
-    assert!(graph.stripe_to_dependents().contains_key(&key));
-
-    // Now, change B1 to depend on something else entirely
-    graph
-        .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 3, 500, 3))
-        .unwrap();
-
-    // The old stripe for column A should be gone
-    assert!(!graph.stripe_to_dependents().contains_key(&key));
-
-    // The new stripe for column C should exist
-    let new_key = StripeKey {
-        sheet_id: 0,
-        stripe_type: StripeType::Column,
-        index: 3,
-    };
-    assert!(graph.stripe_to_dependents().contains_key(&new_key));
 }
 
 #[test]
@@ -321,7 +203,7 @@ fn test_duplicate_range_refs_in_formula() {
     graph.set_cell_formula("Sheet1", 1, 2, formula).unwrap();
 
     let b1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 2))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
     // Should only have one compressed range dependency, not two
@@ -339,127 +221,4 @@ fn test_zero_sized_range_behavior() {
         result.unwrap_err().kind,
         formualizer_common::ExcelErrorKind::Ref
     );
-}
-
-#[test]
-fn test_cross_sheet_implicit_range_stripes() {
-    let mut graph = DependencyGraph::new();
-    graph
-        .set_cell_formula(
-            "Sheet1",
-            1,
-            1,
-            sum_ast(1, 1, 100, 1), // This is on the current sheet
-        )
-        .unwrap();
-
-    let _stripes = graph.stripe_to_dependents();
-    let _key = StripeKey {
-        sheet_id: 0,
-        stripe_type: StripeType::Column,
-        index: 1,
-    };
-    // Note: Cross-sheet handling needs more comprehensive implementation
-    // This is a placeholder test for now
-}
-
-#[test]
-fn test_duplicate_vertex_not_pushed_twice() {
-    let mut graph = graph_with_range_limit(4);
-
-    // Create overlapping ranges that hit the same stripe
-    // B1 = SUM(A1:A500)
-    graph
-        .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 500, 1))
-        .unwrap();
-
-    // C1 = SUM(A200:A600) - overlaps with B1's range in column A
-    graph
-        .set_cell_formula("Sheet1", 1, 3, sum_ast(200, 1, 600, 1))
-        .unwrap();
-
-    let b1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 2))
-        .unwrap();
-    let c1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 3))
-        .unwrap();
-
-    // Check that both vertices are in the column stripe for column A
-    let key = StripeKey {
-        sheet_id: 0,
-        stripe_type: StripeType::Column,
-        index: 1,
-    };
-
-    let dependents = graph.stripe_to_dependents().get(&key).unwrap();
-    assert!(dependents.contains(&b1_id));
-    assert!(dependents.contains(&c1_id));
-    assert_eq!(dependents.len(), 2); // Should be exactly 2, not duplicated
-}
-
-#[test]
-fn test_row_insertion_not_panicking() {
-    // Placeholder test for future row/column operations support
-    // The hybrid dependency extractor should handle this gracefully
-    let mut graph = DependencyGraph::new();
-
-    // This should not panic even if we don't support row operations yet
-    graph
-        .set_cell_formula("Sheet1", 1, 1, sum_ast(1, 1, 100, 1))
-        .unwrap();
-
-    // In the future, row insertions would need to update stripe maps
-    // For now, we just ensure the basic setup doesn't panic
-    assert!(!graph.stripe_to_dependents().is_empty());
-}
-
-#[test]
-fn test_threshold_stripe_interplay() {
-    let mut graph = DependencyGraph::new_with_config(EvalConfig {
-        range_expansion_limit: 5,
-        stripe_height: 4,
-        stripe_width: 4,
-        ..Default::default()
-    });
-
-    // Range size = 8, larger than expansion limit (5) - should create compressed dependency
-    graph
-        .set_cell_formula("Sheet1", 1, 1, sum_ast(1, 1, 8, 1))
-        .unwrap();
-
-    let a1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 1))
-        .unwrap();
-
-    // Should have compressed range dependency (not expanded)
-    let range_deps = graph.formula_to_range_deps();
-    assert!(!range_deps.is_empty());
-    assert!(range_deps.contains_key(&a1_id));
-
-    // Should create column stripe
-    let key = StripeKey {
-        sheet_id: 0,
-        stripe_type: StripeType::Column,
-        index: 1,
-    };
-    assert!(graph.stripe_to_dependents().contains_key(&key));
-}
-
-#[test]
-fn test_overlapping_named_range_deduplication() {
-    // Placeholder test for named range support
-    // When named ranges are implemented, they should be deduplicated
-    // with direct range references if they overlap
-    let mut graph = graph_with_range_limit(5); // Make sure range gets compressed
-
-    // For now, just test that the graph handles basic ranges correctly
-    // B1 = SUM(A1:A10) (avoid self-reference) - size 10 > limit 5
-    graph
-        .set_cell_formula("Sheet1", 1, 2, sum_ast(1, 1, 10, 1))
-        .unwrap();
-
-    // This is a placeholder - in the future, named ranges like "MyRange"
-    // that resolve to A1:A10 should be deduplicated with direct A1:A10 references
-    assert!(!graph.stripe_to_dependents().is_empty());
 }

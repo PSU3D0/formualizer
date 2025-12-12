@@ -6,7 +6,7 @@ use formualizer_parse::parse;
 fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
     CellRef {
         sheet_id,
-        coord: Coord::new(row, col, true, true),
+        coord: Coord::from_excel(row, col, true, true),
     }
 }
 
@@ -28,10 +28,7 @@ fn debug_dependency_creation() {
     drop(editor);
 
     // Check cell_to_vertex mapping
-    let a1_addr = CellRef {
-        sheet_id: 0,
-        coord: Coord::new(1, 1, true, true), // A1 = row 1, col 1
-    };
+    let a1_addr = cell_ref(0, 1, 1);
     let a1_from_graph = graph.get_vertex_for_cell(&a1_addr);
     println!("A1 from get_vertex_for_cell: {a1_from_graph:?}");
     println!("A1 CellRef: {a1_addr:?}");

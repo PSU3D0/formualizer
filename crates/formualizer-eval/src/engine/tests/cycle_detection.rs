@@ -1,4 +1,5 @@
 //! Tests for cycle detection using the Scheduler.
+use super::common::abs_cell_ref;
 use crate::engine::{DependencyGraph, Scheduler, VertexId};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -42,10 +43,10 @@ fn test_two_node_cycle_detection() {
 
     // Get the actual vertex IDs for A1 and B1
     let a1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 1))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
     let b1_id = *graph
-        .get_vertex_id_for_address(&crate::CellRef::new_absolute(0, 1, 2))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 2))
         .unwrap();
 
     let cycle_set: std::collections::HashSet<VertexId> =
@@ -88,14 +89,8 @@ fn test_cycle_with_acyclic_branch() {
     assert_eq!(schedule.layers[0].vertices.len(), 1); // Layer 0: D1
     assert_eq!(schedule.layers[1].vertices.len(), 1); // Layer 1: C1
 
-    let d1_id = graph
-        .cell_to_vertex()
-        .get(&crate::CellRef::new_absolute(0, 2, 2))
-        .unwrap();
-    let c1_id = graph
-        .cell_to_vertex()
-        .get(&crate::CellRef::new_absolute(0, 2, 1))
-        .unwrap();
+    let d1_id = graph.cell_to_vertex().get(&abs_cell_ref(0, 2, 2)).unwrap();
+    let c1_id = graph.cell_to_vertex().get(&abs_cell_ref(0, 2, 1)).unwrap();
 
     assert_eq!(schedule.layers[0].vertices[0], *d1_id);
     assert_eq!(schedule.layers[1].vertices[0], *c1_id);

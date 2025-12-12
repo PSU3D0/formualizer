@@ -3,7 +3,7 @@
 //! These tests verify the core property: "For any N-by-M range, if I change any cell (r, c)
 //! inside it, the dependent formula must become dirty. If I change a cell outside it, it must not."
 
-use crate::CellRef;
+use super::common::abs_cell_ref;
 use crate::engine::{DependencyGraph, EvalConfig, VertexId};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
@@ -88,7 +88,7 @@ fn test_property_small_range_dependency_tracking() {
         )
         .unwrap();
 
-    let formula_addr = CellRef::new_absolute(0, formula_row, formula_col);
+    let formula_addr = abs_cell_ref(0, formula_row, formula_col);
     let formula_id = *graph.get_vertex_id_for_address(&formula_addr).unwrap();
 
     // Clear initial dirty state
@@ -168,7 +168,7 @@ fn test_property_large_range_stripe_tracking() {
         )
         .unwrap();
 
-    let formula_addr = CellRef::new_absolute(0, formula_row, formula_col);
+    let formula_addr = abs_cell_ref(0, formula_row, formula_col);
     let formula_id = *graph.get_vertex_id_for_address(&formula_addr).unwrap();
 
     // Clear initial dirty state
@@ -245,7 +245,7 @@ fn test_property_wide_range_stripe_tracking() {
         )
         .unwrap();
 
-    let formula_addr = CellRef::new_absolute(0, formula_row, formula_col);
+    let formula_addr = abs_cell_ref(0, formula_row, formula_col);
     let formula_id = *graph.get_vertex_id_for_address(&formula_addr).unwrap();
 
     // Clear initial dirty state
@@ -324,7 +324,7 @@ fn test_property_dense_range_block_stripe_tracking() {
         )
         .unwrap();
 
-    let formula_addr = CellRef::new_absolute(0, formula_row, formula_col);
+    let formula_addr = abs_cell_ref(0, formula_row, formula_col);
     let formula_id = *graph.get_vertex_id_for_address(&formula_addr).unwrap();
 
     // Clear initial dirty state
@@ -399,10 +399,10 @@ fn test_property_multiple_overlapping_ranges() {
         .unwrap();
 
     let formula1_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 4))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 4))
         .unwrap();
     let formula2_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 2, 4))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 2, 4))
         .unwrap();
 
     // Clear initial dirty state
@@ -489,7 +489,7 @@ fn test_property_cross_sheet_ranges() {
         .unwrap();
 
     let formula_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 1))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
 
     // Clear initial dirty state
@@ -548,7 +548,7 @@ fn test_property_edge_cases() {
         .unwrap();
 
     let formula_id = *graph
-        .get_vertex_id_for_address(&CellRef::new_absolute(0, 1, 1))
+        .get_vertex_id_for_address(&abs_cell_ref(0, 1, 1))
         .unwrap();
 
     // Clear initial dirty state
@@ -590,7 +590,7 @@ fn test_property_formula_replacement_cleanup() {
 
     let formula_row = 1;
     let formula_col = 1;
-    let formula_addr = CellRef::new_absolute(0, formula_row, formula_col);
+    let formula_addr = abs_cell_ref(0, formula_row, formula_col);
 
     // Initial formula: A1 = SUM(B1:B100)
     graph

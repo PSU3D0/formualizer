@@ -390,11 +390,13 @@ impl<'g> VertexEditor<'g> {
 
         let id = match meta.kind {
             VertexKind::Cell => {
-                // Create with empty value initially
+                // Create with empty value initially.
+                // NOTE: VertexEditor/VertexMeta use internal 0-based coords, while
+                // DependencyGraph::set_cell_value is a public 1-based API. Convert here.
                 match self.graph.set_cell_value(
                     &sheet_name,
-                    meta.coord.row(),
-                    meta.coord.col(),
+                    meta.coord.row() + 1,
+                    meta.coord.col() + 1,
                     LiteralValue::Empty,
                 ) {
                     Ok(summary) => summary
@@ -406,12 +408,13 @@ impl<'g> VertexEditor<'g> {
                 }
             }
             _ => {
-                // For now, treat other kinds as cells
-                // A full implementation would handle different vertex kinds properly
+                // For now, treat other kinds as cells.
+                // A full implementation would handle different vertex kinds properly.
+                // Convert internal 0-based coords to public 1-based API.
                 match self.graph.set_cell_value(
                     &sheet_name,
-                    meta.coord.row(),
-                    meta.coord.col(),
+                    meta.coord.row() + 1,
+                    meta.coord.col() + 1,
                     LiteralValue::Empty,
                 ) {
                     Ok(summary) => summary
@@ -1068,10 +1071,11 @@ impl<'g> VertexEditor<'g> {
             .and_then(|&id| self.graph.get_value(id));
 
         // Use the existing DependencyGraph API
+        // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
         match self.graph.set_cell_value(
             &sheet_name,
-            cell_ref.coord.row(),
-            cell_ref.coord.col(),
+            cell_ref.coord.row() + 1,
+            cell_ref.coord.col() + 1,
             value.clone(),
         ) {
             Ok(summary) => {
@@ -1104,10 +1108,11 @@ impl<'g> VertexEditor<'g> {
             .and_then(|&id| self.graph.get_formula(id));
 
         // Use the existing DependencyGraph API
+        // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
         match self.graph.set_cell_formula(
             &sheet_name,
-            cell_ref.coord.row(),
-            cell_ref.coord.col(),
+            cell_ref.coord.row() + 1,
+            cell_ref.coord.col() + 1,
             formula.clone(),
         ) {
             Ok(summary) => {
@@ -1419,7 +1424,7 @@ impl<'g> VertexEditor<'g> {
                 name: sheet_name.to_string(),
                 reason: "Sheet not found".to_string(),
             })?;
-        let cell_ref = CellRef::new(sheet_id, Coord::new(row, col, true, true));
+        let cell_ref = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
         self.define_name(name, NamedDefinition::Cell(cell_ref), scope)
     }
 
@@ -1441,8 +1446,11 @@ impl<'g> VertexEditor<'g> {
                 name: sheet_name.to_string(),
                 reason: "Sheet not found".to_string(),
             })?;
-        let start = CellRef::new(sheet_id, Coord::new(start_row, start_col, true, true));
-        let end = CellRef::new(sheet_id, Coord::new(end_row, end_col, true, true));
+        let start = CellRef::new(
+            sheet_id,
+            Coord::from_excel(start_row, start_col, true, true),
+        );
+        let end = CellRef::new(sheet_id, Coord::from_excel(end_row, end_col, true, true));
         let range_ref = crate::reference::RangeRef::new(start, end);
         self.define_name(name, NamedDefinition::Range(range_ref), scope)
     }

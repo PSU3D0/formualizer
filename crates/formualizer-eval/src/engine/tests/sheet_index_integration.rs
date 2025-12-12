@@ -9,7 +9,7 @@ fn sum_formula(row1: u32, col1: u32, row2: u32, col2: u32) -> ASTNode {
             op: "+".to_string(),
             left: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
-                    original: format!("A{}", row1 + 1),
+                    original: format!("A{row1}"),
                     reference: ReferenceType::Cell {
                         sheet: None,
                         row: row1,
@@ -21,7 +21,7 @@ fn sum_formula(row1: u32, col1: u32, row2: u32, col2: u32) -> ASTNode {
             }),
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
-                    original: format!("A{}", row2 + 1),
+                    original: format!("A{row2}"),
                     reference: ReferenceType::Cell {
                         sheet: None,
                         row: row2,
@@ -54,21 +54,21 @@ fn test_sheet_index_updated_on_vertex_creation() {
         .expect("Sheet index should exist");
 
     // Query for the exact row
-    let row_vertices = index.vertices_in_row_range(5, 5);
+    let row_vertices = index.vertices_in_row_range(4, 4);
     assert!(
         row_vertices.contains(&vertex_id),
         "Vertex should be in row 5"
     );
 
     // Query for the exact column
-    let col_vertices = index.vertices_in_col_range(10, 10);
+    let col_vertices = index.vertices_in_col_range(9, 9);
     assert!(
         col_vertices.contains(&vertex_id),
         "Vertex should be in column 10"
     );
 
     // Query for a range containing the vertex
-    let range_vertices = index.vertices_in_rect(3, 7, 8, 12);
+    let range_vertices = index.vertices_in_rect(2, 6, 7, 11);
     assert!(
         range_vertices.contains(&vertex_id),
         "Vertex should be in the range"
@@ -118,16 +118,16 @@ fn test_sheet_index_range_query_for_shifts() {
 
     // Create cells that would be affected by "insert rows at row 10"
     let _r5 = graph
-        .set_cell_value("Sheet1", 5, 0, LiteralValue::Number(5.0))
+        .set_cell_value("Sheet1", 5, 1, LiteralValue::Number(5.0))
         .unwrap();
     let _r15 = graph
-        .set_cell_value("Sheet1", 15, 0, LiteralValue::Number(15.0))
+        .set_cell_value("Sheet1", 15, 1, LiteralValue::Number(15.0))
         .unwrap();
     let _r25 = graph
-        .set_cell_value("Sheet1", 25, 0, LiteralValue::Number(25.0))
+        .set_cell_value("Sheet1", 25, 1, LiteralValue::Number(25.0))
         .unwrap();
     let _r35 = graph
-        .set_cell_value("Sheet1", 35, 0, LiteralValue::Number(35.0))
+        .set_cell_value("Sheet1", 35, 1, LiteralValue::Number(35.0))
         .unwrap();
 
     let sheet_id = graph.sheet_id("Sheet1").unwrap();
@@ -151,7 +151,7 @@ fn test_sheet_index_column_operations() {
     // Create cells in various columns
     for col in [0, 5, 10, 15, 20, 25] {
         graph
-            .set_cell_value("Sheet1", 0, col, LiteralValue::Number(col as f64))
+            .set_cell_value("Sheet1", 1, col + 1, LiteralValue::Number(col as f64))
             .unwrap();
     }
 
@@ -179,8 +179,8 @@ fn test_sheet_index_rectangular_range() {
             graph
                 .set_cell_value(
                     "Sheet1",
-                    row,
-                    col,
+                    row + 1,
+                    col + 1,
                     LiteralValue::Number((row * 5 + col) as f64),
                 )
                 .unwrap();
@@ -228,7 +228,7 @@ fn test_sheet_index_sparse_efficiency() {
         .expect("Sheet index should exist");
 
     // This query should be O(log n + k) not O(n)
-    let high_rows = index.vertices_in_row_range(100_000, u32::MAX);
+    let high_rows = index.vertices_in_row_range(99_999, u32::MAX);
     assert_eq!(
         high_rows.len(),
         3,
@@ -236,7 +236,7 @@ fn test_sheet_index_sparse_efficiency() {
     );
 
     // Column range query should also be efficient
-    let mid_cols = index.vertices_in_col_range(10, 20);
+    let mid_cols = index.vertices_in_col_range(9, 19);
     assert_eq!(
         mid_cols.len(),
         3,
@@ -250,14 +250,14 @@ fn test_sheet_index_with_formulas() {
 
     // Create cells with formulas
     graph
-        .set_cell_value("Sheet1", 1, 0, LiteralValue::Number(10.0))
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
         .unwrap();
     graph
-        .set_cell_value("Sheet1", 2, 0, LiteralValue::Number(20.0))
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(20.0))
         .unwrap();
 
-    let formula = sum_formula(0, 0, 1, 0); // =A1+A2
-    let result = graph.set_cell_formula("Sheet1", 3, 0, formula).unwrap();
+    let formula = sum_formula(1, 1, 2, 1); // =A1+A2
+    let result = graph.set_cell_formula("Sheet1", 3, 1, formula).unwrap();
     let formula_vertex = result.affected_vertices[0];
 
     let sheet_id = graph.sheet_id("Sheet1").unwrap();
@@ -266,7 +266,7 @@ fn test_sheet_index_with_formulas() {
         .expect("Sheet index should exist");
 
     // Formula cell should be in the index
-    let row3_vertices = index.vertices_in_row_range(3, 3);
+    let row3_vertices = index.vertices_in_row_range(2, 2);
     assert!(
         row3_vertices.contains(&formula_vertex),
         "Formula vertex should be indexed"

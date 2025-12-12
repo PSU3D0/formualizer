@@ -335,14 +335,9 @@ impl ReferenceType {
             let (start_col, start_row) = Self::parse_range_part_with_abs(start)?;
             let (end_col, end_row) = Self::parse_range_part_with_abs(end)?;
 
-            let range = SheetRangeRef::from_parts(
-                sheet_loc,
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-            )
-            .map_err(|err| ParsingError::InvalidReference(err.to_string()))?;
+            let range =
+                SheetRangeRef::from_parts(sheet_loc, start_row, start_col, end_row, end_col)
+                    .map_err(|err| ParsingError::InvalidReference(err.to_string()))?;
             Ok(SheetRef::Range(range))
         } else {
             let (row, col, row_abs, col_abs) = parse_a1_1based(&ref_part)
@@ -414,9 +409,9 @@ impl ReferenceType {
             }
 
             let row_str = &part[row_start..i];
-            let row1 = row_str.parse::<u32>().map_err(|_| {
-                ParsingError::InvalidReference(format!("Invalid row: {row_str}"))
-            })?;
+            let row1 = row_str
+                .parse::<u32>()
+                .map_err(|_| ParsingError::InvalidReference(format!("Invalid row: {row_str}")))?;
             if row1 == 0 {
                 return Err(ParsingError::InvalidReference(format!(
                     "Invalid range part: {part}"
@@ -446,9 +441,9 @@ impl ReferenceType {
         }
 
         let row_str = &part[row_start..i];
-        let row1 = row_str.parse::<u32>().map_err(|_| {
-            ParsingError::InvalidReference(format!("Invalid row: {row_str}"))
-        })?;
+        let row1 = row_str
+            .parse::<u32>()
+            .map_err(|_| ParsingError::InvalidReference(format!("Invalid row: {row_str}")))?;
         if row1 == 0 {
             return Err(ParsingError::InvalidReference(format!(
                 "Invalid range part: {part}"

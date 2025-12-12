@@ -63,8 +63,12 @@ impl<'a> TryFrom<SheetRangeRef<'a>> for RangeAddress {
             .sheet
             .name()
             .ok_or(SheetAddressError::MissingSheetName)?;
-        let (sr, sc, er, ec) = match (value.start_row, value.start_col, value.end_row, value.end_col)
-        {
+        let (sr, sc, er, ec) = match (
+            value.start_row,
+            value.start_col,
+            value.end_row,
+            value.end_col,
+        ) {
             (Some(sr), Some(sc), Some(er), Some(ec)) => (sr, sc, er, ec),
             _ => return Err(SheetAddressError::UnboundedRange),
         };

@@ -187,7 +187,10 @@ capabilities: { profile: core-v0 }
 ports: []
 "#;
     let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
-    assert_eq!(manifest.effective_profile(), sheetport_spec::Profile::CoreV0);
+    assert_eq!(
+        manifest.effective_profile(),
+        sheetport_spec::Profile::CoreV0
+    );
 }
 
 #[test]
@@ -210,7 +213,9 @@ ports:
     let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
     let err = manifest.validate().expect_err("validation should fail");
     assert!(
-        err.issues().iter().any(|issue| issue.path == "ports[0].location"),
+        err.issues()
+            .iter()
+            .any(|issue| issue.path == "ports[0].location"),
         "expected location issue, got {:#?}",
         err.issues()
     );
@@ -236,7 +241,9 @@ ports:
     let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
     let err = manifest.validate().expect_err("validation should fail");
     assert!(
-        err.issues().iter().any(|issue| issue.path == "ports[0].location"),
+        err.issues()
+            .iter()
+            .any(|issue| issue.path == "ports[0].location"),
         "expected location issue, got {:#?}",
         err.issues()
     );
@@ -257,7 +264,9 @@ ports:
     let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
     let err = manifest.validate().expect_err("validation should fail");
     assert!(
-        err.issues().iter().any(|issue| issue.path == "ports[0].location"),
+        err.issues()
+            .iter()
+            .any(|issue| issue.path == "ports[0].location"),
         "expected location issue, got {:#?}",
         err.issues()
     );
@@ -282,7 +291,9 @@ ports:
     let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
     let err = manifest.validate().expect_err("validation should fail");
     assert!(
-        err.issues().iter().any(|issue| issue.path == "ports[0].location"),
+        err.issues()
+            .iter()
+            .any(|issue| issue.path == "ports[0].location"),
         "expected location issue, got {:#?}",
         err.issues()
     );
@@ -326,7 +337,9 @@ ports:
         - { name: a, type: number }
 "#;
     let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
-    manifest.validate().expect("full profile allows table selector");
+    manifest
+        .validate()
+        .expect("full profile allows table selector");
 }
 
 #[test]
@@ -405,12 +418,16 @@ ports:
     let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
     let err = manifest.validate().expect_err("validation should fail");
     assert!(
-        err.issues().iter().any(|issue| issue.path == "ports[0].constraints.min"),
+        err.issues()
+            .iter()
+            .any(|issue| issue.path == "ports[0].constraints.min"),
         "expected min typing issue, got {:#?}",
         err.issues()
     );
     assert!(
-        err.issues().iter().any(|issue| issue.path == "ports[0].constraints.max"),
+        err.issues()
+            .iter()
+            .any(|issue| issue.path == "ports[0].constraints.max"),
         "expected max typing issue, got {:#?}",
         err.issues()
     );

@@ -51,11 +51,11 @@ fn dependents_redirty_on_formula_edit_direct_chain() {
     let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
     let b1 = engine
         .graph
-        .get_vertex_for_cell(&CellRef::new(sheet_id, Coord::new(1, 2, true, true)))
+        .get_vertex_for_cell(&CellRef::new(sheet_id, Coord::from_excel(1, 2, true, true)))
         .unwrap();
     let c1 = engine
         .graph
-        .get_vertex_for_cell(&CellRef::new(sheet_id, Coord::new(1, 3, true, true)))
+        .get_vertex_for_cell(&CellRef::new(sheet_id, Coord::from_excel(1, 3, true, true)))
         .unwrap();
 
     // Ensure both B1 and C1 are scheduled (redirtied)
@@ -101,11 +101,11 @@ fn dependents_redirty_when_value_becomes_formula() {
     let sid = engine.graph.sheet_id("Sheet1").unwrap();
     let b1 = engine
         .graph
-        .get_vertex_for_cell(&CellRef::new(sid, Coord::new(1, 2, true, true)))
+        .get_vertex_for_cell(&CellRef::new(sid, Coord::from_excel(1, 2, true, true)))
         .unwrap();
     let c1 = engine
         .graph
-        .get_vertex_for_cell(&CellRef::new(sid, Coord::new(1, 3, true, true)))
+        .get_vertex_for_cell(&CellRef::new(sid, Coord::from_excel(1, 3, true, true)))
         .unwrap();
     let scheduled = engine.graph.get_evaluation_vertices();
     assert!(scheduled.contains(&b1));
@@ -137,7 +137,10 @@ fn whole_column_dependent_redirty_on_formula_edit() {
     let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
     let s1 = engine
         .graph
-        .get_vertex_for_cell(&CellRef::new(sheet_id, Coord::new(1, 19, true, true)))
+        .get_vertex_for_cell(&CellRef::new(
+            sheet_id,
+            Coord::from_excel(1, 19, true, true),
+        ))
         .unwrap();
     let scheduled = engine.graph.get_evaluation_vertices();
     assert!(
@@ -174,7 +177,7 @@ fn cross_sheet_whole_column_dependent_redirty_on_formula_edit() {
     let s2_id = engine.graph.sheet_id("Sheet2").unwrap();
     let a1_sheet2 = engine
         .graph
-        .get_vertex_for_cell(&CellRef::new(s2_id, Coord::new(1, 1, true, true)))
+        .get_vertex_for_cell(&CellRef::new(s2_id, Coord::from_excel(1, 1, true, true)))
         .unwrap();
     let scheduled = engine.graph.get_evaluation_vertices();
     assert!(
