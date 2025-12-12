@@ -1637,7 +1637,6 @@ where
         #[cfg(feature = "tracing")]
         let _span =
             tracing::info_span!("demand_subgraph", targets = target_vertices.len()).entered();
-        use formualizer_parse::parser::ReferenceType;
         use rustc_hash::{FxHashMap, FxHashSet};
 
         let mut to_evaluate: FxHashSet<VertexId> = FxHashSet::default();
@@ -1684,25 +1683,17 @@ where
             if let Some(ranges) = self.graph.get_range_dependencies(v) {
                 let current_sheet_id = self.graph.get_vertex_sheet_id(v);
                 for r in ranges {
-                    if let ReferenceType::Range {
-                        sheet,
-                        start_row,
-                        start_col,
-                        end_row,
-                        end_col,
-                    } = r
-                    {
-                        let sheet_id = sheet
-                            .as_ref()
-                            .and_then(|name| self.graph.sheet_id(name))
-                            .unwrap_or(current_sheet_id);
-                        let sheet_name = self.graph.sheet_name(sheet_id);
+                    let sheet_id = match r.sheet {
+                        formualizer_common::SheetLocator::Id(id) => id,
+                        _ => current_sheet_id,
+                    };
+                    let sheet_name = self.graph.sheet_name(sheet_id);
 
-                        // Infer bounds like resolve_range_view
-                        let mut sr = *start_row;
-                        let mut sc = *start_col;
-                        let mut er = *end_row;
-                        let mut ec = *end_col;
+                    // Infer bounds like resolve_range_view (r bounds are 0-based)
+                    let mut sr = r.start_row.map(|b| b.index + 1);
+                    let mut sc = r.start_col.map(|b| b.index + 1);
+                    let mut er = r.end_row.map(|b| b.index + 1);
+                    let mut ec = r.end_col.map(|b| b.index + 1);
 
                         if sr.is_none() && er.is_none() {
                             let scv = sc.unwrap_or(1);
@@ -1809,7 +1800,6 @@ where
                                 }
                             }
                         }
-                    }
                 }
             }
         }
