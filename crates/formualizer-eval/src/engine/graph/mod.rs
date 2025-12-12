@@ -17,7 +17,7 @@ pub struct GraphInstrumentation {
 type ExtractDependenciesResult = Result<
     (
         Vec<VertexId>,
-        Vec<ReferenceType>,
+        Vec<SharedRangeRef<'static>>,
         Vec<CellRef>,
         Vec<VertexId>,
     ),
@@ -412,7 +412,7 @@ impl DependencyGraph {
     pub fn add_range_edges(
         &mut self,
         dependent: VertexId,
-        ranges: &[ReferenceType],
+        ranges: &[SharedRangeRef<'static>],
         current_sheet_id: SheetId,
     ) {
         self.add_range_dependent_edges(dependent, ranges, current_sheet_id);
@@ -1480,7 +1480,7 @@ impl DependencyGraph {
         current_sheet_id: SheetId,
     ) -> ExtractDependenciesResult {
         let mut dependencies = FxHashSet::default();
-        let mut range_dependencies = Vec::new();
+        let mut range_dependencies: Vec<SharedRangeRef<'static>> = Vec::new();
         let mut created_placeholders = Vec::new();
         let mut named_dependencies = Vec::new();
         self.extract_dependencies_recursive(
@@ -1516,7 +1516,7 @@ impl DependencyGraph {
         ast: &ASTNode,
         current_sheet_id: SheetId,
         dependencies: &mut FxHashSet<VertexId>,
-        range_dependencies: &mut Vec<ReferenceType>,
+        range_dependencies: &mut Vec<SharedRangeRef<'static>>,
         created_placeholders: &mut Vec<CellRef>,
         named_dependencies: &mut Vec<VertexId>,
     ) -> Result<(), ExcelError> {
@@ -1544,7 +1544,21 @@ impl DependencyGraph {
                             || start_col.is_none()
                             || end_col.is_none();
                         if has_unbounded {
-                            range_dependencies.push(reference.clone());
+                            if let Some(SharedRef::Range(range)) = reference.to_sheet_ref_lossy() {
+                                let owned = range.into_owned();
+                                let sheet_id = match owned.sheet {
+                                    SharedSheetLocator::Id(id) => id,
+                                    SharedSheetLocator::Current => current_sheet_id,
+                                    SharedSheetLocator::Name(name) => self.sheet_id_mut(name.as_ref()),
+                                };
+                                range_dependencies.push(SharedRangeRef {
+                                    sheet: SharedSheetLocator::Id(sheet_id),
+                                    start_row: owned.start_row,
+                                    start_col: owned.start_col,
+                                    end_row: owned.end_row,
+                                    end_col: owned.end_col,
+                                });
+                            }
                         } else {
                             let sr = start_row.unwrap();
                             let sc = start_col.unwrap();
@@ -1576,7 +1590,21 @@ impl DependencyGraph {
                                 }
                             } else {
                                 // Keep as a compressed range dependency
-                                range_dependencies.push(reference.clone());
+                                if let Some(SharedRef::Range(range)) = reference.to_sheet_ref_lossy() {
+                                    let owned = range.into_owned();
+                                    let sheet_id = match owned.sheet {
+                                        SharedSheetLocator::Id(id) => id,
+                                        SharedSheetLocator::Current => current_sheet_id,
+                                        SharedSheetLocator::Name(name) => self.sheet_id_mut(name.as_ref()),
+                                    };
+                                    range_dependencies.push(SharedRangeRef {
+                                        sheet: SharedSheetLocator::Id(sheet_id),
+                                        start_row: owned.start_row,
+                                        start_col: owned.start_col,
+                                        end_row: owned.end_row,
+                                        end_col: owned.end_col,
+                                    });
+                                }
                             }
                         }
                     }
@@ -1884,45 +1912,9 @@ impl DependencyGraph {
                 self.add_dependent_edges_nobatch(tvid, &deps);
             }
 
-            // Rebuild ranges from RangeKey and add via existing helper
+            // Range deps from plan are already compact RangeKeys; register directly.
             if let Some(rks) = plan.per_formula_ranges.get(i) {
-                let mut range_refs: Vec<ReferenceType> = Vec::with_capacity(rks.len());
-                use crate::engine::plan::RangeKey as RK;
-                for rk in rks {
-                    match rk {
-                        RK::Rect { sheet, start, end } => range_refs.push(ReferenceType::Range {
-                            sheet: Some(self.sheet_name(*sheet).to_string()),
-                            start_row: Some(start.row() + 1),
-                            start_col: Some(start.col() + 1),
-                            end_row: Some(end.row() + 1),
-                            end_col: Some(end.col() + 1),
-                        }),
-                        RK::WholeRow { sheet, row } => range_refs.push(ReferenceType::Range {
-                            sheet: Some(self.sheet_name(*sheet).to_string()),
-                            start_row: Some(*row),
-                            start_col: None,
-                            end_row: Some(*row),
-                            end_col: None,
-                        }),
-                        RK::WholeCol { sheet, col } => range_refs.push(ReferenceType::Range {
-                            sheet: Some(self.sheet_name(*sheet).to_string()),
-                            start_row: None,
-                            start_col: Some(*col),
-                            end_row: None,
-                            end_col: Some(*col),
-                        }),
-                        RK::OpenRect { sheet, start, end } => {
-                            range_refs.push(ReferenceType::Range {
-                                sheet: Some(self.sheet_name(*sheet).to_string()),
-                                start_row: start.map(|p| p.row() + 1),
-                                start_col: start.map(|p| p.col() + 1),
-                                end_row: end.map(|p| p.row() + 1),
-                                end_col: end.map(|p| p.col() + 1),
-                            })
-                        }
-                    }
-                }
-                self.add_range_dependent_edges(tvid, &range_refs, sheet_id);
+                self.add_range_deps_from_keys(tvid, rks, sheet_id);
             }
         }
         self.edges.end_batch();
@@ -1956,41 +1948,16 @@ impl DependencyGraph {
     fn add_range_dependent_edges(
         &mut self,
         dependent: VertexId,
-        ranges: &[ReferenceType],
+        ranges: &[SharedRangeRef<'static>],
         current_sheet_id: SheetId,
     ) {
         if ranges.is_empty() {
             return;
         }
 
-        let mut shared_ranges: Vec<SharedRangeRef<'static>> = Vec::with_capacity(ranges.len());
-        for r in ranges {
-            let Some(SharedRef::Range(range)) = r.to_sheet_ref_lossy() else {
-                continue;
-            };
-            let owned = range.into_owned();
-            let sheet_id = match owned.sheet {
-                SharedSheetLocator::Id(id) => id,
-                SharedSheetLocator::Current => current_sheet_id,
-                SharedSheetLocator::Name(name) => self.sheet_id_mut(name.as_ref()),
-            };
-            shared_ranges.push(SharedRangeRef {
-                sheet: SharedSheetLocator::Id(sheet_id),
-                start_row: owned.start_row,
-                start_col: owned.start_col,
-                end_row: owned.end_row,
-                end_col: owned.end_col,
-            });
-        }
+        self.formula_to_range_deps.insert(dependent, ranges.to_vec());
 
-        if shared_ranges.is_empty() {
-            return;
-        }
-
-        self.formula_to_range_deps
-            .insert(dependent, shared_ranges.clone());
-
-        for range in &shared_ranges {
+        for range in ranges {
             let sheet_id = match range.sheet {
                 SharedSheetLocator::Id(id) => id,
                 _ => current_sheet_id,
@@ -2580,7 +2547,7 @@ impl DependencyGraph {
         self.unregister_name_cell_dependencies(vertex);
 
         let mut dependencies: Vec<VertexId> = Vec::new();
-        let mut range_dependencies: Vec<ReferenceType> = Vec::new();
+        let mut range_dependencies: Vec<SharedRangeRef<'static>> = Vec::new();
         let mut placeholders = Vec::new();
 
         match definition {
@@ -2613,14 +2580,32 @@ impl DependencyGraph {
                         }
                     }
                 } else {
-                    let sheet_name = self.sheet_name(range_ref.start.sheet_id).to_string();
-                    range_dependencies.push(ReferenceType::Range {
-                        sheet: Some(sheet_name),
-                        start_row: Some(range_ref.start.coord.row()),
-                        start_col: Some(range_ref.start.coord.col()),
-                        end_row: Some(range_ref.end.coord.row()),
-                        end_col: Some(range_ref.end.coord.col()),
-                    });
+                    let sheet_loc = SharedSheetLocator::Id(range_ref.start.sheet_id);
+                    let sr = formualizer_common::AxisBound::new(
+                        range_ref.start.coord.row(),
+                        range_ref.start.coord.row_abs(),
+                    );
+                    let sc = formualizer_common::AxisBound::new(
+                        range_ref.start.coord.col(),
+                        range_ref.start.coord.col_abs(),
+                    );
+                    let er = formualizer_common::AxisBound::new(
+                        range_ref.end.coord.row(),
+                        range_ref.end.coord.row_abs(),
+                    );
+                    let ec = formualizer_common::AxisBound::new(
+                        range_ref.end.coord.col(),
+                        range_ref.end.coord.col_abs(),
+                    );
+                    if let Ok(r) = SharedRangeRef::from_parts(
+                        sheet_loc,
+                        Some(sr),
+                        Some(sc),
+                        Some(er),
+                        Some(ec),
+                    ) {
+                        range_dependencies.push(r.into_owned());
+                    }
                 }
             }
             NamedDefinition::Formula {

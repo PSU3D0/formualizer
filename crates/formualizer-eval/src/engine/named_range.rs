@@ -1,7 +1,7 @@
-use formualizer_parse::{ASTNode, parser::ReferenceType};
+use formualizer_parse::ASTNode;
 use rustc_hash::FxHashSet;
 
-use crate::{CellRef, RangeRef, SheetId, engine::VertexId};
+use crate::{engine::VertexId, reference::SharedRangeRef, CellRef, RangeRef, SheetId};
 
 /// Scope of a named range
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,7 +25,7 @@ pub enum NamedDefinition {
         /// Cached dependencies from last parse
         dependencies: Vec<VertexId>,
         /// Cached range dependencies
-        range_deps: Vec<ReferenceType>,
+        range_deps: Vec<SharedRangeRef<'static>>,
     },
 }
 
