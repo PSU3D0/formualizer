@@ -529,7 +529,7 @@ impl Workbook {
                         let c = start_col + ci as u32;
                         let cell = formualizer_eval::reference::CellRef::new(
                             sheet_id,
-                            formualizer_eval::reference::Coord::new(r, c, true, true),
+                            formualizer_eval::reference::Coord::from_excel(r, c, true, true),
                         );
                         editor.set_cell_value(cell, v.clone());
                         overlay_ops.push((r, c, v.clone()));

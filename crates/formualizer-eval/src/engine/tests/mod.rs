@@ -49,6 +49,7 @@ mod context_default_noops;
 mod countifs_arrow_overlay;
 mod criteria_overlay_parity;
 mod formula_edit_propagation;
+mod formula_error_propagation;
 mod formula_overlay_writeback;
 mod overlay_compaction;
 mod region_lock;

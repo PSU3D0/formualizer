@@ -814,6 +814,31 @@ where
         }
     }
 
+    fn mirror_vertex_value_to_overlay(&mut self, vertex_id: VertexId, value: &LiteralValue) {
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+        {
+            return;
+        }
+        if !matches!(
+            self.graph.get_vertex_kind(vertex_id),
+            VertexKind::FormulaScalar | VertexKind::FormulaArray
+        ) {
+            return;
+        }
+        let Some(cell) = self.graph.get_cell_ref(vertex_id) else {
+            return;
+        };
+        let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+        self.mirror_value_to_overlay(
+            &sheet_name,
+            cell.coord.row() + 1,
+            cell.coord.col() + 1,
+            value,
+        );
+    }
+
     fn resolve_sheet_locator_for_write(
         &mut self,
         loc: formualizer_common::SheetLocator<'_>,
@@ -1014,6 +1039,7 @@ where
         let ast = self.graph.get_formula(vid);
         Some((ast, v))
     }
+
 
     /// Begin batch operations - defer CSR rebuilds for better performance
     pub fn begin_batch(&mut self) {
@@ -2249,12 +2275,10 @@ where
                 layer
                     .vertices
                     .par_iter()
-                    .map(
-                        |&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
-                            Ok(v) => Ok((vertex_id, v)),
-                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                        },
-                    )
+                    .map(|&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
+                        Ok(v) => Ok((vertex_id, v)),
+                        Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
+                    })
                     .collect()
             });
 
@@ -2262,7 +2286,8 @@ where
         match results {
             Ok(vertex_results) => {
                 for (vertex_id, result) in vertex_results {
-                    self.graph.update_vertex_value(vertex_id, result);
+                    self.graph.update_vertex_value(vertex_id, result.clone());
+                    self.mirror_vertex_value_to_overlay(vertex_id, &result);
                 }
                 Ok(layer.vertices.len())
             }
@@ -2311,7 +2336,8 @@ where
         match results {
             Ok(vertex_results) => {
                 for (vertex_id, result) in vertex_results {
-                    self.graph.update_vertex_value(vertex_id, result);
+                    self.graph.update_vertex_value(vertex_id, result.clone());
+                    self.mirror_vertex_value_to_overlay(vertex_id, &result);
                 }
                 Ok(layer.vertices.len())
             }
@@ -2593,9 +2619,61 @@ where
             SheetRef as SharedRef,
         };
 
-        let sr = reference
-            .to_sheet_ref_lossy()
-            .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+        // ReferenceType does not retain $ anchors. For evaluation and identity
+        // we treat all coordinates as absolute to match graph cell addressing.
+        // Anchor semantics are handled separately by rewrite/adjustment passes.
+        let sr = match reference {
+            ReferenceType::Cell { sheet, row, col } => {
+                let row0 = row.checked_sub(1).ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                let col0 = col.checked_sub(1).ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                let sheet_loc = match sheet.as_deref() {
+                    Some(name) => SheetLocator::from_name(name),
+                    None => SheetLocator::Current,
+                };
+                let coord = formualizer_common::RelativeCoord::new(row0, col0, true, true);
+                SharedRef::Cell(SharedCellRef::new(sheet_loc, coord))
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => {
+                let sheet_loc = match sheet.as_deref() {
+                    Some(name) => SheetLocator::from_name(name),
+                    None => SheetLocator::Current,
+                };
+
+                fn bound_from_1based(v: Option<u32>) -> Option<formualizer_common::AxisBound> {
+                    v.and_then(|x| x.checked_sub(1).map(|i| formualizer_common::AxisBound::new(i, true)))
+                }
+
+                let sr = bound_from_1based(*start_row);
+                if start_row.is_some() && sr.is_none() {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref));
+                }
+                let sc = bound_from_1based(*start_col);
+                if start_col.is_some() && sc.is_none() {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref));
+                }
+                let er = bound_from_1based(*end_row);
+                if end_row.is_some() && er.is_none() {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref));
+                }
+                let ec = bound_from_1based(*end_col);
+                if end_col.is_some() && ec.is_none() {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref));
+                }
+
+                let range = SharedRangeRef::from_parts(sheet_loc, sr, sc, er, ec)
+                    .map_err(|_| ExcelError::new(ExcelErrorKind::Ref))?;
+                SharedRef::Range(range)
+            }
+            _ => {
+                return Err(ExcelError::new(ExcelErrorKind::Ref));
+            }
+        };
 
         let current_id = self
             .graph

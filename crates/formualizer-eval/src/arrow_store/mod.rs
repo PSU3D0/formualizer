@@ -88,6 +88,8 @@ pub struct ColumnChunk {
     lowered_text: OnceCell<ArrayRef>,
     // Phase C: per-chunk overlay (delta edits since last compaction)
     pub overlay: Overlay,
+    // Phase 0/1: separate computed overlay (formula/spill outputs)
+    pub computed_overlay: Overlay,
 }
 
 impl ColumnChunk {
@@ -571,6 +573,7 @@ impl IngestBuilder {
                 lazy_null_errors: OnceCell::new(),
                 lowered_text: OnceCell::new(),
                 overlay: Overlay::new(),
+                computed_overlay: Overlay::new(),
             };
             self.chunks[c].push(chunk);
 
@@ -826,6 +829,7 @@ impl ArrowSheet {
                     lazy_null_errors: OnceCell::new(),
                     lowered_text: OnceCell::new(),
                     overlay: Overlay::new(),
+                    computed_overlay: Overlay::new(),
                 });
             }
             cur_rows += len;
@@ -879,6 +883,7 @@ impl ArrowSheet {
             lazy_null_errors: OnceCell::new(),
             lowered_text: OnceCell::new(),
             overlay: Overlay::new(),
+            computed_overlay: Overlay::new(),
         }
     }
 
@@ -928,6 +933,12 @@ impl ArrowSheet {
                 overlay.set(*k - off, v.clone());
             }
         }
+        let mut computed_overlay = Overlay::new();
+        for (k, v) in ch.computed_overlay.map.iter() {
+            if *k >= off && *k < off + len {
+                computed_overlay.set(*k - off, v.clone());
+            }
+        }
         let non_null_num = numbers.as_ref().map(|a| len - a.null_count()).unwrap_or(0);
         let non_null_bool = booleans.as_ref().map(|a| len - a.null_count()).unwrap_or(0);
         let non_null_text = text.as_ref().map(|a| len - a.null_count()).unwrap_or(0);
@@ -950,9 +961,10 @@ impl ArrowSheet {
             lazy_null_booleans: OnceCell::new(),
             lazy_null_text: OnceCell::new(),
             lazy_null_errors: OnceCell::new(),
-            lowered_text: OnceCell::new(),
-            overlay,
-        }
+             lowered_text: OnceCell::new(),
+             overlay,
+             computed_overlay,
+         }
     }
 
     /// Heuristic compaction: rebuilds a chunk's base arrays by applying its overlay when
@@ -1397,8 +1409,8 @@ impl<'a> ArrowRangeView<'a> {
         let ch = &col_ref.chunks[ch_idx];
         let row_start = self.chunk_starts[ch_idx];
         let in_off = abs_row - row_start;
-        // Overlay takes precedence
-        if let Some(ov) = ch.overlay.get(in_off) {
+        // Overlay takes precedence: user edits over computed over base.
+        if let Some(ov) = ch.overlay.get(in_off).or_else(|| ch.computed_overlay.get(in_off)) {
             return match ov {
                 OverlayValue::Empty => LiteralValue::Empty,
                 OverlayValue::Number(n) => LiteralValue::Number(*n),
@@ -1606,11 +1618,18 @@ impl<'a> ArrowRangeView<'a> {
                 let ch = &col.chunks[ch_idx];
                 let rel_off = (self.sr + cs.row_start) - self.chunk_starts[ch_idx];
                 let seg_range = rel_off..(rel_off + cs.row_len);
-                if ch.overlay.any_in_range(seg_range.clone()) {
+                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
+                    || (!ch.computed_overlay.is_empty()
+                        && ch.computed_overlay.any_in_range(seg_range.clone()));
+                if has_overlay {
                     let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
                     let mut ob = Float64Builder::with_capacity(cs.row_len);
                     for i in 0..cs.row_len {
-                        if let Some(ov) = ch.overlay.get(rel_off + i) {
+                        if let Some(ov) = ch
+                            .overlay
+                            .get(rel_off + i)
+                            .or_else(|| ch.computed_overlay.get(rel_off + i))
+                        {
                             mask_b.append_value(true);
                             match ov {
                                 OverlayValue::Number(n) => ob.append_value(*n),
@@ -1673,11 +1692,18 @@ impl<'a> ArrowRangeView<'a> {
                 let ch = &col.chunks[ch_idx];
                 let rel_off = (self.sr + cs.row_start) - self.chunk_starts[ch_idx];
                 let seg_range = rel_off..(rel_off + cs.row_len);
-                if ch.overlay.any_in_range(seg_range.clone()) {
+                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
+                    || (!ch.computed_overlay.is_empty()
+                        && ch.computed_overlay.any_in_range(seg_range.clone()));
+                if has_overlay {
                     let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
                     let mut bb = BooleanBuilder::with_capacity(cs.row_len);
                     for i in 0..cs.row_len {
-                        if let Some(ov) = ch.overlay.get(rel_off + i) {
+                        if let Some(ov) = ch
+                            .overlay
+                            .get(rel_off + i)
+                            .or_else(|| ch.computed_overlay.get(rel_off + i))
+                        {
                             mask_b.append_value(true);
                             match ov {
                                 OverlayValue::Boolean(b) => bb.append_value(*b),
@@ -1732,11 +1758,18 @@ impl<'a> ArrowRangeView<'a> {
                 let ch = &col.chunks[ch_idx];
                 let rel_off = (self.sr + cs.row_start) - self.chunk_starts[ch_idx];
                 let seg_range = rel_off..(rel_off + cs.row_len);
-                if ch.overlay.any_in_range(seg_range.clone()) {
+                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
+                    || (!ch.computed_overlay.is_empty()
+                        && ch.computed_overlay.any_in_range(seg_range.clone()));
+                if has_overlay {
                     let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
                     let mut sb = StringBuilder::with_capacity(cs.row_len, cs.row_len * 8);
                     for i in 0..cs.row_len {
-                        if let Some(ov) = ch.overlay.get(rel_off + i) {
+                        if let Some(ov) = ch
+                            .overlay
+                            .get(rel_off + i)
+                            .or_else(|| ch.computed_overlay.get(rel_off + i))
+                        {
                             mask_b.append_value(true);
                             match ov {
                                 OverlayValue::Text(s) => sb.append_value(s),
@@ -1790,11 +1823,18 @@ impl<'a> ArrowRangeView<'a> {
                 let ch = &col.chunks[ch_idx];
                 let rel_off = (self.sr + cs.row_start) - self.chunk_starts[ch_idx];
                 let seg_range = rel_off..(rel_off + cs.row_len);
-                if ch.overlay.any_in_range(seg_range.clone()) {
+                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
+                    || (!ch.computed_overlay.is_empty()
+                        && ch.computed_overlay.any_in_range(seg_range.clone()));
+                if has_overlay {
                     let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
                     let mut eb = UInt8Builder::with_capacity(cs.row_len);
                     for i in 0..cs.row_len {
-                        if let Some(ov) = ch.overlay.get(rel_off + i) {
+                        if let Some(ov) = ch
+                            .overlay
+                            .get(rel_off + i)
+                            .or_else(|| ch.computed_overlay.get(rel_off + i))
+                        {
                             mask_b.append_value(true);
                             match ov {
                                 OverlayValue::Error(code) => eb.append_value(*code),
@@ -1860,7 +1900,12 @@ impl<'a> ArrowRangeView<'a> {
                     let rel_off = is - start;
                     if let Some(ch) = col_ref.chunks.get(ci) {
                         // Overlay-aware lowered segment
-                        if ch.overlay.any_in_range(rel_off..(rel_off + seg_len)) {
+                        let has_overlay = ch.overlay.any_in_range(rel_off..(rel_off + seg_len))
+                            || (!ch.computed_overlay.is_empty()
+                                && ch
+                                    .computed_overlay
+                                    .any_in_range(rel_off..(rel_off + seg_len)));
+                        if has_overlay {
                             // Build lowered overlay values builder
                             let mut sb = arrow_array::builder::StringBuilder::with_capacity(
                                 seg_len,
@@ -1870,27 +1915,27 @@ impl<'a> ArrowRangeView<'a> {
                             let mut mb =
                                 arrow_array::builder::BooleanBuilder::with_capacity(seg_len);
                             for i in 0..seg_len {
-                                if let Some(ov) = ch.overlay.get(rel_off + i) {
+                                if let Some(ov) = ch
+                                    .overlay
+                                    .get(rel_off + i)
+                                    .or_else(|| ch.computed_overlay.get(rel_off + i))
+                                {
+                                    mb.append_value(true);
                                     match ov {
                                         OverlayValue::Text(s) => {
                                             sb.append_value(s.to_ascii_lowercase());
-                                            mb.append_value(true);
                                         }
                                         OverlayValue::Empty => {
                                             sb.append_null();
-                                            mb.append_value(true);
                                         }
                                         OverlayValue::Number(n) => {
-                                            sb.append_value(n.to_string().to_ascii_lowercase());
-                                            mb.append_value(true);
+                                            sb.append_value(n.to_string());
                                         }
                                         OverlayValue::Boolean(b) => {
                                             sb.append_value(if *b { "true" } else { "false" });
-                                            mb.append_value(true);
                                         }
                                         OverlayValue::Error(_) | OverlayValue::Pending => {
                                             sb.append_null();
-                                            mb.append_value(true);
                                         }
                                     }
                                 } else {
@@ -2029,6 +2074,36 @@ mod tests {
         assert_eq!(nums[0].1, 2);
         assert_eq!(nums[1].0, 2);
         assert_eq!(nums[1].1, 1);
+    }
+
+    #[test]
+    fn overlay_precedence_user_over_computed() {
+        let mut b = IngestBuilder::new("S", 1, 8, crate::engine::DateSystem::Excel1900);
+        b.append_row(&[LiteralValue::Number(1.0)]).unwrap();
+        b.append_row(&[LiteralValue::Empty]).unwrap();
+        b.append_row(&[LiteralValue::Empty]).unwrap();
+        let mut sheet = b.finish();
+
+        let (ch_i, off) = sheet.chunk_of_row(0).unwrap();
+        sheet.columns[0].chunks[ch_i]
+            .computed_overlay
+            .set(off, OverlayValue::Number(2.0));
+
+        let rv0 = sheet.range_view(0, 0, 0, 0);
+        assert_eq!(rv0.get_cell(0, 0), LiteralValue::Number(2.0));
+        let nums0: Vec<_> = rv0.numbers_slices().collect();
+        assert_eq!(nums0.len(), 1);
+        assert_eq!(nums0[0].2[0].value(0), 2.0);
+
+        sheet.columns[0].chunks[ch_i]
+            .overlay
+            .set(off, OverlayValue::Number(3.0));
+
+        let rv1 = sheet.range_view(0, 0, 0, 0);
+        assert_eq!(rv1.get_cell(0, 0), LiteralValue::Number(3.0));
+        let nums1: Vec<_> = rv1.numbers_slices().collect();
+        assert_eq!(nums1.len(), 1);
+        assert_eq!(nums1[0].2[0].value(0), 3.0);
     }
 
     #[test]

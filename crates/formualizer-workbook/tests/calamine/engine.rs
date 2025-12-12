@@ -139,7 +139,14 @@ fn stream_mixed_types_in_column() {
     let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
     backend.stream_into_engine(&mut engine).unwrap();
+
     engine.evaluate_all().unwrap();
+
+    // Debug: verify D8 computed error; E8 should mirror it.
+    match engine.get_cell_value("Sheet1", 8, 4) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Div),
+        other => panic!("D8 expected #DIV/0!, got {other:?}"),
+    }
 
     // Non-formula base cells via get_cell_value
     match engine.get_cell_value("Sheet1", 5, 4) {
