@@ -1,6 +1,6 @@
 [package]
 name = "sheetport-spec"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 homepage.workspace = true
 license.workspace = true
@@ -16,6 +16,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 schemars = { workspace = true, features = ["derive"] }
 semver = { workspace = true }
+chrono = { workspace = true }
 regex = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true }

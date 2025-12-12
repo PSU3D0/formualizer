@@ -4,6 +4,18 @@
   "description": "Specification that binds typed input/output ports to a spreadsheet so it can be treated as a pure function.",
   "type": "object",
   "properties": {
+    "capabilities": {
+      "description": "Optional conformance capabilities for this manifest.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Capabilities"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "manifest": {
       "description": "Human-facing metadata describing the manifest.",
       "$ref": "#/$defs/ManifestMeta"
@@ -26,6 +38,10 @@
   "additionalProperties": false,
   "examples": [
     {
+      "capabilities": {
+        "features": null,
+        "profile": "core-v0"
+      },
       "manifest": {
         "description": "Expose the workbook as a function that ingests inventory data and produces restock recommendations.",
         "id": "supply-planning-io",
@@ -115,6 +131,7 @@
             "layout": {
               "anchor_col": "A",
               "header_row": 1,
+              "kind": "header_contiguous_v1",
               "marker_text": null,
               "sheet": "Inventory",
               "terminate": "first_blank_row"
@@ -233,12 +250,33 @@
     "ports"
   ],
   "$defs": {
+    "Capabilities": {
+      "description": "Optional capabilities block for feature gating.",
+      "type": "object",
+      "properties": {
+        "features": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
+        "profile": {
+          "$ref": "#/$defs/Profile",
+          "default": "core-v0"
+        }
+      },
+      "additionalProperties": false
+    },
     "Constraints": {
       "description": "Constraints applied to a port or field.",
       "type": "object",
       "properties": {
         "enum": {
-          "description": "Enumerated set of allowed categorical values.",
+          "description": "Enumerated set of allowed categorical values. Entries are compared by exact JSON equality after type checking; numeric values are not normalized (e.g., 5 != 5.0).",
           "type": [
             "array",
             "null"
@@ -324,6 +362,11 @@
           "format": "uint32",
           "minimum": 0
         },
+        "kind": {
+          "description": "Layout resolution behavior (defaults to `header_contiguous_v1`).",
+          "$ref": "#/$defs/LayoutKind",
+          "default": "header_contiguous_v1"
+        },
         "marker_text": {
           "description": "Marker text required when `terminate` equals `until_marker`.",
           "type": [
@@ -347,6 +390,16 @@
         "header_row",
         "anchor_col",
         "terminate"
+      ]
+    },
+    "LayoutKind": {
+      "description": "Layout resolution behavior for layout selectors.",
+      "oneOf": [
+        {
+          "description": "Header-driven layout using contiguous columns starting at `anchor_col`.",
+          "type": "string",
+          "const": "header_contiguous_v1"
+        }
       ]
     },
     "LayoutTermination": {
@@ -453,7 +506,7 @@
           "$ref": "#/$defs/Selector"
         },
         "partition_key": {
-          "description": "Hint for partitioning/sharding semantics.",
+          "description": "Reserved hint for future partitioning/sharding semantics. No effect in `core-v0` runtimes.",
           "type": [
             "boolean",
             "null"
@@ -493,6 +546,21 @@
         "shape",
         "location",
         "schema"
+      ]
+    },
+    "Profile": {
+      "description": "Conformance profile advertised by a manifest.\n\nProfiles gate optional/forward-looking features so runtimes can safely reject\nmanifests that use selectors they don't support.",
+      "oneOf": [
+        {
+          "description": "Core profile: A1, named range, and layout selectors only.",
+          "type": "string",
+          "const": "core-v0"
+        },
+        {
+          "description": "Full profile (reserved): enables structured refs and workbook table selectors.",
+          "type": "string",
+          "const": "full-v0"
+        }
       ]
     },
     "RangeKind": {
@@ -692,7 +760,7 @@
       "type": "object",
       "properties": {
         "struct_ref": {
-          "description": "Excel structured reference syntax (e.g., `TblOrders[Qty]`).",
+          "description": "Excel structured reference syntax (e.g., `TblOrders[Qty]`). Reserved in `core-v0`; requires `full-v0` profile.",
           "type": "string"
         }
       },
@@ -705,6 +773,7 @@
       "type": "object",
       "properties": {
         "table": {
+          "description": "Workbook table selector (by Excel table name). Reserved in `core-v0`; requires `full-v0` profile.",
           "$ref": "#/$defs/TableSelector"
         }
       },
@@ -843,6 +912,7 @@
       ]
     },
     "TableSelector": {
+      "description": "Selector for an Excel table. Reserved in `core-v0`; requires `full-v0` profile.",
       "type": "object",
       "properties": {
         "area": {
@@ -895,7 +965,7 @@
       ]
     },
     "WorkbookMeta": {
-      "description": "Optional workbook descriptors.",
+      "description": "Optional workbook descriptors. These fields are advisory hints for runtimes and may be ignored unless a runtime explicitly documents support.",
       "type": "object",
       "properties": {
         "date_system": {

@@ -11,7 +11,12 @@ mod validation;
 pub use manifest::*;
 pub use validation::{ManifestIssue, ValidationError};
 
-/// Returns the canonical JSON Schema (Draft 2020-12) for the current manifest version.
+/// Version of this reference implementation crate.
+///
+/// This is expected to track the manifest `spec_version` for the supported spec.
+pub const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Returns the canonical JSON Schema (Draft 2019-09) for the current manifest version.
 pub fn schema_json() -> &'static str {
     include_str!("../schema/fio-0.3.json")
 }

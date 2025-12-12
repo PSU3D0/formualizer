@@ -121,3 +121,8 @@ ports:
     let normalized = manifest.normalized();
     assert_eq!(clone.to_yaml().unwrap(), normalized.to_yaml().unwrap());
 }
+
+#[test]
+fn crate_version_matches_spec_version() {
+    assert_eq!(sheetport_spec::CURRENT_SPEC_VERSION, sheetport_spec::CRATE_VERSION);
+}

@@ -168,3 +168,275 @@ fn record_field_constraints_validated() {
         err.issues()
     );
 }
+
+#[test]
+fn capabilities_default_to_core_profile() {
+    let manifest = load_fixture("supply_planning");
+    assert_eq!(
+        manifest.effective_profile(),
+        sheetport_spec::Profile::CoreV0
+    );
+}
+
+#[test]
+fn capabilities_explicit_core_profile_parses() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+capabilities: { profile: core-v0 }
+ports: []
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    assert_eq!(manifest.effective_profile(), sheetport_spec::Profile::CoreV0);
+}
+
+#[test]
+fn scalar_layout_selector_rejected_under_core() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+ports:
+  - id: x
+    dir: in
+    shape: scalar
+    location:
+      layout:
+        sheet: Sheet1
+        header_row: 1
+        anchor_col: A
+        terminate: first_blank_row
+    schema: { type: number }
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    let err = manifest.validate().expect_err("validation should fail");
+    assert!(
+        err.issues().iter().any(|issue| issue.path == "ports[0].location"),
+        "expected location issue, got {:#?}",
+        err.issues()
+    );
+}
+
+#[test]
+fn record_table_selector_rejected_under_core() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+ports:
+  - id: r
+    dir: in
+    shape: record
+    location:
+      table:
+        name: Tbl
+    schema:
+      kind: record
+      fields:
+        a: { type: number, location: { a1: Sheet1!A1 } }
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    let err = manifest.validate().expect_err("validation should fail");
+    assert!(
+        err.issues().iter().any(|issue| issue.path == "ports[0].location"),
+        "expected location issue, got {:#?}",
+        err.issues()
+    );
+}
+
+#[test]
+fn struct_ref_selector_rejected_under_core() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+ports:
+  - id: s
+    dir: in
+    shape: scalar
+    location: { struct_ref: "Tbl[Col]" }
+    schema: { type: number }
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    let err = manifest.validate().expect_err("validation should fail");
+    assert!(
+        err.issues().iter().any(|issue| issue.path == "ports[0].location"),
+        "expected location issue, got {:#?}",
+        err.issues()
+    );
+}
+
+#[test]
+fn table_shape_rejects_a1_selector_even_under_full() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+capabilities: { profile: full-v0 }
+ports:
+  - id: t
+    dir: in
+    shape: table
+    location: { a1: Sheet1!A1:B2 }
+    schema:
+      kind: table
+      columns:
+        - { name: a, type: number }
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    let err = manifest.validate().expect_err("validation should fail");
+    assert!(
+        err.issues().iter().any(|issue| issue.path == "ports[0].location"),
+        "expected location issue, got {:#?}",
+        err.issues()
+    );
+}
+
+#[test]
+fn full_profile_allows_struct_ref_for_scalar() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+capabilities: { profile: full-v0 }
+ports:
+  - id: s
+    dir: in
+    shape: scalar
+    location: { struct_ref: "Tbl[Col]" }
+    schema: { type: number }
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    manifest
+        .validate()
+        .expect("full profile allows struct_ref scalar");
+}
+
+#[test]
+fn full_profile_allows_table_selector_for_table() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+capabilities: { profile: full-v0 }
+ports:
+  - id: t
+    dir: in
+    shape: table
+    location:
+      table:
+        name: Tbl
+    schema:
+      kind: table
+      columns:
+        - { name: a, type: number }
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    manifest.validate().expect("full profile allows table selector");
+}
+
+#[test]
+fn layout_kind_defaults_when_omitted() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+ports:
+  - id: t
+    dir: in
+    shape: table
+    location:
+      layout:
+        sheet: Sheet1
+        header_row: 1
+        anchor_col: A
+        terminate: first_blank_row
+    schema:
+      kind: table
+      columns:
+        - { name: a, type: number }
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    let port = &manifest.ports[0];
+    match &port.location {
+        sheetport_spec::Selector::Layout(selector) => {
+            assert_eq!(
+                selector.layout.kind,
+                sheetport_spec::LayoutKind::HeaderContiguousV1
+            );
+        }
+        other => panic!("expected layout selector, got {other:?}"),
+    }
+}
+
+#[test]
+fn enum_values_must_match_value_type_for_scalar() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+ports:
+  - id: x
+    dir: in
+    shape: scalar
+    location: { a1: Sheet1!A1 }
+    schema: { type: integer }
+    constraints:
+      enum: ["bad", 1]
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    let err = manifest.validate().expect_err("validation should fail");
+    assert!(
+        err.issues()
+            .iter()
+            .any(|issue| issue.path == "ports[0].constraints.enum[0]"),
+        "expected enum typing issue, got {:#?}",
+        err.issues()
+    );
+}
+
+#[test]
+fn min_max_constraints_require_numeric_type() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+ports:
+  - id: s
+    dir: in
+    shape: scalar
+    location: { a1: Sheet1!A1 }
+    schema: { type: string }
+    constraints:
+      min: 1
+      max: 5
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    let err = manifest.validate().expect_err("validation should fail");
+    assert!(
+        err.issues().iter().any(|issue| issue.path == "ports[0].constraints.min"),
+        "expected min typing issue, got {:#?}",
+        err.issues()
+    );
+    assert!(
+        err.issues().iter().any(|issue| issue.path == "ports[0].constraints.max"),
+        "expected max typing issue, got {:#?}",
+        err.issues()
+    );
+}
+
+#[test]
+fn date_enum_values_must_be_valid_dates() {
+    let yaml = r#"spec: fio
+spec_version: "0.3.0"
+manifest: { id: sample, name: Sample }
+ports:
+  - id: d
+    dir: in
+    shape: scalar
+    location: { a1: Sheet1!A1 }
+    schema: { type: date }
+    constraints:
+      enum: ["2025-01-01", "not-a-date"]
+"#;
+    let manifest: Manifest = serde_yaml::from_str(yaml).expect("manifest parses");
+    let err = manifest.validate().expect_err("validation should fail");
+    assert!(
+        err.issues()
+            .iter()
+            .any(|issue| issue.path == "ports[0].constraints.enum[1]"),
+        "expected date enum issue, got {:#?}",
+        err.issues()
+    );
+}

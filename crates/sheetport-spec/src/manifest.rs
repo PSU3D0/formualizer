@@ -18,6 +18,39 @@ pub const CURRENT_SPEC_VERSION: &str = "0.3.0";
 /// Constant identifier for this spec.
 pub const SPEC_IDENT: &str = "fio";
 
+/// Conformance profile advertised by a manifest.
+///
+/// Profiles gate optional/forward-looking features so runtimes can safely reject
+/// manifests that use selectors they don't support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Profile {
+    /// Core profile: A1, named range, and layout selectors only.
+    #[default]
+    CoreV0,
+    /// Full profile (reserved): enables structured refs and workbook table selectors.
+    FullV0,
+}
+
+/// Optional capabilities block for feature gating.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Capabilities {
+    #[serde(default)]
+    pub profile: Profile,
+    #[serde(default)]
+    pub features: Option<Vec<String>>,
+}
+
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self {
+            profile: Profile::CoreV0,
+            features: None,
+        }
+    }
+}
+
 /// Canonical manifest representation.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(
@@ -31,6 +64,9 @@ pub struct Manifest {
     pub spec: String,
     #[serde(rename = "spec_version")]
     pub spec_version: SpecVersion,
+    #[serde(default)]
+    /// Optional conformance capabilities for this manifest.
+    pub capabilities: Option<Capabilities>,
     /// Human-facing metadata describing the manifest.
     pub manifest: ManifestMeta,
     /// Ordered list of typed ports.
@@ -65,6 +101,13 @@ impl Manifest {
             tags.dedup();
         }
 
+        if let Some(capabilities) = &mut self.capabilities {
+            if let Some(features) = &mut capabilities.features {
+                features.sort();
+                features.dedup();
+            }
+        }
+
         self.ports.sort_by(|a, b| a.id.cmp(&b.id));
 
         for port in &mut self.ports {
@@ -95,6 +138,16 @@ impl Manifest {
     pub fn normalized(mut self) -> Self {
         self.normalize();
         self
+    }
+
+    /// Return the effective conformance profile for this manifest.
+    ///
+    /// When capabilities are omitted, the manifest is treated as `core-v0`.
+    pub fn effective_profile(&self) -> Profile {
+        self.capabilities
+            .as_ref()
+            .map(|c| c.profile)
+            .unwrap_or_default()
     }
 
     /// Validate the manifest and return granular issues when invariants fail.
@@ -137,6 +190,8 @@ impl Manifest {
         let port_id_pattern =
             Regex::new(r"^[a-z0-9]+([_-][a-z0-9]+)*$").expect("port id regex must compile");
 
+        let profile = self.effective_profile();
+
         for (idx, port) in self.ports.iter().enumerate() {
             let path = format!("ports[{}].id", idx);
             if !port_id_pattern.is_match(&port.id) {
@@ -152,6 +207,8 @@ impl Manifest {
                     format!("duplicate port id `{}`", port.id),
                 ));
             }
+
+            validate_port_selector(profile, port, idx, &mut issues);
 
             if port.dir == Direction::Out && port.default.is_some() {
                 issues.push(ManifestIssue::new(
@@ -177,8 +234,14 @@ impl Manifest {
             }
 
             if let Some(constraints) = &port.constraints {
+                let value_type = match &port.schema {
+                    Schema::Scalar(schema) => Some(schema.value_type),
+                    Schema::Range(schema) => Some(schema.cell_type),
+                    _ => None,
+                };
                 validate_constraints(
                     constraints,
+                    value_type,
                     format!("ports[{}].constraints", idx),
                     &mut issues,
                 );
@@ -236,9 +299,25 @@ impl Manifest {
 
             if let Schema::Record(record) = &port.schema {
                 for (field_name, field) in &record.fields {
+                    if profile == Profile::CoreV0
+                        && matches!(field.location, FieldSelector::StructRef(_))
+                    {
+                        issues.push(ManifestIssue::new(
+                            format!(
+                                "ports[{}].schema.fields.{}.location",
+                                idx, field_name
+                            ),
+                            format!(
+                                "structured references are not permitted under profile `{}`",
+                                profile_label(profile)
+                            ),
+                        ));
+                    }
+
                     if let Some(constraints) = &field.constraints {
                         validate_constraints(
                             constraints,
+                            Some(field.value_type),
                             format!("ports[{}].schema.fields.{}.constraints", idx, field_name),
                             &mut issues,
                         );
@@ -273,7 +352,7 @@ pub struct ManifestMeta {
     pub metadata: Option<BTreeMap<String, JsonValue>>,
 }
 
-/// Optional workbook descriptors.
+/// Optional workbook descriptors. These fields are advisory hints for runtimes and may be ignored unless a runtime explicitly documents support.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkbookMeta {
@@ -345,7 +424,7 @@ pub struct Port {
     /// Optional default value (inputs only).
     pub default: Option<JsonValue>,
     #[serde(default)]
-    /// Hint for partitioning/sharding semantics.
+    /// Reserved hint for future partitioning/sharding semantics. No effect in `core-v0` runtimes.
     pub partition_key: Option<bool>,
 }
 
@@ -381,16 +460,18 @@ pub struct SelectorName {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SelectorStructRef {
-    /// Excel structured reference syntax (e.g., `TblOrders[Qty]`).
+    /// Excel structured reference syntax (e.g., `TblOrders[Qty]`). Reserved in `core-v0`; requires `full-v0` profile.
     pub struct_ref: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SelectorTable {
+    /// Workbook table selector (by Excel table name). Reserved in `core-v0`; requires `full-v0` profile.
     pub table: TableSelector,
 }
 
+/// Selector for an Excel table. Reserved in `core-v0`; requires `full-v0` profile.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TableSelector {
@@ -419,9 +500,21 @@ pub struct SelectorLayout {
     pub layout: LayoutDescriptor,
 }
 
+/// Layout resolution behavior for layout selectors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutKind {
+    /// Header-driven layout using contiguous columns starting at `anchor_col`.
+    #[default]
+    HeaderContiguousV1,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LayoutDescriptor {
+    #[serde(default)]
+    /// Layout resolution behavior (defaults to `header_contiguous_v1`).
+    pub kind: LayoutKind,
     /// Sheet containing the layout.
     pub sheet: String,
     /// 1-based index of the header row.
@@ -579,7 +672,7 @@ pub struct Constraints {
     /// Maximum allowed numeric value.
     pub max: Option<f64>,
     #[serde(default)]
-    /// Enumerated set of allowed categorical values.
+    /// Enumerated set of allowed categorical values. Entries are compared by exact JSON equality after type checking; numeric values are not normalized (e.g., 5 != 5.0).
     pub r#enum: Option<Vec<JsonValue>>,
     #[serde(default)]
     /// Regular expression pattern string.
@@ -666,6 +759,80 @@ impl std::str::FromStr for Manifest {
     }
 }
 
+fn profile_label(profile: Profile) -> &'static str {
+    match profile {
+        Profile::CoreV0 => "core-v0",
+        Profile::FullV0 => "full-v0",
+    }
+}
+
+fn profile_allows_struct_ref(profile: Profile) -> bool {
+    matches!(profile, Profile::FullV0)
+}
+
+fn profile_allows_table(profile: Profile) -> bool {
+    matches!(profile, Profile::FullV0)
+}
+
+fn validate_port_selector(
+    profile: Profile,
+    port: &Port,
+    idx: usize,
+    issues: &mut Vec<ManifestIssue>,
+) {
+    let path = format!("ports[{}].location", idx);
+    match port.shape {
+        Shape::Scalar => match &port.location {
+            Selector::A1(_) | Selector::Name(_) => {}
+            Selector::StructRef(_) if profile_allows_struct_ref(profile) => {}
+            Selector::StructRef(_) => issues.push(ManifestIssue::new(
+                &path,
+                format!(
+                    "structured references are not permitted under profile `{}`",
+                    profile_label(profile)
+                ),
+            )),
+            Selector::Layout(_) | Selector::Table(_) => issues.push(ManifestIssue::new(
+                &path,
+                "scalar ports may only use `a1`, `name`, or `struct_ref` selectors".to_string(),
+            )),
+        },
+        Shape::Record | Shape::Range => match &port.location {
+            Selector::A1(_) | Selector::Name(_) | Selector::Layout(_) => {}
+            Selector::StructRef(_) if profile_allows_struct_ref(profile) => {}
+            Selector::StructRef(_) => issues.push(ManifestIssue::new(
+                &path,
+                format!(
+                    "structured references are not permitted under profile `{}`",
+                    profile_label(profile)
+                ),
+            )),
+            Selector::Table(_) => issues.push(ManifestIssue::new(
+                &path,
+                "record/range ports may not use `table` selectors".to_string(),
+            )),
+        },
+        Shape::Table => match &port.location {
+            Selector::Layout(_) => {}
+            Selector::Table(_) if profile_allows_table(profile) => {}
+            Selector::Table(_) => issues.push(ManifestIssue::new(
+                &path,
+                format!(
+                    "`table` selectors are reserved and not permitted under profile `{}`",
+                    profile_label(profile)
+                ),
+            )),
+            Selector::A1(_) | Selector::Name(_) | Selector::StructRef(_) => issues.push(
+                ManifestIssue::new(
+                    &path,
+                    "table ports must use `layout` selectors (or `table` selectors under full-v0)"
+                        .to_string(),
+                ),
+            ),
+        },
+    }
+}
+
 fn canonicalize_enum(values: &mut Option<Vec<JsonValue>>) {
     if let Some(list) = values {
         list.sort_by_key(value_sort_key);
@@ -679,6 +846,7 @@ fn value_sort_key(value: &JsonValue) -> String {
 
 fn validate_constraints(
     constraints: &Constraints,
+    value_type: Option<ValueType>,
     base_path: String,
     issues: &mut Vec<ManifestIssue>,
 ) {
@@ -691,13 +859,37 @@ fn validate_constraints(
         ));
     }
 
-    if let Some(enum_values) = &constraints.r#enum
-        && enum_values.is_empty()
-    {
-        issues.push(ManifestIssue::new(
-            format!("{}.enum", base_path),
-            "enumerated values must contain at least one entry".to_string(),
-        ));
+    if let Some(vt) = value_type {
+        if constraints.min.is_some() && !is_numeric_type(vt) {
+            issues.push(ManifestIssue::new(
+                format!("{}.min", base_path),
+                format!("`min` constraint requires numeric type, found `{vt:?}`"),
+            ));
+        }
+        if constraints.max.is_some() && !is_numeric_type(vt) {
+            issues.push(ManifestIssue::new(
+                format!("{}.max", base_path),
+                format!("`max` constraint requires numeric type, found `{vt:?}`"),
+            ));
+        }
+    }
+
+    if let Some(enum_values) = &constraints.r#enum {
+        if enum_values.is_empty() {
+            issues.push(ManifestIssue::new(
+                format!("{}.enum", base_path),
+                "enumerated values must contain at least one entry".to_string(),
+            ));
+        } else if let Some(vt) = value_type {
+            for (i, candidate) in enum_values.iter().enumerate() {
+                if let Err(message) = validate_enum_candidate(vt, candidate) {
+                    issues.push(ManifestIssue::new(
+                        format!("{}.enum[{}]", base_path, i),
+                        message,
+                    ));
+                }
+            }
+        }
     }
 
     if let Some(pattern) = &constraints.pattern
@@ -710,6 +902,71 @@ fn validate_constraints(
     }
 }
 
+fn is_numeric_type(vt: ValueType) -> bool {
+    matches!(vt, ValueType::Number | ValueType::Integer)
+}
+
+fn validate_enum_candidate(vt: ValueType, candidate: &JsonValue) -> Result<(), String> {
+    use serde_json::Value as J;
+    match vt {
+        ValueType::String => match candidate {
+            J::String(_) => Ok(()),
+            other => Err(format!("enum value `{}` is not a string", value_sort_key(other))),
+        },
+        ValueType::Boolean => match candidate {
+            J::Bool(_) => Ok(()),
+            other => Err(format!("enum value `{}` is not a boolean", value_sort_key(other))),
+        },
+        ValueType::Number => match candidate {
+            J::Number(n) if n.as_f64().is_some() => Ok(()),
+            other => Err(format!("enum value `{}` is not numeric", value_sort_key(other))),
+        },
+        ValueType::Integer => match candidate {
+            J::Number(n) => {
+                if n.as_i64().is_some() {
+                    Ok(())
+                } else if let Some(f) = n.as_f64() {
+                    if (f - f.trunc()).abs() < f64::EPSILON {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "enum value `{}` is not an integer",
+                            value_sort_key(candidate)
+                        ))
+                    }
+                } else {
+                    Err(format!("enum value `{}` is not numeric", value_sort_key(candidate)))
+                }
+            }
+            other => Err(format!("enum value `{}` is not numeric", value_sort_key(other))),
+        },
+        ValueType::Date => match candidate {
+            J::String(s) if parse_date_string(s) => Ok(()),
+            other => Err(format!(
+                "enum value `{}` is not a valid date",
+                value_sort_key(other)
+            )),
+        },
+        ValueType::Datetime => match candidate {
+            J::String(s) if parse_datetime_string(s) => Ok(()),
+            other => Err(format!(
+                "enum value `{}` is not a valid datetime",
+                value_sort_key(other)
+            )),
+        },
+    }
+}
+
+fn parse_date_string(raw: &str) -> bool {
+    chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").is_ok()
+}
+
+fn parse_datetime_string(raw: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(raw).is_ok()
+        || chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S").is_ok()
+        || chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S").is_ok()
+}
+
 pub(crate) mod example_data {
     use super::*;
 
@@ -717,6 +974,7 @@ pub(crate) mod example_data {
         serde_json::from_value(serde_json::json!({
             "spec": SPEC_IDENT,
             "spec_version": CURRENT_SPEC_VERSION,
+            "capabilities": { "profile": "core-v0" },
             "manifest": {
                 "id": "supply-planning-io",
                 "name": "Supply Planning I/O",
