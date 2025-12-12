@@ -1794,3 +1794,111 @@ mod reference_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod sheet_ref_tests {
+    use crate::parser::ReferenceType;
+    use formualizer_common::{AxisBound, SheetLocator, SheetRef};
+
+    #[test]
+    fn parse_sheet_ref_preserves_abs_flags() {
+        let r = ReferenceType::parse_sheet_ref("$A$1").unwrap();
+        match r {
+            SheetRef::Cell(cell) => {
+                assert!(matches!(cell.sheet, SheetLocator::Current));
+                assert_eq!(cell.coord.row(), 0);
+                assert_eq!(cell.coord.col(), 0);
+                assert!(cell.coord.row_abs());
+                assert!(cell.coord.col_abs());
+            }
+            _ => panic!("expected cell"),
+        }
+
+        let r = ReferenceType::parse_sheet_ref("Sheet1!A$1").unwrap();
+        match r {
+            SheetRef::Cell(cell) => {
+                assert_eq!(cell.sheet.name(), Some("Sheet1"));
+                assert!(cell.coord.row_abs());
+                assert!(!cell.coord.col_abs());
+            }
+            _ => panic!("expected cell"),
+        }
+    }
+
+    #[test]
+    fn parse_sheet_ref_supports_open_ended_ranges() {
+        let r = ReferenceType::parse_sheet_ref("$A:$B").unwrap();
+        match r {
+            SheetRef::Range(range) => {
+                assert!(range.start_row.is_none());
+                assert!(range.end_row.is_none());
+                assert_eq!(range.start_col.unwrap().index, 0);
+                assert!(range.start_col.unwrap().abs);
+                assert_eq!(range.end_col.unwrap().index, 1);
+            }
+            _ => panic!("expected range"),
+        }
+
+        let r = ReferenceType::parse_sheet_ref("1:$3").unwrap();
+        match r {
+            SheetRef::Range(range) => {
+                assert!(range.start_col.is_none());
+                assert!(range.end_col.is_none());
+                let sr = range.start_row.unwrap();
+                let er = range.end_row.unwrap();
+                assert_eq!(sr.index, 0);
+                assert!(!sr.abs);
+                assert_eq!(er.index, 2);
+                assert!(er.abs);
+            }
+            _ => panic!("expected range"),
+        }
+
+        let r = ReferenceType::parse_sheet_ref("A1:A").unwrap();
+        match r {
+            SheetRef::Range(range) => {
+                assert_eq!(range.start_row.unwrap().index, 0);
+                assert_eq!(range.start_col.unwrap().index, 0);
+                assert!(range.end_row.is_none());
+                assert_eq!(range.end_col.unwrap().index, 0);
+            }
+            _ => panic!("expected range"),
+        }
+    }
+
+    #[test]
+    fn to_sheet_ref_lossy_defaults_to_relative() {
+        let rt = ReferenceType::Cell {
+            sheet: None,
+            row: 1,
+            col: 1,
+        };
+        let sr = rt.to_sheet_ref_lossy().unwrap();
+        match sr {
+            SheetRef::Cell(cell) => {
+                assert!(!cell.coord.row_abs());
+                assert!(!cell.coord.col_abs());
+                assert!(matches!(cell.sheet, SheetLocator::Current));
+            }
+            _ => panic!("expected cell"),
+        }
+
+        let rt = ReferenceType::Range {
+            sheet: Some("Sheet1".to_string()),
+            start_row: None,
+            start_col: Some(1),
+            end_row: None,
+            end_col: Some(1),
+        };
+        let sr = rt.to_sheet_ref_lossy().unwrap();
+        match sr {
+            SheetRef::Range(range) => {
+                assert_eq!(range.sheet.name(), Some("Sheet1"));
+                assert!(range.start_row.is_none());
+                assert_eq!(range.start_col, Some(AxisBound::new(0, false)));
+                assert_eq!(range.end_col, Some(AxisBound::new(0, false)));
+            }
+            _ => panic!("expected range"),
+        }
+    }
+}

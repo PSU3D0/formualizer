@@ -1,5 +1,4 @@
-use crate::address::{SheetAddressError, SheetLocator, SheetRangeAddress};
-use crate::coord::RelativeCoord;
+use crate::address::{AxisBound, SheetAddressError, SheetLocator, SheetRangeRef};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -40,38 +39,49 @@ impl RangeAddress {
     pub fn width(&self) -> u32 {
         self.end_col - self.start_col + 1
     }
+
     pub fn height(&self) -> u32 {
         self.end_row - self.start_row + 1
     }
 
-    /// Convert into the richer [`SheetRangeAddress`] representation.
-    pub fn to_sheet_range(&self) -> SheetRangeAddress<'_> {
+    /// Convert into the richer [`SheetRangeRef`] representation.
+    pub fn to_sheet_range(&self) -> SheetRangeRef<'_> {
         let sheet = SheetLocator::from_name(self.sheet.as_str());
-        let start = RelativeCoord::new(self.start_row - 1, self.start_col - 1, true, true);
-        let end = RelativeCoord::new(self.end_row - 1, self.end_col - 1, true, true);
-        SheetRangeAddress::new(sheet, start, end)
+        let start_row = Some(AxisBound::new(self.start_row - 1, true));
+        let start_col = Some(AxisBound::new(self.start_col - 1, true));
+        let end_row = Some(AxisBound::new(self.end_row - 1, true));
+        let end_col = Some(AxisBound::new(self.end_col - 1, true));
+        SheetRangeRef::new(sheet, start_row, start_col, end_row, end_col)
     }
 }
 
-impl<'a> TryFrom<SheetRangeAddress<'a>> for RangeAddress {
+impl<'a> TryFrom<SheetRangeRef<'a>> for RangeAddress {
     type Error = SheetAddressError;
 
-    fn try_from(value: SheetRangeAddress<'a>) -> Result<Self, Self::Error> {
+    fn try_from(value: SheetRangeRef<'a>) -> Result<Self, Self::Error> {
         let sheet = value
             .sheet
             .name()
             .ok_or(SheetAddressError::MissingSheetName)?;
+        let (sr, sc, er, ec) = match (value.start_row, value.start_col, value.end_row, value.end_col)
+        {
+            (Some(sr), Some(sc), Some(er), Some(ec)) => (sr, sc, er, ec),
+            _ => return Err(SheetAddressError::UnboundedRange),
+        };
+        if sr.index > er.index || sc.index > ec.index {
+            return Err(SheetAddressError::RangeOrder);
+        }
         Ok(RangeAddress {
             sheet: sheet.to_owned(),
-            start_row: value.start.row() + 1,
-            start_col: value.start.col() + 1,
-            end_row: value.end.row() + 1,
-            end_col: value.end.col() + 1,
+            start_row: sr.to_excel_1based(),
+            start_col: sc.to_excel_1based(),
+            end_row: er.to_excel_1based(),
+            end_col: ec.to_excel_1based(),
         })
     }
 }
 
-impl<'a> From<&'a RangeAddress> for SheetRangeAddress<'a> {
+impl<'a> From<&'a RangeAddress> for SheetRangeRef<'a> {
     fn from(value: &'a RangeAddress) -> Self {
         value.to_sheet_range()
     }
@@ -85,11 +95,13 @@ mod tests {
     fn convert_to_sheet_range() {
         let range = RangeAddress::new("Sheet1", 1, 1, 3, 4).unwrap();
         let sheet_range = range.to_sheet_range();
-        assert_eq!(sheet_range.width(), 4);
-        assert_eq!(sheet_range.height(), 3);
+        assert_eq!(sheet_range.start_col.unwrap().index, 0);
+        assert_eq!(sheet_range.end_col.unwrap().index, 3);
+        assert_eq!(sheet_range.start_row.unwrap().index, 0);
+        assert_eq!(sheet_range.end_row.unwrap().index, 2);
         assert_eq!(sheet_range.sheet.name(), Some("Sheet1"));
-        assert!(sheet_range.start.row_abs());
-        assert!(sheet_range.start.col_abs());
+        assert!(sheet_range.start_row.unwrap().abs);
+        assert!(sheet_range.start_col.unwrap().abs);
     }
 
     #[test]
@@ -99,8 +111,13 @@ mod tests {
         let reconstructed = RangeAddress::try_from(sheet_range.clone()).unwrap();
         assert_eq!(owned, reconstructed);
 
-        let without_name =
-            SheetRangeAddress::new(SheetLocator::from_id(3), sheet_range.start, sheet_range.end);
+        let without_name = SheetRangeRef::new(
+            SheetLocator::from_id(3),
+            sheet_range.start_row,
+            sheet_range.start_col,
+            sheet_range.end_row,
+            sheet_range.end_col,
+        );
         let err = RangeAddress::try_from(without_name).unwrap_err();
         assert_eq!(err, SheetAddressError::MissingSheetName);
     }

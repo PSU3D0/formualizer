@@ -6,6 +6,9 @@ use crate::hasher::FormulaHasher;
 use formualizer_common::coord::{
     col_index_from_letters_1based, col_letters_from_1based, parse_a1_1based,
 };
+use formualizer_common::{
+    AxisBound, RelativeCoord, SheetCellRef, SheetLocator, SheetRangeRef, SheetRef,
+};
 use once_cell::sync::Lazy;
 use smallvec::SmallVec;
 use std::error::Error;
@@ -236,6 +239,223 @@ impl ReferenceType {
             FormulaDialect::OpenFormula => Self::parse_openformula_reference(reference)
                 .or_else(|_| Self::parse_excel_reference(reference)),
         }
+    }
+
+    /// Parse a grid reference into a shared SheetRef, preserving $ anchors.
+    ///
+    /// Only cell and range references are supported. Table and named ranges return an error.
+    pub fn parse_sheet_ref(reference: &str) -> Result<SheetRef<'static>, ParsingError> {
+        Self::parse_sheet_ref_with_dialect(reference, FormulaDialect::Excel)
+    }
+
+    /// Parse a grid reference into a shared SheetRef using the specified dialect.
+    pub fn parse_sheet_ref_with_dialect(
+        reference: &str,
+        dialect: FormulaDialect,
+    ) -> Result<SheetRef<'static>, ParsingError> {
+        match dialect {
+            FormulaDialect::Excel => Self::parse_excel_sheet_ref(reference),
+            FormulaDialect::OpenFormula => Self::parse_openformula_sheet_ref(reference)
+                .or_else(|_| Self::parse_excel_sheet_ref(reference)),
+        }
+    }
+
+    /// Lossy conversion from parsed ReferenceType into SheetRef.
+    /// Absolute anchors are not recoverable from ReferenceType and default to relative.
+    pub fn to_sheet_ref_lossy(&self) -> Option<SheetRef<'_>> {
+        fn bound_from_1based(v: Option<u32>) -> Option<AxisBound> {
+            v.and_then(|x| x.checked_sub(1).map(|i| AxisBound::new(i, false)))
+        }
+
+        match self {
+            ReferenceType::Cell { sheet, row, col } => {
+                let row0 = row.checked_sub(1)?;
+                let col0 = col.checked_sub(1)?;
+                let sheet_loc = match sheet.as_deref() {
+                    Some(name) => SheetLocator::from_name(name),
+                    None => SheetLocator::Current,
+                };
+                let coord = RelativeCoord::new(row0, col0, false, false);
+                Some(SheetRef::Cell(SheetCellRef::new(sheet_loc, coord)))
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            } => {
+                let sheet_loc = match sheet.as_deref() {
+                    Some(name) => SheetLocator::from_name(name),
+                    None => SheetLocator::Current,
+                };
+                let sr = bound_from_1based(*start_row);
+                if start_row.is_some() && sr.is_none() {
+                    return None;
+                }
+                let sc = bound_from_1based(*start_col);
+                if start_col.is_some() && sc.is_none() {
+                    return None;
+                }
+                let er = bound_from_1based(*end_row);
+                if end_row.is_some() && er.is_none() {
+                    return None;
+                }
+                let ec = bound_from_1based(*end_col);
+                if end_col.is_some() && ec.is_none() {
+                    return None;
+                }
+                let range = SheetRangeRef::from_parts(sheet_loc, sr, sc, er, ec).ok()?;
+                Some(SheetRef::Range(range))
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_excel_sheet_ref(reference: &str) -> Result<SheetRef<'static>, ParsingError> {
+        if reference.contains('[') {
+            return Err(ParsingError::InvalidReference(
+                "Table references are not supported for SheetRef".to_string(),
+            ));
+        }
+
+        let (sheet, ref_part) = Self::extract_sheet_name(reference);
+        let sheet_loc: SheetLocator<'static> = match sheet {
+            Some(name) => SheetLocator::from_name(name),
+            None => SheetLocator::Current,
+        };
+
+        if ref_part.contains(':') {
+            let mut parts = ref_part.splitn(2, ':');
+            let start = parts.next().unwrap();
+            let end = parts.next().ok_or_else(|| {
+                ParsingError::InvalidReference(format!("Invalid range: {ref_part}"))
+            })?;
+
+            let (start_col, start_row) = Self::parse_range_part_with_abs(start)?;
+            let (end_col, end_row) = Self::parse_range_part_with_abs(end)?;
+
+            let range = SheetRangeRef::from_parts(
+                sheet_loc,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+            )
+            .map_err(|err| ParsingError::InvalidReference(err.to_string()))?;
+            Ok(SheetRef::Range(range))
+        } else {
+            let (row, col, row_abs, col_abs) = parse_a1_1based(&ref_part)
+                .map_err(|err| ParsingError::InvalidReference(err.to_string()))?;
+            let coord = RelativeCoord::new(row - 1, col - 1, row_abs, col_abs);
+            Ok(SheetRef::Cell(SheetCellRef::new(sheet_loc, coord)))
+        }
+    }
+
+    fn parse_openformula_sheet_ref(reference: &str) -> Result<SheetRef<'static>, ParsingError> {
+        Self::parse_excel_sheet_ref(reference)
+    }
+
+    fn parse_range_part_with_abs(
+        part: &str,
+    ) -> Result<(Option<AxisBound>, Option<AxisBound>), ParsingError> {
+        if let Ok((row, col, row_abs, col_abs)) = parse_a1_1based(part) {
+            let row_b = AxisBound::new(row - 1, row_abs);
+            let col_b = AxisBound::new(col - 1, col_abs);
+            return Ok((Some(col_b), Some(row_b)));
+        }
+
+        let bytes = part.as_bytes();
+        let len = bytes.len();
+        let mut i = 0usize;
+
+        let mut col_abs = false;
+        let mut row_abs = false;
+
+        if i < len && bytes[i] == b'$' {
+            col_abs = true;
+            i += 1;
+        }
+
+        let col_start = i;
+        while i < len && bytes[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+
+        if i > col_start {
+            let col_str = &part[col_start..i];
+            let col1 = Self::column_to_number(col_str)?;
+
+            if i == len {
+                let col_b = AxisBound::new(col1 - 1, col_abs);
+                return Ok((Some(col_b), None));
+            }
+
+            if i < len && bytes[i] == b'$' {
+                row_abs = true;
+                i += 1;
+            }
+
+            if i >= len {
+                return Err(ParsingError::InvalidReference(format!(
+                    "Invalid range part: {part}"
+                )));
+            }
+
+            let row_start = i;
+            while i < len && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+
+            if row_start == i || i != len {
+                return Err(ParsingError::InvalidReference(format!(
+                    "Invalid range part: {part}"
+                )));
+            }
+
+            let row_str = &part[row_start..i];
+            let row1 = row_str.parse::<u32>().map_err(|_| {
+                ParsingError::InvalidReference(format!("Invalid row: {row_str}"))
+            })?;
+            if row1 == 0 {
+                return Err(ParsingError::InvalidReference(format!(
+                    "Invalid range part: {part}"
+                )));
+            }
+
+            let col_b = AxisBound::new(col1 - 1, col_abs);
+            let row_b = AxisBound::new(row1 - 1, row_abs);
+            return Ok((Some(col_b), Some(row_b)));
+        }
+
+        i = 0;
+        if i < len && bytes[i] == b'$' {
+            row_abs = true;
+            i += 1;
+        }
+
+        let row_start = i;
+        while i < len && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+
+        if row_start == i || i != len {
+            return Err(ParsingError::InvalidReference(format!(
+                "Invalid range part: {part}"
+            )));
+        }
+
+        let row_str = &part[row_start..i];
+        let row1 = row_str.parse::<u32>().map_err(|_| {
+            ParsingError::InvalidReference(format!("Invalid row: {row_str}"))
+        })?;
+        if row1 == 0 {
+            return Err(ParsingError::InvalidReference(format!(
+                "Invalid range part: {part}"
+            )));
+        }
+
+        Ok((None, Some(AxisBound::new(row1 - 1, row_abs))))
     }
 
     fn parse_excel_reference(reference: &str) -> Result<Self, ParsingError> {

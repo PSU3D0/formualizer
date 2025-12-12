@@ -1,28 +1,27 @@
-//! Sheet-scoped coordinate helpers shared across the engine and bindings.
+//! Sheet-scoped reference helpers shared across the workspace.
 
 use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
-
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 use crate::coord::{A1ParseError, CoordError, RelativeCoord};
 
 /// Stable sheet identifier used across the workspace.
 pub type SheetId = u16;
 
-/// Errors that can occur while constructing sheet-scoped addresses.
+/// Errors that can occur while constructing sheet-scoped references.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SheetAddressError {
     /// Encountered a 0 or underflowed 1-based index when converting to 0-based.
     ZeroIndex,
     /// Start/end coordinates were not ordered (start <= end).
     RangeOrder,
-    /// Attempted to combine addresses with different sheet locators.
+    /// Attempted to combine references with different sheet locators.
     MismatchedSheets,
-    /// Requested operation requires a sheet name but only an id was supplied.
+    /// Requested operation requires a sheet name but only an id/current was supplied.
     MissingSheetName,
+    /// Attempted to convert an unbounded range into a bounded representation.
+    UnboundedRange,
     /// Wrapped [`CoordError`] that originated from `RelativeCoord`.
     Coord(CoordError),
     /// Wrapped [`A1ParseError`] originating from A1 parsing.
@@ -47,6 +46,9 @@ impl fmt::Display for SheetAddressError {
             SheetAddressError::MissingSheetName => {
                 write!(f, "sheet name required to materialise textual address")
             }
+            SheetAddressError::UnboundedRange => {
+                write!(f, "range requires explicit bounds")
+            }
             SheetAddressError::Coord(err) => err.fmt(f),
             SheetAddressError::Parse(err) => err.fmt(f),
         }
@@ -67,15 +69,23 @@ impl From<A1ParseError> for SheetAddressError {
     }
 }
 
-/// Sheet locator that can carry either a resolved id or a name.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+/// Sheet locator that can carry either a resolved id, a name, or the current sheet.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum SheetLocator<'a> {
+    /// Reference is scoped to the sheet containing the formula.
+    Current,
+    /// Resolved sheet id.
     Id(SheetId),
+    /// Unresolved sheet name (borrowed or owned).
     Name(Cow<'a, str>),
 }
 
 impl<'a> SheetLocator<'a> {
+    /// Construct a locator for the current sheet.
+    pub const fn current() -> Self {
+        SheetLocator::Current
+    }
+
     /// Construct from a resolved sheet id.
     pub const fn from_id(id: SheetId) -> Self {
         SheetLocator::Id(id)
@@ -90,21 +100,27 @@ impl<'a> SheetLocator<'a> {
     pub const fn id(&self) -> Option<SheetId> {
         match self {
             SheetLocator::Id(id) => Some(*id),
-            SheetLocator::Name(_) => None,
+            SheetLocator::Current | SheetLocator::Name(_) => None,
         }
     }
 
     /// Returns the sheet name if present.
     pub fn name(&self) -> Option<&str> {
         match self {
-            SheetLocator::Id(_) => None,
             SheetLocator::Name(name) => Some(name.as_ref()),
+            SheetLocator::Current | SheetLocator::Id(_) => None,
         }
+    }
+
+    /// Returns true if this locator refers to the current sheet.
+    pub const fn is_current(&self) -> bool {
+        matches!(self, SheetLocator::Current)
     }
 
     /// Borrow the locator, ensuring any owned name is exposed by reference.
     pub fn as_ref(&self) -> SheetLocator<'_> {
         match self {
+            SheetLocator::Current => SheetLocator::Current,
             SheetLocator::Id(id) => SheetLocator::Id(*id),
             SheetLocator::Name(name) => SheetLocator::Name(Cow::Borrowed(name.as_ref())),
         }
@@ -113,9 +129,16 @@ impl<'a> SheetLocator<'a> {
     /// Convert the locator into an owned `'static` form.
     pub fn into_owned(self) -> SheetLocator<'static> {
         match self {
+            SheetLocator::Current => SheetLocator::Current,
             SheetLocator::Id(id) => SheetLocator::Id(id),
             SheetLocator::Name(name) => SheetLocator::Name(Cow::Owned(name.into_owned())),
         }
+    }
+}
+
+impl<'a> Default for SheetLocator<'a> {
+    fn default() -> Self {
+        SheetLocator::Current
     }
 }
 
@@ -137,17 +160,42 @@ impl<'a> From<String> for SheetLocator<'a> {
     }
 }
 
+/// Bound on a single axis (row or column).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct AxisBound {
+    /// 0-based index.
+    pub index: u32,
+    /// True if anchored with '$'.
+    pub abs: bool,
+}
+
+impl AxisBound {
+    pub const fn new(index: u32, abs: bool) -> Self {
+        AxisBound { index, abs }
+    }
+
+    /// Construct from an Excel 1-based index.
+    pub fn from_excel_1based(index: u32, abs: bool) -> Result<Self, SheetAddressError> {
+        let index0 = index.checked_sub(1).ok_or(SheetAddressError::ZeroIndex)?;
+        Ok(AxisBound::new(index0, abs))
+    }
+
+    /// Convert to Excel 1-based index.
+    pub const fn to_excel_1based(self) -> u32 {
+        self.index + 1
+    }
+}
+
 /// Sheet-scoped cell reference that retains relative/absolute anchors.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct SheetCellAddress<'a> {
+pub struct SheetCellRef<'a> {
     pub sheet: SheetLocator<'a>,
     pub coord: RelativeCoord,
 }
 
-impl<'a> SheetCellAddress<'a> {
+impl<'a> SheetCellRef<'a> {
     pub const fn new(sheet: SheetLocator<'a>, coord: RelativeCoord) -> Self {
-        SheetCellAddress { sheet, coord }
+        SheetCellRef { sheet, coord }
     }
 
     /// Construct from Excel 1-based coordinates with anchor flags.
@@ -161,7 +209,7 @@ impl<'a> SheetCellAddress<'a> {
         let row0 = row.checked_sub(1).ok_or(SheetAddressError::ZeroIndex)?;
         let col0 = col.checked_sub(1).ok_or(SheetAddressError::ZeroIndex)?;
         let coord = RelativeCoord::try_new(row0, col0, row_abs, col_abs)?;
-        Ok(SheetCellAddress::new(sheet, coord))
+        Ok(SheetCellRef::new(sheet, coord))
     }
 
     /// Parse an A1-style reference for this sheet.
@@ -170,57 +218,70 @@ impl<'a> SheetCellAddress<'a> {
         reference: &str,
     ) -> Result<Self, SheetAddressError> {
         let coord = RelativeCoord::try_from_a1(reference)?;
-        Ok(SheetCellAddress::new(sheet, coord))
+        Ok(SheetCellRef::new(sheet, coord))
     }
 
     /// Borrowing variant that preserves the lifetime of the sheet locator.
-    pub fn as_ref(&self) -> SheetCellAddress<'_> {
-        SheetCellAddress {
+    pub fn as_ref(&self) -> SheetCellRef<'_> {
+        SheetCellRef {
             sheet: self.sheet.as_ref(),
             coord: self.coord,
         }
     }
 
-    /// Convert into an owned `'static` address.
-    pub fn into_owned(self) -> SheetCellAddress<'static> {
-        SheetCellAddress {
+    /// Convert into an owned `'static` reference.
+    pub fn into_owned(self) -> SheetCellRef<'static> {
+        SheetCellRef {
             sheet: self.sheet.into_owned(),
             coord: self.coord,
         }
     }
 }
 
-/// Inclusive rectangular range with sheet context.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+/// Sheet-scoped range reference. Bounds are inclusive; None indicates an unbounded side.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct SheetRangeAddress<'a> {
+pub struct SheetRangeRef<'a> {
     pub sheet: SheetLocator<'a>,
-    pub start: RelativeCoord,
-    pub end: RelativeCoord,
+    pub start_row: Option<AxisBound>,
+    pub start_col: Option<AxisBound>,
+    pub end_row: Option<AxisBound>,
+    pub end_col: Option<AxisBound>,
 }
 
-impl<'a> SheetRangeAddress<'a> {
+impl<'a> SheetRangeRef<'a> {
     pub const fn new(
         sheet: SheetLocator<'a>,
-        start: RelativeCoord,
-        end: RelativeCoord,
-    ) -> SheetRangeAddress<'a> {
-        SheetRangeAddress { sheet, start, end }
+        start_row: Option<AxisBound>,
+        start_col: Option<AxisBound>,
+        end_row: Option<AxisBound>,
+        end_col: Option<AxisBound>,
+    ) -> Self {
+        SheetRangeRef {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+        }
     }
 
-    /// Construct a range from two cell addresses, ensuring sheet/order validity.
+    /// Construct a range from two cell references, ensuring sheet/order validity.
     pub fn from_cells(
-        start: SheetCellAddress<'a>,
-        end: SheetCellAddress<'a>,
+        start: SheetCellRef<'a>,
+        end: SheetCellRef<'a>,
     ) -> Result<Self, SheetAddressError> {
         if start.sheet != end.sheet {
             return Err(SheetAddressError::MismatchedSheets);
         }
-        SheetRangeAddress::from_parts(start.sheet, start.coord, end.coord)
+        let sr = AxisBound::new(start.coord.row(), start.coord.row_abs());
+        let sc = AxisBound::new(start.coord.col(), start.coord.col_abs());
+        let er = AxisBound::new(end.coord.row(), end.coord.row_abs());
+        let ec = AxisBound::new(end.coord.col(), end.coord.col_abs());
+        SheetRangeRef::from_parts(start.sheet, Some(sr), Some(sc), Some(er), Some(ec))
     }
 
     /// Construct from Excel 1-based bounds and anchor flags.
-    pub fn from_excel(
+    pub fn from_excel_rect(
         sheet: SheetLocator<'a>,
         start_row: u32,
         start_col: u32,
@@ -231,72 +292,62 @@ impl<'a> SheetRangeAddress<'a> {
         end_row_abs: bool,
         end_col_abs: bool,
     ) -> Result<Self, SheetAddressError> {
-        let start = SheetCellAddress::from_excel(
-            sheet.as_ref(),
-            start_row,
-            start_col,
-            start_row_abs,
-            start_col_abs,
-        )?
-        .coord;
-        let end = SheetCellAddress::from_excel(
-            sheet.as_ref(),
-            end_row,
-            end_col,
-            end_row_abs,
-            end_col_abs,
-        )?
-        .coord;
-        SheetRangeAddress::from_parts(sheet, start, end)
+        let sr = AxisBound::from_excel_1based(start_row, start_row_abs)?;
+        let sc = AxisBound::from_excel_1based(start_col, start_col_abs)?;
+        let er = AxisBound::from_excel_1based(end_row, end_row_abs)?;
+        let ec = AxisBound::from_excel_1based(end_col, end_col_abs)?;
+        SheetRangeRef::from_parts(sheet, Some(sr), Some(sc), Some(er), Some(ec))
     }
 
-    /// Helper to build a range from raw coordinates.
+    /// Helper to build a range from raw bounds, validating ordering when bounded.
     pub fn from_parts(
         sheet: SheetLocator<'a>,
-        start: RelativeCoord,
-        end: RelativeCoord,
+        start_row: Option<AxisBound>,
+        start_col: Option<AxisBound>,
+        end_row: Option<AxisBound>,
+        end_col: Option<AxisBound>,
     ) -> Result<Self, SheetAddressError> {
-        if start.row() > end.row() || start.col() > end.col() {
-            return Err(SheetAddressError::RangeOrder);
+        if let (Some(sr), Some(er)) = (start_row, end_row) {
+            if sr.index > er.index {
+                return Err(SheetAddressError::RangeOrder);
+            }
         }
-        Ok(SheetRangeAddress::new(sheet, start, end))
+        if let (Some(sc), Some(ec)) = (start_col, end_col) {
+            if sc.index > ec.index {
+                return Err(SheetAddressError::RangeOrder);
+            }
+        }
+        Ok(SheetRangeRef::new(sheet, start_row, start_col, end_row, end_col))
     }
 
     /// Borrowing variant preserving the sheet locator lifetime.
-    pub fn as_ref(&self) -> SheetRangeAddress<'_> {
-        SheetRangeAddress {
+    pub fn as_ref(&self) -> SheetRangeRef<'_> {
+        SheetRangeRef {
             sheet: self.sheet.as_ref(),
-            start: self.start,
-            end: self.end,
+            start_row: self.start_row,
+            start_col: self.start_col,
+            end_row: self.end_row,
+            end_col: self.end_col,
         }
     }
 
     /// Convert into an owned `'static` range.
-    pub fn into_owned(self) -> SheetRangeAddress<'static> {
-        SheetRangeAddress {
+    pub fn into_owned(self) -> SheetRangeRef<'static> {
+        SheetRangeRef {
             sheet: self.sheet.into_owned(),
-            start: self.start,
-            end: self.end,
+            start_row: self.start_row,
+            start_col: self.start_col,
+            end_row: self.end_row,
+            end_col: self.end_col,
         }
     }
+}
 
-    /// Width of the range in cells (inclusive bounds).
-    pub fn width(&self) -> u32 {
-        self.end.col() - self.start.col() + 1
-    }
-
-    /// Height of the range in cells (inclusive bounds).
-    pub fn height(&self) -> u32 {
-        self.end.row() - self.start.row() + 1
-    }
-
-    /// Decompose into top-left and bottom-right cell addresses.
-    pub fn bounds(&self) -> (SheetCellAddress<'_>, SheetCellAddress<'_>) {
-        (
-            SheetCellAddress::new(self.sheet.as_ref(), self.start),
-            SheetCellAddress::new(self.sheet.as_ref(), self.end),
-        )
-    }
+/// Sheet-scoped grid reference (cell or range).
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum SheetRef<'a> {
+    Cell(SheetCellRef<'a>),
+    Range(SheetRangeRef<'a>),
 }
 
 #[cfg(test)]
@@ -316,21 +367,23 @@ mod tests {
         let owned = name.clone().into_owned();
         assert_eq!(owned.name(), Some("Data"));
         assert_eq!(name, owned.as_ref());
+
+        let current = SheetLocator::current();
+        assert!(current.is_current());
+        assert_eq!(current.id(), None);
     }
 
     #[test]
     fn cell_from_excel_preserves_flags() {
-        let a1 =
-            SheetCellAddress::from_excel(SheetLocator::from_name("Sheet1"), 1, 1, false, false)
-                .expect("valid cell");
+        let a1 = SheetCellRef::from_excel(SheetLocator::from_name("Sheet1"), 1, 1, false, false)
+            .expect("valid cell");
         assert_eq!(a1.coord.row(), 0);
         assert_eq!(a1.coord.col(), 0);
         assert!(!a1.coord.row_abs());
         assert!(!a1.coord.col_abs());
 
-        let abs =
-            SheetCellAddress::from_excel(SheetLocator::from_name("Sheet1"), 3, 2, true, false)
-                .expect("valid absolute cell");
+        let abs = SheetCellRef::from_excel(SheetLocator::from_name("Sheet1"), 3, 2, true, false)
+            .expect("valid absolute cell");
         assert_eq!(abs.coord.row(), 2);
         assert!(abs.coord.row_abs());
         assert!(!abs.coord.col_abs());
@@ -338,40 +391,34 @@ mod tests {
 
     #[test]
     fn cell_from_excel_rejects_zero() {
-        let err =
-            SheetCellAddress::from_excel(SheetLocator::from_name("Sheet1"), 0, 1, false, false)
-                .unwrap_err();
+        let err = SheetCellRef::from_excel(SheetLocator::from_name("Sheet1"), 0, 1, false, false)
+            .unwrap_err();
         assert_eq!(err, SheetAddressError::ZeroIndex);
     }
 
     #[test]
     fn range_from_cells_validates_sheet_and_order() {
         let sheet = SheetLocator::from_name("Sheet1");
-        let start = SheetCellAddress::try_from_a1(sheet.as_ref(), "A1").unwrap();
-        let end = SheetCellAddress::try_from_a1(sheet.as_ref(), "$B$3").unwrap();
-        let range = SheetRangeAddress::from_cells(start.clone(), end.clone()).unwrap();
-        assert_eq!(range.width(), 2);
-        assert_eq!(range.height(), 3);
-        let (tl, br) = range.bounds();
-        assert_eq!(tl.coord.to_string(), "A1");
-        assert_eq!(br.coord.to_string(), "$B$3");
+        let start = SheetCellRef::try_from_a1(sheet.as_ref(), "A1").unwrap();
+        let end = SheetCellRef::try_from_a1(sheet.as_ref(), "$B$3").unwrap();
+        let range = SheetRangeRef::from_cells(start.clone(), end.clone()).unwrap();
+        assert_eq!(range.start_row.unwrap().index, 0);
+        assert_eq!(range.end_row.unwrap().index, 2);
 
-        let other_sheet = SheetCellAddress::try_from_a1(SheetLocator::from_name("Other"), "C2")
-            .expect("valid cell");
+        let other_sheet =
+            SheetCellRef::try_from_a1(SheetLocator::from_name("Other"), "C2").unwrap();
         assert_eq!(
-            SheetRangeAddress::from_cells(start, other_sheet).unwrap_err(),
+            SheetRangeRef::from_cells(start, other_sheet).unwrap_err(),
             SheetAddressError::MismatchedSheets
         );
 
-        let inverted = SheetRangeAddress::from_parts(
+        let inverted = SheetRangeRef::from_parts(
             SheetLocator::from_name("Sheet1"),
-            end.coord,
-            RelativeCoord::try_from_a1("A1").unwrap(),
+            Some(AxisBound::new(end.coord.row(), end.coord.row_abs())),
+            Some(AxisBound::new(end.coord.col(), end.coord.col_abs())),
+            Some(AxisBound::new(0, false)),
+            Some(AxisBound::new(0, false)),
         );
-        assert_eq!(
-            inverted.unwrap_err(),
-            SheetAddressError::RangeOrder,
-            "start must be above/left of end"
-        );
+        assert_eq!(inverted.unwrap_err(), SheetAddressError::RangeOrder);
     }
 }

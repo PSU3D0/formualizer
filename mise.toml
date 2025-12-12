@@ -1,8 +1,6 @@
 [tools]
 uv = "latest"
-node = "lts"
-pnpm = "latest"
-"rust" = { version = "1.90.0", profile = "default" }
+"rust" = { version = "1.91.1", profile = "default" }
 "github:BurntSushi/ripgrep" = "latest"
 "npm:@anthropic-ai/claude-code" = "latest"
 "npm:@openai/codex" = "latest"
