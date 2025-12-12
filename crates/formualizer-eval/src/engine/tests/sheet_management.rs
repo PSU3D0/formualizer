@@ -161,4 +161,49 @@ mod tests {
         let result = graph.duplicate_sheet(999, "Copy");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_current_sheet_resolution_for_unsheeted_refs() {
+        use crate::engine::{Engine, EvalConfig};
+        use crate::test_workbook::TestWorkbook;
+        use formualizer_parse::parser::Parser;
+
+        let wb = TestWorkbook::new();
+        let mut engine = Engine::new(wb, EvalConfig::default());
+        engine.graph.add_sheet("Data").unwrap();
+
+        engine
+            .set_cell_value("Data", 1, 1, LiteralValue::Number(10.0))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(99.0))
+            .unwrap();
+
+        engine
+            .set_cell_formula("Data", 1, 2, Parser::from("=A1").parse().unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+
+        assert_eq!(
+            engine.get_cell_value("Data", 1, 2),
+            Some(LiteralValue::Number(10.0))
+        );
+    }
+
+    #[test]
+    fn test_unknown_sheet_reference_errors_on_resolve() {
+        use crate::engine::{Engine, EvalConfig};
+        use crate::test_workbook::TestWorkbook;
+        use crate::traits::EvaluationContext;
+        use formualizer_parse::parser::ReferenceType;
+
+        let wb = TestWorkbook::new();
+        let engine = Engine::new(wb, EvalConfig::default());
+        let r = ReferenceType::Cell {
+            sheet: Some("NoSuchSheet".to_string()),
+            row: 1,
+            col: 1,
+        };
+        assert!(engine.resolve_range_view(&r, "Sheet1").is_err());
+    }
 }

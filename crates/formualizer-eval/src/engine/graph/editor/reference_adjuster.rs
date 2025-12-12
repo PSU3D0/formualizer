@@ -186,195 +186,163 @@ impl ReferenceAdjuster {
     ) -> formualizer_parse::parser::ReferenceType {
         use formualizer_parse::parser::ReferenceType;
 
-        match reference {
-            ReferenceType::Cell { sheet, row, col } => {
-                // Create a temporary CellRef to reuse adjustment logic
-                // For now, assume same sheet if no sheet specified
+        let shared = reference.to_sheet_ref_lossy();
+
+        match (reference, shared) {
+            (ReferenceType::Cell { sheet, .. }, Some(crate::reference::SharedRef::Cell(cell))) => {
+                let sheet_id = match op {
+                    ShiftOperation::InsertRows { sheet_id, .. }
+                    | ShiftOperation::DeleteRows { sheet_id, .. }
+                    | ShiftOperation::InsertColumns { sheet_id, .. }
+                    | ShiftOperation::DeleteColumns { sheet_id, .. } => *sheet_id,
+                };
                 let temp_ref = CellRef::new(
-                    match op {
-                        ShiftOperation::InsertRows { sheet_id, .. }
-                        | ShiftOperation::DeleteRows { sheet_id, .. }
-                        | ShiftOperation::InsertColumns { sheet_id, .. }
-                        | ShiftOperation::DeleteColumns { sheet_id, .. } => *sheet_id,
-                    },
-                    Coord::from_excel(*row, *col, false, false), // Assume relative for now
+                    sheet_id,
+                    Coord::new(cell.coord.row(), cell.coord.col(), false, false),
                 );
 
                 match self.adjust_cell_ref(&temp_ref, op) {
-                    None => {
-                        // Cell was deleted, create a special marker
-                        // We'll need to handle this at a higher level
-                        ReferenceType::Cell {
-                            sheet: Some("#REF".to_string()),
-                            row: 0,
-                            col: 0,
-                        }
-                    }
+                    None => ReferenceType::Cell {
+                        sheet: Some("#REF".to_string()),
+                        row: 0,
+                        col: 0,
+                    },
                     Some(adjusted) => ReferenceType::Cell {
                         sheet: sheet.clone(),
-                        // Convert internal 0-based coords back to Excel 1-based.
                         row: adjusted.coord.row() + 1,
                         col: adjusted.coord.col() + 1,
                     },
                 }
             }
-            ReferenceType::Range {
-                sheet,
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-            } => {
-                // Check if this is an unbounded (infinite) range
-                // Unbounded column: A:A has no row bounds (both None)
-                // Unbounded row: 1:1 has no column bounds (both None)
-                let is_unbounded_column = start_row.is_none() && end_row.is_none();
-                let is_unbounded_row = start_col.is_none() && end_col.is_none();
-
-                // Don't adjust unbounded ranges - they conceptually represent "all rows/columns"
-                // and should remain unchanged during structural operations
+            (
+                ReferenceType::Range { sheet, .. },
+                Some(crate::reference::SharedRef::Range(range)),
+            ) => {
+                let is_unbounded_column = range.start_row.is_none() && range.end_row.is_none();
+                let is_unbounded_row = range.start_col.is_none() && range.end_col.is_none();
                 if is_unbounded_column || is_unbounded_row {
                     return reference.clone();
                 }
 
-                // Adjust range boundaries based on operation
-                let (adj_start_row, adj_end_row) = match op {
-                    ShiftOperation::InsertRows { before, count, .. } => {
-                        // Only adjust if both bounds are present (bounded range)
-                        match (start_row, end_row) {
-                            (Some(start), Some(end)) => {
-                                let adj_start = if *start >= *before {
-                                    start + count
+                let sr0 = range.start_row.map(|b| b.index);
+                let sc0 = range.start_col.map(|b| b.index);
+                let er0 = range.end_row.map(|b| b.index);
+                let ec0 = range.end_col.map(|b| b.index);
+
+                let (adj_sr0, adj_er0) = match op {
+                    ShiftOperation::InsertRows { before, count, .. } => match (sr0, er0) {
+                        (Some(start), Some(end)) => {
+                            let adj_start = if start >= *before {
+                                start + count
+                            } else {
+                                start
+                            };
+                            let adj_end = if end >= *before { end + count } else { end };
+                            (Some(adj_start), Some(adj_end))
+                        }
+                        _ => (sr0, er0),
+                    },
+                    ShiftOperation::DeleteRows { start, count, .. } => match (sr0, er0) {
+                        (Some(range_start), Some(range_end)) => {
+                            if range_end < *start || range_start >= start + count {
+                                let adj_start = if range_start >= start + count {
+                                    range_start - count
+                                } else {
+                                    range_start
+                                };
+                                let adj_end = if range_end >= start + count {
+                                    range_end - count
+                                } else {
+                                    range_end
+                                };
+                                (Some(adj_start), Some(adj_end))
+                            } else if range_start >= *start && range_end < start + count {
+                                return ReferenceType::Range {
+                                    sheet: Some("#REF".to_string()),
+                                    start_row: Some(0),
+                                    start_col: Some(0),
+                                    end_row: Some(0),
+                                    end_col: Some(0),
+                                };
+                            } else {
+                                let adj_start = if range_start < *start {
+                                    range_start
                                 } else {
                                     *start
                                 };
-                                let adj_end = if *end >= *before { end + count } else { *end };
+                                let adj_end = if range_end >= start + count {
+                                    range_end - count
+                                } else {
+                                    start.saturating_sub(1)
+                                };
                                 (Some(adj_start), Some(adj_end))
                             }
-                            // Preserve None values for partially bounded ranges
-                            _ => (*start_row, *end_row),
                         }
-                    }
-                    ShiftOperation::DeleteRows { start, count, .. } => {
-                        // Only adjust if both bounds are present
-                        match (start_row, end_row) {
-                            (Some(range_start), Some(range_end)) => {
-                                if *range_end < *start || *range_start >= start + count {
-                                    // Range outside delete area
-                                    let adj_start = if *range_start >= start + count {
-                                        range_start - count
-                                    } else {
-                                        *range_start
-                                    };
-                                    let adj_end = if *range_end >= start + count {
-                                        range_end - count
-                                    } else {
-                                        *range_end
-                                    };
-                                    (Some(adj_start), Some(adj_end))
-                                } else if *range_start >= *start && *range_end < start + count {
-                                    // Entire range deleted - mark with special sheet name
-                                    return ReferenceType::Range {
-                                        sheet: Some("#REF".to_string()),
-                                        start_row: Some(0),
-                                        start_col: Some(0),
-                                        end_row: Some(0),
-                                        end_col: Some(0),
-                                    };
-                                } else {
-                                    // Range partially overlaps delete area
-                                    let adj_start = if *range_start < *start {
-                                        *range_start
-                                    } else {
-                                        *start
-                                    };
-                                    let adj_end = if *range_end >= start + count {
-                                        range_end - count
-                                    } else {
-                                        start - 1
-                                    };
-                                    (Some(adj_start), Some(adj_end))
-                                }
-                            }
-                            // Preserve None values for partially bounded ranges
-                            _ => (*start_row, *end_row),
-                        }
-                    }
-                    _ => (*start_row, *end_row),
+                        _ => (sr0, er0),
+                    },
+                    _ => (sr0, er0),
                 };
 
-                // Similar logic for columns
-                let (adj_start_col, adj_end_col) = match op {
-                    ShiftOperation::InsertColumns { before, count, .. } => {
-                        // Only adjust if both bounds are present
-                        match (start_col, end_col) {
-                            (Some(start), Some(end)) => {
-                                let adj_start = if *start >= *before {
-                                    start + count
+                let (adj_sc0, adj_ec0) = match op {
+                    ShiftOperation::InsertColumns { before, count, .. } => match (sc0, ec0) {
+                        (Some(start), Some(end)) => {
+                            let adj_start = if start >= *before {
+                                start + count
+                            } else {
+                                start
+                            };
+                            let adj_end = if end >= *before { end + count } else { end };
+                            (Some(adj_start), Some(adj_end))
+                        }
+                        _ => (sc0, ec0),
+                    },
+                    ShiftOperation::DeleteColumns { start, count, .. } => match (sc0, ec0) {
+                        (Some(range_start), Some(range_end)) => {
+                            if range_end < *start || range_start >= start + count {
+                                let adj_start = if range_start >= start + count {
+                                    range_start - count
+                                } else {
+                                    range_start
+                                };
+                                let adj_end = if range_end >= start + count {
+                                    range_end - count
+                                } else {
+                                    range_end
+                                };
+                                (Some(adj_start), Some(adj_end))
+                            } else if range_start >= *start && range_end < start + count {
+                                return ReferenceType::Range {
+                                    sheet: Some("#REF".to_string()),
+                                    start_row: Some(0),
+                                    start_col: Some(0),
+                                    end_row: Some(0),
+                                    end_col: Some(0),
+                                };
+                            } else {
+                                let adj_start = if range_start < *start {
+                                    range_start
                                 } else {
                                     *start
                                 };
-                                let adj_end = if *end >= *before { end + count } else { *end };
+                                let adj_end = if range_end >= start + count {
+                                    range_end - count
+                                } else {
+                                    start.saturating_sub(1)
+                                };
                                 (Some(adj_start), Some(adj_end))
                             }
-                            // Preserve None values
-                            _ => (*start_col, *end_col),
                         }
-                    }
-                    ShiftOperation::DeleteColumns { start, count, .. } => {
-                        // Only adjust if both bounds are present
-                        match (start_col, end_col) {
-                            (Some(range_start), Some(range_end)) => {
-                                if *range_end < *start || *range_start >= start + count {
-                                    // Range outside delete area
-                                    let adj_start = if *range_start >= start + count {
-                                        range_start - count
-                                    } else {
-                                        *range_start
-                                    };
-                                    let adj_end = if *range_end >= start + count {
-                                        range_end - count
-                                    } else {
-                                        *range_end
-                                    };
-                                    (Some(adj_start), Some(adj_end))
-                                } else if *range_start >= *start && *range_end < start + count {
-                                    // Entire range deleted - mark with special sheet name
-                                    return ReferenceType::Range {
-                                        sheet: Some("#REF".to_string()),
-                                        start_row: Some(0),
-                                        start_col: Some(0),
-                                        end_row: Some(0),
-                                        end_col: Some(0),
-                                    };
-                                } else {
-                                    // Range partially overlaps delete area
-                                    let adj_start = if *range_start < *start {
-                                        *range_start
-                                    } else {
-                                        *start
-                                    };
-                                    let adj_end = if *range_end >= start + count {
-                                        range_end - count
-                                    } else {
-                                        start - 1
-                                    };
-                                    (Some(adj_start), Some(adj_end))
-                                }
-                            }
-                            // Preserve None values
-                            _ => (*start_col, *end_col),
-                        }
-                    }
-                    _ => (*start_col, *end_col),
+                        _ => (sc0, ec0),
+                    },
+                    _ => (sc0, ec0),
                 };
 
                 ReferenceType::Range {
                     sheet: sheet.clone(),
-                    start_row: adj_start_row,
-                    start_col: adj_start_col,
-                    end_row: adj_end_row,
-                    end_col: adj_end_col,
+                    start_row: adj_sr0.map(|i| i + 1),
+                    start_col: adj_sc0.map(|i| i + 1),
+                    end_row: adj_er0.map(|i| i + 1),
+                    end_col: adj_ec0.map(|i| i + 1),
                 }
             }
             _ => reference.clone(),

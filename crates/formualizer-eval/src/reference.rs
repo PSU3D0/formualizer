@@ -23,8 +23,22 @@
 use core::fmt;
 
 use crate::engine::sheet_registry::SheetRegistry; // `no_std`‑friendly; swap for `std::fmt` if you prefer
-use formualizer_common::{ExcelError, ExcelErrorKind, RelativeCoord};
+use formualizer_common::{
+    ExcelError, ExcelErrorKind, RelativeCoord, SheetCellRef as CommonSheetCellRef,
+    SheetId as CommonSheetId, SheetLocator as CommonSheetLocator,
+    SheetRangeRef as CommonSheetRangeRef, SheetRef as CommonSheetRef,
+};
 use formualizer_parse::parser::ReferenceType;
+
+//------------------------------------------------------------------------------
+// Shared ref aliases (Phase 3.2 staging)
+//------------------------------------------------------------------------------
+
+pub type SharedSheetId = CommonSheetId;
+pub type SharedSheetLocator<'a> = CommonSheetLocator<'a>;
+pub type SharedCellRef<'a> = CommonSheetCellRef<'a>;
+pub type SharedRangeRef<'a> = CommonSheetRangeRef<'a>;
+pub type SharedRef<'a> = CommonSheetRef<'a>;
 
 //------------------------------------------------------------------------------
 // Coord
@@ -219,6 +233,23 @@ impl CellRef {
     pub fn sheet_name<'a>(&self, sheet_reg: &'a SheetRegistry) -> &'a str {
         sheet_reg.name(self.sheet_id)
     }
+
+    #[inline]
+    pub fn to_shared(self) -> SharedCellRef<'static> {
+        SharedCellRef::new(
+            SharedSheetLocator::Id(self.sheet_id),
+            self.coord.into_inner(),
+        )
+    }
+
+    pub fn try_from_shared(cell: SharedCellRef<'_>) -> Result<Self, ExcelError> {
+        let owned = cell.into_owned();
+        let sheet_id = match owned.sheet {
+            SharedSheetLocator::Id(id) => id,
+            _ => return Err(ExcelError::new(ExcelErrorKind::Ref)),
+        };
+        Ok(Self::new(sheet_id, Coord(owned.coord)))
+    }
 }
 
 impl fmt::Display for CellRef {
@@ -243,6 +274,41 @@ impl RangeRef {
     #[inline]
     pub const fn new(start: CellRef, end: CellRef) -> Self {
         Self { start, end }
+    }
+
+    pub fn try_to_shared(self) -> Result<SharedRangeRef<'static>, ExcelError> {
+        if self.start.sheet_id != self.end.sheet_id {
+            return Err(ExcelError::new(ExcelErrorKind::Ref));
+        }
+        let sheet = SharedSheetLocator::Id(self.start.sheet_id);
+        let sr =
+            formualizer_common::AxisBound::new(self.start.coord.row(), self.start.coord.row_abs());
+        let sc =
+            formualizer_common::AxisBound::new(self.start.coord.col(), self.start.coord.col_abs());
+        let er = formualizer_common::AxisBound::new(self.end.coord.row(), self.end.coord.row_abs());
+        let ec = formualizer_common::AxisBound::new(self.end.coord.col(), self.end.coord.col_abs());
+        SharedRangeRef::from_parts(sheet, Some(sr), Some(sc), Some(er), Some(ec))
+            .map_err(|_| ExcelError::new(ExcelErrorKind::Ref))
+    }
+
+    pub fn try_from_shared(range: SharedRangeRef<'_>) -> Result<Self, ExcelError> {
+        let owned = range.into_owned();
+        let sheet_id = match owned.sheet {
+            SharedSheetLocator::Id(id) => id,
+            _ => return Err(ExcelError::new(ExcelErrorKind::Ref)),
+        };
+        let (sr, sc, er, ec) = match (
+            owned.start_row,
+            owned.start_col,
+            owned.end_row,
+            owned.end_col,
+        ) {
+            (Some(sr), Some(sc), Some(er), Some(ec)) => (sr, sc, er, ec),
+            _ => return Err(ExcelError::new(ExcelErrorKind::Ref)),
+        };
+        let start = CellRef::new(sheet_id, Coord::new(sr.index, sc.index, sr.abs, sc.abs));
+        let end = CellRef::new(sheet_id, Coord::new(er.index, ec.index, er.abs, ec.abs));
+        Ok(Self::new(start, end))
     }
 }
 

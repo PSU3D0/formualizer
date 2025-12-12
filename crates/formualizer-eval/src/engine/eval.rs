@@ -5,7 +5,7 @@ use crate::engine::range_view::RangeView;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::{DependencyGraph, EvalConfig, Scheduler, VertexId, VertexKind};
 use crate::interpreter::Interpreter;
-use crate::reference::{CellRef, Coord};
+use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, Resolver};
 use chrono::Timelike;
@@ -2488,6 +2488,64 @@ impl ShimSpillManager {
     }
 }
 
+impl<R> Engine<R>
+where
+    R: EvaluationContext,
+{
+    fn resolve_shared_ref(
+        &self,
+        reference: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<formualizer_common::SheetRef<'static>, ExcelError> {
+        use formualizer_common::{
+            SheetCellRef as SharedCellRef, SheetLocator, SheetRangeRef as SharedRangeRef,
+            SheetRef as SharedRef,
+        };
+
+        let sr = reference
+            .to_sheet_ref_lossy()
+            .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+
+        let current_id = self
+            .graph
+            .sheet_id(current_sheet)
+            .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+
+        let resolve_loc = |loc: SheetLocator<'_>| -> Result<SheetLocator<'static>, ExcelError> {
+            match loc {
+                SheetLocator::Current => Ok(SheetLocator::Id(current_id)),
+                SheetLocator::Id(id) => Ok(SheetLocator::Id(id)),
+                SheetLocator::Name(name) => {
+                    let n = name.as_ref();
+                    self.graph
+                        .sheet_id(n)
+                        .map(SheetLocator::Id)
+                        .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))
+                }
+            }
+        };
+
+        match sr {
+            SharedRef::Cell(cell) => {
+                let owned = cell.into_owned();
+                let sheet = resolve_loc(owned.sheet)?;
+                Ok(SharedRef::Cell(SharedCellRef::new(sheet, owned.coord)))
+            }
+            SharedRef::Range(range) => {
+                let owned = range.into_owned();
+                let sheet = resolve_loc(owned.sheet)?;
+                Ok(SharedRef::Range(SharedRangeRef {
+                    sheet,
+                    start_row: owned.start_row,
+                    start_col: owned.start_col,
+                    end_row: owned.end_row,
+                    end_col: owned.end_col,
+                }))
+            }
+        }
+    }
+}
+
 // Implement the resolver traits for the Engine.
 // This allows the interpreter to resolve references by querying the engine's graph.
 impl<R> crate::traits::ReferenceResolver for Engine<R>
@@ -2674,27 +2732,43 @@ where
         current_sheet: &str,
     ) -> Result<RangeView<'c>, ExcelError> {
         match reference {
-            ReferenceType::Range {
-                sheet,
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-            } => {
-                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-                let sheet_id = self
-                    .graph
-                    .sheet_id(sheet_name)
-                    .ok_or(ExcelError::new(ExcelErrorKind::Ref))?;
+            ReferenceType::Range { .. } => {
+                let shared = self.resolve_shared_ref(reference, current_sheet)?;
+                let formualizer_common::SheetRef::Range(range) = shared else {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref));
+                };
+                let sheet_id = match range.sheet {
+                    formualizer_common::SheetLocator::Id(id) => id,
+                    _ => return Err(ExcelError::new(ExcelErrorKind::Ref)),
+                };
+                let sheet_name = self.graph.sheet_name(sheet_id);
 
-                let is_unbounded = start_row.is_none()
-                    || end_row.is_none()
-                    || start_col.is_none()
-                    || end_col.is_none();
-                let mut sr = *start_row;
-                let mut sc = *start_col;
-                let mut er = *end_row;
-                let mut ec = *end_col;
+                let bounded_range = if range.start_row.is_some()
+                    && range.start_col.is_some()
+                    && range.end_row.is_some()
+                    && range.end_col.is_some()
+                {
+                    Some(RangeRef::try_from_shared(range.as_ref())?)
+                } else {
+                    None
+                };
+
+                let mut sr = bounded_range
+                    .as_ref()
+                    .map(|r| r.start.coord.row() + 1)
+                    .or_else(|| range.start_row.map(|b| b.index + 1));
+                let mut sc = bounded_range
+                    .as_ref()
+                    .map(|r| r.start.coord.col() + 1)
+                    .or_else(|| range.start_col.map(|b| b.index + 1));
+                let mut er = bounded_range
+                    .as_ref()
+                    .map(|r| r.end.coord.row() + 1)
+                    .or_else(|| range.end_row.map(|b| b.index + 1));
+                let mut ec = bounded_range
+                    .as_ref()
+                    .map(|r| r.end.coord.col() + 1)
+                    .or_else(|| range.end_col.map(|b| b.index + 1));
 
                 if sr.is_none() && er.is_none() {
                     // Full-column reference: anchor at row 1
@@ -2805,21 +2879,26 @@ where
                     ec.saturating_sub(1),
                 ))
             }
-            ReferenceType::Cell { sheet, row, col } => {
-                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-                if let Some(sheet_id) = self.graph.sheet_id(sheet_name) {
-                    let coord = Coord::from_excel(*row, *col, true, true);
-                    let addr = CellRef::new(sheet_id, coord);
-                    if let Some(vid) = self.graph.get_vertex_id_for_address(&addr)
-                        && matches!(
-                            self.graph.get_vertex_kind(*vid),
-                            VertexKind::FormulaScalar | VertexKind::FormulaArray
-                        )
-                        && let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col)
-                    {
-                        return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
-                    }
+            ReferenceType::Cell { .. } => {
+                let shared = self.resolve_shared_ref(reference, current_sheet)?;
+                let formualizer_common::SheetRef::Cell(cell) = shared else {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref));
+                };
+                let addr = CellRef::try_from_shared(cell)?;
+                let sheet_id = addr.sheet_id;
+                let sheet_name = self.graph.sheet_name(sheet_id);
+                let row = addr.coord.row() + 1;
+                let col = addr.coord.col() + 1;
+                if let Some(vid) = self.graph.get_vertex_id_for_address(&addr)
+                    && matches!(
+                        self.graph.get_vertex_kind(*vid),
+                        VertexKind::FormulaScalar | VertexKind::FormulaArray
+                    )
+                    && let Some(v) = self.graph.get_cell_value(sheet_name, row, col)
+                {
+                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
                 }
+
                 if self.config.arrow_storage_enabled
                     && self.config.delta_overlay_enabled
                     && self.config.write_formula_overlay_enabled
@@ -2831,16 +2910,14 @@ where
                         let v = av.get_cell(0, 0);
                         return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
                     }
-                    // No Arrow: use graph value if present
                     let v = self
                         .graph
-                        .get_cell_value(sheet_name, *row, *col)
+                        .get_cell_value(sheet_name, row, col)
                         .unwrap_or(LiteralValue::Empty);
                     return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
                 }
 
-                // Default behavior
-                if let Some(v) = self.graph.get_cell_value(sheet_name, *row, *col) {
+                if let Some(v) = self.graph.get_cell_value(sheet_name, row, col) {
                     return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
                 }
                 if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
