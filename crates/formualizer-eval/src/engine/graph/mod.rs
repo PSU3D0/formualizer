@@ -1,7 +1,7 @@
 use crate::SheetId;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{parse_a1_1based, ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -99,8 +99,7 @@ fn is_valid_excel_name(name: &str) -> bool {
         return false;
     }
 
-    // Check if it looks like a cell reference (basic check)
-    if is_cell_reference(name) {
+    if parse_a1_1based(name).is_ok() {
         return false;
     }
 
@@ -125,41 +124,6 @@ fn is_valid_excel_name(name: &str) -> bool {
     true
 }
 
-/// Check if a string looks like a cell reference
-fn is_cell_reference(s: &str) -> bool {
-    // A cell reference must:
-    // 1. Start with optional $, then 1-3 letters (column)
-    // 2. Followed by optional $, then digits (row)
-    // Examples: A1, $A$1, AB123, $XFD$1048576
-
-    let s = s.trim_start_matches('$');
-
-    // Find where letters end and digits begin
-    let letter_end = s.chars().position(|c| !c.is_alphabetic() && c != '$');
-
-    if let Some(pos) = letter_end {
-        let (col_part, rest) = s.split_at(pos);
-
-        // Column part must be 1-3 letters
-        if col_part.is_empty() || col_part.len() > 3 {
-            return false;
-        }
-
-        // Check if all are letters
-        if !col_part.chars().all(|c| c.is_alphabetic()) {
-            return false;
-        }
-
-        // Rest must be optional $ followed by digits only
-        let row_part = rest.trim_start_matches('$');
-
-        // Must have at least one digit and all must be digits
-        !row_part.is_empty() && row_part.chars().all(|c| c.is_ascii_digit())
-    } else {
-        // No digits found, not a cell reference
-        false
-    }
-}
 
 /// A summary of the results of a mutating operation on the graph.
 /// This serves as a "changelog" to the application layer.
