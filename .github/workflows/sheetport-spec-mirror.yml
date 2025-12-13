@@ -1,0 +1,64 @@
+name: Mirror SheetPort Spec
+
+on:
+  push:
+    tags:
+      - 'sheetport-spec-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    if: github.repository == 'PSU3D0/formualizer'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test sheetport-spec
+        run: cargo test -p sheetport-spec
+
+      - name: Sync mirror repo
+        env:
+          MIRROR_TOKEN: ${{ secrets.SHEETPORT_SPEC_MIRROR_TOKEN }}
+          MIRROR_REPO: PSU3D0/sheetport-spec
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          SRC_DIR="${GITHUB_WORKSPACE}"
+
+          TMP_DIR="$(mktemp -d)"
+          git clone "https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git" "${TMP_DIR}"
+
+          cd "${TMP_DIR}"
+
+          git checkout -B main
+          git rm -r --ignore-unmatch . || true
+
+          rm -rf schema examples
+          mkdir -p schema examples
+
+          cp "${SRC_DIR}/crates/sheetport-spec/schema/fio-0.3.json" schema/
+          cp "${SRC_DIR}/crates/sheetport-spec/README.md" README.md
+          cp "${SRC_DIR}/crates/sheetport-spec/SPEC.md" SPEC.md
+          cp "${SRC_DIR}/crates/sheetport-spec/CHANGELOG.md" CHANGELOG.md
+          cp "${SRC_DIR}/crates/sheetport-spec/tests/fixtures/"*.yaml examples/
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No mirror changes; exiting"
+            exit 0
+          fi
+
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "Sync from formualizer ${TAG}"
+
+          git push origin main
