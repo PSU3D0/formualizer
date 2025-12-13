@@ -1319,7 +1319,7 @@ where
     ) -> Result<EvalResult, ExcelError> {
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
@@ -1434,7 +1434,7 @@ where
             self.build_graph_all()?;
         }
 
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         let dirty_vertices = self.graph.get_evaluation_vertices();
         if dirty_vertices.is_empty() {
             return Ok(EvalResult {
@@ -1503,7 +1503,7 @@ where
         }
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all").entered();
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
 
@@ -1950,7 +1950,7 @@ where
         &mut self,
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
 
@@ -2022,7 +2022,7 @@ where
         targets: &[&str],
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();

@@ -4,13 +4,12 @@ Visitor utility for traversing AST nodes.
 This module provides a simple DFS traversal utility with early-exit capability.
 """
 
-from typing import Callable, Union
+from typing import TYPE_CHECKING, Any, Callable, Union
 
-try:
-    from . import PyASTNode
-except ImportError:
-    # For when this is used standalone
-    pass
+if TYPE_CHECKING:
+    from .formualizer_py import ASTNode
+else:
+    ASTNode = Any
 
 
 class VisitControl:
@@ -21,15 +20,13 @@ class VisitControl:
     STOP = "stop"
 
 
-def walk_ast(
-    node: "PyASTNode", visitor: Callable[["PyASTNode"], Union[str, None]]
-) -> None:
+def walk_ast(node: "ASTNode", visitor: Callable[["ASTNode"], Union[str, None]]) -> None:
     """
     DFS traversal of AST with early-exit capability.
 
     Args:
         node: The AST node to start traversal from
-        visitor: A function that takes a PyASTNode and returns:
+        visitor: A function that takes a ASTNode and returns:
                 - 'continue' or None: continue normal traversal
                 - 'skip': skip children of this node
                 - 'stop': stop traversal entirely
@@ -59,7 +56,7 @@ def walk_ast(
         ```
     """
 
-    def _walk_recursive(current_node: "PyASTNode") -> str:
+    def _walk_recursive(current_node: "ASTNode") -> str:
         # Call visitor on current node
         result = visitor(current_node)
 
@@ -79,7 +76,7 @@ def walk_ast(
     _walk_recursive(node)
 
 
-def collect_nodes_by_type(node: "PyASTNode", node_type: str) -> list:
+def collect_nodes_by_type(node: "ASTNode", node_type: str) -> list[Any]:
     """
     Collect all nodes of a specific type from the AST.
 
@@ -88,11 +85,11 @@ def collect_nodes_by_type(node: "PyASTNode", node_type: str) -> list:
         node_type: The type of nodes to collect (e.g., "Reference", "Function")
 
     Returns:
-        List of PyASTNode objects matching the specified type
+        List of ASTNode objects matching the specified type
     """
-    nodes = []
+    nodes: list[Any] = []
 
-    def collector(current_node):
+    def collector(current_node: "ASTNode") -> str:
         if current_node.node_type() == node_type:
             nodes.append(current_node)
         return VisitControl.CONTINUE
@@ -101,7 +98,7 @@ def collect_nodes_by_type(node: "PyASTNode", node_type: str) -> list:
     return nodes
 
 
-def collect_references(node: "PyASTNode") -> list:
+def collect_references(node: "ASTNode") -> list[Any]:
     """
     Collect all reference nodes from the AST as rich reference objects.
 
@@ -111,9 +108,9 @@ def collect_references(node: "PyASTNode") -> list:
     Returns:
         List of reference objects (CellRef, RangeRef, etc.)
     """
-    references = []
+    references: list[Any] = []
 
-    def ref_collector(current_node):
+    def ref_collector(current_node: "ASTNode") -> str:
         ref = current_node.get_reference()
         if ref is not None:
             references.append(ref)
@@ -123,7 +120,7 @@ def collect_references(node: "PyASTNode") -> list:
     return references
 
 
-def collect_function_names(node: "PyASTNode") -> list:
+def collect_function_names(node: "ASTNode") -> list[str]:
     """
     Collect all function names used in the AST.
 
@@ -133,9 +130,9 @@ def collect_function_names(node: "PyASTNode") -> list:
     Returns:
         List of function name strings
     """
-    function_names = []
+    function_names: list[str] = []
 
-    def name_collector(current_node):
+    def name_collector(current_node: "ASTNode") -> str:
         if current_node.node_type() == "Function":
             name = current_node.get_function_name()
             if name:

@@ -35,6 +35,7 @@ chrono = { workspace = true }
 bitflags = "2.9.1"
 bumpalo = { version = "3.16", features = ["collections"] }
 smallvec = { workspace = true }
+web-time = { workspace = true }
 
 # Arrow (per-crate) — pinned to 56.x series
 arrow-array = "56"

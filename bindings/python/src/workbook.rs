@@ -471,6 +471,10 @@ impl PyWorkbook {
     where
         F: FnOnce(&mut formualizer_workbook::Workbook) -> PyResult<T>,
     {
+        // Mutations performed through internal helpers (e.g. SheetPort) bypass the
+        // legacy `sheets` cache; invalidate it so `get_value()` stays correct.
+        self.sheets.write().unwrap().clear();
+
         let mut wb = self
             .inner
             .write()

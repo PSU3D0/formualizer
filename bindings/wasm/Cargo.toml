@@ -42,6 +42,12 @@ console_panic = ["console_error_panic_hook"]
 # Expose a local `json` feature and forward it to the workbook dependency
 json = ["formualizer-workbook/json"]
 
-# Ensure getrandom works on wasm32-unknown-unknown by enabling the `js` feature
+# Ensure getrandom works on wasm32-unknown-unknown by enabling the `js` feature.
+# Most of the dependency graph still pulls getrandom 0.2 via rand, so we
+# enable the feature for that version explicitly.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# getrandom 0.3 is pulled in via arrow/ahash; it needs both the feature flag
+# and the cfg backend selection to compile for wasm32-unknown-unknown.
 getrandom = { version = "0.3", features = ["wasm_js"] }
+# Some transitive deps still pull getrandom 0.2 (via rand/const-random).
+getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }

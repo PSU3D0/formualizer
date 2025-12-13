@@ -24,6 +24,9 @@ dev = [
 ]
 
 [tool.maturin]
+# Keep Rust crate/module named `formualizer_py`, but install it under the
+# public Python package `formualizer` to avoid top-level module conflicts.
+module-name = "formualizer.formualizer_py"
 features = ["pyo3/extension-module"]
 
 [tool.ruff]
@@ -59,7 +62,7 @@ indent-style = "space"
 known-first-party = ["formualizer"]
 
 [tool.pytest.ini_options]
-testpaths = ["formualizer"]
+testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 addopts = [
     "--strict-markers",
@@ -92,7 +95,7 @@ exclude_lines = [
 ]
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -105,6 +108,10 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+
+[[tool.mypy.overrides]]
+module = ["formualizer.formualizer_py"]
+ignore_missing_imports = true
 
 [dependency-groups]
 dev = [
