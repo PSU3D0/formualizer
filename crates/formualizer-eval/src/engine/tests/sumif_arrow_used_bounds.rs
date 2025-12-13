@@ -2,7 +2,7 @@ use super::common::arrow_eval_config;
 use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse;
 
 // Repro: Arrow used-bounds cover only top rows; graph values exist below.
 // With the used-bounds fix, SUMIF over whole columns should include edited rows.
@@ -41,7 +41,7 @@ fn sumif_whole_column_includes_post_edit_rows_when_arrow_reads_disabled() {
         .unwrap();
 
     // SUMIF(S:S, D3, P:P) in A1
-    let ast = Parser::from("=SUMIF(S:S, D3, P:P)").parse().unwrap();
+    let ast = parse("=SUMIF(S:S, D3, P:P)").unwrap();
     engine.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
 
     // Evaluate and assert it finds row 50 despite Arrow used-bounds covering only top rows

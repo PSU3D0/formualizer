@@ -2,7 +2,7 @@ use crate::builtins::math::SumFn;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse;
 
 #[test]
 fn test_simple_sum_with_arena() {
@@ -36,7 +36,7 @@ fn test_simple_sum_with_arena() {
 
     // Create a SUM formula
     let formula = "=SUM(A1:A3)";
-    let ast = Parser::from(formula).parse().unwrap();
+    let ast = parse(formula).unwrap();
     engine
         .set_cell_formula("Sheet1", 4, 1, ast.clone())
         .unwrap();
@@ -71,7 +71,7 @@ fn test_cross_sheet_simple() {
 
     // Create formula on Sheet1 that references Sheet2
     let formula = "=Sheet2!A1";
-    let ast = Parser::from(formula).parse().unwrap();
+    let ast = parse(formula).unwrap();
     println!("AST: {ast:?}");
     engine.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
 

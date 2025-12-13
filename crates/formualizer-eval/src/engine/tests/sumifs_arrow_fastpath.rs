@@ -72,9 +72,7 @@ fn countifs_hybrid_formula_and_base_text() {
     ab.finish().unwrap();
 
     // Set formula in row3 col2 producing text "BDM021"
-    let ast = formualizer_parse::parser::Parser::from("=\"BDM021\"")
-        .parse()
-        .unwrap();
+    let ast = formualizer_parse::parser::parse("=\"BDM021\"").unwrap();
     engine
         .set_cell_formula(sheet, 3, 2, ast)
         .expect("set formula");

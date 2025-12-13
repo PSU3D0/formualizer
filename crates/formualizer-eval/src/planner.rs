@@ -337,7 +337,6 @@ impl<'a> Planner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use formualizer_parse::Tokenizer;
 
     fn ensure_builtins_registered() {
         use std::sync::Once;
@@ -354,9 +353,7 @@ mod tests {
 
     fn plan_for(formula: &str) -> ExecPlan {
         ensure_builtins_registered();
-        let t = Tokenizer::new(formula).unwrap();
-        let mut parser = formualizer_parse::parser::Parser::new(t.items, false);
-        let ast = parser.parse().unwrap();
+        let ast = formualizer_parse::parser::parse(formula).unwrap();
         let mut planner = Planner::new(PlanConfig::default())
             .with_function_lookup(&|ns, name| crate::function_registry::get(ns, name));
         planner.plan(&ast)
@@ -384,9 +381,7 @@ mod tests {
     #[test]
     fn sumifs_triggers_chunked_reduce_when_large() {
         // Fake a large range by hinting the probe
-        let t = Tokenizer::new(r#"=SUMIFS(A:A, A:A, ">0")"#).unwrap();
-        let mut parser = formualizer_parse::parser::Parser::new(t.items, false);
-        let ast = parser.parse().unwrap();
+        let ast = formualizer_parse::parser::parse(r#"=SUMIFS(A:A, A:A, ">0")"#).unwrap();
         let mut planner = Planner::new(PlanConfig {
             chunk_min_cells: 1000,
             ..Default::default()
@@ -433,9 +428,7 @@ mod tests {
     #[test]
     fn volatile_forces_sequential() {
         // NOW() is volatile via caps; planner should mark sequential at root
-        let t = Tokenizer::new("=NOW()+1").unwrap();
-        let mut parser = formualizer_parse::parser::Parser::new(t.items, false);
-        let ast = parser.parse().unwrap();
+        let ast = formualizer_parse::parser::parse("=NOW()+1").unwrap();
         let mut planner = Planner::new(PlanConfig::default())
             .with_function_lookup(&|ns, name| crate::function_registry::get(ns, name));
         let plan = planner.plan(&ast);
@@ -445,9 +438,8 @@ mod tests {
     #[test]
     fn whole_column_ranges_prefer_chunked_reduce() {
         // Probe A:A to be large → ChunkedReduce at root
-        let t = Tokenizer::new(r#"=SUMIFS(A:A, A:A, ">0", B:B, "<5")"#).unwrap();
-        let mut parser = formualizer_parse::parser::Parser::new(t.items, false);
-        let ast = parser.parse().unwrap();
+        let ast =
+            formualizer_parse::parser::parse(r#"=SUMIFS(A:A, A:A, ">0", B:B, "<5")"#).unwrap();
         ensure_builtins_registered();
         let mut planner = Planner::new(PlanConfig {
             chunk_min_cells: 1000,
@@ -480,9 +472,7 @@ mod tests {
     #[test]
     fn sum_mixed_scalars_and_large_range_prefers_chunked_reduce() {
         // SUM over a large column plus scalars → prefer chunked reduce due to range cost
-        let t = Tokenizer::new(r#"=SUM(A:A, 1, 2, 3)"#).unwrap();
-        let mut parser = formualizer_parse::parser::Parser::new(t.items, false);
-        let ast = parser.parse().unwrap();
+        let ast = formualizer_parse::parser::parse(r#"=SUM(A:A, 1, 2, 3)"#).unwrap();
         ensure_builtins_registered();
         let mut planner = Planner::new(PlanConfig {
             chunk_min_cells: 500,
@@ -507,9 +497,7 @@ mod tests {
     #[test]
     fn nested_short_circuit_child_remains_sequential_under_parallel_parent() {
         // Force low thresholds to encourage arg-parallel at parent, but AND child must stay Sequential
-        let t = Tokenizer::new("=SUM(AND(TRUE(), FALSE()), 1, 2, 3)").unwrap();
-        let mut parser = formualizer_parse::parser::Parser::new(t.items, false);
-        let ast = parser.parse().unwrap();
+        let ast = formualizer_parse::parser::parse("=SUM(AND(TRUE(), FALSE()), 1, 2, 3)").unwrap();
         ensure_builtins_registered();
         let cfg = PlanConfig {
             enable_parallel: true,
@@ -537,9 +525,7 @@ mod tests {
     #[test]
     fn repeated_identical_ranges_defaults_to_sequential() {
         // Repeated A:A references with tiny dims should not trigger chunking and stay Sequential by default thresholds
-        let t = Tokenizer::new(r#"=SUM(A:A, A:A, A:A)"#).unwrap();
-        let mut parser = formualizer_parse::parser::Parser::new(t.items, false);
-        let ast = parser.parse().unwrap();
+        let ast = formualizer_parse::parser::parse(r#"=SUM(A:A, A:A, A:A)"#).unwrap();
         let mut planner = Planner::new(PlanConfig::default())
             .with_function_lookup(&|ns, name| crate::function_registry::get(ns, name))
             .with_range_probe(&|r: &ReferenceType| match r {

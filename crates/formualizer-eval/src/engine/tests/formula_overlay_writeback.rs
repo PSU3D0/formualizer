@@ -20,9 +20,7 @@ fn formula_scalar_writeback_overlays_arrow_when_enabled() {
     }
 
     // Put a simple scalar formula in row 2, col 1
-    let ast = formualizer_parse::parser::Parser::from("=1+2")
-        .parse()
-        .unwrap();
+    let ast = formualizer_parse::parser::parse("=1+2").unwrap();
     engine.set_cell_formula(sheet, 2, 1, ast).unwrap();
     let _ = engine.evaluate_all().unwrap();
 

@@ -22,9 +22,7 @@ fn spill_overlay_writeback_visible_via_arrow() {
 
     // Place a VSTACK that spills 2x1 into column 1 starting at A2
     // =VSTACK(1,2)
-    let ast = formualizer_parse::parser::Parser::from("=VSTACK(1,2)")
-        .parse()
-        .unwrap();
+    let ast = formualizer_parse::parser::parse("=VSTACK(1,2)").unwrap();
     engine.set_cell_formula(sheet, 2, 1, ast).unwrap();
     let _ = engine.evaluate_all().unwrap();
 

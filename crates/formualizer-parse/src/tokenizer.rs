@@ -1,6 +1,7 @@
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::{self, Display};
+use std::sync::Arc;
 
 use crate::types::FormulaDialect;
 
@@ -354,6 +355,617 @@ impl Token {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TokenSpan {
+    pub token_type: TokenType,
+    pub subtype: TokenSubType,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenView<'a> {
+    pub span: &'a TokenSpan,
+    pub value: &'a str,
+}
+
+/// Source-backed token stream (span-only).
+///
+/// This is intended as a high-performance representation for callers that
+/// want to avoid allocating a `String` per token. It can materialize owned
+/// `Token`s when needed (FFI/debug).
+#[derive(Debug, Clone)]
+pub struct TokenStream {
+    source: Arc<str>,
+    pub spans: Vec<TokenSpan>,
+    dialect: FormulaDialect,
+}
+
+impl TokenStream {
+    pub fn new(formula: &str) -> Result<Self, TokenizerError> {
+        Self::new_with_dialect(formula, FormulaDialect::Excel)
+    }
+
+    pub fn new_with_dialect(
+        formula: &str,
+        dialect: FormulaDialect,
+    ) -> Result<Self, TokenizerError> {
+        let source: Arc<str> = Arc::from(formula);
+        let spans = tokenize_spans_with_dialect(source.as_ref(), dialect)?;
+        Ok(TokenStream {
+            source,
+            spans,
+            dialect,
+        })
+    }
+
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn dialect(&self) -> FormulaDialect {
+        self.dialect
+    }
+
+    pub fn len(&self) -> usize {
+        self.spans.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.spans.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> Option<TokenView<'_>> {
+        let span = self.spans.get(index)?;
+        let value = self.source.get(span.start..span.end)?;
+        Some(TokenView { span, value })
+    }
+
+    pub fn to_tokens(&self) -> Vec<Token> {
+        self.spans
+            .iter()
+            .map(|s| {
+                let value = self
+                    .source
+                    .get(s.start..s.end)
+                    .unwrap_or_default()
+                    .to_string();
+                Token::new_with_span(value, s.token_type, s.subtype, s.start, s.end)
+            })
+            .collect()
+    }
+
+    pub fn render(&self) -> String {
+        let mut out = String::with_capacity(self.source.len());
+        for span in &self.spans {
+            if let Some(s) = self.source.get(span.start..span.end) {
+                out.push_str(s);
+            }
+        }
+        out
+    }
+}
+
+pub(crate) fn tokenize_spans_with_dialect(
+    formula: &str,
+    dialect: FormulaDialect,
+) -> Result<Vec<TokenSpan>, TokenizerError> {
+    let mut tokenizer = SpanTokenizer::new(formula, dialect);
+    tokenizer.parse()?;
+    Ok(tokenizer.spans)
+}
+
+fn operand_subtype(value_str: &str) -> TokenSubType {
+    if value_str.starts_with('"') {
+        TokenSubType::Text
+    } else if value_str.starts_with('#') {
+        TokenSubType::Error
+    } else if value_str == "TRUE" || value_str == "FALSE" {
+        TokenSubType::Logical
+    } else if value_str.parse::<f64>().is_ok() {
+        TokenSubType::Number
+    } else {
+        TokenSubType::Range
+    }
+}
+
+struct SpanTokenizer<'a> {
+    formula: &'a str,
+    spans: Vec<TokenSpan>,
+    token_stack: Vec<TokenSpan>,
+    offset: usize,
+    token_start: usize,
+    token_end: usize,
+    dialect: FormulaDialect,
+}
+
+impl<'a> SpanTokenizer<'a> {
+    fn new(formula: &'a str, dialect: FormulaDialect) -> Self {
+        SpanTokenizer {
+            formula,
+            spans: Vec::with_capacity(formula.len() / 2),
+            token_stack: Vec::with_capacity(16),
+            offset: 0,
+            token_start: 0,
+            token_end: 0,
+            dialect,
+        }
+    }
+
+    #[inline]
+    fn current_byte(&self) -> Option<u8> {
+        self.formula.as_bytes().get(self.offset).copied()
+    }
+
+    #[inline]
+    fn has_token(&self) -> bool {
+        self.token_end > self.token_start
+    }
+
+    #[inline]
+    fn start_token(&mut self) {
+        self.token_start = self.offset;
+        self.token_end = self.offset;
+    }
+
+    #[inline]
+    fn extend_token(&mut self) {
+        self.token_end = self.offset;
+    }
+
+    fn push_span(
+        &mut self,
+        token_type: TokenType,
+        subtype: TokenSubType,
+        start: usize,
+        end: usize,
+    ) {
+        self.spans.push(TokenSpan {
+            token_type,
+            subtype,
+            start,
+            end,
+        });
+    }
+
+    fn save_token(&mut self) {
+        if self.has_token() {
+            let value_str = &self.formula[self.token_start..self.token_end];
+            let subtype = operand_subtype(value_str);
+            self.push_span(
+                TokenType::Operand,
+                subtype,
+                self.token_start,
+                self.token_end,
+            );
+        }
+    }
+
+    fn check_scientific_notation(&mut self) -> bool {
+        if let Some(curr_byte) = self.current_byte()
+            && (curr_byte == b'+' || curr_byte == b'-')
+            && self.has_token()
+            && self.is_scientific_notation_base()
+        {
+            self.offset += 1;
+            self.extend_token();
+            return true;
+        }
+        false
+    }
+
+    fn is_scientific_notation_base(&self) -> bool {
+        if !self.has_token() {
+            return false;
+        }
+
+        let token_slice = &self.formula.as_bytes()[self.token_start..self.token_end];
+        if token_slice.len() < 2 {
+            return false;
+        }
+
+        let last = token_slice[token_slice.len() - 1];
+        if !(last == b'E' || last == b'e') {
+            return false;
+        }
+
+        let first = token_slice[0];
+        if !first.is_ascii_digit() {
+            return false;
+        }
+
+        let mut dot_seen = false;
+        for &ch in &token_slice[1..token_slice.len() - 1] {
+            match ch {
+                b'0'..=b'9' => {}
+                b'.' if !dot_seen => dot_seen = true,
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    fn parse(&mut self) -> Result<(), TokenizerError> {
+        if self.formula.is_empty() {
+            return Ok(());
+        }
+
+        if self.formula.as_bytes()[0] != b'=' {
+            self.push_span(
+                TokenType::Literal,
+                TokenSubType::None,
+                0,
+                self.formula.len(),
+            );
+            return Ok(());
+        }
+
+        self.offset = 1;
+        self.start_token();
+
+        while self.offset < self.formula.len() {
+            if self.check_scientific_notation() {
+                continue;
+            }
+
+            let curr_byte = self.formula.as_bytes()[self.offset];
+
+            if is_token_ender(curr_byte) && self.has_token() {
+                self.save_token();
+                self.start_token();
+            }
+
+            match curr_byte {
+                b'"' | b'\'' => self.parse_string()?,
+                b'[' => self.parse_brackets()?,
+                b'#' => self.parse_error()?,
+                b' ' | b'\n' => self.parse_whitespace()?,
+                b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' => {
+                    self.parse_operator()?
+                }
+                b'{' | b'(' => self.parse_opener()?,
+                b')' | b'}' => self.parse_closer()?,
+                b';' | b',' => self.parse_separator()?,
+                _ => {
+                    if !self.has_token() {
+                        self.start_token();
+                    }
+                    self.offset += 1;
+                    self.extend_token();
+                }
+            }
+        }
+
+        if self.has_token() {
+            self.save_token();
+        }
+
+        if !self.token_stack.is_empty() {
+            return Err(TokenizerError {
+                message: "Unmatched opening parenthesis or bracket".to_string(),
+                pos: self.offset,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn parse_string(&mut self) -> Result<(), TokenizerError> {
+        let delim = self.formula.as_bytes()[self.offset];
+        assert!(delim == b'"' || delim == b'\'');
+
+        let is_dollar_ref = delim == b'\''
+            && self.has_token()
+            && self.token_end - self.token_start == 1
+            && self.formula.as_bytes()[self.token_start] == b'$';
+
+        if !is_dollar_ref && self.has_token() {
+            if self.token_end > 0 && self.formula.as_bytes()[self.token_end - 1] != b':' {
+                self.save_token();
+                self.start_token();
+            }
+        }
+
+        let string_start = if is_dollar_ref {
+            self.token_start
+        } else {
+            self.offset
+        };
+        self.offset += 1;
+
+        while self.offset < self.formula.len() {
+            if self.formula.as_bytes()[self.offset] == delim {
+                self.offset += 1;
+                if self.offset < self.formula.len() && self.formula.as_bytes()[self.offset] == delim
+                {
+                    self.offset += 1;
+                } else {
+                    if delim == b'"' {
+                        let value_str = &self.formula[string_start..self.offset];
+                        let subtype = operand_subtype(value_str);
+                        self.push_span(TokenType::Operand, subtype, string_start, self.offset);
+                        self.start_token();
+                    } else {
+                        self.token_end = self.offset;
+                    }
+                    return Ok(());
+                }
+            } else {
+                self.offset += 1;
+            }
+        }
+
+        Err(TokenizerError {
+            message: "Reached end of formula while parsing string".to_string(),
+            pos: self.offset,
+        })
+    }
+
+    fn parse_brackets(&mut self) -> Result<(), TokenizerError> {
+        assert_eq!(self.formula.as_bytes()[self.offset], b'[');
+
+        if !self.has_token() {
+            self.start_token();
+        }
+
+        let mut open_count = 1;
+        self.offset += 1;
+
+        while self.offset < self.formula.len() {
+            match self.formula.as_bytes()[self.offset] {
+                b'[' => open_count += 1,
+                b']' => {
+                    open_count -= 1;
+                    if open_count == 0 {
+                        self.offset += 1;
+                        self.extend_token();
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+            self.offset += 1;
+        }
+
+        Err(TokenizerError {
+            message: "Encountered unmatched '['".to_string(),
+            pos: self.offset,
+        })
+    }
+
+    fn parse_error(&mut self) -> Result<(), TokenizerError> {
+        if self.has_token()
+            && self.token_end > 0
+            && self.formula.as_bytes()[self.token_end - 1] != b'!'
+        {
+            self.save_token();
+            self.start_token();
+        }
+
+        let error_start = if self.has_token() {
+            self.token_start
+        } else {
+            self.offset
+        };
+
+        for &err_code in ERROR_CODES {
+            let err_bytes = err_code.as_bytes();
+            if self.offset + err_bytes.len() <= self.formula.len() {
+                let slice = &self.formula.as_bytes()[self.offset..self.offset + err_bytes.len()];
+                if slice == err_bytes {
+                    self.push_span(
+                        TokenType::Operand,
+                        TokenSubType::Error,
+                        error_start,
+                        self.offset + err_bytes.len(),
+                    );
+                    self.offset += err_bytes.len();
+                    self.start_token();
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(TokenizerError {
+            message: format!("Invalid error code at position {}", self.offset),
+            pos: self.offset,
+        })
+    }
+
+    fn parse_whitespace(&mut self) -> Result<(), TokenizerError> {
+        self.save_token();
+
+        let ws_start = self.offset;
+        while self.offset < self.formula.len() {
+            match self.formula.as_bytes()[self.offset] {
+                b' ' | b'\n' => self.offset += 1,
+                _ => break,
+            }
+        }
+
+        self.push_span(
+            TokenType::Whitespace,
+            TokenSubType::None,
+            ws_start,
+            self.offset,
+        );
+        self.start_token();
+        Ok(())
+    }
+
+    fn prev_non_whitespace(&self) -> Option<&TokenSpan> {
+        self.spans
+            .iter()
+            .rev()
+            .find(|t| t.token_type != TokenType::Whitespace)
+    }
+
+    fn parse_operator(&mut self) -> Result<(), TokenizerError> {
+        self.save_token();
+
+        if self.offset + 1 < self.formula.len() {
+            let two_char = &self.formula.as_bytes()[self.offset..self.offset + 2];
+            if two_char == b">=" || two_char == b"<=" || two_char == b"<>" {
+                self.push_span(
+                    TokenType::OpInfix,
+                    TokenSubType::None,
+                    self.offset,
+                    self.offset + 2,
+                );
+                self.offset += 2;
+                self.start_token();
+                return Ok(());
+            }
+        }
+
+        let curr_byte = self.formula.as_bytes()[self.offset];
+        let token_type = match curr_byte {
+            b'%' => TokenType::OpPostfix,
+            b'+' | b'-' => {
+                if self.spans.is_empty() {
+                    TokenType::OpPrefix
+                } else {
+                    let prev = self.prev_non_whitespace();
+                    if let Some(p) = prev {
+                        if p.subtype == TokenSubType::Close
+                            || p.token_type == TokenType::OpPostfix
+                            || p.token_type == TokenType::Operand
+                        {
+                            TokenType::OpInfix
+                        } else {
+                            TokenType::OpPrefix
+                        }
+                    } else {
+                        TokenType::OpPrefix
+                    }
+                }
+            }
+            _ => TokenType::OpInfix,
+        };
+
+        self.push_span(token_type, TokenSubType::None, self.offset, self.offset + 1);
+        self.offset += 1;
+        self.start_token();
+        Ok(())
+    }
+
+    fn parse_opener(&mut self) -> Result<(), TokenizerError> {
+        let curr_byte = self.formula.as_bytes()[self.offset];
+        assert!(curr_byte == b'(' || curr_byte == b'{');
+
+        let token = if curr_byte == b'{' {
+            self.save_token();
+            TokenSpan {
+                token_type: TokenType::Array,
+                subtype: TokenSubType::Open,
+                start: self.offset,
+                end: self.offset + 1,
+            }
+        } else if self.has_token() {
+            let token = TokenSpan {
+                token_type: TokenType::Func,
+                subtype: TokenSubType::Open,
+                start: self.token_start,
+                end: self.offset + 1,
+            };
+            self.token_start = self.offset + 1;
+            self.token_end = self.offset + 1;
+            token
+        } else {
+            TokenSpan {
+                token_type: TokenType::Paren,
+                subtype: TokenSubType::Open,
+                start: self.offset,
+                end: self.offset + 1,
+            }
+        };
+
+        self.spans.push(token);
+        self.token_stack.push(token);
+        self.offset += 1;
+        self.start_token();
+        Ok(())
+    }
+
+    fn parse_closer(&mut self) -> Result<(), TokenizerError> {
+        self.save_token();
+
+        let curr_byte = self.formula.as_bytes()[self.offset];
+        assert!(curr_byte == b')' || curr_byte == b'}');
+
+        if let Some(open_token) = self.token_stack.pop() {
+            let expected = if open_token.token_type == TokenType::Array {
+                b'}'
+            } else {
+                b')'
+            };
+            if curr_byte != expected {
+                return Err(TokenizerError {
+                    message: "Mismatched ( and { pair".to_string(),
+                    pos: self.offset,
+                });
+            }
+
+            self.push_span(
+                open_token.token_type,
+                TokenSubType::Close,
+                self.offset,
+                self.offset + 1,
+            );
+        } else {
+            return Err(TokenizerError {
+                message: format!("No matching opener for closer at position {}", self.offset),
+                pos: self.offset,
+            });
+        }
+
+        self.offset += 1;
+        self.start_token();
+        Ok(())
+    }
+
+    fn parse_separator(&mut self) -> Result<(), TokenizerError> {
+        self.save_token();
+
+        let curr_byte = self.formula.as_bytes()[self.offset];
+        assert!(curr_byte == b';' || curr_byte == b',');
+
+        let top_token = self.token_stack.last();
+        let in_function_or_array = matches!(
+            top_token.map(|t| t.token_type),
+            Some(TokenType::Func | TokenType::Array)
+        );
+        let in_array = matches!(top_token.map(|t| t.token_type), Some(TokenType::Array));
+
+        let (token_type, subtype) = match curr_byte {
+            b',' => {
+                if in_function_or_array {
+                    (TokenType::Sep, TokenSubType::Arg)
+                } else {
+                    (TokenType::OpInfix, TokenSubType::None)
+                }
+            }
+            b';' => {
+                if in_array {
+                    (TokenType::Sep, TokenSubType::Row)
+                } else if self.dialect == FormulaDialect::OpenFormula && in_function_or_array {
+                    (TokenType::Sep, TokenSubType::Arg)
+                } else if self.dialect == FormulaDialect::OpenFormula {
+                    (TokenType::OpInfix, TokenSubType::None)
+                } else {
+                    (TokenType::Sep, TokenSubType::Row)
+                }
+            }
+            _ => (TokenType::OpInfix, TokenSubType::None),
+        };
+
+        self.push_span(token_type, subtype, self.offset, self.offset + 1);
+        self.offset += 1;
+        self.start_token();
+        Ok(())
+    }
+}
+
 /// A tokenizer for Excel worksheet formulas.
 pub struct Tokenizer {
     formula: String, // The formula string
@@ -387,6 +999,18 @@ impl Tokenizer {
         };
         tokenizer.parse()?;
         Ok(tokenizer)
+    }
+
+    pub fn from_token_stream(stream: &TokenStream) -> Self {
+        Tokenizer {
+            formula: stream.source.to_string(),
+            items: stream.to_tokens(),
+            token_stack: Vec::with_capacity(16),
+            offset: 0,
+            token_start: 0,
+            token_end: 0,
+            dialect: stream.dialect,
+        }
     }
 
     /// Get byte at current offset

@@ -117,13 +117,20 @@ impl DependencyGraph {
 
         let formulas_to_update: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
         for formula_id in formulas_to_update {
-            if let Some(ast) = self.get_formula(formula_id) {
-                let updated_ast = update_sheet_references_in_ast(&ast, &old_name, new_name);
-                if ast != updated_ast {
-                    let ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
-                    self.vertex_formulas.insert(formula_id, ast_id);
-                    self.mark_vertex_dirty(formula_id);
-                }
+            let ast_id = match self.get_formula_id(formula_id) {
+                Some(ast_id) => ast_id,
+                None => continue,
+            };
+            let ast = match self.data_store.retrieve_ast(ast_id, &self.sheet_reg) {
+                Some(ast) => ast,
+                None => continue,
+            };
+
+            let updated_ast = update_sheet_references_in_ast(&ast, &old_name, new_name);
+            if ast != updated_ast {
+                let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
+                self.vertex_formulas.insert(formula_id, updated_ast_id);
+                self.mark_vertex_dirty(formula_id);
             }
         }
 

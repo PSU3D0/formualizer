@@ -87,84 +87,348 @@ pub enum EvaluatedArg<'a> {
     Range(Box<dyn Range>),
 }
 
+enum ArgumentExpr<'a> {
+    Ast(&'a ASTNode),
+    Arena {
+        id: crate::engine::arena::AstNodeId,
+        data_store: &'a crate::engine::arena::DataStore,
+        sheet_registry: &'a crate::engine::sheet_registry::SheetRegistry,
+    },
+}
+
 pub struct ArgumentHandle<'a, 'b> {
-    node: &'a ASTNode,
+    expr: ArgumentExpr<'a>,
     interp: &'a Interpreter<'b>,
+    cached_ast: std::cell::OnceCell<ASTNode>,
+    cached_ref: std::cell::OnceCell<ReferenceType>,
 }
 
 impl<'a, 'b> ArgumentHandle<'a, 'b> {
     pub(crate) fn new(node: &'a ASTNode, interp: &'a Interpreter<'b>) -> Self {
-        Self { node, interp }
+        Self {
+            expr: ArgumentExpr::Ast(node),
+            interp,
+            cached_ast: std::cell::OnceCell::new(),
+            cached_ref: std::cell::OnceCell::new(),
+        }
+    }
+
+    pub(crate) fn new_arena(
+        id: crate::engine::arena::AstNodeId,
+        interp: &'a Interpreter<'b>,
+        data_store: &'a crate::engine::arena::DataStore,
+        sheet_registry: &'a crate::engine::sheet_registry::SheetRegistry,
+    ) -> Self {
+        Self {
+            expr: ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            },
+            interp,
+            cached_ast: std::cell::OnceCell::new(),
+            cached_ref: std::cell::OnceCell::new(),
+        }
     }
 
     pub fn value(&self) -> Result<CowValue<'_>, ExcelError> {
-        if let ASTNodeType::Literal(ref v) = self.node.node_type {
-            return Ok(Cow::Borrowed(v));
+        match &self.expr {
+            ArgumentExpr::Ast(node) => {
+                if let ASTNodeType::Literal(ref v) = node.node_type {
+                    return Ok(Cow::Borrowed(v));
+                }
+                self.interp.evaluate_ast(node).map(Cow::Owned)
+            }
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => self
+                .interp
+                .evaluate_arena_ast(*id, data_store, sheet_registry)
+                .map(Cow::Owned),
         }
-        self.interp.evaluate_ast(self.node).map(Cow::Owned)
+    }
+
+    pub fn inline_array_literal(&self) -> Result<Option<Vec<Vec<LiteralValue>>>, ExcelError> {
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Literal(LiteralValue::Array(arr)) => Ok(Some(arr.clone())),
+                _ => Ok(None),
+            },
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => {
+                let node = data_store.get_node(*id).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+                })?;
+                match node {
+                    crate::engine::arena::AstNodeData::Literal(vref) => {
+                        match data_store.retrieve_value(*vref) {
+                            LiteralValue::Array(arr) => Ok(Some(arr)),
+                            _ => Ok(None),
+                        }
+                    }
+                    _ => {
+                        // preserve existing behavior: only a literal array (not a computed array)
+                        // is treated as "inline array literal".
+                        let _ = sheet_registry;
+                        Ok(None)
+                    }
+                }
+            }
+        }
+    }
+
+    fn reference_for_eval(&self) -> Result<ReferenceType, ExcelError> {
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
+                ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
+                    self.interp.evaluate_ast_as_reference(node)
+                }
+                _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Expected a reference (by-ref argument)")),
+            },
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => {
+                let node = data_store.get_node(*id).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+                })?;
+                match node {
+                    crate::engine::arena::AstNodeData::Reference { ref_type, .. } => Ok(
+                        data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry)
+                    ),
+                    crate::engine::arena::AstNodeData::Function { .. }
+                    | crate::engine::arena::AstNodeData::BinaryOp { .. } => self
+                        .interp
+                        .evaluate_arena_ast_as_reference(*id, data_store, sheet_registry),
+                    _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Expected a reference (by-ref argument)")),
+                }
+            }
+        }
     }
 
     pub fn range(&self) -> Result<Box<dyn Range>, ExcelError> {
-        match &self.node.node_type {
-            ASTNodeType::Reference { reference, .. } => {
-                // Prefer RangeView since it has explicit current-sheet context.
-                let view = self
-                    .interp
-                    .context
-                    .resolve_range_view(reference, self.interp.current_sheet())?;
-                let (rows, cols) = view.dims();
-                let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
-                view.for_each_row(&mut |row| {
-                    let row_data: Vec<LiteralValue> = (0..cols)
-                        .map(|c| row.get(c).cloned().unwrap_or(LiteralValue::Empty))
-                        .collect();
-                    out.push(row_data);
-                    Ok(())
-                })?;
-                Ok(Box::new(InMemoryRange::new(out)))
-            }
-            ASTNodeType::Array(rows) => {
-                let mut materialized = Vec::new();
-                for row in rows {
-                    let mut materialized_row = Vec::new();
-                    for cell in row {
-                        materialized_row.push(self.interp.evaluate_ast(cell)?);
-                    }
-                    materialized.push(materialized_row);
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => {
+                    // Prefer RangeView since it has explicit current-sheet context.
+                    let view = self
+                        .interp
+                        .context
+                        .resolve_range_view(reference, self.interp.current_sheet())?;
+                    let (rows, cols) = view.dims();
+                    let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
+                    view.for_each_row(&mut |row| {
+                        let row_data: Vec<LiteralValue> = (0..cols)
+                            .map(|c| row.get(c).cloned().unwrap_or(LiteralValue::Empty))
+                            .collect();
+                        out.push(row_data);
+                        Ok(())
+                    })?;
+                    Ok(Box::new(InMemoryRange::new(out)))
                 }
-                Ok(Box::new(InMemoryRange::new(materialized)))
+                ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
+                    let reference = self.reference_for_eval()?;
+                    let view = self
+                        .interp
+                        .context
+                        .resolve_range_view(&reference, self.interp.current_sheet())?;
+                    let (rows, cols) = view.dims();
+                    let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
+                    view.for_each_row(&mut |row| {
+                        let row_data: Vec<LiteralValue> = (0..cols)
+                            .map(|c| row.get(c).cloned().unwrap_or(LiteralValue::Empty))
+                            .collect();
+                        out.push(row_data);
+                        Ok(())
+                    })?;
+                    Ok(Box::new(InMemoryRange::new(out)))
+                }
+                ASTNodeType::Array(rows) => {
+                    let mut materialized = Vec::new();
+                    for row in rows {
+                        let mut materialized_row = Vec::new();
+                        for cell in row {
+                            materialized_row.push(self.interp.evaluate_ast(cell)?);
+                        }
+                        materialized.push(materialized_row);
+                    }
+                    Ok(Box::new(InMemoryRange::new(materialized)))
+                }
+                _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message(format!("Expected a range, got {:?}", node.node_type))),
+            },
+            ArgumentExpr::Arena { id, data_store, .. } => {
+                let node = data_store.get_node(*id).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+                })?;
+
+                match node {
+                    crate::engine::arena::AstNodeData::Reference { .. }
+                    | crate::engine::arena::AstNodeData::Function { .. }
+                    | crate::engine::arena::AstNodeData::BinaryOp { .. } => {
+                        let reference = self.reference_for_eval()?;
+                        let view = self
+                            .interp
+                            .context
+                            .resolve_range_view(&reference, self.interp.current_sheet())?;
+                        let (rows, cols) = view.dims();
+                        let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
+                        view.for_each_row(&mut |row| {
+                            let row_data: Vec<LiteralValue> = (0..cols)
+                                .map(|c| row.get(c).cloned().unwrap_or(LiteralValue::Empty))
+                                .collect();
+                            out.push(row_data);
+                            Ok(())
+                        })?;
+                        Ok(Box::new(InMemoryRange::new(out)))
+                    }
+                    crate::engine::arena::AstNodeData::Array { .. } => {
+                        let (rows, cols, elements) =
+                            data_store.get_array_elems(*id).ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::Value).with_message("Invalid array")
+                            })?;
+                        let rows_usize = rows as usize;
+                        let cols_usize = cols as usize;
+                        let mut materialized: Vec<Vec<LiteralValue>> =
+                            Vec::with_capacity(rows_usize);
+                        for r in 0..rows_usize {
+                            let mut row = Vec::with_capacity(cols_usize);
+                            for c in 0..cols_usize {
+                                let idx = r * cols_usize + c;
+                                let elem_id = elements.get(idx).copied().ok_or_else(|| {
+                                    ExcelError::new(ExcelErrorKind::Value)
+                                        .with_message("Invalid array")
+                                })?;
+                                let v = self.interp.evaluate_arena_ast(
+                                    elem_id,
+                                    data_store,
+                                    self.sheet_registry(),
+                                )?;
+                                row.push(v);
+                            }
+                            materialized.push(row);
+                        }
+                        Ok(Box::new(InMemoryRange::new(materialized)))
+                    }
+                    _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Argument cannot be interpreted as a range.")),
+                }
             }
-            _ => Err(ExcelError::new(ExcelErrorKind::Ref)
-                .with_message(format!("Expected a range, got {:?}", self.node.node_type))),
+        }
+    }
+
+    fn sheet_registry(&self) -> &crate::engine::sheet_registry::SheetRegistry {
+        match &self.expr {
+            ArgumentExpr::Ast(_) => {
+                // Not needed; used only in arena flows.
+                unreachable!("sheet_registry only used for arena ArgumentHandle")
+            }
+            ArgumentExpr::Arena { sheet_registry, .. } => sheet_registry,
         }
     }
 
     /// Resolve as a RangeView (Phase 2 API). Only supports reference arguments.
     pub fn range_view(&self) -> Result<RangeView<'_>, ExcelError> {
-        match &self.node.node_type {
-            ASTNodeType::Reference { reference, .. } => self
-                .interp
-                .context
-                .resolve_range_view(reference, self.interp.current_sheet()),
-            // Treat array literals (LiteralValue::Array) as ranges for RangeView APIs
-            ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => {
-                // Borrow the rows directly from the AST literal
-                Ok(RangeView::from_borrowed(&arr[..]))
-            }
-            ASTNodeType::Array(rows) => {
-                // Materialize AST array to values, then return a borrowed view
-                let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows.len());
-                for r in rows {
-                    let mut row_vals = Vec::with_capacity(r.len());
-                    for cell in r {
-                        row_vals.push(self.interp.evaluate_ast(cell)?);
-                    }
-                    out.push(row_vals);
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => self
+                    .interp
+                    .context
+                    .resolve_range_view(reference, self.interp.current_sheet()),
+                // Treat array literals (LiteralValue::Array) as ranges for RangeView APIs
+                ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => {
+                    // Borrow the rows directly from the AST literal
+                    Ok(RangeView::from_borrowed(&arr[..]))
                 }
-                Ok(RangeView::from_borrowed(Box::leak(Box::new(out))))
+                ASTNodeType::Array(rows) => {
+                    // Materialize AST array to values, then return a borrowed view
+                    let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows.len());
+                    for r in rows {
+                        let mut row_vals = Vec::with_capacity(r.len());
+                        for cell in r {
+                            row_vals.push(self.interp.evaluate_ast(cell)?);
+                        }
+                        out.push(row_vals);
+                    }
+                    Ok(RangeView::from_borrowed(Box::leak(Box::new(out))))
+                }
+                ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
+                    let reference = self.reference_for_eval()?;
+                    self.interp
+                        .context
+                        .resolve_range_view(&reference, self.interp.current_sheet())
+                }
+                _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Argument cannot be interpreted as a range.")),
+            },
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => {
+                let node = data_store.get_node(*id).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+                })?;
+
+                match node {
+                    crate::engine::arena::AstNodeData::Reference { .. }
+                    | crate::engine::arena::AstNodeData::Function { .. }
+                    | crate::engine::arena::AstNodeData::BinaryOp { .. } => {
+                        let reference = self.reference_for_eval()?;
+                        self.interp
+                            .context
+                            .resolve_range_view(&reference, self.interp.current_sheet())
+                    }
+                    crate::engine::arena::AstNodeData::Literal(vref) => {
+                        match data_store.retrieve_value(*vref) {
+                            LiteralValue::Array(arr) => {
+                                Ok(RangeView::from_borrowed(Box::leak(Box::new(arr))))
+                            }
+                            _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                                .with_message("Argument cannot be interpreted as a range.")),
+                        }
+                    }
+                    crate::engine::arena::AstNodeData::Array { .. } => {
+                        let (rows, cols, elements) =
+                            data_store.get_array_elems(*id).ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::Value).with_message("Invalid array")
+                            })?;
+
+                        let rows_usize = rows as usize;
+                        let cols_usize = cols as usize;
+                        let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows_usize);
+                        for r in 0..rows_usize {
+                            let mut row = Vec::with_capacity(cols_usize);
+                            for c in 0..cols_usize {
+                                let idx = r * cols_usize + c;
+                                let elem_id = elements.get(idx).copied().ok_or_else(|| {
+                                    ExcelError::new(ExcelErrorKind::Value)
+                                        .with_message("Invalid array")
+                                })?;
+                                let v = self.interp.evaluate_arena_ast(
+                                    elem_id,
+                                    data_store,
+                                    sheet_registry,
+                                )?;
+                                row.push(v);
+                            }
+                            out.push(row);
+                        }
+                        Ok(RangeView::from_borrowed(Box::leak(Box::new(out))))
+                    }
+                    _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Argument cannot be interpreted as a range.")),
+                }
             }
-            _ => Err(ExcelError::new(ExcelErrorKind::Ref)
-                .with_message("Argument cannot be interpreted as a range.")),
         }
     }
 
@@ -181,109 +445,206 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     pub fn lazy_values_owned(
         &'a self,
     ) -> Result<Box<dyn Iterator<Item = LiteralValue> + 'a>, ExcelError> {
-        match &self.node.node_type {
-            ASTNodeType::Reference { .. } => {
-                let view = self.range_view()?;
-                let mut values: Vec<LiteralValue> = Vec::new();
-                view.for_each_cell(&mut |v| {
-                    values.push(v.clone());
-                    Ok(())
-                })?;
-                Ok(Box::new(values.into_iter()))
-            }
-            ASTNodeType::Array(rows) => {
-                struct ArrayEvalIter<'a, 'b> {
-                    rows: &'a [Vec<ASTNode>],
-                    r: usize,
-                    c: usize,
-                    interp: &'a Interpreter<'b>,
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference { .. } => {
+                    let view = self.range_view()?;
+                    let mut values: Vec<LiteralValue> = Vec::new();
+                    view.for_each_cell(&mut |v| {
+                        values.push(v.clone());
+                        Ok(())
+                    })?;
+                    Ok(Box::new(values.into_iter()))
                 }
-                impl<'a, 'b> Iterator for ArrayEvalIter<'a, 'b> {
-                    type Item = LiteralValue;
-                    fn next(&mut self) -> Option<Self::Item> {
-                        if self.rows.is_empty() {
-                            return None;
-                        }
-                        let rows = self.rows;
-                        let mut r = self.r;
-                        let mut c = self.c;
-                        if r >= rows.len() {
-                            return None;
-                        }
-                        let node = &rows[r][c];
-                        // advance indices
-                        c += 1;
-                        if c >= rows[r].len() {
-                            r += 1;
-                            c = 0;
-                        }
-                        self.r = r;
-                        self.c = c;
-                        match self.interp.evaluate_ast(node) {
-                            Ok(v) => Some(v),
-                            Err(e) => Some(LiteralValue::Error(e)),
+                ASTNodeType::Array(rows) => {
+                    struct ArrayEvalIter<'a, 'b> {
+                        rows: &'a [Vec<ASTNode>],
+                        r: usize,
+                        c: usize,
+                        interp: &'a Interpreter<'b>,
+                    }
+                    impl<'a, 'b> Iterator for ArrayEvalIter<'a, 'b> {
+                        type Item = LiteralValue;
+                        fn next(&mut self) -> Option<Self::Item> {
+                            if self.rows.is_empty() {
+                                return None;
+                            }
+                            let rows = self.rows;
+                            let mut r = self.r;
+                            let mut c = self.c;
+                            if r >= rows.len() {
+                                return None;
+                            }
+                            let node = &rows[r][c];
+                            // advance indices
+                            c += 1;
+                            if c >= rows[r].len() {
+                                r += 1;
+                                c = 0;
+                            }
+                            self.r = r;
+                            self.c = c;
+                            match self.interp.evaluate_ast(node) {
+                                Ok(v) => Some(v),
+                                Err(e) => Some(LiteralValue::Error(e)),
+                            }
                         }
                     }
+                    let it = ArrayEvalIter {
+                        rows,
+                        r: 0,
+                        c: 0,
+                        interp: self.interp,
+                    };
+                    Ok(Box::new(it))
                 }
-                let it = ArrayEvalIter {
-                    rows,
-                    r: 0,
-                    c: 0,
-                    interp: self.interp,
-                };
-                Ok(Box::new(it))
-            }
-            _ => {
-                // Single value expression
-                let v = self.value()?.into_owned();
-                Ok(Box::new(std::iter::once(v)))
+                _ => {
+                    // Single value expression
+                    let v = self.value()?.into_owned();
+                    Ok(Box::new(std::iter::once(v)))
+                }
+            },
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => {
+                let node = data_store.get_node(*id).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+                })?;
+
+                match node {
+                    crate::engine::arena::AstNodeData::Reference { .. } => {
+                        let view = self.range_view()?;
+                        let mut values: Vec<LiteralValue> = Vec::new();
+                        view.for_each_cell(&mut |v| {
+                            values.push(v.clone());
+                            Ok(())
+                        })?;
+                        Ok(Box::new(values.into_iter()))
+                    }
+                    crate::engine::arena::AstNodeData::Array { .. } => {
+                        let (rows, cols, elements) =
+                            data_store.get_array_elems(*id).ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::Value).with_message("Invalid array")
+                            })?;
+
+                        struct ArenaArrayEvalIter<'a, 'b> {
+                            elements: &'a [crate::engine::arena::AstNodeId],
+                            idx: usize,
+                            interp: &'a Interpreter<'b>,
+                            data_store: &'a crate::engine::arena::DataStore,
+                            sheet_registry: &'a crate::engine::sheet_registry::SheetRegistry,
+                        }
+
+                        impl<'a, 'b> Iterator for ArenaArrayEvalIter<'a, 'b> {
+                            type Item = LiteralValue;
+
+                            fn next(&mut self) -> Option<Self::Item> {
+                                let id = self.elements.get(self.idx).copied()?;
+                                self.idx += 1;
+                                match self.interp.evaluate_arena_ast(
+                                    id,
+                                    self.data_store,
+                                    self.sheet_registry,
+                                ) {
+                                    Ok(v) => Some(v),
+                                    Err(e) => Some(LiteralValue::Error(e)),
+                                }
+                            }
+                        }
+
+                        let _ = (rows, cols);
+                        let it = ArenaArrayEvalIter {
+                            elements,
+                            idx: 0,
+                            interp: self.interp,
+                            data_store,
+                            sheet_registry,
+                        };
+                        Ok(Box::new(it))
+                    }
+                    _ => {
+                        let v = self
+                            .interp
+                            .evaluate_arena_ast(*id, data_store, sheet_registry)?;
+                        Ok(Box::new(std::iter::once(v)))
+                    }
+                }
             }
         }
     }
 
-    pub fn ast(&self) -> &'a ASTNode {
-        self.node
+    pub fn ast(&self) -> &ASTNode {
+        match &self.expr {
+            ArgumentExpr::Ast(node) => node,
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => self.cached_ast.get_or_init(|| {
+                data_store
+                    .retrieve_ast(*id, sheet_registry)
+                    .unwrap_or_else(|| ASTNode {
+                        node_type: ASTNodeType::Literal(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Value)
+                                .with_message("Missing formula AST"),
+                        )),
+                        source_token: None,
+                        contains_volatile: false,
+                    })
+            }),
+        }
     }
 
     /// Returns the raw reference from the AST when this argument is a reference.
     /// This does not evaluate the reference or materialize values.
-    pub fn as_reference(&self) -> Result<&'a ReferenceType, ExcelError> {
-        match &self.node.node_type {
-            ASTNodeType::Reference { reference, .. } => Ok(reference),
-            _ => Err(ExcelError::new(ExcelErrorKind::Ref)
-                .with_message("Expected a reference (by-ref argument)")),
+    pub fn as_reference(&self) -> Result<&ReferenceType, ExcelError> {
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => Ok(reference),
+                _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Expected a reference (by-ref argument)")),
+            },
+            ArgumentExpr::Arena { .. } => {
+                let reference = self.reference_for_eval()?;
+                Ok(self.cached_ref.get_or_init(|| reference))
+            }
         }
     }
 
     /// Returns a `ReferenceType` if this argument is a reference or a function that
     /// can yield a reference via `eval_reference`. Materializes no values.
     pub fn as_reference_or_eval(&self) -> Result<ReferenceType, ExcelError> {
-        match &self.node.node_type {
-            ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
-            ASTNodeType::Function { name, args } => {
-                if let Some(fun) = self.interp.context.get_function("", name) {
-                    let handles: Vec<ArgumentHandle> = args
-                        .iter()
-                        .map(|n| ArgumentHandle::new(n, self.interp))
-                        .collect();
-                    let fctx = crate::traits::DefaultFunctionContext::new_with_sheet(
-                        self.interp.context,
-                        None,
-                        self.interp.current_sheet(),
-                    );
-                    if let Some(res) = fun.eval_reference(&handles, &fctx) {
-                        res
-                    } else {
-                        Err(ExcelError::new(ExcelErrorKind::Ref)
-                            .with_message("Function does not return a reference"))
-                    }
-                } else {
-                    Err(ExcelError::new(ExcelErrorKind::Name))
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
+                ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
+                    self.interp.evaluate_ast_as_reference(node)
                 }
-            }
-            _ => {
-                Err(ExcelError::new(ExcelErrorKind::Ref)
-                    .with_message("Argument is not a reference"))
+                _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Argument is not a reference")),
+            },
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => {
+                let node = data_store.get_node(*id).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+                })?;
+
+                match node {
+                    crate::engine::arena::AstNodeData::Reference { .. } => {
+                        self.reference_for_eval()
+                    }
+                    crate::engine::arena::AstNodeData::Function { .. }
+                    | crate::engine::arena::AstNodeData::BinaryOp { .. } => self
+                        .interp
+                        .evaluate_arena_ast_as_reference(*id, data_store, sheet_registry),
+                    _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Argument is not a reference")),
+                }
             }
         }
     }

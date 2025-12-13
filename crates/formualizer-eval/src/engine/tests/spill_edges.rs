@@ -1,7 +1,7 @@
 use crate::engine::{EvalConfig, eval::Engine};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse;
 
 fn serial_eval_config() -> EvalConfig {
     EvalConfig {
@@ -21,7 +21,7 @@ fn spill_exceeds_sheet_bounds() {
         .unwrap();
     // Array that would require col 16385 (out of bounds)
     engine
-        .set_cell_formula("Sheet1", 1, 16384, Parser::from("={1,2}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 16384, parse("={1,2}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
     match engine.get_cell_value("Sheet1", 1, 16384) {
@@ -49,12 +49,7 @@ fn spill_exceeds_sheet_bounds_rows() {
         .set_cell_value("Sheet1", 1_048_576, 1, LiteralValue::Int(0))
         .unwrap();
     engine
-        .set_cell_formula(
-            "Sheet1",
-            1_048_576,
-            1,
-            Parser::from("={1;2}").parse().unwrap(),
-        )
+        .set_cell_formula("Sheet1", 1_048_576, 1, parse("={1;2}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
     match engine.get_cell_value("Sheet1", 1_048_576, 1) {
@@ -70,11 +65,11 @@ fn spill_values_update_dependents() {
 
     // A1 spills 2x2
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2;3,4}").unwrap())
         .unwrap();
     // C1 reads B2 (spilled bottom-right of 2x2)
     engine
-        .set_cell_formula("Sheet1", 1, 3, Parser::from("=B2").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 3, parse("=B2").unwrap())
         .unwrap();
     // Two-pass: first pass materializes spill cells; second pass updates dependents
     let _ = engine.evaluate_all().unwrap();
@@ -87,7 +82,7 @@ fn spill_values_update_dependents() {
 
     // Change anchor to {5,6;7,8}, B2 becomes 8; C1 should update to 8
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={5,6;7,8}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={5,6;7,8}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
     let _ = engine.evaluate_until(&[("Sheet1", 1, 3)]).unwrap();
@@ -103,13 +98,13 @@ fn scalar_after_array_clears_spill() {
     let mut engine = Engine::new(wb, serial_eval_config());
 
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2;3,4}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
     // Switch to scalar
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("=42").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("=42").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
@@ -143,7 +138,7 @@ fn empty_cells_do_not_block_spill() {
         .unwrap();
     // A1 spills into A1:B1
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={10,20}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={10,20}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
     assert_eq!(
@@ -167,7 +162,7 @@ fn non_empty_values_block_spill() {
         .unwrap();
     // A1 tries to spill 1x2 into A1:B1; B1 contains a value → #SPILL!
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={10,20}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={10,20}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
     match engine.get_cell_value("Sheet1", 1, 1) {
@@ -183,10 +178,10 @@ fn overlapping_spills_conflict() {
 
     // A1 and A2 both try to spill 2x2 overlapping on A2:B3
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2;3,4}").unwrap())
         .unwrap();
     engine
-        .set_cell_formula("Sheet1", 2, 1, Parser::from("={5,6;7,8}").parse().unwrap())
+        .set_cell_formula("Sheet1", 2, 1, parse("={5,6;7,8}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
@@ -206,13 +201,13 @@ fn formula_cells_block_spill() {
 
     // Put a scalar formula in B1
     engine
-        .set_cell_formula("Sheet1", 1, 2, Parser::from("=42").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 2, parse("=42").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
     // A1 tries to spill 1x2 into A1:B1; B1 is occupied by a formula → #SPILL!
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
     match engine.get_cell_value("Sheet1", 1, 1) {
@@ -228,12 +223,12 @@ fn overlapping_spills_firstwins_is_deterministic_sequential() {
 
     // Evaluate A1 first, then A2; A2 should conflict and show #SPILL! (FirstWins)
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2;3,4}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
     engine
-        .set_cell_formula("Sheet1", 2, 1, Parser::from("={5,6;7,8}").parse().unwrap())
+        .set_cell_formula("Sheet1", 2, 1, parse("={5,6;7,8}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
@@ -253,10 +248,10 @@ fn spills_on_different_sheets_do_not_conflict() {
     engine.graph.add_sheet("Sheet2").unwrap();
 
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2}").unwrap())
         .unwrap();
     engine
-        .set_cell_formula("Sheet2", 1, 1, Parser::from("={3,4}").parse().unwrap())
+        .set_cell_formula("Sheet2", 1, 1, parse("={3,4}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 

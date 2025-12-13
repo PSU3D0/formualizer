@@ -44,9 +44,7 @@ mod region_lock_tests {
                 "Sheet1",
                 1,
                 1,
-                formualizer_parse::parser::Parser::from("={1,2}")
-                    .parse()
-                    .unwrap(),
+                formualizer_parse::parser::parse("={1,2}").unwrap(),
             )
             .unwrap();
 

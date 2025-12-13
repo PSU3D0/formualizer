@@ -292,10 +292,7 @@ impl DependencyGraph {
             .set_kind(vid, crate::engine::vertex::VertexKind::FormulaScalar);
         self.vertex_values.remove(&vid);
         self.vertex_formulas.insert(vid, ast_id);
-        if volatile {
-            self.store.set_volatile(vid, true);
-            self.volatile_vertices.insert(vid);
-        }
+        self.mark_volatile(vid, volatile);
         // schedule evaluation
         self.mark_vertex_dirty(vid);
     }
@@ -591,6 +588,10 @@ impl DependencyGraph {
     /// Access the sheet registry (read-only) for external bindings
     pub fn sheet_reg(&self) -> &SheetRegistry {
         &self.sheet_reg
+    }
+
+    pub(crate) fn data_store(&self) -> &DataStore {
+        &self.data_store
     }
 
     /// Converts a `CellRef` to a fully qualified A1-style string (e.g., "SheetName!A1").
@@ -901,9 +902,7 @@ impl DependencyGraph {
         // Clear any cached value since this is now a formula
         self.vertex_values.remove(&addr_vertex_id);
 
-        if volatile {
-            self.store.set_volatile(addr_vertex_id, true);
-        }
+        self.mark_volatile(addr_vertex_id, volatile);
 
         if !named_dependencies.is_empty() {
             self.attach_vertex_to_names(addr_vertex_id, &named_dependencies);
@@ -925,11 +924,6 @@ impl DependencyGraph {
         // Add new dependency edges
         self.add_dependent_edges(addr_vertex_id, &new_dependencies);
         self.add_range_dependent_edges(addr_vertex_id, &new_range_dependencies, sheet_id);
-
-        // Mark as volatile if needed
-        if volatile {
-            self.volatile_vertices.insert(addr_vertex_id);
-        }
 
         Ok(OperationSummary {
             affected_vertices: self.mark_dirty(addr_vertex_id),
@@ -1284,21 +1278,32 @@ impl DependencyGraph {
     where
         I: IntoIterator<Item = (u32, u32, ASTNode)>,
     {
-        use formualizer_parse::parser::CollectPolicy;
-        let sheet_id = self.sheet_id_mut(sheet);
-
-        // 1) Collect items to allow a single plan build
         let collected: Vec<(u32, u32, ASTNode)> = items.into_iter().collect();
         if collected.is_empty() {
             return Ok(0);
         }
-
-        // 2) Build plan across all formulas (read-only, no graph mutation)
-        let tiny_refs = collected.iter().map(|(r, c, ast)| (sheet, *r, *c, ast));
         let vol_flags: Vec<bool> = collected
             .iter()
             .map(|(_, _, ast)| self.is_ast_volatile(ast))
             .collect();
+        self.bulk_set_formulas_with_volatility(sheet, collected, vol_flags)
+    }
+
+    pub fn bulk_set_formulas_with_volatility(
+        &mut self,
+        sheet: &str,
+        collected: Vec<(u32, u32, ASTNode)>,
+        vol_flags: Vec<bool>,
+    ) -> Result<usize, ExcelError> {
+        use formualizer_parse::parser::CollectPolicy;
+        let sheet_id = self.sheet_id_mut(sheet);
+
+        if collected.is_empty() {
+            return Ok(0);
+        }
+
+        // 1) Build plan across all formulas (read-only, no graph mutation)
+        let tiny_refs = collected.iter().map(|(r, c, ast)| (sheet, *r, *c, ast));
         let policy = CollectPolicy {
             expand_small_ranges: true,
             range_expansion_limit: self.config.range_expansion_limit,
@@ -1311,7 +1316,7 @@ impl DependencyGraph {
             Some(&vol_flags),
         )?;
 
-        // 3) Ensure/create target vertices and referenced cells (placeholders) once
+        // 2) Ensure/create target vertices and referenced cells (placeholders) once
         let mut created_placeholders: Vec<CellRef> = Vec::new();
 
         // Targets
@@ -1338,7 +1343,7 @@ impl DependencyGraph {
             dep_vids.push(vid);
         }
 
-        // 4) Store ASTs in batch and update kinds/flags/value map
+        // 3) Store ASTs in batch and update kinds/flags/value map
         let ast_ids = self
             .data_store
             .store_asts_batch(collected.iter().map(|(_, _, ast)| ast), &self.sheet_reg);
@@ -1352,13 +1357,10 @@ impl DependencyGraph {
             self.store.set_dirty(tvid, true);
             self.vertex_values.remove(&tvid);
             self.vertex_formulas.insert(tvid, ast_ids[i]);
-            if vol_flags.get(i).copied().unwrap_or(false) {
-                self.store.set_volatile(tvid, true);
-                self.volatile_vertices.insert(tvid);
-            }
+            self.mark_volatile(tvid, vol_flags.get(i).copied().unwrap_or(false));
         }
 
-        // 5) Add edges in one batch
+        // 4) Add edges in one batch
         self.edges.begin_batch();
         for (i, tvid) in target_vids.iter().copied().enumerate() {
             // Map per-formula indices into dep_vids
@@ -1777,11 +1779,35 @@ impl DependencyGraph {
         self.store.sheet_id(vertex_id)
     }
 
-    /// Get the formula AST for a vertex
+    pub fn get_formula_id(&self, vertex_id: VertexId) -> Option<AstNodeId> {
+        self.vertex_formulas.get(&vertex_id).copied()
+    }
+
+    pub fn get_formula_id_and_volatile(&self, vertex_id: VertexId) -> Option<(AstNodeId, bool)> {
+        let ast_id = self.get_formula_id(vertex_id)?;
+        Some((ast_id, self.is_volatile(vertex_id)))
+    }
+
+    pub fn get_formula_node(&self, vertex_id: VertexId) -> Option<&super::arena::AstNodeData> {
+        let ast_id = self.get_formula_id(vertex_id)?;
+        self.data_store.get_node(ast_id)
+    }
+
+    pub fn get_formula_node_and_volatile(
+        &self,
+        vertex_id: VertexId,
+    ) -> Option<(&super::arena::AstNodeData, bool)> {
+        let (ast_id, vol) = self.get_formula_id_and_volatile(vertex_id)?;
+        let node = self.data_store.get_node(ast_id)?;
+        Some((node, vol))
+    }
+
+    /// Get the formula AST for a vertex.
+    ///
+    /// Not used in hot paths; reconstructs from arena.
     pub fn get_formula(&self, vertex_id: VertexId) -> Option<ASTNode> {
-        self.vertex_formulas
-            .get(&vertex_id)
-            .and_then(|&ast_id| self.data_store.retrieve_ast(ast_id, &self.sheet_reg))
+        let ast_id = self.get_formula_id(vertex_id)?;
+        self.data_store.retrieve_ast(ast_id, &self.sheet_reg)
     }
 
     /// Get the value stored for a vertex

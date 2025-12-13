@@ -15,7 +15,7 @@
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse;
 
 #[test]
 fn demand_driven_enters_compressed_ranges() {
@@ -37,15 +37,15 @@ fn demand_driven_enters_compressed_ranges() {
         .unwrap(); // B2=5
 
     // Column P (16): P2 = B2 (formula)
-    let p2 = Parser::from("=B2").parse().unwrap();
+    let p2 = parse("=B2").unwrap();
     engine.set_cell_formula("Sheet1", 2, 16, p2).unwrap();
 
     // Column S (19): S2 = D3 (formula)
-    let s2 = Parser::from("=D3").parse().unwrap();
+    let s2 = parse("=D3").unwrap();
     engine.set_cell_formula("Sheet1", 2, 19, s2).unwrap();
 
     // D7 = SUMIF(S:S, D3, P:P)
-    let d7 = Parser::from("=SUMIF(S:S, D3, P:P)").parse().unwrap();
+    let d7 = parse("=SUMIF(S:S, D3, P:P)").unwrap();
     engine.set_cell_formula("Sheet1", 7, 4, d7).unwrap();
 
     // Demand-driven: only ask for D7. The engine should pull in P2/S2 automatically

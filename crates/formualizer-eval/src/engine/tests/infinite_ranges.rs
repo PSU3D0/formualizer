@@ -5,8 +5,8 @@ use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::Parser;
 use formualizer_parse::parser::ReferenceType;
+use formualizer_parse::parser::parse;
 
 fn range_limit_config(limit: usize) -> EvalConfig {
     EvalConfig {
@@ -21,10 +21,10 @@ fn infinite_column_empty_sheet_sum_count_are_zero() {
     let mut engine = Engine::new(wb, range_limit_config(16));
 
     // =SUM(A:A) in B1
-    let ast_sum = Parser::from("=SUM(A:A)").parse().unwrap();
+    let ast_sum = parse("=SUM(A:A)").unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast_sum).unwrap();
     // =COUNT(A:A) in B2
-    let ast_cnt = Parser::from("=COUNT(A:A)").parse().unwrap();
+    let ast_cnt = parse("=COUNT(A:A)").unwrap();
     engine.set_cell_formula("Sheet1", 2, 2, ast_cnt).unwrap();
 
     engine.evaluate_all().unwrap();
@@ -55,10 +55,10 @@ fn infinite_column_sparse_sum_and_count_correct() {
         .unwrap();
 
     engine
-        .set_cell_formula("Sheet1", 1, 2, Parser::from("=SUM(A:A)").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 2, parse("=SUM(A:A)").unwrap())
         .unwrap();
     engine
-        .set_cell_formula("Sheet1", 2, 2, Parser::from("=COUNT(A:A)").parse().unwrap())
+        .set_cell_formula("Sheet1", 2, 2, parse("=COUNT(A:A)").unwrap())
         .unwrap();
 
     engine.evaluate_all().unwrap();
@@ -90,10 +90,10 @@ fn infinite_row_sum_and_count_correct() {
     }
 
     engine
-        .set_cell_formula("Sheet1", 2, 1, Parser::from("=SUM(1:1)").parse().unwrap())
+        .set_cell_formula("Sheet1", 2, 1, parse("=SUM(1:1)").unwrap())
         .unwrap();
     engine
-        .set_cell_formula("Sheet1", 3, 1, Parser::from("=COUNT(1:1)").parse().unwrap())
+        .set_cell_formula("Sheet1", 3, 1, parse("=COUNT(1:1)").unwrap())
         .unwrap();
 
     engine.evaluate_all().unwrap();
@@ -125,29 +125,19 @@ fn partial_ranges_column_tail_and_head_bounds() {
 
     // SUM(A1:A) = 10+5+7
     engine
-        .set_cell_formula("Sheet1", 1, 2, Parser::from("=SUM(A1:A)").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 2, parse("=SUM(A1:A)").unwrap())
         .unwrap();
     // COUNT(A1:A) = 3
     engine
-        .set_cell_formula(
-            "Sheet1",
-            2,
-            2,
-            Parser::from("=COUNT(A1:A)").parse().unwrap(),
-        )
+        .set_cell_formula("Sheet1", 2, 2, parse("=COUNT(A1:A)").unwrap())
         .unwrap();
     // SUM(A:A10) = rows 1..10 only => 10 + 5 = 15
     engine
-        .set_cell_formula("Sheet1", 3, 2, Parser::from("=SUM(A:A10)").parse().unwrap())
+        .set_cell_formula("Sheet1", 3, 2, parse("=SUM(A:A10)").unwrap())
         .unwrap();
     // COUNT(A:A10) = 2
     engine
-        .set_cell_formula(
-            "Sheet1",
-            4,
-            2,
-            Parser::from("=COUNT(A:A10)").parse().unwrap(),
-        )
+        .set_cell_formula("Sheet1", 4, 2, parse("=COUNT(A:A10)").unwrap())
         .unwrap();
 
     engine.evaluate_all().unwrap();
@@ -181,7 +171,7 @@ fn invalidation_on_growth_column_and_row() {
             .unwrap();
     }
     engine
-        .set_cell_formula("Sheet1", 1, 3, Parser::from("=SUM(A:A)").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 3, parse("=SUM(A:A)").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
     assert_eq!(
@@ -206,7 +196,7 @@ fn invalidation_on_growth_column_and_row() {
             .unwrap();
     }
     engine
-        .set_cell_formula("Sheet1", 3, 1, Parser::from("=SUM(1:1)").parse().unwrap())
+        .set_cell_formula("Sheet1", 3, 1, parse("=SUM(1:1)").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
     assert_eq!(
@@ -237,7 +227,7 @@ fn invalidation_on_shrink_via_empty() {
             .unwrap();
     }
     engine
-        .set_cell_formula("Sheet1", 1, 2, Parser::from("=SUM(A:A)").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 2, parse("=SUM(A:A)").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
     assert_eq!(
@@ -323,7 +313,7 @@ fn used_region_growth_shrink_has_zero_stripe_churn() {
     engine
         .set_cell_value(sheet, 1, 1, LiteralValue::Number(5.0))
         .unwrap();
-    let ast = Parser::from("=SUM(A:A)").parse().unwrap();
+    let ast = parse("=SUM(A:A)").unwrap();
     engine.set_cell_formula(sheet, 1, 3, ast).unwrap();
     let _ = engine.evaluate_all().unwrap();
 
@@ -376,7 +366,7 @@ fn edge_churn_on_insert_delete_rows_is_bounded() {
             .unwrap();
     }
     engine
-        .set_cell_formula(&sheet, 1, 3, Parser::from("=SUM(A:A)").parse().unwrap())
+        .set_cell_formula(&sheet, 1, 3, parse("=SUM(A:A)").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
@@ -434,7 +424,7 @@ fn edge_churn_on_insert_delete_columns_is_bounded() {
             .unwrap();
     }
     engine
-        .set_cell_formula(&sheet, 3, 1, Parser::from("=SUM(1:1)").parse().unwrap())
+        .set_cell_formula(&sheet, 3, 1, parse("=SUM(1:1)").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 

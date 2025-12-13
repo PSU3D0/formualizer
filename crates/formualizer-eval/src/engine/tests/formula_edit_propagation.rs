@@ -2,7 +2,7 @@ use crate::engine::{Engine, EvalConfig};
 use crate::reference::{CellRef, Coord};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::{ASTNode, ASTNodeType, Parser, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
 
 fn make_engine() -> Engine<TestWorkbook> {
     let wb = TestWorkbook::new();
@@ -125,7 +125,7 @@ fn whole_column_dependent_redirty_on_formula_edit() {
     engine.set_cell_formula("Sheet1", 4, 4, lit(3)).unwrap();
     engine.set_cell_formula("Sheet1", 5, 4, lit(4)).unwrap();
     engine
-        .set_cell_formula("Sheet1", 1, 19, Parser::from("=SUM(D:D)").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 19, parse("=SUM(D:D)").unwrap())
         .unwrap(); // S column is col 19
 
     engine.evaluate_all().unwrap();
@@ -161,12 +161,7 @@ fn cross_sheet_whole_column_dependent_redirty_on_formula_edit() {
     engine.set_cell_formula("Sheet1", 5, 4, lit(7)).unwrap();
 
     engine
-        .set_cell_formula(
-            "Sheet2",
-            1,
-            1,
-            Parser::from("=SUM(Sheet1!D:D)").parse().unwrap(),
-        )
+        .set_cell_formula("Sheet2", 1, 1, parse("=SUM(Sheet1!D:D)").unwrap())
         .unwrap();
 
     engine.evaluate_all().unwrap();

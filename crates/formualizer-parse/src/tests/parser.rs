@@ -898,7 +898,7 @@ mod fingerprint_tests {
 
     use crate::tokenizer::*;
 
-    use crate::parser::{ASTNode, ASTNodeType, Parser};
+    use crate::parser::{ASTNode, ASTNodeType};
 
     #[test]
     fn test_fingerprint_whitespace_insensitive() {
@@ -906,8 +906,8 @@ mod fingerprint_tests {
         let f1 = "=SUM(a1, 2)";
         let f2 = "=  SUM( A1 ,2 )"; // diff whitespace/casing
 
-        let fp1 = Parser::from(f1).parse().unwrap().fingerprint();
-        let fp2 = Parser::from(f2).parse().unwrap().fingerprint();
+        let fp1 = crate::parser::parse(f1).unwrap().fingerprint();
+        let fp2 = crate::parser::parse(f2).unwrap().fingerprint();
 
         assert_eq!(
             fp1, fp2,
@@ -915,7 +915,7 @@ mod fingerprint_tests {
         );
 
         // Different values should have different fingerprints
-        let fp3 = Parser::from("=SUM(A1,3)").parse().unwrap().fingerprint();
+        let fp3 = crate::parser::parse("=SUM(A1,3)").unwrap().fingerprint();
         assert_ne!(
             fp1, fp3,
             "Formulas with different values should have different fingerprints"
@@ -928,8 +928,8 @@ mod fingerprint_tests {
         let f1 = "=sum(a1)";
         let f2 = "=SUM(A1)";
 
-        let fp1 = Parser::from(f1).parse().unwrap().fingerprint();
-        let fp2 = Parser::from(f2).parse().unwrap().fingerprint();
+        let fp1 = crate::parser::parse(f1).unwrap().fingerprint();
+        let fp2 = crate::parser::parse(f2).unwrap().fingerprint();
 
         assert_eq!(
             fp1, fp2,
@@ -943,8 +943,8 @@ mod fingerprint_tests {
         let f1 = "=SUM(A1,B1)";
         let f2 = "=SUM(A1+B1)";
 
-        let fp1 = Parser::from(f1).parse().unwrap().fingerprint();
-        let fp2 = Parser::from(f2).parse().unwrap().fingerprint();
+        let fp1 = crate::parser::parse(f1).unwrap().fingerprint();
+        let fp2 = crate::parser::parse(f2).unwrap().fingerprint();
 
         assert_ne!(
             fp1, fp2,
@@ -975,7 +975,7 @@ mod fingerprint_tests {
     fn test_fingerprint_deterministic() {
         // Test that the fingerprint is deterministic across calls
         let formula = "=SUM(A1:B10)/COUNT(A1:B10)";
-        let ast = Parser::from(formula).parse().unwrap();
+        let ast = crate::parser::parse(formula).unwrap();
 
         let fp1 = ast.fingerprint();
         let fp2 = ast.fingerprint();
@@ -992,8 +992,8 @@ mod fingerprint_tests {
         let f1 = "=IF(AND(A1>0,B1<10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")";
         let f2 = "=IF(AND(A1>0,B1<10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")";
 
-        let fp1 = Parser::from(f1).parse().unwrap().fingerprint();
-        let fp2 = Parser::from(f2).parse().unwrap().fingerprint();
+        let fp1 = crate::parser::parse(f1).unwrap().fingerprint();
+        let fp2 = crate::parser::parse(f2).unwrap().fingerprint();
 
         assert_eq!(
             fp1, fp2,
@@ -1002,7 +1002,7 @@ mod fingerprint_tests {
 
         // Slightly different formula
         let f3 = "=IF(AND(A1>0,B1<=10),SUM(C1:C10)/COUNT(C1:C10),\"N/A\")";
-        let fp3 = Parser::from(f3).parse().unwrap().fingerprint();
+        let fp3 = crate::parser::parse(f3).unwrap().fingerprint();
 
         assert_ne!(
             fp1, fp3,
@@ -1015,14 +1015,14 @@ mod fingerprint_tests {
         // Test the specific validation example from the requirements
         let f1 = "=SUM(a1, 2)";
         let f2 = "=  SUM( A1 ,2 )"; // diff whitespace/casing
-        let fp1 = Parser::from(f1).parse().unwrap().fingerprint();
-        let fp2 = Parser::from(f2).parse().unwrap().fingerprint();
+        let fp1 = crate::parser::parse(f1).unwrap().fingerprint();
+        let fp2 = crate::parser::parse(f2).unwrap().fingerprint();
         assert_eq!(
             fp1, fp2,
             "Formulas with different whitespace and casing should have the same fingerprint"
         );
 
-        let fp3 = Parser::from("=SUM(A1,3)").parse().unwrap().fingerprint();
+        let fp3 = crate::parser::parse("=SUM(A1,3)").unwrap().fingerprint();
         assert_ne!(
             fp1, fp3,
             "Formulas with different values should have different fingerprints"

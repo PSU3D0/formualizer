@@ -2,6 +2,7 @@
 /// Stores formula AST nodes efficiently with content-addressable storage
 use super::string_interner::{StringId, StringInterner};
 use super::value_ref::ValueRef;
+use formualizer_parse::parser::TableSpecifier;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
@@ -20,6 +21,15 @@ impl AstNodeId {
 impl fmt::Display for AstNodeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "AstNode({})", self.0)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct TableSpecId(u32);
+
+impl TableSpecId {
+    pub fn as_u32(self) -> u32 {
+        self.0
     }
 }
 
@@ -83,7 +93,10 @@ pub enum CompactRefType {
         end_col: u32,
     },
     NamedRange(StringId),
-    Table(StringId),
+    Table {
+        name_id: StringId,
+        specifier_id: Option<TableSpecId>,
+    },
 }
 
 /// Arena for storing AST nodes with deduplication
@@ -103,6 +116,10 @@ pub struct AstArena {
     /// String pool for operators and function names
     strings: StringInterner,
 
+    /// Structured table specifiers
+    table_specs: Vec<TableSpecifier>,
+    table_spec_dedup: FxHashMap<u64, TableSpecId>,
+
     /// Statistics
     dedup_hits: usize,
 }
@@ -115,6 +132,8 @@ impl AstArena {
             function_args: Vec::new(),
             array_elements: Vec::new(),
             strings: StringInterner::new(),
+            table_specs: Vec::new(),
+            table_spec_dedup: FxHashMap::default(),
             dedup_hits: 0,
         }
     }
@@ -126,6 +145,8 @@ impl AstArena {
             function_args: Vec::with_capacity(node_cap * 2), // Assume avg 2 args
             array_elements: Vec::with_capacity(node_cap),
             strings: StringInterner::with_capacity(node_cap / 10),
+            table_specs: Vec::new(),
+            table_spec_dedup: FxHashMap::default(),
             dedup_hits: 0,
         }
     }
@@ -255,6 +276,16 @@ impl AstArena {
         }
     }
 
+    pub fn get_array_elements_info(&self, id: AstNodeId) -> Option<(u16, u16, &[AstNodeId])> {
+        match self.get(id)? {
+            AstNodeData::Array { rows, cols, .. } => {
+                let elements = self.get_array_elements(id)?;
+                Some((*rows, *cols, elements))
+            }
+            _ => None,
+        }
+    }
+
     /// Resolve a string ID to its content
     pub fn resolve_string(&self, id: StringId) -> &str {
         self.strings.resolve(id)
@@ -270,6 +301,32 @@ impl AstArena {
         &mut self.strings
     }
 
+    pub fn intern_table_specifier(&mut self, specifier: &TableSpecifier) -> TableSpecId {
+        let hash = {
+            let mut hasher = DefaultHasher::new();
+            specifier.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        if let Some(&id) = self.table_spec_dedup.get(&hash)
+            && self
+                .table_specs
+                .get(id.0 as usize)
+                .is_some_and(|existing| existing == specifier)
+        {
+            return id;
+        }
+
+        let id = TableSpecId(self.table_specs.len() as u32);
+        self.table_specs.push(specifier.clone());
+        self.table_spec_dedup.insert(hash, id);
+        id
+    }
+
+    pub fn resolve_table_specifier(&self, id: TableSpecId) -> Option<&TableSpecifier> {
+        self.table_specs.get(id.0 as usize)
+    }
+
     /// Compute hash for a node
     fn hash_node(&self, node: &AstNodeData) -> u64 {
         let mut hasher = DefaultHasher::new();
@@ -283,6 +340,7 @@ impl AstArena {
             node_count: self.nodes.len(),
             dedup_hits: self.dedup_hits,
             string_count: self.strings.len(),
+            table_spec_count: self.table_specs.len(),
             total_args: self.function_args.len(),
             total_array_elements: self.array_elements.len(),
         }
@@ -295,6 +353,8 @@ impl AstArena {
             + self.function_args.capacity() * 4
             + self.array_elements.capacity() * 4
             + self.strings.memory_usage()
+            + self.table_specs.capacity() * std::mem::size_of::<TableSpecifier>()
+            + self.table_spec_dedup.capacity() * (8 + 4)
     }
 
     /// Clear all nodes from the arena
@@ -304,6 +364,8 @@ impl AstArena {
         self.function_args.clear();
         self.array_elements.clear();
         self.strings.clear();
+        self.table_specs.clear();
+        self.table_spec_dedup.clear();
         self.dedup_hits = 0;
     }
 }
@@ -330,6 +392,7 @@ pub struct AstArenaStats {
     pub node_count: usize,
     pub dedup_hits: usize,
     pub string_count: usize,
+    pub table_spec_count: usize,
     pub total_args: usize,
     pub total_array_elements: usize,
 }

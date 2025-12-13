@@ -244,7 +244,29 @@ impl DependencyGraph {
 
     #[inline]
     pub(super) fn is_ast_volatile(&self, ast: &ASTNode) -> bool {
-        // Fast-path if the AST already carries volatility info from the parser.
-        ast.contains_volatile()
+        if ast.contains_volatile() {
+            return true;
+        }
+
+        use formualizer_parse::parser::ASTNodeType;
+
+        match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                if let Some(func) = crate::function_registry::get("", name)
+                    && func.caps().contains(crate::function::FnCaps::VOLATILE)
+                {
+                    return true;
+                }
+                args.iter().any(|arg| self.is_ast_volatile(arg))
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                self.is_ast_volatile(left) || self.is_ast_volatile(right)
+            }
+            ASTNodeType::UnaryOp { expr, .. } => self.is_ast_volatile(expr),
+            ASTNodeType::Array(rows) => rows
+                .iter()
+                .any(|row| row.iter().any(|cell| self.is_ast_volatile(cell))),
+            _ => false,
+        }
     }
 }

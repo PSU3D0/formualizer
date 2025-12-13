@@ -3,7 +3,7 @@
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse;
 
 #[test]
 fn sumifs_whole_columns_different_used_regions() {
@@ -61,9 +61,8 @@ fn sumifs_whole_columns_different_used_regions() {
 
     // Create a SUMIFS formula similar to the user's case
     // =SUMIFS(P:P, K:K, "Malpractice SC0279", AV:AV, "MatchValue")
-    let formula = Parser::from("=SUMIFS(P:P, K:K, \"Malpractice SC0279\", AV:AV, \"MatchValue\")")
-        .parse()
-        .unwrap();
+    let formula =
+        parse("=SUMIFS(P:P, K:K, \"Malpractice SC0279\", AV:AV, \"MatchValue\")").unwrap();
 
     engine.set_cell_formula("Sheet1", 1, 1, formula).unwrap();
 
@@ -110,9 +109,7 @@ fn sumifs_whole_columns_empty_vs_populated() {
     // Column D has criteria for column C
 
     // SUMIFS with empty column reference should still work
-    let formula = Parser::from("=SUMIFS(A:A, B:B, \"Yes\", C:C, \"\")")
-        .parse()
-        .unwrap();
+    let formula = parse("=SUMIFS(A:A, B:B, \"Yes\", C:C, \"\")").unwrap();
 
     engine.set_cell_formula("Sheet1", 2, 1, formula).unwrap();
 

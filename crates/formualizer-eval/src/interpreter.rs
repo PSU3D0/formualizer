@@ -6,6 +6,10 @@ use crate::{
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+
+use crate::engine::arena::{AstNodeData, AstNodeId, DataStore};
+use crate::engine::sheet_registry::SheetRegistry;
+
 // no Arc needed here after cache removal
 
 pub struct Interpreter<'a> {
@@ -75,6 +79,11 @@ impl<'a> Interpreter<'a> {
                         .with_message(format!("Unknown function: {name}")))
                 }
             }
+            ASTNodeType::BinaryOp { op, left, right } if op == ":" => {
+                let lref = self.evaluate_ast_as_reference(left)?;
+                let rref = self.evaluate_ast_as_reference(right)?;
+                crate::reference::combine_references(&lref, &rref)
+            }
             ASTNodeType::Array(_)
             | ASTNodeType::UnaryOp { .. }
             | ASTNodeType::BinaryOp { .. }
@@ -83,9 +92,201 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    pub(crate) fn evaluate_arena_ast_as_reference(
+        &self,
+        node_id: AstNodeId,
+        data_store: &DataStore,
+        sheet_registry: &SheetRegistry,
+    ) -> Result<ReferenceType, ExcelError> {
+        let node = data_store.get_node(node_id).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+        })?;
+
+        match node {
+            AstNodeData::Reference { ref_type, .. } => {
+                Ok(data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry))
+            }
+            AstNodeData::Function { name_id, .. } => {
+                let name = data_store.resolve_ast_string(*name_id);
+                let fun = self.context.get_function("", name).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Name)
+                        .with_message(format!("Unknown function: {name}"))
+                })?;
+
+                let args = data_store.get_args(node_id).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing function args")
+                })?;
+
+                let handles: Vec<ArgumentHandle> = args
+                    .iter()
+                    .copied()
+                    .map(|arg_id| {
+                        ArgumentHandle::new_arena(arg_id, self, data_store, sheet_registry)
+                    })
+                    .collect();
+
+                let fctx =
+                    DefaultFunctionContext::new_with_sheet(self.context, None, self.current_sheet);
+
+                fun.eval_reference(&handles, &fctx).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Function does not return a reference")
+                })?
+            }
+            AstNodeData::BinaryOp {
+                op_id,
+                left_id,
+                right_id,
+            } => {
+                let op = data_store.resolve_ast_string(*op_id);
+                if op != ":" {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Expression cannot be used as a reference"));
+                }
+                let lref =
+                    self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry)?;
+                let rref =
+                    self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry)?;
+                crate::reference::combine_references(&lref, &rref)
+            }
+            _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Expression cannot be used as a reference")),
+        }
+    }
+
     /* ===================  public  =================== */
     pub fn evaluate_ast(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
         self.evaluate_ast_uncached(node)
+    }
+
+    pub(crate) fn evaluate_arena_ast(
+        &self,
+        node_id: AstNodeId,
+        data_store: &DataStore,
+        sheet_registry: &SheetRegistry,
+    ) -> Result<LiteralValue, ExcelError> {
+        let node = data_store.get_node(node_id).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+        })?;
+
+        match node {
+            AstNodeData::Literal(vref) => Ok(data_store.retrieve_value(*vref)),
+            AstNodeData::Reference { ref_type, .. } => {
+                let reference =
+                    data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                self.eval_reference(&reference)
+            }
+            AstNodeData::UnaryOp { op_id, expr_id } => {
+                let expr = self.evaluate_arena_ast(*expr_id, data_store, sheet_registry)?;
+
+                let op = data_store.resolve_ast_string(*op_id);
+                match expr {
+                    LiteralValue::Array(arr) => {
+                        self.map_array(arr, |cell| self.eval_unary_scalar(op, cell))
+                    }
+                    other => self.eval_unary_scalar(op, other),
+                }
+            }
+            AstNodeData::BinaryOp {
+                op_id,
+                left_id,
+                right_id,
+            } => {
+                let op = data_store.resolve_ast_string(*op_id);
+                if op == ":" {
+                    let lref =
+                        self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry)?;
+                    let rref = self.evaluate_arena_ast_as_reference(
+                        *right_id,
+                        data_store,
+                        sheet_registry,
+                    )?;
+                    return match crate::reference::combine_references(&lref, &rref) {
+                        Ok(_r) => Ok(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Ref).with_message(
+                                "Reference produced by ':' cannot be used directly as a value",
+                            ),
+                        )),
+                        Err(e) => Ok(LiteralValue::Error(e)),
+                    };
+                }
+
+                let left = self.evaluate_arena_ast(*left_id, data_store, sheet_registry)?;
+                let right = self.evaluate_arena_ast(*right_id, data_store, sheet_registry)?;
+
+                if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
+                    return self.compare(op, left, right);
+                }
+
+                match op {
+                    "+" => self.numeric_binary(left, right, |a, b| a + b),
+                    "-" => self.numeric_binary(left, right, |a, b| a - b),
+                    "*" => self.numeric_binary(left, right, |a, b| a * b),
+                    "/" => self.divide(left, right),
+                    "^" => self.power(left, right),
+                    "&" => Ok(LiteralValue::Text(format!(
+                        "{}{}",
+                        crate::coercion::to_text_invariant(&left),
+                        crate::coercion::to_text_invariant(&right)
+                    ))),
+                    _ => Err(ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message(format!("Binary op '{op}'"))),
+                }
+            }
+            AstNodeData::Array { .. } => {
+                let (rows, cols, elements) =
+                    data_store.get_array_elems(node_id).ok_or_else(|| {
+                        ExcelError::new(ExcelErrorKind::Value).with_message("Invalid array")
+                    })?;
+
+                let rows_usize = rows as usize;
+                let cols_usize = cols as usize;
+                let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows_usize);
+                for r in 0..rows_usize {
+                    let mut row = Vec::with_capacity(cols_usize);
+                    for c in 0..cols_usize {
+                        let idx = r * cols_usize + c;
+                        if let Some(&elem_id) = elements.get(idx) {
+                            row.push(self.evaluate_arena_ast(
+                                elem_id,
+                                data_store,
+                                sheet_registry,
+                            )?);
+                        }
+                    }
+                    out.push(row);
+                }
+
+                Ok(LiteralValue::Array(out))
+            }
+            AstNodeData::Function { name_id, .. } => {
+                let name = data_store.resolve_ast_string(*name_id);
+                let fun = self.context.get_function("", name).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Name)
+                        .with_message(format!("Unknown function: {name}"))
+                })?;
+
+                let args = data_store.get_args(node_id).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing function args")
+                })?;
+
+                let handles: Vec<ArgumentHandle> = args
+                    .iter()
+                    .copied()
+                    .map(|arg_id| {
+                        ArgumentHandle::new_arena(arg_id, self, data_store, sheet_registry)
+                    })
+                    .collect();
+
+                let fctx = DefaultFunctionContext::new_with_sheet(
+                    self.context,
+                    self.current_cell,
+                    self.current_sheet,
+                );
+
+                fun.dispatch(&handles, &fctx)
+            }
+        }
     }
 
     fn evaluate_ast_uncached(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {

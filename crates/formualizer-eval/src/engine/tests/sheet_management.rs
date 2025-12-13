@@ -166,7 +166,6 @@ mod tests {
     fn test_current_sheet_resolution_for_unsheeted_refs() {
         use crate::engine::{Engine, EvalConfig};
         use crate::test_workbook::TestWorkbook;
-        use formualizer_parse::parser::Parser;
 
         let wb = TestWorkbook::new();
         let mut engine = Engine::new(wb, EvalConfig::default());
@@ -180,7 +179,7 @@ mod tests {
             .unwrap();
 
         engine
-            .set_cell_formula("Data", 1, 2, Parser::from("=A1").parse().unwrap())
+            .set_cell_formula("Data", 1, 2, parse("=A1").unwrap())
             .unwrap();
         engine.evaluate_all().unwrap();
 

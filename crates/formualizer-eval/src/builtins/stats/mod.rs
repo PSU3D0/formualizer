@@ -34,40 +34,38 @@ fn collect_numeric_stats(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError
         // Special-case: inline array literal argument should be treated like a list of direct scalar
         // arguments (not a by-ref range). This allows boolean/text coercion per element akin to
         // passing multiple scalars to the function.
-        match a.ast().node_type.clone() {
-            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Array(arr)) => {
-                for row in arr.into_iter() {
-                    for cell in row.into_iter() {
-                        match cell {
-                            LiteralValue::Error(e) => return Err(e),
-                            other => {
-                                if let Ok(n) = coerce_num(&other) {
-                                    out.push(n);
-                                }
+        if let Some(arr) = a.inline_array_literal()? {
+            for row in arr.into_iter() {
+                for cell in row.into_iter() {
+                    match cell {
+                        LiteralValue::Error(e) => return Err(e),
+                        other => {
+                            if let Ok(n) = coerce_num(&other) {
+                                out.push(n);
                             }
                         }
                     }
                 }
             }
-            _ => {
-                if let Ok(view) = a.range_view() {
-                    view.for_each_cell(&mut |v| {
-                        match v {
-                            LiteralValue::Error(e) => return Err(e.clone()),
-                            LiteralValue::Number(n) => out.push(*n),
-                            LiteralValue::Int(i) => out.push(*i as f64),
-                            _ => {}
-                        }
-                        Ok(())
-                    })?;
-                } else {
-                    match a.value()?.as_ref() {
-                        LiteralValue::Error(e) => return Err(e.clone()),
-                        other => {
-                            if let Ok(n) = coerce_num(other) {
-                                out.push(n);
-                            }
-                        }
+            continue;
+        }
+
+        if let Ok(view) = a.range_view() {
+            view.for_each_cell(&mut |v| {
+                match v {
+                    LiteralValue::Error(e) => return Err(e.clone()),
+                    LiteralValue::Number(n) => out.push(*n),
+                    LiteralValue::Int(i) => out.push(*i as f64),
+                    _ => {}
+                }
+                Ok(())
+            })?;
+        } else {
+            match a.value()?.as_ref() {
+                LiteralValue::Error(e) => return Err(e.clone()),
+                other => {
+                    if let Ok(n) = coerce_num(other) {
+                        out.push(n);
                     }
                 }
             }

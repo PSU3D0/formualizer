@@ -2,7 +2,7 @@ use crate::engine::EvalConfig;
 use crate::engine::eval::Engine;
 use crate::test_workbook::TestWorkbook;
 use formualizer_parse::LiteralValue;
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse;
 
 #[test]
 fn spill_commit_is_atomic_under_fault() {
@@ -11,7 +11,7 @@ fn spill_commit_is_atomic_under_fault() {
 
     // Seed with a 2x2 spill
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2;3,4}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
@@ -84,13 +84,13 @@ fn spill_resize_shrink_is_atomic() {
 
     // Seed with a 2x2 spill [[1,2],[3,4]]
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2;3,4}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
     // Now shrink to 1x1 {9}
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={9}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={9}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
@@ -120,7 +120,7 @@ fn spill_resize_shrink_with_fault_rolls_back() {
 
     // Seed with a 2x2 spill [[1,2],[3,4]]
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2;3,4}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
@@ -170,18 +170,13 @@ fn spill_resize_grow_is_atomic() {
 
     // Seed with a 2x2 spill [[1,2],[3,4]]
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2;3,4}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 
     // Grow to 2x3 [[10,20,30],[40,50,60]]
     engine
-        .set_cell_formula(
-            "Sheet1",
-            1,
-            1,
-            Parser::from("={10,20,30;40,50,60}").parse().unwrap(),
-        )
+        .set_cell_formula("Sheet1", 1, 1, parse("={10,20,30;40,50,60}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
 

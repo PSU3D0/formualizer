@@ -302,6 +302,30 @@ impl DataStore {
         self.reconstruct_ast_node(id, sheet_registry)
     }
 
+    pub fn resolve_ast_string(&self, id: StringId) -> &str {
+        self.asts.resolve_string(id)
+    }
+
+    pub fn reconstruct_reference_type_for_eval(
+        &self,
+        ref_type: &CompactRefType,
+        sheet_registry: &SheetRegistry,
+    ) -> ReferenceType {
+        self.reconstruct_reference_type(ref_type, sheet_registry)
+    }
+
+    pub fn get_node(&self, id: AstNodeId) -> Option<&super::ast::AstNodeData> {
+        self.asts.get(id)
+    }
+
+    pub fn get_args(&self, id: AstNodeId) -> Option<&[AstNodeId]> {
+        self.asts.get_function_args(id)
+    }
+
+    pub fn get_array_elems(&self, id: AstNodeId) -> Option<(u16, u16, &[AstNodeId])> {
+        self.asts.get_array_elements_info(id)
+    }
+
     /// Convert ASTNode to arena representation
     fn convert_ast_node(&mut self, node: &ASTNode, sheet_registry: &SheetRegistry) -> AstNodeId {
         match &node.node_type {
@@ -407,9 +431,15 @@ impl DataStore {
             }
 
             ReferenceType::Table(table_ref) => {
-                // For now, just store the table name
-                let string_id = self.asts.strings_mut().intern(&table_ref.name);
-                CompactRefType::Table(string_id)
+                let name_id = self.asts.strings_mut().intern(&table_ref.name);
+                let specifier_id = table_ref
+                    .specifier
+                    .as_ref()
+                    .map(|specifier| self.asts.intern_table_specifier(specifier));
+                CompactRefType::Table {
+                    name_id,
+                    specifier_id,
+                }
             }
         }
     }
@@ -435,18 +465,7 @@ impl DataStore {
                 ref_type,
             } => {
                 let original = self.asts.resolve_string(*original_id).to_string();
-                // If this looks like a table reference, prefer reparsing the original string to
-                // preserve structured specifiers that CompactRefType::Table doesn't encode.
-                let reference = match ref_type {
-                    super::ast::CompactRefType::Table(_) => {
-                        formualizer_parse::parser::ReferenceType::from_string(&original)
-                            .unwrap_or_else(|_| {
-                                // Fallback to name-only reconstruction if parse fails
-                                self.reconstruct_reference_type(ref_type, sheet_registry)
-                            })
-                    }
-                    _ => self.reconstruct_reference_type(ref_type, sheet_registry),
-                };
+                let reference = self.reconstruct_reference_type(ref_type, sheet_registry);
                 ASTNodeType::Reference {
                     original,
                     reference,
@@ -575,12 +594,15 @@ impl DataStore {
                 ReferenceType::NamedRange(name)
             }
 
-            CompactRefType::Table(string_id) => {
-                let name = self.asts.resolve_string(*string_id).to_string();
-                ReferenceType::Table(TableReference {
-                    name,
-                    specifier: None, // Specifier not preserved
-                })
+            CompactRefType::Table {
+                name_id,
+                specifier_id,
+            } => {
+                let name = self.asts.resolve_string(*name_id).to_string();
+                let specifier = specifier_id
+                    .and_then(|id| self.asts.resolve_table_specifier(id))
+                    .cloned();
+                ReferenceType::Table(TableReference { name, specifier })
             }
         }
     }

@@ -9,7 +9,7 @@ use crate::builtins::math::SumFn;
 use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse;
 use std::time::Instant;
 
 #[test]
@@ -30,7 +30,7 @@ fn test_stripe_streaming_integration_basic() {
 
     // Formula B1 = SUM(A1:A1000) - should use both stripe tracking and streaming evaluation
     let formula_str = format!("=SUM(A1:A{range_size})");
-    let ast = Parser::from(&formula_str).parse().unwrap();
+    let ast = parse(&formula_str).unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
     // Initial evaluation
@@ -81,17 +81,17 @@ fn test_multiple_overlapping_streaming_ranges() {
     // Create multiple overlapping formulas that should all use streaming
     // B1 = SUM(A1:A500)
     let formula1 = format!("=SUM(A1:A{range_size})");
-    let ast1 = Parser::from(&formula1).parse().unwrap();
+    let ast1 = parse(&formula1).unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast1).unwrap();
 
     // B2 = SUM(A100:A500) - overlaps with B1
     let formula2 = "=SUM(A100:A500)";
-    let ast2 = Parser::from(formula2).parse().unwrap();
+    let ast2 = parse(formula2).unwrap();
     engine.set_cell_formula("Sheet1", 2, 2, ast2).unwrap();
 
     // B3 = SUM(A200:A600) - extends beyond data, overlaps with both
     let formula3 = "=SUM(A200:A600)";
-    let ast3 = Parser::from(formula3).parse().unwrap();
+    let ast3 = parse(formula3).unwrap();
     engine.set_cell_formula("Sheet1", 3, 2, ast3).unwrap();
 
     engine.evaluate_all().unwrap();
@@ -154,7 +154,7 @@ fn test_stripe_streaming_performance_integration() {
         let formula_row = f + 1;
 
         let formula = format!("=SUM(A{start_row}:A{end_row})");
-        let ast = Parser::from(&formula).parse().unwrap();
+        let ast = parse(&formula).unwrap();
         engine
             .set_cell_formula("Sheet1", formula_row, 2, ast)
             .unwrap();
@@ -212,7 +212,7 @@ fn test_stripe_streaming_cross_sheet() {
 
     // Create formula on Sheet1 that references Sheet2 range
     let formula = format!("=SUM(Sheet2!A1:A{range_size})");
-    let ast = Parser::from(&formula).parse().unwrap();
+    let ast = parse(&formula).unwrap();
     engine.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
 
     engine.evaluate_all().unwrap();
@@ -257,7 +257,7 @@ fn test_streaming_with_sparse_data_and_stripes() {
 
     // Create formula that sums the entire sparse range
     let formula = format!("=SUM(A1:A{range_size})");
-    let ast = Parser::from(&formula).parse().unwrap();
+    let ast = parse(&formula).unwrap();
     engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
     engine.evaluate_all().unwrap();
@@ -302,7 +302,7 @@ fn test_streaming_range_shape_variations() {
     }
 
     let tall_formula = "=SUM(A1:A1000)";
-    let tall_ast = Parser::from(tall_formula).parse().unwrap();
+    let tall_ast = parse(tall_formula).unwrap();
     engine.set_cell_formula("Sheet1", 1, 5, tall_ast).unwrap();
 
     // Wide range (row stripe) - AB1:AZ1 (use columns AB-AZ to avoid conflicts)
@@ -314,7 +314,7 @@ fn test_streaming_range_shape_variations() {
     }
 
     let wide_formula = "=SUM(AB1:AZ1)";
-    let wide_ast = Parser::from(wide_formula).parse().unwrap();
+    let wide_ast = parse(wide_formula).unwrap();
     engine.set_cell_formula("Sheet1", 2, 5, wide_ast).unwrap();
 
     // Dense range (block stripe) - B1:Z100 (use columns B-Z to avoid conflict with tall range)
@@ -328,7 +328,7 @@ fn test_streaming_range_shape_variations() {
     }
 
     let dense_formula = "=SUM(B1:Z100)";
-    let dense_ast = Parser::from(dense_formula).parse().unwrap();
+    let dense_ast = parse(dense_formula).unwrap();
     engine.set_cell_formula("Sheet1", 3, 5, dense_ast).unwrap();
 
     engine.evaluate_all().unwrap();
@@ -382,7 +382,7 @@ fn test_streaming_threshold_behavior_with_stripes() {
         }
 
         let formula = format!("=SUM(A1:A{size})");
-        let ast = Parser::from(&formula).parse().unwrap();
+        let ast = parse(&formula).unwrap();
         engine.set_cell_formula("Sheet1", 1, 2, ast).unwrap();
 
         engine.evaluate_all().unwrap();
@@ -446,7 +446,7 @@ fn test_streaming_memory_usage_with_stripes() {
                 let formula_row = f + 1;
 
                 let formula = format!("=SUM(A{start_row}:A{end_row})");
-                let ast = Parser::from(&formula).parse().unwrap();
+                let ast = parse(&formula).unwrap();
                 engine
                     .set_cell_formula("Sheet1", formula_row, 2, ast)
                     .unwrap();

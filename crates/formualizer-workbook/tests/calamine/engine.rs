@@ -3,7 +3,7 @@ use crate::common::build_workbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse;
 use formualizer_workbook::{CalamineAdapter, SpreadsheetReader};
 
 #[test]
@@ -237,7 +237,7 @@ fn stream_edit_propagation_chain() {
 
     // Edit A1's formula via engine; B1 and C1 should reflect the change
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("=20").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("=20").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
     match engine.get_cell_value("Sheet1", 1, 2) {
@@ -251,7 +251,7 @@ fn stream_edit_propagation_chain() {
 
     // Edit B1's formula; only C1 should change accordingly
     engine
-        .set_cell_formula("Sheet1", 1, 2, Parser::from("=A1*3").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 2, parse("=A1*3").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
     match engine.get_cell_value("Sheet1", 1, 2) {

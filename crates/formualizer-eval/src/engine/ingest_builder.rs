@@ -82,8 +82,35 @@ impl<'g> BulkIngestBuilder<'g> {
             .entry(sheet)
             .or_insert_with(|| SheetStage::new(self.g.sheet_name(sheet).to_string(), sheet));
         for (r, c, ast) in formulas {
-            let vol = ast.contains_volatile();
+            let vol = Self::is_ast_volatile(&ast);
             stage.formulas.push((r, c, ast, vol));
+        }
+    }
+
+    fn is_ast_volatile(ast: &ASTNode) -> bool {
+        use formualizer_parse::parser::ASTNodeType;
+
+        if ast.contains_volatile() {
+            return true;
+        }
+
+        match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                if let Some(func) = crate::function_registry::get("", name)
+                    && func.caps().contains(crate::function::FnCaps::VOLATILE)
+                {
+                    return true;
+                }
+                args.iter().any(|arg| Self::is_ast_volatile(arg))
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                Self::is_ast_volatile(left) || Self::is_ast_volatile(right)
+            }
+            ASTNodeType::UnaryOp { expr, .. } => Self::is_ast_volatile(expr),
+            ASTNodeType::Array(rows) => rows
+                .iter()
+                .any(|row| row.iter().any(|cell| Self::is_ast_volatile(cell))),
+            _ => false,
         }
     }
 

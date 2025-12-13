@@ -1,7 +1,7 @@
 use crate::engine::{EvalConfig, eval::Engine};
 use crate::test_workbook::TestWorkbook;
 use formualizer_parse::LiteralValue;
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse;
 
 #[test]
 fn spill_basic_and_block() {
@@ -10,7 +10,7 @@ fn spill_basic_and_block() {
 
     // Put array formula in A1 that spills 2x2
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={1,2;3,4}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={1,2;3,4}").unwrap())
         .unwrap();
     let res = engine.evaluate_all().unwrap();
     assert!(res.computed_vertices >= 1);
@@ -36,7 +36,7 @@ fn spill_basic_and_block() {
 
     // Change shape: from 2x2 to 1x3 and ensure old cells are cleared/resized correctly
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={7,8,9}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={7,8,9}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
     assert_eq!(
@@ -66,7 +66,7 @@ fn spill_basic_and_block() {
         .set_cell_value("Sheet1", 2, 1, LiteralValue::Text("X".into()))
         .unwrap();
     engine
-        .set_cell_formula("Sheet1", 1, 1, Parser::from("={10;20}").parse().unwrap())
+        .set_cell_formula("Sheet1", 1, 1, parse("={10;20}").unwrap())
         .unwrap();
     let _ = engine.evaluate_all().unwrap();
     // Anchor should be #SPILL!

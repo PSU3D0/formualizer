@@ -3,11 +3,10 @@ use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::ASTNode;
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse as parse_formula;
 
 fn parse(formula: &str) -> ASTNode {
-    let mut parser = Parser::from(formula);
-    parser.parse().unwrap()
+    parse_formula(formula).unwrap()
 }
 
 #[test]

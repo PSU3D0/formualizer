@@ -1,7 +1,7 @@
 use formualizer_common::LiteralValue;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_eval::test_workbook::TestWorkbook;
-use formualizer_parse::parser::Parser;
+use formualizer_parse::parser::parse;
 
 // Reproduces the scheduling conditions from the user’s example at the IO layer,
 // without relying on any specific backend. Ensures demand-driven eval enters
@@ -22,13 +22,13 @@ fn io_compressed_range_demand_driven() {
         .unwrap();
 
     // P2 = B2 (col 16)
-    let p2 = Parser::from("=B2").parse().unwrap();
+    let p2 = parse("=B2").unwrap();
     engine.set_cell_formula("Sheet1", 2, 16, p2).unwrap();
     // S2 = D3 (col 19)
-    let s2 = Parser::from("=D3").parse().unwrap();
+    let s2 = parse("=D3").unwrap();
     engine.set_cell_formula("Sheet1", 2, 19, s2).unwrap();
     // D7 = SUMIF(S:S, D3, P:P)
-    let d7 = Parser::from("=SUMIF(S:S, D3, P:P)").parse().unwrap();
+    let d7 = parse("=SUMIF(S:S, D3, P:P)").unwrap();
     engine.set_cell_formula("Sheet1", 7, 4, d7).unwrap();
 
     let v = engine

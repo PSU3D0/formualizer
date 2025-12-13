@@ -988,7 +988,14 @@ where
     where
         I: IntoIterator<Item = (u32, u32, ASTNode)>,
     {
-        let n = self.graph.bulk_set_formulas(sheet, items)?;
+        let collected: Vec<(u32, u32, ASTNode)> = items.into_iter().collect();
+        let vol_flags: Vec<bool> = collected
+            .iter()
+            .map(|(_, _, ast)| self.is_ast_volatile_with_provider(ast))
+            .collect();
+        let n = self
+            .graph
+            .bulk_set_formulas_with_volatility(sheet, collected, vol_flags)?;
         // Single snapshot bump after batch
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1036,7 +1043,11 @@ where
         let coord = Coord::from_excel(row, col, true, true);
         let cell = CellRef::new(sheet_id, coord);
         let vid = self.graph.get_vertex_for_cell(&cell)?;
-        let ast = self.graph.get_formula(vid);
+        let ast = self.graph.get_formula_id(vid).and_then(|ast_id| {
+            self.graph
+                .data_store()
+                .retrieve_ast(ast_id, self.graph.sheet_reg())
+        });
         Some((ast, v))
     }
 
@@ -1063,11 +1074,10 @@ where
         let kind = self.graph.get_vertex_kind(vertex_id);
         let sheet_id = self.graph.get_vertex_sheet_id(vertex_id);
 
-        let ast = match kind {
-            VertexKind::FormulaScalar => {
-                // Get the formula AST
-                if let Some(ast) = self.graph.get_formula(vertex_id) {
-                    ast.clone()
+        let ast_id = match kind {
+            VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                if let Some(ast_id) = self.graph.get_formula_id(vertex_id) {
+                    ast_id
                 } else {
                     return Ok(LiteralValue::Int(0));
                 }
@@ -1078,13 +1088,6 @@ where
                     return Ok(value.clone());
                 } else {
                     return Ok(LiteralValue::Int(0)); // Empty cells evaluate to 0
-                }
-            }
-            VertexKind::FormulaArray => {
-                if let Some(ast) = self.graph.get_formula(vertex_id) {
-                    ast.clone()
-                } else {
-                    return Ok(LiteralValue::Int(0));
                 }
             }
             VertexKind::NamedScalar => {
@@ -1112,7 +1115,9 @@ where
             .get_cell_ref(vertex_id)
             .expect("cell ref for vertex");
         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
-        let result = interpreter.evaluate_ast(&ast);
+
+        let result =
+            interpreter.evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg());
 
         // If array result, perform spill from the anchor cell
         match result {
@@ -2358,11 +2363,10 @@ where
         let kind = self.graph.get_vertex_kind(vertex_id);
         let sheet_id = self.graph.get_vertex_sheet_id(vertex_id);
 
-        let ast = match kind {
+        let ast_id = match kind {
             VertexKind::FormulaScalar => {
-                // Get the formula AST
-                if let Some(ast) = self.graph.get_formula(vertex_id) {
-                    ast.clone()
+                if let Some(ast_id) = self.graph.get_formula_id(vertex_id) {
+                    ast_id
                 } else {
                     return Ok(LiteralValue::Int(0));
                 }
@@ -2426,7 +2430,8 @@ where
             .get_cell_ref(vertex_id)
             .expect("cell ref for vertex");
         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref);
-        interpreter.evaluate_ast(&ast)
+
+        interpreter.evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
     }
 
     /// Get access to the shared thread pool for parallel evaluation

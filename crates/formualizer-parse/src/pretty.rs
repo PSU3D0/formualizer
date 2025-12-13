@@ -1,5 +1,5 @@
-use crate::parser::{ASTNode, ASTNodeType, Parser, ParserError};
-use crate::tokenizer::{Associativity, Tokenizer};
+use crate::parser::{ASTNode, ASTNodeType, ParserError, parse};
+use crate::tokenizer::Associativity;
 
 /// Pretty-prints an AST node according to canonical formatting rules.
 ///
@@ -213,19 +213,8 @@ pub fn pretty_parse_render(formula: &str) -> Result<String, ParserError> {
         formula.to_string()
     };
 
-    // Tokenize, parse, and pretty-print
-    let tokenizer = match Tokenizer::new(&formula_to_parse) {
-        Ok(t) => t,
-        Err(e) => {
-            return Err(ParserError {
-                message: format!("Tokenizer error: {}", e.message),
-                position: None,
-            });
-        }
-    };
-
-    let mut parser = Parser::new(tokenizer.items, false);
-    let ast = parser.parse()?;
+    // Parse and pretty-print
+    let ast = parse(&formula_to_parse)?;
 
     // Format the result with '=' prefix
     let pretty_printed = pretty_print(&ast);

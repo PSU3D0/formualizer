@@ -251,6 +251,14 @@ impl<'g> VertexEditor<'g> {
         self.change_logger.is_some()
     }
 
+    fn get_formula_ast(&self, id: VertexId) -> Option<ASTNode> {
+        self.graph.get_formula_id(id).and_then(|ast_id| {
+            self.graph
+                .data_store()
+                .retrieve_ast(ast_id, self.graph.sheet_reg())
+        })
+    }
+
     // Transaction support
 
     // Transaction support has been moved to TransactionContext
@@ -474,7 +482,7 @@ impl<'g> VertexEditor<'g> {
             let flags = 0u8;
             (
                 self.graph.get_value(id),
-                self.graph.get_formula(id),
+                self.get_formula_ast(id),
                 self.graph.get_dependencies(id), // outgoing deps
                 dependents.clone(),              // captured earlier
                 Some(coord),
@@ -719,7 +727,7 @@ impl<'g> VertexEditor<'g> {
         let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
 
         for id in formula_vertices {
-            if let Some(ast) = self.graph.get_formula(id) {
+            if let Some(ast) = self.get_formula_ast(id) {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 // Only update if the formula actually changed
                 if format!("{ast:?}") != format!("{adjusted:?}") {
@@ -816,7 +824,7 @@ impl<'g> VertexEditor<'g> {
         let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
 
         for id in formula_vertices {
-            if let Some(ast) = self.graph.get_formula(id) {
+            if let Some(ast) = self.get_formula_ast(id) {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 if format!("{ast:?}") != format!("{adjusted:?}") {
                     self.graph.update_vertex_formula(id, adjusted)?;
@@ -900,7 +908,7 @@ impl<'g> VertexEditor<'g> {
         let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
 
         for id in formula_vertices {
-            if let Some(ast) = self.graph.get_formula(id) {
+            if let Some(ast) = self.get_formula_ast(id) {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 // Only update if the formula actually changed
                 if format!("{ast:?}") != format!("{adjusted:?}") {
@@ -997,7 +1005,7 @@ impl<'g> VertexEditor<'g> {
         let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
 
         for id in formula_vertices {
-            if let Some(ast) = self.graph.get_formula(id) {
+            if let Some(ast) = self.get_formula_ast(id) {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 if format!("{ast:?}") != format!("{adjusted:?}") {
                     self.graph.update_vertex_formula(id, adjusted)?;
@@ -1107,7 +1115,7 @@ impl<'g> VertexEditor<'g> {
         let old_formula = self
             .graph
             .get_vertex_id_for_address(&cell_ref)
-            .and_then(|&id| self.graph.get_formula(id));
+            .and_then(|&id| self.get_formula_ast(id));
 
         // Use the existing DependencyGraph API
         // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
@@ -1254,7 +1262,7 @@ impl<'g> VertexEditor<'g> {
             let col = coord.col();
 
             // Get value or formula
-            if let Some(formula) = self.graph.get_formula(id) {
+            if let Some(formula) = self.get_formula_ast(id) {
                 cell_data.push((
                     row - from_start_row,
                     col - from_start_col,
@@ -1386,7 +1394,7 @@ impl<'g> VertexEditor<'g> {
         );
 
         for formula_id in all_formula_vertices {
-            if let Some(formula) = self.graph.get_formula(formula_id) {
+            if let Some(formula) = self.get_formula_ast(formula_id) {
                 let formula_sheet_id = self.graph.get_vertex_sheet_id(formula_id);
                 if let Some(adjusted) = adjuster.adjust_if_references(&formula, formula_sheet_id) {
                     self.graph.update_vertex_formula(formula_id, adjusted)?;
