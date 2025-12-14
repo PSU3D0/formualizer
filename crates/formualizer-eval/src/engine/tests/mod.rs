@@ -55,6 +55,7 @@ mod overlay_compaction;
 mod region_lock;
 mod spill_overlay_writeback;
 mod sumif_arrow_used_bounds;
+mod sumifs_arrow_edits;
 mod sumifs_arrow_fastpath;
 mod used_bounds_cache;
 mod whole_column_sumifs;

@@ -1,7 +1,6 @@
 pub mod backends;
 pub mod builtins;
 pub mod error;
-pub mod loader;
 pub mod resolver;
 pub mod session;
 pub mod traits;
@@ -17,7 +16,6 @@ pub use backends::JsonAdapter;
 pub use backends::UmyaAdapter;
 pub use builtins::{ensure_builtins_loaded, register_function_dynamic, try_load_builtins};
 pub use error::{IoError, with_cell_context};
-pub use loader::{LoaderStats, WorkbookLoader};
 pub use resolver::IoResolver;
 pub use session::{EditorSession, IoConfig};
 pub use traits::{

@@ -1,9 +1,8 @@
 // Integration test for Calamine backend; run with `--features calamine,umya`.
 use crate::common::build_workbook;
+use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_workbook::{
-    CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookLoader,
-};
+use formualizer_workbook::{CalamineAdapter, LiteralValue, SpreadsheetReader};
 
 // 1. Error propagation after evaluation (#DIV/0!)
 #[test]
@@ -12,11 +11,10 @@ fn calamine_error_formula_evaluates_to_error() {
         let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
         sh.get_cell_mut((1, 1)).set_formula("=1/0"); // A1
     });
-    let backend = CalamineAdapter::open_path(&path).unwrap();
-    let mut loader = WorkbookLoader::new(backend, LoadStrategy::EagerAll);
+    let mut backend = CalamineAdapter::open_path(&path).unwrap();
     let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
-    loader.load_into_engine(&mut engine).unwrap();
+    backend.stream_into_engine(&mut engine).unwrap();
     engine.evaluate_all().unwrap();
     let v = engine.get_cell_value("Sheet1", 1, 1).unwrap();
     match v {
@@ -82,17 +80,10 @@ fn loader_fast_path_values_only() {
         sh.get_cell_mut((2, 1)).set_value_number(2);
         sh.get_cell_mut((3, 1)).set_value_number(3);
     });
-    let backend = CalamineAdapter::open_path(&path).unwrap();
-    let mut loader = WorkbookLoader::new(backend, LoadStrategy::EagerAll);
+    let mut backend = CalamineAdapter::open_path(&path).unwrap();
     let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
-    loader.load_into_engine(&mut engine).unwrap();
-    assert_eq!(
-        loader.stats().formulas_loaded,
-        0,
-        "Expected no formulas loaded"
-    );
-    assert!(loader.stats().cells_loaded >= 3);
+    backend.stream_into_engine(&mut engine).unwrap();
     // Quick sanity: engine holds values
     for (col, expected) in [(1, 1.0), (2, 2.0), (3, 3.0)] {
         assert_eq!(

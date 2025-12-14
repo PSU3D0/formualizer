@@ -1186,6 +1186,7 @@ impl ArrowSheet {
         ch_mut.text = text;
         ch_mut.errors = errors;
         ch_mut.overlay.clear();
+        ch_mut.lowered_text = OnceCell::new();
         ch_mut.meta.len = len;
         ch_mut.meta.non_null_num = non_num;
         ch_mut.meta.non_null_bool = non_bool;
@@ -1587,6 +1588,266 @@ impl<'a> ArrowRangeView<'a> {
         self.row_chunk_slices().into_iter()
     }
 
+    /// Helper: return lazy null array for a chunk length (not attached to a specific chunk instance here,
+    /// but useful if we need a null array of size `len` and don't have one).
+    /// Actually, `numbers_or_null` is on `ColumnChunk`. `ArrowRangeView` doesn't own `lazy_null_numbers`.
+    /// We can just construct one on the fly `Float64Array::new_null(len)`. It's cheap (null buffer + 0 data).
+    fn make_null_nums(len: usize) -> Arc<Float64Array> {
+        Arc::new(Float64Array::new_null(len))
+    }
+
+    /// Slice typed float arrays for a specific row interval (relative to view).
+    /// Handles chunk straddling by concatenation if needed, or returns a slice of the chunk.
+    /// This is used to avoid full-column concatenation in aggregates.
+    pub fn slice_numbers(&self, rel_start: usize, len: usize) -> Vec<Option<Arc<Float64Array>>> {
+        use arrow_array::Array;
+        // Determine chunks covering [rel_start, rel_start + len)
+        let abs_start = self.sr + rel_start;
+        let abs_end = abs_start + len;
+
+        let mut out_cols = Vec::with_capacity(self.cols);
+        // We have to iterate columns, then build the slice for each
+        for col_idx in self.sc..=self.ec {
+            if col_idx >= self.sheet.columns.len() {
+                out_cols.push(None); // OOB -> nulls
+                continue;
+            }
+            let col = &self.sheet.columns[col_idx];
+
+            // Find start chunk
+            let start_ch_idx = match self.chunk_starts.binary_search(&abs_start) {
+                Ok(i) => i,
+                Err(0) => 0,
+                Err(i) => i - 1,
+            };
+
+            // Collect segments
+            let mut segments: Vec<Arc<Float64Array>> = Vec::new();
+            let mut null_only = true;
+
+            let mut curr = abs_start;
+            let mut remaining = len;
+            let mut ch_idx = start_ch_idx;
+
+            while remaining > 0 && ch_idx < col.chunks.len() {
+                let ch_start = self.chunk_starts[ch_idx];
+                let ch = &col.chunks[ch_idx];
+                let ch_len = ch.type_tag.len();
+
+                // Overlap of chunk with requested range
+                let overlap_start = curr.max(ch_start);
+                let overlap_end = (ch_start + ch_len).min(abs_end);
+
+                if overlap_start < overlap_end {
+                    let seg_len = overlap_end - overlap_start;
+                    let rel_off_in_chunk = overlap_start - ch_start;
+
+                    // Get base array (slice) + overlay merge
+                    let base_nums_arc = ch.numbers_or_null();
+                    let base_nums = base_nums_arc.as_ref();
+
+                    // Apply overlay
+                    let seg_range = rel_off_in_chunk..(rel_off_in_chunk + seg_len);
+                    let has_overlay = ch.overlay.any_in_range(seg_range.clone())
+                        || (!ch.computed_overlay.is_empty()
+                            && ch.computed_overlay.any_in_range(seg_range.clone()));
+
+                    let final_arr = if has_overlay {
+                        // Materialize overlay
+                        let mut nb = Float64Builder::with_capacity(seg_len);
+                        let mut mask_b = BooleanBuilder::with_capacity(seg_len);
+                        for i in 0..seg_len {
+                            if let Some(ov) = ch
+                                .overlay
+                                .get(rel_off_in_chunk + i)
+                                .or_else(|| ch.computed_overlay.get(rel_off_in_chunk + i))
+                            {
+                                mask_b.append_value(true);
+                                match ov {
+                                    OverlayValue::Number(n) => nb.append_value(*n),
+                                    _ => nb.append_null(),
+                                }
+                            } else {
+                                mask_b.append_value(false);
+                                nb.append_null();
+                            }
+                        }
+                        let mask = mask_b.finish();
+                        let overlay_vals = nb.finish();
+                        // Base slice
+                        let base_slice = Array::slice(base_nums, rel_off_in_chunk, seg_len);
+                        let base_fa = base_slice.as_any().downcast_ref::<Float64Array>().unwrap();
+                        let zipped = zip_select(&mask, &overlay_vals, base_fa).expect("zip slice");
+                        zipped
+                            .as_any()
+                            .downcast_ref::<Float64Array>()
+                            .unwrap()
+                            .clone()
+                    } else {
+                        // Zero-copy slice
+                        let sl = Array::slice(base_nums, rel_off_in_chunk, seg_len);
+                        sl.as_any().downcast_ref::<Float64Array>().unwrap().clone()
+                    };
+
+                    if final_arr.null_count() < final_arr.len() {
+                        null_only = false;
+                    }
+                    segments.push(Arc::new(final_arr));
+
+                    curr += seg_len;
+                    remaining -= seg_len;
+                }
+                ch_idx += 1;
+            }
+
+            // If we ran out of chunks but still have remaining (padding), add nulls
+            if remaining > 0 {
+                let nulls = Float64Array::new_null(remaining);
+                segments.push(Arc::new(nulls));
+            }
+
+            // Concat if multiple segments, otherwise return the single one
+            if segments.len() == 1 {
+                if null_only && segments[0].null_count() == segments[0].len() {
+                    out_cols.push(None); // Optimization: explicit None for all-null
+                } else {
+                    out_cols.push(Some(segments.pop().unwrap()));
+                }
+            } else {
+                let refs: Vec<&dyn Array> =
+                    segments.iter().map(|a| a.as_ref() as &dyn Array).collect();
+                let c = concat_arrays(&refs).expect("concat slice");
+                let fa = c.as_any().downcast_ref::<Float64Array>().unwrap().clone();
+                out_cols.push(Some(Arc::new(fa)));
+            }
+        }
+        out_cols
+    }
+
+    /// Slice typed lowered text arrays for a specific row interval (relative to view).
+    pub fn slice_lowered_text(
+        &self,
+        rel_start: usize,
+        len: usize,
+    ) -> Vec<Option<Arc<StringArray>>> {
+        use arrow_array::Array;
+        let abs_start = self.sr + rel_start;
+        let abs_end = abs_start + len;
+
+        let mut out_cols = Vec::with_capacity(self.cols);
+        for col_idx in self.sc..=self.ec {
+            if col_idx >= self.sheet.columns.len() {
+                out_cols.push(None);
+                continue;
+            }
+            let col = &self.sheet.columns[col_idx];
+            let start_ch_idx = match self.chunk_starts.binary_search(&abs_start) {
+                Ok(i) => i,
+                Err(0) => 0,
+                Err(i) => i - 1,
+            };
+
+            let mut segments: Vec<Arc<StringArray>> = Vec::new();
+            let mut null_only = true;
+
+            let mut curr = abs_start;
+            let mut remaining = len;
+            let mut ch_idx = start_ch_idx;
+
+            while remaining > 0 && ch_idx < col.chunks.len() {
+                let ch_start = self.chunk_starts[ch_idx];
+                let ch = &col.chunks[ch_idx];
+                let ch_len = ch.type_tag.len();
+
+                let overlap_start = curr.max(ch_start);
+                let overlap_end = (ch_start + ch_len).min(abs_end);
+
+                if overlap_start < overlap_end {
+                    let seg_len = overlap_end - overlap_start;
+                    let rel_off_in_chunk = overlap_start - ch_start;
+
+                    let base_lowered = ch.text_lower_or_null();
+
+                    let seg_range = rel_off_in_chunk..(rel_off_in_chunk + seg_len);
+                    let has_overlay = ch.overlay.any_in_range(seg_range.clone())
+                        || (!ch.computed_overlay.is_empty()
+                            && ch.computed_overlay.any_in_range(seg_range.clone()));
+
+                    let final_arr = if has_overlay {
+                        let mut sb = StringBuilder::with_capacity(seg_len, seg_len * 8);
+                        let mut mask_b = BooleanBuilder::with_capacity(seg_len);
+                        for i in 0..seg_len {
+                            if let Some(ov) = ch
+                                .overlay
+                                .get(rel_off_in_chunk + i)
+                                .or_else(|| ch.computed_overlay.get(rel_off_in_chunk + i))
+                            {
+                                mask_b.append_value(true);
+                                match ov {
+                                    OverlayValue::Text(s) => {
+                                        sb.append_value(s.to_ascii_lowercase())
+                                    }
+                                    OverlayValue::Number(n) => sb.append_value(n.to_string()),
+                                    OverlayValue::Boolean(b) => {
+                                        sb.append_value(if *b { "true" } else { "false" })
+                                    }
+                                    _ => sb.append_null(),
+                                }
+                            } else {
+                                mask_b.append_value(false);
+                                sb.append_null();
+                            }
+                        }
+                        let mask = mask_b.finish();
+                        let overlay_vals = sb.finish();
+
+                        let base_slice = Array::slice(&base_lowered, rel_off_in_chunk, seg_len);
+                        let base_sa = base_slice.as_any().downcast_ref::<StringArray>().unwrap();
+                        let zipped =
+                            zip_select(&mask, &overlay_vals, base_sa).expect("zip slice text");
+                        zipped
+                            .as_any()
+                            .downcast_ref::<StringArray>()
+                            .unwrap()
+                            .clone()
+                    } else {
+                        let sl = Array::slice(&base_lowered, rel_off_in_chunk, seg_len);
+                        sl.as_any().downcast_ref::<StringArray>().unwrap().clone()
+                    };
+
+                    if final_arr.null_count() < final_arr.len() {
+                        null_only = false;
+                    }
+                    segments.push(Arc::new(final_arr));
+
+                    curr += seg_len;
+                    remaining -= seg_len;
+                }
+                ch_idx += 1;
+            }
+
+            if remaining > 0 {
+                let nulls = StringArray::new_null(remaining);
+                segments.push(Arc::new(nulls));
+            }
+
+            if segments.len() == 1 {
+                if null_only && segments[0].null_count() == segments[0].len() {
+                    out_cols.push(None);
+                } else {
+                    out_cols.push(Some(segments.pop().unwrap()));
+                }
+            } else {
+                let refs: Vec<&dyn Array> =
+                    segments.iter().map(|a| a.as_ref() as &dyn Array).collect();
+                let c = concat_arrays(&refs).expect("concat slice text");
+                let sa = c.as_any().downcast_ref::<StringArray>().unwrap().clone();
+                out_cols.push(Some(Arc::new(sa)));
+            }
+        }
+        out_cols
+    }
+
     /// Typed numeric slices per row-segment: (row_start, row_len, per-column Float64 arrays)
     pub fn numbers_slices(
         &'a self,
@@ -1680,8 +1941,9 @@ impl<'a> ArrowRangeView<'a> {
                     .downcast_ref::<BooleanArray>()
                     .unwrap()
                     .clone();
-                let base_arc: Arc<BooleanArray> = Arc::new(base_ba);
+                let base_arc = Arc::new(base_ba);
 
+                // Identify chunk and overlay segment
                 let abs_seg_start = self.sr + cs.row_start;
                 let ch_idx = match self.chunk_starts.binary_search(&abs_seg_start) {
                     Ok(i) => i,
@@ -1792,6 +2054,97 @@ impl<'a> ArrowRangeView<'a> {
                     out_cols.push(zipped);
                 } else {
                     out_cols.push(base.clone());
+                }
+            }
+            (cs.row_start, cs.row_len, out_cols)
+        })
+    }
+
+    /// Typed lowered text slices per row-segment, overlay-aware via zip.
+    pub fn lowered_text_slices(
+        &'a self,
+    ) -> impl Iterator<Item = (usize, usize, Vec<Arc<StringArray>>)> + 'a {
+        use crate::compute_prelude::zip_select;
+        use arrow_array::Array;
+        self.iter_row_chunks().map(move |cs| {
+            let mut out_cols: Vec<Arc<StringArray>> = Vec::with_capacity(cs.cols.len());
+            for (local_c, col_idx) in (self.sc..=self.ec).enumerate() {
+                // Identify chunk
+                let abs_seg_start = self.sr + cs.row_start;
+                let ch_idx = match self.chunk_starts.binary_search(&abs_seg_start) {
+                    Ok(i) => i,
+                    Err(0) => 0,
+                    Err(i) => i - 1,
+                };
+                if col_idx >= self.sheet.columns.len() {
+                    out_cols.push(Arc::new(StringArray::new_null(cs.row_len)));
+                    continue;
+                }
+                let col = &self.sheet.columns[col_idx];
+                let ch = &col.chunks[ch_idx];
+                let rel_off = (self.sr + cs.row_start) - self.chunk_starts[ch_idx];
+                let seg_range = rel_off..(rel_off + cs.row_len);
+
+                // Check overlay
+                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
+                    || (!ch.computed_overlay.is_empty()
+                        && ch.computed_overlay.any_in_range(seg_range.clone()));
+
+                let base_lowered = ch.text_lower_or_null();
+                let base_seg = Array::slice(&base_lowered, rel_off, cs.row_len);
+                let base_sa = base_seg
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .expect("lowered slice downcast");
+
+                if has_overlay {
+                    // Build lowered overlay values builder
+                    let mut sb = arrow_array::builder::StringBuilder::with_capacity(
+                        cs.row_len,
+                        cs.row_len * 8,
+                    );
+                    let mut mb = arrow_array::builder::BooleanBuilder::with_capacity(cs.row_len);
+                    for i in 0..cs.row_len {
+                        if let Some(ov) = ch
+                            .overlay
+                            .get(rel_off + i)
+                            .or_else(|| ch.computed_overlay.get(rel_off + i))
+                        {
+                            mb.append_value(true);
+                            match ov {
+                                OverlayValue::Text(s) => {
+                                    sb.append_value(s.to_ascii_lowercase());
+                                }
+                                OverlayValue::Empty => {
+                                    sb.append_null();
+                                }
+                                OverlayValue::Number(n) => {
+                                    sb.append_value(n.to_string());
+                                }
+                                OverlayValue::Boolean(b) => {
+                                    sb.append_value(if *b { "true" } else { "false" });
+                                }
+                                OverlayValue::Error(_) | OverlayValue::Pending => {
+                                    sb.append_null();
+                                }
+                            }
+                        } else {
+                            sb.append_null();
+                            mb.append_value(false);
+                        }
+                    }
+                    let overlay_vals = sb.finish();
+                    let mask = mb.finish();
+                    let zipped = zip_select(&mask, &overlay_vals, base_sa)
+                        .expect("zip lowered text overlay");
+                    let za = zipped
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .unwrap()
+                        .clone();
+                    out_cols.push(Arc::new(za));
+                } else {
+                    out_cols.push(Arc::new(base_sa.clone()));
                 }
             }
             (cs.row_start, cs.row_len, out_cols)
@@ -2160,6 +2513,9 @@ mod tests {
             assert_eq!(cols.len(), 3);
         }
         for (_rs, _rl, cols) in rv.errors_slices() {
+            assert_eq!(cols.len(), 3);
+        }
+        for (_rs, _rl, cols) in rv.lowered_text_slices() {
             assert_eq!(cols.len(), 3);
         }
     }

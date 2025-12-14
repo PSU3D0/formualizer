@@ -1,5 +1,4 @@
 use crate::error::IoError;
-use crate::loader::WorkbookLoader;
 use crate::traits::{LoadStrategy, SpreadsheetReader, SpreadsheetWriter};
 use chrono::Timelike;
 use formualizer_common::{
@@ -380,7 +379,10 @@ impl Workbook {
         }
     }
     pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
-        self.engine.get_cell_value(sheet, row, col)
+        match self.engine.get_cell_value(sheet, row, col) {
+            Some(LiteralValue::Empty) | None => None,
+            Some(v) => Some(v),
+        }
     }
     pub fn get_formula(&self, sheet: &str, row: u32, col: u32) -> Option<String> {
         if let Some(s) = self.engine.get_staged_formula_text(sheet, row, col) {
@@ -766,16 +768,21 @@ impl Workbook {
         crate::transaction::WriteTransaction::new(writer)
     }
 
-    // Loading via SpreadsheetReader
-    pub fn from_reader<B: SpreadsheetReader>(
-        backend: B,
-        strategy: LoadStrategy,
+    // Loading via streaming ingest (Arrow base + graph formulas)
+    pub fn from_reader<B>(
+        mut backend: B,
+        _strategy: LoadStrategy,
         mut config: formualizer_eval::engine::EvalConfig,
-    ) -> Result<Self, IoError> {
+    ) -> Result<Self, IoError>
+    where
+        B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
+        IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
+    {
         config.defer_graph_building = true;
         let mut wb = Self::new_with_config(config);
-        let mut loader = WorkbookLoader::new(backend, strategy);
-        loader.load_into_engine(&mut wb.engine)?;
+        backend
+            .stream_into_engine(&mut wb.engine)
+            .map_err(IoError::from)?;
         Ok(wb)
     }
 }

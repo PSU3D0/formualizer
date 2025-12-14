@@ -1,10 +1,9 @@
 // Integration test for Calamine backend; run with `--features calamine,umya`.
 
 use crate::common::build_workbook;
+use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_workbook::{
-    CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookLoader,
-}; // umya coordinate order (col,row)
+use formualizer_workbook::{CalamineAdapter, LiteralValue, SpreadsheetReader};
 
 #[test]
 fn calamine_reads_values_and_formulas_from_generated_xlsx() {
@@ -42,15 +41,9 @@ fn calamine_reads_values_and_formulas_from_generated_xlsx() {
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
 
     // Load into engine
-    let mut loader = WorkbookLoader::new(backend, LoadStrategy::EagerAll);
-    loader
-        .load_into_engine(&mut engine)
+    backend
+        .stream_into_engine(&mut engine)
         .expect("load into engine");
-    let stats = loader.stats();
-    assert!(
-        stats.cells_loaded >= 2,
-        "Expected at least 2 cells loaded, got {stats:?}"
-    );
 
     assert!(
         engine.sheet_id(&sheet_name).is_some(),

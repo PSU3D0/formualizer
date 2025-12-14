@@ -559,6 +559,64 @@ where
                 let _ = builder.finish();
             }
         }
+
+        // Register named ranges (metadata only) into the dependency graph.
+        {
+            use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
+            use formualizer_eval::reference::{CellRef, Coord};
+            use rustc_hash::FxHashSet;
+
+            let mut seen: FxHashSet<(crate::traits::NamedRangeScope, String, String)> =
+                FxHashSet::default();
+
+            for (sheet_name, sheet) in self.data.sheets.iter() {
+                for named in &sheet.named_ranges {
+                    if named.address.sheet != *sheet_name {
+                        continue;
+                    }
+
+                    let key = (
+                        named.scope.clone(),
+                        named.address.sheet.clone(),
+                        named.name.clone(),
+                    );
+                    if !seen.insert(key) {
+                        continue;
+                    }
+
+                    let Some(sheet_id) = engine.graph.sheet_id(&named.address.sheet) else {
+                        continue;
+                    };
+
+                    let addr = &named.address;
+                    let sr0 = addr.start_row.saturating_sub(1);
+                    let sc0 = addr.start_col.saturating_sub(1);
+                    let er0 = addr.end_row.saturating_sub(1);
+                    let ec0 = addr.end_col.saturating_sub(1);
+
+                    let start_coord = Coord::new(sr0, sc0, true, true);
+                    let end_coord = Coord::new(er0, ec0, true, true);
+                    let start_ref = CellRef::new(sheet_id, start_coord);
+                    let end_ref = CellRef::new(sheet_id, end_coord);
+
+                    let definition = if sr0 == er0 && sc0 == ec0 {
+                        NamedDefinition::Cell(start_ref)
+                    } else {
+                        let range_ref =
+                            formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                        NamedDefinition::Range(range_ref)
+                    };
+
+                    let scope = match named.scope {
+                        crate::traits::NamedRangeScope::Workbook => NameScope::Workbook,
+                        crate::traits::NamedRangeScope::Sheet => NameScope::Sheet(sheet_id),
+                    };
+
+                    engine.graph.define_name(&named.name, definition, scope)?;
+                }
+            }
+        }
+
         // Finalize sheet indexes after load
         for name in self.data.sheets.keys() {
             engine.graph.finalize_sheet_index(name);

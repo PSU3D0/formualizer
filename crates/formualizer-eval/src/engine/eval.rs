@@ -1266,7 +1266,16 @@ where
 
         match &named_range.definition {
             NamedDefinition::Cell(cell_ref) => {
-                if let Some(dep_vertex) = self.graph.get_vertex_for_cell(cell_ref) {
+                let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
+                let row = cell_ref.coord.row() + 1;
+                let col = cell_ref.coord.col() + 1;
+
+                if let Some(dep_vertex) = self.graph.get_vertex_for_cell(cell_ref)
+                    && matches!(
+                        self.graph.get_vertex_kind(dep_vertex),
+                        VertexKind::FormulaScalar | VertexKind::FormulaArray
+                    )
+                {
                     let value = if let Some(existing) = self.graph.get_value(dep_vertex) {
                         existing.clone()
                     } else {
@@ -1277,9 +1286,11 @@ where
                     self.graph.update_vertex_value(vertex_id, value.clone());
                     Ok(value)
                 } else {
-                    let empty = LiteralValue::Empty;
-                    self.graph.update_vertex_value(vertex_id, empty.clone());
-                    Ok(empty)
+                    let value = self
+                        .get_cell_value(sheet_name, row, col)
+                        .unwrap_or(LiteralValue::Empty);
+                    self.graph.update_vertex_value(vertex_id, value.clone());
+                    Ok(value)
                 }
             }
             NamedDefinition::Formula { ast, .. } => {
@@ -3121,11 +3132,10 @@ where
                         NamedDefinition::Cell(cell_ref) => {
                             let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
                             let value = self
-                                .graph
                                 .get_cell_value(
                                     sheet_name,
-                                    cell_ref.coord.row(),
-                                    cell_ref.coord.col(),
+                                    cell_ref.coord.row() + 1,
+                                    cell_ref.coord.col() + 1,
                                 )
                                 .unwrap_or(LiteralValue::Empty);
                             let data = vec![vec![value]];
@@ -3134,12 +3144,12 @@ where
                         NamedDefinition::Range(range_ref) => {
                             let sheet_name = self.graph.sheet_name(range_ref.start.sheet_id);
                             let mut rows = Vec::new();
-                            for row in range_ref.start.coord.row()..=range_ref.end.coord.row() {
+                            for row0 in range_ref.start.coord.row()..=range_ref.end.coord.row() {
                                 let mut line = Vec::new();
-                                for col in range_ref.start.coord.col()..=range_ref.end.coord.col() {
+                                for col0 in range_ref.start.coord.col()..=range_ref.end.coord.col()
+                                {
                                     let value = self
-                                        .graph
-                                        .get_cell_value(sheet_name, row, col)
+                                        .get_cell_value(sheet_name, row0 + 1, col0 + 1)
                                         .unwrap_or(LiteralValue::Empty);
                                     line.push(value);
                                 }

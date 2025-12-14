@@ -1,7 +1,8 @@
 // Integration test for Calamine backend; run with `--features calamine,umya`.
 use crate::common::build_standard_grid;
+use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_workbook::{CalamineAdapter, LoadStrategy, SpreadsheetReader, WorkbookLoader};
+use formualizer_workbook::{CalamineAdapter, SpreadsheetReader};
 use std::time::Instant; // generates grid via umya (col,row)
 
 // This test is ignored by default due to generation cost; run with -- --ignored to include.
@@ -25,26 +26,20 @@ fn calamine_large_file_performance() {
         .spawn(move || {
             let path = build_standard_grid(rows, cols);
             let start = Instant::now();
-            let backend = CalamineAdapter::open_path(&path).expect("open path");
-            let mut loader = WorkbookLoader::new(backend, LoadStrategy::EagerAll);
+            let mut backend = CalamineAdapter::open_path(&path).expect("open path");
             let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
             let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
             // Explicitly use FastBatch index mode for performance test
             engine.set_sheet_index_mode(formualizer_eval::engine::SheetIndexMode::FastBatch);
-            loader.load_into_engine(&mut engine).expect("load into engine");
+            backend
+                .stream_into_engine(&mut engine)
+                .expect("load into engine");
             let elapsed = start.elapsed();
 
             eprintln!(
-                "[calamine_large] rows={} cols={} cells_loaded={} elapsed={:?} backend_read_ms={} engine_insert_ms={}",
-                rows,
-                cols,
-                loader.stats().cells_loaded,
-                elapsed,
-                loader.stats().backend_read_time_ms,
-                loader.stats().engine_insert_time_ms
+                "[calamine_large] rows={} cols={} elapsed={:?}",
+                rows, cols, elapsed
             );
-
-            assert!(loader.stats().cells_loaded >= (rows * cols) as usize);
             assert!(elapsed.as_secs_f64() < 5.0, "Load exceeded 5s: {elapsed:?}");
         })
         .expect("spawn perf thread");

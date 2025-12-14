@@ -508,3 +508,152 @@ impl UmyaAdapter {
         })
     }
 }
+
+impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for UmyaAdapter
+where
+    R: formualizer_eval::traits::EvaluationContext,
+{
+    type Error = crate::error::IoError;
+
+    fn stream_into_engine(
+        &mut self,
+        engine: &mut formualizer_eval::engine::Engine<R>,
+    ) -> Result<(), Self::Error> {
+        use crate::error::IoError;
+        use formualizer_eval::arrow_store::IngestBuilder;
+        use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
+        use formualizer_eval::reference::{CellRef, Coord};
+
+        let names = self
+            .sheet_names()
+            .map_err(|e| IoError::from_backend("umya", e))?;
+        for n in &names {
+            engine.graph.add_sheet(n).map_err(IoError::Engine)?;
+        }
+
+        let prev_index_mode = engine.config.sheet_index_mode;
+        engine.set_sheet_index_mode(formualizer_eval::engine::SheetIndexMode::Lazy);
+        let prev_range_limit = engine.config.range_expansion_limit;
+        engine.config.range_expansion_limit = 0;
+
+        engine.graph.set_first_load_assume_new(true);
+        engine.graph.reset_ensure_touched();
+
+        let chunk_rows: usize = 32 * 1024;
+
+        for n in &names {
+            let sheet_data = self
+                .read_sheet(n)
+                .map_err(|e| IoError::from_backend("umya", e))?;
+            let dims = sheet_data.dimensions.unwrap_or_else(|| {
+                sheet_data
+                    .cells
+                    .keys()
+                    .fold((0u32, 0u32), |mut acc, (r, c)| {
+                        if *r > acc.0 {
+                            acc.0 = *r;
+                        }
+                        if *c > acc.1 {
+                            acc.1 = *c;
+                        }
+                        acc
+                    })
+            });
+            let rows = dims.0 as usize;
+            let cols = dims.1 as usize;
+
+            let mut aib = IngestBuilder::new(n, cols, chunk_rows, engine.config.date_system);
+            for r in 1..=rows {
+                let mut row_vals = vec![LiteralValue::Empty; cols];
+                for c in 1..=cols {
+                    if let Some(cd) = sheet_data.cells.get(&(r as u32, c as u32))
+                        && let Some(v) = &cd.value
+                    {
+                        row_vals[c - 1] = v.clone();
+                    }
+                }
+                aib.append_row(&row_vals).map_err(IoError::Engine)?;
+            }
+            let asheet = aib.finish();
+            let store = engine.sheet_store_mut();
+            if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == n) {
+                store.sheets[pos] = asheet;
+            } else {
+                store.sheets.push(asheet);
+            }
+
+            if engine.config.defer_graph_building {
+                for ((row, col), cd) in &sheet_data.cells {
+                    if let Some(f) = &cd.formula {
+                        if f.is_empty() {
+                            continue;
+                        }
+                        engine.stage_formula_text(n, *row, *col, f.clone());
+                    }
+                }
+            } else {
+                let mut builder = engine.begin_bulk_ingest();
+                let sid = builder.add_sheet(n);
+                for ((row, col), cd) in &sheet_data.cells {
+                    if let Some(f) = &cd.formula {
+                        if f.is_empty() {
+                            continue;
+                        }
+                        let with_eq = if f.starts_with('=') {
+                            f.clone()
+                        } else {
+                            format!("={f}")
+                        };
+                        let parsed = formualizer_parse::parser::parse(&with_eq)
+                            .map_err(|e| IoError::from_backend("umya", e))?;
+                        builder.add_formulas(sid, std::iter::once((*row, *col, parsed)));
+                    }
+                }
+                let _ = builder.finish();
+            }
+
+            let Some(sheet_id) = engine.graph.sheet_id(n) else {
+                continue;
+            };
+            for named in &sheet_data.named_ranges {
+                if named.address.sheet != *n {
+                    continue;
+                }
+                let addr = &named.address;
+                let sr0 = addr.start_row.saturating_sub(1);
+                let sc0 = addr.start_col.saturating_sub(1);
+                let er0 = addr.end_row.saturating_sub(1);
+                let ec0 = addr.end_col.saturating_sub(1);
+
+                let start_coord = Coord::new(sr0, sc0, true, true);
+                let end_coord = Coord::new(er0, ec0, true, true);
+                let start_ref = CellRef::new(sheet_id, start_coord);
+                let end_ref = CellRef::new(sheet_id, end_coord);
+
+                let definition = if sr0 == er0 && sc0 == ec0 {
+                    NamedDefinition::Cell(start_ref)
+                } else {
+                    let range_ref = formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                    NamedDefinition::Range(range_ref)
+                };
+
+                let scope = match named.scope {
+                    crate::traits::NamedRangeScope::Workbook => NameScope::Workbook,
+                    crate::traits::NamedRangeScope::Sheet => NameScope::Sheet(sheet_id),
+                };
+
+                engine.graph.define_name(&named.name, definition, scope)?;
+            }
+        }
+
+        for n in &names {
+            engine.graph.finalize_sheet_index(n);
+        }
+
+        engine.graph.set_first_load_assume_new(false);
+        engine.graph.reset_ensure_touched();
+        engine.set_sheet_index_mode(prev_index_mode);
+        engine.config.range_expansion_limit = prev_range_limit;
+        Ok(())
+    }
+}

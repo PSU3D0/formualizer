@@ -1,9 +1,9 @@
 // Integration test for Umya backend; run with `--features umya`.
 
+use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig, SheetIndexMode};
 use formualizer_workbook::{
-    CellData, LiteralValue, LoadStrategy, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter,
-    WorkbookLoader,
+    CellData, LiteralValue, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter,
 };
 
 #[test]
@@ -18,12 +18,11 @@ fn umya_full_roundtrip_formula_update() {
     umya_spreadsheet::writer::xlsx::write(&book, &path).unwrap();
 
     // 2. Load via UmyaAdapter and engine evaluate
-    let backend = UmyaAdapter::open_path(&path).unwrap();
-    let mut loader = WorkbookLoader::new(backend, LoadStrategy::EagerAll);
+    let mut backend = UmyaAdapter::open_path(&path).unwrap();
     let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
     engine.set_sheet_index_mode(SheetIndexMode::FastBatch);
-    loader.load_into_engine(&mut engine).unwrap();
+    backend.stream_into_engine(&mut engine).unwrap();
     engine.evaluate_all().unwrap();
     match engine.get_cell_value("Sheet1", 1, 2) {
         // row=1 col=2 (B1)
@@ -40,12 +39,11 @@ fn umya_full_roundtrip_formula_update() {
     backend2.save().unwrap();
 
     // 4. Reopen and assert formula string changed then evaluate to 30
-    let backend3 = UmyaAdapter::open_path(&path).unwrap();
-    let mut loader2 = WorkbookLoader::new(backend3, LoadStrategy::EagerAll);
+    let mut backend3 = UmyaAdapter::open_path(&path).unwrap();
     let ctx2 = formualizer_eval::test_workbook::TestWorkbook::new();
     let mut engine2: Engine<_> = Engine::new(ctx2, EvalConfig::default());
     engine2.set_sheet_index_mode(SheetIndexMode::FastBatch);
-    loader2.load_into_engine(&mut engine2).unwrap();
+    backend3.stream_into_engine(&mut engine2).unwrap();
     // Demand-driven: evaluate just B1 (Sheet1!B1)
     engine2.evaluate_until(&[("Sheet1", 1, 2)]).unwrap();
     match engine2.get_cell_value("Sheet1", 1, 2) {

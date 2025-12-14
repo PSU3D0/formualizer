@@ -1,9 +1,8 @@
 // Integration test for Calamine backend; run with `--features calamine,umya`.
 use crate::common::build_workbook;
+use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_workbook::{
-    CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookLoader,
-}; // centralized helper (umya uses (col,row))
+use formualizer_workbook::{CalamineAdapter, LiteralValue, SpreadsheetReader};
 
 #[test]
 fn calamine_extracts_formulas_and_normalizes_equals() {
@@ -15,11 +14,10 @@ fn calamine_extracts_formulas_and_normalizes_equals() {
         sh.get_cell_mut((2, 2)).set_value_number(3); // B2 value only
     });
 
-    let backend = CalamineAdapter::open_path(&path).unwrap();
-    let mut loader = WorkbookLoader::new(backend, LoadStrategy::EagerAll);
+    let mut backend = CalamineAdapter::open_path(&path).unwrap();
     let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
-    loader.load_into_engine(&mut engine).unwrap();
+    backend.stream_into_engine(&mut engine).unwrap();
     engine.evaluate_all().unwrap();
 
     match engine.get_cell_value("Sheet1", 1, 2) {

@@ -1,7 +1,12 @@
 use super::super::utils::{ARG_ANY_ONE, coerce_num, criteria_match};
 use crate::args::ArgSchema;
+use crate::compute_prelude::{boolean, cmp, filter_array};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
+use arrow::compute::kernels::aggregate::sum_array;
+use arrow::compute::kernels::comparison::{ilike, nilike};
+use arrow_array::types::Float64Type;
+use arrow_array::{Array as _, BooleanArray, Float64Array, StringArray};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
@@ -312,11 +317,6 @@ impl Function for SumIfsFn {
         if ctx.arrow_fastpath_enabled()
             && let Some(sum_av) = sum_view.as_arrow()
         {
-            use crate::compute_prelude::{boolean, cmp, concat_arrays, filter_array};
-            use arrow::compute::kernels::aggregate::sum_array;
-            use arrow::compute::kernels::comparison::{ilike, nilike};
-            use arrow_array::types::Float64Type;
-            use arrow_array::{Array as _, ArrayRef, BooleanArray, Float64Array, StringArray};
             // Validate criteria are supported and Arrow-backed when range-like, with identical dims
             let mut ok = true;
             for (j, (pred, scalar_val)) in preds.iter().enumerate() {
@@ -351,142 +351,88 @@ impl Function for SumIfsFn {
             }
 
             if ok {
-                // Helper: materialize per-column Float64 arrays by concatenating row-slices
-                let build_cols = |av: &crate::arrow_store::ArrowRangeView<'_>| -> Vec<std::sync::Arc<Float64Array>> {
-                        let cols = dims.1;
-                        let mut segs: Vec<Vec<std::sync::Arc<Float64Array>>> = vec![Vec::new(); cols];
-                        for (_rs, _rl, cols_seg) in av.numbers_slices() {
-                            for c in 0..cols {
-                                segs[c].push(cols_seg[c].clone());
-                            }
-                        }
-                        let mut out: Vec<std::sync::Arc<Float64Array>> = Vec::with_capacity(cols);
-                        for mut parts in segs.into_iter() {
-                            if parts.is_empty() {
-                                out.push(std::sync::Arc::new(Float64Array::new_null(dims.0)));
-                            } else if parts.len() == 1 {
-                                out.push(parts.remove(0));
-                            } else {
-                                let anys: Vec<&dyn arrow_array::Array> =
-                                    parts.iter().map(|a| a.as_ref() as &dyn arrow_array::Array).collect();
-                                let conc: ArrayRef = concat_arrays(&anys).expect("concat");
-                                let fa = conc.as_any().downcast_ref::<Float64Array>().unwrap().clone();
-                                out.push(std::sync::Arc::new(fa));
-                            }
-                        }
-                        out
-                    };
-
-                let sum_cols = build_cols(sum_av);
-                // Pre-build criterion columns when range-like
-                let mut crit_cols: Vec<Option<Vec<std::sync::Arc<Float64Array>>>> =
-                    Vec::with_capacity(preds.len());
-                let mut crit_text_cols: Vec<Option<Vec<std::sync::Arc<StringArray>>>> =
-                    Vec::with_capacity(preds.len());
-                for (j, (_pred, scalar_val)) in preds.iter().enumerate() {
-                    // Numeric lane
-                    if let Some(ref v) = crit_views[j] {
-                        let av = v.as_arrow().unwrap();
-                        crit_cols.push(Some(build_cols(av)));
-                    } else {
-                        crit_cols.push(None);
-                    }
-                    // Text lane
-                    if let Some(ref v) = crit_views[j] {
-                        let av = v.as_arrow().unwrap();
-                        // Build lowered text columns using ArrowRangeView cache-aware path
-                        let arrays = av.lowered_text_columns();
-                        let mut out: Vec<std::sync::Arc<StringArray>> = Vec::with_capacity(dims.1);
-                        for a in arrays.into_iter() {
-                            let sa = a.as_any().downcast_ref::<StringArray>().unwrap().clone();
-                            out.push(std::sync::Arc::new(sa));
-                        }
-                        crit_text_cols.push(Some(out));
-                    } else {
-                        crit_text_cols.push(None);
-                    }
-                }
-
-                // Helper: lowercase a StringArray (preserve nulls)
-                fn lower_string_array(a: &StringArray) -> StringArray {
-                    let mut b =
-                        arrow_array::builder::StringBuilder::with_capacity(a.len(), a.len() * 8);
-                    for i in 0..a.len() {
-                        if a.is_null(i) {
-                            b.append_null();
-                        } else {
-                            b.append_value(a.value(i).to_ascii_lowercase());
-                        }
-                    }
-                    b.finish()
-                }
-
                 let mut total = 0.0f64;
-                let null_nums = Float64Array::new_null(dims.0);
-                let null_text = StringArray::new_null(dims.0);
+                let mut ok_masks = true;
 
-                // Process per column; build combined mask and sum filtered values
-                for c in 0..dims.1 {
-                    let values = &sum_cols[c];
-                    // Build mask per criterion for this column
-                    let mut mask_opt: Option<BooleanArray> = None;
-                    let mut impossible = false;
-                    for (j, (pred, scalar_val)) in preds.iter().enumerate() {
-                        // Scalar criterion_range (1x1) is broadcast; avoid materializing a mask.
-                        if crit_views[j].is_none() {
-                            if let Some(sv) = scalar_val {
-                                if !criteria_match(pred, sv) {
+                for (row_start, row_len, sum_cols) in sum_av.numbers_slices() {
+                    if row_len == 0 {
+                        continue;
+                    }
+                    let null_nums = Float64Array::new_null(row_len);
+                    let null_text = StringArray::new_null(row_len);
+
+                    let mut crit_num_slices = Vec::with_capacity(preds.len());
+                    let mut crit_text_slices = Vec::with_capacity(preds.len());
+                    for view in &crit_views {
+                        if let Some(v) = view {
+                            let av = v.as_arrow().unwrap();
+                            crit_num_slices.push(Some(av.slice_numbers(row_start, row_len)));
+                            crit_text_slices.push(Some(av.slice_lowered_text(row_start, row_len)));
+                        } else {
+                            crit_num_slices.push(None);
+                            crit_text_slices.push(None);
+                        }
+                    }
+
+                    'col: for c in 0..dims.1 {
+                        let values = &sum_cols[c];
+                        let mut mask_opt: Option<BooleanArray> = None;
+                        let mut impossible = false;
+
+                        for (j, (pred, scalar_val)) in preds.iter().enumerate() {
+                            if crit_views[j].is_none() {
+                                if let Some(sv) = scalar_val {
+                                    if !criteria_match(pred, sv) {
+                                        impossible = true;
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                if !criteria_match(pred, &LiteralValue::Empty) {
                                     impossible = true;
                                     break;
                                 }
                                 continue;
                             }
 
-                            // Defensive: treat missing scalar as Empty.
-                            if !criteria_match(pred, &LiteralValue::Empty) {
-                                impossible = true;
-                                break;
-                            }
-                            continue;
-                        }
-
-                        // Determine the criterion column data
-                        let col_arr: Option<&Float64Array> =
-                            crit_cols[j].as_ref().map(|cols| cols[c].as_ref());
-                        let col_text: Option<&StringArray> =
-                            crit_text_cols[j].as_ref().map(|cols| cols[c].as_ref());
-                        let num_col = col_arr.unwrap_or(&null_nums);
-                        let text_col = col_text.unwrap_or(&null_text);
-                        // Try cached mask if criterion range is Arrow-backed
-                        let cur_cached: Option<BooleanArray> = if let Some(ref view) = crit_views[j]
-                        {
-                            if let Some(av) = view.as_arrow() {
-                                ctx.get_criteria_mask(av, c, pred).map(|m| (*m).clone())
+                            let cur_cached = if let Some(ref view) = crit_views[j]
+                                && let Some(av) = view.as_arrow()
+                            {
+                                ctx.get_criteria_mask(av, c, pred).map(|m| {
+                                    let sl =
+                                        arrow_array::Array::slice(m.as_ref(), row_start, row_len);
+                                    sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone()
+                                })
                             } else {
                                 None
-                            }
-                        } else {
-                            None
-                        };
+                            };
 
-                        let cur = if let Some(cm) = cur_cached {
-                            Some(cm)
-                        } else {
-                            match pred {
-                                crate::args::CriteriaPredicate::Gt(n) => {
-                                    Some(cmp::gt(num_col, &Float64Array::new_scalar(*n)).unwrap())
-                                }
-                                crate::args::CriteriaPredicate::Ge(n) => Some(
-                                    cmp::gt_eq(num_col, &Float64Array::new_scalar(*n)).unwrap(),
-                                ),
-                                crate::args::CriteriaPredicate::Lt(n) => {
-                                    Some(cmp::lt(num_col, &Float64Array::new_scalar(*n)).unwrap())
-                                }
-                                crate::args::CriteriaPredicate::Le(n) => Some(
-                                    cmp::lt_eq(num_col, &Float64Array::new_scalar(*n)).unwrap(),
-                                ),
-                                crate::args::CriteriaPredicate::Eq(v) => {
-                                    match v {
+                            let num_col = crit_num_slices[j]
+                                .as_ref()
+                                .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
+                                .unwrap_or(&null_nums);
+                            let text_col = crit_text_slices[j]
+                                .as_ref()
+                                .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
+                                .unwrap_or(&null_text);
+
+                            let cur = if let Some(cm) = cur_cached {
+                                Some(cm)
+                            } else {
+                                match pred {
+                                    crate::args::CriteriaPredicate::Gt(n) => Some(
+                                        cmp::gt(num_col, &Float64Array::new_scalar(*n)).unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Ge(n) => Some(
+                                        cmp::gt_eq(num_col, &Float64Array::new_scalar(*n)).unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Lt(n) => Some(
+                                        cmp::lt(num_col, &Float64Array::new_scalar(*n)).unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Le(n) => Some(
+                                        cmp::lt_eq(num_col, &Float64Array::new_scalar(*n)).unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Eq(v) => match v {
                                         LiteralValue::Number(x) => Some(
                                             cmp::eq(num_col, &Float64Array::new_scalar(*x))
                                                 .unwrap(),
@@ -498,11 +444,11 @@ impl Function for SumIfsFn {
                                         LiteralValue::Text(t) => {
                                             let lt = t.to_ascii_lowercase();
                                             let pat = StringArray::new_scalar(lt);
-                                            // Special case: equality to empty string treats nulls as equal in Excel
                                             let mut m = ilike(text_col, &pat).unwrap();
                                             if t.is_empty() {
-                                                // Build nulls mask and OR it
-                                                let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(text_col.len());
+                                                let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(
+                                                        text_col.len(),
+                                                    );
                                                 for i in 0..text_col.len() {
                                                     bb.append_value(text_col.is_null(i));
                                                 }
@@ -512,80 +458,88 @@ impl Function for SumIfsFn {
                                             Some(m)
                                         }
                                         _ => {
-                                            ok = false;
+                                            ok_masks = false;
                                             break;
                                         }
-                                    }
-                                }
-                                crate::args::CriteriaPredicate::Ne(v) => match v {
-                                    LiteralValue::Number(x) => Some(
-                                        cmp::neq(num_col, &Float64Array::new_scalar(*x)).unwrap(),
-                                    ),
-                                    LiteralValue::Int(i) => Some(
-                                        cmp::neq(num_col, &Float64Array::new_scalar(*i as f64))
-                                            .unwrap(),
-                                    ),
-                                    LiteralValue::Text(t) => {
-                                        let lt = t.to_ascii_lowercase();
-                                        let pat = StringArray::new_scalar(lt);
-                                        Some(nilike(text_col, &pat).unwrap())
+                                    },
+                                    crate::args::CriteriaPredicate::Ne(v) => match v {
+                                        LiteralValue::Number(x) => Some(
+                                            cmp::neq(num_col, &Float64Array::new_scalar(*x))
+                                                .unwrap(),
+                                        ),
+                                        LiteralValue::Int(i) => Some(
+                                            cmp::neq(num_col, &Float64Array::new_scalar(*i as f64))
+                                                .unwrap(),
+                                        ),
+                                        LiteralValue::Text(t) => {
+                                            let lt = t.to_ascii_lowercase();
+                                            let pat = StringArray::new_scalar(lt);
+                                            Some(nilike(text_col, &pat).unwrap())
+                                        }
+                                        _ => {
+                                            ok_masks = false;
+                                            break;
+                                        }
+                                    },
+                                    crate::args::CriteriaPredicate::TextLike {
+                                        pattern, ..
+                                    } => {
+                                        let lp = pattern
+                                            .replace('*', "%")
+                                            .replace('?', "_")
+                                            .to_ascii_lowercase();
+                                        let pat = StringArray::new_scalar(lp);
+                                        Some(ilike(text_col, &pat).unwrap())
                                     }
                                     _ => {
-                                        ok = false;
+                                        ok_masks = false;
                                         break;
                                     }
-                                },
-                                crate::args::CriteriaPredicate::TextLike { pattern, .. } => {
-                                    let lp = pattern
-                                        .replace('*', "%")
-                                        .replace('?', "_")
-                                        .to_ascii_lowercase();
-                                    let pat = StringArray::new_scalar(lp);
-                                    Some(ilike(text_col, &pat).unwrap())
                                 }
-                                _ => {
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                        };
+                            };
 
-                        if !ok {
-                            break;
+                            if !ok_masks {
+                                break;
+                            }
+
+                            if let Some(cur_mask) = cur {
+                                mask_opt = Some(match mask_opt {
+                                    None => cur_mask,
+                                    Some(prev) => boolean::and_kleene(&prev, &cur_mask).unwrap(),
+                                });
+                            }
                         }
 
-                        if let Some(cur_mask) = cur {
-                            mask_opt = Some(match mask_opt {
-                                None => cur_mask,
-                                Some(prev) => boolean::and_kleene(&prev, &cur_mask).unwrap(),
-                            });
+                        if !ok_masks {
+                            break 'col;
+                        }
+                        if impossible {
+                            continue;
+                        }
+
+                        match mask_opt {
+                            Some(mask) => {
+                                let filtered = filter_array(values.as_ref(), &mask).unwrap();
+                                let f64_arr =
+                                    filtered.as_any().downcast_ref::<Float64Array>().unwrap();
+                                if let Some(part) = sum_array::<Float64Type, _>(f64_arr) {
+                                    total += part;
+                                }
+                            }
+                            None => {
+                                if let Some(part) = sum_array::<Float64Type, _>(values.as_ref()) {
+                                    total += part;
+                                }
+                            }
                         }
                     }
 
-                    if !ok {
+                    if !ok_masks {
                         break;
-                    }
-                    if impossible {
-                        continue;
-                    }
-
-                    match mask_opt {
-                        Some(mask) => {
-                            let filtered = filter_array(values.as_ref(), &mask).unwrap();
-                            let f64_arr = filtered.as_any().downcast_ref::<Float64Array>().unwrap();
-                            if let Some(part) = sum_array::<Float64Type, _>(f64_arr) {
-                                total += part;
-                            }
-                        }
-                        None => {
-                            if let Some(part) = sum_array::<Float64Type, _>(values.as_ref()) {
-                                total += part;
-                            }
-                        }
                     }
                 }
 
-                if ok {
+                if ok_masks {
                     return Ok(LiteralValue::Number(total));
                 }
             }
@@ -742,91 +696,238 @@ impl Function for CountIfsFn {
         // Arrow fast path: Arrow-backed criteria ranges with equal dims; scalar (1x1) criteria_range is broadcast.
         if ctx.arrow_fastpath_enabled() {
             let mut all_arrow = true;
-            for v in &crit_views {
-                if let Some(rv) = v {
-                    if rv.as_arrow().is_none() || rv.dims() != dims {
-                        all_arrow = false;
-                        break;
-                    }
+            for rv in crit_views.iter().flatten() {
+                if rv.as_arrow().is_none() || rv.dims() != dims {
+                    all_arrow = false;
+                    break;
                 }
             }
 
             if all_arrow {
-                use crate::compute_prelude::boolean;
-                use arrow_array::BooleanArray;
+                if crit_views.iter().all(|v| v.is_none()) {
+                    let all_match = preds.iter().all(|(pred, scalar_val)| {
+                        let v = scalar_val.as_ref().unwrap_or(&LiteralValue::Empty);
+                        criteria_match(pred, v)
+                    });
+                    let total = if all_match {
+                        (dims.0 * dims.1) as i64
+                    } else {
+                        0
+                    };
+                    return Ok(LiteralValue::Number(total as f64));
+                }
 
-                let mut total: i64 = 0;
-                let mut ok = true;
-                for c in 0..dims.1 {
-                    let mut mask_opt: Option<BooleanArray> = None;
-                    let mut col_ok = true;
-                    let mut impossible = false;
+                let driver_av = crit_views
+                    .iter()
+                    .find_map(|v| v.as_ref().and_then(|rv| rv.as_arrow()));
 
-                    for (j, (pred, scalar_val)) in preds.iter().enumerate() {
-                        if crit_views[j].is_none() {
-                            if let Some(sv) = scalar_val {
-                                if !criteria_match(pred, sv) {
-                                    impossible = true;
-                                    break;
-                                }
-                                continue;
-                            }
+                if let Some(driver) = driver_av {
+                    let mut total: i64 = 0;
+                    let mut ok_masks = true;
 
-                            if !criteria_match(pred, &LiteralValue::Empty) {
-                                impossible = true;
-                                break;
-                            }
+                    for cs in driver.row_chunk_slices() {
+                        let row_start = cs.row_start;
+                        let row_len = cs.row_len;
+                        if row_len == 0 {
                             continue;
                         }
 
-                        let av = crit_views[j].as_ref().and_then(|v| v.as_arrow());
-                        let Some(av) = av else {
-                            col_ok = false;
-                            break;
-                        };
-                        let Some(m) = ctx.get_criteria_mask(av, c, pred) else {
-                            col_ok = false;
-                            break;
-                        };
+                        let null_nums = Float64Array::new_null(row_len);
+                        let null_text = StringArray::new_null(row_len);
 
-                        let cur = (*m).clone();
-                        let next = match mask_opt.take() {
-                            None => cur,
-                            Some(prev) => match boolean::and_kleene(&prev, &cur) {
-                                Ok(x) => x,
-                                Err(_) => {
-                                    col_ok = false;
+                        let mut crit_num_slices = Vec::with_capacity(preds.len());
+                        let mut crit_text_slices = Vec::with_capacity(preds.len());
+                        for view in &crit_views {
+                            if let Some(v) = view {
+                                let av = v.as_arrow().unwrap();
+                                crit_num_slices.push(Some(av.slice_numbers(row_start, row_len)));
+                                crit_text_slices
+                                    .push(Some(av.slice_lowered_text(row_start, row_len)));
+                            } else {
+                                crit_num_slices.push(None);
+                                crit_text_slices.push(None);
+                            }
+                        }
+
+                        'col: for c in 0..dims.1 {
+                            let mut mask_opt: Option<BooleanArray> = None;
+                            let mut impossible = false;
+
+                            for (j, (pred, scalar_val)) in preds.iter().enumerate() {
+                                if crit_views[j].is_none() {
+                                    if let Some(sv) = scalar_val {
+                                        if !criteria_match(pred, sv) {
+                                            impossible = true;
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                    if !criteria_match(pred, &LiteralValue::Empty) {
+                                        impossible = true;
+                                        break;
+                                    }
+                                    continue;
+                                }
+
+                                let cur_cached = if let Some(ref view) = crit_views[j]
+                                    && let Some(av) = view.as_arrow()
+                                {
+                                    ctx.get_criteria_mask(av, c, pred).map(|m| {
+                                        let sl = arrow_array::Array::slice(
+                                            m.as_ref(),
+                                            row_start,
+                                            row_len,
+                                        );
+                                        sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone()
+                                    })
+                                } else {
+                                    None
+                                };
+
+                                let num_col = crit_num_slices[j]
+                                    .as_ref()
+                                    .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
+                                    .unwrap_or(&null_nums);
+                                let text_col = crit_text_slices[j]
+                                    .as_ref()
+                                    .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
+                                    .unwrap_or(&null_text);
+
+                                let cur = if let Some(cm) = cur_cached {
+                                    Some(cm)
+                                } else {
+                                    match pred {
+                                        crate::args::CriteriaPredicate::Gt(n) => Some(
+                                            cmp::gt(num_col, &Float64Array::new_scalar(*n))
+                                                .unwrap(),
+                                        ),
+                                        crate::args::CriteriaPredicate::Ge(n) => Some(
+                                            cmp::gt_eq(num_col, &Float64Array::new_scalar(*n))
+                                                .unwrap(),
+                                        ),
+                                        crate::args::CriteriaPredicate::Lt(n) => Some(
+                                            cmp::lt(num_col, &Float64Array::new_scalar(*n))
+                                                .unwrap(),
+                                        ),
+                                        crate::args::CriteriaPredicate::Le(n) => Some(
+                                            cmp::lt_eq(num_col, &Float64Array::new_scalar(*n))
+                                                .unwrap(),
+                                        ),
+                                        crate::args::CriteriaPredicate::Eq(v) => match v {
+                                            LiteralValue::Number(x) => Some(
+                                                cmp::eq(num_col, &Float64Array::new_scalar(*x))
+                                                    .unwrap(),
+                                            ),
+                                            LiteralValue::Int(i) => Some(
+                                                cmp::eq(
+                                                    num_col,
+                                                    &Float64Array::new_scalar(*i as f64),
+                                                )
+                                                .unwrap(),
+                                            ),
+                                            LiteralValue::Text(t) => {
+                                                let lt = t.to_ascii_lowercase();
+                                                let pat = StringArray::new_scalar(lt);
+                                                let mut m = ilike(text_col, &pat).unwrap();
+                                                if t.is_empty() {
+                                                    let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(
+                                                        text_col.len(),
+                                                    );
+                                                    for i in 0..text_col.len() {
+                                                        bb.append_value(text_col.is_null(i));
+                                                    }
+                                                    let add = bb.finish();
+                                                    m = boolean::or_kleene(&m, &add).unwrap();
+                                                }
+                                                Some(m)
+                                            }
+                                            _ => {
+                                                ok_masks = false;
+                                                break;
+                                            }
+                                        },
+                                        crate::args::CriteriaPredicate::Ne(v) => match v {
+                                            LiteralValue::Number(x) => Some(
+                                                cmp::neq(num_col, &Float64Array::new_scalar(*x))
+                                                    .unwrap(),
+                                            ),
+                                            LiteralValue::Int(i) => Some(
+                                                cmp::neq(
+                                                    num_col,
+                                                    &Float64Array::new_scalar(*i as f64),
+                                                )
+                                                .unwrap(),
+                                            ),
+                                            LiteralValue::Text(t) => {
+                                                let lt = t.to_ascii_lowercase();
+                                                let pat = StringArray::new_scalar(lt);
+                                                Some(nilike(text_col, &pat).unwrap())
+                                            }
+                                            _ => {
+                                                ok_masks = false;
+                                                break;
+                                            }
+                                        },
+                                        crate::args::CriteriaPredicate::TextLike {
+                                            pattern,
+                                            ..
+                                        } => {
+                                            let lp = pattern
+                                                .replace('*', "%")
+                                                .replace('?', "_")
+                                                .to_ascii_lowercase();
+                                            let pat = StringArray::new_scalar(lp);
+                                            Some(ilike(text_col, &pat).unwrap())
+                                        }
+                                        _ => {
+                                            ok_masks = false;
+                                            break;
+                                        }
+                                    }
+                                };
+
+                                if !ok_masks {
                                     break;
                                 }
-                            },
-                        };
-                        mask_opt = Some(next);
-                    }
 
-                    if !col_ok {
-                        ok = false;
-                        break;
-                    }
-                    if impossible {
-                        continue;
-                    }
+                                if let Some(cur_mask) = cur {
+                                    mask_opt = Some(match mask_opt {
+                                        None => cur_mask,
+                                        Some(prev) => {
+                                            boolean::and_kleene(&prev, &cur_mask).unwrap()
+                                        }
+                                    });
+                                }
+                            }
 
-                    match mask_opt {
-                        Some(mask) => {
-                            use arrow_array::Array as _;
-                            total += (0..mask.len())
-                                .filter(|&i| mask.is_valid(i) && mask.value(i))
-                                .count() as i64;
+                            if !ok_masks {
+                                break 'col;
+                            }
+                            if impossible {
+                                continue;
+                            }
+
+                            match mask_opt {
+                                Some(mask) => {
+                                    total += (0..mask.len())
+                                        .filter(|&i| mask.is_valid(i) && mask.value(i))
+                                        .count()
+                                        as i64;
+                                }
+                                None => {
+                                    total += row_len as i64;
+                                }
+                            }
                         }
-                        None => {
-                            // All criteria were scalar and matched; count all rows in this column.
-                            total += dims.0 as i64;
+
+                        if !ok_masks {
+                            break;
                         }
                     }
-                }
 
-                if ok {
-                    return Ok(LiteralValue::Number(total as f64));
+                    if ok_masks {
+                        return Ok(LiteralValue::Number(total as f64));
+                    }
                 }
             }
         }
