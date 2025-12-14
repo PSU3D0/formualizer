@@ -118,7 +118,6 @@ jobs:
             return 1
           }
 
-          publish_with_retry sheetport-spec
           publish_with_retry formualizer-common
           publish_with_retry formualizer-macros
           publish_with_retry formualizer-parse
