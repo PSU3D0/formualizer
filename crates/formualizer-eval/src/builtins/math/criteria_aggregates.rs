@@ -314,9 +314,7 @@ impl Function for SumIfsFn {
 
         // Arrow fast path (guarded by config): numeric comparators and basic text (eq/neq, wildcard) over Arrow-backed views.
         // Supports N-criteria with array/scalar comparisons.
-        if ctx.arrow_fastpath_enabled()
-            && let Some(sum_av) = sum_view.as_arrow()
-        {
+        if let Some(sum_av) = sum_view.try_arrow() {
             // Validate criteria are supported and Arrow-backed when range-like, with identical dims
             let mut ok = true;
             for (j, (pred, scalar_val)) in preds.iter().enumerate() {
@@ -343,7 +341,7 @@ impl Function for SumIfsFn {
                     break;
                 }
                 if let Some(ref v) = crit_views[j]
-                    && (v.as_arrow().is_none() || v.dims() != dims)
+                    && (v.try_arrow().is_none() || v.dims() != dims)
                 {
                     ok = false;
                     break;
@@ -365,7 +363,7 @@ impl Function for SumIfsFn {
                     let mut crit_text_slices = Vec::with_capacity(preds.len());
                     for view in &crit_views {
                         if let Some(v) = view {
-                            let av = v.as_arrow().unwrap();
+                            let av = v.as_arrow();
                             crit_num_slices.push(Some(av.slice_numbers(row_start, row_len)));
                             crit_text_slices.push(Some(av.slice_lowered_text(row_start, row_len)));
                         } else {
@@ -395,9 +393,8 @@ impl Function for SumIfsFn {
                                 continue;
                             }
 
-                            let cur_cached = if let Some(ref view) = crit_views[j]
-                                && let Some(av) = view.as_arrow()
-                            {
+                            let cur_cached = if let Some(ref view) = crit_views[j] {
+                                let av = view.as_arrow();
                                 ctx.get_criteria_mask(av, c, pred).map(|m| {
                                     let sl =
                                         arrow_array::Array::slice(m.as_ref(), row_start, row_len);
@@ -694,240 +691,219 @@ impl Function for CountIfsFn {
             arg_i += 2;
         }
         // Arrow fast path: Arrow-backed criteria ranges with equal dims; scalar (1x1) criteria_range is broadcast.
-        if ctx.arrow_fastpath_enabled() {
-            let mut all_arrow = true;
-            for rv in crit_views.iter().flatten() {
-                if rv.as_arrow().is_none() || rv.dims() != dims {
-                    all_arrow = false;
-                    break;
-                }
+        let mut all_arrow = true;
+        for rv in crit_views.iter().flatten() {
+            if rv.try_arrow().is_none() || rv.dims() != dims {
+                all_arrow = false;
+                break;
+            }
+        }
+
+        if all_arrow {
+            if crit_views.iter().all(|v| v.is_none()) {
+                let all_match = preds.iter().all(|(pred, scalar_val)| {
+                    let v = scalar_val.as_ref().unwrap_or(&LiteralValue::Empty);
+                    criteria_match(pred, v)
+                });
+                let total = if all_match {
+                    (dims.0 * dims.1) as i64
+                } else {
+                    0
+                };
+                return Ok(LiteralValue::Number(total as f64));
             }
 
-            if all_arrow {
-                if crit_views.iter().all(|v| v.is_none()) {
-                    let all_match = preds.iter().all(|(pred, scalar_val)| {
-                        let v = scalar_val.as_ref().unwrap_or(&LiteralValue::Empty);
-                        criteria_match(pred, v)
-                    });
-                    let total = if all_match {
-                        (dims.0 * dims.1) as i64
-                    } else {
-                        0
-                    };
-                    return Ok(LiteralValue::Number(total as f64));
-                }
+            let driver_av = crit_views
+                .iter()
+                .find_map(|v| v.as_ref().and_then(|rv| rv.try_arrow()));
 
-                let driver_av = crit_views
-                    .iter()
-                    .find_map(|v| v.as_ref().and_then(|rv| rv.as_arrow()));
+            if let Some(driver) = driver_av {
+                let mut total: i64 = 0;
+                let mut ok_masks = true;
 
-                if let Some(driver) = driver_av {
-                    let mut total: i64 = 0;
-                    let mut ok_masks = true;
+                for cs in driver.row_chunk_slices() {
+                    let row_start = cs.row_start;
+                    let row_len = cs.row_len;
+                    if row_len == 0 {
+                        continue;
+                    }
 
-                    for cs in driver.row_chunk_slices() {
-                        let row_start = cs.row_start;
-                        let row_len = cs.row_len;
-                        if row_len == 0 {
-                            continue;
+                    let null_nums = Float64Array::new_null(row_len);
+                    let null_text = StringArray::new_null(row_len);
+
+                    let mut crit_num_slices = Vec::with_capacity(preds.len());
+                    let mut crit_text_slices = Vec::with_capacity(preds.len());
+                    for view in &crit_views {
+                        if let Some(v) = view {
+                            let av = v.as_arrow();
+                            crit_num_slices.push(Some(av.slice_numbers(row_start, row_len)));
+                            crit_text_slices.push(Some(av.slice_lowered_text(row_start, row_len)));
+                        } else {
+                            crit_num_slices.push(None);
+                            crit_text_slices.push(None);
                         }
+                    }
 
-                        let null_nums = Float64Array::new_null(row_len);
-                        let null_text = StringArray::new_null(row_len);
+                    'col: for c in 0..dims.1 {
+                        let mut mask_opt: Option<BooleanArray> = None;
+                        let mut impossible = false;
 
-                        let mut crit_num_slices = Vec::with_capacity(preds.len());
-                        let mut crit_text_slices = Vec::with_capacity(preds.len());
-                        for view in &crit_views {
-                            if let Some(v) = view {
-                                let av = v.as_arrow().unwrap();
-                                crit_num_slices.push(Some(av.slice_numbers(row_start, row_len)));
-                                crit_text_slices
-                                    .push(Some(av.slice_lowered_text(row_start, row_len)));
-                            } else {
-                                crit_num_slices.push(None);
-                                crit_text_slices.push(None);
-                            }
-                        }
-
-                        'col: for c in 0..dims.1 {
-                            let mut mask_opt: Option<BooleanArray> = None;
-                            let mut impossible = false;
-
-                            for (j, (pred, scalar_val)) in preds.iter().enumerate() {
-                                if crit_views[j].is_none() {
-                                    if let Some(sv) = scalar_val {
-                                        if !criteria_match(pred, sv) {
-                                            impossible = true;
-                                            break;
-                                        }
-                                        continue;
-                                    }
-                                    if !criteria_match(pred, &LiteralValue::Empty) {
+                        for (j, (pred, scalar_val)) in preds.iter().enumerate() {
+                            if crit_views[j].is_none() {
+                                if let Some(sv) = scalar_val {
+                                    if !criteria_match(pred, sv) {
                                         impossible = true;
                                         break;
                                     }
                                     continue;
                                 }
+                                if !criteria_match(pred, &LiteralValue::Empty) {
+                                    impossible = true;
+                                    break;
+                                }
+                                continue;
+                            }
 
-                                let cur_cached = if let Some(ref view) = crit_views[j]
-                                    && let Some(av) = view.as_arrow()
-                                {
-                                    ctx.get_criteria_mask(av, c, pred).map(|m| {
-                                        let sl = arrow_array::Array::slice(
-                                            m.as_ref(),
-                                            row_start,
-                                            row_len,
-                                        );
-                                        sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone()
-                                    })
-                                } else {
-                                    None
-                                };
+                            let cur_cached = if let Some(ref view) = crit_views[j] {
+                                let av = view.as_arrow();
+                                ctx.get_criteria_mask(av, c, pred).map(|m| {
+                                    let sl =
+                                        arrow_array::Array::slice(m.as_ref(), row_start, row_len);
+                                    sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone()
+                                })
+                            } else {
+                                None
+                            };
 
-                                let num_col = crit_num_slices[j]
-                                    .as_ref()
-                                    .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
-                                    .unwrap_or(&null_nums);
-                                let text_col = crit_text_slices[j]
-                                    .as_ref()
-                                    .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
-                                    .unwrap_or(&null_text);
+                            let num_col = crit_num_slices[j]
+                                .as_ref()
+                                .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
+                                .unwrap_or(&null_nums);
+                            let text_col = crit_text_slices[j]
+                                .as_ref()
+                                .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
+                                .unwrap_or(&null_text);
 
-                                let cur = if let Some(cm) = cur_cached {
-                                    Some(cm)
-                                } else {
-                                    match pred {
-                                        crate::args::CriteriaPredicate::Gt(n) => Some(
-                                            cmp::gt(num_col, &Float64Array::new_scalar(*n))
+                            let cur = if let Some(cm) = cur_cached {
+                                Some(cm)
+                            } else {
+                                match pred {
+                                    crate::args::CriteriaPredicate::Gt(n) => Some(
+                                        cmp::gt(num_col, &Float64Array::new_scalar(*n)).unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Ge(n) => Some(
+                                        cmp::gt_eq(num_col, &Float64Array::new_scalar(*n)).unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Lt(n) => Some(
+                                        cmp::lt(num_col, &Float64Array::new_scalar(*n)).unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Le(n) => Some(
+                                        cmp::lt_eq(num_col, &Float64Array::new_scalar(*n)).unwrap(),
+                                    ),
+                                    crate::args::CriteriaPredicate::Eq(v) => match v {
+                                        LiteralValue::Number(x) => Some(
+                                            cmp::eq(num_col, &Float64Array::new_scalar(*x))
                                                 .unwrap(),
                                         ),
-                                        crate::args::CriteriaPredicate::Ge(n) => Some(
-                                            cmp::gt_eq(num_col, &Float64Array::new_scalar(*n))
+                                        LiteralValue::Int(i) => Some(
+                                            cmp::eq(num_col, &Float64Array::new_scalar(*i as f64))
                                                 .unwrap(),
                                         ),
-                                        crate::args::CriteriaPredicate::Lt(n) => Some(
-                                            cmp::lt(num_col, &Float64Array::new_scalar(*n))
-                                                .unwrap(),
-                                        ),
-                                        crate::args::CriteriaPredicate::Le(n) => Some(
-                                            cmp::lt_eq(num_col, &Float64Array::new_scalar(*n))
-                                                .unwrap(),
-                                        ),
-                                        crate::args::CriteriaPredicate::Eq(v) => match v {
-                                            LiteralValue::Number(x) => Some(
-                                                cmp::eq(num_col, &Float64Array::new_scalar(*x))
-                                                    .unwrap(),
-                                            ),
-                                            LiteralValue::Int(i) => Some(
-                                                cmp::eq(
-                                                    num_col,
-                                                    &Float64Array::new_scalar(*i as f64),
-                                                )
-                                                .unwrap(),
-                                            ),
-                                            LiteralValue::Text(t) => {
-                                                let lt = t.to_ascii_lowercase();
-                                                let pat = StringArray::new_scalar(lt);
-                                                let mut m = ilike(text_col, &pat).unwrap();
-                                                if t.is_empty() {
-                                                    let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(
+                                        LiteralValue::Text(t) => {
+                                            let lt = t.to_ascii_lowercase();
+                                            let pat = StringArray::new_scalar(lt);
+                                            let mut m = ilike(text_col, &pat).unwrap();
+                                            if t.is_empty() {
+                                                let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(
                                                         text_col.len(),
                                                     );
-                                                    for i in 0..text_col.len() {
-                                                        bb.append_value(text_col.is_null(i));
-                                                    }
-                                                    let add = bb.finish();
-                                                    m = boolean::or_kleene(&m, &add).unwrap();
+                                                for i in 0..text_col.len() {
+                                                    bb.append_value(text_col.is_null(i));
                                                 }
-                                                Some(m)
+                                                let add = bb.finish();
+                                                m = boolean::or_kleene(&m, &add).unwrap();
                                             }
-                                            _ => {
-                                                ok_masks = false;
-                                                break;
-                                            }
-                                        },
-                                        crate::args::CriteriaPredicate::Ne(v) => match v {
-                                            LiteralValue::Number(x) => Some(
-                                                cmp::neq(num_col, &Float64Array::new_scalar(*x))
-                                                    .unwrap(),
-                                            ),
-                                            LiteralValue::Int(i) => Some(
-                                                cmp::neq(
-                                                    num_col,
-                                                    &Float64Array::new_scalar(*i as f64),
-                                                )
-                                                .unwrap(),
-                                            ),
-                                            LiteralValue::Text(t) => {
-                                                let lt = t.to_ascii_lowercase();
-                                                let pat = StringArray::new_scalar(lt);
-                                                Some(nilike(text_col, &pat).unwrap())
-                                            }
-                                            _ => {
-                                                ok_masks = false;
-                                                break;
-                                            }
-                                        },
-                                        crate::args::CriteriaPredicate::TextLike {
-                                            pattern,
-                                            ..
-                                        } => {
-                                            let lp = pattern
-                                                .replace('*', "%")
-                                                .replace('?', "_")
-                                                .to_ascii_lowercase();
-                                            let pat = StringArray::new_scalar(lp);
-                                            Some(ilike(text_col, &pat).unwrap())
+                                            Some(m)
                                         }
                                         _ => {
                                             ok_masks = false;
                                             break;
                                         }
-                                    }
-                                };
-
-                                if !ok_masks {
-                                    break;
-                                }
-
-                                if let Some(cur_mask) = cur {
-                                    mask_opt = Some(match mask_opt {
-                                        None => cur_mask,
-                                        Some(prev) => {
-                                            boolean::and_kleene(&prev, &cur_mask).unwrap()
+                                    },
+                                    crate::args::CriteriaPredicate::Ne(v) => match v {
+                                        LiteralValue::Number(x) => Some(
+                                            cmp::neq(num_col, &Float64Array::new_scalar(*x))
+                                                .unwrap(),
+                                        ),
+                                        LiteralValue::Int(i) => Some(
+                                            cmp::neq(num_col, &Float64Array::new_scalar(*i as f64))
+                                                .unwrap(),
+                                        ),
+                                        LiteralValue::Text(t) => {
+                                            let lt = t.to_ascii_lowercase();
+                                            let pat = StringArray::new_scalar(lt);
+                                            Some(nilike(text_col, &pat).unwrap())
                                         }
-                                    });
+                                        _ => {
+                                            ok_masks = false;
+                                            break;
+                                        }
+                                    },
+                                    crate::args::CriteriaPredicate::TextLike {
+                                        pattern, ..
+                                    } => {
+                                        let lp = pattern
+                                            .replace('*', "%")
+                                            .replace('?', "_")
+                                            .to_ascii_lowercase();
+                                        let pat = StringArray::new_scalar(lp);
+                                        Some(ilike(text_col, &pat).unwrap())
+                                    }
+                                    _ => {
+                                        ok_masks = false;
+                                        break;
+                                    }
                                 }
-                            }
+                            };
 
                             if !ok_masks {
-                                break 'col;
-                            }
-                            if impossible {
-                                continue;
+                                break;
                             }
 
-                            match mask_opt {
-                                Some(mask) => {
-                                    total += (0..mask.len())
-                                        .filter(|&i| mask.is_valid(i) && mask.value(i))
-                                        .count()
-                                        as i64;
-                                }
-                                None => {
-                                    total += row_len as i64;
-                                }
+                            if let Some(cur_mask) = cur {
+                                mask_opt = Some(match mask_opt {
+                                    None => cur_mask,
+                                    Some(prev) => boolean::and_kleene(&prev, &cur_mask).unwrap(),
+                                });
                             }
                         }
 
                         if !ok_masks {
-                            break;
+                            break 'col;
+                        }
+                        if impossible {
+                            continue;
+                        }
+
+                        match mask_opt {
+                            Some(mask) => {
+                                total += (0..mask.len())
+                                    .filter(|&i| mask.is_valid(i) && mask.value(i))
+                                    .count() as i64;
+                            }
+                            None => {
+                                total += row_len as i64;
+                            }
                         }
                     }
 
-                    if ok_masks {
-                        return Ok(LiteralValue::Number(total as f64));
+                    if !ok_masks {
+                        break;
                     }
+                }
+
+                if ok_masks {
+                    return Ok(LiteralValue::Number(total as f64));
                 }
             }
         }

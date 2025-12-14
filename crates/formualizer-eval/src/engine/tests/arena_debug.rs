@@ -23,15 +23,15 @@ fn test_simple_sum_with_arena() {
     // Verify values are stored correctly
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1).unwrap(),
-        LiteralValue::Int(10)
+        LiteralValue::Number(10.0)
     );
     assert_eq!(
         engine.get_cell_value("Sheet1", 2, 1).unwrap(),
-        LiteralValue::Int(20)
+        LiteralValue::Number(20.0)
     );
     assert_eq!(
         engine.get_cell_value("Sheet1", 3, 1).unwrap(),
-        LiteralValue::Int(30)
+        LiteralValue::Number(30.0)
     );
 
     // Create a SUM formula

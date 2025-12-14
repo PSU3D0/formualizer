@@ -142,7 +142,6 @@ fn sumifs_arrow_fastpath_parity_small() {
     };
 
     // Disable fastpath and re-evaluate
-    engine.config = config.with_arrow_fastpath(false);
     let got_slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, "Sheet1");
         let args = vec![
@@ -200,7 +199,6 @@ fn sumifs_arrow_fastpath_broadcasts_1x1_text_criteria_range() {
         fun.dispatch(&args, &fctx).unwrap()
     };
 
-    engine.config = config.with_arrow_fastpath(false);
     let got_slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, sheet);
         let args = vec![
@@ -256,7 +254,6 @@ fn sumifs_arrow_fastpath_broadcasts_1x1_numeric_criteria_range() {
         fun.dispatch(&args, &fctx).unwrap()
     };
 
-    engine.config = config.with_arrow_fastpath(false);
     let got_slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, sheet);
         let args = vec![
@@ -315,7 +312,6 @@ fn countifs_arrow_fastpath_broadcasts_1x1_numeric_criteria_range() {
         fun.dispatch(&args, &fctx).unwrap()
     };
 
-    engine.config = config.with_arrow_fastpath(false);
     let got_slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, sheet);
         let args = vec![
@@ -430,7 +426,6 @@ fn sumifs_text_and_date_window_parity() {
         fun.dispatch(&args, &fctx).unwrap()
     };
 
-    engine.config = config.with_arrow_fastpath(false);
     let got_slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, sheet);
         let args = vec![
@@ -502,7 +497,6 @@ fn sumifs_arrow_fastpath_large_numeric_criteria() {
         fun.dispatch(&args, &fctx).unwrap()
     };
 
-    engine.config = config.with_arrow_fastpath(false);
     let slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, "Sheet1");
         let args = vec![
@@ -578,7 +572,6 @@ fn sumifs_multi_chunk_criteria_mask_correctness() {
     };
 
     // Disable fastpath and compare
-    engine.config = config.with_arrow_fastpath(false);
     let slow_result = {
         let interp = crate::interpreter::Interpreter::new(&engine, "Sheet1");
         let args = vec![

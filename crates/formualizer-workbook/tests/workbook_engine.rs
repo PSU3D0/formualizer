@@ -9,13 +9,13 @@ fn values_roundtrip_and_range() {
     wb.set_value("S", 1, 1, LiteralValue::Int(10)).unwrap();
     wb.set_value("S", 2, 1, LiteralValue::Number(2.5)).unwrap();
 
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(10)));
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(10.0)));
     assert_eq!(wb.get_value("S", 2, 1), Some(LiteralValue::Number(2.5)));
 
     let ra = RangeAddress::new("S", 1, 1, 2, 1).unwrap();
     let vals = wb.read_range(&ra);
     assert_eq!(vals.len(), 2);
-    assert_eq!(vals[0][0], LiteralValue::Int(10));
+    assert_eq!(vals[0][0], LiteralValue::Number(10.0));
     assert_eq!(vals[1][0], LiteralValue::Number(2.5));
 }
 
@@ -74,7 +74,7 @@ fn value_edit_triggers_recompute_in_deferred_mode() {
     wb.set_value("S", 1, 1, LiteralValue::Int(3)).unwrap();
     wb.set_formula("S", 1, 2, "A1*2").unwrap();
 
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(3)));
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(3.0)));
     assert_eq!(wb.get_formula("S", 1, 2), Some("A1*2".to_string()));
 
     let v = wb.evaluate_cell("S", 1, 2).unwrap();
@@ -149,8 +149,8 @@ fn set_values_batch_and_undo() {
 
     let ra = RangeAddress::new("S", 1, 1, 2, 2).unwrap();
     let vals = wb.read_range(&ra);
-    assert_eq!(vals[0][0], LiteralValue::Int(1));
-    assert_eq!(vals[1][1], LiteralValue::Int(4));
+    assert_eq!(vals[0][0], LiteralValue::Number(1.0));
+    assert_eq!(vals[1][1], LiteralValue::Number(4.0));
 
     wb.undo().unwrap();
     let vals2 = wb.read_range(&ra);
@@ -158,8 +158,8 @@ fn set_values_batch_and_undo() {
     assert_eq!(vals2[1][1], LiteralValue::Empty);
     wb.redo().unwrap();
     let vals3 = wb.read_range(&ra);
-    assert_eq!(vals3[0][0], LiteralValue::Int(1));
-    assert_eq!(vals3[1][1], LiteralValue::Int(4));
+    assert_eq!(vals3[0][0], LiteralValue::Number(1.0));
+    assert_eq!(vals3[1][1], LiteralValue::Number(4.0));
 }
 
 #[test]
@@ -191,17 +191,17 @@ fn changelog_undo_redo_values() {
     wb.add_sheet("S");
     wb.set_value("S", 1, 1, LiteralValue::Int(1)).unwrap();
     wb.set_value("S", 1, 2, LiteralValue::Int(2)).unwrap();
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(1)));
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(1.0)));
 
     wb.begin_action("edit A1");
     wb.set_value("S", 1, 1, LiteralValue::Int(5)).unwrap();
     wb.end_action();
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(5)));
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(5.0)));
 
     wb.undo().unwrap();
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(1)));
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(1.0)));
     wb.redo().unwrap();
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(5)));
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(5.0)));
 }
 
 #[test]

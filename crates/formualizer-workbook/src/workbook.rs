@@ -102,7 +102,10 @@ impl Default for Workbook {
 }
 
 impl Workbook {
-    pub fn new_with_config(config: formualizer_eval::engine::EvalConfig) -> Self {
+    pub fn new_with_config(mut config: formualizer_eval::engine::EvalConfig) -> Self {
+        config.arrow_storage_enabled = true;
+        config.delta_overlay_enabled = true;
+        config.write_formula_overlay_enabled = true;
         let engine = formualizer_eval::engine::Engine::new(WBResolver, config);
         Self {
             engine,
@@ -192,24 +195,52 @@ impl Workbook {
         }
         // No Arrow sheet: nothing to sync
     }
+
+    fn ensure_arrow_sheet_capacity(&mut self, sheet: &str, min_rows: usize, min_cols: usize) {
+        use formualizer_eval::arrow_store::ArrowSheet;
+
+        if self.engine.sheet_store().sheet(sheet).is_none() {
+            self.engine.sheet_store_mut().sheets.push(ArrowSheet {
+                name: std::sync::Arc::<str>::from(sheet),
+                columns: Vec::new(),
+                nrows: 0,
+                chunk_starts: Vec::new(),
+            });
+        }
+
+        let asheet = self
+            .engine
+            .sheet_store_mut()
+            .sheet_mut(sheet)
+            .expect("ArrowSheet must exist");
+
+        let cur_cols = asheet.columns.len();
+        if min_cols > cur_cols {
+            asheet.insert_columns(cur_cols, min_cols - cur_cols);
+        }
+
+        if min_rows > asheet.nrows as usize {
+            if asheet.columns.is_empty() {
+                asheet.insert_columns(0, 1);
+            }
+            asheet.ensure_row_capacity(min_rows);
+        }
+    }
+
     fn mirror_value_to_overlay(&mut self, sheet: &str, row: u32, col: u32, value: &LiteralValue) {
         use formualizer_eval::arrow_store::OverlayValue;
         if !(self.engine.config.arrow_storage_enabled && self.engine.config.delta_overlay_enabled) {
             return;
         }
         let date_system = self.engine.config.date_system;
-        let asheet = match self.engine.sheet_store_mut().sheet_mut(sheet) {
-            Some(s) => s,
-            None => return,
-        };
         let row0 = row.saturating_sub(1) as usize;
         let col0 = col.saturating_sub(1) as usize;
-        if col0 >= asheet.columns.len() {
-            return;
-        }
-        if row0 >= asheet.nrows as usize {
-            asheet.ensure_row_capacity(row0 + 1);
-        }
+        self.ensure_arrow_sheet_capacity(sheet, row0 + 1, col0 + 1);
+        let asheet = self
+            .engine
+            .sheet_store_mut()
+            .sheet_mut(sheet)
+            .expect("ArrowSheet must exist");
         if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
             let ov = match value {
                 LiteralValue::Empty => OverlayValue::Empty,
@@ -278,6 +309,7 @@ impl Workbook {
     }
     pub fn add_sheet(&mut self, name: &str) {
         let _ = self.engine.graph.add_sheet(name);
+        self.ensure_arrow_sheet_capacity(name, 0, 0);
     }
     pub fn delete_sheet(&mut self, name: &str) {
         if let Some(id) = self.engine.graph.sheet_id(name) {
@@ -306,6 +338,7 @@ impl Workbook {
         col: u32,
         value: LiteralValue,
     ) -> Result<(), IoError> {
+        self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         if self.enable_changelog {
             // Use VertexEditor with logging for graph, then mirror overlay and mark edited
             let sheet_id = self
@@ -333,6 +366,7 @@ impl Workbook {
                 .map_err(IoError::Engine)
         }
     }
+
     pub fn set_formula(
         &mut self,
         sheet: &str,
@@ -340,6 +374,7 @@ impl Workbook {
         col: u32,
         formula: &str,
     ) -> Result<(), IoError> {
+        self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         if self.engine.config.defer_graph_building {
             self.engine
                 .stage_formula_text(sheet, row, col, formula.to_string());
@@ -378,6 +413,7 @@ impl Workbook {
             }
         }
     }
+
     pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
         match self.engine.get_cell_value(sheet, row, col) {
             Some(LiteralValue::Empty) | None => None,
@@ -567,6 +603,15 @@ impl Workbook {
         start_col: u32,
         rows: &[Vec<String>],
     ) -> Result<(), IoError> {
+        let height = rows.len();
+        let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        if height == 0 || width == 0 {
+            return Ok(());
+        }
+        let end_row = start_row.saturating_add((height - 1) as u32);
+        let end_col = start_col.saturating_add((width - 1) as u32);
+        self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
+
         if self.engine.config.defer_graph_building {
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;

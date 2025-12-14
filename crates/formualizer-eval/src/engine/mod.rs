@@ -130,8 +130,6 @@ pub struct EvalConfig {
 
     /// Enable Arrow-backed storage reads (Phase A)
     pub arrow_storage_enabled: bool,
-    /// Enable Arrow fast paths in builtins (Phase B)
-    pub arrow_fastpath_enabled: bool,
     /// Enable delta overlay for Arrow sheets (Phase C)
     pub delta_overlay_enabled: bool,
 
@@ -180,7 +178,6 @@ impl Default for EvalConfig {
             sheet_index_mode: SheetIndexMode::Eager,
             warmup: tuning::WarmupConfig::default(),
             arrow_storage_enabled: true,
-            arrow_fastpath_enabled: true,
             delta_overlay_enabled: true,
             write_formula_overlay_enabled: true,
             date_system: DateSystem::Excel1900,
@@ -211,12 +208,6 @@ impl EvalConfig {
     #[inline]
     pub fn with_arrow_storage(mut self, enable: bool) -> Self {
         self.arrow_storage_enabled = enable;
-        self
-    }
-
-    #[inline]
-    pub fn with_arrow_fastpath(mut self, enable: bool) -> Self {
-        self.arrow_fastpath_enabled = enable;
         self
     }
 

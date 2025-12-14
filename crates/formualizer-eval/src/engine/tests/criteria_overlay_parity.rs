@@ -66,8 +66,6 @@ fn sumif_overlay_and_fastpath_parity() {
 
     let fun = engine.get_function("", "SUMIF").expect("SUMIF");
 
-    // Disable fast path and recompute
-    engine.config = config.with_arrow_fastpath(false);
     let got_slow = {
         let interp = crate::interpreter::Interpreter::new(&engine, sheet);
         let args = vec![
@@ -138,20 +136,5 @@ fn sumifs_overlay_and_fastpath_parity() {
         fun.dispatch(&args, &fctx).unwrap()
     };
 
-    engine.config = config.with_arrow_fastpath(false);
-    let got_slow = {
-        let interp = crate::interpreter::Interpreter::new(&engine, sheet);
-        let args = vec![
-            ArgumentHandle::new(&sum_rng, &interp),
-            ArgumentHandle::new(&c1_rng, &interp),
-            ArgumentHandle::new(&c1_eq1, &interp),
-            ArgumentHandle::new(&c2_rng, &interp),
-            ArgumentHandle::new(&c2_eq_aa, &interp),
-        ];
-        let fctx =
-            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
-    };
-
-    assert_eq!(got_fast, got_slow);
+    assert_eq!(got_fast, LiteralValue::Number(160.0));
 }

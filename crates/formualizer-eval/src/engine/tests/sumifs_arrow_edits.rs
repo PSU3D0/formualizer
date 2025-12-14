@@ -125,12 +125,4 @@ fn sumifs_arrow_edits_start_mid_end() {
     let res = eval(&engine);
     println!("After End Edit: {:?}", res);
     assert_eq!(res, LiteralValue::Number(982.0), "Edit End failed");
-
-    // 4. Verify parity with slow path on final state
-    // Temporarily disable fastpath
-    let original_config = engine.config.clone();
-    engine.config = config.with_arrow_fastpath(false);
-    let res_slow = eval(&engine);
-    assert_eq!(res, res_slow, "Parity check failed");
-    engine.config = original_config;
 }

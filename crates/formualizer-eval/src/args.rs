@@ -102,12 +102,23 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
     match v {
         LiteralValue::Text(s) => {
             let s_trim = s.trim();
+
+            let unquote = |t: &str| -> String {
+                let t = t.trim();
+                if let Some(inner) = t.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+                    inner.replace("\"\"", "\"")
+                } else {
+                    t.to_string()
+                }
+            };
+
             // Operators: >=, <=, <>, >, <, =
             let ops = [">=", "<=", "<>", ">", "<", "="];
             for op in ops.iter() {
                 if let Some(rhs) = s_trim.strip_prefix(op) {
+                    let rhs_trim = rhs.trim();
                     // Try numeric parse for comparisons
-                    if let Ok(n) = rhs.trim().parse::<f64>() {
+                    if let Ok(n) = rhs_trim.parse::<f64>() {
                         return Ok(match *op {
                             ">=" => CriteriaPredicate::Ge(n),
                             "<=" => CriteriaPredicate::Le(n),
@@ -118,8 +129,8 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
                             _ => unreachable!(),
                         });
                     }
-                    // Fallback: non-numeric equals/neq text
-                    let lit = LiteralValue::Text(rhs.to_string());
+                    // Fallback: non-numeric equals/neq text (support Excel-style quoted strings: ="aa")
+                    let lit = LiteralValue::Text(unquote(rhs_trim));
                     return Ok(match *op {
                         "=" => CriteriaPredicate::Eq(lit),
                         "<>" => CriteriaPredicate::Ne(lit),
@@ -131,24 +142,25 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
                     });
                 }
             }
+
+            let plain = unquote(s_trim);
+
             // Wildcards * or ? => TextLike
-            if s_trim.contains('*') || s_trim.contains('?') {
+            if plain.contains('*') || plain.contains('?') {
                 return Ok(CriteriaPredicate::TextLike {
-                    pattern: s_trim.to_string(),
+                    pattern: plain,
                     case_insensitive: true,
                 });
             }
             // Booleans TRUE/FALSE
-            let lower = s_trim.to_ascii_lowercase();
+            let lower = plain.to_ascii_lowercase();
             if lower == "true" {
                 return Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(true)));
             } else if lower == "false" {
                 return Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(false)));
             }
             // Plain text equality
-            Ok(CriteriaPredicate::Eq(LiteralValue::Text(
-                s_trim.to_string(),
-            )))
+            Ok(CriteriaPredicate::Eq(LiteralValue::Text(plain)))
         }
         LiteralValue::Empty => Ok(CriteriaPredicate::IsBlank),
         LiteralValue::Number(n) => Ok(CriteriaPredicate::Eq(LiteralValue::Number(*n))),

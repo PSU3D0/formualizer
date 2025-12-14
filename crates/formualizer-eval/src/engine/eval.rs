@@ -751,16 +751,34 @@ where
         if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
             return;
         }
-        let asheet = match self.arrow_sheets.sheet_mut(sheet) {
-            Some(s) => s,
-            None => return,
-        };
+        if self.arrow_sheets.sheet(sheet).is_none() {
+            self.arrow_sheets
+                .sheets
+                .push(crate::arrow_store::ArrowSheet {
+                    name: std::sync::Arc::<str>::from(sheet),
+                    columns: Vec::new(),
+                    nrows: 0,
+                    chunk_starts: Vec::new(),
+                });
+        }
+
         let row0 = row.saturating_sub(1) as usize;
         let col0 = col.saturating_sub(1) as usize;
-        if col0 >= asheet.columns.len() {
-            return;
+
+        let asheet = self
+            .arrow_sheets
+            .sheet_mut(sheet)
+            .expect("ArrowSheet must exist");
+
+        let cur_cols = asheet.columns.len();
+        if col0 >= cur_cols {
+            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
         }
+
         if row0 >= asheet.nrows as usize {
+            if asheet.columns.is_empty() {
+                asheet.insert_columns(0, 1);
+            }
             asheet.ensure_row_capacity(row0 + 1);
         }
         if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
@@ -1206,7 +1224,24 @@ where
             }
             Ok(other) => {
                 // Scalar result: store value and ensure any previous spill is cleared
+                let spill_cells = self
+                    .graph
+                    .spill_cells_for_anchor(vertex_id)
+                    .map(|cells| cells.to_vec())
+                    .unwrap_or_default();
                 self.graph.clear_spill_region(vertex_id);
+                if self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
+                    let empty = LiteralValue::Empty;
+                    for cell in spill_cells.iter() {
+                        let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+                        self.mirror_value_to_overlay(
+                            &sheet_name,
+                            cell.coord.row() + 1,
+                            cell.coord.col() + 1,
+                            &empty,
+                        );
+                    }
+                }
                 self.graph.update_vertex_value(vertex_id, other.clone());
                 // Optionally mirror into Arrow overlay for Arrow-backed reads
                 if self.config.arrow_storage_enabled
@@ -1230,7 +1265,24 @@ where
             Err(e) => {
                 // Runtime Excel error: store as a cell value instead of propagating
                 // as an exception so bulk eval paths don't fail the whole pass.
+                let spill_cells = self
+                    .graph
+                    .spill_cells_for_anchor(vertex_id)
+                    .map(|cells| cells.to_vec())
+                    .unwrap_or_default();
                 self.graph.clear_spill_region(vertex_id);
+                if self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
+                    let empty = LiteralValue::Empty;
+                    for cell in spill_cells.iter() {
+                        let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+                        self.mirror_value_to_overlay(
+                            &sheet_name,
+                            cell.coord.row() + 1,
+                            cell.coord.col() + 1,
+                            &empty,
+                        );
+                    }
+                }
                 let err_val = LiteralValue::Error(e.clone());
                 self.graph.update_vertex_value(vertex_id, err_val.clone());
                 if self.config.arrow_storage_enabled
@@ -2911,10 +2963,6 @@ where
 
     // Flats removed
 
-    fn arrow_fastpath_enabled(&self) -> bool {
-        self.config.arrow_fastpath_enabled
-    }
-
     fn date_system(&self) -> crate::engine::DateSystem {
         self.config.date_system
     }
@@ -3017,37 +3065,6 @@ where
                 let er = er.unwrap_or(sr.saturating_sub(1));
                 let ec = ec.unwrap_or(sc.saturating_sub(1));
 
-                // Feature: Arrow-only RangeView resolution (no Hybrid/GraphSlice) when overlay mirroring is enabled.
-                if self.config.arrow_storage_enabled
-                    && self.config.delta_overlay_enabled
-                    && self.config.write_formula_overlay_enabled
-                {
-                    if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
-                        let sr0 = sr.saturating_sub(1) as usize;
-                        let sc0 = sc.saturating_sub(1) as usize;
-                        let er0 = er.saturating_sub(1) as usize;
-                        let ec0 = ec.saturating_sub(1) as usize;
-                        let av = asheet.range_view(sr0, sc0, er0, ec0);
-                        return Ok(RangeView::from_arrow(av));
-                    }
-                    // Materialize via graph when Arrow backend is absent.
-                    let rows = (sr..=er)
-                        .map(|r| {
-                            (sc..=ec)
-                                .map(|c| {
-                                    let coord = Coord::from_excel(r, c, true, true);
-                                    let addr = CellRef::new(sheet_id, coord);
-                                    self.graph
-                                        .get_vertex_id_for_address(&addr)
-                                        .and_then(|id| self.graph.get_value(*id))
-                                        .unwrap_or(LiteralValue::Empty)
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>();
-                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(rows))));
-                }
-
                 // Default behavior (no feature): prefer Hybrid when Arrow exists, otherwise GraphSlice
                 if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
                     let sr0 = sr.saturating_sub(1) as usize;
@@ -3082,47 +3099,24 @@ where
                 let sheet_name = self.graph.sheet_name(sheet_id);
                 let row = addr.coord.row() + 1;
                 let col = addr.coord.col() + 1;
-                if let Some(vid) = self.graph.get_vertex_id_for_address(&addr)
-                    && matches!(
-                        self.graph.get_vertex_kind(*vid),
-                        VertexKind::FormulaScalar | VertexKind::FormulaArray
-                    )
-                    && let Some(v) = self.graph.get_cell_value(sheet_name, row, col)
-                {
-                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
-                }
 
-                if self.config.arrow_storage_enabled
-                    && self.config.delta_overlay_enabled
-                    && self.config.write_formula_overlay_enabled
-                {
-                    if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
-                        let r0 = row.saturating_sub(1) as usize;
-                        let c0 = col.saturating_sub(1) as usize;
-                        let av = asheet.range_view(r0, c0, r0, c0);
-                        let v = av.get_cell(0, 0);
-                        return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
-                    }
-                    let v = self
-                        .graph
-                        .get_cell_value(sheet_name, row, col)
-                        .unwrap_or(LiteralValue::Empty);
-                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
-                }
-
-                if let Some(v) = self.graph.get_cell_value(sheet_name, row, col) {
-                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
-                }
                 if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
                     let r0 = row.saturating_sub(1) as usize;
                     let c0 = col.saturating_sub(1) as usize;
                     let av = asheet.range_view(r0, c0, r0, c0);
-                    let v = av.get_cell(0, 0);
-                    return Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))));
+                    return Ok(RangeView::from_hybrid(
+                        &self.graph,
+                        sheet_id,
+                        row.saturating_sub(1),
+                        col.saturating_sub(1),
+                        av,
+                    ));
                 }
-                Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![
-                    LiteralValue::Empty,
-                ]]))))
+
+                let v = self
+                    .get_cell_value(sheet_name, row, col)
+                    .unwrap_or(LiteralValue::Empty);
+                Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))))
             }
             ReferenceType::NamedRange(name) => {
                 if let Some(current_id) = self.graph.sheet_id(current_sheet)
@@ -3203,6 +3197,12 @@ where
         targets: &[CellRef],
         rows: Vec<Vec<LiteralValue>>,
     ) -> Result<(), ExcelError> {
+        let prev_spill_cells = self
+            .graph
+            .spill_cells_for_anchor(anchor_vertex)
+            .map(|cells| cells.to_vec())
+            .unwrap_or_default();
+
         // Commit via shim (releases locks)
         self.spill_mgr
             .commit_array(&mut self.graph, anchor_vertex, targets, rows.clone())?;
@@ -3211,6 +3211,22 @@ where
             && self.config.delta_overlay_enabled
             && self.config.write_formula_overlay_enabled
         {
+            if !prev_spill_cells.is_empty() {
+                let target_set: FxHashSet<CellRef> = targets.iter().copied().collect();
+                let empty = LiteralValue::Empty;
+                for cell in prev_spill_cells.iter() {
+                    if !target_set.contains(cell) {
+                        let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+                        self.mirror_value_to_overlay(
+                            &sheet_name,
+                            cell.coord.row() + 1,
+                            cell.coord.col() + 1,
+                            &empty,
+                        );
+                    }
+                }
+            }
+
             for (idx, cell) in targets.iter().enumerate() {
                 if rows.is_empty() || rows[0].is_empty() {
                     break;

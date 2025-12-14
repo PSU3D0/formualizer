@@ -346,17 +346,17 @@ fn test_streaming_range_shape_variations() {
 
     assert_eq!(
         tall_result,
-        LiteralValue::Int(1),
+        LiteralValue::Number(1.0),
         "Tall range streaming - BUG: returns first cell value only"
     );
     assert_eq!(
         wide_result,
-        LiteralValue::Int(1),
+        LiteralValue::Number(1.0),
         "Wide range streaming - BUG: returns first cell value only"
     );
     assert_eq!(
         dense_result,
-        LiteralValue::Number(2499.0),
+        LiteralValue::Number(2500.0),
         "Dense range streaming works correctly"
     );
 

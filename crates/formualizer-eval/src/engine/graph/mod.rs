@@ -1744,6 +1744,12 @@ impl DependencyGraph {
         Ok(())
     }
 
+    pub(crate) fn spill_cells_for_anchor(&self, anchor: VertexId) -> Option<&[CellRef]> {
+        self.spill_anchor_to_cells
+            .get(&anchor)
+            .map(|v| v.as_slice())
+    }
+
     /// Clear an existing spill region for an anchor (set cells to Empty and forget ownership)
     pub fn clear_spill_region(&mut self, anchor: VertexId) {
         if let Some(cells) = self.spill_anchor_to_cells.remove(&anchor) {

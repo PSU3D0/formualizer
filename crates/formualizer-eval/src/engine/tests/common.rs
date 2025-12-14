@@ -45,7 +45,6 @@ pub fn get_vertex_ids_in_order(graph: &crate::engine::DependencyGraph) -> Vec<Ve
 pub fn arrow_eval_config() -> EvalConfig {
     EvalConfig {
         arrow_storage_enabled: true,
-        arrow_fastpath_enabled: true,
         delta_overlay_enabled: true,
         write_formula_overlay_enabled: true,
         ..Default::default()

@@ -1045,12 +1045,6 @@ pub trait EvaluationContext: Resolver + FunctionProvider {
 
     // Flats removed
 
-    /// Feature gate: enable Arrow fast paths in builtins (e.g., SUMIFS).
-    /// Default is false; engines that wish to enable must override.
-    fn arrow_fastpath_enabled(&self) -> bool {
-        false
-    }
-
     /// Workbook date system selection (1900 vs 1904).
     /// Defaults to 1900 for compatibility.
     fn date_system(&self) -> crate::engine::DateSystem {
@@ -1137,11 +1131,6 @@ pub trait FunctionContext {
         };
         let (l0, l1) = compose_seed(self.workbook_seed(), sheet_id, row, col, fn_salt, epoch);
         small_rng_from_lanes(l0, l1)
-    }
-
-    /// Feature gate: enable Arrow fast paths in builtins (e.g., SUMIFS)
-    fn arrow_fastpath_enabled(&self) -> bool {
-        false
     }
 
     /// Workbook date system selection (1900 vs 1904).
@@ -1233,10 +1222,6 @@ impl<'a> FunctionContext for DefaultFunctionContext<'a> {
     }
 
     // Flats removed
-
-    fn arrow_fastpath_enabled(&self) -> bool {
-        self.base.arrow_fastpath_enabled()
-    }
 
     fn date_system(&self) -> crate::engine::DateSystem {
         self.base.date_system()

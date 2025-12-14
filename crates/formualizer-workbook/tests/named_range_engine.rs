@@ -12,7 +12,6 @@ fn named_range_formula_recalculates_and_marks_dirty() {
 
     workbook
         .engine_mut()
-        .graph
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
         .expect("set seed value");
 
@@ -66,7 +65,6 @@ fn named_range_formula_recalculates_and_marks_dirty() {
 
     workbook
         .engine_mut()
-        .graph
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(25.0))
         .expect("mutate named input");
 

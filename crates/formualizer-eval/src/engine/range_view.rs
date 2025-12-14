@@ -416,13 +416,17 @@ impl<'a> RangeView<'a> {
         Ok(())
     }
 
-    /// If Arrow-backed, return the underlying ArrowRangeView for vectorized fast paths.
-    pub fn as_arrow(&self) -> Option<&arrow_store::ArrowRangeView<'a>> {
+    pub fn try_arrow(&self) -> Option<&arrow_store::ArrowRangeView<'a>> {
         match &self.backing {
             RangeBacking::Arrow(av) => Some(av),
             RangeBacking::Hybrid { arrow, .. } => Some(arrow),
             _ => None,
         }
+    }
+
+    /// Arrow-backed view; panics if not Arrow/Hybrid.
+    pub fn as_arrow(&self) -> &arrow_store::ArrowRangeView<'a> {
+        self.try_arrow().expect("Arrow-backed RangeView expected")
     }
 
     /// Get a numeric value at a specific cell, with coercion.
