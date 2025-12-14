@@ -38,15 +38,15 @@ jobs:
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Install uv
-      run: curl -LsSf https://astral.sh/uv/install.sh | sh
+    - name: Set up uv
+      working-directory: bindings/python
+      uses: astral-sh/setup-uv@v7
 
     - name: Install Python dependencies
       working-directory: bindings/python
       run: |
         uv venv
-        uv pip install maturin
-        uv pip install -e ".[dev]"
+        uv pip install maturin -e ".[dev]"
 
     - name: Build Python extension
       working-directory: bindings/python
@@ -187,28 +187,36 @@ jobs:
         else:
           color = '#e05d44'
 
-        left = 'coverage'
+        left = 'Python Coverage (3.12)'
         right = f'{pct_rounded}%'
 
-        # Very simple fixed-size badge; good enough and stable.
-        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="110" height="20" role="img" aria-label="{left}: {right}">
+        # Simple, dependency-free badge.
+        # Widths are approximate character-based sizing.
+        char_px = 6
+        left_w = max(140, len(left) * char_px + 20)
+        right_w = max(50, len(right) * char_px + 20)
+        total_w = left_w + right_w
+        left_x = left_w / 2
+        right_x = left_w + (right_w / 2)
+
+        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{total_w}" height="20" role="img" aria-label="{left}: {right}">
           <linearGradient id="s" x2="0" y2="100%">
             <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
             <stop offset="1" stop-opacity=".1"/>
           </linearGradient>
           <clipPath id="r">
-            <rect width="110" height="20" rx="3" fill="#fff"/>
+            <rect width="{total_w}" height="20" rx="3" fill="#fff"/>
           </clipPath>
           <g clip-path="url(#r)">
-            <rect width="60" height="20" fill="#555"/>
-            <rect x="60" width="50" height="20" fill="{color}"/>
-            <rect width="110" height="20" fill="url(#s)"/>
+            <rect width="{left_w}" height="20" fill="#555"/>
+            <rect x="{left_w}" width="{right_w}" height="20" fill="{color}"/>
+            <rect width="{total_w}" height="20" fill="url(#s)"/>
           </g>
           <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
-            <text x="30" y="15" fill="#010101" fill-opacity=".3">{left}</text>
-            <text x="30" y="14">{left}</text>
-            <text x="85" y="15" fill="#010101" fill-opacity=".3">{right}</text>
-            <text x="85" y="14">{right}</text>
+            <text x="{left_x}" y="15" fill="#010101" fill-opacity=".3">{left}</text>
+            <text x="{left_x}" y="14">{left}</text>
+            <text x="{right_x}" y="15" fill="#010101" fill-opacity=".3">{right}</text>
+            <text x="{right_x}" y="14">{right}</text>
           </g>
         </svg>'''
 
