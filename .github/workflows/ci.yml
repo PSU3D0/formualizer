@@ -39,8 +39,10 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Set up uv
-      working-directory: bindings/python
       uses: astral-sh/setup-uv@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+        working-directory: bindings/python
 
     - name: Install Python dependencies
       working-directory: bindings/python
