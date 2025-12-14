@@ -1,20 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="110" height="20" role="img" aria-label="coverage: 31%">
+<svg xmlns="http://www.w3.org/2000/svg" width="202" height="20" role="img" aria-label="Python Coverage (3.12): 31%">
   <linearGradient id="s" x2="0" y2="100%">
     <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
     <stop offset="1" stop-opacity=".1"/>
   </linearGradient>
   <clipPath id="r">
-    <rect width="110" height="20" rx="3" fill="#fff"/>
+    <rect width="202" height="20" rx="3" fill="#fff"/>
   </clipPath>
   <g clip-path="url(#r)">
-    <rect width="60" height="20" fill="#555"/>
-    <rect x="60" width="50" height="20" fill="#e05d44"/>
-    <rect width="110" height="20" fill="url(#s)"/>
+    <rect width="152" height="20" fill="#555"/>
+    <rect x="152" width="50" height="20" fill="#e05d44"/>
+    <rect width="202" height="20" fill="url(#s)"/>
   </g>
   <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
-    <text x="30" y="15" fill="#010101" fill-opacity=".3">coverage</text>
-    <text x="30" y="14">coverage</text>
-    <text x="85" y="15" fill="#010101" fill-opacity=".3">31%</text>
-    <text x="85" y="14">31%</text>
+    <text x="76.0" y="15" fill="#010101" fill-opacity=".3">Python Coverage (3.12)</text>
+    <text x="76.0" y="14">Python Coverage (3.12)</text>
+    <text x="177.0" y="15" fill="#010101" fill-opacity=".3">31%</text>
+    <text x="177.0" y="14">31%</text>
   </g>
 </svg>
