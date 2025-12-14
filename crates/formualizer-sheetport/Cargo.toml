@@ -1,17 +1,21 @@
 [package]
 name = "formualizer-sheetport"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
+description = "SheetPort runtime: bind manifests to workbooks, validate IO, and run sessions deterministically"
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["sheetport", "spreadsheet", "excel", "engine", "io"]
+categories = ["data-structures"]
 
 [dependencies]
 sheetport-spec = { path = "../sheetport-spec", version = "0.3.0" }
-formualizer-workbook = { path = "../formualizer-workbook", version = "0.2.0", features = ["umya_integration"] }
-formualizer-common = { path = "../formualizer-common", version = "0.2.0" }
-formualizer-parse = { path = "../formualizer-parse", version = "0.2.0" }
-formualizer-eval = { path = "../formualizer-eval", version = "0.2.0" }
+formualizer-workbook = { path = "../formualizer-workbook", version = "0.3.0", features = ["umya_integration"] }
+formualizer-common = { path = "../formualizer-common", version = "1.0.0" }
+formualizer-parse = { path = "../formualizer-parse", version = "1.0.0" }
+formualizer-eval = { path = "../formualizer-eval", version = "0.3.0" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

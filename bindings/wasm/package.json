@@ -1,7 +1,7 @@
 {
   "name": "formualizer",
-  "version": "0.2.0",
-  "description": "WebAssembly bindings for Formualizer Excel formula parser",
+  "version": "0.3.0",
+  "description": "WebAssembly bindings for the Formualizer workbook + formula engine",
   "main": "pkg/formualizer_wasm.js",
   "module": "pkg/formualizer_wasm.js",
   "files": [

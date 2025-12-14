@@ -1,8 +1,8 @@
 [package]
 name = "formualizer-parse"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2024"
-description = "Excel/OpenFormula tokenizer, parser, and pretty-printer for the Formualizer spreadsheet engine"
+description = "High-performance Excel/OpenFormula tokenizer + parser with a stable AST surface"
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true

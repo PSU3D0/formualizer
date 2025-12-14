@@ -1,8 +1,8 @@
 [package]
 name = "formualizer-common"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2024"
-description = "Shared value, reference, function, and error types for the Formualizer spreadsheet engine"
+description = "Core value, reference, and error types shared across the Formualizer parser and engine"
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true

@@ -1,8 +1,8 @@
 [package]
 name = "formualizer-workbook"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
-description = "Workbook abstraction and IO adapters built on the Formualizer spreadsheet engine"
+description = "Ergonomic workbook API over the Formualizer engine (sheets, loaders, staging, undo/redo)"
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true

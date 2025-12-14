@@ -1,10 +1,10 @@
 [package]
 name = "formualizer-wasm"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Formualizer Contributors"]
 license = "MIT OR Apache-2.0"
-description = "WebAssembly bindings for Formualizer Excel formula parser"
+description = "WebAssembly bindings for the Formualizer workbook + formula engine"
 repository = "https://github.com/psu3d0/formualizer"
 categories = ["wasm", "parsing", "spreadsheet"]
 keywords = ["excel", "formula", "parser", "wasm", "webassembly"]

@@ -1,8 +1,8 @@
 [package]
 name = "formualizer-eval"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
-description = "Arrow-backed spreadsheet evaluation engine used by Formualizer"
+description = "High-performance Arrow-backed Excel formula engine with dependency graph and incremental recalculation"
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true

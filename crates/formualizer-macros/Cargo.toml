@@ -1,8 +1,8 @@
 [package]
 name = "formualizer-macros"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
-description = "Procedural macros that power Formualizer spreadsheet built-in implementations"
+description = "Proc macros for authoring Formualizer built-ins (caps, schemas, and validation)"
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true

@@ -5,6 +5,9 @@ repomix-output.xml
 !README.md
 !SPEC.md
 !CHANGELOG.md
+!docs/**
+opencode.json
 
 *coverage*
 *.xlsx
+test-wb/

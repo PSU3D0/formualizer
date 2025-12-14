@@ -2,9 +2,13 @@
 name = "sheetport-spec"
 version = "0.3.0"
 edition = "2024"
+description = "SheetPort spec: schema, validation, and fio-lint CLI for portable spreadsheet IO"
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["sheetport", "spreadsheet", "schema", "validation", "excel"]
+categories = ["data-structures"]
 
 [[bin]]
 name = "fio-lint"

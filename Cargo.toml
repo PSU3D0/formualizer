@@ -22,10 +22,10 @@ repository = "https://github.com/psu3d0/formualizer"
 
 [workspace.dependencies]
 
-formualizer-common = { version = "0.2.0", path = "crates/formualizer-common" }
-formualizer-macros = { version = "0.2.0", path = "crates/formualizer-macros" }
-formualizer-parse = { version = "0.2.0", path = "crates/formualizer-parse" }
-formualizer-eval = { version = "0.2.0", path = "crates/formualizer-eval" }
+formualizer-common = { version = "1.0.0", path = "crates/formualizer-common" }
+formualizer-macros = { version = "0.3.0", path = "crates/formualizer-macros" }
+formualizer-parse = { version = "1.0.0", path = "crates/formualizer-parse" }
+formualizer-eval = { version = "0.3.0", path = "crates/formualizer-eval" }
 
 chrono = "0.4.41"
 serde = "1.0.228"
