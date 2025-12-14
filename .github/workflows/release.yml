@@ -23,7 +23,7 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
 
-          python - <<'PY'
+          python - "${VERSION}" <<'PY'
           import json
           import sys
           import tomllib
@@ -62,7 +62,6 @@ jobs:
 
           print(f"OK: tag v{tag_version} matches product manifests")
           PY
-          "${VERSION}"
 
   publish-crates-io:
     needs: verify
