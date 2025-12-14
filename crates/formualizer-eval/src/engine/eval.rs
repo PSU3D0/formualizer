@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct Engine<R> {
-    pub graph: DependencyGraph,
+    pub(crate) graph: DependencyGraph,
     resolver: R,
     pub config: EvalConfig,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
@@ -308,6 +308,134 @@ where
 
     pub fn sheet_id(&self, name: &str) -> Option<SheetId> {
         self.graph.sheet_id(name)
+    }
+
+    pub fn sheet_id_mut(&mut self, name: &str) -> SheetId {
+        self.add_sheet(name)
+            .unwrap_or_else(|_| self.graph.sheet_id_mut(name))
+    }
+
+    pub fn sheet_name(&self, id: SheetId) -> &str {
+        self.graph.sheet_name(id)
+    }
+
+    pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
+        let id = self.graph.add_sheet(name)?;
+        self.ensure_arrow_sheet(name);
+        Ok(id)
+    }
+
+    fn ensure_arrow_sheet(&mut self, name: &str) {
+        if self.arrow_sheets.sheet(name).is_some() {
+            return;
+        }
+        self.arrow_sheets
+            .sheets
+            .push(crate::arrow_store::ArrowSheet {
+                name: std::sync::Arc::<str>::from(name),
+                columns: Vec::new(),
+                nrows: 0,
+                chunk_starts: Vec::new(),
+            });
+    }
+
+    pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
+        let name = self.graph.sheet_name(sheet_id).to_string();
+        self.graph.remove_sheet(sheet_id)?;
+        self.arrow_sheets.sheets.retain(|s| s.name.as_ref() != name);
+        Ok(())
+    }
+
+    pub fn rename_sheet(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
+        let old_name = self.graph.sheet_name(sheet_id).to_string();
+        self.graph.rename_sheet(sheet_id, new_name)?;
+        self.ensure_arrow_sheet(&old_name);
+        if let Some(asheet) = self.arrow_sheets.sheet_mut(&old_name) {
+            asheet.name = std::sync::Arc::<str>::from(new_name);
+        }
+        Ok(())
+    }
+
+    pub fn named_ranges_iter(
+        &self,
+    ) -> impl Iterator<Item = (&String, &crate::engine::named_range::NamedRange)> {
+        self.graph.named_ranges_iter()
+    }
+
+    pub fn sheet_named_ranges_iter(
+        &self,
+    ) -> impl Iterator<Item = (&(SheetId, String), &crate::engine::named_range::NamedRange)> {
+        self.graph.sheet_named_ranges_iter()
+    }
+
+    pub fn resolve_name_entry(
+        &self,
+        name: &str,
+        current_sheet: SheetId,
+    ) -> Option<&crate::engine::named_range::NamedRange> {
+        self.graph.resolve_name_entry(name, current_sheet)
+    }
+
+    pub fn define_name(
+        &mut self,
+        name: &str,
+        definition: NamedDefinition,
+        scope: NameScope,
+    ) -> Result<(), ExcelError> {
+        self.graph.define_name(name, definition, scope)
+    }
+
+    pub fn vertex_value(&self, vertex: VertexId) -> Option<LiteralValue> {
+        self.graph.get_value(vertex)
+    }
+
+    pub fn graph_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
+        self.graph.get_cell_value(sheet, row, col)
+    }
+
+    pub fn vertex_for_cell(&self, cell: &CellRef) -> Option<VertexId> {
+        self.graph.get_vertex_for_cell(cell)
+    }
+
+    pub fn evaluation_vertices(&self) -> Vec<VertexId> {
+        self.graph.get_evaluation_vertices()
+    }
+
+    pub fn set_first_load_assume_new(&mut self, enabled: bool) {
+        self.graph.set_first_load_assume_new(enabled);
+    }
+
+    pub fn reset_ensure_touched(&mut self) {
+        self.graph.reset_ensure_touched();
+    }
+
+    pub fn finalize_sheet_index(&mut self, sheet: &str) {
+        self.graph.finalize_sheet_index(sheet);
+    }
+
+    pub fn edit_with_logger<T>(
+        &mut self,
+        log: &mut crate::engine::ChangeLog,
+        f: impl FnOnce(&mut crate::engine::VertexEditor) -> T,
+    ) -> T {
+        let mut editor = crate::engine::VertexEditor::with_logger(&mut self.graph, log);
+        f(&mut editor)
+    }
+
+    pub fn undo_logged(
+        &mut self,
+        undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
+        log: &mut crate::engine::ChangeLog,
+    ) -> Result<(), crate::engine::EditorError> {
+        undo.undo(&mut self.graph, log)
+    }
+
+    pub fn redo_logged(
+        &mut self,
+        undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
+        log: &mut crate::engine::ChangeLog,
+    ) -> Result<(), crate::engine::EditorError> {
+        undo.redo(&mut self.graph, log)
     }
 
     pub fn set_default_sheet_by_name(&mut self, name: &str) {

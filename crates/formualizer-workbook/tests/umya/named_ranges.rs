@@ -120,12 +120,11 @@ fn umya_named_range_loader_evaluates() {
     assert_eq!(addr.sheet, "Sheet1");
     assert_eq!(addr.start_row, 1);
     assert_eq!(addr.start_col, 1);
-    let sheet_id = workbook.engine().graph.sheet_id("Sheet1").unwrap();
+    let sheet_id = workbook.engine().sheet_id("Sheet1").unwrap();
     assert!(
         workbook
             .engine()
-            .graph
-            .resolve_name("InputValue", sheet_id)
+            .resolve_name_entry("InputValue", sheet_id)
             .is_some()
     );
 
@@ -161,31 +160,26 @@ fn umya_named_range_set_value_recalc() {
     workbook
         .set_value("Sheet1", 1, 1, LiteralValue::Number(25.0))
         .expect("set named input");
-    let sheet_id = workbook.engine().graph.sheet_id("Sheet1").unwrap();
+    let sheet_id = workbook.engine().sheet_id("Sheet1").unwrap();
     assert_eq!(
-        workbook
-            .engine()
-            .graph
-            .get_cell_value("Sheet1", 1, 1)
-            .unwrap(),
+        workbook.engine().get_cell_value("Sheet1", 1, 1).unwrap(),
         LiteralValue::Number(25.0)
     );
 
     let name_entry = workbook
         .engine()
-        .graph
         .resolve_name_entry("InputValue", sheet_id)
         .unwrap();
     let name_vertex = name_entry.vertex;
 
-    let pending = workbook.engine().graph.get_evaluation_vertices();
+    let pending = workbook.engine().evaluation_vertices();
     assert!(
         pending.contains(&name_vertex),
         "named range vertex should be marked dirty after input mutation"
     );
 
     workbook.evaluate_all().expect("re-evaluate workbook");
-    let name_val_after = workbook.engine().graph.get_value(name_vertex);
+    let name_val_after = workbook.engine().vertex_value(name_vertex);
     assert!(matches!(
         name_val_after,
         Some(LiteralValue::Number(n)) if (n - 25.0).abs() < 1e-9

@@ -146,8 +146,8 @@ impl Workbook {
     }
     pub fn undo(&mut self) -> Result<(), IoError> {
         if self.enable_changelog {
-            self.undo
-                .undo(&mut self.engine.graph, &mut self.log)
+            self.engine
+                .undo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
             self.resync_all_overlays();
         }
@@ -155,8 +155,8 @@ impl Workbook {
     }
     pub fn redo(&mut self) -> Result<(), IoError> {
         if self.enable_changelog {
-            self.undo
-                .redo(&mut self.engine.graph, &mut self.log)
+            self.engine
+                .redo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
             self.resync_all_overlays();
         }
@@ -186,8 +186,7 @@ impl Workbook {
                     let c = (c0 as u32) + 1;
                     let v = self
                         .engine
-                        .graph
-                        .get_cell_value(sheet, r, c)
+                        .graph_cell_value(sheet, r, c)
                         .unwrap_or(LiteralValue::Empty);
                     self.mirror_value_to_overlay(sheet, r, c, &v);
                 }
@@ -305,15 +304,15 @@ impl Workbook {
             .map(|s| (s.nrows, s.columns.len() as u32))
     }
     pub fn has_sheet(&self, name: &str) -> bool {
-        self.engine.graph.sheet_id(name).is_some()
+        self.engine.sheet_id(name).is_some()
     }
     pub fn add_sheet(&mut self, name: &str) {
-        let _ = self.engine.graph.add_sheet(name);
+        let _ = self.engine.add_sheet(name);
         self.ensure_arrow_sheet_capacity(name, 0, 0);
     }
     pub fn delete_sheet(&mut self, name: &str) {
-        if let Some(id) = self.engine.graph.sheet_id(name) {
-            let _ = self.engine.graph.remove_sheet(id);
+        if let Some(id) = self.engine.sheet_id(name) {
+            let _ = self.engine.remove_sheet(id);
         }
         // Remove from Arrow store as well
         self.engine
@@ -322,8 +321,8 @@ impl Workbook {
             .retain(|s| s.name.as_ref() != name);
     }
     pub fn rename_sheet(&mut self, old: &str, new: &str) {
-        if let Some(id) = self.engine.graph.sheet_id(old) {
-            let _ = self.engine.graph.rename_sheet(id, new);
+        if let Some(id) = self.engine.sheet_id(old) {
+            let _ = self.engine.rename_sheet(id, new);
         }
         if let Some(asheet) = self.engine.sheet_store_mut().sheet_mut(old) {
             asheet.name = std::sync::Arc::<str>::from(new);
@@ -343,20 +342,15 @@ impl Workbook {
             // Use VertexEditor with logging for graph, then mirror overlay and mark edited
             let sheet_id = self
                 .engine
-                .graph
                 .sheet_id(sheet)
-                .unwrap_or_else(|| self.engine.graph.add_sheet(sheet).unwrap());
+                .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
             let cell = formualizer_eval::reference::CellRef::new(
                 sheet_id,
                 formualizer_eval::reference::Coord::from_excel(row, col, true, true),
             );
-            {
-                let mut editor = formualizer_eval::engine::VertexEditor::with_logger(
-                    &mut self.engine.graph,
-                    &mut self.log,
-                );
+            self.engine.edit_with_logger(&mut self.log, |editor| {
                 editor.set_cell_value(cell, value.clone());
-            }
+            });
             self.mirror_value_to_overlay(sheet, row, col, &value);
             self.engine.mark_data_edited();
             Ok(())
@@ -390,20 +384,15 @@ impl Workbook {
             if self.enable_changelog {
                 let sheet_id = self
                     .engine
-                    .graph
                     .sheet_id(sheet)
-                    .unwrap_or_else(|| self.engine.graph.add_sheet(sheet).unwrap());
+                    .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
                 let cell = formualizer_eval::reference::CellRef::new(
                     sheet_id,
                     formualizer_eval::reference::Coord::from_excel(row, col, true, true),
                 );
-                {
-                    let mut editor = formualizer_eval::engine::VertexEditor::with_logger(
-                        &mut self.engine.graph,
-                        &mut self.log,
-                    );
+                self.engine.edit_with_logger(&mut self.log, |editor| {
                     editor.set_cell_formula(cell, ast);
-                }
+                });
                 self.engine.mark_data_edited();
                 Ok(())
             } else {
@@ -453,7 +442,6 @@ impl Workbook {
                 for c in addr.start_col..=addr.end_col {
                     row.push(
                         self.engine
-                            .graph
                             .get_cell_value(&addr.sheet, r, c)
                             .unwrap_or(LiteralValue::Empty),
                     );
@@ -472,41 +460,42 @@ impl Workbook {
         if self.enable_changelog {
             let sheet_id = self
                 .engine
-                .graph
                 .sheet_id(sheet)
-                .unwrap_or_else(|| self.engine.graph.add_sheet(sheet).unwrap());
+                .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
+            let defer_graph_building = self.engine.config.defer_graph_building;
+
             let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
             let mut staged_forms: Vec<(u32, u32, String)> = Vec::new();
-            {
-                let mut editor = formualizer_eval::engine::VertexEditor::with_logger(
-                    &mut self.engine.graph,
-                    &mut self.log,
-                );
-                for ((r, c), d) in cells.into_iter() {
-                    let cell = formualizer_eval::reference::CellRef::new(
-                        sheet_id,
-                        formualizer_eval::reference::Coord::from_excel(r, c, true, true),
-                    );
-                    if let Some(v) = d.value.clone() {
-                        editor.set_cell_value(cell, v.clone());
-                        overlay_ops.push((r, c, v));
-                    }
-                    if let Some(f) = d.formula.as_ref() {
-                        if self.engine.config.defer_graph_building {
-                            staged_forms.push((r, c, f.clone()));
-                        } else {
-                            let with_eq = if f.starts_with('=') {
-                                f.clone()
+
+            self.engine
+                .edit_with_logger(&mut self.log, |editor| -> Result<(), IoError> {
+                    for ((r, c), d) in cells.into_iter() {
+                        let cell = formualizer_eval::reference::CellRef::new(
+                            sheet_id,
+                            formualizer_eval::reference::Coord::from_excel(r, c, true, true),
+                        );
+                        if let Some(v) = d.value.clone() {
+                            editor.set_cell_value(cell, v.clone());
+                            overlay_ops.push((r, c, v));
+                        }
+                        if let Some(f) = d.formula.as_ref() {
+                            if defer_graph_building {
+                                staged_forms.push((r, c, f.clone()));
                             } else {
-                                format!("={f}")
-                            };
-                            let ast = formualizer_parse::parser::parse(&with_eq)
-                                .map_err(|e| IoError::from_backend("parser", e))?;
-                            editor.set_cell_formula(cell, ast);
+                                let with_eq = if f.starts_with('=') {
+                                    f.clone()
+                                } else {
+                                    format!("={f}")
+                                };
+                                let ast = formualizer_parse::parser::parse(&with_eq)
+                                    .map_err(|e| IoError::from_backend("parser", e))?;
+                                editor.set_cell_formula(cell, ast);
+                            }
                         }
                     }
-                }
-            }
+                    Ok(())
+                })?;
+
             for (r, c, v) in overlay_ops {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
             }
@@ -554,15 +543,11 @@ impl Workbook {
         if self.enable_changelog {
             let sheet_id = self
                 .engine
-                .graph
                 .sheet_id(sheet)
-                .unwrap_or_else(|| self.engine.graph.add_sheet(sheet).unwrap());
+                .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
             let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
-            {
-                let mut editor = formualizer_eval::engine::VertexEditor::with_logger(
-                    &mut self.engine.graph,
-                    &mut self.log,
-                );
+
+            self.engine.edit_with_logger(&mut self.log, |editor| {
                 for (ri, rvals) in rows.iter().enumerate() {
                     let r = start_row + ri as u32;
                     for (ci, v) in rvals.iter().enumerate() {
@@ -575,7 +560,8 @@ impl Workbook {
                         overlay_ops.push((r, c, v.clone()));
                     }
                 }
-            }
+            });
+
             for (r, c, v) in overlay_ops {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
             }
@@ -624,33 +610,32 @@ impl Workbook {
         } else if self.enable_changelog {
             let sheet_id = self
                 .engine
-                .graph
                 .sheet_id(sheet)
-                .unwrap_or_else(|| self.engine.graph.add_sheet(sheet).unwrap());
-            {
-                let mut editor = formualizer_eval::engine::VertexEditor::with_logger(
-                    &mut self.engine.graph,
-                    &mut self.log,
-                );
-                for (ri, rforms) in rows.iter().enumerate() {
-                    let r = start_row + ri as u32;
-                    for (ci, f) in rforms.iter().enumerate() {
-                        let c = start_col + ci as u32;
-                        let cell = formualizer_eval::reference::CellRef::new(
-                            sheet_id,
-                            formualizer_eval::reference::Coord::from_excel(r, c, true, true),
-                        );
-                        let with_eq = if f.starts_with('=') {
-                            f.clone()
-                        } else {
-                            format!("={f}")
-                        };
-                        let ast = formualizer_parse::parser::parse(&with_eq)
-                            .map_err(|e| IoError::from_backend("parser", e))?;
-                        editor.set_cell_formula(cell, ast);
+                .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
+
+            self.engine
+                .edit_with_logger(&mut self.log, |editor| -> Result<(), IoError> {
+                    for (ri, rforms) in rows.iter().enumerate() {
+                        let r = start_row + ri as u32;
+                        for (ci, f) in rforms.iter().enumerate() {
+                            let c = start_col + ci as u32;
+                            let cell = formualizer_eval::reference::CellRef::new(
+                                sheet_id,
+                                formualizer_eval::reference::Coord::from_excel(r, c, true, true),
+                            );
+                            let with_eq = if f.starts_with('=') {
+                                f.clone()
+                            } else {
+                                format!("={f}")
+                            };
+                            let ast = formualizer_parse::parser::parse(&with_eq)
+                                .map_err(|e| IoError::from_backend("parser", e))?;
+                            editor.set_cell_formula(cell, ast);
+                        }
                     }
-                }
-            }
+                    Ok(())
+                })?;
+
             self.engine.mark_data_edited();
             Ok(())
         } else {
@@ -753,7 +738,6 @@ impl Workbook {
     pub fn named_range_address(&self, name: &str) -> Option<RangeAddress> {
         if let Some((_, named)) = self
             .engine
-            .graph
             .named_ranges_iter()
             .find(|(n, _)| n.as_str() == name)
         {
@@ -761,7 +745,7 @@ impl Workbook {
         }
 
         let mut resolved: Option<RangeAddress> = None;
-        for ((_sheet_id, candidate), named) in self.engine.graph.sheet_named_ranges_iter() {
+        for ((_sheet_id, candidate), named) in self.engine.sheet_named_ranges_iter() {
             if candidate == name
                 && let Some(address) = self.named_definition_to_address(&named.definition)
             {
@@ -777,7 +761,7 @@ impl Workbook {
     fn named_definition_to_address(&self, definition: &NamedDefinition) -> Option<RangeAddress> {
         match definition {
             NamedDefinition::Cell(cell) => {
-                let sheet = self.engine.graph.sheet_name(cell.sheet_id).to_string();
+                let sheet = self.engine.sheet_name(cell.sheet_id).to_string();
                 let row = cell.coord.row() + 1;
                 let col = cell.coord.col() + 1;
                 RangeAddress::new(sheet, row, col, row, col).ok()
@@ -786,11 +770,7 @@ impl Workbook {
                 if range.start.sheet_id != range.end.sheet_id {
                     return None;
                 }
-                let sheet = self
-                    .engine
-                    .graph
-                    .sheet_name(range.start.sheet_id)
-                    .to_string();
+                let sheet = self.engine.sheet_name(range.start.sheet_id).to_string();
                 let start_row = range.start.coord.row() + 1;
                 let start_col = range.start.coord.col() + 1;
                 let end_row = range.end.coord.row() + 1;

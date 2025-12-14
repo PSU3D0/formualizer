@@ -8,7 +8,7 @@ fn named_range_formula_recalculates_and_marks_dirty() {
     let mut workbook = Workbook::new();
     workbook.add_sheet("Sheet1");
 
-    let sheet_id = workbook.engine_mut().graph.sheet_id_mut("Sheet1");
+    let sheet_id = workbook.engine_mut().sheet_id_mut("Sheet1");
 
     workbook
         .engine_mut()
@@ -18,7 +18,6 @@ fn named_range_formula_recalculates_and_marks_dirty() {
     let input_ref = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
     workbook
         .engine_mut()
-        .graph
         .define_name(
             "InputValue",
             NamedDefinition::Cell(input_ref),
@@ -29,7 +28,6 @@ fn named_range_formula_recalculates_and_marks_dirty() {
     let formula_ast = formualizer_parse::parser::parse("=InputValue*2").expect("parse formula");
     workbook
         .engine_mut()
-        .graph
         .set_cell_formula("Sheet1", 1, 2, formula_ast)
         .expect("set formula");
 
@@ -37,7 +35,6 @@ fn named_range_formula_recalculates_and_marks_dirty() {
 
     let initial_output = workbook
         .engine()
-        .graph
         .get_cell_value("Sheet1", 1, 2)
         .expect("output cell present");
     assert!(
@@ -47,17 +44,15 @@ fn named_range_formula_recalculates_and_marks_dirty() {
 
     let name_entry = workbook
         .engine()
-        .graph
         .resolve_name_entry("InputValue", sheet_id)
         .expect("named range entry");
     let name_vertex = name_entry.vertex;
     let formula_vertex = workbook
         .engine()
-        .graph
-        .get_vertex_for_cell(&CellRef::new(sheet_id, Coord::new(0, 1, true, true)))
+        .vertex_for_cell(&CellRef::new(sheet_id, Coord::new(0, 1, true, true)))
         .expect("formula vertex");
 
-    let named_value = workbook.engine().graph.get_value(name_vertex);
+    let named_value = workbook.engine().vertex_value(name_vertex);
     assert!(
         matches!(named_value, Some(LiteralValue::Number(n)) if (n - 10.0).abs() < 1e-9),
         "expected named range value 10, got {named_value:?}"
@@ -68,7 +63,7 @@ fn named_range_formula_recalculates_and_marks_dirty() {
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(25.0))
         .expect("mutate named input");
 
-    let pending = workbook.engine().graph.get_evaluation_vertices();
+    let pending = workbook.engine().evaluation_vertices();
     assert!(
         pending.contains(&name_vertex),
         "named range vertex should be dirtied after dependency edit"
@@ -80,7 +75,7 @@ fn named_range_formula_recalculates_and_marks_dirty() {
 
     workbook.evaluate_all().expect("re-evaluation");
 
-    let updated_name_value = workbook.engine().graph.get_value(name_vertex);
+    let updated_name_value = workbook.engine().vertex_value(name_vertex);
     assert!(
         matches!(updated_name_value, Some(LiteralValue::Number(n)) if (n - 25.0).abs() < 1e-9),
         "expected named range to reflect updated value, got {updated_name_value:?}"
@@ -88,7 +83,6 @@ fn named_range_formula_recalculates_and_marks_dirty() {
 
     let updated_output = workbook
         .engine()
-        .graph
         .get_cell_value("Sheet1", 1, 2)
         .expect("output cell after mutation");
     assert!(

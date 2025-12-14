@@ -40,28 +40,28 @@ mod json_stream {
         let mut engine = create_test_engine();
         adapter.stream_into_engine(&mut engine).unwrap();
 
-        let sheet_id = engine.graph.sheet_id("Sheet1").expect("sheet present");
+        let sheet_id = engine.sheet_id("Sheet1").expect("sheet present");
         let global = engine
-            .graph
-            .resolve_name("GlobalName", sheet_id)
+            .resolve_name_entry("GlobalName", sheet_id)
+            .map(|nr| &nr.definition)
             .expect("global name registered");
 
         match global {
             NamedDefinition::Cell(cell) => {
-                assert_eq!(engine.graph.sheet_name(cell.sheet_id), "Sheet1");
+                assert_eq!(engine.sheet_name(cell.sheet_id), "Sheet1");
                 assert_eq!(format!("{}", cell.coord), "$A$1");
             }
             other => panic!("expected cell definition, got {other:?}"),
         }
 
         let local = engine
-            .graph
-            .resolve_name("LocalName", sheet_id)
+            .resolve_name_entry("LocalName", sheet_id)
+            .map(|nr| &nr.definition)
             .expect("local name registered");
 
         match local {
             NamedDefinition::Range(range) => {
-                assert_eq!(engine.graph.sheet_name(range.start.sheet_id), "Sheet1");
+                assert_eq!(engine.sheet_name(range.start.sheet_id), "Sheet1");
                 assert_eq!(format!("{}", range.start.coord), "$A$2");
                 assert_eq!(format!("{}", range.end.coord), "$B$2");
             }

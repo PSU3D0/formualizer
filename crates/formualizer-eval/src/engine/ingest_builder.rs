@@ -55,7 +55,10 @@ impl<'g> BulkIngestBuilder<'g> {
     }
 
     pub fn add_sheet(&mut self, name: &str) -> SheetId {
-        let id = self.g.sheet_id_mut(name);
+        let id = self
+            .g
+            .add_sheet(name)
+            .unwrap_or_else(|_| self.g.sheet_id_mut(name));
         self.sheets
             .entry(id)
             .or_insert_with(|| SheetStage::new(name.to_string(), id));

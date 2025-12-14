@@ -472,7 +472,6 @@ where
         // Ensure all sheets exist in the graph first
         for name in self.data.sheets.keys() {
             engine
-                .graph
                 .add_sheet(name)
                 .map_err(|e| IoError::from_backend("json", e))?;
         }
@@ -584,7 +583,7 @@ where
                         continue;
                     }
 
-                    let Some(sheet_id) = engine.graph.sheet_id(&named.address.sheet) else {
+                    let Some(sheet_id) = engine.sheet_id(&named.address.sheet) else {
                         continue;
                     };
 
@@ -612,17 +611,17 @@ where
                         crate::traits::NamedRangeScope::Sheet => NameScope::Sheet(sheet_id),
                     };
 
-                    engine.graph.define_name(&named.name, definition, scope)?;
+                    engine.define_name(&named.name, definition, scope)?;
                 }
             }
         }
 
         // Finalize sheet indexes after load
         for name in self.data.sheets.keys() {
-            engine.graph.finalize_sheet_index(name);
+            engine.finalize_sheet_index(name);
         }
-        engine.graph.set_first_load_assume_new(false);
-        engine.graph.reset_ensure_touched();
+        engine.set_first_load_assume_new(false);
+        engine.reset_ensure_touched();
         Ok(())
     }
 }

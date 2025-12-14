@@ -32,8 +32,7 @@ impl<'e, R: EvaluationContext> ArrowBulkIngestBuilder<'e, R> {
         let ib = IngestBuilder::new(name, ncols, chunk_rows, self.engine.config.date_system);
         self.builders.insert(name.to_string(), ib);
         self.rows.insert(name.to_string(), 0);
-        // Ensure the graph knows about the sheet name now for consistent IDs/references
-        self.engine.graph.sheet_id_mut(name);
+        self.engine.sheet_id_mut(name);
     }
 
     /// Append a single row of values for the given sheet (0-based col order, length == ncols).

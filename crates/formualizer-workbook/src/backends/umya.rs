@@ -528,7 +528,7 @@ where
             .sheet_names()
             .map_err(|e| IoError::from_backend("umya", e))?;
         for n in &names {
-            engine.graph.add_sheet(n).map_err(IoError::Engine)?;
+            engine.add_sheet(n).map_err(IoError::Engine)?;
         }
 
         let prev_index_mode = engine.config.sheet_index_mode;
@@ -536,8 +536,8 @@ where
         let prev_range_limit = engine.config.range_expansion_limit;
         engine.config.range_expansion_limit = 0;
 
-        engine.graph.set_first_load_assume_new(true);
-        engine.graph.reset_ensure_touched();
+        engine.set_first_load_assume_new(true);
+        engine.reset_ensure_touched();
 
         let chunk_rows: usize = 32 * 1024;
 
@@ -612,7 +612,7 @@ where
                 let _ = builder.finish();
             }
 
-            let Some(sheet_id) = engine.graph.sheet_id(n) else {
+            let Some(sheet_id) = engine.sheet_id(n) else {
                 continue;
             };
             for named in &sheet_data.named_ranges {
@@ -642,16 +642,16 @@ where
                     crate::traits::NamedRangeScope::Sheet => NameScope::Sheet(sheet_id),
                 };
 
-                engine.graph.define_name(&named.name, definition, scope)?;
+                engine.define_name(&named.name, definition, scope)?;
             }
         }
 
         for n in &names {
-            engine.graph.finalize_sheet_index(n);
+            engine.finalize_sheet_index(n);
         }
 
-        engine.graph.set_first_load_assume_new(false);
-        engine.graph.reset_ensure_touched();
+        engine.set_first_load_assume_new(false);
+        engine.reset_ensure_touched();
         engine.set_sheet_index_mode(prev_index_mode);
         engine.config.range_expansion_limit = prev_range_limit;
         Ok(())

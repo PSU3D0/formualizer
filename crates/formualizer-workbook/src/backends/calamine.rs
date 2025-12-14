@@ -266,7 +266,6 @@ where
             #[cfg(feature = "tracing")]
             let _span_sheet = tracing::info_span!("io_load_sheet", sheet = n.as_str()).entered();
             engine
-                .graph
                 .add_sheet(n.as_str())
                 .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
         }
@@ -278,8 +277,8 @@ where
 
         // Use builders: Arrow for base values; graph builder for formulas/edges
         // Hint the graph to assume new cells during this initial ingest
-        engine.graph.set_first_load_assume_new(true);
-        engine.graph.reset_ensure_touched();
+        engine.set_first_load_assume_new(true);
+        engine.reset_ensure_touched();
         let mut total_values = 0usize;
         let mut total_formulas = 0usize;
         // Route formula ingest through the engine's bulk ingest builder for optimal edge construction
@@ -596,11 +595,11 @@ where
         }
         // Build sheet indexes after load to accelerate used-region queries
         for n in &names {
-            engine.graph.finalize_sheet_index(n);
+            engine.finalize_sheet_index(n);
         }
-        // Restore config after load
-        engine.graph.set_first_load_assume_new(false);
-        engine.graph.reset_ensure_touched();
+
+        engine.set_first_load_assume_new(false);
+        engine.reset_ensure_touched();
         engine.set_sheet_index_mode(prev_index_mode);
         engine.config.range_expansion_limit = prev_range_limit;
         if debug {

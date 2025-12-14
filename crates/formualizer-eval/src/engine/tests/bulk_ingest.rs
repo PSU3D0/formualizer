@@ -14,19 +14,43 @@ fn bulk_ingest_then_eval_then_edit() {
     let cfg = EvalConfig::default();
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
 
-    // Stage values and formulas for a medium sheet
+    // Ingest base values via Arrow store
+    {
+        let mut aib = engine.begin_bulk_ingest_arrow();
+        aib.add_sheet("Sheet1", 3, 1024);
+        aib.append_row(
+            "Sheet1",
+            &[
+                LiteralValue::Number(10.0),
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+            ],
+        )
+        .unwrap();
+        aib.append_row(
+            "Sheet1",
+            &[
+                LiteralValue::Number(20.0),
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+            ],
+        )
+        .unwrap();
+        aib.append_row(
+            "Sheet1",
+            &[
+                LiteralValue::Number(30.0),
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+            ],
+        )
+        .unwrap();
+        aib.finish().unwrap();
+    }
+
+    // Stage formulas via graph bulk ingest
     let mut builder = engine.begin_bulk_ingest();
     let sheet = builder.add_sheet("Sheet1");
-
-    // Values: A1=10, A2=20, A3=30
-    builder.add_values(
-        sheet,
-        vec![
-            (1, 1, LiteralValue::Number(10.0)),
-            (2, 1, LiteralValue::Number(20.0)),
-            (3, 1, LiteralValue::Number(30.0)),
-        ],
-    );
 
     // Formulas: B1 = A1*2, B2 = A2 + A3, C1 = SUM(A1:A3)
     builder.add_formulas(
