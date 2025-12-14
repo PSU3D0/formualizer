@@ -3,6 +3,7 @@
 An open‑source, embeddable spreadsheet engine. Formualizer parses, evaluates, and mutates Excel‑style workbooks at speed — with a modern Rust core, Arrow‑powered storage, deferred/demand evaluation, and first‑class Python and WASM bindings.
 
 [![CI](https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg)](https://github.com/psu3d0/formualizer/actions/workflows/ci.yml)
+![Coverage](https://raw.githubusercontent.com/psu3d0/formualizer/badges/coverage.svg)
 
 ## Overview
 
