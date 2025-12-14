@@ -222,18 +222,27 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         set -euo pipefail
+        set -x
 
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-        if git show-ref --verify --quiet refs/remotes/origin/badges; then
-          git checkout -B badges origin/badges
+        mkdir -p /tmp/fz-badges
+        cp coverage.svg /tmp/fz-badges/coverage.svg
+
+        # actions/checkout does not fetch origin/badges, so detect via ls-remote.
+        if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
+          git fetch --depth=1 origin badges
+          git checkout -B badges FETCH_HEAD
         else
           git checkout --orphan badges
-          git rm -rf . || true
         fi
 
-        cp coverage.svg ./coverage.svg
+        # Keep the branch as a single-file badge branch.
+        git rm -rf . >/dev/null 2>&1 || true
+        git clean -fdx
+
+        cp /tmp/fz-badges/coverage.svg ./coverage.svg
         git add coverage.svg
         git commit -m "ci: update coverage badge" || exit 0
-        git push origin badges
+        git push origin badges --force-with-lease
