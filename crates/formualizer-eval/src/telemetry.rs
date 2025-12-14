@@ -7,6 +7,7 @@ use std::sync::Mutex;
 /// Initialize tracing subscriber based on env vars.
 /// - FZ_TRACING_CHROME=/path/to/trace.json (requires feature `tracing_chrome`)
 /// - FZ_TRACING=1 enables a fmt subscriber with optional FZ_TRACING_FILTER (e.g., "info,formualizer_eval=debug").
+///
 /// No-op if already initialized or when feature is disabled.
 #[cfg(feature = "tracing")]
 pub fn init_tracing_from_env() -> bool {

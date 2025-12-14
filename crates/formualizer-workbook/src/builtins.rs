@@ -56,13 +56,11 @@ pub fn register_function_dynamic(f: Arc<dyn formualizer_eval::function::Function
 /// Load IO-specific builtin functions (behind feature flag). Returns how many were added.
 #[cfg(feature = "io_builtins")]
 pub fn load_io_builtins() -> usize {
-    let added = 0usize;
-
     // Example placeholders for IO builtins (to be implemented):
     // if function_registry::register_function(Arc::new(crate::io_builtins::ImportRangeFn)) { added += 1; }
     // if cfg!(feature = "webservice") {
     //     if function_registry::register_function(Arc::new(crate::io_builtins::WebServiceFn)) { added += 1; }
     // }
 
-    added
+    0usize
 }

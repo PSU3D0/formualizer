@@ -113,8 +113,10 @@ impl Workbook {
         }
     }
     pub fn new() -> Self {
-        let mut cfg = formualizer_eval::engine::EvalConfig::default();
-        cfg.defer_graph_building = true;
+        let cfg = formualizer_eval::engine::EvalConfig {
+            defer_graph_building: true,
+            ..Default::default()
+        };
         Self::new_with_config(cfg)
     }
 
@@ -713,13 +715,13 @@ impl Workbook {
 
         let mut resolved: Option<RangeAddress> = None;
         for ((_sheet_id, candidate), named) in self.engine.graph.sheet_named_ranges_iter() {
-            if candidate == name {
-                if let Some(address) = self.named_definition_to_address(&named.definition) {
-                    if resolved.is_some() {
-                        return None; // ambiguous sheet-scoped name
-                    }
-                    resolved = Some(address);
+            if candidate == name
+                && let Some(address) = self.named_definition_to_address(&named.definition)
+            {
+                if resolved.is_some() {
+                    return None; // ambiguous sheet-scoped name
                 }
+                resolved = Some(address);
             }
         }
         resolved

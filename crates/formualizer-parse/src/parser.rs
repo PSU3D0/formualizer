@@ -2359,7 +2359,7 @@ impl<'a> SpanParser<'a> {
         func_span: crate::tokenizer::TokenSpan,
     ) -> Result<ASTNode, ParserError> {
         let func_value = self.span_value(&func_span);
-        if func_value.len() < 1 {
+        if func_value.is_empty() {
             return Err(ParserError {
                 message: "Invalid function token".to_string(),
                 position: Some(self.position),

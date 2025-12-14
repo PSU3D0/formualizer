@@ -70,9 +70,10 @@ impl From<A1ParseError> for SheetAddressError {
 }
 
 /// Sheet locator that can carry either a resolved id, a name, or the current sheet.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub enum SheetLocator<'a> {
     /// Reference is scoped to the sheet containing the formula.
+    #[default]
     Current,
     /// Resolved sheet id.
     Id(SheetId),
@@ -133,12 +134,6 @@ impl<'a> SheetLocator<'a> {
             SheetLocator::Id(id) => SheetLocator::Id(id),
             SheetLocator::Name(name) => SheetLocator::Name(Cow::Owned(name.into_owned())),
         }
-    }
-}
-
-impl<'a> Default for SheetLocator<'a> {
-    fn default() -> Self {
-        SheetLocator::Current
     }
 }
 
@@ -281,6 +276,7 @@ impl<'a> SheetRangeRef<'a> {
     }
 
     /// Construct from Excel 1-based bounds and anchor flags.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_excel_rect(
         sheet: SheetLocator<'a>,
         start_row: u32,
@@ -307,15 +303,15 @@ impl<'a> SheetRangeRef<'a> {
         end_row: Option<AxisBound>,
         end_col: Option<AxisBound>,
     ) -> Result<Self, SheetAddressError> {
-        if let (Some(sr), Some(er)) = (start_row, end_row) {
-            if sr.index > er.index {
-                return Err(SheetAddressError::RangeOrder);
-            }
+        if let (Some(sr), Some(er)) = (start_row, end_row)
+            && sr.index > er.index
+        {
+            return Err(SheetAddressError::RangeOrder);
         }
-        if let (Some(sc), Some(ec)) = (start_col, end_col) {
-            if sc.index > ec.index {
-                return Err(SheetAddressError::RangeOrder);
-            }
+        if let (Some(sc), Some(ec)) = (start_col, end_col)
+            && sc.index > ec.index
+        {
+            return Err(SheetAddressError::RangeOrder);
         }
         Ok(SheetRangeRef::new(
             sheet, start_row, start_col, end_row, end_col,

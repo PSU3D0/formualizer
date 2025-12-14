@@ -20,7 +20,7 @@ mod tests {
     fn test_sumifs_equality_first() {
         reset_counter();
 
-        let sum_range = vec![
+        let sum_range = [
             LiteralValue::Number(10.0),
             LiteralValue::Number(20.0),
             LiteralValue::Number(30.0),
@@ -28,7 +28,7 @@ mod tests {
             LiteralValue::Number(50.0),
         ];
 
-        let criteria_range1 = vec![
+        let criteria_range1 = [
             LiteralValue::Text("A".into()),
             LiteralValue::Text("B".into()),
             LiteralValue::Text("A".into()),
@@ -36,7 +36,7 @@ mod tests {
             LiteralValue::Text("A".into()),
         ];
 
-        let criteria_range2 = vec![
+        let criteria_range2 = [
             LiteralValue::Number(1.0),
             LiteralValue::Number(2.0),
             LiteralValue::Number(3.0),
@@ -74,14 +74,14 @@ mod tests {
     fn test_sumifs_wildcard_ordering() {
         reset_counter();
 
-        let sum_range = vec![
+        let sum_range = [
             LiteralValue::Number(100.0),
             LiteralValue::Number(200.0),
             LiteralValue::Number(300.0),
             LiteralValue::Number(400.0),
         ];
 
-        let text_range = vec![
+        let text_range = [
             LiteralValue::Text("apple".into()),
             LiteralValue::Text("banana".into()),
             LiteralValue::Text("apricot".into()),
@@ -117,7 +117,7 @@ mod tests {
     fn test_sumifs_numeric_range_ordering() {
         reset_counter();
 
-        let sum_range = vec![
+        let sum_range = [
             LiteralValue::Number(10.0),
             LiteralValue::Number(20.0),
             LiteralValue::Number(30.0),
@@ -125,7 +125,7 @@ mod tests {
             LiteralValue::Number(50.0),
         ];
 
-        let num_range = vec![
+        let num_range = [
             LiteralValue::Number(5.0),
             LiteralValue::Number(15.0),
             LiteralValue::Number(25.0),
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn test_sumifs_mixed_criteria_order() {
-        let sum_range = vec![
+        let sum_range = [
             LiteralValue::Number(1.0),
             LiteralValue::Number(2.0),
             LiteralValue::Number(3.0),
@@ -156,7 +156,7 @@ mod tests {
             LiteralValue::Number(5.0),
         ];
 
-        let eq_range = vec![
+        let eq_range = [
             LiteralValue::Text("X".into()),
             LiteralValue::Text("Y".into()),
             LiteralValue::Text("X".into()),
@@ -164,7 +164,7 @@ mod tests {
             LiteralValue::Text("X".into()),
         ];
 
-        let wildcard_range = vec![
+        let wildcard_range = [
             LiteralValue::Text("abc123".into()),
             LiteralValue::Text("def456".into()),
             LiteralValue::Text("abc789".into()),
@@ -172,7 +172,7 @@ mod tests {
             LiteralValue::Text("abc345".into()),
         ];
 
-        let num_range = vec![
+        let num_range = [
             LiteralValue::Number(10.0),
             LiteralValue::Number(20.0),
             LiteralValue::Number(30.0),
@@ -225,19 +225,19 @@ mod tests {
 
     #[test]
     fn test_sumifs_correctness_preserved() {
-        let sum_range = vec![
+        let sum_range = [
             LiteralValue::Number(10.0),
             LiteralValue::Number(20.0),
             LiteralValue::Number(30.0),
         ];
 
-        let criteria1 = vec![
+        let criteria1 = [
             LiteralValue::Number(5.0),
             LiteralValue::Number(15.0),
             LiteralValue::Number(25.0),
         ];
 
-        let criteria2 = vec![
+        let criteria2 = [
             LiteralValue::Text("A".into()),
             LiteralValue::Text("B".into()),
             LiteralValue::Text("A".into()),

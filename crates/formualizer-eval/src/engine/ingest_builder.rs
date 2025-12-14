@@ -101,15 +101,15 @@ impl<'g> BulkIngestBuilder<'g> {
                 {
                     return true;
                 }
-                args.iter().any(|arg| Self::is_ast_volatile(arg))
+                args.iter().any(Self::is_ast_volatile)
             }
             ASTNodeType::BinaryOp { left, right, .. } => {
                 Self::is_ast_volatile(left) || Self::is_ast_volatile(right)
             }
             ASTNodeType::UnaryOp { expr, .. } => Self::is_ast_volatile(expr),
-            ASTNodeType::Array(rows) => rows
-                .iter()
-                .any(|row| row.iter().any(|cell| Self::is_ast_volatile(cell))),
+            ASTNodeType::Array(rows) => {
+                rows.iter().any(|row| row.iter().any(Self::is_ast_volatile))
+            }
             _ => false,
         }
     }

@@ -511,10 +511,10 @@ where
                 let mut row_vals: Vec<formualizer_common::LiteralValue> =
                     vec![formualizer_common::LiteralValue::Empty; cols];
                 for c in 1..=cols {
-                    if let Some(cell) = cell_map.get(&(r as u32, c as u32)) {
-                        if let Some(v) = &cell.value {
-                            row_vals[c - 1] = json_to_literal(v);
-                        }
+                    if let Some(cell) = cell_map.get(&(r as u32, c as u32))
+                        && let Some(v) = &cell.value
+                    {
+                        row_vals[c - 1] = json_to_literal(v);
                     }
                 }
                 aib.append_row(&row_vals)

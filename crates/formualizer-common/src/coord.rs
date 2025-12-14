@@ -24,7 +24,7 @@ const RESERVED_LOW_MASK: u64 = 0x3FF;
 
 const ROW_ABS_BIT: u64 = 1;
 const COL_ABS_BIT: u64 = 1 << 1;
-const RELATIVE_RESERVED_LOW_MASK: u64 = RESERVED_LOW_MASK & !((ROW_ABS_BIT | COL_ABS_BIT) as u64);
+const RELATIVE_RESERVED_LOW_MASK: u64 = RESERVED_LOW_MASK & !(ROW_ABS_BIT | COL_ABS_BIT);
 
 /// Errors returned when constructing coordinates from unchecked inputs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -421,7 +421,7 @@ fn letters_to_column_index(s: &str) -> Option<u32> {
     let mut col: u32 = 0;
     for (idx, byte) in s.bytes().enumerate() {
         let upper = byte.to_ascii_uppercase();
-        if !(b'A'..=b'Z').contains(&upper) {
+        if !upper.is_ascii_uppercase() {
             return None;
         }
         let val = (upper - b'A') as u32;

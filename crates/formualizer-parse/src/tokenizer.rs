@@ -659,11 +659,13 @@ impl<'a> SpanTokenizer<'a> {
             && self.token_end - self.token_start == 1
             && self.formula.as_bytes()[self.token_start] == b'$';
 
-        if !is_dollar_ref && self.has_token() {
-            if self.token_end > 0 && self.formula.as_bytes()[self.token_end - 1] != b':' {
-                self.save_token();
-                self.start_token();
-            }
+        if !is_dollar_ref
+            && self.has_token()
+            && self.token_end > 0
+            && self.formula.as_bytes()[self.token_end - 1] != b':'
+        {
+            self.save_token();
+            self.start_token();
         }
 
         let string_start = if is_dollar_ref {

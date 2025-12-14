@@ -81,10 +81,10 @@ impl DependencyGraph {
 
         self.sheet_indexes.remove(&sheet_id);
 
-        if self.default_sheet_id == sheet_id {
-            if let Some(&new_default) = self.sheet_indexes.keys().next() {
-                self.default_sheet_id = new_default;
-            }
+        if self.default_sheet_id == sheet_id
+            && let Some(&new_default) = self.sheet_indexes.keys().next()
+        {
+            self.default_sheet_id = new_default;
         }
 
         self.sheet_reg.remove(sheet_id)?;

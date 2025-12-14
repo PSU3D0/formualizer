@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-macros"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Procedural macros that power Formualizer spreadsheet built-in implementations"
 homepage.workspace = true

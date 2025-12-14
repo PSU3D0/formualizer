@@ -3,66 +3,204 @@ name: Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  publish-crates-io:
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: Cargo login
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Verify tag versions match manifests
+        shell: bash
         run: |
-          cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          python - <<'PY'
+          import json
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          repo = Path(".")
+          tag_version = sys.argv[1]
+
+          def toml_version(path: Path, keys: list[str]) -> str:
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+            cur = data
+            for k in keys:
+              cur = cur[k]
+            return str(cur)
+
+          def json_version(path: Path) -> str:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return str(data["version"])
+
+          checks = [
+            ("crates/formualizer/Cargo.toml", lambda p: toml_version(p, ["package", "version"])),
+            ("bindings/python/pyproject.toml", lambda p: toml_version(p, ["project", "version"])),
+            ("bindings/wasm/package.json", json_version),
+          ]
+
+          failures: list[str] = []
+          for rel, reader in checks:
+            path = repo / rel
+            actual = reader(path)
+            if actual != tag_version:
+              failures.append(f"{rel}: {actual} != {tag_version}")
+
+          if failures:
+            print("Tag/version mismatch:\n" + "\n".join(failures))
+            raise SystemExit(1)
+
+          print(f"OK: tag v{tag_version} matches product manifests")
+          PY
+          "${VERSION}"
+
+  publish-crates-io:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cargo publish dry runs
+        run: |
+          set -euo pipefail
+          cargo publish -p sheetport-spec --locked --dry-run
+          cargo publish -p formualizer-common --locked --dry-run
+          cargo publish -p formualizer-macros --locked --dry-run
+          cargo publish -p formualizer-parse --locked --dry-run
+          cargo publish -p formualizer-eval --locked --dry-run
+          cargo publish -p formualizer-workbook --locked --dry-run
+          cargo publish -p formualizer-sheetport --locked --dry-run
+          cargo publish -p formualizer --locked --dry-run
+
       - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          # Publish core crates in order to satisfy dependencies
-          cargo publish -p formualizer-common --no-verify || true
-          cargo publish -p formualizer-macros --no-verify || true
-          cargo publish -p formualizer-parse --no-verify || true
-          cargo publish -p formualizer-eval --no-verify || true
-          cargo publish -p formualizer-workbook --no-verify || true
+
+          publish_with_retry() {
+            local pkg="$1"
+            local attempts="${2:-12}"
+            local sleep_secs="${3:-15}"
+
+            for ((i=1; i<=attempts; i++)); do
+              echo "Publishing ${pkg} (attempt ${i}/${attempts})"
+
+              set +e
+              out="$(cargo publish -p "${pkg}" --locked --no-verify 2>&1)"
+              status=$?
+              set -e
+
+              if [[ "${status}" -eq 0 ]]; then
+                return 0
+              fi
+
+              if echo "${out}" | grep -q "is already uploaded"; then
+                echo "${pkg} already uploaded; skipping"
+                return 0
+              fi
+
+              echo "${out}"
+
+              if [[ "${i}" -lt "${attempts}" ]]; then
+                echo "Publish failed; sleeping ${sleep_secs}s before retry"
+                sleep "${sleep_secs}"
+              fi
+            done
+
+            echo "Failed to publish ${pkg} after ${attempts} attempts"
+            return 1
+          }
+
+          publish_with_retry sheetport-spec
+          publish_with_retry formualizer-common
+          publish_with_retry formualizer-macros
+          publish_with_retry formualizer-parse
+          publish_with_retry formualizer-eval
+          publish_with_retry formualizer-workbook
+          publish_with_retry formualizer-sheetport
+          publish_with_retry formualizer
 
   publish-pypi:
     needs: publish-crates-io
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
       - name: Publish to PyPI (maturin)
         uses: PyO3/maturin-action@v1
         with:
           working-directory: bindings/python
           command: publish
           args: --release -u __token__ -p ${{ secrets.PYPI_API_TOKEN }}
-          sccache: 'true'
+          sccache: "true"
 
   publish-npm:
     needs: publish-crates-io
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      - name: Build WASM package (web)
+
+      - name: Build WASM package (bundler)
         working-directory: bindings/wasm
-        run: |
-          npm ci || true
-          wasm-pack build --target web --out-dir pkg --release
-      - name: Configure npm auth
-        working-directory: bindings/wasm
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+        run: wasm-pack build --target bundler --out-dir pkg --release
+
       - name: Publish to npm
         working-directory: bindings/wasm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
 
+  github-release:
+    needs:
+      - publish-crates-io
+      - publish-pypi
+      - publish-npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
