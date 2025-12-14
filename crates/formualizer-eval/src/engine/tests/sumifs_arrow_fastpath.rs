@@ -163,6 +163,177 @@ fn sumifs_arrow_fastpath_parity_small() {
 }
 
 #[test]
+fn sumifs_arrow_fastpath_broadcasts_1x1_text_criteria_range() {
+    let config = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::new(), config.clone());
+
+    let sheet = "SheetScalarText";
+    let mut ab = engine.begin_bulk_ingest_arrow();
+    ab.add_sheet(sheet, 2, 8);
+
+    // Col1 is sum range. Col2 has a single scalar criterion value in row 1.
+    for i in 0..4u32 {
+        let sum = LiteralValue::Int(((i + 1) * 10) as i64);
+        let crit = if i == 0 {
+            LiteralValue::Text("FL".into())
+        } else {
+            LiteralValue::Empty
+        };
+        ab.append_row(sheet, &[sum, crit]).unwrap();
+    }
+    ab.finish().unwrap();
+
+    let sum_rng = range_ref(sheet, 1, 1, 4, 1);
+    let c_rng = range_ref(sheet, 1, 2, 1, 2);
+    let c = lit_text("FL");
+
+    let fun = engine.get_function("", "SUMIFS").expect("SUMIFS available");
+    let got_fast = {
+        let interp = crate::interpreter::Interpreter::new(&engine, sheet);
+        let args = vec![
+            ArgumentHandle::new(&sum_rng, &interp),
+            ArgumentHandle::new(&c_rng, &interp),
+            ArgumentHandle::new(&c, &interp),
+        ];
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
+        fun.dispatch(&args, &fctx).unwrap()
+    };
+
+    engine.config = config.with_arrow_fastpath(false);
+    let got_slow = {
+        let interp = crate::interpreter::Interpreter::new(&engine, sheet);
+        let args = vec![
+            ArgumentHandle::new(&sum_rng, &interp),
+            ArgumentHandle::new(&c_rng, &interp),
+            ArgumentHandle::new(&c, &interp),
+        ];
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
+        fun.dispatch(&args, &fctx).unwrap()
+    };
+
+    assert_eq!(got_fast, got_slow);
+    assert_eq!(got_fast, LiteralValue::Number(100.0));
+}
+
+#[test]
+fn sumifs_arrow_fastpath_broadcasts_1x1_numeric_criteria_range() {
+    let config = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::new(), config.clone());
+
+    let sheet = "SheetScalarNum";
+    let mut ab = engine.begin_bulk_ingest_arrow();
+    ab.add_sheet(sheet, 2, 8);
+
+    // Col1 is sum range. Col2 is a 1x1 criteria_range value at row 1.
+    // With broadcast semantics, if B1 matches the predicate, include all sums.
+    for i in 0..4u32 {
+        let sum = LiteralValue::Int(((i + 1) * 10) as i64);
+        let crit_range_cell = if i == 0 {
+            LiteralValue::Int(3)
+        } else {
+            LiteralValue::Empty
+        };
+        ab.append_row(sheet, &[sum, crit_range_cell]).unwrap();
+    }
+    ab.finish().unwrap();
+
+    let sum_rng = range_ref(sheet, 1, 1, 4, 1);
+    let c_rng = range_ref(sheet, 1, 2, 1, 2);
+    let c = lit_text("<=3");
+
+    let fun = engine.get_function("", "SUMIFS").expect("SUMIFS available");
+    let got_fast = {
+        let interp = crate::interpreter::Interpreter::new(&engine, sheet);
+        let args = vec![
+            ArgumentHandle::new(&sum_rng, &interp),
+            ArgumentHandle::new(&c_rng, &interp),
+            ArgumentHandle::new(&c, &interp),
+        ];
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
+        fun.dispatch(&args, &fctx).unwrap()
+    };
+
+    engine.config = config.with_arrow_fastpath(false);
+    let got_slow = {
+        let interp = crate::interpreter::Interpreter::new(&engine, sheet);
+        let args = vec![
+            ArgumentHandle::new(&sum_rng, &interp),
+            ArgumentHandle::new(&c_rng, &interp),
+            ArgumentHandle::new(&c, &interp),
+        ];
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
+        fun.dispatch(&args, &fctx).unwrap()
+    };
+
+    assert_eq!(got_fast, got_slow);
+    assert_eq!(got_fast, LiteralValue::Number(100.0));
+}
+
+#[test]
+fn countifs_arrow_fastpath_broadcasts_1x1_numeric_criteria_range() {
+    let config = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::new(), config.clone());
+
+    let sheet = "SheetCountIfsScalar";
+    let mut ab = engine.begin_bulk_ingest_arrow();
+    ab.add_sheet(sheet, 2, 8);
+
+    // Col1 is the primary criteria_range (4 rows). Col2 is a 1x1 criteria_range (row1 only).
+    for i in 0..4u32 {
+        let r1 = LiteralValue::Int((i % 2) as i64); // 0,1,0,1
+        let r2 = if i == 0 {
+            LiteralValue::Int(3)
+        } else {
+            LiteralValue::Empty
+        };
+        ab.append_row(sheet, &[r1, r2]).unwrap();
+    }
+    ab.finish().unwrap();
+
+    let range1 = range_ref(sheet, 1, 1, 4, 1);
+    let pred1 = lit_text("=1");
+    let range2 = range_ref(sheet, 1, 2, 1, 2);
+    let pred2 = lit_text("<=3");
+
+    let fun = engine
+        .get_function("", "COUNTIFS")
+        .expect("COUNTIFS available");
+    let got_fast = {
+        let interp = crate::interpreter::Interpreter::new(&engine, sheet);
+        let args = vec![
+            ArgumentHandle::new(&range1, &interp),
+            ArgumentHandle::new(&pred1, &interp),
+            ArgumentHandle::new(&range2, &interp),
+            ArgumentHandle::new(&pred2, &interp),
+        ];
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
+        fun.dispatch(&args, &fctx).unwrap()
+    };
+
+    engine.config = config.with_arrow_fastpath(false);
+    let got_slow = {
+        let interp = crate::interpreter::Interpreter::new(&engine, sheet);
+        let args = vec![
+            ArgumentHandle::new(&range1, &interp),
+            ArgumentHandle::new(&pred1, &interp),
+            ArgumentHandle::new(&range2, &interp),
+            ArgumentHandle::new(&pred2, &interp),
+        ];
+        let fctx =
+            DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
+        fun.dispatch(&args, &fctx).unwrap()
+    };
+
+    assert_eq!(got_fast, got_slow);
+    assert_eq!(got_fast, LiteralValue::Number(2.0));
+}
+
+#[test]
 fn sumifs_text_and_date_window_parity() {
     // Build Arrow sheet 'MONTHLY.DATA R260' with P(16), K(11), AV(48), R(18)
     let config = arrow_eval_config();

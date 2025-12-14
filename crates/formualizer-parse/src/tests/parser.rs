@@ -1406,6 +1406,31 @@ mod reference_tests {
     }
 
     #[test]
+    fn test_external_workbook_reference_parsing() {
+        let ref_type = ReferenceType::from_string("[33]Sheet1!$B:$B").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::Range {
+                sheet: Some("[33]Sheet1".to_string()),
+                start_row: None,
+                start_col: Some(2),
+                end_row: None,
+                end_col: Some(2),
+            }
+        );
+
+        let ref_type = ReferenceType::from_string("'[My Book.xlsx]Sheet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::Cell {
+                sheet: Some("[My Book.xlsx]Sheet1".to_string()),
+                row: 1,
+                col: 1,
+            }
+        );
+    }
+
+    #[test]
     fn test_named_range_parsing() {
         // Named range
         let reference = "SalesData";
@@ -1835,6 +1860,7 @@ mod sheet_ref_tests {
                 assert_eq!(range.start_col.unwrap().index, 0);
                 assert!(range.start_col.unwrap().abs);
                 assert_eq!(range.end_col.unwrap().index, 1);
+                assert!(range.end_col.unwrap().abs);
             }
             _ => panic!("expected range"),
         }
@@ -1861,6 +1887,25 @@ mod sheet_ref_tests {
                 assert_eq!(range.start_col.unwrap().index, 0);
                 assert!(range.end_row.is_none());
                 assert_eq!(range.end_col.unwrap().index, 0);
+            }
+            _ => panic!("expected range"),
+        }
+    }
+
+    #[test]
+    fn parse_sheet_ref_allows_external_workbook_prefix() {
+        let r = ReferenceType::parse_sheet_ref("[33]Sheet1!$B:$B").unwrap();
+        match r {
+            SheetRef::Range(range) => {
+                assert_eq!(range.sheet.name(), Some("[33]Sheet1"));
+                assert!(range.start_row.is_none());
+                assert!(range.end_row.is_none());
+                let sc = range.start_col.unwrap();
+                let ec = range.end_col.unwrap();
+                assert_eq!(sc.index, 1);
+                assert!(sc.abs);
+                assert_eq!(ec.index, 1);
+                assert!(ec.abs);
             }
             _ => panic!("expected range"),
         }

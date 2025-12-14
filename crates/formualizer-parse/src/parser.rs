@@ -313,13 +313,14 @@ impl ReferenceType {
     }
 
     fn parse_excel_sheet_ref(reference: &str) -> Result<SheetRef<'static>, ParsingError> {
-        if reference.contains('[') {
+        let (sheet, ref_part) = Self::extract_sheet_name(reference);
+
+        if ref_part.contains('[') {
             return Err(ParsingError::InvalidReference(
                 "Table references are not supported for SheetRef".to_string(),
             ));
         }
 
-        let (sheet, ref_part) = Self::extract_sheet_name(reference);
         let sheet_loc: SheetLocator<'static> = match sheet {
             Some(name) => SheetLocator::from_name(name),
             None => SheetLocator::Current,
@@ -454,13 +455,14 @@ impl ReferenceType {
     }
 
     fn parse_excel_reference(reference: &str) -> Result<Self, ParsingError> {
-        // First check if this is a table reference (contains '[')
-        if reference.contains('[') {
-            return Self::parse_table_reference(reference);
-        }
-
         // Extract sheet name if present
         let (sheet, ref_part) = Self::extract_sheet_name(reference);
+
+        // Table references live in the ref_part (e.g., "Table1[Column]").
+        // Sheet names can contain '[' for external workbook refs (e.g., "[1]Sheet1!A1").
+        if ref_part.contains('[') {
+            return Self::parse_table_reference(&ref_part);
+        }
 
         if ref_part.contains(':') {
             // Range reference
