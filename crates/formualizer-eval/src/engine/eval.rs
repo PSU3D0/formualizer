@@ -249,7 +249,7 @@ where
             None
         };
 
-        Self {
+        let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             config,
@@ -262,7 +262,10 @@ where
             overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
             staged_formulas: std::collections::HashMap::new(),
-        }
+        };
+        let default_sheet = engine.graph.default_sheet_name().to_string();
+        engine.ensure_arrow_sheet(&default_sheet);
+        engine
     }
 
     /// Create an Engine with a custom thread pool (for shared thread pool scenarios)
@@ -272,7 +275,7 @@ where
         thread_pool: Arc<rayon::ThreadPool>,
     ) -> Self {
         crate::builtins::load_builtins();
-        Self {
+        let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             config,
@@ -285,7 +288,10 @@ where
             overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
             staged_formulas: std::collections::HashMap::new(),
-        }
+        };
+        let default_sheet = engine.graph.default_sheet_name().to_string();
+        engine.ensure_arrow_sheet(&default_sheet);
+        engine
     }
 
     pub fn default_sheet_id(&self) -> SheetId {
@@ -491,6 +497,9 @@ where
         }
         // Take staged formulas before borrowing graph via builder
         let staged = std::mem::take(&mut self.staged_formulas);
+        for sheet in staged.keys() {
+            let _ = self.add_sheet(sheet);
+        }
         let mut builder = self.begin_bulk_ingest();
         for (sheet, entries) in staged {
             let sid = builder.add_sheet(&sheet);
@@ -537,6 +546,9 @@ where
             if let Some(entries) = self.staged_formulas.remove(s) {
                 collected.push(SheetFormulas { sheet: s, entries });
             }
+        }
+        for SheetFormulas { sheet, .. } in collected.iter() {
+            let _ = self.add_sheet(sheet);
         }
         let mut builder = self.begin_bulk_ingest();
         // small parse cache per call
@@ -3193,29 +3205,24 @@ where
                 let er = er.unwrap_or(sr.saturating_sub(1));
                 let ec = ec.unwrap_or(sc.saturating_sub(1));
 
-                // Default behavior (no feature): prefer Hybrid when Arrow exists, otherwise GraphSlice
-                if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
+                let Some(asheet) = self.sheet_store().sheet(sheet_name) else {
+                    return Ok(RangeView::from_owned_rows(
+                        Vec::new(),
+                        self.config.date_system,
+                    ));
+                };
+
+                let av = if er < sr || ec < sc {
+                    asheet.range_view(1, 1, 0, 0)
+                } else {
                     let sr0 = sr.saturating_sub(1) as usize;
                     let sc0 = sc.saturating_sub(1) as usize;
                     let er0 = er.saturating_sub(1) as usize;
                     let ec0 = ec.saturating_sub(1) as usize;
-                    let av = asheet.range_view(sr0, sc0, er0, ec0);
-                    return Ok(RangeView::from_hybrid(
-                        &self.graph,
-                        sheet_id,
-                        sr.saturating_sub(1),
-                        sc.saturating_sub(1),
-                        av,
-                    ));
-                }
-                Ok(RangeView::from_graph(
-                    &self.graph,
-                    sheet_id,
-                    sr.saturating_sub(1),
-                    sc.saturating_sub(1),
-                    er.saturating_sub(1),
-                    ec.saturating_sub(1),
-                ))
+                    asheet.range_view(sr0, sc0, er0, ec0)
+                };
+
+                Ok(RangeView::from_arrow(av))
             }
             ReferenceType::Cell { .. } => {
                 let shared = self.resolve_shared_ref(reference, current_sheet)?;
@@ -3232,19 +3239,16 @@ where
                     let r0 = row.saturating_sub(1) as usize;
                     let c0 = col.saturating_sub(1) as usize;
                     let av = asheet.range_view(r0, c0, r0, c0);
-                    return Ok(RangeView::from_hybrid(
-                        &self.graph,
-                        sheet_id,
-                        row.saturating_sub(1),
-                        col.saturating_sub(1),
-                        av,
-                    ));
+                    Ok(RangeView::from_arrow(av))
+                } else {
+                    let v = self
+                        .get_cell_value(sheet_name, row, col)
+                        .unwrap_or(LiteralValue::Empty);
+                    Ok(RangeView::from_owned_rows(
+                        vec![vec![v]],
+                        self.config.date_system,
+                    ))
                 }
-
-                let v = self
-                    .get_cell_value(sheet_name, row, col)
-                    .unwrap_or(LiteralValue::Empty);
-                Ok(RangeView::from_borrowed(Box::leak(Box::new(vec![vec![v]]))))
             }
             ReferenceType::NamedRange(name) => {
                 if let Some(current_id) = self.graph.sheet_id(current_sheet)
@@ -3253,50 +3257,49 @@ where
                     match &named.definition {
                         NamedDefinition::Cell(cell_ref) => {
                             let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
-                            let value = self
-                                .get_cell_value(
-                                    sheet_name,
-                                    cell_ref.coord.row() + 1,
-                                    cell_ref.coord.col() + 1,
-                                )
-                                .unwrap_or(LiteralValue::Empty);
-                            let data = vec![vec![value]];
-                            return Ok(RangeView::from_borrowed(Box::leak(Box::new(data))));
+                            let asheet = self
+                                .sheet_store()
+                                .sheet(sheet_name)
+                                .expect("Arrow sheet missing for named cell");
+
+                            let r0 = cell_ref.coord.row() as usize;
+                            let c0 = cell_ref.coord.col() as usize;
+                            let av = asheet.range_view(r0, c0, r0, c0);
+                            return Ok(RangeView::from_arrow(av));
                         }
                         NamedDefinition::Range(range_ref) => {
                             let sheet_name = self.graph.sheet_name(range_ref.start.sheet_id);
-                            let mut rows = Vec::new();
-                            for row0 in range_ref.start.coord.row()..=range_ref.end.coord.row() {
-                                let mut line = Vec::new();
-                                for col0 in range_ref.start.coord.col()..=range_ref.end.coord.col()
-                                {
-                                    let value = self
-                                        .get_cell_value(sheet_name, row0 + 1, col0 + 1)
-                                        .unwrap_or(LiteralValue::Empty);
-                                    line.push(value);
-                                }
-                                rows.push(line);
-                            }
-                            return Ok(RangeView::from_borrowed(Box::leak(Box::new(rows))));
+                            let asheet = self
+                                .sheet_store()
+                                .sheet(sheet_name)
+                                .expect("Arrow sheet missing for named range");
+
+                            let sr0 = range_ref.start.coord.row() as usize;
+                            let sc0 = range_ref.start.coord.col() as usize;
+                            let er0 = range_ref.end.coord.row() as usize;
+                            let ec0 = range_ref.end.coord.col() as usize;
+                            let av = asheet.range_view(sr0, sc0, er0, ec0);
+                            return Ok(RangeView::from_arrow(av));
                         }
                         NamedDefinition::Formula { .. } => {
                             if let Some(value) = self.graph.get_value(named.vertex) {
-                                let data = vec![vec![value]];
-                                return Ok(RangeView::from_borrowed(Box::leak(Box::new(data))));
+                                return Ok(RangeView::from_owned_rows(
+                                    vec![vec![value]],
+                                    self.config.date_system,
+                                ));
                             }
                         }
                     }
                 }
+
                 let data = self.resolver.resolve_named_range_reference(name)?;
-                Ok(RangeView::from_borrowed(Box::leak(Box::new(data))))
+                Ok(RangeView::from_owned_rows(data, self.config.date_system))
             }
             ReferenceType::Table(tref) => {
                 // Materialize via Resolver::resolve_range_like tranche 1
                 let boxed = self.resolve_range_like(&ReferenceType::Table(tref.clone()))?;
-                {
-                    let owned = boxed.materialise().into_owned();
-                    Ok(RangeView::from_borrowed(Box::leak(Box::new(owned))))
-                }
+                let owned = boxed.materialise().into_owned();
+                Ok(RangeView::from_owned_rows(owned, self.config.date_system))
             }
         }
     }

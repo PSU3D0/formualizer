@@ -1115,7 +1115,7 @@ mod tests {
             ArgumentHandle::new(&return_range, &ctx),
         ];
         let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
-        assert_eq!(v, LiteralValue::Int(20));
+        assert_eq!(v, LiteralValue::Number(20.0));
         let key_missing = lit(LiteralValue::Text("z".into()));
         let if_nf = lit(LiteralValue::Text("NF".into()));
         let args_nf = vec![
@@ -1179,7 +1179,7 @@ mod tests {
         let v_smaller = f
             .dispatch(&args_smaller, &ctx.function_context(None))
             .unwrap();
-        assert_eq!(v_smaller, LiteralValue::Int(2));
+        assert_eq!(v_smaller, LiteralValue::Number(2.0));
         let mm_next_larger = lit(LiteralValue::Int(1));
         let nf_text2 = lit(LiteralValue::Text("NF".into()));
         let args_larger = vec![
@@ -1192,7 +1192,7 @@ mod tests {
         let v_larger = f
             .dispatch(&args_larger, &ctx.function_context(None))
             .unwrap();
-        assert_eq!(v_larger, LiteralValue::Int(3));
+        assert_eq!(v_larger, LiteralValue::Number(3.0));
     }
 
     #[test]
@@ -1245,7 +1245,7 @@ mod tests {
             ArgumentHandle::new(&match_mode_wild, &ctx),
         ];
         let v_wild = f.dispatch(&args_wild, &ctx.function_context(None)).unwrap();
-        assert_eq!(v_wild, LiteralValue::Int(200));
+        assert_eq!(v_wild, LiteralValue::Number(200.0));
         // Escaped wildcard literal ~* should not match Beta
         let pattern_lit_star = lit(LiteralValue::Text("~*eta".into()));
         let args_lit = vec![
@@ -1374,7 +1374,10 @@ mod tests {
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 1);
-                assert_eq!(a[0], vec![LiteralValue::Int(1), LiteralValue::Int(10)]);
+                assert_eq!(
+                    a[0],
+                    vec![LiteralValue::Number(1.0), LiteralValue::Number(10.0)]
+                );
             }
             other => panic!("expected array got {other:?}"),
         }
@@ -1449,9 +1452,9 @@ mod tests {
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 3);
-                assert_eq!(a[0][0], LiteralValue::Int(1));
-                assert_eq!(a[1][0], LiteralValue::Int(2));
-                assert_eq!(a[2][0], LiteralValue::Int(3));
+                assert_eq!(a[0][0], LiteralValue::Number(1.0));
+                assert_eq!(a[1][0], LiteralValue::Number(2.0));
+                assert_eq!(a[2][0], LiteralValue::Number(3.0));
             }
             _ => panic!("expected array"),
         }
@@ -1466,8 +1469,8 @@ mod tests {
         match v_once {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2);
-                assert_eq!(a[0][0], LiteralValue::Int(2));
-                assert_eq!(a[1][0], LiteralValue::Int(3));
+                assert_eq!(a[0][0], LiteralValue::Number(2.0));
+                assert_eq!(a[1][0], LiteralValue::Number(3.0));
             }
             _ => panic!("expected array"),
         }
@@ -1505,7 +1508,7 @@ mod tests {
         let v_single = f
             .dispatch(&args_single, &ctx.function_context(None))
             .unwrap();
-        assert_eq!(v_single, LiteralValue::Int(1));
+        assert_eq!(v_single, LiteralValue::Number(1.0));
     }
 
     #[test]
@@ -1596,11 +1599,11 @@ mod tests {
                 assert_eq!(a.len(), 2);
                 assert_eq!(
                     a[0],
-                    vec![LiteralValue::Int(1), LiteralValue::Text("x".into())]
+                    vec![LiteralValue::Number(1.0), LiteralValue::Text("x".into())]
                 );
                 assert_eq!(
                     a[1],
-                    vec![LiteralValue::Int(2), LiteralValue::Text("y".into())]
+                    vec![LiteralValue::Number(2.0), LiteralValue::Text("y".into())]
                 );
             }
             other => panic!("expected array got {other:?}"),
@@ -1691,8 +1694,14 @@ mod tests {
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2); // 2 columns -> rows
-                assert_eq!(a[0], vec![LiteralValue::Int(1), LiteralValue::Int(2)]);
-                assert_eq!(a[1], vec![LiteralValue::Int(10), LiteralValue::Int(20)]);
+                assert_eq!(
+                    a[0],
+                    vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)]
+                );
+                assert_eq!(
+                    a[1],
+                    vec![LiteralValue::Number(10.0), LiteralValue::Number(20.0)]
+                );
             }
             other => panic!("expected array got {other:?}"),
         }
@@ -1747,7 +1756,7 @@ mod tests {
         match v_last {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 1);
-                assert_eq!(a[0][0], LiteralValue::Int(3));
+                assert_eq!(a[0][0], LiteralValue::Number(3.0));
             }
             other => panic!("expected array got {other:?}"),
         }
@@ -1816,7 +1825,7 @@ mod tests {
         match v_d2 {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2);
-                assert_eq!(a[0][0], LiteralValue::Int(1));
+                assert_eq!(a[0][0], LiteralValue::Number(1.0));
             }
             other => panic!("expected array got {other:?}"),
         }

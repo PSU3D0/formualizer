@@ -198,7 +198,7 @@ fn test_cancellation_in_demand_driven_evaluation() {
             // Evaluation completed before cancellation
             assert_eq!(
                 engine.get_cell_value("Sheet1", 1, 4),
-                Some(LiteralValue::Int(1))
+                Some(LiteralValue::Number(1.0))
             );
         }
         Err(other_error) => {

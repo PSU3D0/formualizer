@@ -928,7 +928,7 @@ mod tests {
             ArgumentHandle::new(&false_lit, &ctx),
         ];
         let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
-        assert_eq!(v, LiteralValue::Int(200));
+        assert_eq!(v, LiteralValue::Number(200.0));
     }
 
     #[test]
@@ -1008,7 +1008,7 @@ mod tests {
             ArgumentHandle::new(&false_lit, &ctx),
         ];
         let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
-        assert_eq!(v, LiteralValue::Int(100));
+        assert_eq!(v, LiteralValue::Number(100.0));
     }
 
     #[test]

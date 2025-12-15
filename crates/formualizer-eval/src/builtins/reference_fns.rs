@@ -390,7 +390,7 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "INDEX").unwrap();
         let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
-        assert_eq!(v, LiteralValue::Int(42));
+        assert_eq!(v, LiteralValue::Number(42.0));
     }
 
     #[test]
@@ -435,6 +435,6 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "OFFSET").unwrap();
         let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
-        assert_eq!(v, LiteralValue::Int(5));
+        assert_eq!(v, LiteralValue::Number(5.0));
     }
 }

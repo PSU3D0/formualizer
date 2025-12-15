@@ -345,12 +345,10 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     .context
                     .resolve_range_view(reference, self.interp.current_sheet()),
                 // Treat array literals (LiteralValue::Array) as ranges for RangeView APIs
-                ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => {
-                    // Borrow the rows directly from the AST literal
-                    Ok(RangeView::from_borrowed(&arr[..]))
-                }
+                ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => Ok(
+                    RangeView::from_owned_rows(arr.clone(), self.interp.context.date_system()),
+                ),
                 ASTNodeType::Array(rows) => {
-                    // Materialize AST array to values, then return a borrowed view
                     let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows.len());
                     for r in rows {
                         let mut row_vals = Vec::with_capacity(r.len());
@@ -359,7 +357,10 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         }
                         out.push(row_vals);
                     }
-                    Ok(RangeView::from_borrowed(Box::leak(Box::new(out))))
+                    Ok(RangeView::from_owned_rows(
+                        out,
+                        self.interp.context.date_system(),
+                    ))
                 }
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
                     let reference = self.reference_for_eval()?;
@@ -390,9 +391,10 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     }
                     crate::engine::arena::AstNodeData::Literal(vref) => {
                         match data_store.retrieve_value(*vref) {
-                            LiteralValue::Array(arr) => {
-                                Ok(RangeView::from_borrowed(Box::leak(Box::new(arr))))
-                            }
+                            LiteralValue::Array(arr) => Ok(RangeView::from_owned_rows(
+                                arr,
+                                self.interp.context.date_system(),
+                            )),
                             _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                                 .with_message("Argument cannot be interpreted as a range.")),
                         }
@@ -423,7 +425,10 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                             }
                             out.push(row);
                         }
-                        Ok(RangeView::from_borrowed(Box::leak(Box::new(out))))
+                        Ok(RangeView::from_owned_rows(
+                            out,
+                            self.interp.context.date_system(),
+                        ))
                     }
                     _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                         .with_message("Argument cannot be interpreted as a range.")),

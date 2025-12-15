@@ -500,7 +500,10 @@ mod tests {
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2);
-                assert_eq!(a[0], vec![LiteralValue::Int(1), LiteralValue::Int(3)]);
+                assert_eq!(
+                    a[0],
+                    vec![LiteralValue::Number(1.0), LiteralValue::Number(3.0)]
+                );
             }
             other => panic!("expected array got {other:?}"),
         }
@@ -512,7 +515,7 @@ mod tests {
         let v2 = f.dispatch(&args_neg, &ctx.function_context(None)).unwrap();
         match v2 {
             LiteralValue::Array(a) => {
-                assert_eq!(a[0], vec![LiteralValue::Int(3)]);
+                assert_eq!(a[0], vec![LiteralValue::Number(3.0)]);
             }
             other => panic!("expected array last col got {other:?}"),
         }
@@ -525,7 +528,10 @@ mod tests {
         let v3 = f.dispatch(&args_dup, &ctx.function_context(None)).unwrap();
         match v3 {
             LiteralValue::Array(a) => {
-                assert_eq!(a[0], vec![LiteralValue::Int(1), LiteralValue::Int(1)]);
+                assert_eq!(
+                    a[0],
+                    vec![LiteralValue::Number(1.0), LiteralValue::Number(1.0)]
+                );
             }
             other => panic!("expected dup cols got {other:?}"),
         }
@@ -576,8 +582,8 @@ mod tests {
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2);
-                assert_eq!(a[0][0], LiteralValue::Int(1));
-                assert_eq!(a[1][0], LiteralValue::Int(100));
+                assert_eq!(a[0][0], LiteralValue::Number(1.0));
+                assert_eq!(a[1][0], LiteralValue::Number(100.0));
             }
             other => panic!("expected array got {other:?}"),
         }

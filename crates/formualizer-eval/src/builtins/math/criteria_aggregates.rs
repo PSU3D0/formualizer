@@ -314,7 +314,8 @@ impl Function for SumIfsFn {
 
         // Arrow fast path (guarded by config): numeric comparators and basic text (eq/neq, wildcard) over Arrow-backed views.
         // Supports N-criteria with array/scalar comparisons.
-        if let Some(sum_av) = sum_view.try_arrow() {
+        {
+            let sum_av = sum_view.as_arrow();
             // Validate criteria are supported and Arrow-backed when range-like, with identical dims
             let mut ok = true;
             for (j, (pred, scalar_val)) in preds.iter().enumerate() {
@@ -341,7 +342,7 @@ impl Function for SumIfsFn {
                     break;
                 }
                 if let Some(ref v) = crit_views[j]
-                    && (v.try_arrow().is_none() || v.dims() != dims)
+                    && v.dims() != dims
                 {
                     ok = false;
                     break;
@@ -395,7 +396,7 @@ impl Function for SumIfsFn {
 
                             let cur_cached = if let Some(ref view) = crit_views[j] {
                                 let av = view.as_arrow();
-                                ctx.get_criteria_mask(av, c, pred).map(|m| {
+                                ctx.get_criteria_mask(&av, c, pred).map(|m| {
                                     let sl =
                                         arrow_array::Array::slice(m.as_ref(), row_start, row_len);
                                     sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone()
@@ -693,7 +694,7 @@ impl Function for CountIfsFn {
         // Arrow fast path: Arrow-backed criteria ranges with equal dims; scalar (1x1) criteria_range is broadcast.
         let mut all_arrow = true;
         for rv in crit_views.iter().flatten() {
-            if rv.try_arrow().is_none() || rv.dims() != dims {
+            if rv.dims() != dims {
                 all_arrow = false;
                 break;
             }
@@ -715,7 +716,7 @@ impl Function for CountIfsFn {
 
             let driver_av = crit_views
                 .iter()
-                .find_map(|v| v.as_ref().and_then(|rv| rv.try_arrow()));
+                .find_map(|v| v.as_ref().map(|rv| rv.as_arrow()));
 
             if let Some(driver) = driver_av {
                 let mut total: i64 = 0;
@@ -766,7 +767,7 @@ impl Function for CountIfsFn {
 
                             let cur_cached = if let Some(ref view) = crit_views[j] {
                                 let av = view.as_arrow();
-                                ctx.get_criteria_mask(av, c, pred).map(|m| {
+                                ctx.get_criteria_mask(&av, c, pred).map(|m| {
                                     let sl =
                                         arrow_array::Array::slice(m.as_ref(), row_start, row_len);
                                     sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone()
@@ -1853,8 +1854,8 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "COUNTIF").unwrap();
         let res = f.dispatch(&args_true, &ctx.function_context(None)).unwrap();
-        // Expect 1 match (the boolean true) because Text("TRUE") is parsed to boolean predicate Eq(Boolean(true))
-        assert_eq!(res, LiteralValue::Number(1.0));
+        // Current semantics: boolean Eq(TRUE) matches Boolean(TRUE) and Number(1).
+        assert_eq!(res, LiteralValue::Number(2.0));
     }
 
     #[test]

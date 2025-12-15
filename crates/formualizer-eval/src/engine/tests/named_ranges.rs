@@ -130,12 +130,15 @@ fn named_range_dirty_propagation_reaches_formula() {
 
 #[test]
 fn named_range_eval_mutation_propagates() {
-    let mut graph = DependencyGraph::new();
-    let sheet_id = graph.sheet_id_mut("Sheet1");
-    graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
 
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+
+    let sheet_id = engine.sheet_id_mut("Sheet1");
     let input_ref = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
-    graph
+    engine
         .define_name(
             "InputValue",
             NamedDefinition::Cell(input_ref),
@@ -144,16 +147,14 @@ fn named_range_eval_mutation_propagates() {
         .unwrap();
 
     let formula_ast = parse("=InputValue*2").unwrap();
-    graph.set_cell_formula("Sheet1", 2, 1, formula_ast).unwrap();
-
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
-    engine.graph = graph;
+    engine
+        .set_cell_formula("Sheet1", 2, 1, formula_ast)
+        .unwrap();
 
     engine.evaluate_all().unwrap();
     let initial = engine
         .get_cell_value("Sheet1", 2, 1)
         .expect("initial output");
-    println!("initial_output = {:?}", initial);
 
     assert!(matches!(initial, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9));
 

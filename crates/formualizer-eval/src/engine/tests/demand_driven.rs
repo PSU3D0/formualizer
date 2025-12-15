@@ -109,11 +109,11 @@ fn test_evaluate_until_dependency_chain() {
     );
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 2),
-        Some(LiteralValue::Int(30))
+        Some(LiteralValue::Number(30.0))
     );
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
-        Some(LiteralValue::Int(30))
+        Some(LiteralValue::Number(30.0))
     );
 }
 

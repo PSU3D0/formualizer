@@ -250,7 +250,10 @@ mod tests {
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2);
-                assert_eq!(a[0], vec![LiteralValue::Int(1), LiteralValue::Int(10)]);
+                assert_eq!(
+                    a[0],
+                    vec![LiteralValue::Number(1.0), LiteralValue::Number(10.0)]
+                );
             }
             other => panic!("expected array got {other:?}"),
         }
@@ -289,7 +292,10 @@ mod tests {
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2);
-                assert_eq!(a[0], vec![LiteralValue::Int(1), LiteralValue::Int(10)]);
+                assert_eq!(
+                    a[0],
+                    vec![LiteralValue::Number(1.0), LiteralValue::Number(10.0)]
+                );
             }
             other => panic!("expected array got {other:?}"),
         }

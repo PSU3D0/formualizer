@@ -264,19 +264,19 @@ impl EvaluationContext for TestWorkbook {
                     Err(e) => V::Error(e),
                 };
                 let owned = vec![vec![v]];
-                Ok(RangeView::from_borrowed(Box::leak(Box::new(owned))))
+                Ok(RangeView::from_owned_rows(owned, self.date_system()))
             }
             // Named range: delegate to resolver so missing names become #NAME?
             RT::NamedRange(name) => {
                 let rows = self.resolve_named_range_reference(name)?;
-                Ok(RangeView::from_borrowed(Box::leak(Box::new(rows))))
+                Ok(RangeView::from_owned_rows(rows, self.date_system()))
             }
             // Tables and rectangular ranges: materialize via generic path
             _ => {
                 let qualified = qualify_reference(reference, current_sheet);
                 let range_box = self.resolve_range_like(&qualified)?;
                 let owned: Vec<Vec<V>> = range_box.materialise().into_owned();
-                Ok(RangeView::from_borrowed(Box::leak(Box::new(owned))))
+                Ok(RangeView::from_owned_rows(owned, self.date_system()))
             }
         }
     }

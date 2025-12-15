@@ -1376,6 +1376,11 @@ impl<'a> ArrowRangeView<'a> {
     pub fn sheet_name(&self) -> &str {
         &self.sheet.name
     }
+
+    #[inline]
+    pub fn sheet(&self) -> &'a ArrowSheet {
+        self.sheet
+    }
     #[inline]
     pub fn dims(&self) -> (usize, usize) {
         (self.rows, self.cols)

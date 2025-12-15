@@ -3,7 +3,7 @@ use formualizer_common::Coord as AbsCoord;
 // use crate::engine::plan::RangeKey; // no longer needed directly here
 use crate::engine::EvalConfig;
 use crate::{SheetId, engine::vertex::VertexId};
-use formualizer_common::{ExcelError, LiteralValue};
+use formualizer_common::ExcelError;
 use formualizer_parse::parser::{ASTNode, CollectPolicy};
 use rustc_hash::FxHashMap;
 
@@ -20,7 +20,6 @@ pub struct BulkIngestSummary {
 struct SheetStage {
     name: String,
     id: SheetId,
-    values: Vec<(u32, u32, LiteralValue)>,
     formulas: Vec<(u32, u32, ASTNode, bool)>, // volatile flag
 }
 
@@ -29,7 +28,6 @@ impl SheetStage {
         Self {
             name,
             id,
-            values: Vec::new(),
             formulas: Vec::new(),
         }
     }
@@ -55,25 +53,15 @@ impl<'g> BulkIngestBuilder<'g> {
     }
 
     pub fn add_sheet(&mut self, name: &str) -> SheetId {
-        let id = self
-            .g
-            .add_sheet(name)
-            .unwrap_or_else(|_| self.g.sheet_id_mut(name));
+        let id = self.g.sheet_id(name).unwrap_or_else(|| {
+            panic!(
+                "BulkIngestBuilder::add_sheet requires pre-existing sheet; call Engine::add_sheet first: {name}"
+            )
+        });
         self.sheets
             .entry(id)
             .or_insert_with(|| SheetStage::new(name.to_string(), id));
         id
-    }
-
-    pub fn add_values<I>(&mut self, sheet: SheetId, values: I)
-    where
-        I: IntoIterator<Item = (u32, u32, LiteralValue)>,
-    {
-        let stage = self
-            .sheets
-            .entry(sheet)
-            .or_insert_with(|| SheetStage::new(self.g.sheet_name(sheet).to_string(), sheet));
-        stage.values.extend(values);
     }
 
     pub fn add_formulas<I>(&mut self, sheet: SheetId, formulas: I)
@@ -144,7 +132,6 @@ impl<'g> BulkIngestBuilder<'g> {
         let mut id_accum: Vec<u32> = Vec::new();
         for (_sid, stage) in self.sheets.drain() {
             let t_sheet0 = Instant::now();
-            let mut t_values_ms = 0u128;
             let mut t_plan_ms = 0u128;
             let mut t_ensure_ms = 0u128;
             let mut t_assign_ms = 0u128;
@@ -157,16 +144,7 @@ impl<'g> BulkIngestBuilder<'g> {
             if dbg {
                 eprintln!("[fz][ingest] sheet '{}' begin", stage.name);
             }
-            // 1) Ensure/allocate values quickly (reuse existing bulk path)
-            if !stage.values.is_empty() {
-                let tv0 = Instant::now();
-
-                self.g
-                    .bulk_insert_values(&stage.name, stage.values.into_iter());
-                t_values_ms = tv0.elapsed().as_millis();
-            }
-
-            // 2) Build plan for formulas on this sheet
+            // 1) Build plan for formulas on this sheet
             if !stage.formulas.is_empty() {
                 let tp0 = Instant::now();
                 let refs = stage
@@ -287,9 +265,8 @@ impl<'g> BulkIngestBuilder<'g> {
             }
             if dbg {
                 eprintln!(
-                    "[fz][ingest] sheet '{}' done: values={}ms plan={}ms ensure={}ms assign={}ms edges={}ms ranges={}ms targets={} globals={} cell_deps={} range_groups={} total={}ms",
+                    "[fz][ingest] sheet '{}' done: plan={}ms ensure={}ms assign={}ms edges={}ms ranges={}ms targets={} globals={} cell_deps={} range_groups={} total={}ms",
                     stage.name,
-                    t_values_ms,
                     t_plan_ms,
                     t_ensure_ms,
                     t_assign_ms,

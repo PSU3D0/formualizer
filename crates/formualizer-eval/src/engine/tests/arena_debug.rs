@@ -92,7 +92,7 @@ fn test_cross_sheet_simple() {
     println!("Result: {result:?}");
     assert_eq!(
         result,
-        LiteralValue::Int(100),
+        LiteralValue::Number(100.0),
         "Cross-sheet reference should work"
     );
 }

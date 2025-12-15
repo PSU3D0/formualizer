@@ -912,8 +912,12 @@ mod tests {
                 || 0i64,
                 move |wins, acc| {
                     ctr.fetch_add(1, Ordering::Relaxed);
-                    if let Some(LiteralValue::Int(i)) = wins[0].last() {
-                        *acc += *i;
+                    if let Some(v) = wins[0].last() {
+                        match v {
+                            LiteralValue::Number(n) => *acc += *n as i64,
+                            LiteralValue::Int(i) => *acc += *i,
+                            _ => {}
+                        }
                     }
                     Ok(())
                 },
@@ -956,8 +960,12 @@ mod tests {
                 || 0i64,
                 move |wins, acc| {
                     ctr.fetch_add(1, Ordering::Relaxed);
-                    if let Some(LiteralValue::Int(i)) = wins[0].last() {
-                        *acc += *i;
+                    if let Some(v) = wins[0].last() {
+                        match v {
+                            LiteralValue::Number(n) => *acc += *n as i64,
+                            LiteralValue::Int(i) => *acc += *i,
+                            _ => {}
+                        }
                     }
                     Ok(())
                 },
