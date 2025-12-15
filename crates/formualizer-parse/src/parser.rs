@@ -120,6 +120,41 @@ pub struct TableReference {
     pub specifier: Option<TableSpecifier>,
 }
 
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum ExternalBookRef {
+    Token(String),
+}
+
+impl ExternalBookRef {
+    pub fn token(&self) -> &str {
+        match self {
+            ExternalBookRef::Token(s) => s,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExternalRefKind {
+    Cell {
+        row: u32,
+        col: u32,
+    },
+    Range {
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct ExternalReference {
+    pub raw: String,
+    pub book: ExternalBookRef,
+    pub sheet: String,
+    pub kind: ExternalRefKind,
+}
+
 /// A reference to something outside the cell.
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ReferenceType {
@@ -135,6 +170,7 @@ pub enum ReferenceType {
         end_row: Option<u32>,
         end_col: Option<u32>,
     },
+    External(ExternalReference),
     Table(TableReference),
     NamedRange(String),
 }
@@ -464,39 +500,78 @@ impl ReferenceType {
             return Self::parse_table_reference(&ref_part);
         }
 
+        let external_sheet = sheet.as_deref().and_then(|s| {
+            // Excel external workbook refs embed a "[...]" token inside the sheet segment.
+            // Use the last '[' to allow paths/URIs that may contain earlier brackets, then
+            // take the first ']' after it to avoid being confused by ']' in the sheet name.
+            let lb = s.rfind('[')?;
+            let rb_rel = s[lb..].find(']')?;
+            let rb = lb + rb_rel;
+            if lb >= rb {
+                return None;
+            }
+
+            let token = &s[..=rb];
+            let sheet_name = &s[rb + 1..];
+            if sheet_name.is_empty() {
+                None
+            } else {
+                Some((token, sheet_name))
+            }
+        });
+
         if ref_part.contains(':') {
             // Range reference
-            Self::parse_range_reference(&ref_part, sheet)
+            let mut parts = ref_part.splitn(2, ':');
+            let start = parts.next().unwrap();
+            let end = parts.next().ok_or_else(|| {
+                ParsingError::InvalidReference(format!("Invalid range: {ref_part}"))
+            })?;
+            let (start_col, start_row) = Self::parse_range_part(start)?;
+            let (end_col, end_row) = Self::parse_range_part(end)?;
+
+            if let Some((book_token, sheet_name)) = external_sheet {
+                Ok(ReferenceType::External(ExternalReference {
+                    raw: reference.to_string(),
+                    book: ExternalBookRef::Token(book_token.to_string()),
+                    sheet: sheet_name.to_string(),
+                    kind: ExternalRefKind::Range {
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                    },
+                }))
+            } else {
+                Ok(ReferenceType::Range {
+                    sheet,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                })
+            }
         } else {
             // Try to parse as a single cell reference
             match Self::parse_cell_reference(&ref_part) {
-                Ok((col, row)) => Ok(ReferenceType::Cell { sheet, row, col }),
+                Ok((col, row)) => {
+                    if let Some((book_token, sheet_name)) = external_sheet {
+                        Ok(ReferenceType::External(ExternalReference {
+                            raw: reference.to_string(),
+                            book: ExternalBookRef::Token(book_token.to_string()),
+                            sheet: sheet_name.to_string(),
+                            kind: ExternalRefKind::Cell { row, col },
+                        }))
+                    } else {
+                        Ok(ReferenceType::Cell { sheet, row, col })
+                    }
+                }
                 Err(_) => {
                     // Treat it as a named range
                     Ok(ReferenceType::NamedRange(reference.to_string()))
                 }
             }
         }
-    }
-
-    /// Parse a range reference like "A1:B2", "A:A", or "1:1"
-    fn parse_range_reference(reference: &str, sheet: Option<String>) -> Result<Self, ParsingError> {
-        let mut parts = reference.splitn(2, ':');
-        let start = parts.next().unwrap();
-        let end = parts
-            .next()
-            .ok_or_else(|| ParsingError::InvalidReference(format!("Invalid range: {reference}")))?;
-
-        let (start_col, start_row) = Self::parse_range_part(start)?;
-        let (end_col, end_row) = Self::parse_range_part(end)?;
-
-        Ok(ReferenceType::Range {
-            sheet,
-            start_row,
-            start_col,
-            end_row,
-            end_col,
-        })
     }
 
     /// Parse a part of a range reference (either start or end).
@@ -669,6 +744,7 @@ impl Display for ReferenceType {
                         range_part
                     }
                 }
+                ReferenceType::External(ext) => ext.raw.clone(),
                 ReferenceType::Table(table_ref) => {
                     if let Some(specifier) = &table_ref.specifier {
                         // For table references, we need to handle column specifiers specially
@@ -1108,6 +1184,7 @@ impl ReferenceType {
                     range_part
                 }
             }
+            ReferenceType::External(ext) => ext.raw.clone(),
             ReferenceType::Table(table_ref) => {
                 if let Some(specifier) = &table_ref.specifier {
                     format!("{}[{}]", table_ref.name, specifier)
@@ -1377,6 +1454,17 @@ impl ASTNode {
                     end_col,
                 });
             }
+            RefView::External {
+                raw,
+                book,
+                sheet,
+                kind,
+            } => out.push(ReferenceType::External(ExternalReference {
+                raw: raw.to_string(),
+                book: ExternalBookRef::Token(book.to_string()),
+                sheet: sheet.to_string(),
+                kind,
+            })),
             RefView::Table { name, specifier } => out.push(ReferenceType::Table(TableReference {
                 name: name.to_string(),
                 specifier: specifier.cloned(),
@@ -1405,6 +1493,12 @@ pub enum RefView<'a> {
         start_col: Option<u32>,
         end_row: Option<u32>,
         end_col: Option<u32>,
+    },
+    External {
+        raw: &'a str,
+        book: &'a str,
+        sheet: &'a str,
+        kind: ExternalRefKind,
     },
     Table {
         name: &'a str,
@@ -1435,6 +1529,12 @@ impl<'a> From<&'a ReferenceType> for RefView<'a> {
                 start_col: *start_col,
                 end_row: *end_row,
                 end_col: *end_col,
+            },
+            ReferenceType::External(ext) => RefView::External {
+                raw: ext.raw.as_str(),
+                book: ext.book.token(),
+                sheet: ext.sheet.as_str(),
+                kind: ext.kind,
             },
             ReferenceType::Table(tr) => RefView::Table {
                 name: tr.name.as_str(),

@@ -338,7 +338,7 @@ fn load_workbook_into_engine(
     engine: &mut RustEngine<PyResolver>,
 ) -> PyResult<()> {
     // Use bulk ingest builder to avoid per-cell graph mutations
-    let mut builder = engine.begin_bulk_ingest();
+    let mut arrow_builder = engine.begin_bulk_ingest_arrow();
 
     // Batch parser with volatility classifier so ASTs carry contains_volatile
     let mut parser = formualizer_parse::parser::BatchParser::builder()
@@ -364,25 +364,43 @@ fn load_workbook_into_engine(
         (names, dims)
     };
 
-    // Pre-add sheets and capture their SheetIds for staging
-    let mut sheet_ids: std::collections::HashMap<String, formualizer_eval::SheetId> =
-        std::collections::HashMap::new();
+    // Add sheets and stage base values via Arrow ingest first.
+    // This ensures SheetIds exist before BulkIngestBuilder is used for formulas.
     for sheet_name in &names {
-        let sid = builder.add_sheet(sheet_name);
-        sheet_ids.insert(sheet_name.clone(), sid);
+        if let Some((rows, cols)) = dims.get(sheet_name) {
+            let ncols = *cols as usize;
+            let chunk_rows = 1024usize;
+            arrow_builder.add_sheet(sheet_name, ncols, chunk_rows);
+
+            for r in 1..=*rows {
+                let mut row_vals = vec![formualizer_common::LiteralValue::Empty; ncols];
+                for c in 1..=*cols {
+                    if let Some(v) = workbook.get_value_inner(sheet_name, r, c)? {
+                        row_vals[(c - 1) as usize] = v;
+                    }
+                }
+                arrow_builder
+                    .append_row(sheet_name, &row_vals)
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
+                    })?;
+            }
+        }
     }
 
-    // Now gather values and formulas by scanning used rectangles
+    arrow_builder
+        .finish()
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    let mut builder = engine.begin_bulk_ingest();
+
+    // Now stage formulas.
     for sheet_name in &names {
-        let sid = *sheet_ids.get(sheet_name).expect("sheet id present");
         if let Some((rows, cols)) = dims.get(sheet_name) {
-            let mut staged_values: Vec<(u32, u32, formualizer_common::LiteralValue)> = Vec::new();
+            let sid = builder.add_sheet(sheet_name);
             let mut staged_asts: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
             for r in 1..=*rows {
                 for c in 1..=*cols {
-                    if let Some(v) = workbook.get_value_inner(sheet_name, r, c)? {
-                        staged_values.push((r, c, v));
-                    }
                     if let Some(formula) = workbook.get_formula_inner(sheet_name, r, c)? {
                         let ast = parser.parse(&formula).map_err(|e| {
                             PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string())
@@ -391,20 +409,15 @@ fn load_workbook_into_engine(
                     }
                 }
             }
-            if !staged_values.is_empty() {
-                builder.add_values(sid, staged_values);
-            }
             if !staged_asts.is_empty() {
                 builder.add_formulas(sid, staged_asts);
             }
         }
     }
 
-    // Materialize in one go
     builder.finish().map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("bulk finish: {e}"))
     })?;
-    // Ensure formulas are evaluable; build graph and compute once
     let _ = engine.evaluate_all();
     Ok(())
 }

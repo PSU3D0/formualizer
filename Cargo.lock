@@ -1051,6 +1051,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tracing",
  "umya-spreadsheet",
+ "zip 0.6.6",
  "zstd",
 ]
 

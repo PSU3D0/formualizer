@@ -63,6 +63,26 @@ impl DependencyGraph {
     ) -> Result<(), ExcelError> {
         match &ast.node_type {
             ASTNodeType::Reference { reference, .. } => match reference {
+                ReferenceType::External(ext) => match ext.kind {
+                    formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
+                        let name = ext.raw.as_str();
+                        if let Some(source) = self.resolve_source_scalar_entry(name) {
+                            dependencies.insert(source.vertex);
+                        } else {
+                            return Err(ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Undefined name: {name}")));
+                        }
+                    }
+                    formualizer_parse::parser::ExternalRefKind::Range { .. } => {
+                        let name = ext.raw.as_str();
+                        if let Some(source) = self.resolve_source_table_entry(name) {
+                            dependencies.insert(source.vertex);
+                        } else {
+                            return Err(ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Undefined table: {name}")));
+                        }
+                    }
+                },
                 ReferenceType::Cell { .. } => {
                     let vertex_id = self.get_or_create_vertex_for_reference(
                         reference,

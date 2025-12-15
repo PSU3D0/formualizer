@@ -3382,6 +3382,37 @@ where
         current_sheet: &str,
     ) -> Result<RangeView<'c>, ExcelError> {
         match reference {
+            ReferenceType::External(ext) => {
+                let name = ext.raw.as_str();
+                match ext.kind {
+                    formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
+                        let Some(source) = self.graph.resolve_source_scalar_entry(name) else {
+                            return Err(ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Undefined name: {name}")));
+                        };
+                        let version = source
+                            .version
+                            .or_else(|| self.resolver.source_scalar_version(name));
+                        let v = self.resolve_source_scalar_cached(name, version)?;
+                        Ok(RangeView::from_owned_rows(
+                            vec![vec![v]],
+                            self.config.date_system,
+                        ))
+                    }
+                    formualizer_parse::parser::ExternalRefKind::Range { .. } => {
+                        let Some(source) = self.graph.resolve_source_table_entry(name) else {
+                            return Err(ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Undefined table: {name}")));
+                        };
+                        let version = source
+                            .version
+                            .or_else(|| self.resolver.source_table_version(name));
+                        let table = self.resolve_source_table_cached(name, version)?;
+                        let spec = Some(formualizer_parse::parser::TableSpecifier::Data);
+                        self.source_table_to_range_view(table.as_ref(), &spec)
+                    }
+                }
+            }
             ReferenceType::Range { .. } => {
                 let shared = self.resolve_shared_ref(reference, current_sheet)?;
                 let formualizer_common::SheetRef::Range(range) = shared else {

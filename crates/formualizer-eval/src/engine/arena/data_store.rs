@@ -8,7 +8,9 @@ use super::string_interner::{StringId, StringInterner};
 use super::value_ref::ValueRef;
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, TableReference};
+use formualizer_parse::parser::{
+    ASTNode, ASTNodeType, ExternalBookRef, ExternalReference, ReferenceType, TableReference,
+};
 
 /// Centralized data storage using arenas
 #[derive(Debug)]
@@ -425,6 +427,18 @@ impl DataStore {
                 }
             }
 
+            ReferenceType::External(ext) => {
+                let raw_id = self.asts.strings_mut().intern(&ext.raw);
+                let book_id = self.asts.strings_mut().intern(ext.book.token());
+                let sheet_id = self.asts.strings_mut().intern(&ext.sheet);
+                CompactRefType::External {
+                    raw_id,
+                    book_id,
+                    sheet_id,
+                    kind: ext.kind,
+                }
+            }
+
             ReferenceType::NamedRange(name) => {
                 let string_id = self.asts.strings_mut().intern(name);
                 CompactRefType::NamedRange(string_id)
@@ -587,6 +601,23 @@ impl DataStore {
                         Some(*end_col)
                     },
                 }
+            }
+
+            CompactRefType::External {
+                raw_id,
+                book_id,
+                sheet_id,
+                kind,
+            } => {
+                let raw = self.asts.resolve_string(*raw_id).to_string();
+                let book = self.asts.resolve_string(*book_id).to_string();
+                let sheet = self.asts.resolve_string(*sheet_id).to_string();
+                ReferenceType::External(ExternalReference {
+                    raw,
+                    book: ExternalBookRef::Token(book),
+                    sheet,
+                    kind: *kind,
+                })
             }
 
             CompactRefType::NamedRange(string_id) => {

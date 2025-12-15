@@ -146,6 +146,16 @@ where
                         }),
                     }
                 }
+                ReferenceType::External(ext) => match ext.kind {
+                    formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
+                        flags |= F_HAS_NAMES;
+                        per_names.push(ext.raw.clone());
+                    }
+                    formualizer_parse::parser::ExternalRefKind::Range { .. } => {
+                        flags |= F_HAS_TABLES;
+                        per_tables.push(ext.raw.clone());
+                    }
+                },
                 ReferenceType::NamedRange(name) => {
                     // Resolution handled later; mark via flags if caller cares
                     flags |= F_HAS_NAMES;

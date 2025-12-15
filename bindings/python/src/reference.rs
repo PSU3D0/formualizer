@@ -345,6 +345,7 @@ pub fn reference_type_to_py(ref_type: &ReferenceType, original: &str) -> Referen
 
             ReferenceLike::Range(RangeRef::new(sheet.clone(), start, end))
         }
+        ReferenceType::External(ext) => ReferenceLike::Unknown(UnknownRef::new(ext.raw.clone())),
         ReferenceType::Table(table_ref) => {
             let spec = table_ref.specifier.as_ref().map(|s| format!("{s}"));
             ReferenceLike::Table(TableRef::new(table_ref.name.clone(), spec))

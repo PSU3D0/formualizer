@@ -13,14 +13,65 @@ use formualizer_eval::arrow_store::{CellIngest, IngestBuilder, map_error_code};
 use formualizer_eval::engine::Engine as EvalEngine;
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::traits::EvaluationContext;
+use zip::ZipArchive;
 
 pub struct CalamineAdapter {
     workbook: RwLock<Xlsx<BufReader<File>>>,
     loaded_sheets: HashSet<String>,
     cached_names: Option<Vec<String>>,
+    external_link_targets: BTreeMap<u32, String>,
 }
 
 impl CalamineAdapter {
+    pub fn external_link_target(&self, index: u32) -> Option<&str> {
+        self.external_link_targets.get(&index).map(|s| s.as_str())
+    }
+
+    fn scan_external_link_targets(path: &Path) -> BTreeMap<u32, String> {
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => return BTreeMap::new(),
+        };
+        let reader = BufReader::new(file);
+        let mut archive = match ZipArchive::new(reader) {
+            Ok(a) => a,
+            Err(_) => return BTreeMap::new(),
+        };
+
+        fn extract_target(xml: &str) -> Option<String> {
+            let key = "Target=\"";
+            let start = xml.find(key)? + key.len();
+            let end = xml[start..].find('"')? + start;
+            Some(xml[start..end].to_string())
+        }
+
+        let mut out = BTreeMap::new();
+        for i in 0..archive.len() {
+            let mut entry = match archive.by_index(i) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let name = entry.name().to_string();
+            let Some(rest) = name.strip_prefix("xl/externalLinks/_rels/externalLink") else {
+                continue;
+            };
+            let Some(num_str) = rest.strip_suffix(".xml.rels") else {
+                continue;
+            };
+            let Ok(idx) = num_str.parse::<u32>() else {
+                continue;
+            };
+
+            let mut xml = String::new();
+            if entry.read_to_string(&mut xml).is_ok() {
+                if let Some(target) = extract_target(&xml) {
+                    out.insert(idx, target);
+                }
+            }
+        }
+        out
+    }
+
     fn calamine_error_code(e: &calamine::CellErrorType) -> u8 {
         let kind = match e {
             calamine::CellErrorType::Div0 => ExcelErrorKind::Div,
@@ -164,11 +215,14 @@ impl SpreadsheetReader for CalamineAdapter {
     where
         Self: Sized,
     {
+        let path = path.as_ref();
+        let external_link_targets = Self::scan_external_link_targets(path);
         let workbook: Xlsx<BufReader<File>> = open_workbook(path)?;
         Ok(Self {
             workbook: RwLock::new(workbook),
             loaded_sheets: HashSet::new(),
             cached_names: None,
+            external_link_targets,
         })
     }
 

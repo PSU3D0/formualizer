@@ -21,11 +21,12 @@ parking_lot = "0.12"
 chrono = { workspace = true }
 once_cell = { workspace = true }
 rustc-hash = { workspace = true }
+zip = { version = "0.6.6", default-features = false, features = ["deflate"], optional = true }
 
 [features]
 default = ["json"]
 json = ["dep:serde_json", "formualizer-common/serde"]
-calamine = ["dep:calamine"]
+calamine = ["dep:calamine", "dep:zip"]
 umya = ["dep:umya-spreadsheet"]
 mmap = ["dep:memmap2"]
 io_builtins = []

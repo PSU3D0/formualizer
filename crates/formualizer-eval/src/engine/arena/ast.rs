@@ -2,7 +2,7 @@
 /// Stores formula AST nodes efficiently with content-addressable storage
 use super::string_interner::{StringId, StringInterner};
 use super::value_ref::ValueRef;
-use formualizer_parse::parser::TableSpecifier;
+use formualizer_parse::parser::{ExternalRefKind, TableSpecifier};
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
@@ -91,6 +91,12 @@ pub enum CompactRefType {
         start_col: u32,
         end_row: u32,
         end_col: u32,
+    },
+    External {
+        raw_id: StringId,
+        book_id: StringId,
+        sheet_id: StringId,
+        kind: ExternalRefKind,
     },
     NamedRange(StringId),
     Table {

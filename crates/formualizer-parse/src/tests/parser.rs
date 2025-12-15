@@ -1410,23 +1410,173 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string("[33]Sheet1!$B:$B").unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: Some("[33]Sheet1".to_string()),
-                start_row: None,
-                start_col: Some(2),
-                end_row: None,
-                end_col: Some(2),
-            }
+            ReferenceType::External(ExternalReference {
+                raw: "[33]Sheet1!$B:$B".to_string(),
+                book: ExternalBookRef::Token("[33]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::Range {
+                    start_row: None,
+                    start_col: Some(2),
+                    end_row: None,
+                    end_col: Some(2),
+                },
+            })
         );
 
         let ref_type = ReferenceType::from_string("'[My Book.xlsx]Sheet1'!A1").unwrap();
         assert_eq!(
             ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[My Book.xlsx]Sheet1'!A1".to_string(),
+                book: ExternalBookRef::Token("[My Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+            })
+        );
+    }
+
+    #[test]
+    fn test_external_workbook_reference_paths_and_urls() {
+        let ref_type = ReferenceType::from_string("'[C:\\Users\\me\\Book.xlsx]Sheet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[C:\\Users\\me\\Book.xlsx]Sheet1'!A1".to_string(),
+                book: ExternalBookRef::Token("[C:\\Users\\me\\Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+            })
+        );
+
+        let ref_type = ReferenceType::from_string("'C:\\Users\\me\\[Book.xlsx]Sheet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'C:\\Users\\me\\[Book.xlsx]Sheet1'!A1".to_string(),
+                book: ExternalBookRef::Token("C:\\Users\\me\\[Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+            })
+        );
+
+        let ref_type =
+            ReferenceType::from_string("[\\\\server\\share\\Book.xlsx]Sheet1!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "[\\\\server\\share\\Book.xlsx]Sheet1!A1".to_string(),
+                book: ExternalBookRef::Token("[\\\\server\\share\\Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+            })
+        );
+
+        let ref_type =
+            ReferenceType::from_string("'[https://example.com/Book.xlsx]Sheet1'!1:3").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[https://example.com/Book.xlsx]Sheet1'!1:3".to_string(),
+                book: ExternalBookRef::Token("[https://example.com/Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::Range {
+                    start_row: Some(1),
+                    start_col: None,
+                    end_row: Some(3),
+                    end_col: None,
+                },
+            })
+        );
+
+        // Sheet names containing ']' but no '[' should not be treated as external.
+        let ref_type = ReferenceType::from_string("'foo]bar'!A1").unwrap();
+        assert_eq!(
+            ref_type,
             ReferenceType::Cell {
-                sheet: Some("[My Book.xlsx]Sheet1".to_string()),
+                sheet: Some("foo]bar".to_string()),
                 row: 1,
                 col: 1,
             }
+        );
+    }
+
+    #[test]
+    fn test_external_workbook_sheet_names_with_spaces() {
+        let ref_type = ReferenceType::from_string("'[Book.xlsx]My Sheet'!$A$1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[Book.xlsx]My Sheet'!$A$1".to_string(),
+                book: ExternalBookRef::Token("[Book.xlsx]".to_string()),
+                sheet: "My Sheet".to_string(),
+                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+            })
+        );
+    }
+
+    #[test]
+    fn test_external_workbook_unix_style_paths() {
+        let ref_type = ReferenceType::from_string("'/tmp/[Book.xlsx]Sheet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'/tmp/[Book.xlsx]Sheet1'!A1".to_string(),
+                book: ExternalBookRef::Token("/tmp/[Book.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+            })
+        );
+    }
+
+    #[test]
+    fn test_external_workbook_sheet_name_can_contain_close_bracket() {
+        let ref_type =
+            ReferenceType::from_string("'C:\\Users\\me\\[Book.xlsx]S]heet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'C:\\Users\\me\\[Book.xlsx]S]heet1'!A1".to_string(),
+                book: ExternalBookRef::Token("C:\\Users\\me\\[Book.xlsx]".to_string()),
+                sheet: "S]heet1".to_string(),
+                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+            })
+        );
+    }
+
+    #[test]
+    fn test_external_workbook_token_and_sheet_name_allow_escaped_quotes() {
+        let ref_type = ReferenceType::from_string("'[O''Reilly.xlsx]Sheet1'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[O''Reilly.xlsx]Sheet1'!A1".to_string(),
+                book: ExternalBookRef::Token("[O'Reilly.xlsx]".to_string()),
+                sheet: "Sheet1".to_string(),
+                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+            })
+        );
+
+        let ref_type = ReferenceType::from_string("'[Book.xlsx]Bob''s Sheet'!A1").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::External(ExternalReference {
+                raw: "'[Book.xlsx]Bob''s Sheet'!A1".to_string(),
+                book: ExternalBookRef::Token("[Book.xlsx]".to_string()),
+                sheet: "Bob's Sheet".to_string(),
+                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+            })
+        );
+    }
+
+    #[test]
+    fn test_sheet_scoped_table_reference_is_not_external() {
+        let ref_type = ReferenceType::from_string("Sheet1!Table1[Column1]").unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::Table(TableReference {
+                name: "Table1".to_string(),
+                specifier: Some(TableSpecifier::Column("Column1".to_string())),
+            })
         );
     }
 

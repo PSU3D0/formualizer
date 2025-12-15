@@ -837,6 +837,8 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                 *end_row,
                 *end_col,
             ),
+            ReferenceType::External(_) => Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("External references are not supported by Resolver".to_string())),
             ReferenceType::Table(tref) => {
                 let t = self.resolve_table_reference(tref)?;
                 match &tref.specifier {
