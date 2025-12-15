@@ -527,6 +527,32 @@ where
                 store.sheets.push(asheet);
             }
 
+            // Register native table metadata before formula ingest.
+            if let Some(sheet_id) = engine.sheet_id(name) {
+                for table in &sheet.tables {
+                    let (sr, sc, er, ec) = table.range;
+                    let sr0 = sr.saturating_sub(1);
+                    let sc0 = sc.saturating_sub(1);
+                    let er0 = er.saturating_sub(1);
+                    let ec0 = ec.saturating_sub(1);
+                    let start_ref = formualizer_eval::reference::CellRef::new(
+                        sheet_id,
+                        formualizer_eval::reference::Coord::new(sr0, sc0, true, true),
+                    );
+                    let end_ref = formualizer_eval::reference::CellRef::new(
+                        sheet_id,
+                        formualizer_eval::reference::Coord::new(er0, ec0, true, true),
+                    );
+                    let range_ref = formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                    engine.define_table(
+                        &table.name,
+                        range_ref,
+                        table.headers.clone(),
+                        table.totals_row,
+                    )?;
+                }
+            }
+
             // Formulas: either stage into graph now or defer
             if engine.config.defer_graph_building {
                 for c in &sheet.cells {

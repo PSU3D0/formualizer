@@ -159,7 +159,14 @@ impl DependencyGraph {
                             .with_message(format!("Undefined name: {name}")));
                     }
                 }
-                _ => {}
+                ReferenceType::Table(tref) => {
+                    if let Some(table) = self.resolve_table_entry(&tref.name) {
+                        dependencies.insert(table.vertex);
+                    } else {
+                        return Err(ExcelError::new(ExcelErrorKind::Name)
+                            .with_message(format!("Undefined table: {}", tref.name)));
+                    }
+                }
             },
             ASTNodeType::BinaryOp { left, right, .. } => {
                 self.extract_dependencies_recursive(

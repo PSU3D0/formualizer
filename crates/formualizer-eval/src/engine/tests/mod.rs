@@ -30,6 +30,7 @@ mod sheet_management;
 mod stripe_streaming_integration;
 mod stripe_tests;
 mod striped_dirty_propagation;
+mod tables;
 mod tarjan_scc;
 mod topo_layers;
 mod transactions;

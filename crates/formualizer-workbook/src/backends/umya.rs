@@ -205,7 +205,7 @@ impl SpreadsheetReader for UmyaAdapter {
         Ok(SheetData {
             cells: cells_map,
             dimensions: Some(dims),
-            tables: vec![],
+            tables: Self::collect_tables(ws),
             named_ranges: Self::collect_named_ranges(sheet, &wb, ws),
             date_system_1904: false,
             merged_cells: vec![],
@@ -458,6 +458,32 @@ impl UmyaAdapter {
         ranges
     }
 
+    fn collect_tables(worksheet: &Worksheet) -> Vec<crate::traits::TableDefinition> {
+        worksheet
+            .get_tables()
+            .iter()
+            .map(|t| {
+                let (beg, end) = t.get_area();
+                let headers = t
+                    .get_columns()
+                    .iter()
+                    .map(|c| c.get_name().to_string())
+                    .collect();
+                crate::traits::TableDefinition {
+                    name: t.get_name().to_string(),
+                    range: (
+                        *beg.get_row_num(),
+                        *beg.get_col_num(),
+                        *end.get_row_num(),
+                        *end.get_col_num(),
+                    ),
+                    headers,
+                    totals_row: *t.get_totals_row_shown(),
+                }
+            })
+            .collect()
+    }
+
     fn convert_defined_name(defined: &DefinedName, current_sheet: &str) -> Option<NamedRange> {
         let raw = defined.get_address();
         let trimmed = raw.trim();
@@ -580,6 +606,26 @@ where
                 store.sheets[pos] = asheet;
             } else {
                 store.sheets.push(asheet);
+            }
+
+            // Register native tables before formula ingest.
+            if let Some(sheet_id) = engine.sheet_id(n) {
+                for table in &sheet_data.tables {
+                    let (sr, sc, er, ec) = table.range;
+                    let sr0 = sr.saturating_sub(1);
+                    let sc0 = sc.saturating_sub(1);
+                    let er0 = er.saturating_sub(1);
+                    let ec0 = ec.saturating_sub(1);
+                    let start_ref = CellRef::new(sheet_id, Coord::new(sr0, sc0, true, true));
+                    let end_ref = CellRef::new(sheet_id, Coord::new(er0, ec0, true, true));
+                    let range_ref = formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                    engine.define_table(
+                        &table.name,
+                        range_ref,
+                        table.headers.clone(),
+                        table.totals_row,
+                    )?;
+                }
             }
 
             if engine.config.defer_graph_building {

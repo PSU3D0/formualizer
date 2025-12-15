@@ -391,6 +391,16 @@ where
         self.graph.define_name(name, definition, scope)
     }
 
+    pub fn define_table(
+        &mut self,
+        name: &str,
+        range: crate::reference::RangeRef,
+        headers: Vec<String>,
+        totals_row: bool,
+    ) -> Result<(), ExcelError> {
+        self.graph.define_table(name, range, headers, totals_row)
+    }
+
     pub fn vertex_value(&self, vertex: VertexId) -> Option<LiteralValue> {
         self.graph.get_value(vertex)
     }
@@ -1256,7 +1266,10 @@ where
                 return Err(ExcelError::new(ExcelErrorKind::NImpl)
                     .with_message("Array named ranges not yet implemented"));
             }
-            VertexKind::InfiniteRange | VertexKind::Range | VertexKind::External => {
+            VertexKind::InfiniteRange
+            | VertexKind::Range
+            | VertexKind::External
+            | VertexKind::Table => {
                 // Not directly evaluatable here; return stored or 0
                 if let Some(value) = self.graph.get_value(vertex_id) {
                     return Ok(value.clone());
@@ -3296,7 +3309,113 @@ where
                 Ok(RangeView::from_owned_rows(data, self.config.date_system))
             }
             ReferenceType::Table(tref) => {
-                // Materialize via Resolver::resolve_range_like tranche 1
+                if let Some(table) = self.graph.resolve_table_entry(&tref.name) {
+                    let sheet_name = self.graph.sheet_name(table.range.start.sheet_id);
+                    let asheet = self
+                        .sheet_store()
+                        .sheet(sheet_name)
+                        .expect("Arrow sheet missing for table reference");
+
+                    let sr0 = table.range.start.coord.row() as usize;
+                    let sc0 = table.range.start.coord.col() as usize;
+                    let er0 = table.range.end.coord.row() as usize;
+                    let ec0 = table.range.end.coord.col() as usize;
+
+                    let has_totals = table.totals_row;
+                    let data_sr = sr0.saturating_add(1);
+                    let data_er = if has_totals {
+                        er0.saturating_sub(1)
+                    } else {
+                        er0
+                    };
+
+                    let select = |sr: usize, sc: usize, er: usize, ec: usize| {
+                        if sr > er || sc > ec {
+                            asheet.range_view(1, 1, 0, 0)
+                        } else {
+                            asheet.range_view(sr, sc, er, ec)
+                        }
+                    };
+
+                    let av = match &tref.specifier {
+                        None => {
+                            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                "Table reference without specifier is unsupported".to_string(),
+                            ));
+                        }
+                        Some(formualizer_parse::parser::TableSpecifier::Column(col)) => {
+                            let Some(idx) = table.col_index(col) else {
+                                return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                                    "Column refers to unknown table column".to_string(),
+                                ));
+                            };
+                            let c0 = sc0 + idx;
+                            select(data_sr, c0, data_er, c0)
+                        }
+                        Some(formualizer_parse::parser::TableSpecifier::ColumnRange(
+                            start,
+                            end,
+                        )) => {
+                            let Some(si) = table.col_index(start) else {
+                                return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                                    "Column range refers to unknown column(s)".to_string(),
+                                ));
+                            };
+                            let Some(ei) = table.col_index(end) else {
+                                return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                                    "Column range refers to unknown column(s)".to_string(),
+                                ));
+                            };
+                            let (mut a, mut b) = (si, ei);
+                            if a > b {
+                                std::mem::swap(&mut a, &mut b);
+                            }
+                            let c_start = sc0 + a;
+                            let c_end = sc0 + b;
+                            select(data_sr, c_start, data_er, c_end)
+                        }
+                        Some(formualizer_parse::parser::TableSpecifier::All)
+                        | Some(formualizer_parse::parser::TableSpecifier::SpecialItem(
+                            formualizer_parse::parser::SpecialItem::All,
+                        )) => select(sr0, sc0, er0, ec0),
+                        Some(formualizer_parse::parser::TableSpecifier::Data)
+                        | Some(formualizer_parse::parser::TableSpecifier::SpecialItem(
+                            formualizer_parse::parser::SpecialItem::Data,
+                        )) => select(data_sr, sc0, data_er, ec0),
+                        Some(formualizer_parse::parser::TableSpecifier::Headers)
+                        | Some(formualizer_parse::parser::TableSpecifier::SpecialItem(
+                            formualizer_parse::parser::SpecialItem::Headers,
+                        )) => select(sr0, sc0, sr0, ec0),
+                        Some(formualizer_parse::parser::TableSpecifier::Totals)
+                        | Some(formualizer_parse::parser::TableSpecifier::SpecialItem(
+                            formualizer_parse::parser::SpecialItem::Totals,
+                        )) => {
+                            if !has_totals {
+                                asheet.range_view(1, 1, 0, 0)
+                            } else {
+                                select(er0, sc0, er0, ec0)
+                            }
+                        }
+                        Some(formualizer_parse::parser::TableSpecifier::SpecialItem(
+                            formualizer_parse::parser::SpecialItem::ThisRow,
+                        )) => {
+                            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                "@ (This Row) requires table-aware context; not yet supported"
+                                    .to_string(),
+                            ));
+                        }
+                        Some(formualizer_parse::parser::TableSpecifier::Row(_))
+                        | Some(formualizer_parse::parser::TableSpecifier::Combination(_)) => {
+                            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                "Complex structured references not yet supported".to_string(),
+                            ));
+                        }
+                    };
+
+                    return Ok(RangeView::from_arrow(av));
+                }
+
+                // Fallback: materialize via Resolver::resolve_range_like tranche 1
                 let boxed = self.resolve_range_like(&ReferenceType::Table(tref.clone()))?;
                 let owned = boxed.materialise().into_owned();
                 Ok(RangeView::from_owned_rows(owned, self.config.date_system))

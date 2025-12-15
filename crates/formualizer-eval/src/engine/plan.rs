@@ -34,6 +34,7 @@ pub type FormulaFlags = u8;
 pub const F_VOLATILE: FormulaFlags = 0b0000_0001;
 pub const F_HAS_RANGES: FormulaFlags = 0b0000_0010;
 pub const F_HAS_NAMES: FormulaFlags = 0b0000_0100;
+pub const F_HAS_TABLES: FormulaFlags = 0b0001_0000;
 pub const F_LIKELY_ARRAY: FormulaFlags = 0b0000_1000;
 
 #[derive(Debug, Default, Clone)]
@@ -43,6 +44,7 @@ pub struct DependencyPlan {
     pub per_formula_cells: Vec<Vec<u32>>, // indices into global_cells
     pub per_formula_ranges: Vec<Vec<RangeKey>>,
     pub per_formula_names: Vec<Vec<String>>,
+    pub per_formula_tables: Vec<Vec<String>>,
     pub per_formula_flags: Vec<FormulaFlags>,
     pub edges_flat: Option<Vec<u32>>, // optional flat adjacency (indices into global_cells)
     pub offsets: Option<Vec<u32>>,    // len = num_formulas + 1 when edges_flat is Some
@@ -79,6 +81,7 @@ where
         let mut per_cells: Vec<u32> = Vec::new();
         let mut per_ranges: Vec<RangeKey> = Vec::new();
         let mut per_names: Vec<String> = Vec::new();
+        let mut per_tables: Vec<String> = Vec::new();
 
         // Collect references using core collector (may expand small ranges per policy)
         let refs = ast.collect_references(policy);
@@ -148,8 +151,9 @@ where
                     flags |= F_HAS_NAMES;
                     per_names.push(name);
                 }
-                ReferenceType::Table(_tbl) => {
-                    // Treat like named entity; handled later
+                ReferenceType::Table(tref) => {
+                    flags |= F_HAS_TABLES;
+                    per_tables.push(tref.name);
                 }
             }
         }
@@ -157,6 +161,7 @@ where
         plan.per_formula_cells.push(per_cells);
         plan.per_formula_ranges.push(per_ranges);
         plan.per_formula_names.push(per_names);
+        plan.per_formula_tables.push(per_tables);
         plan.per_formula_flags.push(flags);
     }
 

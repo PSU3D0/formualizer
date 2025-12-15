@@ -20,6 +20,7 @@ mod names;
 mod range_deps;
 mod sheets;
 pub mod snapshot;
+mod tables;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
@@ -142,6 +143,10 @@ pub struct DependencyGraph {
 
     /// Pending formula vertices referencing names not yet defined
     pending_name_links: FxHashMap<String, Vec<(SheetId, VertexId)>>,
+
+    // Native workbook tables (ListObjects)
+    tables: FxHashMap<String, tables::TableEntry>,
+    table_vertex_lookup: FxHashMap<VertexId, String>,
 
     /// Monotonic counter to assign synthetic coordinates to name vertices
     name_vertex_seq: u32,
@@ -475,6 +480,8 @@ impl DependencyGraph {
             vertex_to_names: FxHashMap::default(),
             name_vertex_lookup: FxHashMap::default(),
             pending_name_links: FxHashMap::default(),
+            tables: FxHashMap::default(),
+            table_vertex_lookup: FxHashMap::default(),
             name_vertex_seq: 0,
             cell_to_name_dependents: FxHashMap::default(),
             name_to_cell_dependencies: FxHashMap::default(),
@@ -1363,14 +1370,51 @@ impl DependencyGraph {
         // 4) Add edges in one batch
         self.edges.begin_batch();
         for (i, tvid) in target_vids.iter().copied().enumerate() {
+            let mut deps: Vec<VertexId> = Vec::new();
+
             // Map per-formula indices into dep_vids
             if let Some(indices) = plan.per_formula_cells.get(i) {
-                let mut deps: Vec<VertexId> = Vec::with_capacity(indices.len());
+                deps.reserve(indices.len());
                 for &idx in indices {
                     if let Some(vid) = dep_vids.get(idx as usize) {
                         deps.push(*vid);
                     }
                 }
+            }
+
+            if let Some(names) = plan.per_formula_names.get(i)
+                && !names.is_empty()
+            {
+                let mut name_vertices = Vec::new();
+                let formula_sheet = plan
+                    .formula_targets
+                    .get(i)
+                    .map(|(sid, _)| *sid)
+                    .unwrap_or(sheet_id);
+                for name in names {
+                    if let Some(named) = self.resolve_name_entry(name, formula_sheet) {
+                        deps.push(named.vertex);
+                        name_vertices.push(named.vertex);
+                    } else {
+                        self.record_pending_name_reference(formula_sheet, name, tvid);
+                    }
+                }
+                if !name_vertices.is_empty() {
+                    self.attach_vertex_to_names(tvid, &name_vertices);
+                }
+            }
+
+            if let Some(tables) = plan.per_formula_tables.get(i)
+                && !tables.is_empty()
+            {
+                for table_name in tables {
+                    if let Some(table) = self.resolve_table_entry(table_name) {
+                        deps.push(table.vertex);
+                    }
+                }
+            }
+
+            if !deps.is_empty() {
                 self.add_dependent_edges_nobatch(tvid, &deps);
             }
 

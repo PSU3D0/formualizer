@@ -52,6 +52,9 @@ pub enum VertexKind {
 
     /// External reference
     External = 8,
+
+    /// Workbook table (ListObject)
+    Table = 9,
 }
 
 impl VertexKind {
@@ -67,6 +70,7 @@ impl VertexKind {
             6 => VertexKind::InfiniteRange,
             7 => VertexKind::Range,
             8 => VertexKind::External,
+            9 => VertexKind::Table,
             _ => VertexKind::Empty,
         }
     }

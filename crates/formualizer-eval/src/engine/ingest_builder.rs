@@ -258,6 +258,16 @@ impl<'g> BulkIngestBuilder<'g> {
                             self.g.attach_vertex_to_names(tvid, &name_vertices);
                         }
                     }
+
+                    if let Some(tables) = plan.per_formula_tables.get(fi)
+                        && !tables.is_empty()
+                    {
+                        for table_name in tables {
+                            if let Some(table) = self.g.resolve_table_entry(table_name) {
+                                row.push(table.vertex.0);
+                            }
+                        }
+                    }
                     // Always add adjacency row for target (may be empty)
                     edges_adj.push((tvid.0, row.into_vec()));
                 }

@@ -13,4 +13,6 @@ mod roundtrip;
 #[cfg(feature = "umya")]
 mod save;
 #[cfg(feature = "umya")]
+mod tables;
+#[cfg(feature = "umya")]
 mod write;
