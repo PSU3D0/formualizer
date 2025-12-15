@@ -75,6 +75,7 @@ impl formualizer_eval::traits::TableResolver for WBResolver {
         ))
     }
 }
+impl formualizer_eval::traits::SourceResolver for WBResolver {}
 impl formualizer_eval::traits::FunctionProvider for WBResolver {
     fn get_function(
         &self,

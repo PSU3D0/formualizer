@@ -54,6 +54,8 @@ impl formualizer_eval::traits::TableResolver for PyResolver {
     }
 }
 
+impl formualizer_eval::traits::SourceResolver for PyResolver {}
+
 impl formualizer_eval::traits::FunctionProvider for PyResolver {
     fn get_function(
         &self,

@@ -8,7 +8,7 @@ use crate::engine::range_view::RangeView;
 use crate::function::Function;
 use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
-    ReferenceResolver, Resolver, Table, TableResolver,
+    ReferenceResolver, Resolver, SourceResolver, Table, TableResolver,
 };
 use formualizer_common::{ExcelError, LiteralValue, parse_a1_1based};
 use formualizer_parse::{
@@ -394,6 +394,8 @@ impl TableResolver for TestWorkbook {
             .ok_or_else(|| ExcelError::from(ExcelErrorKind::NImpl))
     }
 }
+
+impl SourceResolver for TestWorkbook {}
 
 impl FunctionProvider for TestWorkbook {
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {

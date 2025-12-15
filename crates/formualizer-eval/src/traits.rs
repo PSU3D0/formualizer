@@ -800,6 +800,27 @@ pub trait TableResolver: Send + Sync {
         tref: &formualizer_parse::parser::TableReference,
     ) -> Result<Box<dyn Table>, ExcelError>;
 }
+
+pub trait SourceResolver: Send + Sync {
+    fn source_scalar_version(&self, _name: &str) -> Option<u64> {
+        None
+    }
+
+    fn resolve_source_scalar(&self, name: &str) -> Result<LiteralValue, ExcelError> {
+        Err(ExcelError::new(ExcelErrorKind::NImpl)
+            .with_message(format!("Source scalar not supported: {name}")))
+    }
+
+    fn source_table_version(&self, _name: &str) -> Option<u64> {
+        None
+    }
+
+    fn resolve_source_table(&self, name: &str) -> Result<Box<dyn Table>, ExcelError> {
+        Err(ExcelError::new(ExcelErrorKind::NImpl)
+            .with_message(format!("Source table not supported: {name}")))
+    }
+}
+
 pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + TableResolver {
     fn resolve_range_like(&self, r: &ReferenceType) -> Result<Box<dyn Range>, ExcelError> {
         match r {
@@ -952,7 +973,7 @@ pub trait FunctionProvider: Send + Sync {
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>>;
 }
 
-pub trait EvaluationContext: Resolver + FunctionProvider {
+pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
     /// Get access to the shared thread pool for parallel evaluation
     /// Returns None if parallel evaluation is disabled or unavailable
     fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {

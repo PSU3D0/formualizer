@@ -20,6 +20,7 @@ mod names;
 mod range_deps;
 mod sheets;
 pub mod snapshot;
+mod sources;
 mod tables;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
@@ -148,8 +149,16 @@ pub struct DependencyGraph {
     tables: FxHashMap<String, tables::TableEntry>,
     table_vertex_lookup: FxHashMap<VertexId, String>,
 
+    // External sources (SourceVertex)
+    source_scalars: FxHashMap<String, sources::SourceScalarEntry>,
+    source_tables: FxHashMap<String, sources::SourceTableEntry>,
+    source_vertex_lookup: FxHashMap<VertexId, String>,
+
     /// Monotonic counter to assign synthetic coordinates to name vertices
     name_vertex_seq: u32,
+
+    /// Monotonic counter to assign synthetic coordinates to source vertices
+    source_vertex_seq: u32,
 
     /// Mapping from cell vertices to named range vertices that depend on them
     cell_to_name_dependents: FxHashMap<VertexId, FxHashSet<VertexId>>,
@@ -482,7 +491,11 @@ impl DependencyGraph {
             pending_name_links: FxHashMap::default(),
             tables: FxHashMap::default(),
             table_vertex_lookup: FxHashMap::default(),
+            source_scalars: FxHashMap::default(),
+            source_tables: FxHashMap::default(),
+            source_vertex_lookup: FxHashMap::default(),
             name_vertex_seq: 0,
+            source_vertex_seq: 0,
             cell_to_name_dependents: FxHashMap::default(),
             name_to_cell_dependencies: FxHashMap::default(),
             config: config.clone(),
@@ -1395,6 +1408,8 @@ impl DependencyGraph {
                     if let Some(named) = self.resolve_name_entry(name, formula_sheet) {
                         deps.push(named.vertex);
                         name_vertices.push(named.vertex);
+                    } else if let Some(source) = self.resolve_source_scalar_entry(name) {
+                        deps.push(source.vertex);
                     } else {
                         self.record_pending_name_reference(formula_sheet, name, tvid);
                     }
@@ -1410,6 +1425,8 @@ impl DependencyGraph {
                 for table_name in tables {
                     if let Some(table) = self.resolve_table_entry(table_name) {
                         deps.push(table.vertex);
+                    } else if let Some(source) = self.resolve_source_table_entry(table_name) {
+                        deps.push(source.vertex);
                     }
                 }
             }

@@ -13,7 +13,7 @@ use formualizer_common::{col_letters_from_1based, parse_a1_1based};
 use formualizer_parse::parser::ReferenceType;
 use formualizer_parse::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -33,8 +33,27 @@ pub struct Engine<R> {
     overlay_compactions: u64,
     // Pass-scoped cache for Arrow used-row bounds per column
     row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
+    source_cache: Arc<std::sync::RwLock<SourceCache>>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
     staged_formulas: std::collections::HashMap<String, Vec<(u32, u32, String)>>,
+}
+
+#[derive(Default)]
+struct SourceCache {
+    scalars: FxHashMap<(String, Option<u64>), LiteralValue>,
+    tables: FxHashMap<(String, Option<u64>), Arc<dyn crate::traits::Table>>,
+}
+
+struct SourceCacheSession {
+    cache: Arc<std::sync::RwLock<SourceCache>>,
+}
+
+impl Drop for SourceCacheSession {
+    fn drop(&mut self) {
+        if let Ok(mut g) = self.cache.write() {
+            *g = SourceCache::default();
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -261,6 +280,7 @@ where
             has_edited: false,
             overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
+            source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
         };
         let default_sheet = engine.graph.default_sheet_name().to_string();
@@ -287,11 +307,186 @@ where
             has_edited: false,
             overlay_compactions: 0,
             row_bounds_cache: std::sync::RwLock::new(None),
+            source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
         };
         let default_sheet = engine.graph.default_sheet_name().to_string();
         engine.ensure_arrow_sheet(&default_sheet);
         engine
+    }
+
+    fn clear_source_cache(&self) {
+        if let Ok(mut g) = self.source_cache.write() {
+            *g = SourceCache::default();
+        }
+    }
+
+    fn source_cache_session(&self) -> SourceCacheSession {
+        self.clear_source_cache();
+        SourceCacheSession {
+            cache: self.source_cache.clone(),
+        }
+    }
+
+    fn resolve_source_scalar_cached(
+        &self,
+        name: &str,
+        version: Option<u64>,
+    ) -> Result<LiteralValue, ExcelError> {
+        let key = (name.to_string(), version);
+        if let Ok(mut g) = self.source_cache.write() {
+            if let Some(v) = g.scalars.get(&key) {
+                return Ok(v.clone());
+            }
+
+            let v = self.resolver.resolve_source_scalar(name).map_err(|err| {
+                if matches!(err.kind, ExcelErrorKind::Name | ExcelErrorKind::NImpl) {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message(format!("Unresolved source scalar: {name}"))
+                } else {
+                    err
+                }
+            })?;
+            g.scalars.insert(key, v.clone());
+            Ok(v)
+        } else {
+            self.resolver.resolve_source_scalar(name).map_err(|err| {
+                if matches!(err.kind, ExcelErrorKind::Name | ExcelErrorKind::NImpl) {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message(format!("Unresolved source scalar: {name}"))
+                } else {
+                    err
+                }
+            })
+        }
+    }
+
+    fn resolve_source_table_cached(
+        &self,
+        name: &str,
+        version: Option<u64>,
+    ) -> Result<Arc<dyn crate::traits::Table>, ExcelError> {
+        let key = (name.to_string(), version);
+        if let Ok(mut g) = self.source_cache.write() {
+            if let Some(t) = g.tables.get(&key) {
+                return Ok(t.clone());
+            }
+
+            let t = self.resolver.resolve_source_table(name).map_err(|err| {
+                if matches!(err.kind, ExcelErrorKind::Name | ExcelErrorKind::NImpl) {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message(format!("Unresolved source table: {name}"))
+                } else {
+                    err
+                }
+            })?;
+            let t: Arc<dyn crate::traits::Table> = Arc::from(t);
+            g.tables.insert(key, t.clone());
+            Ok(t)
+        } else {
+            self.resolver
+                .resolve_source_table(name)
+                .map_err(|err| {
+                    if matches!(err.kind, ExcelErrorKind::Name | ExcelErrorKind::NImpl) {
+                        ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message(format!("Unresolved source table: {name}"))
+                    } else {
+                        err
+                    }
+                })
+                .map(Arc::from)
+        }
+    }
+
+    fn source_table_to_range_view(
+        &self,
+        table: &dyn crate::traits::Table,
+        spec: &Option<formualizer_parse::parser::TableSpecifier>,
+    ) -> Result<RangeView<'static>, ExcelError> {
+        use formualizer_parse::parser::{SpecialItem, TableSpecifier};
+
+        let owned = match spec {
+            Some(TableSpecifier::Column(c)) => {
+                let c = c.trim();
+                if c == "@" || c.contains('[') || c.contains(']') || c.contains(',') {
+                    return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                        "Complex structured references not yet supported".to_string(),
+                    ));
+                }
+                table.get_column(c)?.materialise().into_owned()
+            }
+            Some(TableSpecifier::ColumnRange(start, end)) => {
+                let cols = table.columns();
+                let start = start.trim();
+                let end = end.trim();
+                let start_idx = cols.iter().position(|n| n.eq_ignore_ascii_case(start));
+                let end_idx = cols.iter().position(|n| n.eq_ignore_ascii_case(end));
+                if let (Some(mut si), Some(mut ei)) = (start_idx, end_idx) {
+                    if si > ei {
+                        std::mem::swap(&mut si, &mut ei);
+                    }
+                    let h = table.data_height();
+                    let w = ei - si + 1;
+                    let mut rows = vec![vec![LiteralValue::Empty; w]; h];
+                    for (offset, ci) in (si..=ei).enumerate() {
+                        let cname = &cols[ci];
+                        let col_range = table.get_column(cname)?;
+                        let (rh, _) = col_range.dimensions();
+                        for (r, row) in rows.iter_mut().enumerate().take(h.min(rh)) {
+                            row[offset] = col_range.get(r, 0)?;
+                        }
+                    }
+                    rows
+                } else {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Column range refers to unknown column(s)".to_string()));
+                }
+            }
+            Some(TableSpecifier::SpecialItem(SpecialItem::Headers))
+            | Some(TableSpecifier::Headers) => table
+                .headers_row()
+                .map(|r| r.materialise().into_owned())
+                .unwrap_or_default(),
+            Some(TableSpecifier::SpecialItem(SpecialItem::Totals))
+            | Some(TableSpecifier::Totals) => table
+                .totals_row()
+                .map(|r| r.materialise().into_owned())
+                .unwrap_or_default(),
+            Some(TableSpecifier::SpecialItem(SpecialItem::Data)) | Some(TableSpecifier::Data) => {
+                table
+                    .data_body()
+                    .map(|r| r.materialise().into_owned())
+                    .unwrap_or_default()
+            }
+            Some(TableSpecifier::SpecialItem(SpecialItem::All)) | Some(TableSpecifier::All) => {
+                let mut out: Vec<Vec<LiteralValue>> = Vec::new();
+                if let Some(h) = table.headers_row() {
+                    out.extend(h.iter_rows());
+                }
+                if let Some(body) = table.data_body() {
+                    out.extend(body.iter_rows());
+                }
+                if let Some(tr) = table.totals_row() {
+                    out.extend(tr.iter_rows());
+                }
+                out
+            }
+            Some(TableSpecifier::SpecialItem(SpecialItem::ThisRow)) => {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                    "@ (This Row) requires table-aware context; not yet supported".to_string(),
+                ));
+            }
+            Some(TableSpecifier::Row(_)) | Some(TableSpecifier::Combination(_)) => {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("Complex structured references not yet supported".to_string()));
+            }
+            None => {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("Table reference without specifier is unsupported".to_string()));
+            }
+        };
+
+        Ok(RangeView::from_owned_rows(owned, self.config.date_system))
     }
 
     pub fn default_sheet_id(&self) -> SheetId {
@@ -399,6 +594,42 @@ where
         totals_row: bool,
     ) -> Result<(), ExcelError> {
         self.graph.define_table(name, range, headers, totals_row)
+    }
+
+    pub fn define_source_scalar(
+        &mut self,
+        name: &str,
+        version: Option<u64>,
+    ) -> Result<(), ExcelError> {
+        self.graph.define_source_scalar(name, version)
+    }
+
+    pub fn define_source_table(
+        &mut self,
+        name: &str,
+        version: Option<u64>,
+    ) -> Result<(), ExcelError> {
+        self.graph.define_source_table(name, version)
+    }
+
+    pub fn set_source_scalar_version(
+        &mut self,
+        name: &str,
+        version: Option<u64>,
+    ) -> Result<(), ExcelError> {
+        self.graph.set_source_scalar_version(name, version)
+    }
+
+    pub fn set_source_table_version(
+        &mut self,
+        name: &str,
+        version: Option<u64>,
+    ) -> Result<(), ExcelError> {
+        self.graph.set_source_table_version(name, version)
+    }
+
+    pub fn invalidate_source(&mut self, name: &str) -> Result<(), ExcelError> {
+        self.graph.invalidate_source(name)
     }
 
     pub fn vertex_value(&self, vertex: VertexId) -> Option<LiteralValue> {
@@ -1541,6 +1772,7 @@ where
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = web_time::Instant::now();
+        let _source_cache = self.source_cache_session();
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
@@ -1651,6 +1883,7 @@ where
 
     /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
     pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
+        let _source_cache = self.source_cache_session();
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
@@ -1718,6 +1951,7 @@ where
 
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
+        let _source_cache = self.source_cache_session();
         if self.config.defer_graph_building {
             // Build graph for all staged formulas before evaluating
             self.build_graph_all()?;
@@ -2387,8 +2621,6 @@ where
 
     /// Find dirty precedents that need evaluation for the given target vertices
     fn find_dirty_precedents(&self, target_vertices: &[VertexId]) -> Vec<VertexId> {
-        use rustc_hash::FxHashSet;
-
         let mut to_evaluate = FxHashSet::default();
         let mut visited = FxHashSet::default();
         let mut stack = Vec::new();
@@ -3010,6 +3242,30 @@ where
     }
 }
 
+impl<R> crate::traits::SourceResolver for Engine<R>
+where
+    R: EvaluationContext,
+{
+    fn source_scalar_version(&self, name: &str) -> Option<u64> {
+        self.resolver.source_scalar_version(name)
+    }
+
+    fn resolve_source_scalar(&self, name: &str) -> Result<LiteralValue, ExcelError> {
+        self.resolver.resolve_source_scalar(name)
+    }
+
+    fn source_table_version(&self, name: &str) -> Option<u64> {
+        self.resolver.source_table_version(name)
+    }
+
+    fn resolve_source_table(
+        &self,
+        name: &str,
+    ) -> Result<Box<dyn crate::traits::Table>, ExcelError> {
+        self.resolver.resolve_source_table(name)
+    }
+}
+
 // The Engine is a Resolver because it implements the constituent traits.
 impl<R> crate::traits::Resolver for Engine<R> where R: EvaluationContext {}
 
@@ -3305,6 +3561,17 @@ where
                     }
                 }
 
+                if let Some(source) = self.graph.resolve_source_scalar_entry(name) {
+                    let version = source
+                        .version
+                        .or_else(|| self.resolver.source_scalar_version(name));
+                    let v = self.resolve_source_scalar_cached(name, version)?;
+                    return Ok(RangeView::from_owned_rows(
+                        vec![vec![v]],
+                        self.config.date_system,
+                    ));
+                }
+
                 let data = self.resolver.resolve_named_range_reference(name)?;
                 Ok(RangeView::from_owned_rows(data, self.config.date_system))
             }
@@ -3413,6 +3680,14 @@ where
                     };
 
                     return Ok(RangeView::from_arrow(av));
+                }
+
+                if let Some(source) = self.graph.resolve_source_table_entry(&tref.name) {
+                    let version = source
+                        .version
+                        .or_else(|| self.resolver.source_table_version(&tref.name));
+                    let table = self.resolve_source_table_cached(&tref.name, version)?;
+                    return self.source_table_to_range_view(table.as_ref(), &tref.specifier);
                 }
 
                 // Fallback: materialize via Resolver::resolve_range_like tranche 1

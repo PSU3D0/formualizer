@@ -1,8 +1,195 @@
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime};
-use formualizer_common::{RangeAddress, error::ExcelError};
+use formualizer_common::{
+    RangeAddress,
+    error::{ExcelError, ExcelErrorKind},
+};
 #[cfg(feature = "json")]
 use formualizer_workbook::JsonAdapter;
 use formualizer_workbook::{CellData, LiteralValue, SpreadsheetReader, SpreadsheetWriter};
+
+#[cfg(feature = "json")]
+#[test]
+fn json_loader_declares_sources_before_formulas() {
+    use formualizer_eval::engine::EvalConfig;
+    use formualizer_workbook::{LoadStrategy, Workbook};
+
+    let bytes = br#"{
+        "version": 1,
+        "sources": [
+            { "type": "scalar", "name": "Foo", "version": 1 }
+        ],
+        "sheets": {
+            "S": {
+                "cells": [
+                    { "row": 1, "col": 1, "formula": "Foo" }
+                ]
+            }
+        }
+    }"#
+    .to_vec();
+
+    let adapter = JsonAdapter::open_bytes(bytes).unwrap();
+    let cfg = EvalConfig::default();
+
+    let mut wb = Workbook::from_reader(adapter, LoadStrategy::EagerAll, cfg).unwrap();
+    let v = wb.evaluate_cell("S", 1, 1).unwrap();
+
+    match v {
+        LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Ref),
+        other => panic!("expected #REF!, got {other:?}"),
+    }
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn json_loader_declares_sources_before_formula_ingest_eager_mode() {
+    use formualizer_eval::engine::ingest::EngineLoadStream;
+    use formualizer_eval::engine::{Engine, EvalConfig};
+    use formualizer_eval::traits::{
+        EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
+        ReferenceResolver, Resolver, SourceResolver, Table, TableResolver,
+    };
+    use formualizer_parse::parser::TableReference;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, RwLock};
+
+    #[derive(Clone)]
+    struct Ctx {
+        v: Arc<RwLock<LiteralValue>>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl Ctx {
+        fn new(v: LiteralValue) -> Self {
+            Self {
+                v: Arc::new(RwLock::new(v)),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn set(&self, v: LiteralValue) {
+            *self.v.write().unwrap() = v;
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::Relaxed)
+        }
+    }
+
+    impl ReferenceResolver for Ctx {
+        fn resolve_cell_reference(
+            &self,
+            _sheet: Option<&str>,
+            _row: u32,
+            _col: u32,
+        ) -> Result<LiteralValue, formualizer_common::error::ExcelError> {
+            Err(formualizer_common::error::ExcelError::new(
+                ExcelErrorKind::NImpl,
+            ))
+        }
+    }
+
+    impl RangeResolver for Ctx {
+        fn resolve_range_reference(
+            &self,
+            _sheet: Option<&str>,
+            _sr: Option<u32>,
+            _sc: Option<u32>,
+            _er: Option<u32>,
+            _ec: Option<u32>,
+        ) -> Result<Box<dyn Range>, formualizer_common::error::ExcelError> {
+            Err(formualizer_common::error::ExcelError::new(
+                ExcelErrorKind::NImpl,
+            ))
+        }
+    }
+
+    impl NamedRangeResolver for Ctx {
+        fn resolve_named_range_reference(
+            &self,
+            _name: &str,
+        ) -> Result<Vec<Vec<LiteralValue>>, formualizer_common::error::ExcelError> {
+            Err(formualizer_common::error::ExcelError::new(
+                ExcelErrorKind::Name,
+            ))
+        }
+    }
+
+    impl TableResolver for Ctx {
+        fn resolve_table_reference(
+            &self,
+            _tref: &TableReference,
+        ) -> Result<Box<dyn Table>, formualizer_common::error::ExcelError> {
+            Err(formualizer_common::error::ExcelError::new(
+                ExcelErrorKind::NImpl,
+            ))
+        }
+    }
+
+    impl SourceResolver for Ctx {
+        fn resolve_source_scalar(
+            &self,
+            _name: &str,
+        ) -> Result<LiteralValue, formualizer_common::error::ExcelError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(self.v.read().unwrap().clone())
+        }
+    }
+
+    impl FunctionProvider for Ctx {
+        fn get_function(
+            &self,
+            ns: &str,
+            name: &str,
+        ) -> Option<std::sync::Arc<dyn formualizer_eval::function::Function>> {
+            formualizer_eval::function_registry::get(ns, name)
+        }
+    }
+
+    impl Resolver for Ctx {}
+    impl EvaluationContext for Ctx {}
+
+    let ctx = Ctx::new(LiteralValue::Number(1.0));
+
+    let bytes = br#"{
+        "version": 1,
+        "sources": [
+            { "type": "scalar", "name": "Foo", "version": 1 }
+        ],
+        "sheets": {
+            "S": {
+                "cells": [
+                    { "row": 1, "col": 1, "formula": "Foo" }
+                ]
+            }
+        }
+    }"#
+    .to_vec();
+
+    let mut adapter = JsonAdapter::open_bytes(bytes).unwrap();
+
+    let mut cfg = EvalConfig::default();
+    cfg.defer_graph_building = false;
+
+    let mut engine: Engine<_> = Engine::new(ctx.clone(), cfg);
+    adapter.stream_into_engine(&mut engine).unwrap();
+
+    let v1 = engine
+        .evaluate_cell("S", 1, 1)
+        .unwrap()
+        .expect("computed value");
+    assert_eq!(v1, LiteralValue::Number(1.0));
+
+    ctx.set(LiteralValue::Number(2.0));
+    engine.invalidate_source("Foo").unwrap();
+
+    let v2 = engine
+        .evaluate_cell("S", 1, 1)
+        .unwrap()
+        .expect("computed value");
+    assert_eq!(v2, LiteralValue::Number(2.0));
+    assert!(ctx.calls() >= 2);
+}
 
 #[cfg(feature = "json")]
 #[test]

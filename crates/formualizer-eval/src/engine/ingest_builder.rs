@@ -249,6 +249,8 @@ impl<'g> BulkIngestBuilder<'g> {
                             if let Some(named) = self.g.resolve_name_entry(name, formula_sheet) {
                                 row.push(named.vertex.0);
                                 name_vertices.push(named.vertex);
+                            } else if let Some(source) = self.g.resolve_source_scalar_entry(name) {
+                                row.push(source.vertex.0);
                             } else {
                                 self.g
                                     .record_pending_name_reference(formula_sheet, name, tvid);
@@ -265,6 +267,10 @@ impl<'g> BulkIngestBuilder<'g> {
                         for table_name in tables {
                             if let Some(table) = self.g.resolve_table_entry(table_name) {
                                 row.push(table.vertex.0);
+                            } else if let Some(source) =
+                                self.g.resolve_source_table_entry(table_name)
+                            {
+                                row.push(source.vertex.0);
                             }
                         }
                     }

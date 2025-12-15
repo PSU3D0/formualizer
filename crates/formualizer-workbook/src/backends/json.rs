@@ -16,6 +16,8 @@ struct JsonWorkbook {
     #[serde(default)]
     compression: Option<CompressionType>,
     #[serde(default)]
+    sources: Vec<JsonSource>,
+    #[serde(default)]
     sheets: BTreeMap<String, JsonSheet>,
 }
 
@@ -60,6 +62,13 @@ struct JsonCell {
     formula: Option<String>,
     #[serde(default)]
     style: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum JsonSource {
+    Scalar { name: String, version: Option<u64> },
+    Table { name: String, version: Option<u64> },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -474,6 +483,20 @@ where
             engine
                 .add_sheet(name)
                 .map_err(|e| IoError::from_backend("json", e))?;
+        }
+
+        // Declare external sources (SourceVertex) before ingesting formulas.
+        for src in &self.data.sources {
+            match src {
+                JsonSource::Scalar { name, version } => engine
+                    .define_source_scalar(name, *version)
+                    .map_err(|e| IoError::from_backend("json", e))?,
+                JsonSource::Table { name, version } => {
+                    engine
+                        .define_source_table(name, *version)
+                        .map_err(|e| IoError::from_backend("json", e))?
+                }
+            }
         }
 
         // Ingest values via Arrow IngestBuilder per sheet

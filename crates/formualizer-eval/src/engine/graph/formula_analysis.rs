@@ -154,6 +154,8 @@ impl DependencyGraph {
                     if let Some(named_range) = self.resolve_name_entry(name, current_sheet_id) {
                         dependencies.insert(named_range.vertex);
                         named_dependencies.push(named_range.vertex);
+                    } else if let Some(source) = self.resolve_source_scalar_entry(name) {
+                        dependencies.insert(source.vertex);
                     } else {
                         return Err(ExcelError::new(ExcelErrorKind::Name)
                             .with_message(format!("Undefined name: {name}")));
@@ -162,6 +164,8 @@ impl DependencyGraph {
                 ReferenceType::Table(tref) => {
                     if let Some(table) = self.resolve_table_entry(&tref.name) {
                         dependencies.insert(table.vertex);
+                    } else if let Some(source) = self.resolve_source_table_entry(&tref.name) {
+                        dependencies.insert(source.vertex);
                     } else {
                         return Err(ExcelError::new(ExcelErrorKind::Name)
                             .with_message(format!("Undefined table: {}", tref.name)));
