@@ -19,9 +19,7 @@
 //! - Match unsorted detection for approximate modes (#N/A) and wildcard escaping.
 //! - PERFORMANCE: streaming FILTER without full materialization; UNIQUE using smallvec for tiny sets.
 
-use super::lookup_utils::{
-    approximate_select_ascending, equals_maybe_wildcard, find_exact_index, guard_sorted_ascending,
-};
+use super::lookup_utils::{cmp_for_lookup, equals_maybe_wildcard, value_to_f64_lenient};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::Function; // FnCaps imported via macro
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -30,45 +28,6 @@ use formualizer_macros::func_caps;
 use std::collections::HashMap;
 
 /* ───────────────────────── helpers ───────────────────────── */
-
-fn to_values_flat(
-    arg: &ArgumentHandle,
-    ctx: &dyn FunctionContext,
-) -> Result<Vec<LiteralValue>, ExcelError> {
-    if let Ok(r) = arg.as_reference_or_eval() {
-        let mut out = Vec::new();
-        let sheet = ctx.current_sheet();
-        let rv = ctx.resolve_range_view(&r, sheet)?;
-        rv.for_each_cell(&mut |v| {
-            out.push(v.clone());
-            Ok(())
-        })?;
-        Ok(out)
-    } else {
-        Ok(vec![arg.value()?.as_ref().clone()])
-    }
-}
-
-fn to_rows_2d(
-    arg: &ArgumentHandle,
-    ctx: &dyn FunctionContext,
-) -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
-    if let Ok(r) = arg.as_reference_or_eval() {
-        let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
-        let sheet = ctx.current_sheet();
-        let rv = ctx.resolve_range_view(&r, sheet)?;
-        rv.for_each_row(&mut |row| {
-            rows.push(row.to_vec());
-            Ok(())
-        })?;
-        Ok(rows)
-    } else {
-        match arg.value()?.as_ref() {
-            LiteralValue::Array(a) => Ok(a.clone()),
-            v => Ok(vec![vec![v.clone()]]),
-        }
-    }
-}
 
 pub fn super_wildcard_match(pattern: &str, text: &str) -> bool {
     // public for shared lookup utils
@@ -195,24 +154,6 @@ pub fn super_wildcard_match(pattern: &str, text: &str) -> bool {
     match_tokens(&compact, text)
 }
 
-fn value_equal(a: &LiteralValue, b: &LiteralValue, wildcard: bool) -> bool {
-    match (a, b) {
-        (LiteralValue::Int(i1), LiteralValue::Int(i2)) => i1 == i2,
-        (LiteralValue::Number(n1), LiteralValue::Number(n2)) => (n1 - n2).abs() < 1e-12,
-        (LiteralValue::Int(i), LiteralValue::Number(n))
-        | (LiteralValue::Number(n), LiteralValue::Int(i)) => (*i as f64 - *n).abs() < 1e-12,
-        (LiteralValue::Text(s1), LiteralValue::Text(s2)) => {
-            if wildcard && (s1.contains('*') || s1.contains('?') || s1.contains('~')) {
-                super_wildcard_match(s1, s2)
-            } else {
-                s1.eq_ignore_ascii_case(s2)
-            }
-        }
-        (LiteralValue::Boolean(b1), LiteralValue::Boolean(b2)) => b1 == b2,
-        _ => false,
-    }
-}
-
 /* ───────────────────────── XLOOKUP() ───────────────────────── */
 
 #[derive(Debug)]
@@ -306,7 +247,7 @@ impl Function for XLookupFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 3 {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
@@ -315,24 +256,31 @@ impl Function for XLookupFn {
         if let LiteralValue::Error(e) = lookup_value.as_ref() {
             return Ok(LiteralValue::Error(e.clone()));
         }
-        // Materialize lookup & return arrays with both flat & 2D for orientation logic
-        let lookup_rows = to_rows_2d(&args[1], ctx)?; // could be 1 x N or N x 1
-        let ret_rows = to_rows_2d(&args[2], ctx)?; // may be multi-column/row slice
-        // Derive flat list of candidates (respect row/col orientation). If lookup_rows has 1 row -> horizontal; else if 1 col -> vertical
-        let vertical = lookup_rows.len() > 1; // heuristic: multi-row => vertical orientation
-        let lookup_vals: Vec<LiteralValue> = if vertical {
-            // Each row should have at least 1 col; use first column
-            lookup_rows
-                .iter()
-                .map(|r| r.first().cloned().unwrap_or(LiteralValue::Empty))
-                .collect()
-        } else {
-            // horizontal
-            lookup_rows.first().cloned().unwrap_or_default()
+        let lookup_view = match args[1].range_view() {
+            Ok(v) => v,
+            Err(e) => return Ok(LiteralValue::Error(e)),
         };
-        if lookup_vals.is_empty() {
+        let ret_view = match args[2].range_view() {
+            Ok(v) => v,
+            Err(e) => return Ok(LiteralValue::Error(e)),
+        };
+
+        let (lookup_rows, lookup_cols) = lookup_view.dims();
+        if lookup_rows == 0 || lookup_cols == 0 {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
         }
+
+        // XLOOKUP requires a 1-D lookup array (single row or single column).
+        let vertical = if lookup_cols == 1 {
+            true
+        } else if lookup_rows == 1 {
+            false
+        } else {
+            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+        };
+
+        let lookup_len = if vertical { lookup_rows } else { lookup_cols };
+
         let match_mode = if args.len() >= 5 {
             match args[4].value()?.as_ref() {
                 LiteralValue::Int(i) => *i,
@@ -351,68 +299,116 @@ impl Function for XLookupFn {
         } else {
             1
         };
+
         let wildcard = match_mode == 2;
-        let indices: Box<dyn Iterator<Item = usize>> = if search_mode == -1 {
-            Box::new((0..lookup_vals.len()).rev())
-        } else {
-            Box::new(0..lookup_vals.len())
-        };
+
         let mut found: Option<usize> = None;
         if match_mode == 0 || wildcard {
-            // respect search direction
             if search_mode == -1 {
-                for i in (0..lookup_vals.len()).rev() {
-                    if equals_maybe_wildcard(lookup_value.as_ref(), &lookup_vals[i], wildcard) {
+                for i in (0..lookup_len).rev() {
+                    let cand = if vertical {
+                        lookup_view.get_cell(i, 0)
+                    } else {
+                        lookup_view.get_cell(0, i)
+                    };
+                    if equals_maybe_wildcard(lookup_value.as_ref(), &cand, wildcard) {
                         found = Some(i);
                         break;
                     }
                 }
             } else {
-                found = find_exact_index(&lookup_vals, lookup_value.as_ref(), wildcard);
+                for i in 0..lookup_len {
+                    let cand = if vertical {
+                        lookup_view.get_cell(i, 0)
+                    } else {
+                        lookup_view.get_cell(0, i)
+                    };
+                    if equals_maybe_wildcard(lookup_value.as_ref(), &cand, wildcard) {
+                        found = Some(i);
+                        break;
+                    }
+                }
             }
         } else if match_mode == -1 || match_mode == 1 {
-            if let Err(e) = guard_sorted_ascending(&lookup_vals) {
-                return Ok(LiteralValue::Error(e));
+            let needle = lookup_value.as_ref();
+            let needle_num = value_to_f64_lenient(needle);
+            let mut best_idx: Option<usize> = None;
+            let mut best_val: f64 = if match_mode == -1 {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            };
+
+            let mut prev: Option<LiteralValue> = None;
+            for i in 0..lookup_len {
+                let cand = if vertical {
+                    lookup_view.get_cell(i, 0)
+                } else {
+                    lookup_view.get_cell(0, i)
+                };
+
+                if let Some(p) = prev.as_ref() {
+                    let sorted_ok = cmp_for_lookup(p, &cand).is_some_and(|o| o <= 0);
+                    if !sorted_ok {
+                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
+                    }
+                }
+                prev = Some(cand.clone());
+
+                if cmp_for_lookup(&cand, needle).is_some_and(|o| o == 0) {
+                    found = Some(i);
+                    break;
+                }
+
+                if let (Some(nn), Some(vv)) = (needle_num, value_to_f64_lenient(&cand)) {
+                    if match_mode == -1 {
+                        if vv <= nn && vv > best_val {
+                            best_val = vv;
+                            best_idx = Some(i);
+                        }
+                    } else if vv >= nn && vv < best_val {
+                        best_val = vv;
+                        best_idx = Some(i);
+                    }
+                }
             }
-            found = approximate_select_ascending(
-                &lookup_vals,
-                lookup_value.as_ref(),
-                match_mode as i32,
-            );
+
+            if found.is_none() {
+                found = best_idx;
+            }
         } else {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }
+
         if let Some(idx) = found {
-            if ret_rows.is_empty() {
+            let (ret_rows, ret_cols) = ret_view.dims();
+            if ret_rows == 0 || ret_cols == 0 {
                 return Ok(LiteralValue::Empty);
             }
+
             if vertical {
-                if idx < ret_rows.len() {
-                    let row = &ret_rows[idx];
-                    if row.len() == 1 {
-                        return Ok(row[0].clone());
-                    }
-                    return Ok(LiteralValue::Array(vec![row.clone()]));
+                if ret_cols == 1 {
+                    return Ok(ret_view.get_cell(idx, 0));
                 }
-            } else {
-                // horizontal orientation: treat idx as column; build column vector
-                let height = ret_rows.len();
-                if height == 1 {
-                    // single row -> scalar
-                    let row = &ret_rows[0];
-                    if idx < row.len() {
-                        return Ok(row[idx].clone());
-                    }
-                } else {
-                    let mut col: Vec<Vec<LiteralValue>> = Vec::new();
-                    for r in &ret_rows {
-                        col.push(vec![r.get(idx).cloned().unwrap_or(LiteralValue::Empty)]);
-                    }
-                    return Ok(LiteralValue::Array(col));
+                let mut row_out: Vec<LiteralValue> = Vec::with_capacity(ret_cols);
+                for c in 0..ret_cols {
+                    row_out.push(ret_view.get_cell(idx, c));
                 }
+                return Ok(LiteralValue::Array(vec![row_out]));
             }
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+
+            // Horizontal orientation: treat idx as column.
+            if ret_rows == 1 {
+                return Ok(ret_view.get_cell(0, idx));
+            }
+
+            let mut col_out: Vec<Vec<LiteralValue>> = Vec::with_capacity(ret_rows);
+            for r in 0..ret_rows {
+                col_out.push(vec![ret_view.get_cell(r, idx)]);
+            }
+            return Ok(LiteralValue::Array(col_out));
         }
+
         if args.len() >= 4 {
             return args[3].value().map(|c| c.into_owned());
         }
@@ -479,30 +475,50 @@ impl Function for FilterFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }
-        let rows = to_rows_2d(&args[0], ctx)?;
-        if rows.is_empty() {
+        let array_view = match args[0].range_view() {
+            Ok(v) => v,
+            Err(e) => return Ok(LiteralValue::Error(e)),
+        };
+        let include_view = match args[1].range_view() {
+            Ok(v) => v,
+            Err(e) => return Ok(LiteralValue::Error(e)),
+        };
+
+        let (array_rows, array_cols) = array_view.dims();
+        if array_rows == 0 || array_cols == 0 {
             return Ok(LiteralValue::Array(vec![]));
         }
-        let include_rows = to_rows_2d(&args[1], ctx)?;
+
+        let (include_rows, include_cols) = include_view.dims();
+        if include_rows != array_rows && include_rows != 1 {
+            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+        }
+
         let mut result: Vec<Vec<LiteralValue>> = Vec::new();
-        let row_count = rows.len();
-        for (i, row) in rows.iter().enumerate() {
-            let include = if include_rows.len() == row_count {
-                include_rows[i].iter().any(|v| v.is_truthy())
-            } else if include_rows.len() == 1 {
-                include_rows[0].iter().any(|v| v.is_truthy())
-            } else {
-                return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
-            };
+        for r in 0..array_rows {
+            let include_r = if include_rows == array_rows { r } else { 0 };
+            let mut include = false;
+            for c in 0..include_cols {
+                if include_view.get_cell(include_r, c).is_truthy() {
+                    include = true;
+                    break;
+                }
+            }
+
             if include {
-                result.push(row.clone());
+                let mut row_out: Vec<LiteralValue> = Vec::with_capacity(array_cols);
+                for c in 0..array_cols {
+                    row_out.push(array_view.get_cell(r, c));
+                }
+                result.push(row_out);
             }
         }
+
         if result.is_empty() {
             if args.len() >= 3 {
                 return args[2].value().map(|c| c.into_owned());
@@ -572,12 +588,17 @@ impl Function for UniqueFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        let rows = to_rows_2d(&args[0], ctx)?;
-        if rows.is_empty() {
+        let view = match args[0].range_view() {
+            Ok(v) => v,
+            Err(e) => return Ok(LiteralValue::Error(e)),
+        };
+        let (rows, cols) = view.dims();
+        if rows == 0 || cols == 0 {
             return Ok(LiteralValue::Array(vec![]));
         }
+
         let by_col = if args.len() >= 2 {
             matches!(args[1].value()?.as_ref(), LiteralValue::Boolean(true))
         } else {
@@ -588,24 +609,26 @@ impl Function for UniqueFn {
         } else {
             false
         };
+
         if by_col {
-            // Transpose columns to vectors and dedup columns
-            let width = rows[0].len();
-            // Ensure all rows same width
-            if rows.iter().any(|r| r.len() != width) {
-                return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
-            }
             #[derive(Hash, Eq, PartialEq, Clone)]
             struct ColKey(Vec<LiteralValue>);
+
             let mut order: Vec<ColKey> = Vec::new();
             let mut counts: HashMap<ColKey, usize> = HashMap::new();
-            for c in 0..width {
-                let key = ColKey(rows.iter().map(|r| r[c].clone()).collect());
+
+            for c in 0..cols {
+                let mut col_vals: Vec<LiteralValue> = Vec::with_capacity(rows);
+                for r in 0..rows {
+                    col_vals.push(view.get_cell(r, c));
+                }
+                let key = ColKey(col_vals);
                 if !counts.contains_key(&key) {
                     order.push(key.clone());
                 }
                 *counts.entry(key).or_insert(0) += 1;
             }
+
             let mut out: Vec<Vec<LiteralValue>> = Vec::new();
             for k in order {
                 if !exactly_once || counts.get(&k) == Some(&1) {
@@ -617,18 +640,24 @@ impl Function for UniqueFn {
             }
             return Ok(LiteralValue::Array(out));
         }
-        // Row-wise uniqueness (entire rows)
+
         #[derive(Hash, Eq, PartialEq, Clone)]
         struct RowKey(Vec<LiteralValue>);
+
         let mut order: Vec<RowKey> = Vec::new();
         let mut counts: HashMap<RowKey, usize> = HashMap::new();
-        for r in &rows {
-            let key = RowKey(r.clone());
+        for r in 0..rows {
+            let mut row_vals: Vec<LiteralValue> = Vec::with_capacity(cols);
+            for c in 0..cols {
+                row_vals.push(view.get_cell(r, c));
+            }
+            let key = RowKey(row_vals);
             if !counts.contains_key(&key) {
                 order.push(key.clone());
             }
             *counts.entry(key).or_insert(0) += 1;
         }
+
         let mut out: Vec<Vec<LiteralValue>> = Vec::new();
         for k in order {
             if !exactly_once || counts.get(&k) == Some(&1) {
@@ -806,24 +835,21 @@ impl Function for TransposeFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        let rows = to_rows_2d(&args[0], ctx)?;
-        if rows.is_empty() {
+        let view = match args[0].range_view() {
+            Ok(v) => v,
+            Err(e) => return Ok(LiteralValue::Error(e)),
+        };
+        let (rows, cols) = view.dims();
+        if rows == 0 || cols == 0 {
             return Ok(LiteralValue::Array(vec![]));
         }
-        let width = rows[0].len();
-        // Validate rectangular
-        if rows.iter().any(|r| r.len() != width) {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
-        }
-        if width == 0 {
-            return Ok(LiteralValue::Array(vec![]));
-        }
-        let mut out: Vec<Vec<LiteralValue>> = vec![Vec::with_capacity(rows.len()); width];
-        for row in &rows {
-            for (c, cell) in row.iter().enumerate() {
-                out[c].push(cell.clone());
+
+        let mut out: Vec<Vec<LiteralValue>> = vec![Vec::with_capacity(rows); cols];
+        for r in 0..rows {
+            for c in 0..cols {
+                out[c].push(view.get_cell(r, c));
             }
         }
         if out.len() == 1 && out[0].len() == 1 {
@@ -889,17 +915,20 @@ impl Function for TakeFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        let rows = to_rows_2d(&args[0], ctx)?;
-        if rows.is_empty() {
+        let view = match args[0].range_view() {
+            Ok(v) => v,
+            Err(e) => return Ok(LiteralValue::Error(e)),
+        };
+        let (rows, cols) = view.dims();
+        if rows == 0 || cols == 0 {
             return Ok(LiteralValue::Array(vec![]));
         }
-        let height = rows.len() as i64;
-        let width = rows[0].len() as i64;
-        if rows.iter().any(|r| r.len() as i64 != width) {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
-        }
+
+        let height = rows as i64;
+        let width = cols as i64;
+
         let num = |a: &ArgumentHandle| -> Result<i64, ExcelError> {
             Ok(match a.value()?.as_ref() {
                 LiteralValue::Int(i) => *i,
@@ -913,37 +942,43 @@ impl Function for TakeFn {
         } else {
             None
         };
+
         if take_rows.abs() > height {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }
-        let row_start;
-        let row_end; // inclusive-exclusive
-        if take_rows >= 0 {
-            row_start = 0;
-            row_end = take_rows as usize;
+
+        let (row_start, row_end) = if take_rows >= 0 {
+            (0usize, take_rows as usize)
         } else {
-            row_start = (height + take_rows) as usize;
-            row_end = height as usize;
-        }
+            ((height + take_rows) as usize, height as usize)
+        };
+
         let (col_start, col_end) = if let Some(tc) = take_cols {
             if tc.abs() > width {
                 return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
             }
             if tc >= 0 {
-                (0, tc as usize)
+                (0usize, tc as usize)
             } else {
                 ((width + tc) as usize, width as usize)
             }
         } else {
-            (0, width as usize)
+            (0usize, width as usize)
         };
-        let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_end - row_start);
-        for row in rows.iter().skip(row_start).take(row_end - row_start) {
-            out.push(row[col_start..col_end].to_vec());
-        }
-        if out.is_empty() {
+
+        if row_start >= row_end || col_start >= col_end {
             return Ok(LiteralValue::Array(vec![]));
         }
+
+        let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_end - row_start);
+        for r in row_start..row_end {
+            let mut row_out: Vec<LiteralValue> = Vec::with_capacity(col_end - col_start);
+            for c in col_start..col_end {
+                row_out.push(view.get_cell(r, c));
+            }
+            out.push(row_out);
+        }
+
         if out.len() == 1 && out[0].len() == 1 {
             return Ok(out[0][0].clone());
         }
@@ -1007,17 +1042,20 @@ impl Function for DropFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        let rows = to_rows_2d(&args[0], ctx)?;
-        if rows.is_empty() {
+        let view = match args[0].range_view() {
+            Ok(v) => v,
+            Err(e) => return Ok(LiteralValue::Error(e)),
+        };
+        let (rows, cols) = view.dims();
+        if rows == 0 || cols == 0 {
             return Ok(LiteralValue::Array(vec![]));
         }
-        let height = rows.len() as i64;
-        let width = rows[0].len() as i64;
-        if rows.iter().any(|r| r.len() as i64 != width) {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
-        }
+
+        let height = rows as i64;
+        let width = cols as i64;
+
         let num = |a: &ArgumentHandle| -> Result<i64, ExcelError> {
             Ok(match a.value()?.as_ref() {
                 LiteralValue::Int(i) => *i,
@@ -1031,27 +1069,36 @@ impl Function for DropFn {
         } else {
             None
         };
+
         let (row_start, row_end) = if drop_rows >= 0 {
             ((drop_rows as usize).min(height as usize), height as usize)
         } else {
-            (0, ((height + drop_rows).max(0) as usize))
+            (0usize, (height + drop_rows).max(0) as usize)
         };
+
         let (col_start, col_end) = if let Some(dc) = drop_cols {
             if dc >= 0 {
-                (((dc as usize).min(width as usize)), width as usize)
+                ((dc as usize).min(width as usize), width as usize)
             } else {
-                (0, ((width + dc).max(0) as usize))
+                (0usize, (width + dc).max(0) as usize)
             }
         } else {
-            (0, width as usize)
+            (0usize, width as usize)
         };
+
         if row_start >= row_end || col_start >= col_end {
             return Ok(LiteralValue::Array(vec![]));
         }
+
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_end - row_start);
-        for row in rows.iter().skip(row_start).take(row_end - row_start) {
-            out.push(row[col_start..col_end].to_vec());
+        for r in row_start..row_end {
+            let mut row_out: Vec<LiteralValue> = Vec::with_capacity(col_end - col_start);
+            for c in col_start..col_end {
+                row_out.push(view.get_cell(r, c));
+            }
+            out.push(row_out);
         }
+
         if out.len() == 1 && out[0].len() == 1 {
             return Ok(out[0][0].clone());
         }
@@ -1326,6 +1373,301 @@ mod tests {
         ];
         let v_rev = f.dispatch(&args_rev, &ctx.function_context(None)).unwrap();
         assert_eq!(v_rev, LiteralValue::Text("Last".into()));
+    }
+
+    #[test]
+    fn xlookup_horizontal_returns_column_vector_for_matrix_return() {
+        let wb = TestWorkbook::new().with_function(Arc::new(XLookupFn));
+        let wb = wb
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(30))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(1))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(2))
+            .with_cell_a1("Sheet1", "C2", LiteralValue::Int(3))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(4))
+            .with_cell_a1("Sheet1", "B3", LiteralValue::Int(5))
+            .with_cell_a1("Sheet1", "C3", LiteralValue::Int(6));
+        let ctx = wb.interpreter();
+
+        let lookup_range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:C1".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(1),
+                    end_col: Some(3),
+                },
+            },
+            None,
+        );
+        let return_range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A2:C3".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(2),
+                    start_col: Some(1),
+                    end_row: Some(3),
+                    end_col: Some(3),
+                },
+            },
+            None,
+        );
+
+        let f = ctx.context.get_function("", "XLOOKUP").unwrap();
+        let needle = lit(LiteralValue::Int(20));
+        let args = vec![
+            ArgumentHandle::new(&needle, &ctx),
+            ArgumentHandle::new(&lookup_range, &ctx),
+            ArgumentHandle::new(&return_range, &ctx),
+        ];
+
+        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        match v {
+            LiteralValue::Array(a) => {
+                assert_eq!(
+                    a,
+                    vec![
+                        vec![LiteralValue::Number(2.0)],
+                        vec![LiteralValue::Number(5.0)]
+                    ]
+                );
+            }
+            other => panic!("expected array got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn xlookup_vertical_returns_row_vector_for_matrix_return() {
+        let wb = TestWorkbook::new().with_function(Arc::new(XLookupFn));
+        let wb = wb
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(30))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(101))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(102))
+            .with_cell_a1("Sheet1", "D1", LiteralValue::Int(103))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(201))
+            .with_cell_a1("Sheet1", "C2", LiteralValue::Int(202))
+            .with_cell_a1("Sheet1", "D2", LiteralValue::Int(203))
+            .with_cell_a1("Sheet1", "B3", LiteralValue::Int(301))
+            .with_cell_a1("Sheet1", "C3", LiteralValue::Int(302))
+            .with_cell_a1("Sheet1", "D3", LiteralValue::Int(303));
+        let ctx = wb.interpreter();
+
+        let lookup_range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:A3".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(3),
+                    end_col: Some(1),
+                },
+            },
+            None,
+        );
+        let return_range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "B1:D3".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(2),
+                    end_row: Some(3),
+                    end_col: Some(4),
+                },
+            },
+            None,
+        );
+
+        let f = ctx.context.get_function("", "XLOOKUP").unwrap();
+        let needle = lit(LiteralValue::Int(20));
+        let args = vec![
+            ArgumentHandle::new(&needle, &ctx),
+            ArgumentHandle::new(&lookup_range, &ctx),
+            ArgumentHandle::new(&return_range, &ctx),
+        ];
+
+        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        match v {
+            LiteralValue::Array(a) => {
+                assert_eq!(
+                    a,
+                    vec![vec![
+                        LiteralValue::Number(201.0),
+                        LiteralValue::Number(202.0),
+                        LiteralValue::Number(203.0)
+                    ]]
+                );
+            }
+            other => panic!("expected array got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn xlookup_mismatched_return_dims_yields_empty_for_oob() {
+        let wb = TestWorkbook::new().with_function(Arc::new(XLookupFn));
+        let wb = wb
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(30))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(1))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(2));
+        let ctx = wb.interpreter();
+
+        let lookup_range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:A3".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(3),
+                    end_col: Some(1),
+                },
+            },
+            None,
+        );
+        let return_range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "B1:B2".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(2),
+                    end_row: Some(2),
+                    end_col: Some(2),
+                },
+            },
+            None,
+        );
+
+        let f = ctx.context.get_function("", "XLOOKUP").unwrap();
+        let needle = lit(LiteralValue::Int(30));
+        let args = vec![
+            ArgumentHandle::new(&needle, &ctx),
+            ArgumentHandle::new(&lookup_range, &ctx),
+            ArgumentHandle::new(&return_range, &ctx),
+        ];
+
+        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        assert_eq!(v, LiteralValue::Empty);
+    }
+
+    #[test]
+    fn xlookup_2d_lookup_array_errors() {
+        let wb = TestWorkbook::new().with_function(Arc::new(XLookupFn));
+        let wb = wb
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(1))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(2))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(3))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(4))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "C2", LiteralValue::Int(20));
+        let ctx = wb.interpreter();
+
+        let lookup_range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:B2".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(2),
+                    end_col: Some(2),
+                },
+            },
+            None,
+        );
+        let return_range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "C1:C2".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(3),
+                    end_row: Some(2),
+                    end_col: Some(3),
+                },
+            },
+            None,
+        );
+
+        let f = ctx.context.get_function("", "XLOOKUP").unwrap();
+        let needle = lit(LiteralValue::Int(2));
+        let args = vec![
+            ArgumentHandle::new(&needle, &ctx),
+            ArgumentHandle::new(&lookup_range, &ctx),
+            ArgumentHandle::new(&return_range, &ctx),
+        ];
+
+        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        match v {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
+            other => panic!("expected #VALUE! got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn xlookup_invalid_match_mode_errors() {
+        let wb = TestWorkbook::new().with_function(Arc::new(XLookupFn));
+        let wb = wb
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(1))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(2))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(20));
+        let ctx = wb.interpreter();
+
+        let lookup_range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:A2".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(2),
+                    end_col: Some(1),
+                },
+            },
+            None,
+        );
+        let return_range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "B1:B2".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(2),
+                    end_row: Some(2),
+                    end_col: Some(2),
+                },
+            },
+            None,
+        );
+
+        let f = ctx.context.get_function("", "XLOOKUP").unwrap();
+        let needle = lit(LiteralValue::Int(1));
+        let bad_match_mode = lit(LiteralValue::Int(3));
+        let nf = lit(LiteralValue::Text("NF".into()));
+        let args = vec![
+            ArgumentHandle::new(&needle, &ctx),
+            ArgumentHandle::new(&lookup_range, &ctx),
+            ArgumentHandle::new(&return_range, &ctx),
+            // if_not_found
+            ArgumentHandle::new(&nf, &ctx),
+            ArgumentHandle::new(&bad_match_mode, &ctx),
+        ];
+
+        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        match v {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
+            other => panic!("expected #VALUE! got {other:?}"),
+        }
     }
 
     #[test]

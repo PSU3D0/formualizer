@@ -1018,7 +1018,8 @@ where
         ci: usize,
     ) -> (Option<u32>, Option<u32>) {
         let col = &a.columns[ci];
-        // Min
+
+        // Min: scan dense chunks first, then sparse chunks in ascending index order.
         let mut min_r0: Option<u32> = None;
         for (chunk_idx, chunk) in col.chunks.iter().enumerate() {
             let tags = chunk.type_tag.values();
@@ -1029,7 +1030,10 @@ where
                     .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
                     .unwrap_or(false);
                 if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
-                    let row0 = a.chunk_starts[chunk_idx] + off;
+                    let Some(&chunk_start) = a.chunk_starts.get(chunk_idx) else {
+                        break;
+                    };
+                    let row0 = chunk_start + off;
                     min_r0 = Some(row0 as u32);
                     break;
                 }
@@ -1038,27 +1042,89 @@ where
                 break;
             }
         }
-        // Max
-        let mut max_r0: Option<u32> = None;
-        for (chunk_rel, chunk) in col.chunks.iter().enumerate().rev() {
-            let chunk_idx = chunk_rel;
-            let tags = chunk.type_tag.values();
-            for (rev_idx, &t) in tags.iter().enumerate().rev() {
-                let overlay_non_empty = chunk
-                    .overlay
-                    .get(rev_idx)
-                    .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
-                    .unwrap_or(false);
-                if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
-                    let row0 = a.chunk_starts[chunk_idx] + rev_idx;
-                    max_r0 = Some(row0 as u32);
+        if min_r0.is_none() && !col.sparse_chunks.is_empty() {
+            let mut sparse_idxs: Vec<usize> = col.sparse_chunks.keys().copied().collect();
+            sparse_idxs.sort_unstable();
+            for chunk_idx in sparse_idxs {
+                let Some(chunk) = col.sparse_chunks.get(&chunk_idx) else {
+                    continue;
+                };
+                let Some(&chunk_start) = a.chunk_starts.get(chunk_idx) else {
+                    continue;
+                };
+                let tags = chunk.type_tag.values();
+                for (off, &t) in tags.iter().enumerate() {
+                    let overlay_non_empty = chunk
+                        .overlay
+                        .get(off)
+                        .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
+                        .unwrap_or(false);
+                    if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
+                        let row0 = chunk_start + off;
+                        min_r0 = Some(row0 as u32);
+                        break;
+                    }
+                }
+                if min_r0.is_some() {
                     break;
                 }
             }
-            if max_r0.is_some() {
-                break;
+        }
+
+        // Max: scan sparse chunks in descending index order, then dense chunks in reverse.
+        let mut max_r0: Option<u32> = None;
+        if !col.sparse_chunks.is_empty() {
+            let mut sparse_idxs: Vec<usize> = col.sparse_chunks.keys().copied().collect();
+            sparse_idxs.sort_unstable_by(|a, b| b.cmp(a));
+            for chunk_idx in sparse_idxs {
+                let Some(chunk) = col.sparse_chunks.get(&chunk_idx) else {
+                    continue;
+                };
+                let Some(&chunk_start) = a.chunk_starts.get(chunk_idx) else {
+                    continue;
+                };
+                let tags = chunk.type_tag.values();
+                for (rev_idx, &t) in tags.iter().enumerate().rev() {
+                    let overlay_non_empty = chunk
+                        .overlay
+                        .get(rev_idx)
+                        .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
+                        .unwrap_or(false);
+                    if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
+                        let row0 = chunk_start + rev_idx;
+                        max_r0 = Some(row0 as u32);
+                        break;
+                    }
+                }
+                if max_r0.is_some() {
+                    break;
+                }
             }
         }
+        if max_r0.is_none() {
+            for (chunk_idx, chunk) in col.chunks.iter().enumerate().rev() {
+                let tags = chunk.type_tag.values();
+                for (rev_idx, &t) in tags.iter().enumerate().rev() {
+                    let overlay_non_empty = chunk
+                        .overlay
+                        .get(rev_idx)
+                        .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
+                        .unwrap_or(false);
+                    if overlay_non_empty || t != crate::arrow_store::TypeTag::Empty as u8 {
+                        let Some(&chunk_start) = a.chunk_starts.get(chunk_idx) else {
+                            break;
+                        };
+                        let row0 = chunk_start + rev_idx;
+                        max_r0 = Some(row0 as u32);
+                        break;
+                    }
+                }
+                if max_r0.is_some() {
+                    break;
+                }
+            }
+        }
+
         (min_r0, max_r0)
     }
 
@@ -1084,18 +1150,20 @@ where
         let mut max_c0: Option<usize> = None;
         // Precompute chunk bounds for row range
         for (ci, col) in a.columns.iter().enumerate() {
-            // Skip columns with no chunks (shouldn't happen)
-            if col.chunks.is_empty() {
-                continue;
-            }
             let mut any_in_range = false;
-            for (chunk_idx, chunk) in col.chunks.iter().enumerate() {
-                let chunk_start = a.chunk_starts[chunk_idx];
+
+            let scan_chunk = |chunk_idx: usize, chunk: &crate::arrow_store::ColumnChunk| -> bool {
+                let Some(&chunk_start) = a.chunk_starts.get(chunk_idx) else {
+                    return false;
+                };
                 let chunk_len = chunk.type_tag.len();
+                if chunk_len == 0 {
+                    return false;
+                }
                 let chunk_end = chunk_start + chunk_len.saturating_sub(1);
                 // check intersection
                 if sr0 > chunk_end || er0 < chunk_start {
-                    continue;
+                    return false;
                 }
                 let start_off = sr0.max(chunk_start) - chunk_start;
                 let end_off = er0.min(chunk_end) - chunk_start;
@@ -1107,14 +1175,28 @@ where
                         .map(|ov| !matches!(ov, crate::arrow_store::OverlayValue::Empty))
                         .unwrap_or(false);
                     if overlay_non_empty || tags[off] != crate::arrow_store::TypeTag::Empty as u8 {
+                        return true;
+                    }
+                }
+                false
+            };
+
+            for (chunk_idx, chunk) in col.chunks.iter().enumerate() {
+                if scan_chunk(chunk_idx, chunk) {
+                    any_in_range = true;
+                    break;
+                }
+            }
+
+            if !any_in_range && !col.sparse_chunks.is_empty() {
+                for (&chunk_idx, chunk) in col.sparse_chunks.iter() {
+                    if scan_chunk(chunk_idx, chunk) {
                         any_in_range = true;
                         break;
                     }
                 }
-                if any_in_range {
-                    break;
-                }
             }
+
             if any_in_range {
                 min_c0 = Some(min_c0.map(|m| m.min(ci)).unwrap_or(ci));
                 max_c0 = Some(max_c0.map(|m| m.max(ci)).unwrap_or(ci));
@@ -1201,9 +1283,11 @@ where
                     formualizer_common::ExcelErrorKind::Value,
                 )),
             };
-            let colref = &mut asheet.columns[col0];
-            let ch = &mut colref.chunks[ch_idx];
-            ch.overlay.set(in_off, ov);
+            if let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) {
+                ch.overlay.set(in_off, ov);
+            } else {
+                return;
+            }
             // Heuristic compaction: > len/50 or > 1024
             let abs_threshold = 1024usize;
             let frac_den = 50usize;
@@ -1406,14 +1490,14 @@ where
 
     /// Get a cell value
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
-        // Prefer Arrow for non-formula cells. For formula cells, use graph value.
+        // If a vertex exists in the graph (formula or value cell), use graph value to preserve types.
+        // Only fall back to Arrow for cells not in the graph.
         if let Some(sheet_id) = self.graph.sheet_id(sheet) {
-            // If a formula exists at this address, return graph value
             let coord = Coord::from_excel(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
             if let Some(vid) = self.graph.get_vertex_id_for_address(&addr) {
                 match self.graph.get_vertex_kind(*vid) {
-                    VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray | VertexKind::Cell => {
                         return self.graph.get_cell_value(sheet, row, col);
                     }
                     _ => {}
@@ -2293,7 +2377,7 @@ where
                             er = Some(max_r);
                         } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
                             sr = Some(1);
-                            er = Some(max_rows);
+                            er = Some(self.config.max_open_ended_rows);
                         }
                     }
                     if sc.is_none() && ec.is_none() {
@@ -2305,7 +2389,7 @@ where
                             ec = Some(max_c);
                         } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
                             sc = Some(1);
-                            ec = Some(max_cols);
+                            ec = Some(self.config.max_open_ended_cols);
                         }
                     }
                     if sr.is_some() && er.is_none() {
@@ -2314,7 +2398,7 @@ where
                         if let Some((_, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
                             er = Some(max_r);
                         } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                            er = Some(max_rows);
+                            er = Some(self.config.max_open_ended_rows);
                         }
                     }
                     if er.is_some() && sr.is_none() {
@@ -2332,7 +2416,7 @@ where
                         if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
                             ec = Some(max_c);
                         } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                            ec = Some(max_cols);
+                            ec = Some(self.config.max_open_ended_cols);
                         }
                     }
                     if ec.is_some() && sc.is_none() {
@@ -3459,7 +3543,7 @@ where
                     if let Some((_, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
                         er = Some(max_r);
                     } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                        er = Some(max_rows);
+                        er = Some(self.config.max_open_ended_rows);
                     }
                 }
                 if sc.is_none() && ec.is_none() {
@@ -3470,7 +3554,7 @@ where
                     if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
                         ec = Some(max_c);
                     } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                        ec = Some(max_cols);
+                        ec = Some(self.config.max_open_ended_cols);
                     }
                 }
                 if sr.is_some() && er.is_none() {
@@ -3479,7 +3563,7 @@ where
                     if let Some((_, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
                         er = Some(max_r);
                     } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                        er = Some(max_rows);
+                        er = Some(self.config.max_open_ended_rows);
                     }
                 }
                 if er.is_some() && sr.is_none() {
@@ -3492,7 +3576,7 @@ where
                     if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
                         ec = Some(max_c);
                     } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                        ec = Some(max_cols);
+                        ec = Some(self.config.max_open_ended_cols);
                     }
                 }
                 if ec.is_some() && sc.is_none() {

@@ -799,6 +799,8 @@ ports:
         - { name: on_hand, type: integer, col: C }
         - { name: safety_stock, type: integer, col: D }
         - { name: lead_time_days, type: integer, col: E }
+    constraints:
+      nullable: true
 "#;
     let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
     let mut sheetport = SheetPort::new(&mut workbook, manifest)?;

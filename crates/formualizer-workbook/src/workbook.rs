@@ -214,16 +214,15 @@ impl Workbook {
             .sheet_mut(sheet)
             .expect("ArrowSheet must exist");
 
+        // Ensure rows first so nrows is set before inserting columns
+        if min_rows > asheet.nrows as usize {
+            asheet.ensure_row_capacity(min_rows);
+        }
+
+        // Then ensure columns - they will get properly sized chunks since nrows is set
         let cur_cols = asheet.columns.len();
         if min_cols > cur_cols {
             asheet.insert_columns(cur_cols, min_cols - cur_cols);
-        }
-
-        if min_rows > asheet.nrows as usize {
-            if asheet.columns.is_empty() {
-                asheet.insert_columns(0, 1);
-            }
-            asheet.ensure_row_capacity(min_rows);
         }
     }
 
@@ -281,10 +280,10 @@ impl Workbook {
                     ))
                 }
             };
-            let colref = &mut asheet.columns[col0];
-            let ch = &mut colref.chunks[ch_idx];
-            ch.overlay.set(in_off, ov);
-            // skip compaction here (optional)
+            // Use ensure_column_chunk_mut to lazily create chunk if needed
+            if let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) {
+                ch.overlay.set(in_off, ov);
+            }
         }
     }
 

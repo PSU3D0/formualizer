@@ -105,7 +105,7 @@ fn test_evaluate_until_dependency_chain() {
     // All values should be updated
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Number(30.0))
+        Some(LiteralValue::Int(30))
     );
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 2),

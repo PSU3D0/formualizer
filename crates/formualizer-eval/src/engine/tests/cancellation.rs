@@ -72,7 +72,7 @@ fn test_cancellation_between_layers() {
             // In that case, verify all values were computed correctly
             assert_eq!(
                 engine.get_cell_value("Sheet1", 1, 1),
-                Some(LiteralValue::Number(1.0))
+                Some(LiteralValue::Int(1))
             );
             assert_eq!(
                 engine.get_cell_value("Sheet1", 1, 2),

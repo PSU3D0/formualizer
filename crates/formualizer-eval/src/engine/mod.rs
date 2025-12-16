@@ -101,6 +101,17 @@ pub struct EvalConfig {
     // Range handling configuration (Phase 5)
     /// Ranges with size <= this limit are expanded into individual Cell dependencies
     pub range_expansion_limit: usize,
+
+    /// Fallback maximum row bound for open-ended references (e.g. `A:A`, `A1:A`).
+    ///
+    /// This is only used when used-bounds cannot be determined.
+    pub max_open_ended_rows: u32,
+
+    /// Fallback maximum column bound for open-ended references (e.g. `1:1`, `A1:1`).
+    ///
+    /// This is only used when used-bounds cannot be determined.
+    pub max_open_ended_cols: u32,
+
     /// Height of stripe blocks for dense range indexing
     pub stripe_height: u32,
     /// Width of stripe blocks for dense range indexing  
@@ -164,6 +175,10 @@ impl Default for EvalConfig {
 
             // Range handling defaults (Phase 5)
             range_expansion_limit: 64,
+            // Open-ended reference defaults (Excel max dimensions).
+            // Lower these to cap `A:A` / `1:1` when used-bounds are unknown.
+            max_open_ended_rows: 1_048_576,
+            max_open_ended_cols: 16_384,
             stripe_height: 256,
             stripe_width: 256,
             enable_block_stripes: false,

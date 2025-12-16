@@ -118,7 +118,9 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                     }
                 }
                 for (ch_idx, mut items) in by_chunk {
-                    let ch = &mut sheet.columns[col0].chunks[ch_idx];
+                    let Some(ch) = sheet.ensure_column_chunk_mut(col0, ch_idx) else {
+                        continue;
+                    };
                     let len = ch.type_tag.len();
                     // heuristic: rebuild if > 2% or > 1024 updates in this chunk
                     let rebuild = items.len() > len / 50 || items.len() > 1024;

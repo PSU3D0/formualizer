@@ -20,18 +20,18 @@ fn test_simple_sum_with_arena() {
         .set_cell_value("Sheet1", 3, 1, LiteralValue::Int(30))
         .unwrap();
 
-    // Verify values are stored correctly
+    // Verify values are stored correctly (Int values should be preserved)
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1).unwrap(),
-        LiteralValue::Number(10.0)
+        LiteralValue::Int(10)
     );
     assert_eq!(
         engine.get_cell_value("Sheet1", 2, 1).unwrap(),
-        LiteralValue::Number(20.0)
+        LiteralValue::Int(20)
     );
     assert_eq!(
         engine.get_cell_value("Sheet1", 3, 1).unwrap(),
-        LiteralValue::Number(30.0)
+        LiteralValue::Int(30)
     );
 
     // Create a SUM formula
