@@ -343,11 +343,14 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::Reference { reference, .. } => self
                     .interp
                     .context
-                    .resolve_range_view(reference, self.interp.current_sheet()),
+                    .resolve_range_view(reference, self.interp.current_sheet())
+                    .map(|v| v.with_cancel_token(self.interp.context.cancellation_token())),
                 // Treat array literals (LiteralValue::Array) as ranges for RangeView APIs
-                ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => Ok(
-                    RangeView::from_owned_rows(arr.clone(), self.interp.context.date_system()),
-                ),
+                ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => Ok(RangeView::from_owned_rows(
+                    arr.clone(),
+                    self.interp.context.date_system(),
+                )
+                .with_cancel_token(self.interp.context.cancellation_token())),
                 ASTNodeType::Array(rows) => {
                     let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows.len());
                     for r in rows {
@@ -357,16 +360,17 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         }
                         out.push(row_vals);
                     }
-                    Ok(RangeView::from_owned_rows(
-                        out,
-                        self.interp.context.date_system(),
-                    ))
+                    Ok(
+                        RangeView::from_owned_rows(out, self.interp.context.date_system())
+                            .with_cancel_token(self.interp.context.cancellation_token()),
+                    )
                 }
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
                     let reference = self.reference_for_eval()?;
                     self.interp
                         .context
                         .resolve_range_view(&reference, self.interp.current_sheet())
+                        .map(|v| v.with_cancel_token(self.interp.context.cancellation_token()))
                 }
                 _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                     .with_message("Argument cannot be interpreted as a range.")),
@@ -388,13 +392,15 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         self.interp
                             .context
                             .resolve_range_view(&reference, self.interp.current_sheet())
+                            .map(|v| v.with_cancel_token(self.interp.context.cancellation_token()))
                     }
                     crate::engine::arena::AstNodeData::Literal(vref) => {
                         match data_store.retrieve_value(*vref) {
                             LiteralValue::Array(arr) => Ok(RangeView::from_owned_rows(
                                 arr,
                                 self.interp.context.date_system(),
-                            )),
+                            )
+                            .with_cancel_token(self.interp.context.cancellation_token())),
                             _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                                 .with_message("Argument cannot be interpreted as a range.")),
                         }
@@ -428,7 +434,8 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         Ok(RangeView::from_owned_rows(
                             out,
                             self.interp.context.date_system(),
-                        ))
+                        )
+                        .with_cancel_token(self.interp.context.cancellation_token()))
                     }
                     _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                         .with_message("Argument cannot be interpreted as a range.")),
@@ -1083,7 +1090,7 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
     /// Implementations should return None if not supported.
     fn build_criteria_mask(
         &self,
-        _view: &crate::arrow_store::ArrowRangeView<'_>,
+        _view: &RangeView<'_>,
         _col_in_view: usize,
         _pred: &crate::args::CriteriaPredicate,
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
@@ -1170,7 +1177,7 @@ pub trait FunctionContext {
     /// Returns None if not supported by the underlying context.
     fn get_criteria_mask(
         &self,
-        _view: &crate::arrow_store::ArrowRangeView<'_>,
+        _view: &RangeView<'_>,
         _col_in_view: usize,
         _pred: &crate::args::CriteriaPredicate,
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
@@ -1257,7 +1264,7 @@ impl<'a> FunctionContext for DefaultFunctionContext<'a> {
 
     fn get_criteria_mask(
         &self,
-        view: &crate::arrow_store::ArrowRangeView<'_>,
+        view: &RangeView<'_>,
         col_in_view: usize,
         pred: &crate::args::CriteriaPredicate,
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {

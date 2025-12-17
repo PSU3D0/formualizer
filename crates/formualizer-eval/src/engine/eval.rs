@@ -79,7 +79,7 @@ impl RecalcPlan {
 }
 
 fn compute_criteria_mask(
-    view: &crate::arrow_store::ArrowRangeView<'_>,
+    view: &RangeView<'_>,
     col_in_view: usize,
     pred: &crate::args::CriteriaPredicate,
 ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
@@ -147,7 +147,8 @@ fn compute_criteria_mask(
     // concatenates boolean masks (1-bit per element) - a 64x memory reduction.
     if is_numeric_pred {
         let mut bool_parts: Vec<BooleanArray> = Vec::new();
-        for (_rs, _rl, cols_seg) in view.numbers_slices() {
+        for res in view.numbers_slices() {
+            let (_rs, _rl, cols_seg) = res.ok()?;
             if col_in_view < cols_seg.len() {
                 let chunk = cols_seg[col_in_view].as_ref();
                 let mask = apply_numeric_pred(chunk, pred)?;
@@ -4031,7 +4032,7 @@ where
                     ));
                 };
 
-                let av = if er < sr || ec < sc {
+                let rv = if er < sr || ec < sc {
                     asheet.range_view(1, 1, 0, 0)
                 } else {
                     let sr0 = sr.saturating_sub(1) as usize;
@@ -4041,7 +4042,7 @@ where
                     asheet.range_view(sr0, sc0, er0, ec0)
                 };
 
-                Ok(RangeView::from_arrow(av))
+                Ok(rv)
             }
             ReferenceType::Cell { .. } => {
                 let shared = self.resolve_shared_ref(reference, current_sheet)?;
@@ -4057,8 +4058,8 @@ where
                 if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
                     let r0 = row.saturating_sub(1) as usize;
                     let c0 = col.saturating_sub(1) as usize;
-                    let av = asheet.range_view(r0, c0, r0, c0);
-                    Ok(RangeView::from_arrow(av))
+                    let rv = asheet.range_view(r0, c0, r0, c0);
+                    Ok(rv)
                 } else {
                     let v = self
                         .get_cell_value(sheet_name, row, col)
@@ -4083,8 +4084,8 @@ where
 
                             let r0 = cell_ref.coord.row() as usize;
                             let c0 = cell_ref.coord.col() as usize;
-                            let av = asheet.range_view(r0, c0, r0, c0);
-                            return Ok(RangeView::from_arrow(av));
+                            let rv = asheet.range_view(r0, c0, r0, c0);
+                            return Ok(rv);
                         }
                         NamedDefinition::Range(range_ref) => {
                             let sheet_name = self.graph.sheet_name(range_ref.start.sheet_id);
@@ -4097,8 +4098,8 @@ where
                             let sc0 = range_ref.start.coord.col() as usize;
                             let er0 = range_ref.end.coord.row() as usize;
                             let ec0 = range_ref.end.coord.col() as usize;
-                            let av = asheet.range_view(sr0, sc0, er0, ec0);
-                            return Ok(RangeView::from_arrow(av));
+                            let rv = asheet.range_view(sr0, sc0, er0, ec0);
+                            return Ok(rv);
                         }
                         NamedDefinition::Formula { .. } => {
                             if let Some(value) = self.graph.get_value(named.vertex) {
@@ -4229,7 +4230,8 @@ where
                         }
                     };
 
-                    return Ok(RangeView::from_arrow(av));
+                    let rv = asheet.range_view(sr0, sc0, er0, ec0);
+                    return Ok(rv);
                 }
 
                 if let Some(source) = self.graph.resolve_source_table_entry(&tref.name) {
@@ -4250,7 +4252,7 @@ where
 
     fn build_criteria_mask(
         &self,
-        view: &crate::arrow_store::ArrowRangeView<'_>,
+        view: &RangeView<'_>,
         col_in_view: usize,
         pred: &crate::args::CriteriaPredicate,
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {

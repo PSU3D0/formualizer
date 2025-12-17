@@ -97,6 +97,7 @@ impl Workbook {
             .map_err(|e| JsValue::from_str(&format!("load failed: {e}")))?;
             Ok(Workbook {
                 inner: Arc::new(RwLock::new(wb)),
+                cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             })
         }
         #[cfg(not(feature = "json"))]

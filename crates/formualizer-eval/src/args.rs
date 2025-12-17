@@ -11,15 +11,7 @@ pub enum ShapeKind {
     Array,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum CoercionPolicy {
-    None,
-    NumberStrict,
-    NumberLenientText,
-    Logical,
-    Criteria,
-    DateTimeSerial,
-}
+pub use formualizer_common::CoercionPolicy;
 
 #[derive(Clone, Debug)]
 pub struct ArgSchema {

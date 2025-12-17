@@ -90,6 +90,7 @@ impl PyWorkbook {
                 Ok(Self {
                     inner: std::sync::Arc::new(std::sync::RwLock::new(wb)),
                     sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
+                    cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 })
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(

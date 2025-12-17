@@ -151,75 +151,95 @@ impl Function for MatchFn {
             0
         };
         let arr_ref = args[1].as_reference_or_eval().ok();
-        let mut values: Vec<LiteralValue> = Vec::new();
         if let Some(r) = arr_ref {
             let current_sheet = ctx.current_sheet();
             match ctx.resolve_range_view(&r, current_sheet) {
                 Ok(rv) => {
+                    if mt == 0 {
+                        let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
+                        if let Some(idx) = super::lookup_utils::find_exact_index_in_view(
+                            &rv,
+                            lookup_value.as_ref(),
+                            wildcard_mode,
+                        )? {
+                            return Ok(LiteralValue::Int((idx + 1) as i64));
+                        }
+                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
+                    }
+
+                    // Fallback for approximate match modes (handled via materialization for now)
+                    let mut values: Vec<LiteralValue> = Vec::new();
                     if let Err(e) = rv.for_each_cell(&mut |v| {
                         values.push(v.clone());
                         Ok(())
                     }) {
                         return Ok(LiteralValue::Error(e));
                     }
+
+                    // Lightweight unsorted detection for approximate modes
+                    let is_sorted = if mt == 1 {
+                        is_sorted_ascending(&values)
+                    } else if mt == -1 {
+                        values
+                            .windows(2)
+                            .all(|w| cmp_for_lookup(&w[0], &w[1]).is_some_and(|c| c >= 0))
+                    } else {
+                        true
+                    };
+                    if !is_sorted {
+                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
+                    }
+                    let idx = if values.len() < 8 {
+                        // linear small
+                        let mut best: Option<(usize, &LiteralValue)> = None;
+                        for (i, v) in values.iter().enumerate() {
+                            if let Some(c) = cmp_for_lookup(v, lookup_value.as_ref()) {
+                                // compare candidate to needle
+                                if mt == 1 {
+                                    // v <= needle
+                                    if (c == 0 || c == -1) && (best.is_none() || i > best.unwrap().0)
+                                    {
+                                        best = Some((i, v));
+                                    }
+                                } else {
+                                    // -1, v >= needle
+                                    if (c == 0 || c == 1) && (best.is_none() || i > best.unwrap().0)
+                                    {
+                                        best = Some((i, v));
+                                    }
+                                }
+                            }
+                        }
+                        best.map(|(i, _)| i)
+                    } else {
+                        binary_search_match(&values, lookup_value.as_ref(), mt)
+                    };
+                    match idx {
+                        Some(i) => Ok(LiteralValue::Int((i + 1) as i64)),
+                        None => Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
+                    }
                 }
                 Err(e) => return Ok(LiteralValue::Error(e)),
             }
         } else {
+            let mut values: Vec<LiteralValue> = Vec::new();
             match args[1].value() {
                 Ok(v) => values.push(v.as_ref().clone()),
                 Err(e) => return Ok(LiteralValue::Error(e)),
             }
-        }
-        if values.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
-        }
-        if mt == 0 {
-            let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
-            if let Some(idx) = find_exact_index(&values, lookup_value.as_ref(), wildcard_mode) {
-                return Ok(LiteralValue::Int((idx + 1) as i64));
+            if values.is_empty() {
+                return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
             }
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
-        }
-        // Lightweight unsorted detection for approximate modes
-        let is_sorted = if mt == 1 {
-            is_sorted_ascending(&values)
-        } else if mt == -1 {
-            values
-                .windows(2)
-                .all(|w| cmp_for_lookup(&w[0], &w[1]).is_some_and(|c| c >= 0))
-        } else {
-            true
-        };
-        if !is_sorted {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
-        }
-        let idx = if values.len() < 8 {
-            // linear small
-            let mut best: Option<(usize, &LiteralValue)> = None;
-            for (i, v) in values.iter().enumerate() {
-                if let Some(c) = cmp_for_lookup(v, lookup_value.as_ref()) {
-                    // compare candidate to needle
-                    if mt == 1 {
-                        // v <= needle
-                        if (c == 0 || c == -1) && (best.is_none() || i > best.unwrap().0) {
-                            best = Some((i, v));
-                        }
-                    } else {
-                        // -1, v >= needle
-                        if (c == 0 || c == 1) && (best.is_none() || i > best.unwrap().0) {
-                            best = Some((i, v));
-                        }
-                    }
-                }
+            let idx = if mt == 0 {
+                let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
+                find_exact_index(&values, lookup_value.as_ref(), wildcard_mode)
+            } else {
+                binary_search_match(&values, lookup_value.as_ref(), mt)
+            };
+            match idx {
+                Some(i) => Ok(LiteralValue::Int((i + 1) as i64)),
+                None => Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
             }
-            best.map(|(i, _)| i)
-        } else {
-            binary_search_match(&values, lookup_value.as_ref(), mt)
-        };
-        match idx {
-            Some(i) => Ok(LiteralValue::Int((i + 1) as i64)),
-            None => Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
         }
     }
 }
@@ -334,56 +354,34 @@ impl Function for VLookupFn {
         if col_index as u32 > width {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)));
         }
-        // Collect first column
-        let mut first_col: Vec<LiteralValue> = Vec::new();
-        {
-            let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
-            let col_offset = 0usize;
-            rv.for_each_row(&mut |row| {
-                let v = row.get(col_offset).cloned().unwrap_or(LiteralValue::Empty);
-                first_col.push(v);
+
+        let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
+        let rows = rv.dims().0;
+        let first_col_view = rv.sub_view(0, 0, rows, 1);
+        let row_idx_opt = if !approximate {
+            let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
+            super::lookup_utils::find_exact_index_in_view(&first_col_view, lookup_value.as_ref(), wildcard_mode)?
+        } else {
+            // Fallback for approximate mode (requires materializing first column for now)
+            let mut first_col: Vec<LiteralValue> = Vec::new();
+            first_col_view.for_each_row(&mut |row| {
+                first_col.push(row[0].clone());
                 Ok(())
             })?;
-        }
-        let row_idx_opt = if approximate {
             if first_col.is_empty() {
                 None
             } else {
                 binary_search_match(&first_col, lookup_value.as_ref(), 1)
             }
-        } else {
-            let mut found = None;
-            for (i, v) in first_col.iter().enumerate() {
-                if let Some(c) = cmp_for_lookup(lookup_value.as_ref(), v)
-                    && c == 0
-                {
-                    found = Some(i);
-                    break;
-                }
-            }
-            found
         };
-        let row_idx = match row_idx_opt {
-            Some(i) => i,
-            None => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
-        };
-        // Retrieve target by re-iterating rows (acceptable initial implementation)
-        let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
-        let mut current = 0usize;
-        let target_col_idx = ((sc + (col_index as u32) - 1) - sc) as usize; // zero-based within slice
-        let mut out: Option<LiteralValue> = None;
-        rv.for_each_row(&mut |row| {
-            if current == row_idx {
-                out = Some(
-                    row.get(target_col_idx)
-                        .cloned()
-                        .unwrap_or(LiteralValue::Empty),
-                );
+
+        match row_idx_opt {
+            Some(i) => {
+                let target_col_idx = (col_index - 1) as usize;
+                Ok(rv.get_cell(i, target_col_idx))
             }
-            current += 1;
-            Ok(())
-        })?;
-        Ok(out.unwrap_or(LiteralValue::Empty))
+            None => Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
+        }
     }
 }
 
@@ -494,56 +492,34 @@ impl Function for HLookupFn {
         let current_sheet = ctx.current_sheet();
         let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
         let height = er - sr + 1;
+        let width = ec - sc + 1;
         if row_index as u32 > height {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)));
         }
-        let mut first_row: Vec<LiteralValue> = Vec::new();
-        {
-            let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
-            let mut row_counter = 0usize;
-            rv.for_each_row(&mut |row| {
-                if row_counter == 0 {
+        let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
+        let cols = rv.dims().1;
+        let first_row_view = rv.sub_view(0, 0, 1, cols);
+        let col_idx_opt = if approximate {
+            let mut first_row: Vec<LiteralValue> = Vec::with_capacity(width as usize);
+            first_row_view.for_each_row(&mut |row| {
+                if first_row.is_empty() {
                     first_row.extend_from_slice(row);
                 }
-                row_counter += 1;
                 Ok(())
             })?;
-        }
-        let col_idx_opt = if approximate {
             binary_search_match(&first_row, lookup_value.as_ref(), 1)
         } else {
-            let mut f = None;
-            for (i, v) in first_row.iter().enumerate() {
-                if let Some(c) = cmp_for_lookup(lookup_value.as_ref(), v)
-                    && c == 0
-                {
-                    f = Some(i);
-                    break;
-                }
-            }
-            f
+            let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
+            super::lookup_utils::find_exact_index_in_view(&first_row_view, lookup_value.as_ref(), wildcard_mode)?
         };
-        let col_idx = match col_idx_opt {
-            Some(i) => i,
-            None => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
-        };
-        let target_row_rel = (row_index as usize) - 1; // zero-based
-        let target_col_rel = col_idx; // zero-based within row slice
-        let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
-        let mut collected: Option<LiteralValue> = None;
-        let mut r_counter = 0usize;
-        rv.for_each_row(&mut |row| {
-            if r_counter == target_row_rel {
-                collected = Some(
-                    row.get(target_col_rel)
-                        .cloned()
-                        .unwrap_or(LiteralValue::Empty),
-                );
+
+        match col_idx_opt {
+            Some(i) => {
+                let target_row_idx = (row_index - 1) as usize;
+                Ok(rv.get_cell(target_row_idx, i))
             }
-            r_counter += 1;
-            Ok(())
-        })?;
-        Ok(collected.unwrap_or(LiteralValue::Empty))
+            None => Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
+        }
     }
 }
 
@@ -788,10 +764,13 @@ mod tests {
             ArgumentHandle::new(&range, &ctx),
             ArgumentHandle::new(&zero, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
-        // Current validation path collapses error in lookup_value into value position without early propagation.
-        // Accept either passthrough or generic #N/A fallback depending on future semantics.
-        assert!(matches!(v, LiteralValue::Error(_)));
+        let res = f.dispatch(&args, &ctx.function_context(None));
+        // Expect error to propagate via Result::Err or LiteralValue::Error
+        match res {
+            Ok(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Div),
+            Err(e) => assert_eq!(e.kind, ExcelErrorKind::Div),
+            v => panic!("expected error got {v:?}"),
+        }
     }
 
     #[test]

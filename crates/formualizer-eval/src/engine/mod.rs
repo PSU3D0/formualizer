@@ -34,7 +34,6 @@ pub mod tuning;
 #[cfg(test)]
 mod tests;
 
-use std::fmt::{Display, Formatter};
 
 pub use eval::{Engine, EvalResult, RecalcPlan};
 pub use eval_delta::{DeltaMode, EvalDelta};
@@ -257,23 +256,7 @@ pub enum SheetIndexMode {
     FastBatch,
 }
 
-/// Excel workbook date system selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DateSystem {
-    /// Excel 1900 date system with the historical 1900-02-29 compatibility gap.
-    Excel1900,
-    /// Excel 1904 date system (epoch 1904-01-01), no 1900 leap-year bug offset.
-    Excel1904,
-}
-
-impl Display for DateSystem {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DateSystem::Excel1900 => write!(f, "1900"),
-            DateSystem::Excel1904 => write!(f, "1904"),
-        }
-    }
-}
+pub use formualizer_common::DateSystem;
 
 /// Construct a new engine with the given resolver and configuration
 pub fn new_engine<R>(resolver: R, config: EvalConfig) -> Engine<R>

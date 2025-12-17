@@ -2,6 +2,8 @@
 //! Provides unified coercion, comparison and approximate-mode selection logic.
 
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use crate::engine::range_view::RangeView;
+use arrow_array::Array;
 
 /// Coerce a value to f64 with Excel-like rules for numeric comparisons:
 /// - Number / Int: numeric
@@ -267,4 +269,174 @@ pub fn find_exact_index(
         }
     }
     None
+}
+
+/// Find index of exact (or wildcard) match in a 1D RangeView; returns first match (Excel semantics).
+/// Supports both single-column (vertical) and single-row (horizontal) views.
+pub fn find_exact_index_in_view(
+    view: &RangeView<'_>,
+    needle: &LiteralValue,
+    wildcard: bool,
+) -> Result<Option<usize>, ExcelError> {
+    let (rows, cols) = view.dims();
+    let vertical = if cols == 1 {
+        true
+    } else if rows == 1 {
+        false
+    } else {
+        // Not a 1D range
+        return Ok(None);
+    };
+
+    match needle {
+        LiteralValue::Number(n) => find_exact_number_in_view(view, *n, vertical),
+        LiteralValue::Int(i) => find_exact_number_in_view(view, *i as f64, vertical),
+        LiteralValue::Text(s) => find_exact_text_in_view(view, s, wildcard, vertical),
+        LiteralValue::Boolean(b) => find_exact_boolean_in_view(view, *b, vertical),
+        LiteralValue::Empty => find_exact_empty_in_view(view, vertical),
+        LiteralValue::Error(e) => Err(e.clone()),
+        _ => Ok(None),
+    }
+}
+
+fn find_exact_number_in_view(
+    view: &RangeView<'_>,
+    n: f64,
+    vertical: bool,
+) -> Result<Option<usize>, ExcelError> {
+    if vertical {
+        for res in view.numbers_slices() {
+            let (row_start, _row_len, cols) = res?;
+            if !cols.is_empty() {
+                let arr = &cols[0];
+                for i in 0..arr.len() {
+                    if !arr.is_null(i) && (arr.value(i) - n).abs() < 1e-12 {
+                        return Ok(Some(row_start + i));
+                    }
+                }
+            }
+        }
+    } else {
+        // Horizontal: check columns in the first row segment
+        for res in view.numbers_slices() {
+            let (_row_start, _row_len, cols) = res?;
+            for (c, arr) in cols.iter().enumerate() {
+                if !arr.is_null(0) && (arr.value(0) - n).abs() < 1e-12 {
+                    return Ok(Some(c));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn find_exact_text_in_view(
+    view: &RangeView<'_>,
+    s: &str,
+    wildcard: bool,
+    vertical: bool,
+) -> Result<Option<usize>, ExcelError> {
+    let s_low = s.to_ascii_lowercase();
+    let has_wildcard = wildcard && (s.contains('*') || s.contains('?') || s.contains('~'));
+
+    if vertical {
+        for res in view.text_slices() {
+            let (row_start, _row_len, cols) = res?;
+            if !cols.is_empty() {
+                let arr = cols[0]
+                    .as_any()
+                    .downcast_ref::<arrow_array::StringArray>()
+                    .unwrap();
+                for i in 0..arr.len() {
+                    if !arr.is_null(i) {
+                        let val = arr.value(i);
+                        if has_wildcard {
+                            if wildcard_pattern_match(&s_low, &val.to_ascii_lowercase()) {
+                                return Ok(Some(row_start + i));
+                            }
+                        } else if val.eq_ignore_ascii_case(s) {
+                            return Ok(Some(row_start + i));
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        for res in view.text_slices() {
+            let (_row_start, _row_len, cols) = res?;
+            for (c, arr_ref) in cols.iter().enumerate() {
+                let arr = arr_ref
+                    .as_any()
+                    .downcast_ref::<arrow_array::StringArray>()
+                    .unwrap();
+                if !arr.is_null(0) {
+                    let val = arr.value(0);
+                    if has_wildcard {
+                        if wildcard_pattern_match(&s_low, &val.to_ascii_lowercase()) {
+                            return Ok(Some(c));
+                        }
+                    } else if val.eq_ignore_ascii_case(s) {
+                        return Ok(Some(c));
+                    }
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn find_exact_boolean_in_view(
+    view: &RangeView<'_>,
+    b: bool,
+    vertical: bool,
+) -> Result<Option<usize>, ExcelError> {
+    if vertical {
+        for res in view.booleans_slices() {
+            let (row_start, _row_len, cols) = res?;
+            if !cols.is_empty() {
+                let arr = &cols[0];
+                for i in 0..arr.len() {
+                    if !arr.is_null(i) && arr.value(i) == b {
+                        return Ok(Some(row_start + i));
+                    }
+                }
+            }
+        }
+    } else {
+        for res in view.booleans_slices() {
+            let (_row_start, _row_len, cols) = res?;
+            for (c, arr) in cols.iter().enumerate() {
+                if !arr.is_null(0) && arr.value(0) == b {
+                    return Ok(Some(c));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn find_exact_empty_in_view(view: &RangeView<'_>, vertical: bool) -> Result<Option<usize>, ExcelError> {
+    if vertical {
+        for res in view.type_tags_slices() {
+            let (row_start, _row_len, cols) = res?;
+            if !cols.is_empty() {
+                let arr = &cols[0];
+                for i in 0..arr.len() {
+                    if !arr.is_null(i) && arr.value(i) == crate::arrow_store::TypeTag::Empty as u8 {
+                        return Ok(Some(row_start + i));
+                    }
+                }
+            }
+        }
+    } else {
+        for res in view.type_tags_slices() {
+            let (_row_start, _row_len, cols) = res?;
+            for (c, arr) in cols.iter().enumerate() {
+                if !arr.is_null(0) && arr.value(0) == crate::arrow_store::TypeTag::Empty as u8 {
+                    return Ok(Some(c));
+                }
+            }
+        }
+    }
+    Ok(None)
 }

@@ -164,19 +164,17 @@ impl Function for ChooseColsFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }
-        let rows = materialize_rows_2d(&args[0], ctx)?;
-        if rows.is_empty() {
+        let view = args[0].range_view()?;
+        let (rows, cols) = view.dims();
+        if rows == 0 || cols == 0 {
             return Ok(LiteralValue::Array(vec![]));
         }
-        let width = rows[0].len();
-        if rows.iter().any(|r| r.len() != width) {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
-        }
+
         let mut indices: Vec<usize> = Vec::new();
         for a in &args[1..] {
             let v = a.value()?;
@@ -194,18 +192,18 @@ impl Function for ChooseColsFn {
             let adj = if raw > 0 {
                 raw - 1
             } else {
-                (width as i64) + raw
+                (cols as i64) + raw
             };
-            if adj < 0 || adj as usize >= width {
+            if adj < 0 || adj as usize >= cols {
                 return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
             }
             indices.push(adj as usize);
         }
-        let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows.len());
-        for r in &rows {
+        let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
+        for r in 0..rows {
             let mut new_row = Vec::with_capacity(indices.len());
             for &c in &indices {
-                new_row.push(r[c].clone());
+                new_row.push(view.get_cell(r, c));
             }
             out.push(new_row);
         }
@@ -260,16 +258,17 @@ impl Function for ChooseRowsFn {
     fn eval_scalar<'a, 'b>(
         &self,
         args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
+        _ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
         if args.len() < 2 {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }
-        let rows = materialize_rows_2d(&args[0], ctx)?;
-        if rows.is_empty() {
+        let view = args[0].range_view()?;
+        let (rows, cols) = view.dims();
+        if rows == 0 || cols == 0 {
             return Ok(LiteralValue::Array(vec![]));
         }
-        let height = rows.len();
+
         let mut indices: Vec<usize> = Vec::new();
         for a in &args[1..] {
             let v = a.value()?;
@@ -287,16 +286,20 @@ impl Function for ChooseRowsFn {
             let adj = if raw > 0 {
                 raw - 1
             } else {
-                (height as i64) + raw
+                (rows as i64) + raw
             };
-            if adj < 0 || adj as usize >= height {
+            if adj < 0 || adj as usize >= rows {
                 return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
             }
             indices.push(adj as usize);
         }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(indices.len());
         for &r in &indices {
-            out.push(rows[r].clone());
+            let mut row_vals = Vec::with_capacity(cols);
+            for c in 0..cols {
+                row_vals.push(view.get_cell(r, c));
+            }
+            out.push(row_vals);
         }
         if out.len() == 1 && out[0].len() == 1 {
             return Ok(out[0][0].clone());

@@ -37,7 +37,7 @@ fn used_rows_for_columns_sees_sparse_overlay_for_whole_column_refs() {
     };
 
     let view = engine.resolve_range_view(&r, sheet).unwrap();
-    let av = view.as_arrow();
+    let av = view;
 
     // Whole-column refs are anchored at row 1, but the end row should expand to the last used row
     // (even if the open-ended cap is smaller).
@@ -84,7 +84,7 @@ fn used_cols_for_rows_sees_sparse_overlay_for_whole_row_refs() {
     };
 
     let view = engine.resolve_range_view(&r, sheet).unwrap();
-    let av = view.as_arrow();
+    let av = view;
 
     // Whole-row refs are anchored at column A, but the end column should expand to the last used
     // column (even if the open-ended cap is smaller).

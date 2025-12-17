@@ -47,6 +47,21 @@ pub fn serial_to_datetime(serial: f64) -> NaiveDateTime {
 
 const EXCEL_EPOCH: NaiveDate = NaiveDate::from_ymd_opt(1899, 12, 30).unwrap();
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DateSystem {
+    Excel1900,
+    Excel1904,
+}
+
+impl Display for DateSystem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DateSystem::Excel1900 => write!(f, "1900"),
+            DateSystem::Excel1904 => write!(f, "1904"),
+        }
+    }
+}
+
 /// An **interpeter** LiteralValue. This is distinct
 /// from the possible types that can be stored in a cell.
 #[derive(Debug, Clone, PartialEq)]

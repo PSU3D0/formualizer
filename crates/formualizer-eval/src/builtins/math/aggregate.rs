@@ -2,6 +2,7 @@ use super::super::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
 use crate::args::ArgSchema;
 use crate::function::{FnFoldCtx, Function};
 use crate::traits::{ArgumentHandle, FunctionContext};
+use arrow_array::Array;
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
@@ -33,21 +34,30 @@ impl Function for SumFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut total = 0.0;
         for arg in args {
-            // Try to get a range/view first. If that fails, fall back to a single value.
             if let Ok(view) = arg.range_view() {
-                view.for_each_cell(&mut |v| {
-                    match v {
-                        LiteralValue::Error(e) => return Err(e.clone()),
-                        _ => {
-                            if let Ok(n) = coerce_num(v) {
-                                total += n;
+                // Propagate errors from range first
+                for res in view.errors_slices() {
+                    let (_, _, err_cols) = res?;
+                    for col in err_cols {
+                        if col.null_count() < col.len() {
+                            for i in 0..col.len() {
+                                if !col.is_null(i) {
+                                    return Ok(LiteralValue::Error(ExcelError::new(
+                                        crate::arrow_store::unmap_error_code(col.value(i)),
+                                    )));
+                                }
                             }
                         }
                     }
-                    Ok(())
-                })?;
+                }
+
+                for res in view.numbers_slices() {
+                    let (_, _, num_cols) = res?;
+                    for col in num_cols {
+                        total += arrow::compute::kernels::aggregate::sum(col.as_ref()).unwrap_or(0.0);
+                    }
+                }
             } else {
-                // Fallback for arguments that are not ranges but might be single values or errors.
                 match arg.value()?.as_ref() {
                     LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
                     v => total += coerce_num(v)?,
@@ -104,12 +114,12 @@ impl Function for CountFn {
         let mut count: i64 = 0;
         for arg in args {
             if let Ok(view) = arg.range_view() {
-                view.for_each_cell(&mut |v| {
-                    if !matches!(v, LiteralValue::Empty) && coerce_num(v).is_ok() {
-                        count += 1;
+                for res in view.numbers_slices() {
+                    let (_, _, num_cols) = res?;
+                    for col in num_cols {
+                        count += (col.len() - col.null_count()) as i64;
                     }
-                    Ok(())
-                })?;
+                }
             } else {
                 match arg.value()?.as_ref() {
                     LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
@@ -170,13 +180,29 @@ impl Function for AverageFn {
         let mut cnt: i64 = 0;
         for arg in args {
             if let Ok(view) = arg.range_view() {
-                view.for_each_cell(&mut |v| {
-                    if let Ok(n) = coerce_num(v) {
-                        sum += n;
-                        cnt += 1;
+                // Propagate errors from range first
+                for res in view.errors_slices() {
+                    let (_, _, err_cols) = res?;
+                    for col in err_cols {
+                        if col.null_count() < col.len() {
+                            for i in 0..col.len() {
+                                if !col.is_null(i) {
+                                    return Ok(LiteralValue::Error(ExcelError::new(
+                                        crate::arrow_store::unmap_error_code(col.value(i)),
+                                    )));
+                                }
+                            }
+                        }
                     }
-                    Ok(())
-                })?;
+                }
+
+                for res in view.numbers_slices() {
+                    let (_, _, num_cols) = res?;
+                    for col in num_cols {
+                        sum += arrow::compute::kernels::aggregate::sum(col.as_ref()).unwrap_or(0.0);
+                        cnt += (col.len() - col.null_count()) as i64;
+                    }
+                }
             } else {
                 match arg.value()?.as_ref() {
                     LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
@@ -190,9 +216,7 @@ impl Function for AverageFn {
             }
         }
         if cnt == 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
-            )));
+            return Ok(LiteralValue::Error(ExcelError::new_div()));
         }
         Ok(LiteralValue::Number(sum / (cnt as f64)))
     }

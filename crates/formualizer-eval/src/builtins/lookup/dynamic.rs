@@ -304,7 +304,13 @@ impl Function for XLookupFn {
 
         let mut found: Option<usize> = None;
         if match_mode == 0 || wildcard {
-            if search_mode == -1 {
+            if search_mode == 1 {
+                found = super::lookup_utils::find_exact_index_in_view(
+                    &lookup_view,
+                    lookup_value.as_ref(),
+                    wildcard,
+                )?;
+            } else if search_mode == -1 {
                 for i in (0..lookup_len).rev() {
                     let cand = if vertical {
                         lookup_view.get_cell(i, 0)
@@ -480,14 +486,8 @@ impl Function for FilterFn {
         if args.len() < 2 {
             return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
         }
-        let array_view = match args[0].range_view() {
-            Ok(v) => v,
-            Err(e) => return Ok(LiteralValue::Error(e)),
-        };
-        let include_view = match args[1].range_view() {
-            Ok(v) => v,
-            Err(e) => return Ok(LiteralValue::Error(e)),
-        };
+        let array_view = args[0].range_view()?;
+        let include_view = args[1].range_view()?;
 
         let (array_rows, array_cols) = array_view.dims();
         if array_rows == 0 || array_cols == 0 {

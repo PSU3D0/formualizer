@@ -85,45 +85,73 @@ impl Function for HStackFn {
         if args.is_empty() {
             return Ok(LiteralValue::Array(vec![]));
         }
-        let mut blocks: Vec<Vec<Vec<LiteralValue>>> = Vec::new();
+
+        let mut entries = Vec::with_capacity(args.len());
         let mut target_rows: Option<usize> = None;
+        let mut total_cols = 0;
+
         for a in args {
-            let rows = materialize_arg(a, ctx)?;
-            if rows.is_empty() {
-                continue;
-            }
-            if let Some(tr) = target_rows {
-                if rows.len() != tr {
-                    return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            if let Ok(v) = a.range_view() {
+                let (rows, cols) = v.dims();
+                if rows == 0 || cols == 0 {
+                    continue;
                 }
+                if let Some(tr) = target_rows {
+                    if rows != tr {
+                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                    }
+                } else {
+                    target_rows = Some(rows);
+                }
+                total_cols += cols;
+                entries.push(HStackEntry::View(v));
             } else {
-                target_rows = Some(rows.len());
+                let v = a.value()?.into_owned();
+                if let Some(tr) = target_rows {
+                    if tr != 1 {
+                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                    }
+                } else {
+                    target_rows = Some(1);
+                }
+                total_cols += 1;
+                entries.push(HStackEntry::Scalar(v));
             }
-            blocks.push(rows);
         }
-        if blocks.is_empty() {
+
+        if entries.is_empty() {
             return Ok(LiteralValue::Array(vec![]));
         }
+
         let row_count = target_rows.unwrap();
-        // Compute total width (use first row lengths; mismatched row internal widths cause #VALUE!)
-        for b in &blocks {
-            // rectangular validation inside block
-            let w = b[0].len();
-            if b.iter().any(|r| r.len() != w) {
-                return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
-            }
-        }
         let mut result: Vec<Vec<LiteralValue>> = Vec::with_capacity(row_count);
-        for r in 0..row_count {
-            result.push(Vec::new());
+        for _ in 0..row_count {
+            result.push(Vec::with_capacity(total_cols));
         }
-        for b in blocks {
-            for (r, row_vec) in b.into_iter().enumerate() {
-                result[r].extend(row_vec);
+
+        for entry in entries {
+            match entry {
+                HStackEntry::View(v) => {
+                    let (v_rows, v_cols) = v.dims();
+                    for r in 0..v_rows {
+                        for c in 0..v_cols {
+                            result[r].push(v.get_cell(r, c));
+                        }
+                    }
+                }
+                HStackEntry::Scalar(s) => {
+                    result[0].push(s);
+                }
             }
         }
+
         Ok(collapse_if_scalar(result))
     }
+}
+
+enum HStackEntry<'a> {
+    View(crate::engine::range_view::RangeView<'a>),
+    Scalar(LiteralValue),
 }
 
 impl Function for VStackFn {
@@ -161,36 +189,66 @@ impl Function for VStackFn {
         if args.is_empty() {
             return Ok(LiteralValue::Array(vec![]));
         }
-        let mut blocks: Vec<Vec<Vec<LiteralValue>>> = Vec::new();
+
         let mut target_width: Option<usize> = None;
+        let mut total_rows = 0;
+        let mut entries = Vec::with_capacity(args.len());
+
         for a in args {
-            let rows = materialize_arg(a, ctx)?;
-            if rows.is_empty() {
-                continue;
-            }
-            // Determine width (validate rectangular within block)
-            let width = rows[0].len();
-            if rows.iter().any(|r| r.len() != width) {
-                return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
-            }
-            if let Some(tw) = target_width {
-                if width != tw {
-                    return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            if let Ok(v) = a.range_view() {
+                let (rows, cols) = v.dims();
+                if rows == 0 || cols == 0 {
+                    continue;
                 }
+                if let Some(tw) = target_width {
+                    if cols != tw {
+                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                    }
+                } else {
+                    target_width = Some(cols);
+                }
+                total_rows += rows;
+                entries.push(VStackEntry::View(v));
             } else {
-                target_width = Some(width);
+                let v = a.value()?.into_owned();
+                if let Some(tw) = target_width {
+                    if tw != 1 {
+                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                    }
+                } else {
+                    target_width = Some(1);
+                }
+                total_rows += 1;
+                entries.push(VStackEntry::Scalar(v));
             }
-            blocks.push(rows);
         }
-        if blocks.is_empty() {
+
+        if entries.is_empty() {
             return Ok(LiteralValue::Array(vec![]));
         }
-        let mut result: Vec<Vec<LiteralValue>> = Vec::new();
-        for b in blocks {
-            result.extend(b);
+
+        let mut result: Vec<Vec<LiteralValue>> = Vec::with_capacity(total_rows);
+        for entry in entries {
+            match entry {
+                VStackEntry::View(v) => {
+                    v.for_each_row(&mut |row| {
+                        result.push(row.to_vec());
+                        Ok(())
+                    })?;
+                }
+                VStackEntry::Scalar(s) => {
+                    result.push(vec![s]);
+                }
+            }
         }
+
         Ok(collapse_if_scalar(result))
     }
+}
+
+enum VStackEntry<'a> {
+    View(crate::engine::range_view::RangeView<'a>),
+    Scalar(LiteralValue),
 }
 
 pub fn register_builtins() {

@@ -2,6 +2,7 @@ use super::super::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
+use arrow_array::Array;
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
@@ -29,17 +30,30 @@ impl Function for MinFn {
         let mut mv: Option<f64> = None;
         for a in args {
             if let Ok(view) = a.range_view() {
-                view.for_each_cell(&mut |v| {
-                    match v {
-                        LiteralValue::Error(e) => return Err(e.clone()),
-                        other => {
-                            if let Ok(n) = coerce_num(other) {
-                                mv = Some(mv.map(|m| m.min(n)).unwrap_or(n));
+                // Propagate errors from range first
+                for res in view.errors_slices() {
+                    let (_, _, err_cols) = res?;
+                    for col in err_cols {
+                        if col.null_count() < col.len() {
+                            for i in 0..col.len() {
+                                if !col.is_null(i) {
+                                    return Ok(LiteralValue::Error(ExcelError::new(
+                                        crate::arrow_store::unmap_error_code(col.value(i)),
+                                    )));
+                                }
                             }
                         }
                     }
-                    Ok(())
-                })?;
+                }
+
+                for res in view.numbers_slices() {
+                    let (_, _, num_cols) = res?;
+                    for col in num_cols {
+                        if let Some(n) = arrow::compute::kernels::aggregate::min(col.as_ref()) {
+                            mv = Some(mv.map(|m| m.min(n)).unwrap_or(n));
+                        }
+                    }
+                }
             } else {
                 let v = a.value()?;
                 match v.as_ref() {
@@ -80,17 +94,30 @@ impl Function for MaxFn {
         let mut mv: Option<f64> = None;
         for a in args {
             if let Ok(view) = a.range_view() {
-                view.for_each_cell(&mut |v| {
-                    match v {
-                        LiteralValue::Error(e) => return Err(e.clone()),
-                        other => {
-                            if let Ok(n) = coerce_num(other) {
-                                mv = Some(mv.map(|m| m.max(n)).unwrap_or(n));
+                // Propagate errors from range first
+                for res in view.errors_slices() {
+                    let (_, _, err_cols) = res?;
+                    for col in err_cols {
+                        if col.null_count() < col.len() {
+                            for i in 0..col.len() {
+                                if !col.is_null(i) {
+                                    return Ok(LiteralValue::Error(ExcelError::new(
+                                        crate::arrow_store::unmap_error_code(col.value(i)),
+                                    )));
+                                }
                             }
                         }
                     }
-                    Ok(())
-                })?;
+                }
+
+                for res in view.numbers_slices() {
+                    let (_, _, num_cols) = res?;
+                    for col in num_cols {
+                        if let Some(n) = arrow::compute::kernels::aggregate::max(col.as_ref()) {
+                            mv = Some(mv.map(|m| m.max(n)).unwrap_or(n));
+                        }
+                    }
+                }
             } else {
                 let v = a.value()?;
                 match v.as_ref() {

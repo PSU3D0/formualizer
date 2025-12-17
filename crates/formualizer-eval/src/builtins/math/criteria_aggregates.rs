@@ -4,9 +4,8 @@ use crate::compute_prelude::{boolean, cmp, filter_array};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use arrow::compute::kernels::aggregate::sum_array;
-use arrow::compute::kernels::comparison::{ilike, nilike};
 use arrow_array::types::Float64Type;
-use arrow_array::{Array as _, BooleanArray, Float64Array, StringArray};
+use arrow_array::{Array as _, BooleanArray, Float64Array};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
@@ -25,6 +24,428 @@ Design notes:
   * Criteria parsing reused via crate::args::parse_criteria and criteria_match helper in utils.
   * Streaming optimization deferred (TODO(perf)).
 */
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AggregationType {
+    Sum,
+    Count,
+    Average,
+}
+
+fn eval_if_family<'a, 'b>(
+    args: &'a [ArgumentHandle<'a, 'b>],
+    ctx: &dyn FunctionContext,
+    agg_type: AggregationType,
+    multi: bool,
+) -> Result<LiteralValue, ExcelError> {
+    let mut sum_view: Option<crate::engine::range_view::RangeView<'_>> = None;
+    let mut sum_scalar: Option<LiteralValue> = None;
+    let mut crit_specs = Vec::new();
+
+    if !multi {
+        // Single criterion: IF(range, criteria, [target_range])
+        if args.len() < 2 || args.len() > 3 {
+            return Ok(LiteralValue::Error(
+                ExcelError::new_value().with_message(format!(
+                    "Function expects 2 or 3 arguments, got {}",
+                    args.len()
+                )),
+            ));
+        }
+        let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
+        let crit_rv = args[0].range_view().ok();
+        let crit_val = if crit_rv.is_none() {
+            Some(args[0].value()?.into_owned())
+        } else {
+            None
+        };
+        crit_specs.push((crit_rv, pred, crit_val));
+
+        if agg_type != AggregationType::Count {
+            if args.len() == 3 {
+                if let Ok(v) = args[2].range_view() {
+                    let crit_dims = crit_specs[0].0.as_ref().map(|v| v.dims()).unwrap_or((1, 1));
+                    sum_view = Some(v.expand_to(crit_dims.0, crit_dims.1));
+                } else {
+                    sum_scalar = Some(args[2].value()?.into_owned());
+                }
+            } else {
+                // Default target is criteria range
+                if let Ok(v) = args[0].range_view() {
+                    sum_view = Some(v);
+                } else {
+                    sum_scalar = Some(args[0].value()?.into_owned());
+                }
+            }
+        }
+    } else {
+        // Multi criteria: IFS(target_range, crit_range1, crit1, ...) or COUNTIFS(crit_range1, crit1, ...)
+        if agg_type == AggregationType::Count {
+            if args.len() < 2 || !args.len().is_multiple_of(2) {
+                return Ok(LiteralValue::Error(
+                    ExcelError::new_value().with_message(format!(
+                        "COUNTIFS expects N pairs (criteria_range, criteria); got {} args",
+                        args.len()
+                    )),
+                ));
+            }
+            for i in (0..args.len()).step_by(2) {
+                let rv = args[i].range_view().ok();
+                let val = if rv.is_none() {
+                    Some(args[i].value()?.into_owned())
+                } else {
+                    None
+                };
+                let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
+                crit_specs.push((rv, pred, val));
+            }
+        } else {
+            if args.len() < 3 || !(args.len() - 1).is_multiple_of(2) {
+                return Ok(LiteralValue::Error(
+                    ExcelError::new_value().with_message(format!(
+                        "Function expects 1 target_range followed by N pairs (criteria_range, criteria); got {} args",
+                        args.len()
+                    )),
+                ));
+            }
+            if let Ok(v) = args[0].range_view() {
+                sum_view = Some(v);
+            } else {
+                sum_scalar = Some(args[0].value()?.into_owned());
+            }
+            for i in (1..args.len()).step_by(2) {
+                let rv = args[i].range_view().ok();
+                let val = if rv.is_none() {
+                    Some(args[i].value()?.into_owned())
+                } else {
+                    None
+                };
+                let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
+                crit_specs.push((rv, pred, val));
+            }
+        }
+    }
+
+    // Determine union dimensions
+    let mut dims = (1usize, 1usize);
+    if let Some(ref sv) = sum_view {
+        dims = sv.dims();
+    }
+    for (rv, _, _) in &crit_specs {
+        if let Some(v) = rv {
+            let vd = v.dims();
+            dims.0 = dims.0.max(vd.0);
+            dims.1 = dims.1.max(vd.1);
+        }
+    }
+
+    // Excel SUMIF rules: if target_range is given, it expands from its top-left to match criteria range dims
+    // SUMIFS rules: all ranges must have same dims.
+    // Our implementation will use dims as the iteration space and broadcast/pad.
+
+    let mut total_sum = 0.0f64;
+    let mut total_count = 0i64;
+
+    // Use a driver view for chunked iteration. Prefer sum_view, else first criteria range.
+    let driver = sum_view.as_ref().or_else(|| crit_specs.iter().find_map(|(rv, _, _)| rv.as_ref()));
+
+    if let Some(drv) = driver {
+        // We can't easily iterate over union dims if they are larger than driver.
+        // But for most cases they are same.
+        // If driver is smaller, we'll miss some rows. 
+        // Actually, if it's SUMIF, we want to iterate over criteria range dims.
+        let driver = if !multi && crit_specs[0].0.is_some() {
+            crit_specs[0].0.as_ref().unwrap()
+        } else {
+            drv
+        };
+
+        for res in driver.iter_row_chunks() {
+            let cs = res?;
+            let row_start = cs.row_start;
+            let row_len = cs.row_len;
+            if row_len == 0 {
+                continue;
+            }
+
+            // Get slices for all criteria and sum range
+            let mut crit_num_slices = Vec::with_capacity(crit_specs.len());
+            let mut crit_text_slices = Vec::with_capacity(crit_specs.len());
+            for (rv, _, _) in &crit_specs {
+                if let Some(v) = rv {
+                    crit_num_slices.push(Some(v.slice_numbers(row_start, row_len)));
+                    crit_text_slices.push(Some(v.slice_lowered_text(row_start, row_len)));
+                } else {
+                    crit_num_slices.push(None);
+                    crit_text_slices.push(None);
+                }
+            }
+
+            let sum_slices = sum_view.as_ref().map(|v| v.slice_numbers(row_start, row_len));
+
+            for c in 0..dims.1 {
+                let mut mask_opt: Option<BooleanArray> = None;
+                let mut impossible = false;
+
+                for (j, (_, pred, scalar_val)) in crit_specs.iter().enumerate() {
+                    if crit_specs[j].0.is_none() {
+                        if let Some(sv) = scalar_val {
+                            if !criteria_match(pred, sv) {
+                                impossible = true;
+                                break;
+                            }
+                            continue;
+                        }
+                        if !criteria_match(pred, &LiteralValue::Empty) {
+                            impossible = true;
+                            break;
+                        }
+                        continue;
+                    }
+
+                    // Try cache
+                    let cur_cached = if let Some(ref view) = crit_specs[j].0 {
+                        ctx.get_criteria_mask(view, c, pred).map(|m| {
+                            let sl = arrow_array::Array::slice(m.as_ref(), row_start, row_len);
+                            sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone()
+                        })
+                    } else {
+                        None
+                    };
+
+                    if let Some(cm) = cur_cached {
+                        mask_opt = Some(match mask_opt {
+                            None => cm,
+                            Some(prev) => boolean::and_kleene(&prev, &cm).unwrap(),
+                        });
+                        continue;
+                    }
+
+                    // Compute mask for this chunk
+                    let num_col = crit_num_slices[j]
+                        .as_ref()
+                        .and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
+                    let text_col = crit_text_slices[j]
+                        .as_ref()
+                        .and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
+
+                    let m = match (pred, num_col, text_col) {
+                        (crate::args::CriteriaPredicate::Gt(n), Some(nc), _) => {
+                            cmp::gt(nc.as_ref(), &Float64Array::new_scalar(*n)).unwrap()
+                        }
+                        (crate::args::CriteriaPredicate::Ge(n), Some(nc), _) => {
+                            cmp::gt_eq(nc.as_ref(), &Float64Array::new_scalar(*n)).unwrap()
+                        }
+                        (crate::args::CriteriaPredicate::Lt(n), Some(nc), _) => {
+                            cmp::lt(nc.as_ref(), &Float64Array::new_scalar(*n)).unwrap()
+                        }
+                        (crate::args::CriteriaPredicate::Le(n), Some(nc), _) => {
+                            cmp::lt_eq(nc.as_ref(), &Float64Array::new_scalar(*n)).unwrap()
+                        }
+                        (crate::args::CriteriaPredicate::Eq(v), nc, tc) => {
+                            match v {
+                                LiteralValue::Number(x) => {
+                                    let nx = *x;
+                                    if let Some(nc) = nc {
+                                        cmp::eq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
+                                    } else {
+                                        BooleanArray::new_null(row_len)
+                                    }
+                                }
+                                LiteralValue::Int(x) => {
+                                    let nx = *x as f64;
+                                    if let Some(nc) = nc {
+                                        cmp::eq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
+                                    } else {
+                                        BooleanArray::new_null(row_len)
+                                    }
+                                }
+                                _ => {
+                                    // Use fallback for text and other types to ensure Excel parity (e.g. blank matching)
+                                    let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                                    let view = crit_specs[j].0.as_ref().unwrap();
+                                    for i in 0..row_len {
+                                        bb.append_value(criteria_match(pred, &view.get_cell(row_start + i, c)));
+                                    }
+                                    bb.finish()
+                                }
+                            }
+                        }
+                        (crate::args::CriteriaPredicate::Ne(v), nc, tc) => {
+                            match v {
+                                LiteralValue::Number(x) => {
+                                    let nx = *x;
+                                    if let Some(nc) = nc {
+                                        cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
+                                    } else {
+                                        BooleanArray::from(vec![true; row_len])
+                                    }
+                                }
+                                LiteralValue::Int(x) => {
+                                    let nx = *x as f64;
+                                    if let Some(nc) = nc {
+                                        cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
+                                    } else {
+                                        BooleanArray::from(vec![true; row_len])
+                                    }
+                                }
+                                _ => {
+                                    let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                                    let view = crit_specs[j].0.as_ref().unwrap();
+                                    for i in 0..row_len {
+                                        bb.append_value(criteria_match(pred, &view.get_cell(row_start + i, c)));
+                                    }
+                                    bb.finish()
+                                }
+                            }
+                        }
+                        (crate::args::CriteriaPredicate::TextLike { .. }, _, _) => {
+                            let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                            let view = crit_specs[j].0.as_ref().unwrap();
+                            for i in 0..row_len {
+                                bb.append_value(criteria_match(pred, &view.get_cell(row_start + i, c)));
+                            }
+                            bb.finish()
+                        }
+                        _ => {
+                            // Fallback for any other case
+                            let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                            if let Some(ref view) = crit_specs[j].0 {
+                                for i in 0..row_len {
+                                    bb.append_value(criteria_match(pred, &view.get_cell(row_start + i, c)));
+                                }
+                            } else {
+                                let val = scalar_val.as_ref().unwrap_or(&LiteralValue::Empty);
+                                let matches = criteria_match(pred, val);
+                                for _ in 0..row_len { bb.append_value(matches); }
+                            }
+                            bb.finish()
+                        }
+                    };
+
+                    mask_opt = Some(match mask_opt {
+                        None => m,
+                        Some(prev) => boolean::and_kleene(&prev, &m).unwrap(),
+                    });
+                }
+
+                if impossible {
+                    continue;
+                }
+
+                match mask_opt {
+                    Some(mask) => {
+                        if agg_type == AggregationType::Count {
+                            total_count += (0..mask.len()).filter(|&i| mask.is_valid(i) && mask.value(i)).count() as i64;
+                        } else {
+                            let target_col = sum_slices.as_ref().and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
+                            if let Some(tc) = target_col {
+                                let filtered = filter_array(tc.as_ref(), &mask).unwrap();
+                                let f64_arr = filtered.as_any().downcast_ref::<Float64Array>().unwrap();
+                                if let Some(s) = sum_array::<Float64Type, _>(f64_arr) {
+                                    total_sum += s;
+                                }
+                                total_count += f64_arr.len() as i64 - f64_arr.null_count() as i64;
+                            } else if let Some(ref s) = sum_scalar {
+                                if let Ok(n) = coerce_num(s) {
+                                    let count = (0..mask.len()).filter(|&i| mask.is_valid(i) && mask.value(i)).count() as i64;
+                                    total_sum += n * count as f64;
+                                    total_count += count;
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        // No masks: everything matches
+                        if agg_type == AggregationType::Count {
+                            total_count += row_len as i64;
+                        } else {
+                            let target_col = sum_slices.as_ref().and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
+                            if let Some(tc) = target_col {
+                                if let Some(s) = sum_array::<Float64Type, _>(tc.as_ref()) {
+                                    total_sum += s;
+                                }
+                                total_count += tc.len() as i64 - tc.null_count() as i64;
+                            } else if let Some(ref s) = sum_scalar {
+                                if let Ok(n) = coerce_num(s) {
+                                    total_sum += n * row_len as f64;
+                                    total_count += row_len as i64;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Scalar driver fallback
+        let mut all_match = true;
+        for (_, pred, scalar_val) in &crit_specs {
+            let val = scalar_val.as_ref().unwrap_or(&LiteralValue::Empty);
+            if !criteria_match(pred, val) {
+                all_match = false;
+                break;
+            }
+        }
+        if all_match {
+            if agg_type == AggregationType::Count {
+                total_count = (dims.0 * dims.1) as i64;
+            } else {
+                if let Some(ref s) = sum_scalar {
+                    if let Ok(n) = coerce_num(s) {
+                        total_sum = n * (dims.0 * dims.1) as f64;
+                        total_count = (dims.0 * dims.1) as i64;
+                    }
+                }
+            }
+        }
+    }
+
+    match agg_type {
+        AggregationType::Sum => Ok(LiteralValue::Number(total_sum)),
+        AggregationType::Count => Ok(LiteralValue::Number(total_count as f64)),
+        AggregationType::Average => {
+            if total_count == 0 {
+                Ok(LiteralValue::Error(ExcelError::new_div()))
+            } else {
+                Ok(LiteralValue::Number(total_sum / total_count as f64))
+            }
+        }
+    }
+}
+
+/* ─────────────────────────── AVERAGEIF() ──────────────────────────── */
+#[derive(Debug)]
+pub struct AverageIfFn;
+impl Function for AverageIfFn {
+    func_caps!(
+        PURE,
+        REDUCTION,
+        WINDOWED,
+        STREAM_OK,
+        PARALLEL_ARGS,
+        PARALLEL_CHUNKS
+    );
+    fn name(&self) -> &'static str {
+        "AVERAGEIF"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval_scalar<'a, 'b>(
+        &self,
+        args: &'a [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext,
+    ) -> Result<LiteralValue, ExcelError> {
+        eval_if_family(args, ctx, AggregationType::Average, false)
+    }
+}
 
 /* ─────────────────────────── SUMIF() ──────────────────────────── */
 #[derive(Debug)]
@@ -55,107 +476,7 @@ impl Function for SumIfFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        if args.len() < 2 || args.len() > 3 {
-            return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
-                format!("SUMIF expects 2 or 3 arguments, got {}", args.len()),
-            )));
-        }
-
-        let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
-
-        // Resolve criteria source via RangeView or scalar
-        let crit_view = args[0].range_view().ok();
-        let crit_scalar = if crit_view.is_none() {
-            Some(args[0].value()?.into_owned())
-        } else {
-            None
-        };
-
-        // Resolve sum source and iteration dims
-        let mut sum_view_opt: Option<crate::engine::range_view::RangeView<'_>> = None;
-        let mut sum_scalar_opt: Option<LiteralValue> = None;
-        let dims: (usize, usize);
-
-        if args.len() == 3 {
-            if let Ok(v) = args[2].range_view() {
-                dims = v.dims();
-                sum_view_opt = Some(v);
-            } else {
-                let sv = args[2].value()?.into_owned();
-                // If criteria is a range, iterate over its dims; else single cell
-                dims = crit_view.as_ref().map(|v| v.dims()).unwrap_or((1, 1));
-                sum_scalar_opt = Some(sv);
-            }
-        } else {
-            // No sum_range: sum over the criteria range itself or scalar
-            if let Ok(v) = args[0].range_view() {
-                dims = v.dims();
-                sum_view_opt = Some(v);
-            } else {
-                let sv = args[0].value()?.into_owned();
-                sum_scalar_opt = Some(sv);
-                dims = (1, 1);
-            }
-        }
-
-        // Optimized numeric-only path when summing from a numeric-only view
-        if let Some(ref sum_view) = sum_view_opt
-            && sum_view.kind_probe() == crate::engine::range_view::RangeKind::NumericOnly
-        {
-            let mut total = 0.0f64;
-            for row in 0..dims.0 {
-                for col in 0..dims.1 {
-                    // Criteria value (padded/broadcast)
-                    let cval = if let Some(ref v) = crit_view {
-                        v.get_cell(row, col)
-                    } else if let Some(ref s) = crit_scalar {
-                        s.clone()
-                    } else {
-                        LiteralValue::Empty
-                    };
-                    if !criteria_match(&pred, &cval) {
-                        continue;
-                    }
-                    match sum_view.get_cell(row, col) {
-                        LiteralValue::Number(n) => total += n,
-                        LiteralValue::Int(i) => total += i as f64,
-                        _ => {}
-                    }
-                }
-            }
-            return Ok(LiteralValue::Number(total));
-        }
-
-        // General path (mixed types, or scalar sum)
-        let mut total = 0.0f64;
-        for row in 0..dims.0 {
-            if row % 1024 == 0 && ctx.cancellation_token().map(|t| t.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false) {
-                return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Cancelled));
-            }
-            for col in 0..dims.1 {
-                let cval = if let Some(ref v) = crit_view {
-                    v.get_cell(row, col)
-                } else if let Some(ref s) = crit_scalar {
-                    s.clone()
-                } else {
-                    LiteralValue::Empty
-                };
-                if !criteria_match(&pred, &cval) {
-                    continue;
-                }
-                let sval = if let Some(ref v) = sum_view_opt {
-                    v.get_cell(row, col)
-                } else if let Some(ref s) = sum_scalar_opt {
-                    s.clone()
-                } else {
-                    LiteralValue::Empty
-                };
-                if let Ok(n) = coerce_num(&sval) {
-                    total += n;
-                }
-            }
-        }
-        Ok(LiteralValue::Number(total))
+        eval_if_family(args, ctx, AggregationType::Sum, false)
     }
 }
 
@@ -188,27 +509,7 @@ impl Function for CountIfFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        if args.len() != 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
-                format!("COUNTIF expects 2 arguments, got {}", args.len()),
-            )));
-        }
-        let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
-        // Use RangeView if possible
-        if let Ok(view) = args[0].range_view() {
-            let mut cnt = 0i64;
-            let _ = view.for_each_cell(&mut |cell| {
-                if criteria_match(&pred, cell) {
-                    cnt += 1;
-                }
-                Ok(())
-            });
-            return Ok(LiteralValue::Number(cnt as f64));
-        }
-        // Scalar fallback
-        let v = args[0].value()?.into_owned();
-        let matches = criteria_match(&pred, &v);
-        Ok(LiteralValue::Number(if matches { 1.0 } else { 0.0 }))
+        eval_if_family(args, ctx, AggregationType::Count, false)
     }
 }
 
@@ -241,384 +542,7 @@ impl Function for SumIfsFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        #[cfg(feature = "tracing")]
-        let _span = tracing::info_span!("SUMIFS").entered();
-        if args.len() < 3 || !(args.len() - 1).is_multiple_of(2) {
-            return Ok(LiteralValue::Error(
-                ExcelError::new_value().with_message(format!(
-                    "SUMIFS expects 1 sum_range followed by N pairs (criteria_range, criteria); got {} args",
-                    args.len()
-                )),
-            ));
-        }
-
-        // Get the sum range as a RangeView
-        let sum_view = match args[0].range_view() {
-            Ok(v) => v,
-            Err(_) => {
-                // Scalar fallback
-                let val = args[0].value()?;
-                let mut total = 0.0f64;
-                // For scalar, we need all criteria to be scalar and match
-                for i in (1..args.len()).step_by(2) {
-                    let crit_val = args[i].value()?;
-                    let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
-                    if !criteria_match(&pred, crit_val.as_ref()) {
-                        return Ok(LiteralValue::Number(0.0));
-                    }
-                }
-                if let Ok(n) = coerce_num(val.as_ref()) {
-                    total = n;
-                }
-                return Ok(LiteralValue::Number(total));
-            }
-        };
-
-        let dims = sum_view.dims();
-
-        // Collect criteria ranges and predicates
-        let mut crit_views = Vec::new();
-        let mut preds = Vec::new();
-        // Build views/preds
-        let mut arg_i = 1usize;
-        while arg_i + 1 < args.len() {
-            let crit_arg = arg_i;
-            let pred_arg = arg_i + 1;
-            match args[crit_arg].range_view() {
-                Ok(v) => {
-                    if v.dims() == (1, 1) {
-                        let scalar_val = v.get_cell(0, 0);
-                        crit_views.push(None);
-                        let p = crate::args::parse_criteria(args[pred_arg].value()?.as_ref())?;
-                        preds.push((p, Some(scalar_val)));
-                    } else {
-                        crit_views.push(Some(v));
-                        let p = crate::args::parse_criteria(args[pred_arg].value()?.as_ref())?;
-                        preds.push((p, None));
-                    }
-                }
-                Err(_) => {
-                    let val = args[crit_arg].value()?.into_owned();
-                    crit_views.push(None);
-                    let p = crate::args::parse_criteria(args[pred_arg].value()?.as_ref())?;
-                    preds.push((p, Some(val)));
-                }
-            }
-            arg_i += 2;
-        }
-
-        #[cfg(feature = "tracing")]
-        tracing::debug!(
-            rows = dims.0,
-            cols = dims.1,
-            criteria = preds.len(),
-            "sumifs_dims"
-        );
-
-        // Arrow fast path (guarded by config): numeric comparators and basic text (eq/neq, wildcard) over Arrow-backed views.
-        // Supports N-criteria with array/scalar comparisons.
-        {
-            let sum_av = sum_view.as_arrow();
-            // Validate criteria are supported and Arrow-backed when range-like, with identical dims
-            let mut ok = true;
-            for (j, (pred, scalar_val)) in preds.iter().enumerate() {
-                match pred {
-                    // Numeric support
-                    crate::args::CriteriaPredicate::Gt(_)
-                    | crate::args::CriteriaPredicate::Ge(_)
-                    | crate::args::CriteriaPredicate::Lt(_)
-                    | crate::args::CriteriaPredicate::Le(_) => {}
-                    crate::args::CriteriaPredicate::Eq(v)
-                    | crate::args::CriteriaPredicate::Ne(v) => match v {
-                        LiteralValue::Number(_) | LiteralValue::Int(_) => {}
-                        LiteralValue::Text(_) => {}
-                        _ => {
-                            ok = false;
-                        }
-                    },
-                    crate::args::CriteriaPredicate::TextLike { .. } => {}
-                    _ => {
-                        ok = false;
-                    }
-                }
-                if !ok {
-                    break;
-                }
-                if let Some(ref v) = crit_views[j]
-                    && v.dims() != dims
-                {
-                    ok = false;
-                    break;
-                }
-            }
-
-            if ok {
-                let mut total = 0.0f64;
-                let mut ok_masks = true;
-
-                for (row_start, row_len, sum_cols) in sum_av.numbers_slices() {
-                    // Check cancellation per chunk
-                    if ctx.cancellation_token().map(|t| t.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false) {
-                        return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Cancelled));
-                    }
-                    if row_len == 0 {
-                        continue;
-                    }
-                    let null_nums = Float64Array::new_null(row_len);
-                    let null_text = StringArray::new_null(row_len);
-
-                    let mut crit_num_slices = Vec::with_capacity(preds.len());
-                    let mut crit_text_slices = Vec::with_capacity(preds.len());
-                    for view in &crit_views {
-                        if let Some(v) = view {
-                            let av = v.as_arrow();
-                            crit_num_slices.push(Some(av.slice_numbers(row_start, row_len)));
-                            crit_text_slices.push(Some(av.slice_lowered_text(row_start, row_len)));
-                        } else {
-                            crit_num_slices.push(None);
-                            crit_text_slices.push(None);
-                        }
-                    }
-
-                    'col: for c in 0..dims.1 {
-                        let values = &sum_cols[c];
-                        let mut mask_opt: Option<BooleanArray> = None;
-                        let mut impossible = false;
-
-                        for (j, (pred, scalar_val)) in preds.iter().enumerate() {
-                            if crit_views[j].is_none() {
-                                if let Some(sv) = scalar_val {
-                                    if !criteria_match(pred, sv) {
-                                        impossible = true;
-                                        break;
-                                    }
-                                    continue;
-                                }
-                                if !criteria_match(pred, &LiteralValue::Empty) {
-                                    impossible = true;
-                                    break;
-                                }
-                                continue;
-                            }
-
-                            let cur_cached = if let Some(ref view) = crit_views[j] {
-                                let av = view.as_arrow();
-                                ctx.get_criteria_mask(&av, c, pred).map(|m| {
-                                    let sl =
-                                        arrow_array::Array::slice(m.as_ref(), row_start, row_len);
-                                    sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone()
-                                })
-                            } else {
-                                None
-                            };
-
-                            let num_col = crit_num_slices[j]
-                                .as_ref()
-                                .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
-                                .unwrap_or(&null_nums);
-                            let text_col = crit_text_slices[j]
-                                .as_ref()
-                                .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
-                                .unwrap_or(&null_text);
-
-                            let cur = if let Some(cm) = cur_cached {
-                                Some(cm)
-                            } else {
-                                match pred {
-                                    crate::args::CriteriaPredicate::Gt(n) => Some(
-                                        cmp::gt(num_col, &Float64Array::new_scalar(*n)).unwrap(),
-                                    ),
-                                    crate::args::CriteriaPredicate::Ge(n) => Some(
-                                        cmp::gt_eq(num_col, &Float64Array::new_scalar(*n)).unwrap(),
-                                    ),
-                                    crate::args::CriteriaPredicate::Lt(n) => Some(
-                                        cmp::lt(num_col, &Float64Array::new_scalar(*n)).unwrap(),
-                                    ),
-                                    crate::args::CriteriaPredicate::Le(n) => Some(
-                                        cmp::lt_eq(num_col, &Float64Array::new_scalar(*n)).unwrap(),
-                                    ),
-                                    crate::args::CriteriaPredicate::Eq(v) => match v {
-                                        LiteralValue::Number(x) => Some(
-                                            cmp::eq(num_col, &Float64Array::new_scalar(*x))
-                                                .unwrap(),
-                                        ),
-                                        LiteralValue::Int(i) => Some(
-                                            cmp::eq(num_col, &Float64Array::new_scalar(*i as f64))
-                                                .unwrap(),
-                                        ),
-                                        LiteralValue::Text(t) => {
-                                            let lt = t.to_ascii_lowercase();
-                                            let pat = StringArray::new_scalar(lt);
-                                            let mut m = ilike(text_col, &pat).unwrap();
-                                            if t.is_empty() {
-                                                let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(
-                                                        text_col.len(),
-                                                    );
-                                                for i in 0..text_col.len() {
-                                                    bb.append_value(text_col.is_null(i));
-                                                }
-                                                let add = bb.finish();
-                                                m = boolean::or_kleene(&m, &add).unwrap();
-                                            }
-                                            Some(m)
-                                        }
-                                        _ => {
-                                            ok_masks = false;
-                                            break;
-                                        }
-                                    },
-                                    crate::args::CriteriaPredicate::Ne(v) => match v {
-                                        LiteralValue::Number(x) => Some(
-                                            cmp::neq(num_col, &Float64Array::new_scalar(*x))
-                                                .unwrap(),
-                                        ),
-                                        LiteralValue::Int(i) => Some(
-                                            cmp::neq(num_col, &Float64Array::new_scalar(*i as f64))
-                                                .unwrap(),
-                                        ),
-                                        LiteralValue::Text(t) => {
-                                            let lt = t.to_ascii_lowercase();
-                                            let pat = StringArray::new_scalar(lt);
-                                            Some(nilike(text_col, &pat).unwrap())
-                                        }
-                                        _ => {
-                                            ok_masks = false;
-                                            break;
-                                        }
-                                    },
-                                    crate::args::CriteriaPredicate::TextLike {
-                                        pattern, ..
-                                    } => {
-                                        let lp = pattern
-                                            .replace('*', "%")
-                                            .replace('?', "_")
-                                            .to_ascii_lowercase();
-                                        let pat = StringArray::new_scalar(lp);
-                                        Some(ilike(text_col, &pat).unwrap())
-                                    }
-                                    _ => {
-                                        ok_masks = false;
-                                        break;
-                                    }
-                                }
-                            };
-
-                            if !ok_masks {
-                                break;
-                            }
-
-                            if let Some(cur_mask) = cur {
-                                mask_opt = Some(match mask_opt {
-                                    None => cur_mask,
-                                    Some(prev) => boolean::and_kleene(&prev, &cur_mask).unwrap(),
-                                });
-                            }
-                        }
-
-                        if !ok_masks {
-                            break 'col;
-                        }
-                        if impossible {
-                            continue;
-                        }
-
-                        match mask_opt {
-                            Some(mask) => {
-                                let filtered = filter_array(values.as_ref(), &mask).unwrap();
-                                let f64_arr =
-                                    filtered.as_any().downcast_ref::<Float64Array>().unwrap();
-                                if let Some(part) = sum_array::<Float64Type, _>(f64_arr) {
-                                    total += part;
-                                }
-                            }
-                            None => {
-                                if let Some(part) = sum_array::<Float64Type, _>(values.as_ref()) {
-                                    total += part;
-                                }
-                            }
-                        }
-                    }
-
-                    if !ok_masks {
-                        break;
-                    }
-                }
-
-                if ok_masks {
-                    return Ok(LiteralValue::Number(total));
-                }
-            }
-        }
-
-        // Check if we can use the optimized numeric path
-        if sum_view.kind_probe() == crate::engine::range_view::RangeKind::NumericOnly {
-            // Optimized path for numeric-only sum range
-            let mut total = 0.0f64;
-
-            // We'll iterate by rows for union dims (padding via get_cell)
-            for row in 0..dims.0 {
-                for col in 0..dims.1 {
-                    // Check all criteria
-                    let mut all_match = true;
-                    for (j, (pred, scalar_val)) in preds.iter().enumerate() {
-                        let crit_val = if let Some(ref view) = crit_views[j] {
-                            view.get_cell(row, col)
-                        } else if let Some(scalar) = scalar_val {
-                            scalar.clone()
-                        } else {
-                            LiteralValue::Empty
-                        };
-
-                        if !criteria_match(pred, &crit_val) {
-                            all_match = false;
-                            break;
-                        }
-                    }
-
-                    if all_match {
-                        match sum_view.get_cell(row, col) {
-                            LiteralValue::Number(n) => total += n,
-                            LiteralValue::Int(i) => total += i as f64,
-                            _ => {}
-                        }
-                    }
-                }
-            }
-
-            return Ok(LiteralValue::Number(total));
-        }
-
-        // General path for mixed or non-numeric ranges over union dims
-        let mut total = 0.0f64;
-        for row in 0..dims.0 {
-            if row % 1024 == 0 && ctx.cancellation_token().map(|t| t.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false) {
-                return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Cancelled));
-            }
-            for col in 0..dims.1 {
-                // Check all criteria
-                let mut all_match = true;
-                for (j, (pred, scalar_val)) in preds.iter().enumerate() {
-                    let crit_val = if let Some(ref view) = crit_views[j] {
-                        view.get_cell(row, col)
-                    } else if let Some(scalar) = scalar_val {
-                        scalar.clone()
-                    } else {
-                        LiteralValue::Empty
-                    };
-                    if !criteria_match(pred, &crit_val) {
-                        all_match = false;
-                        break;
-                    }
-                }
-                if all_match {
-                    let sum_val = sum_view.get_cell(row, col);
-                    if let Ok(n) = coerce_num(&sum_val) {
-                        total += n;
-                    }
-                }
-            }
-        }
-        Ok(LiteralValue::Number(total))
+        eval_if_family(args, ctx, AggregationType::Sum, true)
     }
 }
 
@@ -651,296 +575,7 @@ impl Function for CountIfsFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        #[cfg(feature = "tracing")]
-        let _span = tracing::info_span!("COUNTIFS").entered();
-        if args.len() < 2 || !args.len().is_multiple_of(2) {
-            return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
-                format!(
-                    "COUNTIFS expects N pairs (criteria_range, criteria); got {} args",
-                    args.len()
-                ),
-            )));
-        }
-        // Collect criteria as views or scalars; compute union dims
-        let mut crit_views: Vec<Option<crate::engine::range_view::RangeView<'_>>> = Vec::new();
-        let mut preds = Vec::new();
-        let mut dims = (1usize, 1usize);
-        let mut seen_any_view = false;
-        // Build views/preds and union dims
-        let mut arg_i = 0usize;
-        while arg_i + 1 < args.len() {
-            let pred = crate::args::parse_criteria(args[arg_i + 1].value()?.as_ref())?;
-            match args[arg_i].range_view() {
-                Ok(v) => {
-                    if v.dims() == (1, 1) {
-                        let scalar = v.get_cell(0, 0);
-                        crit_views.push(None);
-                        preds.push((pred, Some(scalar)));
-                    } else {
-                        let vd = v.dims();
-                        if !seen_any_view {
-                            dims = vd;
-                            seen_any_view = true;
-                        } else {
-                            if vd.0 > dims.0 {
-                                dims.0 = vd.0;
-                            }
-                            if vd.1 > dims.1 {
-                                dims.1 = vd.1;
-                            }
-                        }
-                        crit_views.push(Some(v));
-                        preds.push((pred, None));
-                    }
-                }
-                Err(_) => {
-                    let scalar = args[arg_i].value()?.into_owned();
-                    crit_views.push(None);
-                    preds.push((pred, Some(scalar)));
-                }
-            }
-            arg_i += 2;
-        }
-        // Arrow fast path: Arrow-backed criteria ranges with equal dims; scalar (1x1) criteria_range is broadcast.
-        let mut all_arrow = true;
-        for rv in crit_views.iter().flatten() {
-            if rv.dims() != dims {
-                all_arrow = false;
-                break;
-            }
-        }
-
-        if all_arrow {
-            if crit_views.iter().all(|v| v.is_none()) {
-                let all_match = preds.iter().all(|(pred, scalar_val)| {
-                    let v = scalar_val.as_ref().unwrap_or(&LiteralValue::Empty);
-                    criteria_match(pred, v)
-                });
-                let total = if all_match {
-                    (dims.0 * dims.1) as i64
-                } else {
-                    0
-                };
-                return Ok(LiteralValue::Number(total as f64));
-            }
-
-            let driver_av = crit_views
-                .iter()
-                .find_map(|v| v.as_ref().map(|rv| rv.as_arrow()));
-
-            if let Some(driver) = driver_av {
-                let mut total: i64 = 0;
-                let mut ok_masks = true;
-
-                for cs in driver.row_chunk_slices() {
-                    let row_start = cs.row_start;
-                    let row_len = cs.row_len;
-                    if row_len == 0 {
-                        continue;
-                    }
-
-                    let null_nums = Float64Array::new_null(row_len);
-                    let null_text = StringArray::new_null(row_len);
-
-                    let mut crit_num_slices = Vec::with_capacity(preds.len());
-                    let mut crit_text_slices = Vec::with_capacity(preds.len());
-                    for view in &crit_views {
-                        if let Some(v) = view {
-                            let av = v.as_arrow();
-                            crit_num_slices.push(Some(av.slice_numbers(row_start, row_len)));
-                            crit_text_slices.push(Some(av.slice_lowered_text(row_start, row_len)));
-                        } else {
-                            crit_num_slices.push(None);
-                            crit_text_slices.push(None);
-                        }
-                    }
-
-                    'col: for c in 0..dims.1 {
-                        let mut mask_opt: Option<BooleanArray> = None;
-                        let mut impossible = false;
-
-                        for (j, (pred, scalar_val)) in preds.iter().enumerate() {
-                            if crit_views[j].is_none() {
-                                if let Some(sv) = scalar_val {
-                                    if !criteria_match(pred, sv) {
-                                        impossible = true;
-                                        break;
-                                    }
-                                    continue;
-                                }
-                                if !criteria_match(pred, &LiteralValue::Empty) {
-                                    impossible = true;
-                                    break;
-                                }
-                                continue;
-                            }
-
-                            let cur_cached = if let Some(ref view) = crit_views[j] {
-                                let av = view.as_arrow();
-                                ctx.get_criteria_mask(&av, c, pred).map(|m| {
-                                    let sl =
-                                        arrow_array::Array::slice(m.as_ref(), row_start, row_len);
-                                    sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone()
-                                })
-                            } else {
-                                None
-                            };
-
-                            let num_col = crit_num_slices[j]
-                                .as_ref()
-                                .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
-                                .unwrap_or(&null_nums);
-                            let text_col = crit_text_slices[j]
-                                .as_ref()
-                                .and_then(|cols| cols[c].as_ref().map(|a| a.as_ref()))
-                                .unwrap_or(&null_text);
-
-                            let cur = if let Some(cm) = cur_cached {
-                                Some(cm)
-                            } else {
-                                match pred {
-                                    crate::args::CriteriaPredicate::Gt(n) => Some(
-                                        cmp::gt(num_col, &Float64Array::new_scalar(*n)).unwrap(),
-                                    ),
-                                    crate::args::CriteriaPredicate::Ge(n) => Some(
-                                        cmp::gt_eq(num_col, &Float64Array::new_scalar(*n)).unwrap(),
-                                    ),
-                                    crate::args::CriteriaPredicate::Lt(n) => Some(
-                                        cmp::lt(num_col, &Float64Array::new_scalar(*n)).unwrap(),
-                                    ),
-                                    crate::args::CriteriaPredicate::Le(n) => Some(
-                                        cmp::lt_eq(num_col, &Float64Array::new_scalar(*n)).unwrap(),
-                                    ),
-                                    crate::args::CriteriaPredicate::Eq(v) => match v {
-                                        LiteralValue::Number(x) => Some(
-                                            cmp::eq(num_col, &Float64Array::new_scalar(*x))
-                                                .unwrap(),
-                                        ),
-                                        LiteralValue::Int(i) => Some(
-                                            cmp::eq(num_col, &Float64Array::new_scalar(*i as f64))
-                                                .unwrap(),
-                                        ),
-                                        LiteralValue::Text(t) => {
-                                            let lt = t.to_ascii_lowercase();
-                                            let pat = StringArray::new_scalar(lt);
-                                            let mut m = ilike(text_col, &pat).unwrap();
-                                            if t.is_empty() {
-                                                let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(
-                                                        text_col.len(),
-                                                    );
-                                                for i in 0..text_col.len() {
-                                                    bb.append_value(text_col.is_null(i));
-                                                }
-                                                let add = bb.finish();
-                                                m = boolean::or_kleene(&m, &add).unwrap();
-                                            }
-                                            Some(m)
-                                        }
-                                        _ => {
-                                            ok_masks = false;
-                                            break;
-                                        }
-                                    },
-                                    crate::args::CriteriaPredicate::Ne(v) => match v {
-                                        LiteralValue::Number(x) => Some(
-                                            cmp::neq(num_col, &Float64Array::new_scalar(*x))
-                                                .unwrap(),
-                                        ),
-                                        LiteralValue::Int(i) => Some(
-                                            cmp::neq(num_col, &Float64Array::new_scalar(*i as f64))
-                                                .unwrap(),
-                                        ),
-                                        LiteralValue::Text(t) => {
-                                            let lt = t.to_ascii_lowercase();
-                                            let pat = StringArray::new_scalar(lt);
-                                            Some(nilike(text_col, &pat).unwrap())
-                                        }
-                                        _ => {
-                                            ok_masks = false;
-                                            break;
-                                        }
-                                    },
-                                    crate::args::CriteriaPredicate::TextLike {
-                                        pattern, ..
-                                    } => {
-                                        let lp = pattern
-                                            .replace('*', "%")
-                                            .replace('?', "_")
-                                            .to_ascii_lowercase();
-                                        let pat = StringArray::new_scalar(lp);
-                                        Some(ilike(text_col, &pat).unwrap())
-                                    }
-                                    _ => {
-                                        ok_masks = false;
-                                        break;
-                                    }
-                                }
-                            };
-
-                            if !ok_masks {
-                                break;
-                            }
-
-                            if let Some(cur_mask) = cur {
-                                mask_opt = Some(match mask_opt {
-                                    None => cur_mask,
-                                    Some(prev) => boolean::and_kleene(&prev, &cur_mask).unwrap(),
-                                });
-                            }
-                        }
-
-                        if !ok_masks {
-                            break 'col;
-                        }
-                        if impossible {
-                            continue;
-                        }
-
-                        match mask_opt {
-                            Some(mask) => {
-                                total += (0..mask.len())
-                                    .filter(|&i| mask.is_valid(i) && mask.value(i))
-                                    .count() as i64;
-                            }
-                            None => {
-                                total += row_len as i64;
-                            }
-                        }
-                    }
-
-                    if !ok_masks {
-                        break;
-                    }
-                }
-
-                if ok_masks {
-                    return Ok(LiteralValue::Number(total as f64));
-                }
-            }
-        }
-        let mut cnt = 0i64;
-        for row in 0..dims.0 {
-            for col in 0..dims.1 {
-                let mut all_match = true;
-                for (j, (pred, scalar_val)) in preds.iter().enumerate() {
-                    let crit_val = if let Some(ref view) = crit_views[j] {
-                        view.get_cell(row, col)
-                    } else if let Some(sv) = scalar_val {
-                        sv.clone()
-                    } else {
-                        LiteralValue::Empty
-                    };
-                    if !criteria_match(pred, &crit_val) {
-                        all_match = false;
-                        break;
-                    }
-                }
-                if all_match {
-                    cnt += 1;
-                }
-            }
-        }
-        Ok(LiteralValue::Number(cnt as f64))
+        eval_if_family(args, ctx, AggregationType::Count, true)
     }
 }
 
@@ -973,97 +608,7 @@ impl Function for AverageIfsFn {
         args: &'a [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext,
     ) -> Result<LiteralValue, ExcelError> {
-        if args.len() < 3 || !(args.len() - 1).is_multiple_of(2) {
-            return Ok(LiteralValue::Error(
-                ExcelError::new_value().with_message(format!(
-                    "AVERAGEIFS expects 1 avg_range followed by N pairs (criteria_range, criteria); got {} args",
-                    args.len()
-                )),
-            ));
-        }
-        // Resolve avg range
-        let avg_view = match args[0].range_view() {
-            Ok(v) => v,
-            Err(_) => {
-                // Scalar fallback: require scalar criteria and match; else #DIV/0!
-                let val = args[0].value()?;
-                for i in (1..args.len()).step_by(2) {
-                    let cval = args[i].value()?;
-                    let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
-                    if !criteria_match(&pred, cval.as_ref()) {
-                        return Ok(ExcelError::new_div().into());
-                    }
-                }
-                if let Ok(n) = coerce_num(val.as_ref()) {
-                    return Ok(LiteralValue::Number(n));
-                } else {
-                    return Ok(ExcelError::new_div().into());
-                }
-            }
-        };
-
-        // Collect criteria as views or scalars; compute union dims with avg_view (prefer flats)
-        let dims = avg_view.dims();
-        let mut crit_views: Vec<Option<crate::engine::range_view::RangeView<'_>>> = Vec::new();
-        let mut preds = Vec::new();
-        // Build views/preds
-        let mut arg_i = 1usize;
-        while arg_i + 1 < args.len() {
-            let pred = crate::args::parse_criteria(args[arg_i + 1].value()?.as_ref())?;
-            match args[arg_i].range_view() {
-                Ok(v) => {
-                    if v.dims() == (1, 1) {
-                        let scalar = v.get_cell(0, 0);
-                        crit_views.push(None);
-                        preds.push((pred, Some(scalar)));
-                    } else {
-                        // Do not expand avg_range dimensions; pad criteria to avg_range dims
-                        crit_views.push(Some(v));
-                        preds.push((pred, None));
-                    }
-                }
-                Err(_) => {
-                    let scalar = args[arg_i].value()?.into_owned();
-                    crit_views.push(None);
-                    preds.push((pred, Some(scalar)));
-                }
-            }
-            arg_i += 2;
-        }
-
-        let mut sum = 0.0f64;
-        let mut cnt = 0i64;
-        for row in 0..dims.0 {
-            for col in 0..dims.1 {
-                let mut all_match = true;
-                for (j, (pred, scalar_val)) in preds.iter().enumerate() {
-                    let crit_val = if let Some(ref view) = crit_views[j] {
-                        view.get_cell(row, col)
-                    } else if let Some(sv) = scalar_val {
-                        sv.clone()
-                    } else {
-                        LiteralValue::Empty
-                    };
-                    if !criteria_match(pred, &crit_val) {
-                        all_match = false;
-                        break;
-                    }
-                }
-                if all_match {
-                    let v = avg_view.get_cell(row, col);
-                    if let Ok(n) = coerce_num(&v) {
-                        sum += n;
-                        cnt += 1;
-                    }
-                }
-            }
-        }
-        if cnt == 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
-            )));
-        }
-        Ok(LiteralValue::Number(sum / cnt as f64))
+        eval_if_family(args, ctx, AggregationType::Average, true)
     }
 }
 
@@ -1071,7 +616,7 @@ impl Function for AverageIfsFn {
 #[derive(Debug)]
 pub struct CountAFn; // counts non-empty (including empty text "")
 impl Function for CountAFn {
-    func_caps!(PURE, REDUCTION, WINDOWED, STREAM_OK);
+    func_caps!(PURE, REDUCTION);
     fn name(&self) -> &'static str {
         "COUNTA"
     }
@@ -1091,11 +636,21 @@ impl Function for CountAFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut cnt = 0i64;
         for a in args {
-            let (it, _) = materialize_iter(a);
-            for v in it {
-                match v {
-                    LiteralValue::Empty => {}
-                    _ => cnt += 1,
+            if let Ok(view) = a.range_view() {
+                for res in view.type_tags_slices() {
+                    let (_, _, tag_cols) = res?;
+                    for col in tag_cols {
+                        for i in 0..col.len() {
+                            if col.value(i) != crate::arrow_store::TypeTag::Empty as u8 {
+                                cnt += 1;
+                            }
+                        }
+                    }
+                }
+            } else {
+                let v = a.value()?;
+                if !matches!(v.as_ref(), LiteralValue::Empty) {
+                    cnt += 1;
                 }
             }
         }
@@ -1107,7 +662,7 @@ impl Function for CountAFn {
 #[derive(Debug)]
 pub struct CountBlankFn; // counts truly empty cells and empty text
 impl Function for CountBlankFn {
-    func_caps!(PURE, REDUCTION, WINDOWED, STREAM_OK);
+    func_caps!(PURE, REDUCTION);
     fn name(&self) -> &'static str {
         "COUNTBLANK"
     }
@@ -1127,11 +682,35 @@ impl Function for CountBlankFn {
     ) -> Result<LiteralValue, ExcelError> {
         let mut cnt = 0i64;
         for a in args {
-            let (it, _) = materialize_iter(a);
-            for v in it {
-                match v {
+            if let Ok(view) = a.range_view() {
+                let mut tag_it = view.type_tags_slices();
+                let mut text_it = view.text_slices();
+
+                while let (Some(tag_res), Some(text_res)) = (tag_it.next(), text_it.next()) {
+                    let (_, _, tag_cols) = tag_res?;
+                    let (_, _, text_cols) = text_res?;
+
+                    for (tc, xc) in tag_cols.into_iter().zip(text_cols.into_iter()) {
+                        let text_arr = xc
+                            .as_any()
+                            .downcast_ref::<arrow_array::StringArray>()
+                            .unwrap();
+                        for i in 0..tc.len() {
+                            if tc.value(i) == crate::arrow_store::TypeTag::Empty as u8 {
+                                cnt += 1;
+                            } else if tc.value(i) == crate::arrow_store::TypeTag::Text as u8 {
+                                if !text_arr.is_null(i) && text_arr.value(i).is_empty() {
+                                    cnt += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                let v = a.value()?;
+                match v.as_ref() {
                     LiteralValue::Empty => cnt += 1,
-                    LiteralValue::Text(ref s) if s.is_empty() => cnt += 1,
+                    LiteralValue::Text(s) if s.is_empty() => cnt += 1,
                     _ => {}
                 }
             }
@@ -1140,32 +719,11 @@ impl Function for CountBlankFn {
     }
 }
 
-// Helper: materialize an argument (range or scalar) into an iterator of values and its 2D dims representation.
-fn materialize_iter<'a, 'b>(
-    arg: &'a ArgumentHandle<'a, 'b>,
-) -> (Box<dyn Iterator<Item = LiteralValue> + 'a>, (usize, usize)) {
-    if let Ok(view) = arg.range_view() {
-        let d = view.dims();
-        let mut values: Vec<LiteralValue> = Vec::with_capacity(d.0 * d.1);
-        // Re-resolve for borrow: the previous `view` is moved; get a fresh one
-        if let Ok(rv2) = arg.range_view() {
-            rv2.for_each_cell(&mut |cell| {
-                values.push(cell.clone());
-                Ok(())
-            })
-            .ok();
-        }
-        (Box::new(values.into_iter()), d)
-    } else {
-        let v = arg.value().unwrap().into_owned();
-        (Box::new(std::iter::once(v)), (1, 1))
-    }
-}
-
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(SumIfFn));
     crate::function_registry::register_function(Arc::new(CountIfFn));
+    crate::function_registry::register_function(Arc::new(AverageIfFn));
     crate::function_registry::register_function(Arc::new(SumIfsFn));
     crate::function_registry::register_function(Arc::new(CountIfsFn));
     crate::function_registry::register_function(Arc::new(AverageIfsFn));
