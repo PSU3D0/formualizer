@@ -189,16 +189,21 @@ impl PyWorkbook {
             .inner
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        
+
         // Ensure flag is reset before starting
-        self.cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
-        
+        self.cancel_flag
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
         wb.evaluate_all_cancellable(&self.cancel_flag)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         Ok(())
     }
 
-    pub fn evaluate_cells(&self, py: Python<'_>, targets: &Bound<'_, pyo3::types::PyList>) -> PyResult<PyObject> {
+    pub fn evaluate_cells(
+        &self,
+        py: Python<'_>,
+        targets: &Bound<'_, pyo3::types::PyList>,
+    ) -> PyResult<PyObject> {
         let mut target_vec = Vec::with_capacity(targets.len());
         for item in targets.iter() {
             let tuple: &Bound<'_, pyo3::types::PyTuple> = item.downcast()?;
@@ -207,21 +212,26 @@ impl PyWorkbook {
             let col: u32 = tuple.get_item(2)?.extract()?;
             target_vec.push((sheet, row, col));
         }
-        
+
         let mut wb = self
             .inner
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-            
+
         // Ensure flag is reset
-        self.cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
-        
+        self.cancel_flag
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
         // We use a temporary vector of (&str, u32, u32) because Workbook::evaluate_cells expects that
-        let refs: Vec<(&str, u32, u32)> = target_vec.iter().map(|(s, r, c)| (s.as_str(), *r, *c)).collect();
-        
-        let results = wb.evaluate_cells_cancellable(&refs, &self.cancel_flag)
+        let refs: Vec<(&str, u32, u32)> = target_vec
+            .iter()
+            .map(|(s, r, c)| (s.as_str(), *r, *c))
+            .collect();
+
+        let results = wb
+            .evaluate_cells_cancellable(&refs, &self.cancel_flag)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            
+
         let py_results = pyo3::types::PyList::empty(py);
         for v in results {
             py_results.append(literal_to_py(py, &v)?)?;
@@ -230,11 +240,13 @@ impl PyWorkbook {
     }
 
     pub fn cancel(&self) {
-        self.cancel_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.cancel_flag
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn reset_cancel(&self) {
-        self.cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.cancel_flag
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn get_value(

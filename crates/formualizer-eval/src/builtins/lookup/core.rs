@@ -197,7 +197,8 @@ impl Function for MatchFn {
                                 // compare candidate to needle
                                 if mt == 1 {
                                     // v <= needle
-                                    if (c == 0 || c == -1) && (best.is_none() || i > best.unwrap().0)
+                                    if (c == 0 || c == -1)
+                                        && (best.is_none() || i > best.unwrap().0)
                                     {
                                         best = Some((i, v));
                                     }
@@ -360,7 +361,11 @@ impl Function for VLookupFn {
         let first_col_view = rv.sub_view(0, 0, rows, 1);
         let row_idx_opt = if !approximate {
             let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
-            super::lookup_utils::find_exact_index_in_view(&first_col_view, lookup_value.as_ref(), wildcard_mode)?
+            super::lookup_utils::find_exact_index_in_view(
+                &first_col_view,
+                lookup_value.as_ref(),
+                wildcard_mode,
+            )?
         } else {
             // Fallback for approximate mode (requires materializing first column for now)
             let mut first_col: Vec<LiteralValue> = Vec::new();
@@ -510,7 +515,11 @@ impl Function for HLookupFn {
             binary_search_match(&first_row, lookup_value.as_ref(), 1)
         } else {
             let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
-            super::lookup_utils::find_exact_index_in_view(&first_row_view, lookup_value.as_ref(), wildcard_mode)?
+            super::lookup_utils::find_exact_index_in_view(
+                &first_row_view,
+                lookup_value.as_ref(),
+                wildcard_mode,
+            )?
         };
 
         match col_idx_opt {

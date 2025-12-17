@@ -2473,7 +2473,9 @@ where
         // Let's implement evaluate_until_coords_cancellable or similar, or just convert
         let a1_targets: Vec<String> = targets
             .iter()
-            .map(|(s, r, c)| format!("{}!{}", s, col_letters_from_1based(*c).unwrap()) + &r.to_string())
+            .map(|(s, r, c)| {
+                format!("{}!{}", s, col_letters_from_1based(*c).unwrap()) + &r.to_string()
+            })
             .collect();
         let a1_refs: Vec<&str> = a1_targets.iter().map(|s| s.as_str()).collect();
 

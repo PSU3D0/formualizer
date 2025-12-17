@@ -1,11 +1,11 @@
 use crate::arrow_store;
 use crate::arrow_store::IngestBuilder;
 use crate::stripes::NumericChunk;
-use formualizer_common::{ExcelError, LiteralValue, DateSystem, CoercionPolicy};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use arrow_array::Array;
 use arrow_schema::DataType;
+use formualizer_common::{CoercionPolicy, DateSystem, ExcelError, LiteralValue};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub enum RangeBacking<'a> {
     Borrowed(&'a arrow_store::ArrowSheet),
@@ -68,7 +68,9 @@ impl<'a> Iterator for RowChunkIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(token) = self.view.cancel_token {
             if token.load(Ordering::Relaxed) {
-                return Some(Err(ExcelError::new(formualizer_common::ExcelErrorKind::Cancelled)));
+                return Some(Err(ExcelError::new(
+                    formualizer_common::ExcelErrorKind::Cancelled,
+                )));
             }
         }
 
@@ -108,7 +110,11 @@ impl<'a> Iterator for RowChunkIterator<'a> {
                     let text = Some(arrow_array::new_null_array(&DataType::Utf8, seg_len));
                     let errors = Some(arrow_array::new_null_array(&DataType::UInt8, seg_len));
                     let type_tag: arrow_array::ArrayRef =
-                        Arc::new(arrow_array::UInt8Array::from(vec![arrow_store::TypeTag::Empty as u8; seg_len]));
+                        Arc::new(arrow_array::UInt8Array::from(vec![
+                            arrow_store::TypeTag::Empty
+                                as u8;
+                            seg_len
+                        ]));
                     cols.push(ChunkCol {
                         numbers,
                         booleans,
@@ -119,12 +125,18 @@ impl<'a> Iterator for RowChunkIterator<'a> {
                 } else {
                     let col = &sheet.columns[col_idx];
                     let Some(ch) = col.chunk(ci) else {
-                        let numbers = Some(arrow_array::new_null_array(&DataType::Float64, seg_len));
-                        let booleans = Some(arrow_array::new_null_array(&DataType::Boolean, seg_len));
+                        let numbers =
+                            Some(arrow_array::new_null_array(&DataType::Float64, seg_len));
+                        let booleans =
+                            Some(arrow_array::new_null_array(&DataType::Boolean, seg_len));
                         let text = Some(arrow_array::new_null_array(&DataType::Utf8, seg_len));
                         let errors = Some(arrow_array::new_null_array(&DataType::UInt8, seg_len));
                         let type_tag: arrow_array::ArrayRef =
-                            Arc::new(arrow_array::UInt8Array::from(vec![arrow_store::TypeTag::Empty as u8; seg_len]));
+                            Arc::new(arrow_array::UInt8Array::from(vec![
+                                arrow_store::TypeTag::Empty
+                                    as u8;
+                                seg_len
+                            ]));
                         cols.push(ChunkCol {
                             numbers,
                             booleans,
@@ -134,17 +146,18 @@ impl<'a> Iterator for RowChunkIterator<'a> {
                         });
                         continue;
                     };
-                    
+
                     let numbers_base: arrow_array::ArrayRef = ch.numbers_or_null();
                     let booleans_base: arrow_array::ArrayRef = ch.booleans_or_null();
                     let text_base: arrow_array::ArrayRef = ch.text_or_null();
                     let errors_base: arrow_array::ArrayRef = ch.errors_or_null();
-                    
+
                     let numbers = Some(numbers_base.slice(rel_off, seg_len));
                     let booleans = Some(booleans_base.slice(rel_off, seg_len));
                     let text = Some(text_base.slice(rel_off, seg_len));
                     let errors = Some(errors_base.slice(rel_off, seg_len));
-                    let type_tag: arrow_array::ArrayRef = Arc::new(ch.type_tag.slice(rel_off, seg_len));
+                    let type_tag: arrow_array::ArrayRef =
+                        Arc::new(ch.type_tag.slice(rel_off, seg_len));
                     cols.push(ChunkCol {
                         numbers,
                         booleans,
@@ -434,7 +447,10 @@ impl<'a> RangeView<'a> {
                     if arr.is_null(in_off) {
                         return LiteralValue::Empty;
                     }
-                    let sa = arr.as_any().downcast_ref::<arrow_array::StringArray>().unwrap();
+                    let sa = arr
+                        .as_any()
+                        .downcast_ref::<arrow_array::StringArray>()
+                        .unwrap();
                     LiteralValue::Text(sa.value(in_off).to_string())
                 } else {
                     LiteralValue::Empty
@@ -544,9 +560,9 @@ impl<'a> RangeView<'a> {
                         // Currently NumericChunk doesn't have a perfect way to represent sparse Arrow slices
                         // without copying if we want a contiguous f64 slice.
                         // For now, we can just provide the raw data and the validity mask if it exists.
-                        
+
                         let validity = if col.null_count() > 0 {
-                            // Extract validity mask. 
+                            // Extract validity mask.
                             // Note: This is still slightly awkward with the current NumericChunk design.
                             None // TODO: Implement validity mask propagation
                         } else {
@@ -554,10 +570,7 @@ impl<'a> RangeView<'a> {
                         };
 
                         if col.null_count() == 0 {
-                            f(NumericChunk {
-                                data,
-                                validity,
-                            })?;
+                            f(NumericChunk { data, validity })?;
                         } else {
                             // Fallback for nulls: iterate and push to a small buffer
                             let mut buf = Vec::with_capacity(col.len());
@@ -616,13 +629,15 @@ impl<'a> RangeView<'a> {
 
     pub fn numbers_slices(
         &self,
-    ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::Float64Array>>), ExcelError>> + '_ {
+    ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::Float64Array>>), ExcelError>> + '_
+    {
         use crate::compute_prelude::zip_select;
         use arrow_array::builder::{BooleanBuilder, Float64Builder};
-        
+
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
-            let mut out_cols: Vec<Arc<arrow_array::Float64Array>> = Vec::with_capacity(cs.cols.len());
+            let mut out_cols: Vec<Arc<arrow_array::Float64Array>> =
+                Vec::with_capacity(cs.cols.len());
             let sheet = self.sheet();
             let chunk_starts = &sheet.chunk_starts;
 
@@ -681,7 +696,10 @@ impl<'a> RangeView<'a> {
                     }
                     let mask = mask_b.finish();
                     let overlay_vals = ob.finish();
-                    let base_fa = base.as_any().downcast_ref::<arrow_array::Float64Array>().unwrap();
+                    let base_fa = base
+                        .as_any()
+                        .downcast_ref::<arrow_array::Float64Array>()
+                        .unwrap();
                     let zipped = zip_select(&mask, &overlay_vals, base_fa).expect("zip overlay");
                     let fa = zipped
                         .as_any()
@@ -700,13 +718,15 @@ impl<'a> RangeView<'a> {
     /// Typed boolean slices per row-segment, overlay-aware via zip.
     pub fn booleans_slices(
         &self,
-    ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::BooleanArray>>), ExcelError>> + '_ {
+    ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::BooleanArray>>), ExcelError>> + '_
+    {
         use crate::compute_prelude::zip_select;
         use arrow_array::builder::BooleanBuilder;
-        
+
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
-            let mut out_cols: Vec<Arc<arrow_array::BooleanArray>> = Vec::with_capacity(cs.cols.len());
+            let mut out_cols: Vec<Arc<arrow_array::BooleanArray>> =
+                Vec::with_capacity(cs.cols.len());
             let sheet = self.sheet();
             let chunk_starts = &sheet.chunk_starts;
 
@@ -765,7 +785,10 @@ impl<'a> RangeView<'a> {
                     }
                     let mask = mask_b.finish();
                     let overlay_vals = bb.finish();
-                    let base_ba = base.as_any().downcast_ref::<arrow_array::BooleanArray>().unwrap();
+                    let base_ba = base
+                        .as_any()
+                        .downcast_ref::<arrow_array::BooleanArray>()
+                        .unwrap();
                     let zipped =
                         zip_select(&mask, &overlay_vals, base_ba).expect("zip boolean overlay");
                     let ba = zipped
@@ -783,10 +806,13 @@ impl<'a> RangeView<'a> {
     }
 
     /// Text slices per row-segment (erased as ArrayRef for Utf8 today; future Dict/View support).
-    pub fn text_slices(&self) -> impl Iterator<Item = Result<(usize, usize, Vec<arrow_array::ArrayRef>), ExcelError>> + '_ {
+    pub fn text_slices(
+        &self,
+    ) -> impl Iterator<Item = Result<(usize, usize, Vec<arrow_array::ArrayRef>), ExcelError>> + '_
+    {
         use crate::compute_prelude::zip_select;
         use arrow_array::builder::{BooleanBuilder, StringBuilder};
-        
+
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
             let mut out_cols: Vec<arrow_array::ArrayRef> = Vec::with_capacity(cs.cols.len());
@@ -840,7 +866,10 @@ impl<'a> RangeView<'a> {
                     }
                     let mask = mask_b.finish();
                     let overlay_vals = sb.finish();
-                    let base_sa = base.as_any().downcast_ref::<arrow_array::StringArray>().unwrap();
+                    let base_sa = base
+                        .as_any()
+                        .downcast_ref::<arrow_array::StringArray>()
+                        .unwrap();
                     let zipped =
                         zip_select(&mask, &overlay_vals, base_sa).expect("zip text overlay");
                     out_cols.push(zipped);
@@ -855,13 +884,15 @@ impl<'a> RangeView<'a> {
     /// Typed lowered text slices per row-segment, overlay-aware via zip.
     pub fn lowered_text_slices(
         &self,
-    ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::StringArray>>), ExcelError>> + '_ {
+    ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::StringArray>>), ExcelError>> + '_
+    {
         use crate::compute_prelude::zip_select;
         use arrow_array::builder::{BooleanBuilder, StringBuilder};
-        
+
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
-            let mut out_cols: Vec<Arc<arrow_array::StringArray>> = Vec::with_capacity(cs.cols.len());
+            let mut out_cols: Vec<Arc<arrow_array::StringArray>> =
+                Vec::with_capacity(cs.cols.len());
             let sheet = self.sheet();
             let chunk_starts = &sheet.chunk_starts;
 
@@ -899,10 +930,7 @@ impl<'a> RangeView<'a> {
 
                 if has_overlay {
                     // Build lowered overlay values builder
-                    let mut sb = StringBuilder::with_capacity(
-                        cs.row_len,
-                        cs.row_len * 8,
-                    );
+                    let mut sb = StringBuilder::with_capacity(cs.row_len, cs.row_len * 8);
                     let mut mb = BooleanBuilder::with_capacity(cs.row_len);
                     for i in 0..cs.row_len {
                         if let Some(ov) = ch
@@ -924,7 +952,8 @@ impl<'a> RangeView<'a> {
                                 arrow_store::OverlayValue::Boolean(b) => {
                                     sb.append_value(if *b { "true" } else { "false" });
                                 }
-                                arrow_store::OverlayValue::Error(_) | arrow_store::OverlayValue::Pending => {
+                                arrow_store::OverlayValue::Error(_)
+                                | arrow_store::OverlayValue::Pending => {
                                     sb.append_null();
                                 }
                             }
@@ -954,10 +983,11 @@ impl<'a> RangeView<'a> {
     /// Typed error-code slices per row-segment.
     pub fn errors_slices(
         &self,
-    ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::UInt8Array>>), ExcelError>> + '_ {
+    ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::UInt8Array>>), ExcelError>> + '_
+    {
         use crate::compute_prelude::zip_select;
         use arrow_array::builder::{BooleanBuilder, UInt8Builder};
-        
+
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
             let mut out_cols: Vec<Arc<arrow_array::UInt8Array>> = Vec::with_capacity(cs.cols.len());
@@ -970,7 +1000,11 @@ impl<'a> RangeView<'a> {
                     .as_ref()
                     .expect("errors lane exists")
                     .clone();
-                let base_e = base.as_any().downcast_ref::<arrow_array::UInt8Array>().unwrap().clone();
+                let base_e = base
+                    .as_any()
+                    .downcast_ref::<arrow_array::UInt8Array>()
+                    .unwrap()
+                    .clone();
                 let base_arc: Arc<arrow_array::UInt8Array> = Arc::new(base_e);
                 let abs_seg_start = self.sr + cs.row_start;
                 let ch_idx = match chunk_starts.binary_search(&abs_seg_start) {
@@ -1013,7 +1047,10 @@ impl<'a> RangeView<'a> {
                     }
                     let mask = mask_b.finish();
                     let overlay_vals = eb.finish();
-                    let base_ea = base.as_any().downcast_ref::<arrow_array::UInt8Array>().unwrap();
+                    let base_ea = base
+                        .as_any()
+                        .downcast_ref::<arrow_array::UInt8Array>()
+                        .unwrap();
                     let zipped =
                         zip_select(&mask, &overlay_vals, base_ea).expect("zip err overlay");
                     let ea = zipped
@@ -1033,10 +1070,11 @@ impl<'a> RangeView<'a> {
     /// Typed type-tag slices per row-segment.
     pub fn type_tags_slices(
         &self,
-    ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::UInt8Array>>), ExcelError>> + '_ {
+    ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::UInt8Array>>), ExcelError>> + '_
+    {
         use crate::compute_prelude::zip_select;
         use arrow_array::builder::{BooleanBuilder, UInt8Builder};
-        
+
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
             let mut out_cols: Vec<Arc<arrow_array::UInt8Array>> = Vec::with_capacity(cs.cols.len());
@@ -1045,7 +1083,11 @@ impl<'a> RangeView<'a> {
 
             for (local_c, col_idx) in (self.sc..=self.ec).enumerate() {
                 let base = cs.cols[local_c].type_tag.clone();
-                let base_ta = base.as_any().downcast_ref::<arrow_array::UInt8Array>().unwrap().clone();
+                let base_ta = base
+                    .as_any()
+                    .downcast_ref::<arrow_array::UInt8Array>()
+                    .unwrap()
+                    .clone();
                 let base_arc = Arc::new(base_ta);
 
                 let abs_seg_start = self.sr + cs.row_start;
@@ -1080,8 +1122,12 @@ impl<'a> RangeView<'a> {
                             mask_b.append_value(true);
                             let tag = match ov {
                                 arrow_store::OverlayValue::Empty => arrow_store::TypeTag::Empty,
-                                arrow_store::OverlayValue::Number(_) => arrow_store::TypeTag::Number,
-                                arrow_store::OverlayValue::Boolean(_) => arrow_store::TypeTag::Boolean,
+                                arrow_store::OverlayValue::Number(_) => {
+                                    arrow_store::TypeTag::Number
+                                }
+                                arrow_store::OverlayValue::Boolean(_) => {
+                                    arrow_store::TypeTag::Boolean
+                                }
                                 arrow_store::OverlayValue::Text(_) => arrow_store::TypeTag::Text,
                                 arrow_store::OverlayValue::Error(_) => arrow_store::TypeTag::Error,
                                 arrow_store::OverlayValue::Pending => arrow_store::TypeTag::Pending,
@@ -1094,7 +1140,10 @@ impl<'a> RangeView<'a> {
                     }
                     let mask = mask_b.finish();
                     let overlay_vals = tb.finish();
-                    let base_ta = base.as_any().downcast_ref::<arrow_array::UInt8Array>().unwrap();
+                    let base_ta = base
+                        .as_any()
+                        .downcast_ref::<arrow_array::UInt8Array>()
+                        .unwrap();
                     let zipped =
                         zip_select(&mask, &overlay_vals, base_ta).expect("zip tag overlay");
                     let ta = zipped
@@ -1116,7 +1165,7 @@ impl<'a> RangeView<'a> {
     pub fn lowered_text_columns(&self) -> Vec<arrow_array::ArrayRef> {
         use crate::compute_prelude::{concat_arrays, zip_select};
         use arrow_array::builder::{BooleanBuilder, StringBuilder};
-        
+
         let mut out: Vec<arrow_array::ArrayRef> = Vec::with_capacity(self.cols);
         if self.rows == 0 || self.cols == 0 {
             return out;
@@ -1157,13 +1206,9 @@ impl<'a> RangeView<'a> {
                                     .any_in_range(rel_off..(rel_off + seg_len)));
                         if has_overlay {
                             // Build lowered overlay values builder
-                            let mut sb = StringBuilder::with_capacity(
-                                seg_len,
-                                seg_len * 8,
-                            );
+                            let mut sb = StringBuilder::with_capacity(seg_len, seg_len * 8);
                             // mask overlaid rows
-                            let mut mb =
-                                BooleanBuilder::with_capacity(seg_len);
+                            let mut mb = BooleanBuilder::with_capacity(seg_len);
                             for i in 0..seg_len {
                                 if let Some(ov) = ch
                                     .overlay
@@ -1184,7 +1229,8 @@ impl<'a> RangeView<'a> {
                                         arrow_store::OverlayValue::Boolean(b) => {
                                             sb.append_value(if *b { "true" } else { "false" });
                                         }
-                                        arrow_store::OverlayValue::Error(_) | arrow_store::OverlayValue::Pending => {
+                                        arrow_store::OverlayValue::Error(_)
+                                        | arrow_store::OverlayValue::Pending => {
                                             sb.append_null();
                                         }
                                     }
@@ -1217,7 +1263,10 @@ impl<'a> RangeView<'a> {
                 }
             }
             // Concat segments for this column
-            let anys: Vec<&dyn arrow_array::Array> = segs.iter().map(|a| a.as_ref() as &dyn arrow_array::Array).collect();
+            let anys: Vec<&dyn arrow_array::Array> = segs
+                .iter()
+                .map(|a| a.as_ref() as &dyn arrow_array::Array)
+                .collect();
             let conc = concat_arrays(&anys).expect("concat lowered segments");
             out.push(conc);
         }
@@ -1225,7 +1274,11 @@ impl<'a> RangeView<'a> {
     }
 
     /// Slice typed float arrays for a specific row interval (relative to view).
-    pub fn slice_numbers(&self, rel_start: usize, len: usize) -> Vec<Option<Arc<arrow_array::Float64Array>>> {
+    pub fn slice_numbers(
+        &self,
+        rel_start: usize,
+        len: usize,
+    ) -> Vec<Option<Arc<arrow_array::Float64Array>>> {
         let abs_start = self.sr + rel_start;
         let abs_end = abs_start + len;
         let sheet = self.sheet();
@@ -1254,9 +1307,15 @@ impl<'a> RangeView<'a> {
 
             while remaining > 0 && ch_idx < chunk_starts.len() {
                 let ch_start = chunk_starts[ch_idx];
-                let ch_end = chunk_starts.get(ch_idx + 1).copied().unwrap_or(sheet.nrows as usize);
+                let ch_end = chunk_starts
+                    .get(ch_idx + 1)
+                    .copied()
+                    .unwrap_or(sheet.nrows as usize);
                 let ch_len = ch_end.saturating_sub(ch_start);
-                if ch_len == 0 { ch_idx += 1; continue; }
+                if ch_len == 0 {
+                    ch_idx += 1;
+                    continue;
+                }
 
                 let overlap_start = curr.max(ch_start);
                 let overlap_end = ch_end.min(abs_end);
@@ -1275,10 +1334,14 @@ impl<'a> RangeView<'a> {
                                 && ch.computed_overlay.any_in_range(seg_range.clone()));
 
                         let final_arr = if has_overlay {
-                            let mut nb = arrow_array::builder::Float64Builder::with_capacity(seg_len);
-                            let mut mask_b = arrow_array::builder::BooleanBuilder::with_capacity(seg_len);
+                            let mut nb =
+                                arrow_array::builder::Float64Builder::with_capacity(seg_len);
+                            let mut mask_b =
+                                arrow_array::builder::BooleanBuilder::with_capacity(seg_len);
                             for i in 0..seg_len {
-                                if let Some(ov) = ch.overlay.get(rel_off_in_chunk + i)
+                                if let Some(ov) = ch
+                                    .overlay
+                                    .get(rel_off_in_chunk + i)
                                     .or_else(|| ch.computed_overlay.get(rel_off_in_chunk + i))
                                 {
                                     mask_b.append_value(true);
@@ -1294,15 +1357,29 @@ impl<'a> RangeView<'a> {
                             let mask = mask_b.finish();
                             let overlay_vals = nb.finish();
                             let base_slice = base_nums.slice(rel_off_in_chunk, seg_len);
-                            let base_fa = base_slice.as_any().downcast_ref::<arrow_array::Float64Array>().unwrap();
-                            let zipped = crate::compute_prelude::zip_select(&mask, &overlay_vals, base_fa).expect("zip slice");
-                            zipped.as_any().downcast_ref::<arrow_array::Float64Array>().unwrap().clone()
+                            let base_fa = base_slice
+                                .as_any()
+                                .downcast_ref::<arrow_array::Float64Array>()
+                                .unwrap();
+                            let zipped =
+                                crate::compute_prelude::zip_select(&mask, &overlay_vals, base_fa)
+                                    .expect("zip slice");
+                            zipped
+                                .as_any()
+                                .downcast_ref::<arrow_array::Float64Array>()
+                                .unwrap()
+                                .clone()
                         } else {
                             let sl = base_nums.slice(rel_off_in_chunk, seg_len);
-                            sl.as_any().downcast_ref::<arrow_array::Float64Array>().unwrap().clone()
+                            sl.as_any()
+                                .downcast_ref::<arrow_array::Float64Array>()
+                                .unwrap()
+                                .clone()
                         };
 
-                        if final_arr.null_count() < final_arr.len() { null_only = false; }
+                        if final_arr.null_count() < final_arr.len() {
+                            null_only = false;
+                        }
                         segments.push(Arc::new(final_arr));
                     } else {
                         segments.push(Arc::new(arrow_array::Float64Array::new_null(seg_len)));
@@ -1324,9 +1401,14 @@ impl<'a> RangeView<'a> {
                     out_cols.push(Some(segments.pop().unwrap()));
                 }
             } else {
-                let refs: Vec<&dyn Array> = segments.iter().map(|a| a.as_ref() as &dyn Array).collect();
+                let refs: Vec<&dyn Array> =
+                    segments.iter().map(|a| a.as_ref() as &dyn Array).collect();
                 let c = crate::compute_prelude::concat_arrays(&refs).expect("concat slice");
-                let fa = c.as_any().downcast_ref::<arrow_array::Float64Array>().unwrap().clone();
+                let fa = c
+                    .as_any()
+                    .downcast_ref::<arrow_array::Float64Array>()
+                    .unwrap()
+                    .clone();
                 out_cols.push(Some(Arc::new(fa)));
             }
         }
@@ -1366,9 +1448,15 @@ impl<'a> RangeView<'a> {
 
             while remaining > 0 && ch_idx < chunk_starts.len() {
                 let ch_start = chunk_starts[ch_idx];
-                let ch_end = chunk_starts.get(ch_idx + 1).copied().unwrap_or(sheet.nrows as usize);
+                let ch_end = chunk_starts
+                    .get(ch_idx + 1)
+                    .copied()
+                    .unwrap_or(sheet.nrows as usize);
                 let ch_len = ch_end.saturating_sub(ch_start);
-                if ch_len == 0 { ch_idx += 1; continue; }
+                if ch_len == 0 {
+                    ch_idx += 1;
+                    continue;
+                }
 
                 let overlap_start = curr.max(ch_start);
                 let overlap_end = ch_end.min(abs_end);
@@ -1385,17 +1473,29 @@ impl<'a> RangeView<'a> {
                                 && ch.computed_overlay.any_in_range(seg_range.clone()));
 
                         let final_arr = if has_overlay {
-                            let mut sb = arrow_array::builder::StringBuilder::with_capacity(seg_len, seg_len * 8);
-                            let mut mask_b = arrow_array::builder::BooleanBuilder::with_capacity(seg_len);
+                            let mut sb = arrow_array::builder::StringBuilder::with_capacity(
+                                seg_len,
+                                seg_len * 8,
+                            );
+                            let mut mask_b =
+                                arrow_array::builder::BooleanBuilder::with_capacity(seg_len);
                             for i in 0..seg_len {
-                                if let Some(ov) = ch.overlay.get(rel_off_in_chunk + i)
+                                if let Some(ov) = ch
+                                    .overlay
+                                    .get(rel_off_in_chunk + i)
                                     .or_else(|| ch.computed_overlay.get(rel_off_in_chunk + i))
                                 {
                                     mask_b.append_value(true);
                                     match ov {
-                                        arrow_store::OverlayValue::Text(s) => sb.append_value(s.to_ascii_lowercase()),
-                                        arrow_store::OverlayValue::Number(n) => sb.append_value(n.to_string()),
-                                        arrow_store::OverlayValue::Boolean(b) => sb.append_value(if *b { "true" } else { "false" }),
+                                        arrow_store::OverlayValue::Text(s) => {
+                                            sb.append_value(s.to_ascii_lowercase())
+                                        }
+                                        arrow_store::OverlayValue::Number(n) => {
+                                            sb.append_value(n.to_string())
+                                        }
+                                        arrow_store::OverlayValue::Boolean(b) => {
+                                            sb.append_value(if *b { "true" } else { "false" })
+                                        }
                                         _ => sb.append_null(),
                                     }
                                 } else {
@@ -1406,15 +1506,29 @@ impl<'a> RangeView<'a> {
                             let mask = mask_b.finish();
                             let overlay_vals = sb.finish();
                             let base_slice = base_lowered.slice(rel_off_in_chunk, seg_len);
-                            let base_sa = base_slice.as_any().downcast_ref::<arrow_array::StringArray>().unwrap();
-                            let zipped = crate::compute_prelude::zip_select(&mask, &overlay_vals, base_sa).expect("zip text");
-                            zipped.as_any().downcast_ref::<arrow_array::StringArray>().unwrap().clone()
+                            let base_sa = base_slice
+                                .as_any()
+                                .downcast_ref::<arrow_array::StringArray>()
+                                .unwrap();
+                            let zipped =
+                                crate::compute_prelude::zip_select(&mask, &overlay_vals, base_sa)
+                                    .expect("zip text");
+                            zipped
+                                .as_any()
+                                .downcast_ref::<arrow_array::StringArray>()
+                                .unwrap()
+                                .clone()
                         } else {
                             let sl = base_lowered.slice(rel_off_in_chunk, seg_len);
-                            sl.as_any().downcast_ref::<arrow_array::StringArray>().unwrap().clone()
+                            sl.as_any()
+                                .downcast_ref::<arrow_array::StringArray>()
+                                .unwrap()
+                                .clone()
                         };
 
-                        if final_arr.null_count() < final_arr.len() { null_only = false; }
+                        if final_arr.null_count() < final_arr.len() {
+                            null_only = false;
+                        }
                         segments.push(Arc::new(final_arr));
                     } else {
                         segments.push(Arc::new(arrow_array::StringArray::new_null(seg_len)));
@@ -1436,9 +1550,14 @@ impl<'a> RangeView<'a> {
                     out_cols.push(Some(segments.pop().unwrap()));
                 }
             } else {
-                let refs: Vec<&dyn Array> = segments.iter().map(|a| a.as_ref() as &dyn Array).collect();
+                let refs: Vec<&dyn Array> =
+                    segments.iter().map(|a| a.as_ref() as &dyn Array).collect();
                 let c = crate::compute_prelude::concat_arrays(&refs).expect("concat text");
-                let sa = c.as_any().downcast_ref::<arrow_array::StringArray>().unwrap().clone();
+                let sa = c
+                    .as_any()
+                    .downcast_ref::<arrow_array::StringArray>()
+                    .unwrap()
+                    .clone();
                 out_cols.push(Some(Arc::new(sa)));
             }
         }

@@ -200,12 +200,21 @@ impl Workbook {
         for i in 0..targets.length() {
             let item = targets.get(i);
             let arr: js_sys::Array = item.into();
-            let sheet = arr.get(0).as_string().ok_or_else(|| JsValue::from_str("Invalid sheet name"))?;
-            let row = arr.get(1).as_f64().ok_or_else(|| JsValue::from_str("Invalid row"))? as u32;
-            let col = arr.get(2).as_f64().ok_or_else(|| JsValue::from_str("Invalid col"))? as u32;
+            let sheet = arr
+                .get(0)
+                .as_string()
+                .ok_or_else(|| JsValue::from_str("Invalid sheet name"))?;
+            let row = arr
+                .get(1)
+                .as_f64()
+                .ok_or_else(|| JsValue::from_str("Invalid row"))? as u32;
+            let col = arr
+                .get(2)
+                .as_f64()
+                .ok_or_else(|| JsValue::from_str("Invalid col"))? as u32;
             sheet_names.push(sheet);
         }
-        
+
         for (i, name) in sheet_names.iter().enumerate() {
             let arr: js_sys::Array = targets.get(i as u32).into();
             let row = arr.get(1).as_f64().unwrap() as u32;
@@ -214,11 +223,13 @@ impl Workbook {
         }
 
         let mut wb = self.inner.write().map_err(|_| JsValue::from_str("lock"))?;
-        self.cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
-        
-        let results = wb.evaluate_cells_cancellable(&target_vec, &self.cancel_flag)
+        self.cancel_flag
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
+        let results = wb
+            .evaluate_cells_cancellable(&target_vec, &self.cancel_flag)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-            
+
         let out = js_sys::Array::new();
         for v in results {
             out.push(&literal_to_js(v));

@@ -54,7 +54,8 @@ impl Function for SumFn {
                 for res in view.numbers_slices() {
                     let (_, _, num_cols) = res?;
                     for col in num_cols {
-                        total += arrow::compute::kernels::aggregate::sum(col.as_ref()).unwrap_or(0.0);
+                        total +=
+                            arrow::compute::kernels::aggregate::sum(col.as_ref()).unwrap_or(0.0);
                     }
                 }
             } else {

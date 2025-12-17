@@ -346,11 +346,10 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     .resolve_range_view(reference, self.interp.current_sheet())
                     .map(|v| v.with_cancel_token(self.interp.context.cancellation_token())),
                 // Treat array literals (LiteralValue::Array) as ranges for RangeView APIs
-                ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => Ok(RangeView::from_owned_rows(
-                    arr.clone(),
-                    self.interp.context.date_system(),
-                )
-                .with_cancel_token(self.interp.context.cancellation_token())),
+                ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => Ok(
+                    RangeView::from_owned_rows(arr.clone(), self.interp.context.date_system())
+                        .with_cancel_token(self.interp.context.cancellation_token()),
+                ),
                 ASTNodeType::Array(rows) => {
                     let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows.len());
                     for r in rows {
@@ -431,11 +430,10 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                             }
                             out.push(row);
                         }
-                        Ok(RangeView::from_owned_rows(
-                            out,
-                            self.interp.context.date_system(),
+                        Ok(
+                            RangeView::from_owned_rows(out, self.interp.context.date_system())
+                                .with_cancel_token(self.interp.context.cancellation_token()),
                         )
-                        .with_cancel_token(self.interp.context.cancellation_token()))
                     }
                     _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                         .with_message("Argument cannot be interpreted as a range.")),

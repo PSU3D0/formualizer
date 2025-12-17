@@ -45,12 +45,9 @@ fn eval_if_family<'a, 'b>(
     if !multi {
         // Single criterion: IF(range, criteria, [target_range])
         if args.len() < 2 || args.len() > 3 {
-            return Ok(LiteralValue::Error(
-                ExcelError::new_value().with_message(format!(
-                    "Function expects 2 or 3 arguments, got {}",
-                    args.len()
-                )),
-            ));
+            return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
+                format!("Function expects 2 or 3 arguments, got {}", args.len()),
+            )));
         }
         let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
         let crit_rv = args[0].range_view().ok();
@@ -82,12 +79,12 @@ fn eval_if_family<'a, 'b>(
         // Multi criteria: IFS(target_range, crit_range1, crit1, ...) or COUNTIFS(crit_range1, crit1, ...)
         if agg_type == AggregationType::Count {
             if args.len() < 2 || !args.len().is_multiple_of(2) {
-                return Ok(LiteralValue::Error(
-                    ExcelError::new_value().with_message(format!(
+                return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
+                    format!(
                         "COUNTIFS expects N pairs (criteria_range, criteria); got {} args",
                         args.len()
-                    )),
-                ));
+                    ),
+                )));
             }
             for i in (0..args.len()).step_by(2) {
                 let rv = args[i].range_view().ok();
@@ -147,12 +144,14 @@ fn eval_if_family<'a, 'b>(
     let mut total_count = 0i64;
 
     // Use a driver view for chunked iteration. Prefer sum_view, else first criteria range.
-    let driver = sum_view.as_ref().or_else(|| crit_specs.iter().find_map(|(rv, _, _)| rv.as_ref()));
+    let driver = sum_view
+        .as_ref()
+        .or_else(|| crit_specs.iter().find_map(|(rv, _, _)| rv.as_ref()));
 
     if let Some(drv) = driver {
         // We can't easily iterate over union dims if they are larger than driver.
         // But for most cases they are same.
-        // If driver is smaller, we'll miss some rows. 
+        // If driver is smaller, we'll miss some rows.
         // Actually, if it's SUMIF, we want to iterate over criteria range dims.
         let driver = if !multi && crit_specs[0].0.is_some() {
             crit_specs[0].0.as_ref().unwrap()
@@ -181,7 +180,9 @@ fn eval_if_family<'a, 'b>(
                 }
             }
 
-            let sum_slices = sum_view.as_ref().map(|v| v.slice_numbers(row_start, row_len));
+            let sum_slices = sum_view
+                .as_ref()
+                .map(|v| v.slice_numbers(row_start, row_len));
 
             for c in 0..dims.1 {
                 let mut mask_opt: Option<BooleanArray> = None;
@@ -262,62 +263,80 @@ fn eval_if_family<'a, 'b>(
                                 }
                                 _ => {
                                     // Use fallback for text and other types to ensure Excel parity (e.g. blank matching)
-                                    let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                                    let mut bb =
+                                        arrow_array::builder::BooleanBuilder::with_capacity(
+                                            row_len,
+                                        );
                                     let view = crit_specs[j].0.as_ref().unwrap();
                                     for i in 0..row_len {
-                                        bb.append_value(criteria_match(pred, &view.get_cell(row_start + i, c)));
+                                        bb.append_value(criteria_match(
+                                            pred,
+                                            &view.get_cell(row_start + i, c),
+                                        ));
                                     }
                                     bb.finish()
                                 }
                             }
                         }
-                        (crate::args::CriteriaPredicate::Ne(v), nc, tc) => {
-                            match v {
-                                LiteralValue::Number(x) => {
-                                    let nx = *x;
-                                    if let Some(nc) = nc {
-                                        cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
-                                    } else {
-                                        BooleanArray::from(vec![true; row_len])
-                                    }
-                                }
-                                LiteralValue::Int(x) => {
-                                    let nx = *x as f64;
-                                    if let Some(nc) = nc {
-                                        cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
-                                    } else {
-                                        BooleanArray::from(vec![true; row_len])
-                                    }
-                                }
-                                _ => {
-                                    let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(row_len);
-                                    let view = crit_specs[j].0.as_ref().unwrap();
-                                    for i in 0..row_len {
-                                        bb.append_value(criteria_match(pred, &view.get_cell(row_start + i, c)));
-                                    }
-                                    bb.finish()
+                        (crate::args::CriteriaPredicate::Ne(v), nc, tc) => match v {
+                            LiteralValue::Number(x) => {
+                                let nx = *x;
+                                if let Some(nc) = nc {
+                                    cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
+                                } else {
+                                    BooleanArray::from(vec![true; row_len])
                                 }
                             }
-                        }
+                            LiteralValue::Int(x) => {
+                                let nx = *x as f64;
+                                if let Some(nc) = nc {
+                                    cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
+                                } else {
+                                    BooleanArray::from(vec![true; row_len])
+                                }
+                            }
+                            _ => {
+                                let mut bb =
+                                    arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                                let view = crit_specs[j].0.as_ref().unwrap();
+                                for i in 0..row_len {
+                                    bb.append_value(criteria_match(
+                                        pred,
+                                        &view.get_cell(row_start + i, c),
+                                    ));
+                                }
+                                bb.finish()
+                            }
+                        },
                         (crate::args::CriteriaPredicate::TextLike { .. }, _, _) => {
-                            let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                            let mut bb =
+                                arrow_array::builder::BooleanBuilder::with_capacity(row_len);
                             let view = crit_specs[j].0.as_ref().unwrap();
                             for i in 0..row_len {
-                                bb.append_value(criteria_match(pred, &view.get_cell(row_start + i, c)));
+                                bb.append_value(criteria_match(
+                                    pred,
+                                    &view.get_cell(row_start + i, c),
+                                ));
                             }
                             bb.finish()
                         }
                         _ => {
                             // Fallback for any other case
-                            let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                            let mut bb =
+                                arrow_array::builder::BooleanBuilder::with_capacity(row_len);
                             if let Some(ref view) = crit_specs[j].0 {
                                 for i in 0..row_len {
-                                    bb.append_value(criteria_match(pred, &view.get_cell(row_start + i, c)));
+                                    bb.append_value(criteria_match(
+                                        pred,
+                                        &view.get_cell(row_start + i, c),
+                                    ));
                                 }
                             } else {
                                 let val = scalar_val.as_ref().unwrap_or(&LiteralValue::Empty);
                                 let matches = criteria_match(pred, val);
-                                for _ in 0..row_len { bb.append_value(matches); }
+                                for _ in 0..row_len {
+                                    bb.append_value(matches);
+                                }
                             }
                             bb.finish()
                         }
@@ -336,19 +355,27 @@ fn eval_if_family<'a, 'b>(
                 match mask_opt {
                     Some(mask) => {
                         if agg_type == AggregationType::Count {
-                            total_count += (0..mask.len()).filter(|&i| mask.is_valid(i) && mask.value(i)).count() as i64;
+                            total_count += (0..mask.len())
+                                .filter(|&i| mask.is_valid(i) && mask.value(i))
+                                .count() as i64;
                         } else {
-                            let target_col = sum_slices.as_ref().and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
+                            let target_col = sum_slices
+                                .as_ref()
+                                .and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
                             if let Some(tc) = target_col {
                                 let filtered = filter_array(tc.as_ref(), &mask).unwrap();
-                                let f64_arr = filtered.as_any().downcast_ref::<Float64Array>().unwrap();
+                                let f64_arr =
+                                    filtered.as_any().downcast_ref::<Float64Array>().unwrap();
                                 if let Some(s) = sum_array::<Float64Type, _>(f64_arr) {
                                     total_sum += s;
                                 }
                                 total_count += f64_arr.len() as i64 - f64_arr.null_count() as i64;
                             } else if let Some(ref s) = sum_scalar {
                                 if let Ok(n) = coerce_num(s) {
-                                    let count = (0..mask.len()).filter(|&i| mask.is_valid(i) && mask.value(i)).count() as i64;
+                                    let count = (0..mask.len())
+                                        .filter(|&i| mask.is_valid(i) && mask.value(i))
+                                        .count()
+                                        as i64;
                                     total_sum += n * count as f64;
                                     total_count += count;
                                 }
@@ -360,7 +387,9 @@ fn eval_if_family<'a, 'b>(
                         if agg_type == AggregationType::Count {
                             total_count += row_len as i64;
                         } else {
-                            let target_col = sum_slices.as_ref().and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
+                            let target_col = sum_slices
+                                .as_ref()
+                                .and_then(|cols| cols.get(c).and_then(|a| a.as_ref()));
                             if let Some(tc) = target_col {
                                 if let Some(s) = sum_array::<Float64Type, _>(tc.as_ref()) {
                                     total_sum += s;

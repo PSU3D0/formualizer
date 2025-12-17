@@ -34,7 +34,6 @@ pub mod tuning;
 #[cfg(test)]
 mod tests;
 
-
 pub use eval::{Engine, EvalResult, RecalcPlan};
 pub use eval_delta::{DeltaMode, EvalDelta};
 // Use SoA implementation

@@ -794,7 +794,13 @@ impl ArrowSheet {
             .collect()
     }
 
-    pub fn range_view(&self, sr: usize, sc: usize, er: usize, ec: usize) -> crate::engine::range_view::RangeView<'_> {
+    pub fn range_view(
+        &self,
+        sr: usize,
+        sc: usize,
+        er: usize,
+        ec: usize,
+    ) -> crate::engine::range_view::RangeView<'_> {
         let r0 = er.checked_sub(sr).map(|d| d + 1).unwrap_or(0);
         let c0 = ec.checked_sub(sc).map(|d| d + 1).unwrap_or(0);
         let (rows, cols) = if r0 == 0 || c0 == 0 { (0, 0) } else { (r0, c0) };

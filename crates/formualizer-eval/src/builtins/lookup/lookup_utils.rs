@@ -1,9 +1,9 @@
 //! Shared helpers for lookup-family functions (MATCH, VLOOKUP, HLOOKUP, XLOOKUP)
 //! Provides unified coercion, comparison and approximate-mode selection logic.
 
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use crate::engine::range_view::RangeView;
 use arrow_array::Array;
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 
 /// Coerce a value to f64 with Excel-like rules for numeric comparisons:
 /// - Number / Int: numeric
@@ -415,7 +415,10 @@ fn find_exact_boolean_in_view(
     Ok(None)
 }
 
-fn find_exact_empty_in_view(view: &RangeView<'_>, vertical: bool) -> Result<Option<usize>, ExcelError> {
+fn find_exact_empty_in_view(
+    view: &RangeView<'_>,
+    vertical: bool,
+) -> Result<Option<usize>, ExcelError> {
     if vertical {
         for res in view.type_tags_slices() {
             let (row_start, _row_len, cols) = res?;
