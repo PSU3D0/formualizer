@@ -319,6 +319,7 @@ fn test_demand_driven_non_cancelled_works_normally() {
 }
 
 /// Test cancellation message differentiation
+/// Test cancellation message differentiation
 #[test]
 fn test_cancellation_message_differentiation() {
     let workbook = TestWorkbook::new();

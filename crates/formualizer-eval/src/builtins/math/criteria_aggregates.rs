@@ -129,6 +129,9 @@ impl Function for SumIfFn {
         // General path (mixed types, or scalar sum)
         let mut total = 0.0f64;
         for row in 0..dims.0 {
+            if row % 1024 == 0 && ctx.cancellation_token().map(|t| t.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false) {
+                return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Cancelled));
+            }
             for col in 0..dims.1 {
                 let cval = if let Some(ref v) = crit_view {
                     v.get_cell(row, col)
@@ -354,6 +357,10 @@ impl Function for SumIfsFn {
                 let mut ok_masks = true;
 
                 for (row_start, row_len, sum_cols) in sum_av.numbers_slices() {
+                    // Check cancellation per chunk
+                    if ctx.cancellation_token().map(|t| t.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false) {
+                        return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Cancelled));
+                    }
                     if row_len == 0 {
                         continue;
                     }
@@ -584,6 +591,9 @@ impl Function for SumIfsFn {
         // General path for mixed or non-numeric ranges over union dims
         let mut total = 0.0f64;
         for row in 0..dims.0 {
+            if row % 1024 == 0 && ctx.cancellation_token().map(|t| t.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false) {
+                return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Cancelled));
+            }
             for col in 0..dims.1 {
                 // Check all criteria
                 let mut all_match = true;

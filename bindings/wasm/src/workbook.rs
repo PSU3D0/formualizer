@@ -51,12 +51,14 @@ pub(crate) fn literal_to_js(v: formualizer_common::LiteralValue) -> JsValue {
 #[wasm_bindgen]
 pub struct Workbook {
     inner: Arc<RwLock<formualizer_workbook::Workbook>>,
+    cancel_flag: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for Workbook {
     fn default() -> Self {
         Self {
             inner: Arc::new(RwLock::new(formualizer_workbook::Workbook::new())),
+            cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -65,6 +67,7 @@ impl Clone for Workbook {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
+            cancel_flag: Arc::clone(&self.cancel_flag),
         }
     }
 }
@@ -177,6 +180,61 @@ impl Workbook {
             .evaluate_cell(&sheet, row, col)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(literal_to_js(v))
+    }
+
+    #[wasm_bindgen(js_name = "evaluateAll")]
+    pub fn evaluate_all(&self) -> Result<(), JsValue> {
+        let mut wb = self.inner.write().map_err(|_| JsValue::from_str("lock"))?;
+        self.cancel_flag
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        wb.evaluate_all_cancellable(&self.cancel_flag)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = "evaluateCells")]
+    pub fn evaluate_cells(&self, targets: js_sys::Array) -> Result<js_sys::Array, JsValue> {
+        let mut target_vec = Vec::with_capacity(targets.length() as usize);
+        let mut sheet_names = Vec::new(); // Keep strings alive
+        for i in 0..targets.length() {
+            let item = targets.get(i);
+            let arr: js_sys::Array = item.into();
+            let sheet = arr.get(0).as_string().ok_or_else(|| JsValue::from_str("Invalid sheet name"))?;
+            let row = arr.get(1).as_f64().ok_or_else(|| JsValue::from_str("Invalid row"))? as u32;
+            let col = arr.get(2).as_f64().ok_or_else(|| JsValue::from_str("Invalid col"))? as u32;
+            sheet_names.push(sheet);
+        }
+        
+        for (i, name) in sheet_names.iter().enumerate() {
+            let arr: js_sys::Array = targets.get(i as u32).into();
+            let row = arr.get(1).as_f64().unwrap() as u32;
+            let col = arr.get(2).as_f64().unwrap() as u32;
+            target_vec.push((name.as_str(), row, col));
+        }
+
+        let mut wb = self.inner.write().map_err(|_| JsValue::from_str("lock"))?;
+        self.cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        
+        let results = wb.evaluate_cells_cancellable(&target_vec, &self.cancel_flag)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            
+        let out = js_sys::Array::new();
+        for v in results {
+            out.push(&literal_to_js(v));
+        }
+        Ok(out)
+    }
+
+    #[wasm_bindgen]
+    pub fn cancel(&self) {
+        self.cancel_flag
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[wasm_bindgen(js_name = "resetCancel")]
+    pub fn reset_cancel(&self) {
+        self.cancel_flag
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     // ----- Changelog / Undo / Redo -----

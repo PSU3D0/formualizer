@@ -37,6 +37,8 @@ pub struct Engine<R> {
     source_cache: Arc<std::sync::RwLock<SourceCache>>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
     staged_formulas: std::collections::HashMap<String, Vec<(u32, u32, String)>>,
+    /// Transient cancellation flag used during evaluation (stored as usize to remain Send+Sync)
+    active_cancel_flag: Option<usize>,
 }
 
 #[derive(Default)]
@@ -283,6 +285,7 @@ where
             row_bounds_cache: std::sync::RwLock::new(None),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
+            active_cancel_flag: None,
         };
         let default_sheet = engine.graph.default_sheet_name().to_string();
         engine.ensure_arrow_sheet(&default_sheet);
@@ -310,6 +313,7 @@ where
             row_bounds_cache: std::sync::RwLock::new(None),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
+            active_cancel_flag: None,
         };
         let default_sheet = engine.graph.default_sheet_name().to_string();
         engine.ensure_arrow_sheet(&default_sheet);
@@ -2448,6 +2452,38 @@ where
             .collect())
     }
 
+    pub fn evaluate_cells_cancellable(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+        cancel_flag: &AtomicBool,
+    ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.config.defer_graph_building {
+            let mut sheets: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
+            for (s, _, _) in targets.iter() {
+                sheets.insert(*s);
+            }
+            self.build_graph_for_sheets(sheets.iter().cloned())?;
+        }
+
+        // evaluate_until_cancellable takes &[&str] in A1 notation, but we have (&str, u32, u32)
+        // Let's implement evaluate_until_coords_cancellable or similar, or just convert
+        let a1_targets: Vec<String> = targets
+            .iter()
+            .map(|(s, r, c)| format!("{}!{}", s, col_letters_from_1based(*c).unwrap()) + &r.to_string())
+            .collect();
+        let a1_refs: Vec<&str> = a1_targets.iter().map(|s| s.as_str()).collect();
+
+        self.evaluate_until_cancellable(&a1_refs, cancel_flag)?;
+
+        Ok(targets
+            .iter()
+            .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
+            .collect())
+    }
+
     pub fn evaluate_cells_with_delta(
         &mut self,
         targets: &[(&str, u32, u32)],
@@ -2801,6 +2837,16 @@ where
         &mut self,
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
+        self.active_cancel_flag = Some(cancel_flag as *const _ as usize);
+        let res = self.evaluate_all_cancellable_impl(cancel_flag);
+        self.active_cancel_flag = None;
+        res
+    }
+
+    fn evaluate_all_cancellable_impl(
+        &mut self,
+        cancel_flag: &AtomicBool,
+    ) -> Result<EvalResult, ExcelError> {
         let start = web_time::Instant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
@@ -2869,6 +2915,17 @@ where
 
     /// Evaluate only the necessary precedents for specific target cells with cancellation support
     pub fn evaluate_until_cancellable(
+        &mut self,
+        targets: &[&str],
+        cancel_flag: &AtomicBool,
+    ) -> Result<EvalResult, ExcelError> {
+        self.active_cancel_flag = Some(cancel_flag as *const _ as usize);
+        let res = self.evaluate_until_cancellable_impl(targets, cancel_flag);
+        self.active_cancel_flag = None;
+        res
+    }
+
+    fn evaluate_until_cancellable_impl(
         &mut self,
         targets: &[&str],
         cancel_flag: &AtomicBool,
@@ -3755,8 +3812,8 @@ where
     }
 
     fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool> {
-        // Engine-wide cancellation is exposed via evaluate_all_cancellable APIs; default None here.
-        None
+        self.active_cancel_flag
+            .map(|ptr| unsafe { &*(ptr as *const std::sync::atomic::AtomicBool) })
     }
 
     fn chunk_hint(&self) -> Option<usize> {

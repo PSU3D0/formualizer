@@ -14,6 +14,7 @@ pub struct PyWorkbook {
     inner: std::sync::Arc<std::sync::RwLock<formualizer_workbook::Workbook>>,
     // Compatibility cache for old sheet API used by some wrappers
     pub(crate) sheets: std::sync::Arc<std::sync::RwLock<SheetCache>>,
+    cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[pymethods]
@@ -25,6 +26,7 @@ impl PyWorkbook {
                 formualizer_workbook::Workbook::new(),
             )),
             sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
+            cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 
@@ -179,6 +181,59 @@ impl PyWorkbook {
             .evaluate_cell(sheet, row, col)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         literal_to_py(py, &v)
+    }
+
+    pub fn evaluate_all(&self) -> PyResult<()> {
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        
+        // Ensure flag is reset before starting
+        self.cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        
+        wb.evaluate_all_cancellable(&self.cancel_flag)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn evaluate_cells(&self, py: Python<'_>, targets: &Bound<'_, pyo3::types::PyList>) -> PyResult<PyObject> {
+        let mut target_vec = Vec::with_capacity(targets.len());
+        for item in targets.iter() {
+            let tuple: &Bound<'_, pyo3::types::PyTuple> = item.downcast()?;
+            let sheet: String = tuple.get_item(0)?.extract()?;
+            let row: u32 = tuple.get_item(1)?.extract()?;
+            let col: u32 = tuple.get_item(2)?.extract()?;
+            target_vec.push((sheet, row, col));
+        }
+        
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+            
+        // Ensure flag is reset
+        self.cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        
+        // We use a temporary vector of (&str, u32, u32) because Workbook::evaluate_cells expects that
+        let refs: Vec<(&str, u32, u32)> = target_vec.iter().map(|(s, r, c)| (s.as_str(), *r, *c)).collect();
+        
+        let results = wb.evaluate_cells_cancellable(&refs, &self.cancel_flag)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            
+        let py_results = pyo3::types::PyList::empty(py);
+        for v in results {
+            py_results.append(literal_to_py(py, &v)?)?;
+        }
+        Ok(py_results.into())
+    }
+
+    pub fn cancel(&self) {
+        self.cancel_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn reset_cancel(&self) {
+        self.cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn get_value(

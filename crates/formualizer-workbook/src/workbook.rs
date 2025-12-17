@@ -710,10 +710,47 @@ impl Workbook {
             result
         })
     }
+
+    pub fn evaluate_cells_cancellable(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+        cancel_flag: &std::sync::atomic::AtomicBool,
+    ) -> Result<Vec<LiteralValue>, IoError> {
+        ACTIVE_WORKBOOK.with(|cell| {
+            let previous = cell.replace(self as *const _);
+            let result = self
+                .engine
+                .evaluate_cells_cancellable(targets, cancel_flag)
+                .map_err(IoError::Engine)
+                .map(|values| {
+                    values
+                        .into_iter()
+                        .map(|v| v.unwrap_or(LiteralValue::Empty))
+                        .collect()
+                });
+            cell.set(previous);
+            result
+        })
+    }
     pub fn evaluate_all(&mut self) -> Result<formualizer_eval::engine::EvalResult, IoError> {
         ACTIVE_WORKBOOK.with(|cell| {
             let previous = cell.replace(self as *const _);
             let result = self.engine.evaluate_all().map_err(IoError::Engine);
+            cell.set(previous);
+            result
+        })
+    }
+
+    pub fn evaluate_all_cancellable(
+        &mut self,
+        cancel_flag: &std::sync::atomic::AtomicBool,
+    ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
+        ACTIVE_WORKBOOK.with(|cell| {
+            let previous = cell.replace(self as *const _);
+            let result = self
+                .engine
+                .evaluate_all_cancellable(cancel_flag)
+                .map_err(IoError::Engine);
             cell.set(previous);
             result
         })
