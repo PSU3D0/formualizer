@@ -4,6 +4,7 @@
 
 pub mod arrow_ingest;
 pub mod eval;
+pub mod eval_delta;
 pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
@@ -36,6 +37,7 @@ mod tests;
 use std::fmt::{Display, Formatter};
 
 pub use eval::{Engine, EvalResult, RecalcPlan};
+pub use eval_delta::{DeltaMode, EvalDelta};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{

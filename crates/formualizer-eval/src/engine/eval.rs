@@ -1,5 +1,6 @@
 use crate::SheetId;
 use crate::arrow_store::SheetStore;
+use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
@@ -1546,7 +1547,28 @@ where
 
     /// Evaluate a single vertex.
     /// This is the core of the sequential evaluation logic for Milestone 3.1.
+    #[inline]
+    fn record_cell_if_changed(
+        delta: &mut DeltaCollector,
+        cell: &CellRef,
+        old: &LiteralValue,
+        new: &LiteralValue,
+    ) {
+        if old != new {
+            delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+        }
+    }
+
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
+        self.evaluate_vertex_impl(vertex_id, None)
+    }
+
+    fn evaluate_vertex_impl(
+        &mut self,
+        vertex_id: VertexId,
+        delta: Option<&mut DeltaCollector>,
+    ) -> Result<LiteralValue, ExcelError> {
+        let mut delta = delta;
         // Check if vertex exists
         if !self.graph.vertex_exists(vertex_id) {
             return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
@@ -1660,10 +1682,27 @@ where
                         // Commit: write values to grid
                         // Default conflict policy is Error + FirstWins; reserve() enforces in-flight locks
                         // and plan_spill_region enforces overlap with committed formulas/spills/values.
-                        if let Err(e) =
-                            self.commit_spill_and_mirror(vertex_id, &targets, rows.clone())
-                        {
+                        if let Err(e) = self.commit_spill_and_mirror(
+                            vertex_id,
+                            &targets,
+                            rows.clone(),
+                            delta.as_deref_mut(),
+                        ) {
                             // If commit fails, mark as error
+                            if let Some(d) = delta.as_deref_mut() {
+                                let old = self
+                                    .graph
+                                    .get_value(vertex_id)
+                                    .unwrap_or(LiteralValue::Empty);
+                                let new = LiteralValue::Error(e.clone());
+                                if old != new {
+                                    d.record_cell(
+                                        anchor.sheet_id,
+                                        anchor.coord.row(),
+                                        anchor.coord.col(),
+                                    );
+                                }
+                            }
                             self.graph
                                 .update_vertex_value(vertex_id, LiteralValue::Error(e.clone()));
                             return Ok(LiteralValue::Error(e));
@@ -1685,6 +1724,19 @@ where
                                 expected_cols: w,
                             });
                         let spill_val = LiteralValue::Error(spill_err.clone());
+                        if let Some(d) = delta.as_deref_mut() {
+                            let old = self
+                                .graph
+                                .get_value(vertex_id)
+                                .unwrap_or(LiteralValue::Empty);
+                            if old != spill_val {
+                                d.record_cell(
+                                    anchor.sheet_id,
+                                    anchor.coord.row(),
+                                    anchor.coord.col(),
+                                );
+                            }
+                        }
                         self.graph.update_vertex_value(vertex_id, spill_val.clone());
                         Ok(spill_val)
                     }
@@ -1697,6 +1749,43 @@ where
                     .spill_cells_for_anchor(vertex_id)
                     .map(|cells| cells.to_vec())
                     .unwrap_or_default();
+                if let Some(d) = delta.as_deref_mut() {
+                    if let Some(anchor) = self.graph.get_cell_ref_for_vertex(vertex_id) {
+                        if spill_cells.is_empty() {
+                            let old = self
+                                .graph
+                                .get_value(vertex_id)
+                                .unwrap_or(LiteralValue::Empty);
+                            if old != other {
+                                d.record_cell(
+                                    anchor.sheet_id,
+                                    anchor.coord.row(),
+                                    anchor.coord.col(),
+                                );
+                            }
+                        } else {
+                            for cell in spill_cells.iter() {
+                                let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                                let old = self
+                                    .get_cell_value(
+                                        sheet_name,
+                                        cell.coord.row() + 1,
+                                        cell.coord.col() + 1,
+                                    )
+                                    .unwrap_or(LiteralValue::Empty);
+                                let new = if cell.sheet_id == anchor.sheet_id
+                                    && cell.coord.row() == anchor.coord.row()
+                                    && cell.coord.col() == anchor.coord.col()
+                                {
+                                    other.clone()
+                                } else {
+                                    LiteralValue::Empty
+                                };
+                                Self::record_cell_if_changed(d, cell, &old, &new);
+                            }
+                        }
+                    }
+                }
                 self.graph.clear_spill_region(vertex_id);
                 if self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
                     let empty = LiteralValue::Empty;
@@ -1738,6 +1827,44 @@ where
                     .spill_cells_for_anchor(vertex_id)
                     .map(|cells| cells.to_vec())
                     .unwrap_or_default();
+                let err_val = LiteralValue::Error(e.clone());
+                if let Some(d) = delta.as_deref_mut() {
+                    if let Some(anchor) = self.graph.get_cell_ref_for_vertex(vertex_id) {
+                        if spill_cells.is_empty() {
+                            let old = self
+                                .graph
+                                .get_value(vertex_id)
+                                .unwrap_or(LiteralValue::Empty);
+                            if old != err_val {
+                                d.record_cell(
+                                    anchor.sheet_id,
+                                    anchor.coord.row(),
+                                    anchor.coord.col(),
+                                );
+                            }
+                        } else {
+                            for cell in spill_cells.iter() {
+                                let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                                let old = self
+                                    .get_cell_value(
+                                        sheet_name,
+                                        cell.coord.row() + 1,
+                                        cell.coord.col() + 1,
+                                    )
+                                    .unwrap_or(LiteralValue::Empty);
+                                let new = if cell.sheet_id == anchor.sheet_id
+                                    && cell.coord.row() == anchor.coord.row()
+                                    && cell.coord.col() == anchor.coord.col()
+                                {
+                                    err_val.clone()
+                                } else {
+                                    LiteralValue::Empty
+                                };
+                                Self::record_cell_if_changed(d, cell, &old, &new);
+                            }
+                        }
+                    }
+                }
                 self.graph.clear_spill_region(vertex_id);
                 if self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
                     let empty = LiteralValue::Empty;
@@ -1751,7 +1878,6 @@ where
                         );
                     }
                 }
-                let err_val = LiteralValue::Error(e.clone());
                 self.graph.update_vertex_value(vertex_id, err_val.clone());
                 if self.config.arrow_storage_enabled
                     && self.config.delta_overlay_enabled
@@ -1947,6 +2073,95 @@ where
         })
     }
 
+    fn evaluate_until_with_delta_collector(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+        delta: &mut DeltaCollector,
+    ) -> Result<EvalResult, ExcelError> {
+        #[cfg(feature = "tracing")]
+        let _span_eval =
+            tracing::info_span!("evaluate_until_with_delta", targets = targets.len()).entered();
+        let start = web_time::Instant::now();
+        let _source_cache = self.source_cache_session();
+
+        let mut target_addrs = Vec::new();
+        for (sheet, row, col) in targets {
+            let sheet_id = self.graph.sheet_id_mut(sheet);
+            let coord = Coord::from_excel(*row, *col, true, true);
+            target_addrs.push(CellRef::new(sheet_id, coord));
+        }
+
+        let mut target_vertex_ids = Vec::new();
+        for addr in &target_addrs {
+            if let Some(vertex_id) = self.graph.get_vertex_id_for_address(addr) {
+                target_vertex_ids.push(*vertex_id);
+            }
+        }
+
+        if target_vertex_ids.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices: 0,
+                cycle_errors: 0,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        let (precedents_to_eval, vdeps) = self.build_demand_subgraph(&target_vertex_ids);
+
+        if precedents_to_eval.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices: 0,
+                cycle_errors: 0,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = scheduler.create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
+
+        let mut cycle_errors = 0;
+        let circ_error = LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Circ)
+                .with_message("Circular dependency detected".to_string()),
+        );
+        for cycle in &schedule.cycles {
+            cycle_errors += 1;
+            for &vertex_id in cycle {
+                if delta.mode != DeltaMode::Off {
+                    if let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id) {
+                        let old = self
+                            .graph
+                            .get_value(vertex_id)
+                            .unwrap_or(LiteralValue::Empty);
+                        if old != circ_error {
+                            delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                        }
+                    }
+                }
+                self.graph
+                    .update_vertex_value(vertex_id, circ_error.clone());
+            }
+        }
+
+        let mut computed_vertices = 0;
+        for layer in &schedule.layers {
+            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                computed_vertices += self.evaluate_layer_parallel_with_delta(layer, delta)?;
+            } else {
+                computed_vertices += self.evaluate_layer_sequential_with_delta(layer, delta)?;
+            }
+        }
+
+        self.graph.clear_dirty_flags(&precedents_to_eval);
+        self.graph.redirty_volatiles();
+
+        Ok(EvalResult {
+            computed_vertices,
+            cycle_errors,
+            elapsed: start.elapsed(),
+        })
+    }
+
     /// Build a reusable evaluation plan that covers every formula vertex in the workbook.
     pub fn build_recalc_plan(&self) -> Result<RecalcPlan, ExcelError> {
         let mut vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
@@ -2096,6 +2311,80 @@ where
         })
     }
 
+    pub fn evaluate_all_with_delta(&mut self) -> Result<(EvalResult, EvalDelta), ExcelError> {
+        let mut collector = DeltaCollector::new(DeltaMode::Cells);
+        let result = self.evaluate_all_with_delta_collector(&mut collector)?;
+        Ok((result, collector.finish()))
+    }
+
+    fn evaluate_all_with_delta_collector(
+        &mut self,
+        delta: &mut DeltaCollector,
+    ) -> Result<EvalResult, ExcelError> {
+        let _source_cache = self.source_cache_session();
+        if self.config.defer_graph_building {
+            self.build_graph_all()?;
+        }
+        #[cfg(feature = "tracing")]
+        let _span_eval = tracing::info_span!("evaluate_all_with_delta").entered();
+        let start = web_time::Instant::now();
+        let mut computed_vertices = 0;
+        let mut cycle_errors = 0;
+
+        let to_evaluate = self.graph.get_evaluation_vertices();
+        if to_evaluate.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices,
+                cycle_errors,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = scheduler.create_schedule(&to_evaluate)?;
+
+        let circ_error = LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Circ)
+                .with_message("Circular dependency detected".to_string()),
+        );
+        for cycle in &schedule.cycles {
+            cycle_errors += 1;
+            for &vertex_id in cycle {
+                if delta.mode != DeltaMode::Off {
+                    if let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id) {
+                        let old = self
+                            .graph
+                            .get_value(vertex_id)
+                            .unwrap_or(LiteralValue::Empty);
+                        if old != circ_error {
+                            delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                        }
+                    }
+                }
+                self.graph
+                    .update_vertex_value(vertex_id, circ_error.clone());
+            }
+        }
+
+        for layer in &schedule.layers {
+            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                computed_vertices += self.evaluate_layer_parallel_with_delta(layer, delta)?;
+            } else {
+                computed_vertices += self.evaluate_layer_sequential_with_delta(layer, delta)?;
+            }
+        }
+
+        self.graph.clear_dirty_flags(&to_evaluate);
+        self.graph.redirty_volatiles();
+        self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
+
+        Ok(EvalResult {
+            computed_vertices,
+            cycle_errors,
+            elapsed: start.elapsed(),
+        })
+    }
+
     /// Convenience: demand-driven evaluation of a single cell by sheet name and row/col.
     ///
     /// This will evaluate only the minimal set of dirty / volatile precedents required
@@ -2157,6 +2446,29 @@ where
             .iter()
             .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
             .collect())
+    }
+
+    pub fn evaluate_cells_with_delta(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<(Vec<Option<LiteralValue>>, EvalDelta), ExcelError> {
+        if targets.is_empty() {
+            return Ok((Vec::new(), EvalDelta::default()));
+        }
+        if self.config.defer_graph_building {
+            let mut sheets: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
+            for (s, _, _) in targets.iter() {
+                sheets.insert(*s);
+            }
+            self.build_graph_for_sheets(sheets.iter().cloned())?;
+        }
+        let mut collector = DeltaCollector::new(DeltaMode::Cells);
+        self.evaluate_until_with_delta_collector(targets, &mut collector)?;
+        let values = targets
+            .iter()
+            .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
+            .collect();
+        Ok((values, collector.finish()))
     }
 
     /// Get the evaluation plan for target cells without actually evaluating them
@@ -2760,6 +3072,38 @@ where
         Ok(layer.vertices.len())
     }
 
+    fn update_vertex_value_with_delta(
+        &mut self,
+        vertex_id: VertexId,
+        new_value: LiteralValue,
+        delta: &mut DeltaCollector,
+    ) {
+        if delta.mode != DeltaMode::Off {
+            if let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id) {
+                let old = self
+                    .graph
+                    .get_value(vertex_id)
+                    .unwrap_or(LiteralValue::Empty);
+                if old != new_value {
+                    delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                }
+            }
+        }
+        self.graph.update_vertex_value(vertex_id, new_value.clone());
+        self.mirror_vertex_value_to_overlay(vertex_id, &new_value);
+    }
+
+    fn evaluate_layer_sequential_with_delta(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        delta: &mut DeltaCollector,
+    ) -> Result<usize, ExcelError> {
+        for &vertex_id in &layer.vertices {
+            self.evaluate_vertex_impl(vertex_id, Some(delta))?;
+        }
+        Ok(layer.vertices.len())
+    }
+
     /// Evaluate a layer sequentially with cancellation support
     fn evaluate_layer_sequential_cancellable(
         &mut self,
@@ -2826,6 +3170,40 @@ where
                 for (vertex_id, result) in vertex_results {
                     self.graph.update_vertex_value(vertex_id, result.clone());
                     self.mirror_vertex_value_to_overlay(vertex_id, &result);
+                }
+                Ok(layer.vertices.len())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn evaluate_layer_parallel_with_delta(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        delta: &mut DeltaCollector,
+    ) -> Result<usize, ExcelError> {
+        use rayon::prelude::*;
+
+        let thread_pool = self.thread_pool.as_ref().unwrap();
+
+        let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
+            thread_pool.install(|| {
+                layer
+                    .vertices
+                    .par_iter()
+                    .map(
+                        |&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
+                            Ok(v) => Ok((vertex_id, v)),
+                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
+                        },
+                    )
+                    .collect()
+            });
+
+        match results {
+            Ok(vertex_results) => {
+                for (vertex_id, result) in vertex_results {
+                    self.update_vertex_value_with_delta(vertex_id, result, delta);
                 }
                 Ok(layer.vertices.len())
             }
@@ -3836,12 +4214,66 @@ where
         anchor_vertex: VertexId,
         targets: &[CellRef],
         rows: Vec<Vec<LiteralValue>>,
+        delta: Option<&mut DeltaCollector>,
     ) -> Result<(), ExcelError> {
         let prev_spill_cells = self
             .graph
             .spill_cells_for_anchor(anchor_vertex)
             .map(|cells| cells.to_vec())
             .unwrap_or_default();
+
+        if let Some(delta) = delta {
+            if delta.mode != DeltaMode::Off {
+                let target_set: FxHashSet<CellRef> = targets.iter().copied().collect();
+                let empty = LiteralValue::Empty;
+
+                // Clears (prev - targets)
+                for cell in prev_spill_cells.iter() {
+                    if target_set.contains(cell) {
+                        continue;
+                    }
+                    let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                    let old = self
+                        .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                        .unwrap_or(LiteralValue::Empty);
+                    if old != empty {
+                        delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                    }
+                }
+
+                // Writes (targets)
+                if !targets.is_empty() && !rows.is_empty() && !rows[0].is_empty() {
+                    let width = rows[0].len();
+                    for (idx, cell) in targets.iter().enumerate() {
+                        let r_off = idx / width;
+                        let c_off = idx % width;
+                        let new = rows
+                            .get(r_off)
+                            .and_then(|r| r.get(c_off))
+                            .cloned()
+                            .unwrap_or(LiteralValue::Empty);
+                        let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                        let old = self
+                            .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                            .unwrap_or(LiteralValue::Empty);
+                        if old != new {
+                            delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                        }
+                    }
+                } else {
+                    // Degenerate shapes: if we have targets but no rows, treat as writing Empty.
+                    for cell in targets.iter() {
+                        let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                        let old = self
+                            .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                            .unwrap_or(LiteralValue::Empty);
+                        if !matches!(old, LiteralValue::Empty) {
+                            delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                        }
+                    }
+                }
+            }
+        }
 
         // Commit via shim (releases locks)
         self.spill_mgr

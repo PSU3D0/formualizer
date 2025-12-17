@@ -9,6 +9,96 @@ use crate::coord::{A1ParseError, CoordError, RelativeCoord};
 /// Stable sheet identifier used across the workspace.
 pub type SheetId = u16;
 
+/// Compact, stable packed address for an absolute grid cell: `(SheetId, row0, col0)`.
+///
+/// This is intended for high-volume, allocation-free data paths (e.g. evaluation deltas,
+/// dependency attribution, UI invalidation, FFI).
+///
+/// Bit layout (low → high):
+/// - `row0`: 20 bits (0..=1_048_575)
+/// - `col0`: 14 bits (0..=16_383)
+/// - `sheet_id`: 16 bits
+///
+/// This packing is a public contract. Do not change the bit layout without a major
+/// version bump.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PackedSheetCell(u64);
+
+impl PackedSheetCell {
+    const ROW_BITS: u32 = 20;
+    const COL_BITS: u32 = 14;
+    const SHEET_BITS: u32 = 16;
+
+    const COL_SHIFT: u32 = Self::ROW_BITS;
+    const SHEET_SHIFT: u32 = Self::ROW_BITS + Self::COL_BITS;
+
+    const ROW_MASK: u64 = (1u64 << Self::ROW_BITS) - 1;
+    const COL_MASK: u64 = (1u64 << Self::COL_BITS) - 1;
+    const SHEET_MASK: u64 = (1u64 << Self::SHEET_BITS) - 1;
+
+    pub const MAX_ROW0: u32 = Self::ROW_MASK as u32;
+    pub const MAX_COL0: u32 = Self::COL_MASK as u32;
+    const USED_BITS: u32 = Self::ROW_BITS + Self::COL_BITS + Self::SHEET_BITS;
+    const USED_MASK: u64 = (1u64 << Self::USED_BITS) - 1;
+
+    /// Construct from a resolved sheet id and 0-based row/col indices.
+    ///
+    /// Returns `None` if indices exceed Excel's packed bounds.
+    pub const fn try_new(sheet_id: SheetId, row0: u32, col0: u32) -> Option<Self> {
+        if row0 > Self::MAX_ROW0 || col0 > Self::MAX_COL0 {
+            return None;
+        }
+        let packed = (row0 as u64)
+            | ((col0 as u64) << Self::COL_SHIFT)
+            | ((sheet_id as u64) << Self::SHEET_SHIFT);
+        Some(Self(packed))
+    }
+
+    /// Return the packed representation as a `u64` (stable ABI for FFI/serialization).
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+
+    /// Construct from a packed `u64` representation.
+    ///
+    /// Returns `None` if the upper unused bits are set, or if row/col exceed bounds.
+    pub const fn try_from_u64(raw: u64) -> Option<Self> {
+        if (raw & !Self::USED_MASK) != 0 {
+            return None;
+        }
+        let row0 = (raw & Self::ROW_MASK) as u32;
+        let col0 = ((raw >> Self::COL_SHIFT) & Self::COL_MASK) as u32;
+        if row0 > Self::MAX_ROW0 || col0 > Self::MAX_COL0 {
+            return None;
+        }
+        Some(Self(raw))
+    }
+
+    /// Construct from Excel-style 1-based row/col indices.
+    pub fn try_from_excel_1based(sheet_id: SheetId, row: u32, col: u32) -> Option<Self> {
+        let row0 = row.checked_sub(1)?;
+        let col0 = col.checked_sub(1)?;
+        Self::try_new(sheet_id, row0, col0)
+    }
+
+    pub const fn sheet_id(self) -> SheetId {
+        ((self.0 >> Self::SHEET_SHIFT) & Self::SHEET_MASK) as SheetId
+    }
+
+    pub const fn row0(self) -> u32 {
+        (self.0 & Self::ROW_MASK) as u32
+    }
+
+    pub const fn col0(self) -> u32 {
+        ((self.0 >> Self::COL_SHIFT) & Self::COL_MASK) as u32
+    }
+
+    pub const fn to_excel_1based(self) -> (SheetId, u32, u32) {
+        (self.sheet_id(), self.row0() + 1, self.col0() + 1)
+    }
+}
+
 /// Errors that can occur while constructing sheet-scoped references.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SheetAddressError {
@@ -418,5 +508,24 @@ mod tests {
             Some(AxisBound::new(0, false)),
         );
         assert_eq!(inverted.unwrap_err(), SheetAddressError::RangeOrder);
+    }
+
+    #[test]
+    fn packed_sheet_cell_roundtrip() {
+        let packed = PackedSheetCell::try_new(7, 10, 8).unwrap();
+        assert_eq!(packed.sheet_id(), 7);
+        assert_eq!(packed.row0(), 10);
+        assert_eq!(packed.col0(), 8);
+        assert_eq!(packed.to_excel_1based(), (7, 11, 9));
+        assert_eq!(
+            PackedSheetCell::try_from_excel_1based(7, 11, 9),
+            Some(packed)
+        );
+        assert_eq!(PackedSheetCell::try_from_excel_1based(7, 0, 1), None);
+        assert_eq!(PackedSheetCell::try_from_u64(packed.as_u64()), Some(packed));
+        assert_eq!(
+            PackedSheetCell::try_from_u64(packed.as_u64() | (1u64 << 63)),
+            None
+        );
     }
 }
