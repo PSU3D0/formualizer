@@ -1,6 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList};
 
+type PyObject = pyo3::Py<pyo3::PyAny>;
+
 use crate::value::literal_to_py;
 use crate::workbook::{PyCell, PyWorkbook};
 use formualizer_workbook::WorksheetHandle;

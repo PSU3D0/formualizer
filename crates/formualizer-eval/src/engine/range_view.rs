@@ -7,6 +7,7 @@ use formualizer_common::{CoercionPolicy, DateSystem, ExcelError, LiteralValue};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[derive(Clone)]
 pub enum RangeBacking<'a> {
     Borrowed(&'a arrow_store::ArrowSheet),
     Owned(Arc<arrow_store::ArrowSheet>),
@@ -14,6 +15,7 @@ pub enum RangeBacking<'a> {
 
 /// Unified view over a 2D range with efficient traversal utilities.
 /// Phase 4: Arrow-only backing.
+#[derive(Clone)]
 pub struct RangeView<'a> {
     backing: RangeBacking<'a>,
     sr: usize,
@@ -22,7 +24,7 @@ pub struct RangeView<'a> {
     ec: usize,
     rows: usize,
     cols: usize,
-    cancel_token: Option<&'a AtomicBool>,
+    cancel_token: Option<Arc<AtomicBool>>,
 }
 
 impl<'a> core::fmt::Debug for RangeView<'a> {
@@ -66,12 +68,12 @@ impl<'a> Iterator for RowChunkIterator<'a> {
     type Item = Result<ChunkSlice, ExcelError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(token) = self.view.cancel_token {
-            if token.load(Ordering::Relaxed) {
-                return Some(Err(ExcelError::new(
-                    formualizer_common::ExcelErrorKind::Cancelled,
-                )));
-            }
+        if let Some(token) = &self.view.cancel_token
+            && token.load(Ordering::Relaxed)
+        {
+            return Some(Err(ExcelError::new(
+                formualizer_common::ExcelErrorKind::Cancelled,
+            )));
         }
 
         let sheet = self.view.sheet();
@@ -200,7 +202,7 @@ impl<'a> RangeView<'a> {
     }
 
     #[must_use]
-    pub fn with_cancel_token(mut self, token: Option<&'a AtomicBool>) -> Self {
+    pub fn with_cancel_token(mut self, token: Option<Arc<AtomicBool>>) -> Self {
         self.cancel_token = token;
         self
     }
@@ -273,7 +275,7 @@ impl<'a> RangeView<'a> {
             ec,
             rows,
             cols,
-            cancel_token: self.cancel_token,
+            cancel_token: self.cancel_token.clone(),
         }
     }
 
@@ -293,7 +295,7 @@ impl<'a> RangeView<'a> {
             ec,
             rows,
             cols,
-            cancel_token: self.cancel_token,
+            cancel_token: self.cancel_token.clone(),
         }
     }
 
@@ -547,10 +549,7 @@ impl<'a> RangeView<'a> {
         f: &mut dyn FnMut(NumericChunk) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
         // Fast path for Arrow numbers lane when policy allows ignoring non-numeric cells in ranges (standard Excel behavior for SUM/AVERAGE/etc over ranges)
-        if matches!(
-            policy,
-            CoercionPolicy::NumberStrict | CoercionPolicy::NumberLenientText
-        ) {
+        if matches!(policy, CoercionPolicy::NumberStrict) {
             for res in self.numbers_slices() {
                 let (_, _, cols) = res?;
                 for col in cols {
@@ -626,7 +625,6 @@ impl<'a> RangeView<'a> {
     }
 
     /// Typed numeric slices per row-segment: (row_start, row_len, per-column Float64 arrays)
-
     pub fn numbers_slices(
         &self,
     ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::Float64Array>>), ExcelError>> + '_
@@ -1172,12 +1170,21 @@ impl<'a> RangeView<'a> {
         }
         let sheet = self.sheet();
         let chunk_starts = &sheet.chunk_starts;
-        let row_end = self.er.min(sheet.nrows.saturating_sub(1) as usize);
+        // Clamp to physically materialized sheet rows; this view may be logically larger (e.g. A:A).
+        let sheet_rows = sheet.nrows as usize;
+        if sheet_rows == 0 || self.sr >= sheet_rows {
+            for _ in 0..self.cols {
+                out.push(arrow_array::new_null_array(&DataType::Utf8, 0));
+            }
+            return out;
+        }
+        let row_end = self.er.min(sheet_rows.saturating_sub(1));
+        let physical_len = row_end.saturating_sub(self.sr) + 1;
         for col_idx in self.sc..=self.ec {
             let mut segs: Vec<arrow_array::ArrayRef> = Vec::new();
             if col_idx >= sheet.columns.len() {
                 // OOB: nulls across rows
-                segs.push(arrow_array::new_null_array(&DataType::Utf8, self.rows));
+                segs.push(arrow_array::new_null_array(&DataType::Utf8, physical_len));
             } else {
                 let col_ref = &sheet.columns[col_idx];
                 for (ci, &start) in chunk_starts.iter().enumerate() {
@@ -1261,6 +1268,10 @@ impl<'a> RangeView<'a> {
                         segs.push(arrow_array::new_null_array(&DataType::Utf8, seg_len));
                     }
                 }
+            }
+            // Ensure concat has at least one segment (can happen on sparse/empty sheets).
+            if segs.is_empty() {
+                segs.push(arrow_array::new_null_array(&DataType::Utf8, physical_len));
             }
             // Concat segments for this column
             let anys: Vec<&dyn arrow_array::Array> = segs

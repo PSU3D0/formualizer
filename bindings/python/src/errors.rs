@@ -12,6 +12,8 @@ pyo3::create_exception!(formualizer, FormualizerHostError, PyException);
 // Raised when evaluating a cell returns an Excel error value
 pyo3::create_exception!(formualizer, ExcelEvaluationError, PyException);
 
+type PyObject = pyo3::Py<pyo3::PyAny>;
+
 // Helper functions to create errors with position information
 impl TokenizerError {
     pub fn new_with_pos(message: String, pos: Option<usize>) -> PyErr {

@@ -155,7 +155,7 @@ impl<'a> Interpreter<'a> {
     }
 
     /* ===================  public  =================== */
-    pub fn evaluate_ast(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
+    pub fn evaluate_ast(&self, node: &ASTNode) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         self.evaluate_ast_uncached(node)
     }
 
@@ -164,27 +164,33 @@ impl<'a> Interpreter<'a> {
         node_id: AstNodeId,
         data_store: &DataStore,
         sheet_registry: &SheetRegistry,
-    ) -> Result<LiteralValue, ExcelError> {
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         let node = data_store.get_node(node_id).ok_or_else(|| {
             ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
         })?;
 
         match node {
-            AstNodeData::Literal(vref) => Ok(data_store.retrieve_value(*vref)),
+            AstNodeData::Literal(vref) => Ok(crate::traits::CalcValue::Scalar(
+                data_store.retrieve_value(*vref),
+            )),
             AstNodeData::Reference { ref_type, .. } => {
                 let reference =
                     data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
-                self.eval_reference(&reference)
+                self.eval_reference_to_calc(&reference)
             }
             AstNodeData::UnaryOp { op_id, expr_id } => {
                 let expr = self.evaluate_arena_ast(*expr_id, data_store, sheet_registry)?;
 
                 let op = data_store.resolve_ast_string(*op_id);
-                match expr {
-                    LiteralValue::Array(arr) => {
-                        self.map_array(arr, |cell| self.eval_unary_scalar(op, cell))
-                    }
-                    other => self.eval_unary_scalar(op, other),
+                // For now, materialize for operators. Future: virtual range ops.
+                let v = expr.into_literal();
+                match v {
+                    LiteralValue::Array(arr) => self
+                        .map_array(arr, |cell| self.eval_unary_scalar(op, cell))
+                        .map(crate::traits::CalcValue::Scalar),
+                    other => self
+                        .eval_unary_scalar(op, other)
+                        .map(crate::traits::CalcValue::Scalar),
                 }
             }
             AstNodeData::BinaryOp {
@@ -202,32 +208,50 @@ impl<'a> Interpreter<'a> {
                         sheet_registry,
                     )?;
                     return match crate::reference::combine_references(&lref, &rref) {
-                        Ok(_r) => Ok(LiteralValue::Error(
+                        Ok(_r) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                             ExcelError::new(ExcelErrorKind::Ref).with_message(
                                 "Reference produced by ':' cannot be used directly as a value",
                             ),
-                        )),
-                        Err(e) => Ok(LiteralValue::Error(e)),
+                        ))),
+                        Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
                     };
                 }
 
-                let left = self.evaluate_arena_ast(*left_id, data_store, sheet_registry)?;
-                let right = self.evaluate_arena_ast(*right_id, data_store, sheet_registry)?;
+                let left = self
+                    .evaluate_arena_ast(*left_id, data_store, sheet_registry)?
+                    .into_literal();
+                let right = self
+                    .evaluate_arena_ast(*right_id, data_store, sheet_registry)?
+                    .into_literal();
 
                 if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
-                    return self.compare(op, left, right);
+                    return self
+                        .compare(op, left, right)
+                        .map(crate::traits::CalcValue::Scalar);
                 }
 
                 match op {
-                    "+" => self.numeric_binary(left, right, |a, b| a + b),
-                    "-" => self.numeric_binary(left, right, |a, b| a - b),
-                    "*" => self.numeric_binary(left, right, |a, b| a * b),
-                    "/" => self.divide(left, right),
-                    "^" => self.power(left, right),
-                    "&" => Ok(LiteralValue::Text(format!(
-                        "{}{}",
-                        crate::coercion::to_text_invariant(&left),
-                        crate::coercion::to_text_invariant(&right)
+                    "+" => self
+                        .numeric_binary(left, right, |a, b| a + b)
+                        .map(crate::traits::CalcValue::Scalar),
+                    "-" => self
+                        .numeric_binary(left, right, |a, b| a - b)
+                        .map(crate::traits::CalcValue::Scalar),
+                    "*" => self
+                        .numeric_binary(left, right, |a, b| a * b)
+                        .map(crate::traits::CalcValue::Scalar),
+                    "/" => self
+                        .divide(left, right)
+                        .map(crate::traits::CalcValue::Scalar),
+                    "^" => self
+                        .power(left, right)
+                        .map(crate::traits::CalcValue::Scalar),
+                    "&" => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                        format!(
+                            "{}{}",
+                            crate::coercion::to_text_invariant(&left),
+                            crate::coercion::to_text_invariant(&right)
+                        ),
                     ))),
                     _ => Err(ExcelError::new(ExcelErrorKind::NImpl)
                         .with_message(format!("Binary op '{op}'"))),
@@ -247,17 +271,21 @@ impl<'a> Interpreter<'a> {
                     for c in 0..cols_usize {
                         let idx = r * cols_usize + c;
                         if let Some(&elem_id) = elements.get(idx) {
-                            row.push(self.evaluate_arena_ast(
-                                elem_id,
-                                data_store,
-                                sheet_registry,
-                            )?);
+                            row.push(
+                                self.evaluate_arena_ast(elem_id, data_store, sheet_registry)?
+                                    .into_literal(),
+                            );
                         }
                     }
                     out.push(row);
                 }
 
-                Ok(LiteralValue::Array(out))
+                Ok(crate::traits::CalcValue::Range(
+                    crate::engine::range_view::RangeView::from_owned_rows(
+                        out,
+                        self.context.date_system(),
+                    ),
+                ))
             }
             AstNodeData::Function { name_id, .. } => {
                 let name = data_store.resolve_ast_string(*name_id);
@@ -289,7 +317,10 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn evaluate_ast_uncached(&self, node: &ASTNode) -> Result<LiteralValue, ExcelError> {
+    fn evaluate_ast_uncached(
+        &self,
+        node: &ASTNode,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         // Plan-aware evaluation: build a plan for this node and execute accordingly.
         // Provide the planner with a lightweight range-dimension probe and function lookup
         // so it can select chunked reduction and arg-parallel strategies where appropriate.
@@ -400,16 +431,19 @@ impl<'a> Interpreter<'a> {
         &self,
         node: &ASTNode,
         plan_node: &crate::planner::PlanNode,
-    ) -> Result<LiteralValue, ExcelError> {
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         match &node.node_type {
-            ASTNodeType::Literal(v) => Ok(v.clone()),
-            ASTNodeType::Reference { reference, .. } => self.eval_reference(reference),
+            ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
+            ASTNodeType::Reference { reference, .. } => self.eval_reference_to_calc(reference),
             ASTNodeType::UnaryOp { op, expr } => {
                 // For now, reuse existing unary implementation (which recurses).
                 // In a later phase, we can map plan_node.children[0].
                 self.eval_unary(op, expr)
+                    .map(crate::traits::CalcValue::Scalar)
             }
-            ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(op, left, right),
+            ASTNodeType::BinaryOp { op, left, right } => self
+                .eval_binary(op, left, right)
+                .map(crate::traits::CalcValue::Scalar),
             ASTNodeType::Function { name, args } => {
                 let strategy = plan_node.strategy;
                 if let Some(fun) = self.context.get_function("", name) {
@@ -419,31 +453,10 @@ impl<'a> Interpreter<'a> {
 
                     // Short-circuit or volatile: always sequential
                     if caps.contains(FnCaps::SHORT_CIRCUIT) || caps.contains(FnCaps::VOLATILE) {
-                        return self.eval_function(name, args);
+                        return self.eval_function_to_calc(name, args);
                     }
 
-                    // Chunked reduce for windowed functions
-                    if matches!(strategy, ExecStrategy::ChunkedReduce)
-                        && caps.contains(FnCaps::WINDOWED)
-                    {
-                        let handles: Vec<ArgumentHandle> =
-                            args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
-                        let fctx = DefaultFunctionContext::new_with_sheet(
-                            self.context,
-                            self.current_cell,
-                            self.current_sheet,
-                        );
-                        let mut w = crate::window_ctx::SimpleWindowCtx::new(
-                            &handles,
-                            &fctx,
-                            crate::window_ctx::WindowSpec::default(),
-                        );
-                        if let Some(res) = fun.eval_window(&mut w) {
-                            return res;
-                        }
-                        // Fallback to scalar/dispatch if window not implemented
-                        return self.eval_function(name, args);
-                    }
+                    // Windowed/chunked strategies are handled by the unified `eval()` path.
 
                     // Arg-parallel: prewarm subexpressions and then dispatch
                     if matches!(strategy, ExecStrategy::ArgParallel)
@@ -462,54 +475,47 @@ impl<'a> Interpreter<'a> {
                                 }
                             }
                         }
-                        return self.eval_function(name, args);
+                        return self.eval_function_to_calc(name, args);
                     }
 
                     // Default path
-                    return self.eval_function(name, args);
+                    return self.eval_function_to_calc(name, args);
                 }
-                self.eval_function(name, args)
+                self.eval_function_to_calc(name, args)
             }
-            ASTNodeType::Array(rows) => self.eval_array_literal(rows),
+            ASTNodeType::Array(rows) => self.eval_array_literal_to_calc(rows),
         }
     }
 
     /* ===================  reference  =================== */
-    fn eval_reference(&self, reference: &ReferenceType) -> Result<LiteralValue, ExcelError> {
+    fn eval_reference_to_calc(
+        &self,
+        reference: &ReferenceType,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         let view = self
             .context
-            .resolve_range_view(reference, self.current_sheet)?;
+            .resolve_range_view(reference, self.current_sheet)?
+            .with_cancel_token(self.context.cancellation_token());
 
         match reference {
             ReferenceType::Cell { .. } => {
                 // For a single cell reference, just return the value.
-                Ok(view.as_1x1().unwrap_or(LiteralValue::Empty))
+                Ok(crate::traits::CalcValue::Scalar(
+                    view.as_1x1().unwrap_or(LiteralValue::Empty),
+                ))
             }
-            _ => {
-                // For ranges, materialize into an array.
-                let (rows, cols) = view.dims();
-                let mut data = Vec::with_capacity(rows);
-
-                view.for_each_row(&mut |row| {
-                    let row_data: Vec<LiteralValue> = (0..cols)
-                        .map(|c| row.get(c).cloned().unwrap_or(LiteralValue::Empty))
-                        .collect();
-                    data.push(row_data);
-                    Ok(())
-                })?;
-
-                if data.len() == 1 && data[0].len() == 1 {
-                    Ok(data[0][0].clone())
-                } else {
-                    Ok(LiteralValue::Array(data))
-                }
-            }
+            _ => Ok(crate::traits::CalcValue::Range(view)),
         }
+    }
+
+    fn eval_reference(&self, reference: &ReferenceType) -> Result<LiteralValue, ExcelError> {
+        self.eval_reference_to_calc(reference)
+            .map(|cv| cv.into_literal())
     }
 
     /* ===================  unary ops  =================== */
     fn eval_unary(&self, op: &str, expr: &ASTNode) -> Result<LiteralValue, ExcelError> {
-        let v = self.evaluate_ast(expr)?;
+        let v = self.evaluate_ast(expr)?.into_literal();
         match v {
             LiteralValue::Array(arr) => {
                 self.map_array(arr, |cell| self.eval_unary_scalar(op, cell))
@@ -551,13 +557,13 @@ impl<'a> Interpreter<'a> {
     ) -> Result<LiteralValue, ExcelError> {
         // Comparisons use dedicated path.
         if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
-            let l = self.evaluate_ast(left)?;
-            let r = self.evaluate_ast(right)?;
+            let l = self.evaluate_ast(left)?.into_literal();
+            let r = self.evaluate_ast(right)?.into_literal();
             return self.compare(op, l, r);
         }
 
-        let l_val = self.evaluate_ast(left)?;
-        let r_val = self.evaluate_ast(right)?;
+        let l_val = self.evaluate_ast(left)?.into_literal();
+        let r_val = self.evaluate_ast(right)?.into_literal();
 
         match op {
             "+" => self.numeric_binary(l_val, r_val, |a, b| a + b),
@@ -589,7 +595,11 @@ impl<'a> Interpreter<'a> {
     }
 
     /* ===================  function calls  =================== */
-    fn eval_function(&self, name: &str, args: &[ASTNode]) -> Result<LiteralValue, ExcelError> {
+    fn eval_function_to_calc(
+        &self,
+        name: &str,
+        args: &[ASTNode],
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         if let Some(fun) = self.context.get_function("", name) {
             let handles: Vec<ArgumentHandle> =
                 args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
@@ -602,31 +612,43 @@ impl<'a> Interpreter<'a> {
             fun.dispatch(&handles, &fctx)
         } else {
             // Include the function name in the error message for better debugging
-            Ok(LiteralValue::Error(
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Name)
                     .with_message(format!("Unknown function: {name}")),
-            ))
+            )))
         }
+    }
+
+    fn eval_function(&self, name: &str, args: &[ASTNode]) -> Result<LiteralValue, ExcelError> {
+        self.eval_function_to_calc(name, args)
+            .map(|cv| cv.into_literal())
     }
 
     pub fn function_context(&self, cell_ref: Option<&CellRef>) -> DefaultFunctionContext<'_> {
         DefaultFunctionContext::new_with_sheet(self.context, cell_ref.cloned(), self.current_sheet)
     }
 
-    // Test-only helpers removed: interpreter no longer maintains subexpression cache
-    // owned range cache removed in RangeView migration
-
     /* ===================  array literal  =================== */
-    fn eval_array_literal(&self, rows: &[Vec<ASTNode>]) -> Result<LiteralValue, ExcelError> {
+    fn eval_array_literal_to_calc(
+        &self,
+        rows: &[Vec<ASTNode>],
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             let mut r = Vec::with_capacity(row.len());
             for cell in row {
-                r.push(self.evaluate_ast(cell)?);
+                r.push(self.evaluate_ast(cell)?.into_literal());
             }
             out.push(r);
         }
-        Ok(LiteralValue::Array(out))
+        Ok(crate::traits::CalcValue::Range(
+            crate::engine::range_view::RangeView::from_owned_rows(out, self.context.date_system()),
+        ))
+    }
+
+    fn eval_array_literal(&self, rows: &[Vec<ASTNode>]) -> Result<LiteralValue, ExcelError> {
+        self.eval_array_literal_to_calc(rows)
+            .map(|cv| cv.into_literal())
     }
 
     /* ===================  helpers  =================== */

@@ -9,32 +9,32 @@ use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
 fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
-    let v = arg.value()?;
-    match v.as_ref() {
-        LiteralValue::Number(f) => Ok(*f),
-        LiteralValue::Int(i) => Ok(*i as f64),
+    let v = arg.value()?.into_literal();
+    match v {
+        LiteralValue::Number(f) => Ok(f),
+        LiteralValue::Int(i) => Ok(i as f64),
         LiteralValue::Text(s) => s.parse::<f64>().map_err(|_| {
             ExcelError::new_value().with_message("EDATE/EOMONTH start_date is not a valid number")
         }),
-        LiteralValue::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
+        LiteralValue::Boolean(b) => Ok(if b { 1.0 } else { 0.0 }),
         LiteralValue::Empty => Ok(0.0),
-        LiteralValue::Error(e) => Err(e.clone()),
+        LiteralValue::Error(e) => Err(e),
         _ => Err(ExcelError::new_value()
             .with_message("EDATE/EOMONTH expects numeric or text-numeric arguments")),
     }
 }
 
 fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
-    let v = arg.value()?;
-    match v.as_ref() {
-        LiteralValue::Int(i) => Ok(*i as i32),
+    let v = arg.value()?.into_literal();
+    match v {
+        LiteralValue::Int(i) => Ok(i as i32),
         LiteralValue::Number(f) => Ok(f.trunc() as i32),
         LiteralValue::Text(s) => s.parse::<f64>().map(|f| f.trunc() as i32).map_err(|_| {
             ExcelError::new_value().with_message("EDATE/EOMONTH months is not a valid number")
         }),
-        LiteralValue::Boolean(b) => Ok(if *b { 1 } else { 0 }),
+        LiteralValue::Boolean(b) => Ok(if b { 1 } else { 0 }),
         LiteralValue::Empty => Ok(0),
-        LiteralValue::Error(e) => Err(e.clone()),
+        LiteralValue::Error(e) => Err(e),
         _ => Err(ExcelError::new_value()
             .with_message("EDATE/EOMONTH expects numeric or text-numeric arguments")),
     }
@@ -68,11 +68,11 @@ impl Function for EdateFn {
         &TWO[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let start_serial = coerce_to_serial(&args[0])?;
         let months = coerce_to_int(&args[1])?;
 
@@ -91,7 +91,9 @@ impl Function for EdateFn {
         let target_date = NaiveDate::from_ymd_opt(target_year, target_month as u32, target_day)
             .ok_or_else(ExcelError::new_num)?;
 
-        Ok(LiteralValue::Number(date_to_serial(&target_date)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            date_to_serial(&target_date),
+        )))
     }
 }
 
@@ -121,11 +123,11 @@ impl Function for EomonthFn {
         &TWO[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let start_serial = coerce_to_serial(&args[0])?;
         let months = coerce_to_int(&args[1])?;
 
@@ -143,7 +145,9 @@ impl Function for EomonthFn {
         let target_date = NaiveDate::from_ymd_opt(target_year, target_month as u32, last_day)
             .ok_or_else(ExcelError::new_num)?;
 
-        Ok(LiteralValue::Number(date_to_serial(&target_date)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            date_to_serial(&target_date),
+        )))
     }
 }
 
@@ -194,7 +198,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
 
         // Should return a date 3 months later
         assert!(matches!(result, LiteralValue::Number(_)));
@@ -218,7 +223,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
 
         // Should return a date 2 months earlier
         assert!(matches!(result, LiteralValue::Number(_)));
@@ -242,7 +248,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
 
         // Should return Jan 31, 2023
         assert!(matches!(result, LiteralValue::Number(_)));
@@ -266,7 +273,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
 
         // Should return Feb 28, 2023 (not a leap year)
         assert!(matches!(result, LiteralValue::Number(_)));

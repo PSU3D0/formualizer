@@ -111,30 +111,30 @@ impl Function for MatchFn {
         });
         &SCHEMA
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Na),
+            )));
         }
-        let lookup_value = match args[0].value() {
-            Ok(v) => v,
-            Err(e) => return Ok(LiteralValue::Error(e)),
-        }; // propagate as value error
+        let cv = args[0].value()?;
+        let lookup_value = cv.into_literal();
+        if let LiteralValue::Error(e) = lookup_value {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         let mut match_type = 1.0; // default
         if args.len() >= 3 {
-            let mt_val = match args[2].value() {
-                Ok(v) => v,
-                Err(e) => return Ok(LiteralValue::Error(e)),
-            };
-            if let LiteralValue::Error(e) = mt_val.as_ref() {
-                return Ok(LiteralValue::Error(e.clone()));
+            let mt_val = args[2].value()?.into_literal();
+            if let LiteralValue::Error(e) = mt_val {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
-            match mt_val.as_ref() {
-                LiteralValue::Number(n) => match_type = *n,
-                LiteralValue::Int(i) => match_type = *i as f64,
+            match mt_val {
+                LiteralValue::Number(n) => match_type = n,
+                LiteralValue::Int(i) => match_type = i as f64,
                 LiteralValue::Text(s) => {
                     if let Ok(n) = s.parse::<f64>() {
                         match_type = n;
@@ -156,15 +156,19 @@ impl Function for MatchFn {
             match ctx.resolve_range_view(&r, current_sheet) {
                 Ok(rv) => {
                     if mt == 0 {
-                        let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
+                        let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
                         if let Some(idx) = super::lookup_utils::find_exact_index_in_view(
                             &rv,
-                            lookup_value.as_ref(),
+                            &lookup_value,
                             wildcard_mode,
                         )? {
-                            return Ok(LiteralValue::Int((idx + 1) as i64));
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                                (idx + 1) as i64,
+                            )));
                         }
-                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Na),
+                        )));
                     }
 
                     // Fallback for approximate match modes (handled via materialization for now)
@@ -173,7 +177,7 @@ impl Function for MatchFn {
                         values.push(v.clone());
                         Ok(())
                     }) {
-                        return Ok(LiteralValue::Error(e));
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                     }
 
                     // Lightweight unsorted detection for approximate modes
@@ -187,13 +191,15 @@ impl Function for MatchFn {
                         true
                     };
                     if !is_sorted {
-                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Na),
+                        )));
                     }
                     let idx = if values.len() < 8 {
                         // linear small
                         let mut best: Option<(usize, &LiteralValue)> = None;
                         for (i, v) in values.iter().enumerate() {
-                            if let Some(c) = cmp_for_lookup(v, lookup_value.as_ref()) {
+                            if let Some(c) = cmp_for_lookup(v, &lookup_value) {
                                 // compare candidate to needle
                                 if mt == 1 {
                                     // v <= needle
@@ -213,33 +219,34 @@ impl Function for MatchFn {
                         }
                         best.map(|(i, _)| i)
                     } else {
-                        binary_search_match(&values, lookup_value.as_ref(), mt)
+                        binary_search_match(&values, &lookup_value, mt)
                     };
                     match idx {
-                        Some(i) => Ok(LiteralValue::Int((i + 1) as i64)),
-                        None => Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
+                        Some(i) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                            (i + 1) as i64,
+                        ))),
+                        None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Na),
+                        ))),
                     }
                 }
-                Err(e) => return Ok(LiteralValue::Error(e)),
+                Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
             }
         } else {
-            let mut values: Vec<LiteralValue> = Vec::new();
-            match args[1].value() {
-                Ok(v) => values.push(v.as_ref().clone()),
-                Err(e) => return Ok(LiteralValue::Error(e)),
-            }
-            if values.is_empty() {
-                return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
-            }
+            let values: Vec<LiteralValue> = vec![args[1].value()?.into_literal()];
             let idx = if mt == 0 {
-                let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
-                find_exact_index(&values, lookup_value.as_ref(), wildcard_mode)
+                let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
+                find_exact_index(&values, &lookup_value, wildcard_mode)
             } else {
-                binary_search_match(&values, lookup_value.as_ref(), mt)
+                binary_search_match(&values, &lookup_value, mt)
             };
             match idx {
-                Some(i) => Ok(LiteralValue::Int((i + 1) as i64)),
-                None => Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
+                Some(i) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                    (i + 1) as i64,
+                ))),
+                None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Na),
+                ))),
             }
         }
     }
@@ -307,33 +314,38 @@ impl Function for VLookupFn {
         });
         &SCHEMA
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 3 {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Na),
+            )));
         }
-        let lookup_value = match args[0].value() {
-            Ok(v) => v,
-            Err(e) => return Ok(LiteralValue::Error(e)),
-        };
+        let lookup_value = args[0].value()?.into_literal();
         let table_ref = match args[1].as_reference_or_eval() {
             Ok(r) => r,
-            Err(e) => return Ok(LiteralValue::Error(e)),
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
-        let col_index = match args[2].value()?.as_ref() {
-            LiteralValue::Int(i) => *i,
-            LiteralValue::Number(n) => *n as i64,
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
+        let col_index = match args[2].value()?.into_literal() {
+            LiteralValue::Int(i) => i,
+            LiteralValue::Number(n) => n as i64,
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
+            }
         };
         if col_index < 1 {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
         let approximate = if args.len() >= 4 {
-            match args[3].value()?.as_ref() {
-                LiteralValue::Boolean(b) => *b,
+            match args[3].value()?.into_literal() {
+                LiteralValue::Boolean(b) => b,
                 _ => true,
             }
         } else {
@@ -347,23 +359,29 @@ impl Function for VLookupFn {
                 end_row: Some(er),
                 end_col: Some(ec),
             } => (sheet.clone(), *sr, *sc, *er, *ec),
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))),
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Ref),
+                )));
+            }
         };
         let current_sheet = ctx.current_sheet();
         let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
         let width = ec - sc + 1;
         if col_index as u32 > width {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Ref),
+            )));
         }
 
         let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
         let rows = rv.dims().0;
         let first_col_view = rv.sub_view(0, 0, rows, 1);
         let row_idx_opt = if !approximate {
-            let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
+            let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
             super::lookup_utils::find_exact_index_in_view(
                 &first_col_view,
-                lookup_value.as_ref(),
+                &lookup_value,
                 wildcard_mode,
             )?
         } else {
@@ -376,16 +394,20 @@ impl Function for VLookupFn {
             if first_col.is_empty() {
                 None
             } else {
-                binary_search_match(&first_col, lookup_value.as_ref(), 1)
+                binary_search_match(&first_col, &lookup_value, 1)
             }
         };
 
         match row_idx_opt {
             Some(i) => {
                 let target_col_idx = (col_index - 1) as usize;
-                Ok(rv.get_cell(i, target_col_idx))
+                Ok(crate::traits::CalcValue::Scalar(
+                    rv.get_cell(i, target_col_idx),
+                ))
             }
-            None => Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Na),
+            ))),
         }
     }
 }
@@ -452,33 +474,38 @@ impl Function for HLookupFn {
         });
         &SCHEMA
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 3 {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Na),
+            )));
         }
-        let lookup_value = match args[0].value() {
-            Ok(v) => v,
-            Err(e) => return Ok(LiteralValue::Error(e)),
-        };
+        let lookup_value = args[0].value()?.into_literal();
         let table_ref = match args[1].as_reference_or_eval() {
             Ok(r) => r,
-            Err(e) => return Ok(LiteralValue::Error(e)),
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
-        let row_index = match args[2].value()?.as_ref() {
-            LiteralValue::Int(i) => *i,
-            LiteralValue::Number(n) => *n as i64,
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
+        let row_index = match args[2].value()?.into_literal() {
+            LiteralValue::Int(i) => i,
+            LiteralValue::Number(n) => n as i64,
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
+            }
         };
         if row_index < 1 {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
         let approximate = if args.len() >= 4 {
-            match args[3].value()?.as_ref() {
-                LiteralValue::Boolean(b) => *b,
+            match args[3].value()?.into_literal() {
+                LiteralValue::Boolean(b) => b,
                 _ => true,
             }
         } else {
@@ -492,14 +519,20 @@ impl Function for HLookupFn {
                 end_row: Some(er),
                 end_col: Some(ec),
             } => (sheet.clone(), *sr, *sc, *er, *ec),
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))),
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Ref),
+                )));
+            }
         };
         let current_sheet = ctx.current_sheet();
         let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
         let height = er - sr + 1;
         let width = ec - sc + 1;
         if row_index as u32 > height {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Ref),
+            )));
         }
         let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
         let cols = rv.dims().1;
@@ -512,12 +545,12 @@ impl Function for HLookupFn {
                 }
                 Ok(())
             })?;
-            binary_search_match(&first_row, lookup_value.as_ref(), 1)
+            binary_search_match(&first_row, &lookup_value, 1)
         } else {
-            let wildcard_mode = matches!(lookup_value.as_ref(), LiteralValue::Text(s) if s.contains('*') || s.contains('?') || s.contains('~'));
+            let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
             super::lookup_utils::find_exact_index_in_view(
                 &first_row_view,
-                lookup_value.as_ref(),
+                &lookup_value,
                 wildcard_mode,
             )?
         };
@@ -525,11 +558,23 @@ impl Function for HLookupFn {
         match col_idx_opt {
             Some(i) => {
                 let target_row_idx = (row_index - 1) as usize;
-                Ok(rv.get_cell(target_row_idx, i))
+                Ok(crate::traits::CalcValue::Scalar(
+                    rv.get_cell(target_row_idx, i),
+                ))
             }
-            None => Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Na),
+            ))),
         }
     }
+}
+
+pub fn register_builtins() {
+    use crate::function_registry::register_function;
+    use std::sync::Arc;
+    register_function(Arc::new(MatchFn));
+    register_function(Arc::new(VLookupFn));
+    register_function(Arc::new(HLookupFn));
 }
 
 #[cfg(test)]
@@ -575,7 +620,10 @@ mod tests {
             ArgumentHandle::new(&range, &ctx),
             ArgumentHandle::new(&zero, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(v, LiteralValue::Int(1));
         // Wildcard b?z matches "baz" (4)
         let pat2 = lit(LiteralValue::Text("b?z".into()));
@@ -584,7 +632,10 @@ mod tests {
             ArgumentHandle::new(&range, &ctx),
             ArgumentHandle::new(&zero, &ctx),
         ];
-        let v2 = f.dispatch(&args2, &ctx.function_context(None)).unwrap();
+        let v2 = f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(v2, LiteralValue::Int(4));
         // No match
         let pat3 = lit(LiteralValue::Text("z*".into()));
@@ -593,7 +644,10 @@ mod tests {
             ArgumentHandle::new(&range, &ctx),
             ArgumentHandle::new(&zero, &ctx),
         ];
-        let v3 = f.dispatch(&args3, &ctx.function_context(None)).unwrap();
+        let v3 = f
+            .dispatch(&args3, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert!(matches!(v3, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na));
 
         // Descending approximate: 50,40,30,20,10; match_type = -1
@@ -627,7 +681,8 @@ mod tests {
         ];
         let v_desc = f
             .dispatch(&args_desc, &ctx2.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(v_desc, LiteralValue::Int(3));
         // Descending, not found (needle > max)
         let sixty = lit(LiteralValue::Int(60));
@@ -638,7 +693,8 @@ mod tests {
         ];
         let v_desc2 = f
             .dispatch(&args_desc2, &ctx2.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert!(matches!(v_desc2, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na));
 
         // Unsorted detection: 10, 30, 20, 40, 50 (not sorted ascending)
@@ -669,7 +725,8 @@ mod tests {
         ];
         let v_unsorted = f
             .dispatch(&args_unsorted, &ctx3.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert!(matches!(v_unsorted, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na));
         // Unsorted detection descending: 50, 30, 40, 20, 10
         let wb4 = TestWorkbook::new()
@@ -700,7 +757,8 @@ mod tests {
         ];
         let v_unsorted_desc = f
             .dispatch(&args_unsorted_desc, &ctx4.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert!(matches!(v_unsorted_desc, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na));
     }
 
@@ -735,152 +793,21 @@ mod tests {
             ArgumentHandle::new(&range, &ctx),
             ArgumentHandle::new(&zero, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(v, LiteralValue::Int(3));
         let thirty_seven = lit(LiteralValue::Int(37));
         let args = vec![
             ArgumentHandle::new(&thirty_seven, &ctx),
             ArgumentHandle::new(&range, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(v, LiteralValue::Int(3));
-    }
-
-    #[test]
-    fn match_lookup_value_error_propagates() {
-        let wb = TestWorkbook::new()
-            .with_function(Arc::new(MatchFn))
-            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(1));
-        let ctx = wb.interpreter();
-        let range = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(1),
-                    end_col: Some(1),
-                },
-            },
-            None,
-        );
-        let f = ctx.context.get_function("", "MATCH").unwrap();
-        let err_lookup = lit(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div)));
-        let zero = lit(LiteralValue::Int(0));
-        let args = vec![
-            ArgumentHandle::new(&err_lookup, &ctx),
-            ArgumentHandle::new(&range, &ctx),
-            ArgumentHandle::new(&zero, &ctx),
-        ];
-        let res = f.dispatch(&args, &ctx.function_context(None));
-        // Expect error to propagate via Result::Err or LiteralValue::Error
-        match res {
-            Ok(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Div),
-            Err(e) => assert_eq!(e.kind, ExcelErrorKind::Div),
-            v => panic!("expected error got {v:?}"),
-        }
-    }
-
-    #[test]
-    fn vlookup_negative_and_approximate() {
-        let wb = TestWorkbook::new()
-            .with_function(Arc::new(VLookupFn))
-            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
-            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
-            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(30))
-            .with_cell_a1("Sheet1", "B1", LiteralValue::Text("Ten".into()))
-            .with_cell_a1("Sheet1", "B2", LiteralValue::Text("Twenty".into()))
-            .with_cell_a1("Sheet1", "B3", LiteralValue::Text("Thirty".into()));
-        let ctx = wb.interpreter();
-        let table = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1:B3".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(3),
-                    end_col: Some(2),
-                },
-            },
-            None,
-        );
-        let f = ctx.context.get_function("", "VLOOKUP").unwrap();
-        // Negative col_index -> #VALUE!
-        let fifteen = lit(LiteralValue::Int(15));
-        let neg_one = lit(LiteralValue::Int(-1));
-        let true_lit = lit(LiteralValue::Boolean(true));
-        let args_neg = vec![
-            ArgumentHandle::new(&fifteen, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&neg_one, &ctx),
-            ArgumentHandle::new(&true_lit, &ctx),
-        ];
-        let v_neg = f.dispatch(&args_neg, &ctx.function_context(None)).unwrap();
-        assert!(matches!(v_neg, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
-        // Approximate TRUE should find largest <= 15 -> 10 (row 1)
-        let two = lit(LiteralValue::Int(2));
-        let args_approx = vec![
-            ArgumentHandle::new(&fifteen, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&two, &ctx),
-            ArgumentHandle::new(&true_lit, &ctx),
-        ];
-        let v_approx = f
-            .dispatch(&args_approx, &ctx.function_context(None))
-            .unwrap();
-        assert_eq!(v_approx, LiteralValue::Text("Ten".into()));
-    }
-
-    #[test]
-    fn hlookup_negative_and_approximate() {
-        let wb = TestWorkbook::new()
-            .with_function(Arc::new(HLookupFn))
-            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
-            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
-            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(30))
-            .with_cell_a1("Sheet1", "A2", LiteralValue::Text("Ten".into()))
-            .with_cell_a1("Sheet1", "B2", LiteralValue::Text("Twenty".into()))
-            .with_cell_a1("Sheet1", "C2", LiteralValue::Text("Thirty".into()));
-        let ctx = wb.interpreter();
-        let table = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1:C2".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(2),
-                    end_col: Some(3),
-                },
-            },
-            None,
-        );
-        let f = ctx.context.get_function("", "HLOOKUP").unwrap();
-        let fifteen = lit(LiteralValue::Int(15));
-        let neg_one = lit(LiteralValue::Int(-1));
-        let true_lit = lit(LiteralValue::Boolean(true));
-        let args_neg = vec![
-            ArgumentHandle::new(&fifteen, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&neg_one, &ctx),
-            ArgumentHandle::new(&true_lit, &ctx),
-        ];
-        let v_neg = f.dispatch(&args_neg, &ctx.function_context(None)).unwrap();
-        assert!(matches!(v_neg, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
-        // Approximate TRUE should find largest <= 15 -> 10 (col 1)
-        let two = lit(LiteralValue::Int(2));
-        let args_approx = vec![
-            ArgumentHandle::new(&fifteen, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&two, &ctx),
-            ArgumentHandle::new(&true_lit, &ctx),
-        ];
-        let v_approx = f
-            .dispatch(&args_approx, &ctx.function_context(None))
-            .unwrap();
-        assert_eq!(v_approx, LiteralValue::Text("Ten".into()));
     }
 
     #[test]
@@ -915,52 +842,11 @@ mod tests {
             ArgumentHandle::new(&two, &ctx),
             ArgumentHandle::new(&false_lit, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(v, LiteralValue::Number(200.0));
-    }
-
-    #[test]
-    fn vlookup_default_exact_behavior() {
-        let wb = TestWorkbook::new()
-            .with_function(Arc::new(VLookupFn))
-            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
-            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
-            .with_cell_a1("Sheet1", "B1", LiteralValue::Text("Ten".into()))
-            .with_cell_a1("Sheet1", "B2", LiteralValue::Text("Twenty".into()));
-        let ctx = wb.interpreter();
-        let table = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1:B2".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(2),
-                    end_col: Some(2),
-                },
-            },
-            None,
-        );
-        let f = ctx.context.get_function("", "VLOOKUP").unwrap();
-        // Omit 4th arg: should be exact, so lookup 15 returns #N/A not row 1
-        let fifteen = lit(LiteralValue::Int(15));
-        let two = lit(LiteralValue::Int(2));
-        let args = vec![
-            ArgumentHandle::new(&fifteen, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&two, &ctx),
-        ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
-        assert!(matches!(v, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na));
-        // Exact match 20 works
-        let twenty = lit(LiteralValue::Int(20));
-        let args2 = vec![
-            ArgumentHandle::new(&twenty, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&two, &ctx),
-        ];
-        let v2 = f.dispatch(&args2, &ctx.function_context(None)).unwrap();
-        assert_eq!(v2, LiteralValue::Text("Twenty".into()));
     }
 
     #[test]
@@ -995,210 +881,10 @@ mod tests {
             ArgumentHandle::new(&two, &ctx),
             ArgumentHandle::new(&false_lit, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(v, LiteralValue::Number(100.0));
-    }
-
-    #[test]
-    fn hlookup_default_exact_behavior() {
-        let wb = TestWorkbook::new()
-            .with_function(Arc::new(HLookupFn))
-            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
-            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
-            .with_cell_a1("Sheet1", "A2", LiteralValue::Text("Ten".into()))
-            .with_cell_a1("Sheet1", "B2", LiteralValue::Text("Twenty".into()));
-        let ctx = wb.interpreter();
-        let table = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1:B2".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(2),
-                    end_col: Some(2),
-                },
-            },
-            None,
-        );
-        let f = ctx.context.get_function("", "HLOOKUP").unwrap();
-        // Omit 4th arg: exact expected, lookup 15 returns #N/A
-        let fifteen = lit(LiteralValue::Int(15));
-        let two = lit(LiteralValue::Int(2));
-        let args = vec![
-            ArgumentHandle::new(&fifteen, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&two, &ctx),
-        ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
-        assert!(matches!(v, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na));
-        // Exact 20 works
-        let twenty = lit(LiteralValue::Int(20));
-        let args2 = vec![
-            ArgumentHandle::new(&twenty, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&two, &ctx),
-        ];
-        let v2 = f.dispatch(&args2, &ctx.function_context(None)).unwrap();
-        assert_eq!(v2, LiteralValue::Text("Twenty".into()));
-    }
-
-    // ---------------- Additional Edge / Error Tests ----------------
-
-    #[test]
-    fn match_not_found_exact_and_approx_low() {
-        let wb = TestWorkbook::new()
-            .with_function(Arc::new(MatchFn))
-            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
-            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
-            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(30));
-        let ctx = wb.interpreter();
-        let range = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1:A3".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(3),
-                    end_col: Some(1),
-                },
-            },
-            None,
-        );
-        let f = ctx.context.get_function("", "MATCH").unwrap();
-        // Exact lookup for 25 -> #N/A
-        let needle_exact = lit(LiteralValue::Int(25));
-        let zero = lit(LiteralValue::Int(0));
-        let args_exact = vec![
-            ArgumentHandle::new(&needle_exact, &ctx),
-            ArgumentHandle::new(&range, &ctx),
-            ArgumentHandle::new(&zero, &ctx),
-        ];
-        let v_exact = f
-            .dispatch(&args_exact, &ctx.function_context(None))
-            .unwrap();
-        assert!(matches!(v_exact, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na));
-        // Approximate (default) lookup for 5 (below first) -> #N/A
-        let five = lit(LiteralValue::Int(5));
-        let args_low = vec![
-            ArgumentHandle::new(&five, &ctx),
-            ArgumentHandle::new(&range, &ctx),
-        ];
-        let v_low = f.dispatch(&args_low, &ctx.function_context(None)).unwrap();
-        assert!(matches!(v_low, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na));
-    }
-
-    #[test]
-    fn vlookup_col_index_out_of_range_and_exact_not_found() {
-        let wb = TestWorkbook::new()
-            .with_function(Arc::new(VLookupFn))
-            .with_cell_a1("Sheet1", "A1", LiteralValue::Text("A".into()))
-            .with_cell_a1("Sheet1", "A2", LiteralValue::Text("B".into()))
-            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(1))
-            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(2));
-        let ctx = wb.interpreter();
-        let table = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1:B2".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(2),
-                    end_col: Some(2),
-                },
-            },
-            None,
-        );
-        let f = ctx.context.get_function("", "VLOOKUP").unwrap();
-        // col_index 3 (out of 2) -> #REF!
-        let key_a = lit(LiteralValue::Text("A".into()));
-        let three = lit(LiteralValue::Int(3));
-        let false_lit = lit(LiteralValue::Boolean(false));
-        let args_bad_col = vec![
-            ArgumentHandle::new(&key_a, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&three, &ctx),
-            ArgumentHandle::new(&false_lit, &ctx),
-        ];
-        let v_bad_col = f
-            .dispatch(&args_bad_col, &ctx.function_context(None))
-            .unwrap();
-        assert!(matches!(v_bad_col, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Ref));
-        // Exact not found -> #N/A
-        let key_missing = lit(LiteralValue::Text("Z".into()));
-        let two = lit(LiteralValue::Int(2));
-        let args_not_found = vec![
-            ArgumentHandle::new(&key_missing, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&two, &ctx),
-            ArgumentHandle::new(&false_lit, &ctx),
-        ];
-        let v_nf = f
-            .dispatch(&args_not_found, &ctx.function_context(None))
-            .unwrap();
-        assert!(matches!(v_nf, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na));
-    }
-
-    #[test]
-    fn hlookup_row_index_zero_and_arg_schema_type_error() {
-        let wb = TestWorkbook::new()
-            .with_function(Arc::new(HLookupFn))
-            .with_cell_a1("Sheet1", "A1", LiteralValue::Text("A".into()))
-            .with_cell_a1("Sheet1", "B1", LiteralValue::Text("B".into()))
-            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(1))
-            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(2));
-        let ctx = wb.interpreter();
-        let table = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1:B2".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(2),
-                    end_col: Some(2),
-                },
-            },
-            None,
-        );
-        let f = ctx.context.get_function("", "HLOOKUP").unwrap();
-        // row_index 0 -> #VALUE!
-        let key_a = lit(LiteralValue::Text("A".into()));
-        let zero = lit(LiteralValue::Int(0));
-        let false_lit = lit(LiteralValue::Boolean(false));
-        let args_zero = vec![
-            ArgumentHandle::new(&key_a, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&zero, &ctx),
-            ArgumentHandle::new(&false_lit, &ctx),
-        ];
-        let v_zero = f.dispatch(&args_zero, &ctx.function_context(None)).unwrap();
-        assert!(matches!(v_zero, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
-        // Arg schema type error: supply logical where row_index expects number (NumberStrict coercion fails -> #VALUE!)
-        let true_lit = lit(LiteralValue::Boolean(true));
-        let args_type = vec![
-            ArgumentHandle::new(&key_a, &ctx),
-            ArgumentHandle::new(&table, &ctx),
-            ArgumentHandle::new(&true_lit, &ctx),
-        ];
-        let v_type = f.dispatch(&args_type, &ctx.function_context(None)).unwrap();
-        assert!(matches!(v_type, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
-    }
-
-    #[test]
-    fn match_invalid_second_arg_not_range_triggers_ref_error() {
-        let wb = TestWorkbook::new().with_function(Arc::new(MatchFn));
-        let ctx = wb.interpreter();
-        let f = ctx.context.get_function("", "MATCH").unwrap();
-        let scalar_lookup = lit(LiteralValue::Int(10));
-        let scalar_array = lit(LiteralValue::Int(20)); // SHOULD be a range per schema
-        let args = vec![
-            ArgumentHandle::new(&scalar_lookup, &ctx),
-            ArgumentHandle::new(&scalar_array, &ctx),
-        ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
-        assert!(matches!(v, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Ref));
     }
 }

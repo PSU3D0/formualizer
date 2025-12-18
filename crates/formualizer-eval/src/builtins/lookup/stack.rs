@@ -10,6 +10,7 @@
 //! TODO(excel-nuance): Propagate first error cell wise; currently a whole argument that is an Error scalar becomes a 1x1 error block.
 //! TODO(perf): Avoid intermediate full materialization by streaming row-wise/col-wise (later optimization).
 
+use super::super::utils::collapse_if_scalar;
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -21,9 +22,9 @@ pub struct HStackFn;
 #[derive(Debug)]
 pub struct VStackFn;
 
-fn materialize_arg(
-    arg: &ArgumentHandle,
-    ctx: &dyn FunctionContext,
+fn materialize_arg<'b>(
+    arg: &ArgumentHandle<'_, 'b>,
+    ctx: &dyn FunctionContext<'b>,
 ) -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
     // Similar helper to dynamic.rs (avoid cyclic import). Minimal duplication; consider refactor later.
     if let Ok(r) = arg.as_reference_or_eval() {
@@ -36,18 +37,12 @@ fn materialize_arg(
         })?;
         Ok(rows)
     } else {
-        match arg.value()?.as_ref() {
-            LiteralValue::Array(a) => Ok(a.clone()),
-            v => Ok(vec![vec![v.clone()]]),
+        let cv = arg.value()?;
+        match cv.into_literal() {
+            LiteralValue::Array(a) => Ok(a),
+            v => Ok(vec![vec![v]]),
         }
     }
-}
-
-fn collapse_if_scalar(mut rows: Vec<Vec<LiteralValue>>) -> LiteralValue {
-    if rows.len() == 1 && rows[0].len() == 1 {
-        return rows.remove(0).remove(0);
-    }
-    LiteralValue::Array(rows)
 }
 
 impl Function for HStackFn {
@@ -77,13 +72,15 @@ impl Function for HStackFn {
         });
         &SCHEMA
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.is_empty() {
-            return Ok(LiteralValue::Array(vec![]));
+            return Ok(crate::traits::CalcValue::Range(
+                crate::engine::range_view::RangeView::from_owned_rows(vec![], ctx.date_system()),
+            ));
         }
 
         let mut entries = Vec::with_capacity(args.len());
@@ -98,7 +95,9 @@ impl Function for HStackFn {
                 }
                 if let Some(tr) = target_rows {
                     if rows != tr {
-                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Value),
+                        )));
                     }
                 } else {
                     target_rows = Some(rows);
@@ -106,10 +105,12 @@ impl Function for HStackFn {
                 total_cols += cols;
                 entries.push(HStackEntry::View(v));
             } else {
-                let v = a.value()?.into_owned();
+                let v = a.value()?.into_literal();
                 if let Some(tr) = target_rows {
                     if tr != 1 {
-                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Value),
+                        )));
                     }
                 } else {
                     target_rows = Some(1);
@@ -120,7 +121,9 @@ impl Function for HStackFn {
         }
 
         if entries.is_empty() {
-            return Ok(LiteralValue::Array(vec![]));
+            return Ok(crate::traits::CalcValue::Range(
+                crate::engine::range_view::RangeView::from_owned_rows(vec![], ctx.date_system()),
+            ));
         }
 
         let row_count = target_rows.unwrap();
@@ -133,9 +136,9 @@ impl Function for HStackFn {
             match entry {
                 HStackEntry::View(v) => {
                     let (v_rows, v_cols) = v.dims();
-                    for r in 0..v_rows {
+                    for (r, row) in result.iter_mut().enumerate().take(v_rows) {
                         for c in 0..v_cols {
-                            result[r].push(v.get_cell(r, c));
+                            row.push(v.get_cell(r, c));
                         }
                     }
                 }
@@ -145,7 +148,7 @@ impl Function for HStackFn {
             }
         }
 
-        Ok(collapse_if_scalar(result))
+        Ok(collapse_if_scalar(result, ctx.date_system()))
     }
 }
 
@@ -181,13 +184,15 @@ impl Function for VStackFn {
         });
         &SCHEMA
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.is_empty() {
-            return Ok(LiteralValue::Array(vec![]));
+            return Ok(crate::traits::CalcValue::Range(
+                crate::engine::range_view::RangeView::from_owned_rows(vec![], ctx.date_system()),
+            ));
         }
 
         let mut target_width: Option<usize> = None;
@@ -202,7 +207,9 @@ impl Function for VStackFn {
                 }
                 if let Some(tw) = target_width {
                     if cols != tw {
-                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Value),
+                        )));
                     }
                 } else {
                     target_width = Some(cols);
@@ -210,10 +217,12 @@ impl Function for VStackFn {
                 total_rows += rows;
                 entries.push(VStackEntry::View(v));
             } else {
-                let v = a.value()?.into_owned();
+                let v = a.value()?.into_literal();
                 if let Some(tw) = target_width {
                     if tw != 1 {
-                        return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Value),
+                        )));
                     }
                 } else {
                     target_width = Some(1);
@@ -224,17 +233,19 @@ impl Function for VStackFn {
         }
 
         if entries.is_empty() {
-            return Ok(LiteralValue::Array(vec![]));
+            return Ok(crate::traits::CalcValue::Range(
+                crate::engine::range_view::RangeView::from_owned_rows(vec![], ctx.date_system()),
+            ));
         }
 
         let mut result: Vec<Vec<LiteralValue>> = Vec::with_capacity(total_rows);
         for entry in entries {
             match entry {
                 VStackEntry::View(v) => {
-                    v.for_each_row(&mut |row| {
+                    let _ = v.for_each_row(&mut |row| {
                         result.push(row.to_vec());
                         Ok(())
-                    })?;
+                    });
                 }
                 VStackEntry::Scalar(s) => {
                     result.push(vec![s]);
@@ -242,7 +253,7 @@ impl Function for VStackFn {
             }
         }
 
-        Ok(collapse_if_scalar(result))
+        Ok(collapse_if_scalar(result, ctx.date_system()))
     }
 }
 
@@ -304,7 +315,10 @@ mod tests {
             ArgumentHandle::new(&left, &ctx),
             ArgumentHandle::new(&right, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2);
@@ -321,7 +335,10 @@ mod tests {
             ArgumentHandle::new(&left, &ctx),
             ArgumentHandle::new(&mism, &ctx),
         ];
-        let v_bad = f.dispatch(&args_bad, &ctx.function_context(None)).unwrap();
+        let v_bad = f
+            .dispatch(&args_bad, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match v_bad {
             LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
             other => panic!("expected #VALUE! got {other:?}"),
@@ -346,7 +363,10 @@ mod tests {
             ArgumentHandle::new(&top, &ctx),
             ArgumentHandle::new(&bottom, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2);
@@ -363,7 +383,10 @@ mod tests {
             ArgumentHandle::new(&top, &ctx),
             ArgumentHandle::new(&extra, &ctx),
         ];
-        let v_bad = f.dispatch(&args_bad, &ctx.function_context(None)).unwrap();
+        let v_bad = f
+            .dispatch(&args_bad, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match v_bad {
             LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
             other => panic!("expected #VALUE! got {other:?}"),
@@ -381,12 +404,18 @@ mod tests {
             ArgumentHandle::new(&s1, &ctx),
             ArgumentHandle::new(&s2, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         // 1 row x 2 cols stays as array (not scalar collapse)
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 1);
-                assert_eq!(a[0], vec![LiteralValue::Int(5), LiteralValue::Int(6)]);
+                assert_eq!(
+                    a[0],
+                    vec![LiteralValue::Number(5.0), LiteralValue::Number(6.0)]
+                );
             }
             other => panic!("expected array got {other:?}"),
         }
@@ -399,7 +428,10 @@ mod tests {
         let f = ctx.context.get_function("", "VSTACK").unwrap();
         let lone = lit(LiteralValue::Int(9));
         let args = vec![ArgumentHandle::new(&lone, &ctx)];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(v, LiteralValue::Int(9));
     }
 }

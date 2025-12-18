@@ -21,14 +21,16 @@ impl Function for TodayFn {
         0
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        _args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let today = ctx.timezone().today();
         let serial = date_to_serial_for(ctx.date_system(), &today);
-        Ok(LiteralValue::Number(serial))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            serial,
+        )))
     }
 }
 
@@ -47,14 +49,16 @@ impl Function for NowFn {
         0
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        _args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let now = ctx.timezone().now();
         let serial = datetime_to_serial_for(ctx.date_system(), &now);
-        Ok(LiteralValue::Number(serial))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            serial,
+        )))
     }
 }
 
@@ -77,7 +81,10 @@ mod tests {
         let f = ctx.context.get_function("", "TODAY").unwrap();
 
         // Check that it returns a number
-        let result = f.dispatch(&[], &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&[], &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match result {
             LiteralValue::Number(n) => {
                 // Should be a reasonable date serial number (> 0)
@@ -98,7 +105,10 @@ mod tests {
         let f = ctx.context.get_function("", "NOW").unwrap();
 
         // Check that it returns a number
-        let result = f.dispatch(&[], &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&[], &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match result {
             LiteralValue::Number(n) => {
                 // Should be a reasonable date serial number (> 0)

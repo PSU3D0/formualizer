@@ -7,6 +7,8 @@ use crate::resolver::PyResolver;
 use crate::value::{literal_to_py, py_to_literal};
 use crate::workbook::{CellData, PyCell, PyWorkbook};
 
+type PyObject = pyo3::Py<pyo3::PyAny>;
+
 /// Python wrapper for the evaluation engine
 #[pyclass(name = "Engine")]
 pub struct PyEngine {
@@ -437,7 +439,7 @@ impl PyEngine {
 
         let wb_py = if let Some(wb) = workbook {
             // Load the workbook data into the engine
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let wb_ref = wb.borrow(py);
                 load_workbook_into_engine(&wb_ref, &mut engine)
             })?;
@@ -466,7 +468,7 @@ impl PyEngine {
         let mut engine = RustEngine::new(PyResolver, eval_config);
 
         // Load the workbook data into the engine
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let wb_ref = workbook.borrow(py);
             load_workbook_into_engine(&wb_ref, &mut engine)
         })?;
@@ -594,7 +596,7 @@ impl PyEngine {
 
         // Update workbook if present to keep it in sync
         if let Some(ref wb) = self.workbook {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let wb_ref = wb.borrow(py);
                 wb_ref.set_cell_data(
                     sheet,
@@ -633,7 +635,7 @@ impl PyEngine {
         // Note: There's no clear method in the engine, so we'd need to create a new one
         // For now, we'll just load the new data on top
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let wb_ref = workbook.borrow(py);
             load_workbook_into_engine(&wb_ref, &mut engine)
         })?;
@@ -644,7 +646,7 @@ impl PyEngine {
     /// Evaluate all cells in the workbook
     pub fn evaluate_all(&self, py: Python) -> PyResult<PyEvaluationResult> {
         // Drop GIL while Rust runs parallel work
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut engine = self.inner.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to acquire engine lock: {e}"
@@ -683,7 +685,7 @@ impl PyEngine {
             return w.evaluate_cell(py, sheet, row, col);
         }
 
-        let value = py.allow_threads(|| {
+        let value = py.detach(|| {
             let mut engine = self.inner.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to acquire engine lock: {e}"
@@ -783,7 +785,7 @@ impl PyEngine {
         }
 
         // Evaluate the cell value directly
-        let literal = py.allow_threads(|| {
+        let literal = py.detach(|| {
             let mut engine = self.inner.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to acquire engine lock: {e}"
@@ -819,7 +821,7 @@ impl PyEngine {
             }
         }
 
-        let values = py.allow_threads(|| {
+        let values = py.detach(|| {
             let mut engine = self.inner.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to acquire engine lock: {e}"

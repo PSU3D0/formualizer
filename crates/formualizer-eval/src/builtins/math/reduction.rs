@@ -22,11 +22,11 @@ impl Function for MinFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut mv: Option<f64> = None;
         for a in args {
             if let Ok(view) = a.range_view() {
@@ -37,9 +37,11 @@ impl Function for MinFn {
                         if col.null_count() < col.len() {
                             for i in 0..col.len() {
                                 if !col.is_null(i) {
-                                    return Ok(LiteralValue::Error(ExcelError::new(
-                                        crate::arrow_store::unmap_error_code(col.value(i)),
-                                    )));
+                                    return Ok(crate::traits::CalcValue::Scalar(
+                                        LiteralValue::Error(ExcelError::new(
+                                            crate::arrow_store::unmap_error_code(col.value(i)),
+                                        )),
+                                    ));
                                 }
                             }
                         }
@@ -55,18 +57,22 @@ impl Function for MinFn {
                     }
                 }
             } else {
-                let v = a.value()?;
-                match v.as_ref() {
-                    LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                let v = a.value()?.into_literal();
+                match v {
+                    LiteralValue::Error(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
                     other => {
-                        if let Ok(n) = coerce_num(other) {
+                        if let Ok(n) = coerce_num(&other) {
                             mv = Some(mv.map(|m| m.min(n)).unwrap_or(n));
                         }
                     }
                 }
             }
         }
-        Ok(LiteralValue::Number(mv.unwrap_or(0.0)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            mv.unwrap_or(0.0),
+        )))
     }
 }
 
@@ -86,11 +92,11 @@ impl Function for MaxFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut mv: Option<f64> = None;
         for a in args {
             if let Ok(view) = a.range_view() {
@@ -101,9 +107,11 @@ impl Function for MaxFn {
                         if col.null_count() < col.len() {
                             for i in 0..col.len() {
                                 if !col.is_null(i) {
-                                    return Ok(LiteralValue::Error(ExcelError::new(
-                                        crate::arrow_store::unmap_error_code(col.value(i)),
-                                    )));
+                                    return Ok(crate::traits::CalcValue::Scalar(
+                                        LiteralValue::Error(ExcelError::new(
+                                            crate::arrow_store::unmap_error_code(col.value(i)),
+                                        )),
+                                    ));
                                 }
                             }
                         }
@@ -119,18 +127,22 @@ impl Function for MaxFn {
                     }
                 }
             } else {
-                let v = a.value()?;
-                match v.as_ref() {
-                    LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                let v = a.value()?.into_literal();
+                match v {
+                    LiteralValue::Error(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
                     other => {
-                        if let Ok(n) = coerce_num(other) {
+                        if let Ok(n) = coerce_num(&other) {
                             mv = Some(mv.map(|m| m.max(n)).unwrap_or(n));
                         }
                     }
                 }
             }
         }
-        Ok(LiteralValue::Number(mv.unwrap_or(0.0)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            mv.unwrap_or(0.0),
+        )))
     }
 }
 
@@ -173,7 +185,8 @@ mod tests_min_max {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(out, LiteralValue::Number(1.0));
     }
 
@@ -195,7 +208,8 @@ mod tests_min_max {
                 &[ArgumentHandle::new(&arr, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(out, LiteralValue::Number(9.0));
     }
 
@@ -217,7 +231,8 @@ mod tests_min_max {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         match out {
             LiteralValue::Error(e) => assert_eq!(e, "#N/A"),
             v => panic!("expected error got {v:?}"),
@@ -244,7 +259,8 @@ mod tests_min_max {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         match out {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("expected error got {v:?}"),

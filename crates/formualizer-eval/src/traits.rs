@@ -82,6 +82,96 @@ impl Range for Box<dyn Range> {
 
 pub type CowValue<'a> = Cow<'a, LiteralValue>;
 
+#[derive(Debug, Clone)]
+pub enum CalcValue<'a> {
+    Scalar(LiteralValue),
+    Range(RangeView<'a>),
+}
+
+impl<'a> CalcValue<'a> {
+    pub fn into_literal(self) -> LiteralValue {
+        match self {
+            CalcValue::Scalar(s) => s,
+            CalcValue::Range(rv) => {
+                let (rows, cols) = rv.dims();
+                if rows == 1 && cols == 1 {
+                    rv.get_cell(0, 0)
+                } else {
+                    let mut data = Vec::with_capacity(rows);
+                    // Use a simple materialization loop for now
+                    // In the future, this should be optimized.
+                    let _ = rv.for_each_row(&mut |row| {
+                        data.push(row.to_vec());
+                        Ok(())
+                    });
+                    LiteralValue::Array(data)
+                }
+            }
+        }
+    }
+
+    pub fn as_scalar(&self) -> Option<&LiteralValue> {
+        match self {
+            CalcValue::Scalar(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_range(&self) -> Option<&RangeView<'a>> {
+        match self {
+            CalcValue::Range(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    pub fn into_owned(self) -> LiteralValue {
+        self.into_literal()
+    }
+}
+
+impl From<CalcValue<'_>> for LiteralValue {
+    fn from(val: CalcValue<'_>) -> Self {
+        val.into_literal()
+    }
+}
+
+impl<'a> PartialEq<LiteralValue> for CalcValue<'a> {
+    fn eq(&self, other: &LiteralValue) -> bool {
+        match self {
+            CalcValue::Scalar(s) => s == other,
+            CalcValue::Range(rv) => match other {
+                LiteralValue::Array(arr) => {
+                    let (rows, cols) = rv.dims();
+                    if arr.len() != rows {
+                        return false;
+                    }
+                    for (r, row) in arr.iter().enumerate() {
+                        if row.len() != cols {
+                            return false;
+                        }
+                        for (c, cell) in row.iter().enumerate() {
+                            if &rv.get_cell(r, c) != cell {
+                                return false;
+                            }
+                        }
+                    }
+                    true
+                }
+                _ => {
+                    let (rows, cols) = rv.dims();
+                    rows == 1 && cols == 1 && &rv.get_cell(0, 0) == other
+                }
+            },
+        }
+    }
+}
+
+impl<'a> PartialEq<CalcValue<'a>> for LiteralValue {
+    fn eq(&self, other: &CalcValue<'a>) -> bool {
+        other == self
+    }
+}
+
 pub enum EvaluatedArg<'a> {
     LiteralValue(CowValue<'a>),
     Range(Box<dyn Range>),
@@ -131,13 +221,13 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
-    pub fn value(&self) -> Result<CowValue<'_>, ExcelError> {
+    pub fn value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => {
                 if let ASTNodeType::Literal(ref v) = node.node_type {
-                    return Ok(Cow::Borrowed(v));
+                    return Ok(crate::traits::CalcValue::Scalar(v.clone()));
                 }
-                self.interp.evaluate_ast(node).map(Cow::Owned)
+                self.interp.evaluate_ast(node)
             }
             ArgumentExpr::Arena {
                 id,
@@ -145,8 +235,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 sheet_registry,
             } => self
                 .interp
-                .evaluate_arena_ast(*id, data_store, sheet_registry)
-                .map(Cow::Owned),
+                .evaluate_arena_ast(*id, data_store, sheet_registry),
         }
     }
 
@@ -257,7 +346,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     for row in rows {
                         let mut materialized_row = Vec::new();
                         for cell in row {
-                            materialized_row.push(self.interp.evaluate_ast(cell)?);
+                            materialized_row.push(self.interp.evaluate_ast(cell)?.into_literal());
                         }
                         materialized.push(materialized_row);
                     }
@@ -313,7 +402,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                                     data_store,
                                     self.sheet_registry(),
                                 )?;
-                                row.push(v);
+                                row.push(v.into_literal());
                             }
                             materialized.push(row);
                         }
@@ -337,7 +426,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     }
 
     /// Resolve as a RangeView (Phase 2 API). Only supports reference arguments.
-    pub fn range_view(&self) -> Result<RangeView<'_>, ExcelError> {
+    pub fn range_view(&self) -> Result<RangeView<'b>, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Reference { reference, .. } => self
@@ -355,7 +444,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     for r in rows {
                         let mut row_vals = Vec::with_capacity(r.len());
                         for cell in r {
-                            row_vals.push(self.interp.evaluate_ast(cell)?);
+                            row_vals.push(self.interp.evaluate_ast(cell)?.into_literal());
                         }
                         out.push(row_vals);
                     }
@@ -426,7 +515,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                                     data_store,
                                     sheet_registry,
                                 )?;
-                                row.push(v);
+                                row.push(v.into_literal());
                             }
                             out.push(row);
                         }
@@ -443,9 +532,10 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     }
 
     pub fn value_or_range(&self) -> Result<EvaluatedArg<'_>, ExcelError> {
-        self.range()
-            .map(EvaluatedArg::Range)
-            .or_else(|_| self.value().map(EvaluatedArg::LiteralValue))
+        self.range().map(EvaluatedArg::Range).or_else(|_| {
+            self.value()
+                .map(|cv| EvaluatedArg::LiteralValue(Cow::Owned(cv.into_literal())))
+        })
     }
 
     /// Lazily iterate values for this argument in row-major expansion order.
@@ -495,7 +585,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                             self.r = r;
                             self.c = c;
                             match self.interp.evaluate_ast(node) {
-                                Ok(v) => Some(v),
+                                Ok(cv) => Some(cv.into_literal()),
                                 Err(e) => Some(LiteralValue::Error(e)),
                             }
                         }
@@ -510,7 +600,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 }
                 _ => {
                     // Single value expression
-                    let v = self.value()?.into_owned();
+                    let v = self.value()?.into_literal();
                     Ok(Box::new(std::iter::once(v)))
                 }
             },
@@ -558,7 +648,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                                     self.data_store,
                                     self.sheet_registry,
                                 ) {
-                                    Ok(v) => Some(v),
+                                    Ok(cv) => Some(cv.into_literal()),
                                     Err(e) => Some(LiteralValue::Error(e)),
                                 }
                             }
@@ -578,7 +668,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         let v = self
                             .interp
                             .evaluate_arena_ast(*id, data_store, sheet_registry)?;
-                        Ok(Box::new(std::iter::once(v)))
+                        Ok(Box::new(std::iter::once(v.into_literal())))
                     }
                 }
             }
@@ -665,14 +755,14 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             formualizer_common::ArgKind::Any => true,
             formualizer_common::ArgKind::Range => self.range().is_ok(),
             formualizer_common::ArgKind::Number => matches!(
-                self.value()?.as_ref(),
+                self.value()?.into_literal(),
                 LiteralValue::Number(_) | LiteralValue::Int(_)
             ),
             formualizer_common::ArgKind::Text => {
-                matches!(self.value()?.as_ref(), LiteralValue::Text(_))
+                matches!(self.value()?.into_literal(), LiteralValue::Text(_))
             }
             formualizer_common::ArgKind::Logical => {
-                matches!(self.value()?.as_ref(), LiteralValue::Boolean(_))
+                matches!(self.value()?.into_literal(), LiteralValue::Boolean(_))
             }
         })
     }
@@ -988,7 +1078,7 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
     }
 
     /// Optional cancellation token. When Some, long-running operations should periodically abort.
-    fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool> {
+    fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         None
     }
 
@@ -1124,11 +1214,11 @@ pub enum VolatileLevel {
 }
 
 /// Minimal context exposed to functions (no engine/graph APIs)
-pub trait FunctionContext {
+pub trait FunctionContext<'ctx> {
     fn locale(&self) -> crate::locale::Locale;
     fn timezone(&self) -> &crate::timezone::TimeZoneSpec;
     fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>>;
-    fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool>;
+    fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>>;
     fn chunk_hint(&self) -> Option<usize>;
 
     /// Current formula sheet name.
@@ -1140,13 +1230,11 @@ pub trait FunctionContext {
     fn current_cell(&self) -> Option<CellRef>;
 
     /// Resolve a reference into a RangeView using the underlying engine context.
-    fn resolve_range_view<'c>(
-        &'c self,
+    fn resolve_range_view(
+        &self,
         _reference: &ReferenceType,
         _current_sheet: &str,
-    ) -> Result<RangeView<'c>, ExcelError> {
-        Err(ExcelError::new(ExcelErrorKind::NImpl))
-    }
+    ) -> Result<RangeView<'ctx>, ExcelError>;
 
     // Flats removed
 
@@ -1212,7 +1300,7 @@ impl<'a> DefaultFunctionContext<'a> {
     }
 }
 
-impl<'a> FunctionContext for DefaultFunctionContext<'a> {
+impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
     fn locale(&self) -> crate::locale::Locale {
         self.base.locale()
     }
@@ -1226,7 +1314,7 @@ impl<'a> FunctionContext for DefaultFunctionContext<'a> {
     fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>> {
         self.base.thread_pool()
     }
-    fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool> {
+    fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         self.base.cancellation_token()
     }
     fn chunk_hint(&self) -> Option<usize> {
@@ -1246,11 +1334,11 @@ impl<'a> FunctionContext for DefaultFunctionContext<'a> {
         self.current
     }
 
-    fn resolve_range_view<'c>(
-        &'c self,
+    fn resolve_range_view(
+        &self,
         reference: &ReferenceType,
         current_sheet: &str,
-    ) -> Result<RangeView<'c>, ExcelError> {
+    ) -> Result<RangeView<'a>, ExcelError> {
         self.base.resolve_range_view(reference, current_sheet)
     }
 

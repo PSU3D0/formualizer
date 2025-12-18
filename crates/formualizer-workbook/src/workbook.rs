@@ -205,6 +205,7 @@ impl Workbook {
                 columns: Vec::new(),
                 nrows: 0,
                 chunk_starts: Vec::new(),
+                chunk_rows: 32 * 1024,
             });
         }
 
@@ -714,7 +715,7 @@ impl Workbook {
     pub fn evaluate_cells_cancellable(
         &mut self,
         targets: &[(&str, u32, u32)],
-        cancel_flag: &std::sync::atomic::AtomicBool,
+        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Vec<LiteralValue>, IoError> {
         ACTIVE_WORKBOOK.with(|cell| {
             let previous = cell.replace(self as *const _);
@@ -743,7 +744,7 @@ impl Workbook {
 
     pub fn evaluate_all_cancellable(
         &mut self,
-        cancel_flag: &std::sync::atomic::AtomicBool,
+        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
         ACTIVE_WORKBOOK.with(|cell| {
             let previous = cell.replace(self as *const _);

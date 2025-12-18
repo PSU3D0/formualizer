@@ -139,7 +139,7 @@ impl SheetPortSession {
             .map_err(|_| js_error("failed to lock workbook"))?;
         let bindings_clone = self.bindings.clone();
         let mut sheetport =
-            formualizer_sheetport::SheetPort::from_bindings(&mut *guard, bindings_clone)
+            formualizer_sheetport::SheetPort::from_bindings(&mut guard, bindings_clone)
                 .map_err(sheetport_error_to_js)?;
         match f(&mut sheetport) {
             Ok(value) => {
@@ -157,7 +157,7 @@ fn bind_manifest(workbook: &Workbook, manifest: Manifest) -> Result<ManifestBind
     let mut guard = arc
         .write()
         .map_err(|_| js_error("failed to lock workbook"))?;
-    let sheetport = formualizer_sheetport::SheetPort::new(&mut *guard, manifest)
+    let sheetport = formualizer_sheetport::SheetPort::new(&mut guard, manifest)
         .map_err(sheetport_error_to_js)?;
     let (_, bindings) = sheetport.into_parts();
     Ok(bindings)

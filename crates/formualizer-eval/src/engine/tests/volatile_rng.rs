@@ -174,12 +174,12 @@ fn context_scoped_volatility_detection() {
         fn arg_schema(&self) -> &'static [ArgSchema] {
             &[]
         }
-        fn eval_scalar<'a, 'b>(
+        fn eval<'a, 'b, 'c>(
             &self,
-            _args: &'a [ArgumentHandle<'a, 'b>],
-            _ctx: &dyn FunctionContext,
-        ) -> Result<LiteralValue, formualizer_common::ExcelError> {
-            Ok(LiteralValue::Int(0))
+            _args: &'c [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)))
         }
     }
 

@@ -219,7 +219,7 @@ pub fn validate_and_prepare<'a, 'b>(
 
         // Criteria policy: parse into predicate
         if matches!(spec.coercion, CoercionPolicy::Criteria) {
-            let v = arg.value()?.into_owned();
+            let v = arg.value()?.into_literal();
             match parse_criteria(&v) {
                 Ok(pred) => {
                     items.push(PreparedArg::Predicate(pred));
@@ -240,9 +240,9 @@ pub fn validate_and_prepare<'a, 'b>(
             ShapeKind::Scalar => {
                 // Collapse to scalar if needed (top-left for arrays)
                 match arg.value() {
-                    Ok(v) => {
-                        let v = match v.as_ref() {
-                            LiteralValue::Array(arr) => {
+                    Ok(cv) => {
+                        let v: Cow<'_, LiteralValue> = match cv {
+                            crate::traits::CalcValue::Scalar(LiteralValue::Array(arr)) => {
                                 let tl = arr
                                     .first()
                                     .and_then(|row| row.first())
@@ -250,7 +250,8 @@ pub fn validate_and_prepare<'a, 'b>(
                                     .unwrap_or(LiteralValue::Empty);
                                 Cow::Owned(tl)
                             }
-                            _ => v,
+                            crate::traits::CalcValue::Range(rv) => Cow::Owned(rv.get_cell(0, 0)),
+                            crate::traits::CalcValue::Scalar(s) => Cow::Owned(s),
                         };
                         // Apply coercion policy to Value shapes when applicable
                         let coerced = match spec.coercion {
@@ -317,7 +318,7 @@ pub fn validate_and_prepare<'a, 'b>(
                         // Excel-compatible: functions that accept ranges typically also accept scalars.
                         // Fall back to treating the argument as a scalar value, even in strict mode.
                         match arg.value() {
-                            Ok(v) => items.push(PreparedArg::Value(v)),
+                            Ok(v) => items.push(PreparedArg::Value(Cow::Owned(v.into_literal()))),
                             Err(e2) => {
                                 items.push(PreparedArg::Value(Cow::Owned(LiteralValue::Error(e2))))
                             }

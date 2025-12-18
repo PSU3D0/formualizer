@@ -97,54 +97,68 @@ impl Function for AddressFn {
         &SCHEMA
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
 
         // Get row number
-        let row_val = args[0].value()?;
-        if let LiteralValue::Error(e) = row_val.as_ref() {
-            return Ok(LiteralValue::Error(e.clone()));
+        let row_val = args[0].value()?.into_literal();
+        if let LiteralValue::Error(e) = row_val {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
-        let row = match row_val.as_ref() {
-            LiteralValue::Number(n) => *n as i64,
-            LiteralValue::Int(i) => *i,
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
+        let row = match row_val {
+            LiteralValue::Number(n) => n as i64,
+            LiteralValue::Int(i) => i,
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
+            }
         };
 
         if !(1..=1_048_576).contains(&row) {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
 
         // Get column number
-        let col_val = args[1].value()?;
-        if let LiteralValue::Error(e) = col_val.as_ref() {
-            return Ok(LiteralValue::Error(e.clone()));
+        let col_val = args[1].value()?.into_literal();
+        if let LiteralValue::Error(e) = col_val {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
-        let col = match col_val.as_ref() {
-            LiteralValue::Number(n) => *n as i64,
-            LiteralValue::Int(i) => *i,
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
+        let col = match col_val {
+            LiteralValue::Number(n) => n as i64,
+            LiteralValue::Int(i) => i,
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
+            }
         };
 
         if !(1..=16384).contains(&col) {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
 
         // Get abs_num (default 1 = absolute)
         let abs_num = if args.len() > 2 {
-            let abs_val = args[2].value()?;
-            if let LiteralValue::Error(e) = abs_val.as_ref() {
-                return Ok(LiteralValue::Error(e.clone()));
+            let abs_val = args[2].value()?.into_literal();
+            if let LiteralValue::Error(e) = abs_val {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
-            match abs_val.as_ref() {
-                LiteralValue::Number(n) => *n as i64,
-                LiteralValue::Int(i) => *i,
+            match abs_val {
+                LiteralValue::Number(n) => n as i64,
+                LiteralValue::Int(i) => i,
                 _ => 1,
             }
         } else {
@@ -152,17 +166,19 @@ impl Function for AddressFn {
         };
 
         if !(1..=4).contains(&abs_num) {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
 
         // Get a1 (default TRUE = A1 notation)
         let a1_style = if args.len() > 3 {
-            let a1_val = args[3].value()?;
-            if let LiteralValue::Error(e) = a1_val.as_ref() {
-                return Ok(LiteralValue::Error(e.clone()));
+            let a1_val = args[3].value()?.into_literal();
+            if let LiteralValue::Error(e) = a1_val {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
-            match a1_val.as_ref() {
-                LiteralValue::Boolean(b) => *b,
+            match a1_val {
+                LiteralValue::Boolean(b) => b,
                 _ => true,
             }
         } else {
@@ -171,12 +187,12 @@ impl Function for AddressFn {
 
         // Get sheet name (optional)
         let sheet_name = if args.len() > 4 {
-            let sheet_val = args[4].value()?;
-            if let LiteralValue::Error(e) = sheet_val.as_ref() {
-                return Ok(LiteralValue::Error(e.clone()));
+            let sheet_val = args[4].value()?.into_literal();
+            if let LiteralValue::Error(e) = sheet_val {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
-            match sheet_val.as_ref() {
-                LiteralValue::Text(s) => Some(s.clone()),
+            match sheet_val {
+                LiteralValue::Text(s) => Some(s),
                 _ => None,
             }
         } else {
@@ -241,7 +257,9 @@ impl Function for AddressFn {
             address
         };
 
-        Ok(LiteralValue::Text(final_address))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+            final_address,
+        )))
     }
 }
 
@@ -282,7 +300,10 @@ mod tests {
             ArgumentHandle::new(&three, &ctx),
         ];
 
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Text("$C$2".into()));
     }
 
@@ -403,7 +424,9 @@ mod tests {
             ArgumentHandle::new(&r1c1, &ctx),
         ];
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Text("R5C3".into())
         );
 
@@ -434,7 +457,10 @@ mod tests {
             ArgumentHandle::new(&big_row, &ctx),
             ArgumentHandle::new(&col, &ctx),
         ];
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert!(matches!(result, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
 
         // Column too large
@@ -444,7 +470,10 @@ mod tests {
             ArgumentHandle::new(&row, &ctx),
             ArgumentHandle::new(&big_col, &ctx),
         ];
-        let result2 = f.dispatch(&args2, &ctx.function_context(None)).unwrap();
+        let result2 = f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert!(matches!(result2, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
 
         // Invalid abs_num
@@ -455,7 +484,10 @@ mod tests {
             ArgumentHandle::new(&normal_col, &ctx),
             ArgumentHandle::new(&abs5, &ctx),
         ];
-        let result3 = f.dispatch(&args3, &ctx.function_context(None)).unwrap();
+        let result3 = f
+            .dispatch(&args3, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert!(matches!(result3, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
     }
 }

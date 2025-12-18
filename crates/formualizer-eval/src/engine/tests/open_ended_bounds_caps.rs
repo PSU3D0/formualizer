@@ -7,8 +7,10 @@ use formualizer_parse::parser::ReferenceType;
 #[test]
 fn whole_column_reference_uses_configured_cap_when_bounds_unknown() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.max_open_ended_rows = 100_000;
+    let cfg = EvalConfig {
+        max_open_ended_rows: 100_000,
+        ..Default::default()
+    };
     let cap_rows = cfg.max_open_ended_rows as usize;
     let mut engine = Engine::new(wb, cfg);
 

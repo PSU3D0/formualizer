@@ -6,6 +6,8 @@ use pyo3::conversion::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+type PyObject = pyo3::Py<pyo3::PyAny>;
+
 #[pyclass(module = "formualizer", name = "ASTNode")]
 #[derive(Clone)]
 pub struct PyASTNode {
@@ -368,11 +370,12 @@ impl PyRefWalker {
         if slf.index < slf.refs.len() {
             let reference = slf.refs[slf.index].clone();
             slf.index += 1;
-            Some(Python::with_gil(|py| {
+            let py = slf.py();
+            Some(
                 reference
                     .into_py_any(py)
-                    .expect("ReferenceLike should convert to PyObject")
-            }))
+                    .expect("ReferenceLike should convert to PyObject"),
+            )
         } else {
             None
         }

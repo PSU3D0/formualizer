@@ -5,13 +5,20 @@ use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
+fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    Ok(match arg.value()? {
+        crate::traits::CalcValue::Scalar(v) => v,
+        crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
+    })
+}
+
 fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
-    let v = a.value()?;
-    Ok(match v.as_ref() {
-        LiteralValue::Text(s) => s.clone(),
+    let v = scalar_like_value(a)?;
+    Ok(match v {
+        LiteralValue::Text(s) => s,
         LiteralValue::Empty => String::new(),
         LiteralValue::Boolean(b) => {
-            if *b {
+            if b {
                 "TRUE".into()
             } else {
                 "FALSE".into()
@@ -19,7 +26,7 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
         }
         LiteralValue::Int(i) => i.to_string(),
         LiteralValue::Number(f) => f.to_string(),
-        LiteralValue::Error(e) => return Err(e.clone()),
+        LiteralValue::Error(e) => return Err(e),
         other => other.to_string(),
     })
 }
@@ -41,35 +48,45 @@ impl Function for FindFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 || args.len() > 3 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         let needle = to_text(&args[0])?;
         let hay = to_text(&args[1])?;
         let start = if args.len() == 3 {
             let n = number_like(&args[2])?;
             if n < 1 {
-                return Ok(LiteralValue::Error(ExcelError::new_value()));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
             }
             (n - 1) as usize
         } else {
             0
         };
         if needle.is_empty() {
-            return Ok(LiteralValue::Int(1));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)));
         }
         if start > hay.len() {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         if let Some(pos) = hay[start..].find(&needle) {
-            Ok(LiteralValue::Int((start + pos + 1) as i64))
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                (start + pos + 1) as i64,
+            )))
         } else {
-            Ok(LiteralValue::Error(ExcelError::new_value()))
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )))
         }
     }
 }
@@ -91,13 +108,15 @@ impl Function for SearchFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 || args.len() > 3 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         let needle = to_text(&args[0])?.to_ascii_lowercase();
         let hay_raw = to_text(&args[1])?;
@@ -105,36 +124,46 @@ impl Function for SearchFn {
         let start = if args.len() == 3 {
             let n = number_like(&args[2])?;
             if n < 1 {
-                return Ok(LiteralValue::Error(ExcelError::new_value()));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
             }
             (n - 1) as usize
         } else {
             0
         };
         if needle.is_empty() {
-            return Ok(LiteralValue::Int(1));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)));
         }
         if start > hay.len() {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         // Convert wildcard to regex-like simple pattern
         // We'll implement manual scanning.
         let is_wild = needle.contains('*') || needle.contains('?');
         if !is_wild {
             if let Some(pos) = hay[start..].find(&needle) {
-                return Ok(LiteralValue::Int((start + pos + 1) as i64));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                    (start + pos + 1) as i64,
+                )));
             } else {
-                return Ok(LiteralValue::Error(ExcelError::new_value()));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
             }
         }
         // Wildcard scan
         for offset in start..=hay.len() {
             if wildcard_match(&needle, &hay[offset..]) {
-                return Ok(LiteralValue::Int((offset + 1) as i64));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                    (offset + 1) as i64,
+                )));
             }
         }
-        Ok(LiteralValue::Error(ExcelError::from_error_string(
-            "#VALUE!",
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::from_error_string("#VALUE!"),
         )))
     }
 }
@@ -186,32 +215,34 @@ impl Function for ExactFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let a = to_text(&args[0])?;
         let b = to_text(&args[1])?;
-        Ok(LiteralValue::Boolean(a == b))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            a == b,
+        )))
     }
 }
 
 fn number_like<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<i64, ExcelError> {
-    let v = a.value()?;
-    Ok(match v.as_ref() {
-        LiteralValue::Int(i) => *i,
-        LiteralValue::Number(f) => *f as i64,
+    let v = scalar_like_value(a)?;
+    Ok(match v {
+        LiteralValue::Int(i) => i,
+        LiteralValue::Number(f) => f as i64,
         LiteralValue::Text(t) => t.parse::<i64>().unwrap_or(0),
         LiteralValue::Boolean(b) => {
-            if *b {
+            if b {
                 1
             } else {
                 0
             }
         }
         LiteralValue::Empty => 0,
-        LiteralValue::Error(e) => return Err(e.clone()),
+        LiteralValue::Error(e) => return Err(e),
         other => other.to_string().parse::<i64>().unwrap_or(0),
     })
 }
@@ -251,7 +282,8 @@ mod tests {
                 ],
                 &ctx.function_context(None)
             )
-            .unwrap(),
+            .unwrap()
+            .into_literal(),
             LiteralValue::Int(7)
         );
         let needle2 = lit(LiteralValue::Text("world".into()));
@@ -263,7 +295,8 @@ mod tests {
                 ],
                 &ctx.function_context(None)
             )
-            .unwrap(),
+            .unwrap()
+            .into_literal(),
             LiteralValue::Int(7)
         );
     }

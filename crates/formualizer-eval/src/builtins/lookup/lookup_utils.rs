@@ -327,6 +327,14 @@ fn find_exact_number_in_view(
             }
         }
     }
+
+    // Excel-like semantics: Empty cells compare equal to numeric zero.
+    if n.abs() < 1e-12
+        && let Some(idx) = find_exact_empty_in_view(view, vertical)?
+    {
+        return Ok(Some(idx));
+    }
+
     Ok(None)
 }
 

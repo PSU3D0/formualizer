@@ -1,6 +1,6 @@
 use super::super::utils::{
-    ARG_ANY_ONE, ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, EPSILON_NEAR_ZERO, binary_numeric_args,
-    unary_numeric_arg,
+    ARG_ANY_ONE, ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, EPSILON_NEAR_ZERO,
+    binary_numeric_elementwise, unary_numeric_arg, unary_numeric_elementwise,
 };
 use crate::args::ArgSchema;
 use crate::function::Function;
@@ -24,27 +24,12 @@ impl Function for SinFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        let x = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(x.sin()))
-    }
-
-    fn eval_map(
-        &self,
-        m: &mut dyn crate::function::FnMapCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        if !m.is_array_context() {
-            return None;
-        }
-        let mut closure = |n: f64| Ok(LiteralValue::Number(n.sin()));
-        if let Err(e) = m.map_unary_numeric(&mut closure) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        Some(Ok(m.finalize()))
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        unary_numeric_elementwise(args, ctx, |x| Ok(LiteralValue::Number(x.sin())))
     }
 }
 
@@ -75,9 +60,50 @@ mod tests_sin {
         let sin = ctx.context.get_function("", "SIN").unwrap();
         let a0 = make_num_ast(PI / 2.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match sin.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match sin
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, 1.0),
             v => panic!("unexpected {v:?}"),
+        }
+    }
+
+    #[test]
+    fn test_sin_array_literal() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SinFn));
+        let ctx = interp(&wb);
+        let sin = ctx.context.get_function("", "SIN").unwrap();
+        let arr = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Number(0.0),
+                LiteralValue::Number(PI / 2.0),
+            ]])),
+            None,
+        );
+        let args = vec![ArgumentHandle::new(&arr, &ctx)];
+
+        match sin
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            formualizer_common::LiteralValue::Array(rows) => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].len(), 2);
+                match (&rows[0][0], &rows[0][1]) {
+                    (
+                        formualizer_common::LiteralValue::Number(a),
+                        formualizer_common::LiteralValue::Number(b),
+                    ) => {
+                        assert_close(*a, 0.0);
+                        assert_close(*b, 1.0);
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            other => panic!("expected array, got {other:?}"),
         }
     }
 }
@@ -95,27 +121,12 @@ impl Function for CosFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        let x = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(x.cos()))
-    }
-
-    fn eval_map(
-        &self,
-        m: &mut dyn crate::function::FnMapCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        if !m.is_array_context() {
-            return None;
-        }
-        let mut closure = |n: f64| Ok(LiteralValue::Number(n.cos()));
-        if let Err(e) = m.map_unary_numeric(&mut closure) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        Some(Ok(m.finalize()))
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        unary_numeric_elementwise(args, ctx, |x| Ok(LiteralValue::Number(x.cos())))
     }
 }
 
@@ -144,7 +155,11 @@ mod tests_cos {
         let cos = ctx.context.get_function("", "COS").unwrap();
         let a0 = make_num_ast(0.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match cos.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match cos
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, 1.0),
             v => panic!("unexpected {v:?}"),
         }
@@ -164,27 +179,12 @@ impl Function for TanFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        let x = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(x.tan()))
-    }
-
-    fn eval_map(
-        &self,
-        m: &mut dyn crate::function::FnMapCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        if !m.is_array_context() {
-            return None;
-        }
-        let mut closure = |n: f64| Ok(LiteralValue::Number(n.tan()));
-        if let Err(e) = m.map_unary_numeric(&mut closure) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        Some(Ok(m.finalize()))
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        unary_numeric_elementwise(args, ctx, |x| Ok(LiteralValue::Number(x.tan())))
     }
 }
 
@@ -213,7 +213,11 @@ mod tests_tan {
         let tan = ctx.context.get_function("", "TAN").unwrap();
         let a0 = make_num_ast(PI / 4.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match tan.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match tan
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, 1.0),
             v => panic!("unexpected {v:?}"),
         }
@@ -233,16 +237,20 @@ impl Function for AsinFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if !(-1.0..=1.0).contains(&x) {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        Ok(LiteralValue::Number(x.asin()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.asin(),
+        )))
     }
 }
 
@@ -272,14 +280,22 @@ mod tests_asin {
         // valid
         let a0 = make_num_ast(0.5);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match asin.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match asin
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, (0.5f64).asin()),
             v => panic!("unexpected {v:?}"),
         }
         // invalid domain
         let a1 = make_num_ast(2.0);
         let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
-        match asin.dispatch(&args2, &ctx.function_context(None)).unwrap() {
+        match asin
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
             v => panic!("expected error, got {v:?}"),
         }
@@ -299,16 +315,20 @@ impl Function for AcosFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if !(-1.0..=1.0).contains(&x) {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        Ok(LiteralValue::Number(x.acos()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.acos(),
+        )))
     }
 }
 
@@ -337,13 +357,21 @@ mod tests_acos {
         let acos = ctx.context.get_function("", "ACOS").unwrap();
         let a0 = make_num_ast(0.5);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match acos.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match acos
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, (0.5f64).acos()),
             v => panic!("unexpected {v:?}"),
         }
         let a1 = make_num_ast(-2.0);
         let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
-        match acos.dispatch(&args2, &ctx.function_context(None)).unwrap() {
+        match acos
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
             v => panic!("expected error, got {v:?}"),
         }
@@ -361,15 +389,17 @@ impl Function for AtanFn {
         1
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        &ARG_ANY_ONE[..]
+        &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(x.atan()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.atan(),
+        )))
     }
 }
 
@@ -398,7 +428,11 @@ mod tests_atan {
         let atan = ctx.context.get_function("", "ATAN").unwrap();
         let a0 = make_num_ast(1.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match atan.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match atan
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, (1.0f64).atan()),
             v => panic!("unexpected {v:?}"),
         }
@@ -418,28 +452,13 @@ impl Function for Atan2Fn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_TWO[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        let (x, y) = binary_numeric_args(args)?; // Excel: ATAN2(x_num, y_num)
-        if x == 0.0 && y == 0.0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
-            )));
-        }
-        Ok(LiteralValue::Number(y.atan2(x)))
-    }
-
-    fn eval_map(
-        &self,
-        m: &mut dyn crate::function::FnMapCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        if !m.is_array_context() {
-            return None;
-        }
-        let mut closure = |x: f64, y: f64| {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // Excel: ATAN2(x_num, y_num)
+        binary_numeric_elementwise(args, ctx, |x, y| {
             if x == 0.0 && y == 0.0 {
                 Ok(LiteralValue::Error(ExcelError::from_error_string(
                     "#DIV/0!",
@@ -447,11 +466,7 @@ impl Function for Atan2Fn {
             } else {
                 Ok(LiteralValue::Number(y.atan2(x)))
             }
-        };
-        if let Err(e) = m.map_binary_numeric(&mut closure) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        Some(Ok(m.finalize()))
+        })
     }
 }
 
@@ -485,7 +500,11 @@ mod tests_atan2 {
             ArgumentHandle::new(&a0, &ctx),
             ArgumentHandle::new(&a1, &ctx),
         ];
-        match atan2.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match atan2
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, PI / 4.0),
             v => panic!("unexpected {v:?}"),
         }
@@ -496,9 +515,53 @@ mod tests_atan2 {
             ArgumentHandle::new(&b0, &ctx),
             ArgumentHandle::new(&b1, &ctx),
         ];
-        match atan2.dispatch(&args2, &ctx.function_context(None)).unwrap() {
+        match atan2
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("expected error, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn test_atan2_broadcast_scalar_over_array() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(Atan2Fn));
+        let ctx = interp(&wb);
+        let atan2 = ctx.context.get_function("", "ATAN2").unwrap();
+
+        // ATAN2(x_num=1, y_num={0,1}) => {0, pi/4}
+        let x = make_num_ast(1.0);
+        let y = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Number(0.0),
+                LiteralValue::Number(1.0),
+            ]])),
+            None,
+        );
+        let args = vec![ArgumentHandle::new(&x, &ctx), ArgumentHandle::new(&y, &ctx)];
+
+        match atan2
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            formualizer_common::LiteralValue::Array(rows) => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].len(), 2);
+                match (&rows[0][0], &rows[0][1]) {
+                    (
+                        formualizer_common::LiteralValue::Number(a),
+                        formualizer_common::LiteralValue::Number(b),
+                    ) => {
+                        assert_close(*a, 0.0);
+                        assert_close(*b, PI / 4.0);
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            other => panic!("expected array, got {other:?}"),
         }
     }
 }
@@ -516,19 +579,21 @@ impl Function for SecFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let c = x.cos();
         if c.abs() < EPSILON_NEAR_ZERO {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        Ok(LiteralValue::Number(1.0 / c))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            1.0 / c,
+        )))
     }
 }
 
@@ -557,13 +622,21 @@ mod tests_sec {
         let sec = ctx.context.get_function("", "SEC").unwrap();
         let a0 = make_num_ast(0.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match sec.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match sec
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, 1.0),
             v => panic!("unexpected {v:?}"),
         }
         let a1 = make_num_ast(PI / 2.0);
         let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
-        match sec.dispatch(&args2, &ctx.function_context(None)).unwrap() {
+        match sec
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             LiteralValue::Number(n) => assert!(n.abs() > 1e12), // near singularity
             v => panic!("unexpected {v:?}"),
@@ -584,19 +657,21 @@ impl Function for CscFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let s = x.sin();
         if s.abs() < EPSILON_NEAR_ZERO {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        Ok(LiteralValue::Number(1.0 / s))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            1.0 / s,
+        )))
     }
 }
 
@@ -625,13 +700,21 @@ mod tests_csc {
         let csc = ctx.context.get_function("", "CSC").unwrap();
         let a0 = make_num_ast(PI / 2.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match csc.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match csc
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, 1.0),
             v => panic!("unexpected {v:?}"),
         }
         let a1 = make_num_ast(0.0);
         let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
-        match csc.dispatch(&args2, &ctx.function_context(None)).unwrap() {
+        match csc
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("expected error, got {v:?}"),
         }
@@ -651,19 +734,21 @@ impl Function for CotFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let t = x.tan();
         if t.abs() < EPSILON_NEAR_ZERO {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        Ok(LiteralValue::Number(1.0 / t))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            1.0 / t,
+        )))
     }
 }
 
@@ -692,13 +777,21 @@ mod tests_cot {
         let cot = ctx.context.get_function("", "COT").unwrap();
         let a0 = make_num_ast(PI / 4.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match cot.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match cot
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, 1.0),
             v => panic!("unexpected {v:?}"),
         }
         let a1 = make_num_ast(0.0);
         let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
-        match cot.dispatch(&args2, &ctx.function_context(None)).unwrap() {
+        match cot
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("expected error, got {v:?}"),
         }
@@ -718,11 +811,11 @@ impl Function for AcotFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let result = if x == 0.0 {
             PI / 2.0
@@ -731,7 +824,9 @@ impl Function for AcotFn {
         } else {
             (1.0 / x).atan() + PI
         };
-        Ok(LiteralValue::Number(result))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -760,7 +855,11 @@ mod tests_acot {
         let acot = ctx.context.get_function("", "ACOT").unwrap();
         let a0 = make_num_ast(2.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match acot.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match acot
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, 0.4636476090008061),
             v => panic!("unexpected {v:?}"),
         }
@@ -782,13 +881,15 @@ impl Function for SinhFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(x.sinh()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.sinh(),
+        )))
     }
 }
 
@@ -818,7 +919,7 @@ mod tests_sinh {
         let a0 = make_num_ast(1.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
         let fctx = ctx.function_context(None);
-        match f.dispatch(&args, &fctx).unwrap() {
+        match f.dispatch(&args, &fctx).unwrap().into_literal() {
             LiteralValue::Number(n) => assert_close(n, (1.0f64).sinh()),
             v => panic!("unexpected {v:?}"),
         }
@@ -838,13 +939,15 @@ impl Function for CoshFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(x.cosh()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.cosh(),
+        )))
     }
 }
 
@@ -873,7 +976,11 @@ mod tests_cosh {
         let f = ctx.context.get_function("", "COSH").unwrap();
         let a0 = make_num_ast(1.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, (1.0f64).cosh()),
             v => panic!("unexpected {v:?}"),
         }
@@ -893,13 +1000,15 @@ impl Function for TanhFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(x.tanh()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.tanh(),
+        )))
     }
 }
 
@@ -928,7 +1037,11 @@ mod tests_tanh {
         let f = ctx.context.get_function("", "TANH").unwrap();
         let a0 = make_num_ast(0.5);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, (0.5f64).tanh()),
             v => panic!("unexpected {v:?}"),
         }
@@ -948,13 +1061,15 @@ impl Function for AsinhFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(x.asinh()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.asinh(),
+        )))
     }
 }
 
@@ -983,7 +1098,11 @@ mod tests_asinh {
         let f = ctx.context.get_function("", "ASINH").unwrap();
         let a0 = make_num_ast(1.5);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, (1.5f64).asinh()),
             v => panic!("unexpected {v:?}"),
         }
@@ -1003,16 +1122,20 @@ impl Function for AcoshFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if x < 1.0 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        Ok(LiteralValue::Number(x.acosh()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.acosh(),
+        )))
     }
 }
 
@@ -1039,12 +1162,18 @@ mod tests_acosh {
         let a0 = make_num_ast(1.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(0.0)
         );
         let a1 = make_num_ast(0.5);
         let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
-        match f.dispatch(&args2, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
             v => panic!("expected error, got {v:?}"),
         }
@@ -1064,16 +1193,20 @@ impl Function for AtanhFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
         if x <= -1.0 || x >= 1.0 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        Ok(LiteralValue::Number(x.atanh()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.atanh(),
+        )))
     }
 }
 
@@ -1102,13 +1235,21 @@ mod tests_atanh {
         let f = ctx.context.get_function("", "ATANH").unwrap();
         let a0 = make_num_ast(0.5);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, (0.5f64).atanh()),
             v => panic!("unexpected {v:?}"),
         }
         let a1 = make_num_ast(1.0);
         let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
-        match f.dispatch(&args2, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
             v => panic!("expected error, got {v:?}"),
         }
@@ -1128,13 +1269,15 @@ impl Function for SechFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(1.0 / x.cosh()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            1.0 / x.cosh(),
+        )))
     }
 }
 
@@ -1163,7 +1306,11 @@ mod tests_sech {
         let f = ctx.context.get_function("", "SECH").unwrap();
         let a0 = make_num_ast(0.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, 1.0),
             v => panic!("unexpected {v:?}"),
         }
@@ -1181,21 +1328,23 @@ impl Function for CschFn {
         1
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        &ARG_ANY_ONE[..]
+        &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
-        let s = x.sinh();
-        if s == 0.0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
+        let s = x.sin();
+        if s.abs() < EPSILON_NEAR_ZERO {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        Ok(LiteralValue::Number(1.0 / s))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            1.0 / s,
+        )))
     }
 }
 
@@ -1214,14 +1363,31 @@ mod tests_csch {
             None,
         )
     }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9);
+    }
     #[test]
-    fn test_csch_div0() {
+    fn test_csch_basic_and_div0() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CschFn));
         let ctx = interp(&wb);
-        let f = ctx.context.get_function("", "CSCH").unwrap();
-        let a0 = make_num_ast(0.0);
+        let csc = ctx.context.get_function("", "CSCH").unwrap();
+        let a0 = make_num_ast(PI / 2.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match csc
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 1.0),
+            v => panic!("unexpected {v:?}"),
+        }
+        let a1 = make_num_ast(0.0);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match csc
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("expected error, got {v:?}"),
         }
@@ -1239,21 +1405,23 @@ impl Function for CothFn {
         1
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        &ARG_ANY_ONE[..]
+        &ARG_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
         let s = x.sinh();
         if s.abs() < EPSILON_NEAR_ZERO {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        Ok(LiteralValue::Number(x.cosh() / s))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            x.cosh() / s,
+        )))
     }
 }
 
@@ -1279,7 +1447,11 @@ mod tests_coth {
         let f = ctx.context.get_function("", "COTH").unwrap();
         let a0 = make_num_ast(0.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("expected error, got {v:?}"),
         }
@@ -1301,13 +1473,15 @@ impl Function for RadiansFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let deg = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(deg * PI / 180.0))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            deg * PI / 180.0,
+        )))
     }
 }
 
@@ -1336,7 +1510,11 @@ mod tests_radians {
         let f = ctx.context.get_function("", "RADIANS").unwrap();
         let a0 = make_num_ast(180.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, PI),
             v => panic!("unexpected {v:?}"),
         }
@@ -1356,13 +1534,15 @@ impl Function for DegreesFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let rad = unary_numeric_arg(args)?;
-        Ok(LiteralValue::Number(rad * 180.0 / PI))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            rad * 180.0 / PI,
+        )))
     }
 }
 
@@ -1391,7 +1571,11 @@ mod tests_degrees {
         let f = ctx.context.get_function("", "DEGREES").unwrap();
         let a0 = make_num_ast(PI);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(n) => assert_close(n, 180.0),
             v => panic!("unexpected {v:?}"),
         }
@@ -1408,12 +1592,12 @@ impl Function for PiFn {
     fn min_args(&self) -> usize {
         0
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        _args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        Ok(LiteralValue::Number(PI))
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(PI)))
     }
 }
 
@@ -1428,7 +1612,9 @@ mod tests_pi {
         let ctx = wb.interpreter();
         let f = ctx.context.get_function("", "PI").unwrap();
         assert_eq!(
-            f.eval_scalar(&[], &ctx.function_context(None)).unwrap(),
+            f.eval(&[], &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(PI)
         );
     }

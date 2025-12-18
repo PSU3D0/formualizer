@@ -7,6 +7,7 @@
 //! - Can return references, not just values
 
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
+use crate::builtins::utils::collapse_if_scalar;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
@@ -61,47 +62,52 @@ impl Function for ChooseFn {
         &SCHEMA
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
 
         // Get index
-        let index_val = args[0].value()?;
-        if let LiteralValue::Error(e) = index_val.as_ref() {
-            return Ok(LiteralValue::Error(e.clone()));
+        let index_val = args[0].value()?.into_literal();
+        if let LiteralValue::Error(e) = index_val {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
 
-        let index = match index_val.as_ref() {
-            LiteralValue::Number(n) => *n as i64,
-            LiteralValue::Int(i) => *i,
+        let index = match index_val {
+            LiteralValue::Number(n) => n as i64,
+            LiteralValue::Int(i) => i,
             LiteralValue::Text(s) => s.parse::<f64>().map(|n| n as i64).unwrap_or(-1),
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
+            }
         };
 
         // Check bounds
         if index < 1 || index as usize > args.len() - 1 {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
 
         // Return the selected value (1-based indexing for the choice)
         let selected_arg = &args[index as usize];
-        match selected_arg.value() {
-            Ok(v) => Ok(v.as_ref().clone()),
-            Err(e) => Ok(LiteralValue::Error(e)),
-        }
+        selected_arg.value()
     }
 }
 
 /* ───────────────────────── CHOOSECOLS() / CHOOSEROWS() ───────────────────────── */
 
-fn materialize_rows_2d(
-    arg: &ArgumentHandle,
-    ctx: &dyn FunctionContext,
+fn materialize_rows_2d<'b>(
+    arg: &ArgumentHandle<'_, 'b>,
+    ctx: &dyn FunctionContext<'b>,
 ) -> Result<Vec<Vec<formualizer_common::LiteralValue>>, ExcelError> {
     if let Ok(r) = arg.as_reference_or_eval() {
         let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
@@ -113,9 +119,10 @@ fn materialize_rows_2d(
         })?;
         Ok(rows)
     } else {
-        match arg.value()?.as_ref() {
-            LiteralValue::Array(a) => Ok(a.clone()),
-            v => Ok(vec![vec![v.clone()]]),
+        let v = arg.value()?.into_literal();
+        match v {
+            LiteralValue::Array(a) => Ok(a),
+            other => Ok(vec![vec![other]]),
         }
     }
 }
@@ -161,33 +168,43 @@ impl Function for ChooseColsFn {
         });
         &SCHEMA
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
         let view = args[0].range_view()?;
         let (rows, cols) = view.dims();
         if rows == 0 || cols == 0 {
-            return Ok(LiteralValue::Array(vec![]));
+            return Ok(crate::traits::CalcValue::Range(
+                crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
+            ));
         }
 
         let mut indices: Vec<usize> = Vec::new();
         for a in &args[1..] {
-            let v = a.value()?;
-            if let LiteralValue::Error(e) = v.as_ref() {
-                return Ok(LiteralValue::Error(e.clone()));
+            let v = a.value()?.into_literal();
+            if let LiteralValue::Error(e) = v {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
-            let raw = match v.as_ref() {
-                LiteralValue::Int(i) => *i,
-                LiteralValue::Number(n) => *n as i64,
-                _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
+            let raw = match v {
+                LiteralValue::Int(i) => i,
+                LiteralValue::Number(n) => n as i64,
+                _ => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Value),
+                    )));
+                }
             };
             if raw == 0 {
-                return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
             }
             let adj = if raw > 0 {
                 raw - 1
@@ -195,7 +212,9 @@ impl Function for ChooseColsFn {
                 (cols as i64) + raw
             };
             if adj < 0 || adj as usize >= cols {
-                return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
             }
             indices.push(adj as usize);
         }
@@ -207,10 +226,8 @@ impl Function for ChooseColsFn {
             }
             out.push(new_row);
         }
-        if out.len() == 1 && out[0].len() == 1 {
-            return Ok(out[0][0].clone());
-        }
-        Ok(LiteralValue::Array(out))
+
+        Ok(collapse_if_scalar(out, _ctx.date_system()))
     }
 }
 
@@ -255,33 +272,43 @@ impl Function for ChooseRowsFn {
         });
         &SCHEMA
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
         let view = args[0].range_view()?;
         let (rows, cols) = view.dims();
         if rows == 0 || cols == 0 {
-            return Ok(LiteralValue::Array(vec![]));
+            return Ok(crate::traits::CalcValue::Range(
+                crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
+            ));
         }
 
         let mut indices: Vec<usize> = Vec::new();
         for a in &args[1..] {
-            let v = a.value()?;
-            if let LiteralValue::Error(e) = v.as_ref() {
-                return Ok(LiteralValue::Error(e.clone()));
+            let v = a.value()?.into_literal();
+            if let LiteralValue::Error(e) = v {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
-            let raw = match v.as_ref() {
-                LiteralValue::Int(i) => *i,
-                LiteralValue::Number(n) => *n as i64,
-                _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value))),
+            let raw = match v {
+                LiteralValue::Int(i) => i,
+                LiteralValue::Number(n) => n as i64,
+                _ => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Value),
+                    )));
+                }
             };
             if raw == 0 {
-                return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
             }
             let adj = if raw > 0 {
                 raw - 1
@@ -289,7 +316,9 @@ impl Function for ChooseRowsFn {
                 (rows as i64) + raw
             };
             if adj < 0 || adj as usize >= rows {
-                return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
             }
             indices.push(adj as usize);
         }
@@ -301,10 +330,8 @@ impl Function for ChooseRowsFn {
             }
             out.push(row_vals);
         }
-        if out.len() == 1 && out[0].len() == 1 {
-            return Ok(out[0][0].clone());
-        }
-        Ok(LiteralValue::Array(out))
+
+        Ok(collapse_if_scalar(out, _ctx.date_system()))
     }
 }
 
@@ -338,7 +365,10 @@ mod tests {
             ArgumentHandle::new(&c, &ctx),
         ];
 
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Text("B".into()));
     }
 
@@ -363,7 +393,10 @@ mod tests {
             ArgumentHandle::new(&forty, &ctx),
         ];
 
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(30));
     }
 
@@ -386,7 +419,10 @@ mod tests {
             ArgumentHandle::new(&c, &ctx),
         ];
 
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert!(matches!(result, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
 
         // CHOOSE(0, "A", "B") -> #VALUE! (index must be >= 1)
@@ -397,7 +433,10 @@ mod tests {
             ArgumentHandle::new(&b, &ctx),
         ];
 
-        let result2 = f.dispatch(&args2, &ctx.function_context(None)).unwrap();
+        let result2 = f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert!(matches!(result2, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
     }
 
@@ -420,7 +459,10 @@ mod tests {
             ArgumentHandle::new(&c, &ctx),
         ];
 
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Text("B".into()));
     }
 
@@ -439,7 +481,10 @@ mod tests {
             ArgumentHandle::new(&b, &ctx),
             ArgumentHandle::new(&c, &ctx),
         ];
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         // Current engine uses NumberStrict coercion for index: numeric text not accepted -> #VALUE!
         assert!(matches!(result, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
     }
@@ -457,7 +502,10 @@ mod tests {
             ArgumentHandle::new(&a, &ctx),
             ArgumentHandle::new(&b, &ctx),
         ];
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert!(matches!(result, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
     }
 
@@ -499,7 +547,10 @@ mod tests {
             ArgumentHandle::new(&one, &ctx),
             ArgumentHandle::new(&three, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2);
@@ -515,7 +566,10 @@ mod tests {
             ArgumentHandle::new(&arr, &ctx),
             ArgumentHandle::new(&neg_one, &ctx),
         ];
-        let v2 = f.dispatch(&args_neg, &ctx.function_context(None)).unwrap();
+        let v2 = f
+            .dispatch(&args_neg, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match v2 {
             LiteralValue::Array(a) => {
                 assert_eq!(a[0], vec![LiteralValue::Number(3.0)]);
@@ -528,7 +582,10 @@ mod tests {
             ArgumentHandle::new(&one, &ctx),
             ArgumentHandle::new(&one, &ctx),
         ];
-        let v3 = f.dispatch(&args_dup, &ctx.function_context(None)).unwrap();
+        let v3 = f
+            .dispatch(&args_dup, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match v3 {
             LiteralValue::Array(a) => {
                 assert_eq!(
@@ -554,7 +611,10 @@ mod tests {
             ArgumentHandle::new(&arr, &ctx),
             ArgumentHandle::new(&three, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match v {
             LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
             other => panic!("expected #VALUE! got {other:?}"),
@@ -581,7 +641,10 @@ mod tests {
             ArgumentHandle::new(&one, &ctx),
             ArgumentHandle::new(&neg_one, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match v {
             LiteralValue::Array(a) => {
                 assert_eq!(a.len(), 2);
@@ -604,7 +667,10 @@ mod tests {
             ArgumentHandle::new(&arr, &ctx),
             ArgumentHandle::new(&two, &ctx),
         ];
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         match v {
             LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
             other => panic!("expected #VALUE! got {other:?}"),

@@ -92,7 +92,7 @@ fn countifs_hybrid_formula_and_base_text() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
     assert_eq!(got, LiteralValue::Number(2.0));
 }
@@ -138,7 +138,7 @@ fn sumifs_arrow_fastpath_parity_small() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     // Disable fastpath and re-evaluate
@@ -153,7 +153,7 @@ fn sumifs_arrow_fastpath_parity_small() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     assert_eq!(got_fast, got_slow);
@@ -196,7 +196,7 @@ fn sumifs_arrow_fastpath_broadcasts_1x1_text_criteria_range() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     let got_slow = {
@@ -208,7 +208,7 @@ fn sumifs_arrow_fastpath_broadcasts_1x1_text_criteria_range() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     assert_eq!(got_fast, got_slow);
@@ -251,7 +251,7 @@ fn sumifs_arrow_fastpath_broadcasts_1x1_numeric_criteria_range() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     let got_slow = {
@@ -263,7 +263,7 @@ fn sumifs_arrow_fastpath_broadcasts_1x1_numeric_criteria_range() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     assert_eq!(got_fast, got_slow);
@@ -309,7 +309,7 @@ fn countifs_arrow_fastpath_broadcasts_1x1_numeric_criteria_range() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     let got_slow = {
@@ -322,7 +322,7 @@ fn countifs_arrow_fastpath_broadcasts_1x1_numeric_criteria_range() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     assert_eq!(got_fast, got_slow);
@@ -423,7 +423,7 @@ fn sumifs_text_and_date_window_parity() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     let got_slow = {
@@ -441,7 +441,7 @@ fn sumifs_text_and_date_window_parity() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     assert_eq!(got_fast, got_slow);
@@ -494,7 +494,7 @@ fn sumifs_arrow_fastpath_large_numeric_criteria() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     let slow = {
@@ -510,7 +510,7 @@ fn sumifs_arrow_fastpath_large_numeric_criteria() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     assert_eq!(fast, slow);
@@ -568,7 +568,7 @@ fn sumifs_multi_chunk_criteria_mask_correctness() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     // Disable fastpath and compare
@@ -583,7 +583,7 @@ fn sumifs_multi_chunk_criteria_mask_correctness() {
         ];
         let fctx =
             DefaultFunctionContext::new_with_sheet(&engine, None, engine.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     // Verify correctness: both paths must produce the same result

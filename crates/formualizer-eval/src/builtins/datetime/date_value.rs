@@ -30,14 +30,16 @@ impl Function for DateValueFn {
         &ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        let date_text = match args[0].value()?.as_ref() {
-            LiteralValue::Text(s) => s.clone(),
-            LiteralValue::Error(e) => return Err(e.clone()),
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let date_text = match args[0].value()?.into_literal() {
+            LiteralValue::Text(s) => s,
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             other => {
                 return Err(ExcelError::new_value()
                     .with_message(format!("DATEVALUE expects text, got {other:?}")));
@@ -59,7 +61,9 @@ impl Function for DateValueFn {
 
         for fmt in &formats {
             if let Ok(date) = NaiveDate::parse_from_str(&date_text, fmt) {
-                return Ok(LiteralValue::Number(date_to_serial(&date)));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                    date_to_serial(&date),
+                )));
             }
         }
 
@@ -89,14 +93,16 @@ impl Function for TimeValueFn {
         &ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        let time_text = match args[0].value()?.as_ref() {
-            LiteralValue::Text(s) => s.clone(),
-            LiteralValue::Error(e) => return Err(e.clone()),
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let time_text = match args[0].value()?.into_literal() {
+            LiteralValue::Text(s) => s,
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             other => {
                 return Err(ExcelError::new_value()
                     .with_message(format!("TIMEVALUE expects text, got {other:?}")));
@@ -113,7 +119,9 @@ impl Function for TimeValueFn {
 
         for fmt in &formats {
             if let Ok(time) = chrono::NaiveTime::parse_from_str(&time_text, fmt) {
-                return Ok(LiteralValue::Number(time_to_fraction(&time)));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                    time_to_fraction(&time),
+                )));
             }
         }
 
@@ -152,7 +160,8 @@ mod tests {
                 &[ArgumentHandle::new(&date_str, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert!(matches!(result, LiteralValue::Number(_)));
 
         // Test US format
@@ -162,7 +171,8 @@ mod tests {
                 &[ArgumentHandle::new(&date_str, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert!(matches!(result, LiteralValue::Number(_)));
     }
 
@@ -179,7 +189,8 @@ mod tests {
                 &[ArgumentHandle::new(&time_str, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         match result {
             LiteralValue::Number(n) => {
                 // 14:30 = 14.5/24 ≈ 0.604166...
@@ -195,7 +206,8 @@ mod tests {
                 &[ArgumentHandle::new(&time_str, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         match result {
             LiteralValue::Number(n) => {
                 assert!((n - 0.6041666667).abs() < 1e-9);

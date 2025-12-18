@@ -5,6 +5,13 @@ use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
+fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    Ok(match arg.value()? {
+        crate::traits::CalcValue::Scalar(v) => v,
+        crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
+    })
+}
+
 // MID(text, start_num, num_chars)
 #[derive(Debug)]
 pub struct MidFn;
@@ -19,29 +26,35 @@ impl Function for MidFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 3 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         let s = to_text(&args[0])?;
         let start = number_like(&args[1])?;
         let count = number_like(&args[2])?;
         if start < 1 || count < 0 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         let chars: Vec<char> = s.chars().collect();
         if (start as usize) > chars.len() {
-            return Ok(LiteralValue::Text(String::new()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                String::new(),
+            )));
         }
         let end = ((start - 1) + count) as usize;
         let end = min(end, chars.len());
-        Ok(LiteralValue::Text(
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
             chars[(start as usize - 1)..end].iter().collect(),
-        ))
+        )))
     }
 }
 
@@ -62,24 +75,28 @@ impl Function for SubstituteFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 3 || args.len() > 4 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         let text = to_text(&args[0])?;
         let old = to_text(&args[1])?;
         let new = to_text(&args[2])?;
         if old.is_empty() {
-            return Ok(LiteralValue::Text(text));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)));
         }
         if args.len() == 4 {
             let instance = number_like(&args[3])?;
             if instance <= 0 {
-                return Ok(LiteralValue::Error(ExcelError::new_value()));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
             }
             let mut idx = 0;
             let mut count = 0;
@@ -90,15 +107,17 @@ impl Function for SubstituteFn {
                 if count == instance {
                     out.push_str(&new);
                     out.push_str(&text[idx + pos + old.len()..]);
-                    return Ok(LiteralValue::Text(out));
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(out)));
                 } else {
                     out.push_str(&old);
                     idx += pos + old.len();
                 }
             }
-            Ok(LiteralValue::Text(text))
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)))
         } else {
-            Ok(LiteralValue::Text(text.replace(&old, &new)))
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                text.replace(&old, &new),
+            )))
         }
     }
 }
@@ -117,40 +136,46 @@ impl Function for ReplaceFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 4 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         let text = to_text(&args[0])?;
         let start = number_like(&args[1])?;
         let num = number_like(&args[2])?;
         let new = to_text(&args[3])?;
         if start < 1 || num < 0 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         let mut chars: Vec<char> = text.chars().collect();
         let len = chars.len();
         let start_idx = (start as usize).saturating_sub(1);
         if start_idx > len {
-            return Ok(LiteralValue::Text(text));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)));
         }
         let end_idx = (start_idx + num as usize).min(len);
         chars.splice(start_idx..end_idx, new.chars());
-        Ok(LiteralValue::Text(chars.into_iter().collect()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+            chars.into_iter().collect(),
+        )))
     }
 }
 
 fn to_text<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
-    let v = arg.value()?;
-    Ok(match v.as_ref() {
-        LiteralValue::Text(s) => s.clone(),
+    let v = scalar_like_value(arg)?;
+    Ok(match v {
+        LiteralValue::Text(s) => s,
         LiteralValue::Empty => String::new(),
         LiteralValue::Boolean(b) => {
-            if *b {
+            if b {
                 "TRUE".into()
             } else {
                 "FALSE".into()
@@ -164,25 +189,25 @@ fn to_text<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
             s
         }
         LiteralValue::Int(i) => i.to_string(),
-        LiteralValue::Error(e) => return Err(e.clone()),
+        LiteralValue::Error(e) => return Err(e),
         other => other.to_string(),
     })
 }
 fn number_like<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<i64, ExcelError> {
-    let v = arg.value()?;
-    Ok(match v.as_ref() {
-        LiteralValue::Int(i) => *i,
-        LiteralValue::Number(f) => *f as i64,
+    let v = scalar_like_value(arg)?;
+    Ok(match v {
+        LiteralValue::Int(i) => i,
+        LiteralValue::Number(f) => f as i64,
         LiteralValue::Text(t) => t.parse::<i64>().unwrap_or(0),
         LiteralValue::Boolean(b) => {
-            if *b {
+            if b {
                 1
             } else {
                 0
             }
         }
         LiteralValue::Empty => 0,
-        LiteralValue::Error(e) => return Err(e.clone()),
+        LiteralValue::Error(e) => return Err(e),
         other => other.to_string().parse::<i64>().unwrap_or(0),
     })
 }
@@ -223,7 +248,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(out, LiteralValue::Text("ell".into()));
     }
     #[test]
@@ -243,7 +269,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(out, LiteralValue::Text("a-b-a".into()));
     }
     #[test]
@@ -265,7 +292,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(out, LiteralValue::Text("hYYlo".into()));
     }
 }

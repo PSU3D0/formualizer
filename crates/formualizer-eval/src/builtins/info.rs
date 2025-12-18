@@ -45,17 +45,19 @@ impl Function for IsNumberFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
+        let v = args[0].value()?.into_literal();
         let is_num = matches!(
-            v.as_ref(),
+            v,
             LiteralValue::Int(_)
                 | LiteralValue::Number(_)
                 | LiteralValue::Date(_)
@@ -63,7 +65,9 @@ impl Function for IsNumberFn {
                 | LiteralValue::Time(_)
                 | LiteralValue::Duration(_)
         );
-        Ok(LiteralValue::Boolean(is_num))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            is_num,
+        )))
     }
 }
 
@@ -80,18 +84,19 @@ impl Function for IsTextFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        Ok(LiteralValue::Boolean(matches!(
-            v.as_ref(),
-            LiteralValue::Text(_)
+        let v = args[0].value()?.into_literal();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            matches!(v, LiteralValue::Text(_)),
         )))
     }
 }
@@ -109,18 +114,19 @@ impl Function for IsLogicalFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        Ok(LiteralValue::Boolean(matches!(
-            v.as_ref(),
-            LiteralValue::Boolean(_)
+        let v = args[0].value()?.into_literal();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            matches!(v, LiteralValue::Boolean(_)),
         )))
     }
 }
@@ -138,18 +144,19 @@ impl Function for IsBlankFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        Ok(LiteralValue::Boolean(matches!(
-            v.as_ref(),
-            LiteralValue::Empty
+        let v = args[0].value()?.into_literal();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            matches!(v, LiteralValue::Empty),
         )))
     }
 }
@@ -167,18 +174,19 @@ impl Function for IsErrorFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        Ok(LiteralValue::Boolean(matches!(
-            v.as_ref(),
-            LiteralValue::Error(_)
+        let v = args[0].value()?.into_literal();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            matches!(v, LiteralValue::Error(_)),
         )))
     }
 }
@@ -196,20 +204,24 @@ impl Function for IsErrFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        let is_err = match v.as_ref() {
+        let v = args[0].value()?.into_literal();
+        let is_err = match v {
             LiteralValue::Error(e) => e.kind != ExcelErrorKind::Na,
             _ => false,
         };
-        Ok(LiteralValue::Boolean(is_err))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            is_err,
+        )))
     }
 }
 
@@ -226,17 +238,21 @@ impl Function for IsNaFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        let is_na = matches!(v.as_ref(), LiteralValue::Error(e) if e.kind==ExcelErrorKind::Na);
-        Ok(LiteralValue::Boolean(is_na))
+        let v = args[0].value()?.into_literal();
+        let is_na = matches!(v, LiteralValue::Error(e) if e.kind==ExcelErrorKind::Na);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            is_na,
+        )))
     }
 }
 
@@ -253,16 +269,20 @@ impl Function for IsFormulaFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         // TODO(excel-nuance): formula provenance once AST metadata is plumbed.
-        Ok(LiteralValue::Boolean(false))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            false,
+        )))
     }
 }
 
@@ -279,19 +299,21 @@ impl Function for TypeFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?; // Propagate errors directly
-        if let LiteralValue::Error(e) = v.as_ref() {
-            return Ok(LiteralValue::Error(e.clone()));
+        let v = args[0].value()?.into_literal(); // Propagate errors directly
+        if let LiteralValue::Error(e) = v {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
-        let code = match v.as_ref() {
+        let code = match v {
             LiteralValue::Int(_)
             | LiteralValue::Number(_)
             | LiteralValue::Empty
@@ -305,7 +327,7 @@ impl Function for TypeFn {
             LiteralValue::Error(_) => unreachable!(),
             LiteralValue::Pending => 1, // treat as blank/zero numeric; may change
         };
-        Ok(LiteralValue::Int(code))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(code)))
     }
 }
 
@@ -319,12 +341,14 @@ impl Function for NaFn {
     fn min_args(&self) -> usize {
         0
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        _args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)))
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Na),
+        )))
     }
 }
 
@@ -341,38 +365,50 @@ impl Function for NFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        match v.as_ref() {
-            LiteralValue::Int(i) => Ok(LiteralValue::Int(*i)),
-            LiteralValue::Number(n) => Ok(LiteralValue::Number(*n)),
+        let v = args[0].value()?.into_literal();
+        match v {
+            LiteralValue::Int(i) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(i))),
+            LiteralValue::Number(n) => {
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(n)))
+            }
             LiteralValue::Date(_)
             | LiteralValue::DateTime(_)
             | LiteralValue::Time(_)
             | LiteralValue::Duration(_) => {
                 // Convert via serial number helper
-                if let Some(serial) = v.as_ref().as_serial_number() {
-                    Ok(LiteralValue::Number(serial))
+                if let Some(serial) = v.as_serial_number() {
+                    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                        serial,
+                    )))
                 } else {
-                    Ok(LiteralValue::Int(0))
+                    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)))
                 }
             }
-            LiteralValue::Boolean(b) => Ok(LiteralValue::Int(if *b { 1 } else { 0 })),
-            LiteralValue::Text(_) => Ok(LiteralValue::Int(0)),
-            LiteralValue::Empty => Ok(LiteralValue::Int(0)),
+            LiteralValue::Boolean(b) => {
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(if b {
+                    1
+                } else {
+                    0
+                })))
+            }
+            LiteralValue::Text(_) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0))),
+            LiteralValue::Empty => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0))),
             LiteralValue::Array(_) => {
                 // TODO(excel-nuance): implicit intersection; for now return 0
-                Ok(LiteralValue::Int(0))
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)))
             }
-            LiteralValue::Error(e) => Ok(LiteralValue::Error(e.clone())),
-            LiteralValue::Pending => Ok(LiteralValue::Int(0)),
+            LiteralValue::Error(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            LiteralValue::Pending => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0))),
         }
     }
 }
@@ -390,19 +426,23 @@ impl Function for TFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        match v.as_ref() {
-            LiteralValue::Text(s) => Ok(LiteralValue::Text(s.clone())),
-            LiteralValue::Error(e) => Ok(LiteralValue::Error(e.clone())),
-            _ => Ok(LiteralValue::Text(String::new())),
+        let v = args[0].value()?.into_literal();
+        match v {
+            LiteralValue::Text(s) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(s))),
+            LiteralValue::Error(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            _ => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                String::new(),
+            ))),
         }
     }
 }
@@ -452,15 +492,21 @@ mod tests {
         let args_date = vec![crate::traits::ArgumentHandle::new(&date, &ctx)];
         let args_txt = vec![crate::traits::ArgumentHandle::new(&txt, &ctx)];
         assert_eq!(
-            f.dispatch(&args_num, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args_num, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            f.dispatch(&args_date, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args_date, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            f.dispatch(&args_txt, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args_txt, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Boolean(false)
         );
     }
@@ -475,11 +521,15 @@ mod tests {
         let args_t = vec![crate::traits::ArgumentHandle::new(&t, &ctx)];
         let args_n = vec![crate::traits::ArgumentHandle::new(&n, &ctx)];
         assert_eq!(
-            f.dispatch(&args_t, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args_t, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            f.dispatch(&args_n, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args_n, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Boolean(false)
         );
 
@@ -491,7 +541,8 @@ mod tests {
         let blank_args = vec![crate::traits::ArgumentHandle::new(&blank, &ctx2)];
         assert_eq!(
             f2.dispatch(&blank_args, &ctx2.function_context(None))
-                .unwrap(),
+                .unwrap()
+                .into_literal(),
             LiteralValue::Boolean(true)
         );
     }
@@ -509,11 +560,15 @@ mod tests {
         let a_err = vec![crate::traits::ArgumentHandle::new(&err, &ctx)];
         let a_ok = vec![crate::traits::ArgumentHandle::new(&ok, &ctx)];
         assert_eq!(
-            f.dispatch(&a_err, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&a_err, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
-            f.dispatch(&a_ok, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&a_ok, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Boolean(false)
         );
     }
@@ -540,23 +595,35 @@ mod tests {
         let a_err = vec![crate::traits::ArgumentHandle::new(&v_err, &ctx)];
         let a_arr = vec![crate::traits::ArgumentHandle::new(&v_arr, &ctx)];
         assert_eq!(
-            f.dispatch(&a_num, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&a_num, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Int(1)
         );
         assert_eq!(
-            f.dispatch(&a_txt, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&a_txt, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Int(2)
         );
         assert_eq!(
-            f.dispatch(&a_bool, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&a_bool, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Int(4)
         );
-        match f.dispatch(&a_err, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&a_err, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
             _ => panic!(),
         }
         assert_eq!(
-            f.dispatch(&a_arr, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&a_arr, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Int(64)
         );
     }
@@ -570,7 +637,11 @@ mod tests {
         let ctx = wb.interpreter();
         // NA()
         let na_fn = ctx.context.get_function("", "NA").unwrap();
-        match na_fn.eval_scalar(&[], &ctx.function_context(None)).unwrap() {
+        match na_fn
+            .eval(&[], &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#N/A"),
             _ => panic!(),
         }
@@ -579,7 +650,9 @@ mod tests {
         let val = ASTNode::new(ASTNodeType::Literal(LiteralValue::Boolean(true)), None);
         let args = vec![crate::traits::ArgumentHandle::new(&val, &ctx)];
         assert_eq!(
-            n_fn.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            n_fn.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Int(1)
         );
         // T()
@@ -587,7 +660,9 @@ mod tests {
         let txt = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("abc".into())), None);
         let args_t = vec![crate::traits::ArgumentHandle::new(&txt, &ctx)];
         assert_eq!(
-            t_fn.dispatch(&args_t, &ctx.function_context(None)).unwrap(),
+            t_fn.dispatch(&args_t, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Text("abc".into())
         );
     }

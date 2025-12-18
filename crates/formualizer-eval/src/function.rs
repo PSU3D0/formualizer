@@ -23,13 +23,11 @@ bitflags::bitflags! {
 
         // --- Shape / Evaluation Strategy ---
         /// The function reduces a range of inputs to a single value (e.g., `SUM`, `AVERAGE`).
-        /// Can be implemented with `eval_fold`.
         const REDUCTION     = 0b0000_0000_0100;
         /// The function operates on each element of its input ranges independently
-        /// (e.g., `SIN`, `ABS`). Can be implemented with `eval_map`.
+        /// (e.g., `SIN`, `ABS`).
         const ELEMENTWISE   = 0b0000_0000_1000;
         /// The function operates on a sliding window over its input (e.g., `MOVING_AVERAGE`).
-        /// Can be implemented with `eval_window`.
         const WINDOWED      = 0b0000_0001_0000;
         /// The function performs a lookup or search operation (e.g., `VLOOKUP`).
         const LOOKUP        = 0b0000_0010_0000;
@@ -67,157 +65,6 @@ bitflags::bitflags! {
     const PARALLEL_CHUNKS= 0b0100_0000_0000_0000;
     }
 }
-
-// --- Fast-Path Evaluation Contexts ---
-
-use crate::traits::FunctionContext;
-use bumpalo::Bump;
-
-/// A simple slice of homogeneous values for efficient iteration
-pub struct SliceStripe<'a> {
-    pub head: &'a [LiteralValue],
-}
-
-/// Context for `eval_fold` (Reduction operations).
-/// Provides efficient iteration over input ranges for fold/reduce operations.
-pub trait FnFoldCtx {
-    /// Visit numeric chunks packed from all range arguments; no materialization required.
-    fn for_each_numeric_chunk(
-        &mut self,
-        min_chunk: usize,
-        f: &mut dyn FnMut(crate::stripes::NumericChunk) -> Result<(), ExcelError>,
-    ) -> Result<(), ExcelError>;
-
-    /// Visit cells (coerced via range visitors) in row-major order.
-    fn for_each_cell(
-        &mut self,
-        f: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
-    ) -> Result<(), ExcelError>;
-
-    /// Return accumulated result (for two-pass folds like AVERAGE).
-    fn write_result(&mut self, v: LiteralValue);
-
-    /// Access original argument handles (for functions needing parameter scalars like k in LARGE/SMALL)
-    fn args(&self) -> &[ArgumentHandle<'_, '_>];
-}
-
-/// Concrete implementation of FnFoldCtx
-pub struct SimpleFoldCtx<'a, 'b> {
-    args: &'a [ArgumentHandle<'a, 'b>],
-    _ctx: &'a dyn FunctionContext,
-    result: Option<LiteralValue>,
-    /// Temporary arena for allocating iteration data
-    arena: Bump,
-}
-
-impl<'a, 'b> SimpleFoldCtx<'a, 'b> {
-    pub fn new(args: &'a [ArgumentHandle<'a, 'b>], ctx: &'a dyn FunctionContext) -> Self {
-        Self {
-            args,
-            _ctx: ctx,
-            result: None,
-            arena: Bump::new(),
-        }
-    }
-
-    pub fn take_result(self) -> Option<LiteralValue> {
-        self.result
-    }
-}
-
-impl<'a, 'b> FnFoldCtx for SimpleFoldCtx<'a, 'b> {
-    fn for_each_numeric_chunk(
-        &mut self,
-        min_chunk: usize,
-        f: &mut dyn FnMut(crate::stripes::NumericChunk) -> Result<(), ExcelError>,
-    ) -> Result<(), ExcelError> {
-        for arg in self.args {
-            match arg.range_view() {
-                Ok(view) => {
-                    view.numbers_chunked(
-                        crate::args::CoercionPolicy::NumberLenientText,
-                        min_chunk,
-                        f,
-                    )?;
-                }
-                Err(_e_rv) => {
-                    // Fall back to scalar value; propagate errors
-                    match arg.value() {
-                        Ok(value) => {
-                            let as_num = match value.as_ref() {
-                                LiteralValue::Error(e) => {
-                                    return Err(e.clone());
-                                }
-                                other => crate::coercion::to_number_lenient_with_locale(
-                                    other,
-                                    &self._ctx.locale(),
-                                )
-                                .ok(),
-                            };
-                            if let Some(n) = as_num {
-                                let one = [n];
-                                f(crate::stripes::NumericChunk {
-                                    data: &one,
-                                    validity: None,
-                                })?;
-                            }
-                        }
-                        Err(e_val) => {
-                            // Both range_view and value resolution failed → propagate error
-                            return Err(e_val);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn for_each_cell(
-        &mut self,
-        f: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
-    ) -> Result<(), ExcelError> {
-        for arg in self.args {
-            if let Ok(view) = arg.range_view() {
-                view.for_each_cell(f)?;
-            } else if let Ok(value) = arg.value() {
-                f(value.as_ref())?;
-            }
-        }
-        Ok(())
-    }
-
-    fn write_result(&mut self, v: LiteralValue) {
-        self.result = Some(v);
-    }
-
-    fn args(&self) -> &[ArgumentHandle<'_, '_>] {
-        self.args
-    }
-}
-
-/// Context for `eval_map` (Element-wise operations).
-pub trait FnMapCtx {
-    /// Whether inputs indicate an array/range context. If false, callers should fall back to scalar.
-    fn is_array_context(&self) -> bool;
-
-    /// Apply a unary numeric mapping over the broadcasted input. The closure should return the mapped cell.
-    fn map_unary_numeric(
-        &mut self,
-        f: &mut dyn FnMut(f64) -> Result<LiteralValue, ExcelError>,
-    ) -> Result<(), ExcelError>;
-
-    /// Apply a binary numeric mapping over the broadcasted inputs (first two args).
-    fn map_binary_numeric(
-        &mut self,
-        f: &mut dyn FnMut(f64, f64) -> Result<LiteralValue, ExcelError>,
-    ) -> Result<(), ExcelError>;
-
-    /// Finalize and retrieve the output value (typically an Array). Implementations may move out internal buffers.
-    fn finalize(&mut self) -> LiteralValue;
-}
-
-// Windowed functions use the trait from window_ctx module.
 
 /// Revised, object-safe trait for all Excel-style functions.
 ///
@@ -269,44 +116,16 @@ pub trait Function: Send + Sync + 'static {
         crate::rng::fnv1a64(full_name.as_bytes())
     }
 
-    /// The default, scalar evaluation path.
+    /// The unified evaluation path.
     ///
-    /// This method is the fallback for all functions and the only required
-    /// evaluation path. It processes arguments one by one.
-    fn eval_scalar<'a, 'b>(
+    /// This method replaces the separate scalar, fold, and map paths.
+    /// Functions use the provided `ArgumentHandle`s to access inputs as either
+    /// scalars or `RangeView`s (Arrow-backed virtual ranges).
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn crate::traits::FunctionContext,
-    ) -> Result<LiteralValue, ExcelError>;
-
-    // --- Optional Fast Paths ---
-
-    /// An optional, optimized path for reduction functions (e.g., `SUM`, `COUNT`).
-    ///
-    /// This method is called by the engine if the `REDUCTION` capability is set.
-    /// It operates on a `FnFoldCtx` which provides efficient access to input data.
-    fn eval_fold(&self, _f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
-        None
-    }
-
-    /// An optional, optimized path for element-wise functions (e.g., `SIN`, `ABS`).
-    ///
-    /// This method is called by the engine if the `ELEMENTWISE` capability is set.
-    /// It operates on a `FnMapCtx` which provides direct access to input/output
-    /// data stripes for vectorized processing.
-    fn eval_map(&self, _m: &mut dyn FnMapCtx) -> Option<Result<LiteralValue, ExcelError>> {
-        None
-    }
-
-    /// An optional, optimized path for windowed functions (e.g., `MOVING_AVERAGE`).
-    ///
-    /// This method is called by the engine if the `WINDOWED` capability is set.
-    fn eval_window<'a, 'b>(
-        &self,
-        _w: &mut crate::window_ctx::SimpleWindowCtx<'a, 'b>,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        None
-    }
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn crate::traits::FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError>;
 
     /// Optional reference result path. Only called by the interpreter/engine
     /// when the callsite expects a reference (e.g., range combinators, by-ref
@@ -315,69 +134,31 @@ pub trait Function: Send + Sync + 'static {
     /// Default implementation returns `None`, indicating the function does not
     /// support returning references. Functions that set `RETURNS_REFERENCE`
     /// should override this.
-    fn eval_reference<'a, 'b>(
+    fn eval_reference<'a, 'b, 'c>(
         &self,
-        _args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn crate::traits::FunctionContext,
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn crate::traits::FunctionContext<'b>,
     ) -> Option<Result<formualizer_parse::parser::ReferenceType, ExcelError>> {
         None
     }
 
-    /// Dispatch to the most optimal evaluation path based on capabilities.
-    /// This default implementation checks caps and calls the appropriate eval method.
-    fn dispatch<'a, 'b>(
+    /// Dispatch to the unified evaluation path with automatic argument validation.
+    fn dispatch<'a, 'b, 'c>(
         &self,
-        args: &'a [crate::traits::ArgumentHandle<'a, 'b>],
-        ctx: &dyn crate::traits::FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        let caps = self.caps();
-
-        // Central argument validation (always on)
+        args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+        ctx: &dyn crate::traits::FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // Central argument validation
         {
             use crate::args::{ValidationOptions, validate_and_prepare};
             let schema = self.arg_schema();
-            // Strict validation; convert errors to value errors to preserve interpreter Ok path
             if let Err(e) =
                 validate_and_prepare(args, schema, ValidationOptions { warn_only: false })
             {
-                return Ok(LiteralValue::Error(e));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
         }
 
-        // Try fast paths based on capabilities
-        // Commented out for now until we get `eval_scalar robustly working in real-world tests`
-        // if caps.contains(FnCaps::REDUCTION) {
-        //     // Create fold context and try eval_fold
-        //     let mut fold_ctx = SimpleFoldCtx::new(args, ctx);
-        //     if let Some(result) = self.eval_fold(&mut fold_ctx) {
-        //         return result;
-        //     }
-        // }
-
-        if caps.contains(FnCaps::ELEMENTWISE) {
-            // Minimal unary elementwise path: construct a simple map ctx and call eval_map
-            let mut m = crate::map_ctx::SimpleMapCtx::new(args, ctx);
-            if FnMapCtx::is_array_context(&m) {
-                let dyn_m: &mut dyn FnMapCtx = &mut m;
-                if let Some(result) = self.eval_map(dyn_m) {
-                    return result;
-                }
-            }
-        }
-
-        if caps.contains(FnCaps::WINDOWED) {
-            // Construct a minimal window context with a default spec; functions can downcast.
-            let mut w = crate::window_ctx::SimpleWindowCtx::new(
-                args,
-                ctx,
-                crate::window_ctx::WindowSpec::default(),
-            );
-            if let Some(result) = self.eval_window(&mut w) {
-                return result;
-            }
-        }
-
-        // Fallback to scalar evaluation
-        self.eval_scalar(args, ctx)
+        self.eval(args, ctx)
     }
 }

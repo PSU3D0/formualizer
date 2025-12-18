@@ -9,16 +9,16 @@ use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
 fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
-    let v = arg.value()?;
-    match v.as_ref() {
-        LiteralValue::Number(f) => Ok(*f),
-        LiteralValue::Int(i) => Ok(*i as f64),
+    let v = arg.value()?.into_literal();
+    match v {
+        LiteralValue::Number(f) => Ok(f),
+        LiteralValue::Int(i) => Ok(i as f64),
         LiteralValue::Text(s) => s.parse::<f64>().map_err(|_| {
             ExcelError::new_value().with_message("Date/time serial is not a valid number")
         }),
-        LiteralValue::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
+        LiteralValue::Boolean(b) => Ok(if b { 1.0 } else { 0.0 }),
         LiteralValue::Empty => Ok(0.0),
-        LiteralValue::Error(e) => Err(e.clone()),
+        LiteralValue::Error(e) => Err(e),
         _ => Err(ExcelError::new_value()
             .with_message("Date/time functions expect numeric or text-numeric serials")),
     }
@@ -46,14 +46,16 @@ impl Function for YearFn {
         &ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
         let date = serial_to_date(serial)?;
-        Ok(LiteralValue::Int(date.year() as i64))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+            date.year() as i64,
+        )))
     }
 }
 
@@ -79,14 +81,16 @@ impl Function for MonthFn {
         &ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
         let date = serial_to_date(serial)?;
-        Ok(LiteralValue::Int(date.month() as i64))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+            date.month() as i64,
+        )))
     }
 }
 
@@ -112,14 +116,16 @@ impl Function for DayFn {
         &ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
         let date = serial_to_date(serial)?;
-        Ok(LiteralValue::Int(date.day() as i64))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+            date.day() as i64,
+        )))
     }
 }
 
@@ -145,11 +151,11 @@ impl Function for HourFn {
         &ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
 
         // For time values < 1, we just use the fractional part
@@ -157,7 +163,7 @@ impl Function for HourFn {
 
         // Convert fraction to hours (24 hours = 1.0)
         let hours = (time_fraction * 24.0) as i64;
-        Ok(LiteralValue::Int(hours))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(hours)))
     }
 }
 
@@ -183,16 +189,18 @@ impl Function for MinuteFn {
         &ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
 
         // Extract time component
         let datetime = serial_to_datetime(serial)?;
-        Ok(LiteralValue::Int(datetime.minute() as i64))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+            datetime.minute() as i64,
+        )))
     }
 }
 
@@ -218,16 +226,18 @@ impl Function for SecondFn {
         &ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
 
         // Extract time component
         let datetime = serial_to_datetime(serial)?;
-        Ok(LiteralValue::Int(datetime.second() as i64))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+            datetime.second() as i64,
+        )))
     }
 }
 
@@ -270,7 +280,8 @@ mod tests {
                 &[ArgumentHandle::new(&serial, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(2023));
 
         let month_fn = ctx.context.get_function("", "MONTH").unwrap();
@@ -279,7 +290,8 @@ mod tests {
                 &[ArgumentHandle::new(&serial, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(1));
 
         let day_fn = ctx.context.get_function("", "DAY").unwrap();
@@ -288,7 +300,8 @@ mod tests {
                 &[ArgumentHandle::new(&serial, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(1));
     }
 
@@ -309,7 +322,8 @@ mod tests {
                 &[ArgumentHandle::new(&serial, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(12));
 
         let minute_fn = ctx.context.get_function("", "MINUTE").unwrap();
@@ -318,7 +332,8 @@ mod tests {
                 &[ArgumentHandle::new(&serial, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(0));
 
         let second_fn = ctx.context.get_function("", "SECOND").unwrap();
@@ -327,7 +342,8 @@ mod tests {
                 &[ArgumentHandle::new(&serial, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(0));
 
         // Test with 15:30:45 = 15.5/24 + 0.75/24/60 = 0.6463541667
@@ -338,7 +354,8 @@ mod tests {
                 &[ArgumentHandle::new(&time_serial, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(hour_result, LiteralValue::Int(15));
 
         let minute_result = minute_fn
@@ -346,7 +363,8 @@ mod tests {
                 &[ArgumentHandle::new(&time_serial, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(minute_result, LiteralValue::Int(30));
 
         let second_result = second_fn
@@ -354,7 +372,8 @@ mod tests {
                 &[ArgumentHandle::new(&time_serial, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(second_result, LiteralValue::Int(45));
     }
 }

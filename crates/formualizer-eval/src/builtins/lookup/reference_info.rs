@@ -49,23 +49,27 @@ impl Function for RowFn {
         &SCHEMA
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.is_empty() {
             // Return current cell's row if available
             if let Some(cell_ref) = ctx.current_cell() {
-                return Ok(LiteralValue::Int(cell_ref.coord.row() as i64));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                    cell_ref.coord.row() as i64,
+                )));
             }
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
 
         // Get reference
         let reference = match args[0].as_reference_or_eval() {
             Ok(r) => r,
-            Err(e) => return Ok(LiteralValue::Error(e)),
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
         // Extract row number from reference
@@ -75,10 +79,16 @@ impl Function for RowFn {
                 start_row: Some(sr),
                 ..
             } => *sr,
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))),
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Ref),
+                )));
+            }
         };
 
-        Ok(LiteralValue::Int(row as i64))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+            row as i64,
+        )))
     }
 }
 
@@ -116,19 +126,21 @@ impl Function for RowsFn {
         &SCHEMA
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
 
         // Get reference
         let reference = match args[0].as_reference_or_eval() {
             Ok(r) => r,
-            Err(e) => return Ok(LiteralValue::Error(e)),
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
         // Calculate number of rows
@@ -145,10 +157,14 @@ impl Function for RowsFn {
                     1
                 }
             }
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))),
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Ref),
+                )));
+            }
         };
 
-        Ok(LiteralValue::Int(rows))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(rows)))
     }
 }
 
@@ -186,23 +202,27 @@ impl Function for ColumnFn {
         &SCHEMA
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.is_empty() {
             // Return current cell's column if available
             if let Some(cell_ref) = ctx.current_cell() {
-                return Ok(LiteralValue::Int(cell_ref.coord.col() as i64));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                    cell_ref.coord.col() as i64,
+                )));
             }
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
 
         // Get reference
         let reference = match args[0].as_reference_or_eval() {
             Ok(r) => r,
-            Err(e) => return Ok(LiteralValue::Error(e)),
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
         // Extract column number from reference
@@ -212,10 +232,16 @@ impl Function for ColumnFn {
                 start_col: Some(sc),
                 ..
             } => *sc,
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))),
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Ref),
+                )));
+            }
         };
 
-        Ok(LiteralValue::Int(col as i64))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+            col as i64,
+        )))
     }
 }
 
@@ -253,19 +279,21 @@ impl Function for ColumnsFn {
         &SCHEMA
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value)));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value),
+            )));
         }
 
         // Get reference
         let reference = match args[0].as_reference_or_eval() {
             Ok(r) => r,
-            Err(e) => return Ok(LiteralValue::Error(e)),
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
         // Calculate number of columns
@@ -282,10 +310,14 @@ impl Function for ColumnsFn {
                     1
                 }
             }
-            _ => return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))),
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Ref),
+                )));
+            }
         };
 
-        Ok(LiteralValue::Int(cols))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(cols)))
     }
 }
 
@@ -316,7 +348,10 @@ mod tests {
         );
 
         let args = vec![ArgumentHandle::new(&b5_ref, &ctx)];
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(5));
 
         // ROW(A1:C3) -> 1 (first row)
@@ -335,7 +370,10 @@ mod tests {
         );
 
         let args2 = vec![ArgumentHandle::new(&range_ref, &ctx)];
-        let result2 = f.dispatch(&args2, &ctx.function_context(None)).unwrap();
+        let result2 = f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result2, LiteralValue::Int(1));
     }
 
@@ -361,7 +399,10 @@ mod tests {
         );
 
         let args = vec![ArgumentHandle::new(&range_ref, &ctx)];
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(5));
 
         // ROWS(B2:D10) -> 9
@@ -380,7 +421,10 @@ mod tests {
         );
 
         let args2 = vec![ArgumentHandle::new(&range_ref2, &ctx)];
-        let result2 = f.dispatch(&args2, &ctx.function_context(None)).unwrap();
+        let result2 = f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result2, LiteralValue::Int(9));
 
         // ROWS(A1) -> 1 (single cell)
@@ -397,7 +441,10 @@ mod tests {
         );
 
         let args3 = vec![ArgumentHandle::new(&cell_ref, &ctx)];
-        let result3 = f.dispatch(&args3, &ctx.function_context(None)).unwrap();
+        let result3 = f
+            .dispatch(&args3, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result3, LiteralValue::Int(1));
     }
 
@@ -421,7 +468,10 @@ mod tests {
         );
 
         let args = vec![ArgumentHandle::new(&c5_ref, &ctx)];
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(3));
 
         // COLUMN(B2:D4) -> 2 (first column)
@@ -440,7 +490,10 @@ mod tests {
         );
 
         let args2 = vec![ArgumentHandle::new(&range_ref, &ctx)];
-        let result2 = f.dispatch(&args2, &ctx.function_context(None)).unwrap();
+        let result2 = f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result2, LiteralValue::Int(2));
     }
 
@@ -466,7 +519,10 @@ mod tests {
         );
 
         let args = vec![ArgumentHandle::new(&range_ref, &ctx)];
-        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result, LiteralValue::Int(5));
 
         // COLUMNS(B2:D10) -> 3
@@ -485,7 +541,10 @@ mod tests {
         );
 
         let args2 = vec![ArgumentHandle::new(&range_ref2, &ctx)];
-        let result2 = f.dispatch(&args2, &ctx.function_context(None)).unwrap();
+        let result2 = f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result2, LiteralValue::Int(3));
 
         // COLUMNS(A1) -> 1 (single cell)
@@ -502,7 +561,10 @@ mod tests {
         );
 
         let args3 = vec![ArgumentHandle::new(&cell_ref, &ctx)];
-        let result3 = f.dispatch(&args3, &ctx.function_context(None)).unwrap();
+        let result3 = f
+            .dispatch(&args3, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(result3, LiteralValue::Int(1));
     }
 
@@ -529,8 +591,14 @@ mod tests {
             None,
         );
         let args = vec![ArgumentHandle::new(&rev_range, &ctx)];
-        let r_count = rows_f.dispatch(&args, &ctx.function_context(None)).unwrap();
-        let c_count = cols_f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let r_count = rows_f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        let c_count = cols_f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(r_count, LiteralValue::Int(1));
         assert_eq!(c_count, LiteralValue::Int(1));
     }

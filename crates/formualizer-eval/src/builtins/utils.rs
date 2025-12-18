@@ -22,10 +22,10 @@ pub fn unary_numeric_arg<'a, 'b>(
         return Err(ExcelError::new_value()
             .with_message(format!("Expected 1 argument, got {}", args.len())));
     }
-    let v = args[0].value()?;
-    match v.as_ref() {
-        LiteralValue::Error(e) => Err(e.clone()),
-        other => coerce_num(other),
+    let v = args[0].value()?.into_literal();
+    match v {
+        LiteralValue::Error(e) => Err(e),
+        other => coerce_num(&other),
     }
 }
 
@@ -37,17 +37,221 @@ pub fn binary_numeric_args<'a, 'b>(
         return Err(ExcelError::new_value()
             .with_message(format!("Expected 2 arguments, got {}", args.len())));
     }
-    let a = args[0].value()?;
-    let b = args[1].value()?;
-    let a_num = match a.as_ref() {
-        LiteralValue::Error(e) => return Err(e.clone()),
-        other => coerce_num(other)?,
+    let a = args[0].value()?.into_literal();
+    let b = args[1].value()?.into_literal();
+    let a_num = match a {
+        LiteralValue::Error(e) => return Err(e),
+        other => coerce_num(&other)?,
     };
-    let b_num = match b.as_ref() {
-        LiteralValue::Error(e) => return Err(e.clone()),
-        other => coerce_num(other)?,
+    let b_num = match b {
+        LiteralValue::Error(e) => return Err(e),
+        other => coerce_num(&other)?,
     };
     Ok((a_num, b_num))
+}
+
+fn calc_from_literal<'b>(
+    v: LiteralValue,
+    date_system: crate::engine::DateSystem,
+) -> crate::traits::CalcValue<'b> {
+    match v {
+        LiteralValue::Array(rows) => crate::traits::CalcValue::Range(
+            crate::engine::range_view::RangeView::from_owned_rows(rows, date_system),
+        ),
+        other => crate::traits::CalcValue::Scalar(other),
+    }
+}
+
+pub fn unary_numeric_elementwise<'a, 'b, F>(
+    args: &'a [crate::traits::ArgumentHandle<'a, 'b>],
+    ctx: &dyn crate::traits::FunctionContext<'b>,
+    mut f: F,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError>
+where
+    F: FnMut(f64) -> Result<LiteralValue, ExcelError>,
+{
+    if args.len() != 1 {
+        return Err(ExcelError::new_value()
+            .with_message(format!("Expected 1 argument, got {}", args.len())));
+    }
+
+    let shape = if let Ok(rv) = args[0].range_view() {
+        rv.dims()
+    } else if let Ok(cv) = args[0].value() {
+        match cv.into_literal() {
+            LiteralValue::Array(arr) => (arr.len(), arr.first().map(|r| r.len()).unwrap_or(0)),
+            _ => (1, 1),
+        }
+    } else {
+        (1, 1)
+    };
+
+    if shape != (1, 1) {
+        let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(shape.0);
+        if let Ok(view) = args[0].range_view() {
+            view.for_each_row(&mut |row| {
+                let mut out_row: Vec<LiteralValue> = Vec::with_capacity(row.len());
+                for cell in row.iter() {
+                    let num_opt = match cell {
+                        LiteralValue::Error(e) => return Err(e.clone()),
+                        other => {
+                            crate::coercion::to_number_lenient_with_locale(other, &ctx.locale())
+                                .ok()
+                        }
+                    };
+                    match num_opt {
+                        Some(n) => out_row.push(f(n)?),
+                        None => out_row.push(LiteralValue::Error(
+                            ExcelError::new_value()
+                                .with_message("Element is not coercible to number"),
+                        )),
+                    }
+                }
+                out.push(out_row);
+                Ok(())
+            })?;
+        } else {
+            let v = args[0].value()?.into_literal();
+            let LiteralValue::Array(arr) = v else {
+                // Defensive: if shape says array but value isn't, treat as scalar.
+                let x = unary_numeric_arg(args)?;
+                return Ok(calc_from_literal(f(x)?, ctx.date_system()));
+            };
+
+            for row in arr {
+                let mut out_row: Vec<LiteralValue> = Vec::with_capacity(row.len());
+                for cell in row {
+                    let num_opt = match &cell {
+                        LiteralValue::Error(e) => return Err(e.clone()),
+                        other => {
+                            crate::coercion::to_number_lenient_with_locale(other, &ctx.locale())
+                                .ok()
+                        }
+                    };
+                    match num_opt {
+                        Some(n) => out_row.push(f(n)?),
+                        None => out_row.push(LiteralValue::Error(
+                            ExcelError::new_value()
+                                .with_message("Element is not coercible to number"),
+                        )),
+                    }
+                }
+                out.push(out_row);
+            }
+        }
+
+        return Ok(calc_from_literal(
+            LiteralValue::Array(out),
+            ctx.date_system(),
+        ));
+    }
+
+    let x = unary_numeric_arg(args)?;
+    Ok(calc_from_literal(f(x)?, ctx.date_system()))
+}
+
+pub fn binary_numeric_elementwise<'a, 'b, F>(
+    args: &'a [crate::traits::ArgumentHandle<'a, 'b>],
+    ctx: &dyn crate::traits::FunctionContext<'b>,
+    mut f: F,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError>
+where
+    F: FnMut(f64, f64) -> Result<LiteralValue, ExcelError>,
+{
+    if args.len() != 2 {
+        return Err(ExcelError::new_value()
+            .with_message(format!("Expected 2 arguments, got {}", args.len())));
+    }
+
+    use crate::broadcast::{broadcast_shape, project_index};
+
+    enum Grid<'b> {
+        Range(crate::engine::range_view::RangeView<'b>),
+        Array(Vec<Vec<LiteralValue>>),
+        Scalar(LiteralValue),
+    }
+
+    impl<'b> Grid<'b> {
+        fn shape(&self) -> (usize, usize) {
+            match self {
+                Grid::Range(rv) => rv.dims(),
+                Grid::Array(arr) => (arr.len(), arr.first().map(|r| r.len()).unwrap_or(0)),
+                Grid::Scalar(_) => (1, 1),
+            }
+        }
+
+        fn get(&self, r: usize, c: usize) -> LiteralValue {
+            match self {
+                Grid::Range(rv) => rv.get_cell(r, c),
+                Grid::Array(arr) => arr
+                    .get(r)
+                    .and_then(|row| row.get(c))
+                    .cloned()
+                    .unwrap_or(LiteralValue::Empty),
+                Grid::Scalar(v) => v.clone(),
+            }
+        }
+    }
+
+    fn to_grid<'a, 'b>(ah: &crate::traits::ArgumentHandle<'a, 'b>) -> Result<Grid<'b>, ExcelError> {
+        if let Ok(rv) = ah.range_view() {
+            return Ok(Grid::Range(rv));
+        }
+        let v = ah.value()?.into_literal();
+        Ok(match v {
+            LiteralValue::Array(arr) => Grid::Array(arr),
+            other => Grid::Scalar(other),
+        })
+    }
+
+    let g0 = to_grid(&args[0])?;
+    let g1 = to_grid(&args[1])?;
+    let s0 = g0.shape();
+    let s1 = g1.shape();
+    let target = broadcast_shape(&[s0, s1])?;
+
+    if target != (1, 1) {
+        let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(target.0);
+        for r in 0..target.0 {
+            let mut out_row = Vec::with_capacity(target.1);
+            for c in 0..target.1 {
+                let (r0, c0) = project_index((r, c), s0);
+                let (r1, c1) = project_index((r, c), s1);
+                let lv0 = g0.get(r0, c0);
+                let lv1 = g1.get(r1, c1);
+
+                let n0 = match &lv0 {
+                    LiteralValue::Error(e) => return Err(e.clone()),
+                    other => {
+                        crate::coercion::to_number_lenient_with_locale(other, &ctx.locale()).ok()
+                    }
+                };
+                let n1 = match &lv1 {
+                    LiteralValue::Error(e) => return Err(e.clone()),
+                    other => {
+                        crate::coercion::to_number_lenient_with_locale(other, &ctx.locale()).ok()
+                    }
+                };
+
+                let out_cell = match (n0, n1) {
+                    (Some(a), Some(b)) => f(a, b)?,
+                    _ => LiteralValue::Error(
+                        ExcelError::new_value()
+                            .with_message("Elements are not coercible to numbers"),
+                    ),
+                };
+                out_row.push(out_cell);
+            }
+            out.push(out_row);
+        }
+        return Ok(calc_from_literal(
+            LiteralValue::Array(out),
+            ctx.date_system(),
+        ));
+    }
+
+    let (a, b) = binary_numeric_args(args)?;
+    Ok(calc_from_literal(f(a, b)?, ctx.date_system()))
 }
 
 /// Forward-looking: clamp numeric result to Excel-friendly finite values.
@@ -71,6 +275,20 @@ pub fn round_to_precision(n: f64, digits: i32) -> f64 {
     }
     let factor = 10f64.powi(digits);
     (n * factor).round() / factor
+}
+
+pub fn collapse_if_scalar(
+    rows: Vec<Vec<LiteralValue>>,
+    date_system: crate::engine::DateSystem,
+) -> crate::traits::CalcValue<'static> {
+    if rows.len() == 1 && rows[0].len() == 1 {
+        crate::traits::CalcValue::Scalar(rows[0][0].clone())
+    } else {
+        crate::traits::CalcValue::Range(crate::engine::range_view::RangeView::from_owned_rows(
+            rows,
+            date_system,
+        ))
+    }
 }
 
 // ─────────────────────────────── Criteria helpers (shared by *IF* aggregators) ───────────────────────────────

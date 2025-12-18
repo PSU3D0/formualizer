@@ -5,13 +5,20 @@ use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
+fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    Ok(match arg.value()? {
+        crate::traits::CalcValue::Scalar(v) => v,
+        crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
+    })
+}
+
 fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
-    let v = a.value()?;
-    Ok(match v.as_ref() {
-        LiteralValue::Text(s) => s.clone(),
+    let v = scalar_like_value(a)?;
+    Ok(match v {
+        LiteralValue::Text(s) => s,
         LiteralValue::Empty => String::new(),
         LiteralValue::Boolean(b) => {
-            if *b {
+            if b {
                 "TRUE".into()
             } else {
                 "FALSE".into()
@@ -26,7 +33,7 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
                 s
             }
         }
-        LiteralValue::Error(e) => return Err(e.clone()),
+        LiteralValue::Error(e) => return Err(e),
         other => other.to_string(),
     })
 }
@@ -44,11 +51,11 @@ impl Function for TrimFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let s = to_text(&args[0])?;
         let mut out = String::new();
         let mut prev_space = false;
@@ -63,7 +70,9 @@ impl Function for TrimFn {
                 prev_space = false;
             }
         }
-        Ok(LiteralValue::Text(out.trim().into()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+            out.trim().into(),
+        )))
     }
 }
 
@@ -80,12 +89,14 @@ impl Function for UpperFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        a: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        Ok(LiteralValue::Text(to_text(&a[0])?.to_ascii_uppercase()))
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+            to_text(&args[0])?.to_ascii_uppercase(),
+        )))
     }
 }
 #[derive(Debug)]
@@ -101,12 +112,14 @@ impl Function for LowerFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        a: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        Ok(LiteralValue::Text(to_text(&a[0])?.to_ascii_lowercase()))
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+            to_text(&args[0])?.to_ascii_lowercase(),
+        )))
     }
 }
 #[derive(Debug)]
@@ -122,12 +135,12 @@ impl Function for ProperFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        a: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        let s = to_text(&a[0])?;
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let s = to_text(&args[0])?;
         let mut out = String::new();
         let mut new_word = true;
         for ch in s.chars() {
@@ -147,7 +160,7 @@ impl Function for ProperFn {
                 new_word = true;
             }
         }
-        Ok(LiteralValue::Text(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(out)))
     }
 }
 
@@ -168,16 +181,16 @@ impl Function for ConcatFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut out = String::new();
         for a in args {
             out.push_str(&to_text(a)?);
         }
-        Ok(LiteralValue::Text(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(out)))
     }
 }
 // CONCATENATE (alias semantics)
@@ -197,12 +210,12 @@ impl Function for ConcatenateFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        ConcatFn.eval_scalar(args, ctx)
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        ConcatFn.eval(args, ctx)
     }
 }
 
@@ -223,34 +236,40 @@ impl Function for TextJoinFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 3 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
 
         // Get delimiter
         let delimiter = to_text(&args[0])?;
 
         // Get ignore_empty flag
-        let ignore_empty = match args[1].value()?.as_ref() {
-            LiteralValue::Boolean(b) => *b,
-            LiteralValue::Int(i) => *i != 0,
-            LiteralValue::Number(f) => *f != 0.0,
+        let ignore_empty = match scalar_like_value(&args[1])? {
+            LiteralValue::Boolean(b) => b,
+            LiteralValue::Int(i) => i != 0,
+            LiteralValue::Number(f) => f != 0.0,
             LiteralValue::Text(t) => t.to_uppercase() == "TRUE",
             LiteralValue::Empty => false,
-            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             _ => false,
         };
 
         // Collect text values
         let mut parts = Vec::new();
         for arg in args.iter().skip(2) {
-            match arg.value()?.as_ref() {
-                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            match scalar_like_value(arg)? {
+                LiteralValue::Error(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
                 LiteralValue::Empty => {
                     if !ignore_empty {
                         parts.push(String::new());
@@ -258,9 +277,9 @@ impl Function for TextJoinFn {
                 }
                 v => {
                     let s = match v {
-                        LiteralValue::Text(t) => t.clone(),
+                        LiteralValue::Text(t) => t,
                         LiteralValue::Boolean(b) => {
-                            if *b {
+                            if b {
                                 "TRUE".to_string()
                             } else {
                                 "FALSE".to_string()
@@ -277,7 +296,9 @@ impl Function for TextJoinFn {
             }
         }
 
-        Ok(LiteralValue::Text(parts.join(&delimiter)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+            parts.join(&delimiter),
+        )))
     }
 }
 
@@ -331,7 +352,8 @@ mod tests {
                 &[ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&b, &ctx)],
                 &ctx.function_context(None)
             )
-            .unwrap(),
+            .unwrap()
+            .into_literal(),
             LiteralValue::Text("ab".into())
         );
         assert_eq!(
@@ -339,7 +361,8 @@ mod tests {
                 &[ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&b, &ctx)],
                 &ctx.function_context(None)
             )
-            .unwrap(),
+            .unwrap()
+            .into_literal(),
             LiteralValue::Text("ab".into())
         );
     }

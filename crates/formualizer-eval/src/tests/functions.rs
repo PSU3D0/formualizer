@@ -1,6 +1,4 @@
 use crate::builtins::math::{Atan2Fn, CosFn, SinFn, TanFn};
-use crate::function::Function;
-use crate::map_ctx::SimpleMapCtx;
 use crate::test_workbook::TestWorkbook;
 use crate::traits::ArgumentHandle;
 use formualizer_common::LiteralValue;
@@ -33,7 +31,10 @@ fn sin_map_matches_scalar_for_array_input() {
 
     // Scalar path maps via interpreter if we push SIN over each (simulate by map)
     // Here we call dispatch directly, which should use the map path because input is array.
-    let out = sin.dispatch(&args, &ctx.function_context(None)).unwrap();
+    let out = sin
+        .dispatch(&args, &ctx.function_context(None))
+        .unwrap()
+        .into_literal();
     match out {
         LiteralValue::Array(rows) => {
             assert_eq!(rows.len(), 2);
@@ -67,7 +68,10 @@ fn cos_map_matches_scalar_for_array_input() {
     let args = vec![ArgumentHandle::new(&node, &ctx)];
 
     let cos = ctx.context.get_function("", "COS").unwrap();
-    let out = cos.dispatch(&args, &ctx.function_context(None)).unwrap();
+    let out = cos
+        .dispatch(&args, &ctx.function_context(None))
+        .unwrap()
+        .into_literal();
     match out {
         LiteralValue::Array(rows) => {
             assert_eq!(rows.len(), 1);
@@ -100,7 +104,10 @@ fn tan_map_handles_array_input() {
     let args = vec![ArgumentHandle::new(&node, &ctx)];
 
     let tan = ctx.context.get_function("", "TAN").unwrap();
-    let out = tan.dispatch(&args, &ctx.function_context(None)).unwrap();
+    let out = tan
+        .dispatch(&args, &ctx.function_context(None))
+        .unwrap()
+        .into_literal();
     match out {
         LiteralValue::Array(rows) => {
             assert_eq!(rows.len(), 1);
@@ -133,7 +140,10 @@ fn atan2_map_broadcasts_scalar_over_array() {
     let args = vec![ArgumentHandle::new(&x, &ctx), ArgumentHandle::new(&y, &ctx)];
 
     let f = ctx.context.get_function("", "ATAN2").unwrap();
-    let out = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+    let out = f
+        .dispatch(&args, &ctx.function_context(None))
+        .unwrap()
+        .into_literal();
     match out {
         LiteralValue::Array(rows) => {
             assert_eq!(rows.len(), 1);
@@ -169,20 +179,16 @@ fn sin_map_equals_scalar_per_cell() {
     let node_arr = ASTNode::new(ASTNodeType::Literal(arr), None);
     let args_arr = vec![ArgumentHandle::new(&node_arr, &ctx)];
 
-    let sin_fn = SinFn;
+    let sin = ctx.context.get_function("", "SIN").unwrap();
     let fctx = ctx.function_context(None);
-    let mut mctx = SimpleMapCtx::new(&args_arr, &fctx);
-    let out = sin_fn
-        .eval_map(&mut mctx)
-        .expect("map path expected")
-        .unwrap();
+    let out = sin.dispatch(&args_arr, &fctx).unwrap().into_literal();
     let rows = match out {
         LiteralValue::Array(r) => r,
         v => panic!("unexpected {v:?}"),
     };
+
     for (i, row) in rows.iter().enumerate() {
         for (j, cell) in row.iter().enumerate() {
-            // Build scalar node matching input element
             let input = match (i, j) {
                 (0, 0) => 0.0,
                 (0, 1) => std::f64::consts::PI / 2.0,
@@ -192,9 +198,7 @@ fn sin_map_equals_scalar_per_cell() {
             };
             let node_scalar = ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(input)), None);
             let args_scalar = vec![ArgumentHandle::new(&node_scalar, &ctx)];
-            let expected = sin_fn
-                .eval_scalar(&args_scalar, &ctx.function_context(None))
-                .unwrap();
+            let expected = sin.dispatch(&args_scalar, &fctx).unwrap().into_literal();
             assert_eq!(&expected, cell);
         }
     }
@@ -216,26 +220,16 @@ fn cos_map_equals_scalar_per_cell() {
     let node_arr = ASTNode::new(ASTNodeType::Literal(arr), None);
     let args_arr = vec![ArgumentHandle::new(&node_arr, &ctx)];
 
-    let cos_fn = CosFn;
-    let fctx = ctx.function_context(None);
-    let mut mctx = SimpleMapCtx::new(&args_arr, &fctx);
-    let out = cos_fn
-        .eval_map(&mut mctx)
-        .expect("map path expected")
-        .unwrap();
+    let cos = ctx.context.get_function("", "COS").unwrap();
+    let out = cos
+        .dispatch(&args_arr, &ctx.function_context(None))
+        .unwrap()
+        .into_literal();
     let rows = match out {
         LiteralValue::Array(r) => r,
         v => panic!("unexpected {v:?}"),
     };
 
-    for row in rows.iter() {
-        for cell in row.iter() {
-            // For each result cell, recompute by scalar
-            // We don't know original input here; instead, compute expected by inverse: find an input such that cos(input) == cell
-            // Simpler: reconstruct input from node_arr using positions
-        }
-    }
-    // Instead of the above, assert known values directly
     match &rows[0][0] {
         LiteralValue::Number(n) => assert!((n - 1.0).abs() < 1e-9),
         _ => panic!(),
@@ -264,36 +258,32 @@ fn atan2_map_equals_scalar_per_cell_broadcast() {
     ]]);
     let y_node = ASTNode::new(ASTNodeType::Literal(y_arr), None);
 
-    let atan2_fn = Atan2Fn;
+    let atan2 = ctx.context.get_function("", "ATAN2").unwrap();
     let args_vec = vec![
         ArgumentHandle::new(&x_node, &ctx),
         ArgumentHandle::new(&y_node, &ctx),
     ];
     let fctx = ctx.function_context(None);
-    let mut mctx = SimpleMapCtx::new(&args_vec, &fctx);
-    let out = atan2_fn
-        .eval_map(&mut mctx)
-        .expect("map path expected")
-        .unwrap();
-    let row = match out {
+    let out = atan2.dispatch(&args_vec, &fctx).unwrap().into_literal();
+    let rows = match out {
         LiteralValue::Array(r) => r,
         v => panic!("unexpected {v:?}"),
     };
-    let row = &row[0];
+    let row = &rows[0];
 
-    // Compare with scalar eval for each y element
     for (idx, y) in [0.0, 1.0, 2.0].iter().enumerate() {
         let xs = ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(1.0)), None);
         let ys = ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(*y)), None);
-        let expected = atan2_fn
-            .eval_scalar(
+        let expected = atan2
+            .dispatch(
                 &[
                     ArgumentHandle::new(&xs, &ctx),
                     ArgumentHandle::new(&ys, &ctx),
                 ],
-                &ctx.function_context(None),
+                &fctx,
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(&expected, &row[idx]);
     }
 }
@@ -482,7 +472,7 @@ fn interpreter_broadcasts_numeric_binary() {
         },
         None,
     );
-    let out = ctx.evaluate_ast(&plus).unwrap();
+    let out = ctx.evaluate_ast(&plus).unwrap().into_literal();
     match out {
         LiteralValue::Array(rows) => {
             assert_eq!(rows.len(), 2);
@@ -516,7 +506,7 @@ fn interpreter_broadcast_scalar_over_array() {
         },
         None,
     );
-    let out = ctx.evaluate_ast(&node).unwrap();
+    let out = ctx.evaluate_ast(&node).unwrap().into_literal();
     match out {
         LiteralValue::Array(rows) => {
             assert_eq!(
@@ -554,7 +544,7 @@ fn interpreter_incompatible_broadcast_is_value_error() {
         },
         None,
     );
-    match ctx.evaluate_ast(&n).unwrap() {
+    match ctx.evaluate_ast(&n).unwrap().into_literal() {
         LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
         v => panic!("expected value error, got {v:?}"),
     }

@@ -55,7 +55,7 @@ fn test_cancellation_between_layers() {
     });
 
     // Attempt evaluation with cancellation
-    let result = engine.evaluate_all_cancellable(&cancel_flag);
+    let result = engine.evaluate_all_cancellable(cancel_flag);
 
     handle.join().unwrap();
 
@@ -129,7 +129,7 @@ fn test_cancellation_within_large_layer() {
         cancel_flag_clone.store(true, Ordering::Relaxed);
     });
 
-    let result = engine.evaluate_all_cancellable(&cancel_flag);
+    let result = engine.evaluate_all_cancellable(cancel_flag);
 
     handle.join().unwrap();
 
@@ -183,7 +183,7 @@ fn test_cancellation_in_demand_driven_evaluation() {
     });
 
     // Try to evaluate until D1 with cancellation
-    let result = engine.evaluate_until_cancellable(&["D1"], &cancel_flag);
+    let result = engine.evaluate_until_cancellable(&["D1"], cancel_flag);
 
     handle.join().unwrap();
 
@@ -225,7 +225,7 @@ fn test_cancellation_during_cycle_handling() {
     let cancel_flag = Arc::new(AtomicBool::new(true));
 
     // Evaluation should be cancelled immediately
-    let result = engine.evaluate_all_cancellable(&cancel_flag);
+    let result = engine.evaluate_all_cancellable(cancel_flag);
 
     match result {
         Err(ExcelError {
@@ -265,10 +265,10 @@ fn test_non_cancelled_evaluation_works_normally() {
     engine.set_cell_formula("Sheet1", 1, 2, b1_formula).unwrap();
 
     // Use cancellation flag but never set it
-    let cancel_flag = AtomicBool::new(false);
+    let cancel_flag = Arc::new(AtomicBool::new(false));
 
     // Evaluation should complete normally
-    let result = engine.evaluate_all_cancellable(&cancel_flag).unwrap();
+    let result = engine.evaluate_all_cancellable(cancel_flag).unwrap();
 
     assert_eq!(result.computed_vertices, 1); // Only B1 needs evaluation
     assert_eq!(result.cycle_errors, 0);
@@ -303,11 +303,11 @@ fn test_demand_driven_non_cancelled_works_normally() {
     engine.set_cell_formula("Sheet1", 1, 3, c1_formula).unwrap();
 
     // Use cancellation flag but never set it
-    let cancel_flag = AtomicBool::new(false);
+    let cancel_flag = Arc::new(AtomicBool::new(false));
 
     // Evaluation should complete normally
     let result = engine
-        .evaluate_until_cancellable(&["C1"], &cancel_flag)
+        .evaluate_until_cancellable(&["C1"], cancel_flag)
         .unwrap();
 
     assert_eq!(result.computed_vertices, 2); // B1 and C1 need evaluation
@@ -335,8 +335,8 @@ fn test_cancellation_message_differentiation() {
     engine.set_cell_formula("Sheet1", 1, 1, one).unwrap();
 
     // Test immediate cancellation to get between-layers message
-    let cancel_flag = AtomicBool::new(true);
-    let result = engine.evaluate_all_cancellable(&cancel_flag);
+    let cancel_flag = Arc::new(AtomicBool::new(true));
+    let result = engine.evaluate_all_cancellable(cancel_flag);
 
     match result {
         Err(ExcelError {

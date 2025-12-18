@@ -20,26 +20,32 @@ impl Function for NotFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        let b = match v.as_ref() {
-            LiteralValue::Boolean(b) => !*b,
-            LiteralValue::Number(n) => *n == 0.0,
-            LiteralValue::Int(i) => *i == 0,
+        let v = args[0].value()?.into_literal();
+        let b = match v {
+            LiteralValue::Boolean(b) => !b,
+            LiteralValue::Number(n) => n == 0.0,
+            LiteralValue::Int(i) => i == 0,
             LiteralValue::Empty => true,
-            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             _ => {
-                return Ok(LiteralValue::Error(ExcelError::new_value()));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
             }
         };
-        Ok(LiteralValue::Boolean(b))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(b)))
     }
 }
 
@@ -59,11 +65,11 @@ impl Function for XorFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut true_count = 0usize;
         let mut first_error: Option<LiteralValue> = None;
         for a in args {
@@ -106,27 +112,27 @@ impl Function for XorFn {
                     first_error = err;
                 }
             } else {
-                let v = a.value()?;
-                match v.as_ref() {
+                let v = a.value()?.into_literal();
+                match v {
                     LiteralValue::Boolean(b) => {
-                        if *b {
+                        if b {
                             true_count += 1;
                         }
                     }
                     LiteralValue::Number(n) => {
-                        if *n != 0.0 {
+                        if n != 0.0 {
                             true_count += 1;
                         }
                     }
                     LiteralValue::Int(i) => {
-                        if *i != 0 {
+                        if i != 0 {
                             true_count += 1;
                         }
                     }
                     LiteralValue::Empty => {}
                     LiteralValue::Error(e) => {
                         if first_error.is_none() {
-                            first_error = Some(LiteralValue::Error(e.clone()));
+                            first_error = Some(LiteralValue::Error(e));
                         }
                     }
                     _ => {
@@ -140,9 +146,11 @@ impl Function for XorFn {
             }
         }
         if let Some(err) = first_error {
-            return Ok(err);
+            return Ok(crate::traits::CalcValue::Scalar(err));
         }
-        Ok(LiteralValue::Boolean(true_count % 2 == 1))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            true_count % 2 == 1,
+        )))
     }
 }
 
@@ -166,18 +174,20 @@ impl Function for IfErrorFn {
             LazyLock::new(|| vec![ArgSchema::any(), ArgSchema::any()]);
         &TWO[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        match v.as_ref() {
-            LiteralValue::Error(_) => Ok(args[1].value()?.into_owned()),
-            other => Ok(other.clone()),
+        let v = args[0].value()?.into_literal();
+        match v {
+            LiteralValue::Error(_) => args[1].value(),
+            other => Ok(crate::traits::CalcValue::Scalar(other)),
         }
     }
 }
@@ -201,19 +211,22 @@ impl Function for IfNaFn {
             LazyLock::new(|| vec![ArgSchema::any(), ArgSchema::any()]);
         &TWO[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let v = args[0].value()?;
-        match v.as_ref() {
-            LiteralValue::Error(e) if *e == "#N/A" => Ok(args[1].value()?.into_owned()),
-            LiteralValue::Error(_) => Ok(v.into_owned()),
-            other => Ok(other.clone()),
+        let v = args[0].value()?.into_literal();
+        match v {
+            LiteralValue::Error(ref e) if e.kind == formualizer_common::ExcelErrorKind::Na => {
+                args[1].value()
+            }
+            other => Ok(crate::traits::CalcValue::Scalar(other)),
         }
     }
 }
@@ -234,33 +247,39 @@ impl Function for IfsFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 || !args.len().is_multiple_of(2) {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         for pair in args.chunks(2) {
-            let cond = pair[0].value()?;
-            let is_true = match cond.as_ref() {
-                LiteralValue::Boolean(b) => *b,
-                LiteralValue::Number(n) => *n != 0.0,
-                LiteralValue::Int(i) => *i != 0,
+            let cond = pair[0].value()?.into_literal();
+            let is_true = match cond {
+                LiteralValue::Boolean(b) => b,
+                LiteralValue::Number(n) => n != 0.0,
+                LiteralValue::Int(i) => i != 0,
                 LiteralValue::Empty => false,
-                LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+                LiteralValue::Error(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
                 _ => {
-                    return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                        "#VALUE!",
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::from_error_string("#VALUE!"),
                     )));
                 }
             };
             if is_true {
-                return pair[1].value().map(|c| c.into_owned());
+                return pair[1].value();
             }
         }
-        Ok(LiteralValue::Error(ExcelError::new_na()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new_na(),
+        )))
     }
 }
 
@@ -293,7 +312,9 @@ mod tests {
         let args = vec![ArgumentHandle::new(&t, &ctx)];
         let f = ctx.context.get_function("", "NOT").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Boolean(false)
         );
     }
@@ -318,7 +339,9 @@ mod tests {
         let f = ctx.context.get_function("", "XOR").unwrap();
         // 1,true,true -> 2 trues => even => FALSE
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Boolean(false)
         );
     }
@@ -340,7 +363,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "IFERROR").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Int(5)
         );
     }
@@ -357,7 +382,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "IFERROR").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Int(11)
         );
     }
@@ -385,10 +412,16 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "IFNA").unwrap();
         assert_eq!(
-            f.dispatch(&args_na, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args_na, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Int(7)
         );
-        match f.dispatch(&args_val, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args_val, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
             _ => panic!(),
         }
@@ -406,7 +439,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "IFNA").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Int(22)
         );
     }
@@ -427,7 +462,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "IFS").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Int(9)
         );
     }
@@ -447,7 +484,11 @@ mod tests {
             ArgumentHandle::new(&val2, &ctx),
         ];
         let f = ctx.context.get_function("", "IFS").unwrap();
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#N/A"),
             other => panic!("expected #N/A got {other:?}"),
         }
@@ -465,7 +506,8 @@ mod tests {
                 &[ArgumentHandle::new(&zero, &ctx)],
                 &ctx.function_context(None)
             )
-            .unwrap(),
+            .unwrap()
+            .into_literal(),
             LiteralValue::Boolean(true)
         );
         assert_eq!(
@@ -473,7 +515,8 @@ mod tests {
                 &[ArgumentHandle::new(&one, &ctx)],
                 &ctx.function_context(None)
             )
-            .unwrap(),
+            .unwrap()
+            .into_literal(),
             LiteralValue::Boolean(false)
         );
     }
@@ -497,6 +540,7 @@ mod tests {
                 &ctx.function_context(None),
             )
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
             _ => panic!("expected value error"),

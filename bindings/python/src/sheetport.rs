@@ -22,6 +22,8 @@ pyo3::create_exception!(formualizer, SheetPortManifestError, SheetPortError);
 pyo3::create_exception!(formualizer, SheetPortConstraintError, SheetPortError);
 pyo3::create_exception!(formualizer, SheetPortWorkbookError, SheetPortError);
 
+type PyObject = pyo3::Py<pyo3::PyAny>;
+
 type RuntimeResult<T> = Result<T, RuntimeSheetPortError>;
 
 #[pyclass(name = "SheetPortSession", module = "formualizer")]
@@ -142,7 +144,7 @@ impl PySheetPortSession {
     }
 
     pub fn write_inputs(&mut self, py: Python<'_>, update: &Bound<'_, PyAny>) -> PyResult<()> {
-        let dict = update.downcast::<PyDict>().map_err(|_| {
+        let dict = update.cast::<PyDict>().map_err(|_| {
             PyErr::new::<PyTypeError, _>("input updates must be provided as a dict")
         })?;
         let converted = py_to_input_update(&self.bindings, dict)?;
@@ -157,9 +159,11 @@ impl PySheetPortSession {
         freeze_volatile: bool,
         rng_seed: Option<u64>,
     ) -> PyResult<PyObject> {
-        let mut options = formualizer_sheetport::EvalOptions::default();
-        options.freeze_volatile = freeze_volatile;
-        options.rng_seed = rng_seed;
+        let options = formualizer_sheetport::EvalOptions {
+            freeze_volatile,
+            rng_seed,
+            ..Default::default()
+        };
         self.with_sheetport(py, |sheetport| sheetport.evaluate_once(options))
             .and_then(|snapshot| snapshot_to_py(py, snapshot.inner()))
     }
@@ -274,7 +278,7 @@ fn py_to_port_value(binding: &PortBinding, value: &Bound<'_, PyAny>) -> PyResult
         }
         formualizer_sheetport::BoundPort::Record(record) => {
             let dict = value
-                .downcast::<PyDict>()
+                .cast::<PyDict>()
                 .map_err(|_| PyErr::new::<PyTypeError, _>("record inputs must be dictionaries"))?;
             let mut map = BTreeMap::new();
             for (key, val) in dict.iter() {
@@ -297,7 +301,7 @@ fn py_to_port_value(binding: &PortBinding, value: &Bound<'_, PyAny>) -> PyResult
             let mut expected_width: Option<usize> = None;
             for (row_idx, row_obj) in iter.enumerate() {
                 let row_any = row_obj?;
-                let mut row_iter = row_any.try_iter().map_err(|_| {
+                let row_iter = row_any.try_iter().map_err(|_| {
                     PyErr::new::<PyTypeError, _>(format!(
                         "range row {} must be iterable",
                         row_idx + 1
@@ -337,7 +341,7 @@ fn py_to_port_value(binding: &PortBinding, value: &Bound<'_, PyAny>) -> PyResult
                 .collect();
             for (row_idx, row_obj) in iter.enumerate() {
                 let row_any = row_obj?;
-                let mapping = row_any.downcast::<PyDict>().map_err(|_| {
+                let mapping = row_any.cast::<PyDict>().map_err(|_| {
                     PyErr::new::<PyTypeError, _>(format!(
                         "table row {} must be a dict of column values",
                         row_idx + 1

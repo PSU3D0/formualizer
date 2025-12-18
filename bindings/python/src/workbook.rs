@@ -8,6 +8,8 @@ use std::collections::HashMap;
 type SheetCellMap = HashMap<(u32, u32), CellData>;
 type SheetCache = HashMap<String, SheetCellMap>;
 
+type PyObject = pyo3::Py<pyo3::PyAny>;
+
 #[pyclass(name = "Workbook", module = "formualizer")]
 #[derive(Clone)]
 pub struct PyWorkbook {
@@ -194,7 +196,7 @@ impl PyWorkbook {
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
-        wb.evaluate_all_cancellable(&self.cancel_flag)
+        wb.evaluate_all_cancellable(self.cancel_flag.clone())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         Ok(())
     }
@@ -206,7 +208,7 @@ impl PyWorkbook {
     ) -> PyResult<PyObject> {
         let mut target_vec = Vec::with_capacity(targets.len());
         for item in targets.iter() {
-            let tuple: &Bound<'_, pyo3::types::PyTuple> = item.downcast()?;
+            let tuple: &Bound<'_, pyo3::types::PyTuple> = item.cast()?;
             let sheet: String = tuple.get_item(0)?.extract()?;
             let row: u32 = tuple.get_item(1)?.extract()?;
             let col: u32 = tuple.get_item(2)?.extract()?;
@@ -229,7 +231,7 @@ impl PyWorkbook {
             .collect();
 
         let results = wb
-            .evaluate_cells_cancellable(&refs, &self.cancel_flag)
+            .evaluate_cells_cancellable(&refs, self.cancel_flag.clone())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         let py_results = pyo3::types::PyList::empty(py);
@@ -334,7 +336,7 @@ impl PyWorkbook {
     ) -> PyResult<()> {
         let mut rows_vec: Vec<Vec<LiteralValue>> = Vec::with_capacity(data.len());
         for row in data.iter() {
-            let list: &Bound<'_, pyo3::types::PyList> = row.downcast()?;
+            let list: &Bound<'_, pyo3::types::PyList> = row.cast()?;
             let mut row_vals: Vec<LiteralValue> = Vec::with_capacity(list.len());
             for v in list.iter() {
                 row_vals.push(py_to_literal(&v)?);
@@ -382,7 +384,7 @@ impl PyWorkbook {
     ) -> PyResult<()> {
         let mut rows_vec: Vec<Vec<String>> = Vec::with_capacity(formulas.len());
         for row in formulas.iter() {
-            let list: &Bound<'_, pyo3::types::PyList> = row.downcast()?;
+            let list: &Bound<'_, pyo3::types::PyList> = row.cast()?;
             let mut row_vals: Vec<String> = Vec::with_capacity(list.len());
             for v in list.iter() {
                 let s: String = v.extract()?;
@@ -524,17 +526,6 @@ impl PyRangeAddress {
 
 // Non-Python methods for internal use
 impl PyWorkbook {
-    pub(crate) fn with_workbook<T, F>(&self, f: F) -> PyResult<T>
-    where
-        F: FnOnce(&formualizer_workbook::Workbook) -> PyResult<T>,
-    {
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        f(&wb)
-    }
-
     pub(crate) fn with_workbook_mut<T, F>(&self, f: F) -> PyResult<T>
     where
         F: FnOnce(&mut formualizer_workbook::Workbook) -> PyResult<T>,

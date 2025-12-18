@@ -3,6 +3,7 @@ use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Helper to create a cell reference AST node
@@ -440,12 +441,12 @@ fn test_parallel_cancellation() {
     }
 
     // Test cancellation during evaluation
-    let cancel_flag = AtomicBool::new(false);
+    let cancel_flag = Arc::new(AtomicBool::new(false));
 
     // Set cancellation flag immediately (simulating early cancellation)
     cancel_flag.store(true, Ordering::Relaxed);
 
-    let result = engine.evaluate_all_cancellable(&cancel_flag);
+    let result = engine.evaluate_all_cancellable(cancel_flag);
 
     // Should get a cancellation error
     match result {
@@ -629,10 +630,10 @@ fn test_parallel_with_cancellation_timing() {
     }
 
     // Test cancellation with immediate flag setting
-    let cancel_flag = AtomicBool::new(false);
+    let cancel_flag = Arc::new(AtomicBool::new(false));
     cancel_flag.store(true, Ordering::Relaxed);
 
-    let result = engine.evaluate_all_cancellable(&cancel_flag);
+    let result = engine.evaluate_all_cancellable(cancel_flag);
 
     // Should get a cancellation error since flag is set immediately
     match result {

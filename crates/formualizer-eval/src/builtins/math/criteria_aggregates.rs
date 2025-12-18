@@ -9,6 +9,40 @@ use arrow_array::{Array as _, BooleanArray, Float64Array};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        static CACHED_MASK_SLICE_FAST: Cell<usize> = const { Cell::new(0) };
+        static CACHED_MASK_PAD_PARTIAL: Cell<usize> = const { Cell::new(0) };
+        static CACHED_MASK_PAD_ALL_FILL: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub fn reset_cached_mask_counters() {
+        CACHED_MASK_SLICE_FAST.with(|c| c.set(0));
+        CACHED_MASK_PAD_PARTIAL.with(|c| c.set(0));
+        CACHED_MASK_PAD_ALL_FILL.with(|c| c.set(0));
+    }
+
+    pub fn cached_mask_counters() -> (usize, usize, usize) {
+        let a = CACHED_MASK_SLICE_FAST.with(|c| c.get());
+        let b = CACHED_MASK_PAD_PARTIAL.with(|c| c.get());
+        let d = CACHED_MASK_PAD_ALL_FILL.with(|c| c.get());
+        (a, b, d)
+    }
+
+    pub(crate) fn inc_slice_fast() {
+        CACHED_MASK_SLICE_FAST.with(|c| c.set(c.get() + 1));
+    }
+    pub(crate) fn inc_pad_partial() {
+        CACHED_MASK_PAD_PARTIAL.with(|c| c.set(c.get() + 1));
+    }
+    pub(crate) fn inc_pad_all_fill() {
+        CACHED_MASK_PAD_ALL_FILL.with(|c| c.set(c.get() + 1));
+    }
+}
+
 /*
 Criteria-driven aggregation functions:
   - SUMIF(range, criteria, [sum_range])
@@ -33,11 +67,11 @@ enum AggregationType {
 }
 
 fn eval_if_family<'a, 'b>(
-    args: &'a [ArgumentHandle<'a, 'b>],
-    ctx: &dyn FunctionContext,
+    args: &[ArgumentHandle<'a, 'b>],
+    ctx: &dyn FunctionContext<'b>,
     agg_type: AggregationType,
     multi: bool,
-) -> Result<LiteralValue, ExcelError> {
+) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
     let mut sum_view: Option<crate::engine::range_view::RangeView<'_>> = None;
     let mut sum_scalar: Option<LiteralValue> = None;
     let mut crit_specs = Vec::new();
@@ -45,14 +79,17 @@ fn eval_if_family<'a, 'b>(
     if !multi {
         // Single criterion: IF(range, criteria, [target_range])
         if args.len() < 2 || args.len() > 3 {
-            return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
-                format!("Function expects 2 or 3 arguments, got {}", args.len()),
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value().with_message(format!(
+                    "Function expects 2 or 3 arguments, got {}",
+                    args.len()
+                )),
             )));
         }
-        let pred = crate::args::parse_criteria(args[1].value()?.as_ref())?;
+        let pred = crate::args::parse_criteria(&args[1].value()?.into_literal())?;
         let crit_rv = args[0].range_view().ok();
         let crit_val = if crit_rv.is_none() {
-            Some(args[0].value()?.into_owned())
+            Some(args[0].value()?.into_literal())
         } else {
             None
         };
@@ -64,14 +101,14 @@ fn eval_if_family<'a, 'b>(
                     let crit_dims = crit_specs[0].0.as_ref().map(|v| v.dims()).unwrap_or((1, 1));
                     sum_view = Some(v.expand_to(crit_dims.0, crit_dims.1));
                 } else {
-                    sum_scalar = Some(args[2].value()?.into_owned());
+                    sum_scalar = Some(args[2].value()?.into_literal());
                 }
             } else {
                 // Default target is criteria range
                 if let Ok(v) = args[0].range_view() {
                     sum_view = Some(v);
                 } else {
-                    sum_scalar = Some(args[0].value()?.into_owned());
+                    sum_scalar = Some(args[0].value()?.into_literal());
                 }
             }
         }
@@ -79,45 +116,65 @@ fn eval_if_family<'a, 'b>(
         // Multi criteria: IFS(target_range, crit_range1, crit1, ...) or COUNTIFS(crit_range1, crit1, ...)
         if agg_type == AggregationType::Count {
             if args.len() < 2 || !args.len().is_multiple_of(2) {
-                return Ok(LiteralValue::Error(ExcelError::new_value().with_message(
-                    format!(
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value().with_message(format!(
                         "COUNTIFS expects N pairs (criteria_range, criteria); got {} args",
                         args.len()
-                    ),
+                    )),
                 )));
             }
             for i in (0..args.len()).step_by(2) {
-                let rv = args[i].range_view().ok();
-                let val = if rv.is_none() {
-                    Some(args[i].value()?.into_owned())
-                } else {
-                    None
-                };
-                let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
+                let mut rv = args[i].range_view().ok();
+                let mut val: Option<LiteralValue> = None;
+
+                // Broadcast semantics: treat 1x1 criteria ranges as scalar criteria.
+                if let Some(ref view) = rv {
+                    let (r, c) = view.dims();
+                    if r == 1 && c == 1 {
+                        val = Some(view.as_1x1().unwrap_or(LiteralValue::Empty));
+                        rv = None;
+                    }
+                }
+
+                if val.is_none() && rv.is_none() {
+                    val = Some(args[i].value()?.into_literal());
+                }
+
+                let pred = crate::args::parse_criteria(&args[i + 1].value()?.into_literal())?;
                 crit_specs.push((rv, pred, val));
             }
         } else {
             if args.len() < 3 || !(args.len() - 1).is_multiple_of(2) {
-                return Ok(LiteralValue::Error(
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new_value().with_message(format!(
                         "Function expects 1 target_range followed by N pairs (criteria_range, criteria); got {} args",
                         args.len()
                     )),
-                ));
+                )));
             }
             if let Ok(v) = args[0].range_view() {
                 sum_view = Some(v);
             } else {
-                sum_scalar = Some(args[0].value()?.into_owned());
+                sum_scalar = Some(args[0].value()?.into_literal());
             }
             for i in (1..args.len()).step_by(2) {
-                let rv = args[i].range_view().ok();
-                let val = if rv.is_none() {
-                    Some(args[i].value()?.into_owned())
-                } else {
-                    None
-                };
-                let pred = crate::args::parse_criteria(args[i + 1].value()?.as_ref())?;
+                let mut rv = args[i].range_view().ok();
+                let mut val: Option<LiteralValue> = None;
+
+                // Broadcast semantics: treat 1x1 criteria ranges as scalar criteria.
+                if let Some(ref view) = rv {
+                    let (r, c) = view.dims();
+                    if r == 1 && c == 1 {
+                        val = Some(view.as_1x1().unwrap_or(LiteralValue::Empty));
+                        rv = None;
+                    }
+                }
+
+                if val.is_none() && rv.is_none() {
+                    val = Some(args[i].value()?.into_literal());
+                }
+
+                let pred = crate::args::parse_criteria(&args[i + 1].value()?.into_literal())?;
                 crit_specs.push((rv, pred, val));
             }
         }
@@ -207,8 +264,43 @@ fn eval_if_family<'a, 'b>(
                     // Try cache
                     let cur_cached = if let Some(ref view) = crit_specs[j].0 {
                         ctx.get_criteria_mask(view, c, pred).map(|m| {
-                            let sl = arrow_array::Array::slice(m.as_ref(), row_start, row_len);
-                            sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone()
+                            let fill = criteria_match(pred, &LiteralValue::Empty);
+                            let m_len = m.len();
+
+                            // The cached mask may be shorter than the current driver's chunk
+                            // (e.g., whole-column references trimmed to different used-regions).
+                            // Treat out-of-bounds rows as Empty cells.
+                            if row_start + row_len <= m_len {
+                                #[cfg(test)]
+                                test_hooks::inc_slice_fast();
+                                let sl = m.slice(row_start, row_len);
+                                return sl
+                                    .as_any()
+                                    .downcast_ref::<arrow_array::BooleanArray>()
+                                    .expect("cached criteria mask slice downcast")
+                                    .clone();
+                            }
+
+                            let mut bb =
+                                arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                            if row_start < m_len {
+                                #[cfg(test)]
+                                test_hooks::inc_pad_partial();
+                                let take_len = row_len.min(m_len - row_start);
+                                let sl = m.slice(row_start, take_len);
+                                let ba = sl
+                                    .as_any()
+                                    .downcast_ref::<arrow_array::BooleanArray>()
+                                    .expect("cached criteria mask slice downcast");
+                                bb.append_array(ba);
+                                bb.append_n(row_len - take_len, fill);
+                            } else {
+                                #[cfg(test)]
+                                test_hooks::inc_pad_all_fill();
+                                bb.append_n(row_len, fill);
+                            }
+
+                            bb.finish()
                         })
                     } else {
                         None
@@ -370,15 +462,14 @@ fn eval_if_family<'a, 'b>(
                                     total_sum += s;
                                 }
                                 total_count += f64_arr.len() as i64 - f64_arr.null_count() as i64;
-                            } else if let Some(ref s) = sum_scalar {
-                                if let Ok(n) = coerce_num(s) {
-                                    let count = (0..mask.len())
-                                        .filter(|&i| mask.is_valid(i) && mask.value(i))
-                                        .count()
-                                        as i64;
-                                    total_sum += n * count as f64;
-                                    total_count += count;
-                                }
+                            } else if let Some(ref s) = sum_scalar
+                                && let Ok(n) = coerce_num(s)
+                            {
+                                let count = (0..mask.len())
+                                    .filter(|&i| mask.is_valid(i) && mask.value(i))
+                                    .count() as i64;
+                                total_sum += n * count as f64;
+                                total_count += count;
                             }
                         }
                     }
@@ -395,11 +486,11 @@ fn eval_if_family<'a, 'b>(
                                     total_sum += s;
                                 }
                                 total_count += tc.len() as i64 - tc.null_count() as i64;
-                            } else if let Some(ref s) = sum_scalar {
-                                if let Ok(n) = coerce_num(s) {
-                                    total_sum += n * row_len as f64;
-                                    total_count += row_len as i64;
-                                }
+                            } else if let Some(ref s) = sum_scalar
+                                && let Ok(n) = coerce_num(s)
+                            {
+                                total_sum += n * row_len as f64;
+                                total_count += row_len as i64;
                             }
                         }
                     }
@@ -419,25 +510,31 @@ fn eval_if_family<'a, 'b>(
         if all_match {
             if agg_type == AggregationType::Count {
                 total_count = (dims.0 * dims.1) as i64;
-            } else {
-                if let Some(ref s) = sum_scalar {
-                    if let Ok(n) = coerce_num(s) {
-                        total_sum = n * (dims.0 * dims.1) as f64;
-                        total_count = (dims.0 * dims.1) as i64;
-                    }
-                }
+            } else if let Some(ref s) = sum_scalar
+                && let Ok(n) = coerce_num(s)
+            {
+                total_sum = n * (dims.0 * dims.1) as f64;
+                total_count = (dims.0 * dims.1) as i64;
             }
         }
     }
 
     match agg_type {
-        AggregationType::Sum => Ok(LiteralValue::Number(total_sum)),
-        AggregationType::Count => Ok(LiteralValue::Number(total_count as f64)),
+        AggregationType::Sum => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            total_sum,
+        ))),
+        AggregationType::Count => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            total_count as f64,
+        ))),
         AggregationType::Average => {
             if total_count == 0 {
-                Ok(LiteralValue::Error(ExcelError::new_div()))
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )))
             } else {
-                Ok(LiteralValue::Number(total_sum / total_count as f64))
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                    total_sum / total_count as f64,
+                )))
             }
         }
     }
@@ -467,11 +564,11 @@ impl Function for AverageIfFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         eval_if_family(args, ctx, AggregationType::Average, false)
     }
 }
@@ -500,11 +597,11 @@ impl Function for SumIfFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         eval_if_family(args, ctx, AggregationType::Sum, false)
     }
 }
@@ -533,11 +630,11 @@ impl Function for CountIfFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         eval_if_family(args, ctx, AggregationType::Count, false)
     }
 }
@@ -566,11 +663,11 @@ impl Function for SumIfsFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         eval_if_family(args, ctx, AggregationType::Sum, true)
     }
 }
@@ -599,11 +696,11 @@ impl Function for CountIfsFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         eval_if_family(args, ctx, AggregationType::Count, true)
     }
 }
@@ -632,11 +729,11 @@ impl Function for AverageIfsFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         eval_if_family(args, ctx, AggregationType::Average, true)
     }
 }
@@ -658,11 +755,11 @@ impl Function for CountAFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut cnt = 0i64;
         for a in args {
             if let Ok(view) = a.range_view() {
@@ -677,13 +774,15 @@ impl Function for CountAFn {
                     }
                 }
             } else {
-                let v = a.value()?;
-                if !matches!(v.as_ref(), LiteralValue::Empty) {
+                let v = a.value()?.into_literal();
+                if !matches!(v, LiteralValue::Empty) {
                     cnt += 1;
                 }
             }
         }
-        Ok(LiteralValue::Number(cnt as f64))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            cnt as f64,
+        )))
     }
 }
 
@@ -704,11 +803,11 @@ impl Function for CountBlankFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut cnt = 0i64;
         for a in args {
             if let Ok(view) = a.range_view() {
@@ -725,26 +824,28 @@ impl Function for CountBlankFn {
                             .downcast_ref::<arrow_array::StringArray>()
                             .unwrap();
                         for i in 0..tc.len() {
-                            if tc.value(i) == crate::arrow_store::TypeTag::Empty as u8 {
+                            let is_blank = tc.value(i) == crate::arrow_store::TypeTag::Empty as u8
+                                || (tc.value(i) == crate::arrow_store::TypeTag::Text as u8
+                                    && !text_arr.is_null(i)
+                                    && text_arr.value(i).is_empty());
+                            if is_blank {
                                 cnt += 1;
-                            } else if tc.value(i) == crate::arrow_store::TypeTag::Text as u8 {
-                                if !text_arr.is_null(i) && text_arr.value(i).is_empty() {
-                                    cnt += 1;
-                                }
                             }
                         }
                     }
                 }
             } else {
-                let v = a.value()?;
-                match v.as_ref() {
+                let v = a.value()?.into_literal();
+                match v {
                     LiteralValue::Empty => cnt += 1,
                     LiteralValue::Text(s) if s.is_empty() => cnt += 1,
                     _ => {}
                 }
             }
         }
-        Ok(LiteralValue::Number(cnt as f64))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            cnt as f64,
+        )))
     }
 }
 
@@ -790,7 +891,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "SUMIF").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(5.0)
         );
     }
@@ -817,7 +920,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "SUMIF").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(40.0)
         );
     }
@@ -845,7 +950,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "SUMIF").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(10.0)
         );
     }
@@ -866,7 +973,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "COUNTIF").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(2.0)
         );
     }
@@ -904,7 +1013,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "SUMIFS").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(30.0)
         );
     }
@@ -933,7 +1044,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "COUNTIFS").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(1.0)
         );
     }
@@ -957,7 +1070,11 @@ mod tests {
             ArgumentHandle::new(&crit, &ctx),
         ];
         let f = ctx.context.get_function("", "AVERAGEIFS").unwrap();
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             _ => panic!("expected div0"),
         }
@@ -978,89 +1095,22 @@ mod tests {
         let counta = ctx.context.get_function("", "COUNTA").unwrap();
         let countblank = ctx.context.get_function("", "COUNTBLANK").unwrap();
         assert_eq!(
-            counta.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            counta
+                .dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(2.0)
         );
         assert_eq!(
             countblank
                 .dispatch(&args, &ctx.function_context(None))
-                .unwrap(),
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(2.0)
         );
     }
 
     // ───────── Parity tests (window vs scalar) ─────────
-    #[test]
-    #[ignore]
-    fn sumif_window_parity() {
-        let f = SumIfFn; // direct instance
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfFn));
-        let ctx = interp(&wb);
-        let range = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Int(1),
-            LiteralValue::Int(2),
-            LiteralValue::Int(3),
-        ]]));
-        let crit = lit(LiteralValue::Text(">1".into()));
-        let args = vec![
-            ArgumentHandle::new(&range, &ctx),
-            ArgumentHandle::new(&crit, &ctx),
-        ];
-        let fctx = ctx.function_context(None);
-        let mut wctx = crate::window_ctx::SimpleWindowCtx::new(
-            &args,
-            &fctx,
-            crate::window_ctx::WindowSpec::default(),
-        );
-        let window_val = f.eval_window(&mut wctx).expect("window path").unwrap();
-        let scalar = f.eval_scalar(&args, &fctx).unwrap();
-        assert_eq!(window_val, scalar);
-    }
-
-    #[test]
-    #[ignore]
-    fn sumifs_window_parity() {
-        let f = SumIfsFn;
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfsFn));
-        let ctx = interp(&wb);
-        let sum = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Int(10),
-            LiteralValue::Int(20),
-            LiteralValue::Int(30),
-            LiteralValue::Int(40),
-        ]]));
-        let city = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Text("Bellevue".into()),
-            LiteralValue::Text("Issaquah".into()),
-            LiteralValue::Text("Bellevue".into()),
-            LiteralValue::Text("Issaquah".into()),
-        ]]));
-        let beds = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Int(2),
-            LiteralValue::Int(3),
-            LiteralValue::Int(4),
-            LiteralValue::Int(5),
-        ]]));
-        let c_city = lit(LiteralValue::Text("Bellevue".into()));
-        let c_beds = lit(LiteralValue::Text(">=4".into()));
-        let args = vec![
-            ArgumentHandle::new(&sum, &ctx),
-            ArgumentHandle::new(&city, &ctx),
-            ArgumentHandle::new(&c_city, &ctx),
-            ArgumentHandle::new(&beds, &ctx),
-            ArgumentHandle::new(&c_beds, &ctx),
-        ];
-        let fctx = ctx.function_context(None);
-        let mut wctx = crate::window_ctx::SimpleWindowCtx::new(
-            &args,
-            &fctx,
-            crate::window_ctx::WindowSpec::default(),
-        );
-        let window_val = f.eval_window(&mut wctx).expect("window path").unwrap();
-        let scalar = f.eval_scalar(&args, &fctx).unwrap();
-        assert_eq!(window_val, scalar);
-    }
-
     #[test]
     fn sumifs_broadcasts_1x1_criteria_over_range() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfsFn));
@@ -1086,7 +1136,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "SUMIFS").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(10.0)
         );
     }
@@ -1112,7 +1164,9 @@ mod tests {
         ];
         let f = ctx.context.get_function("", "COUNTIFS").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(2.0)
         );
     }
@@ -1230,296 +1284,6 @@ mod tests {
         assert_eq!(
             f.dispatch(&args, &ctx.function_context(None)).unwrap(),
             LiteralValue::Number(15.0)
-        );
-    }
-
-    #[test]
-    #[ignore]
-    fn countifs_window_parity() {
-        let f = CountIfsFn;
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountIfsFn));
-        let ctx = interp(&wb);
-        let city = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Text("a".into()),
-            LiteralValue::Text("b".into()),
-            LiteralValue::Text("a".into()),
-        ]]));
-        let beds = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Int(1),
-            LiteralValue::Int(2),
-            LiteralValue::Int(3),
-        ]]));
-        let c_city = lit(LiteralValue::Text("a".into()));
-        let c_beds = lit(LiteralValue::Text(">1".into()));
-        let args = vec![
-            ArgumentHandle::new(&city, &ctx),
-            ArgumentHandle::new(&c_city, &ctx),
-            ArgumentHandle::new(&beds, &ctx),
-            ArgumentHandle::new(&c_beds, &ctx),
-        ];
-        let fctx = ctx.function_context(None);
-        let mut wctx = crate::window_ctx::SimpleWindowCtx::new(
-            &args,
-            &fctx,
-            crate::window_ctx::WindowSpec::default(),
-        );
-        let window_val = f.eval_window(&mut wctx).expect("window path").unwrap();
-        let scalar = f.eval_scalar(&args, &fctx).unwrap();
-        assert_eq!(window_val, scalar);
-    }
-
-    #[test]
-    #[ignore]
-    fn averageifs_window_parity() {
-        let f = AverageIfsFn;
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageIfsFn));
-        let ctx = interp(&wb);
-        let avg = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Int(10),
-            LiteralValue::Int(20),
-            LiteralValue::Int(30),
-        ]]));
-        let crit_rng = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Int(0),
-            LiteralValue::Int(1),
-            LiteralValue::Int(1),
-        ]]));
-        let crit = lit(LiteralValue::Text(">0".into()));
-        let args = vec![
-            ArgumentHandle::new(&avg, &ctx),
-            ArgumentHandle::new(&crit_rng, &ctx),
-            ArgumentHandle::new(&crit, &ctx),
-        ];
-        let fctx = ctx.function_context(None);
-        let mut wctx = crate::window_ctx::SimpleWindowCtx::new(
-            &args,
-            &fctx,
-            crate::window_ctx::WindowSpec::default(),
-        );
-        let window_val = f.eval_window(&mut wctx).expect("window path").unwrap();
-        let scalar = f.eval_scalar(&args, &fctx).unwrap();
-        assert_eq!(window_val, scalar);
-    }
-    #[test]
-    #[ignore]
-    fn counta_window_parity() {
-        let f = CountAFn;
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountAFn));
-        let ctx = interp(&wb);
-        let arr = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Empty,
-            LiteralValue::Int(1),
-            LiteralValue::Text("".into()),
-        ]]));
-        let args = vec![ArgumentHandle::new(&arr, &ctx)];
-        let fctx = ctx.function_context(None);
-        let mut wctx = crate::window_ctx::SimpleWindowCtx::new(
-            &args,
-            &fctx,
-            crate::window_ctx::WindowSpec::default(),
-        );
-        let window_val = f.eval_window(&mut wctx).expect("window path").unwrap();
-        let scalar = f.eval_scalar(&args, &fctx).unwrap();
-        assert_eq!(window_val, scalar);
-    }
-    #[test]
-    #[ignore]
-    fn countblank_window_parity() {
-        let f = CountBlankFn;
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountBlankFn));
-        let ctx = interp(&wb);
-        let arr = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Empty,
-            LiteralValue::Int(1),
-            LiteralValue::Text("".into()),
-        ]]));
-        let args = vec![ArgumentHandle::new(&arr, &ctx)];
-        let fctx = ctx.function_context(None);
-        let mut wctx = crate::window_ctx::SimpleWindowCtx::new(
-            &args,
-            &fctx,
-            crate::window_ctx::WindowSpec::default(),
-        );
-        let window_val = f.eval_window(&mut wctx).expect("window path").unwrap();
-        let scalar = f.eval_scalar(&args, &fctx).unwrap();
-        assert_eq!(window_val, scalar);
-    }
-
-    // ───────── Criteria parsing edge cases ─────────
-    #[test]
-    fn criteria_numeric_string_vs_number() {
-        // SUMIF over numeric cells with criteria expressed as text ">=2" and "=3"
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfFn));
-        let ctx = interp(&wb);
-        let range = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Int(1),
-            LiteralValue::Number(2.0),
-            LiteralValue::Int(3),
-        ]]));
-        let ge2 = lit(LiteralValue::Text(">=2".into()));
-        let eq3 = lit(LiteralValue::Text("=3".into()));
-        let args_ge2 = vec![
-            ArgumentHandle::new(&range, &ctx),
-            ArgumentHandle::new(&ge2, &ctx),
-        ];
-        let args_eq3 = vec![
-            ArgumentHandle::new(&range, &ctx),
-            ArgumentHandle::new(&eq3, &ctx),
-        ];
-        let f = ctx.context.get_function("", "SUMIF").unwrap();
-        assert_eq!(
-            f.dispatch(&args_ge2, &ctx.function_context(None)).unwrap(),
-            LiteralValue::Number(5.0)
-        ); // 2+3
-        assert_eq!(
-            f.dispatch(&args_eq3, &ctx.function_context(None)).unwrap(),
-            LiteralValue::Number(3.0)
-        );
-    }
-
-    #[test]
-    fn criteria_wildcards_patterns() {
-        // COUNTIF with wildcard patterns
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountIfFn));
-        let ctx = interp(&wb);
-        let data = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Text("alpha".into()),
-            LiteralValue::Text("alphabet".into()),
-            LiteralValue::Text("alp".into()),
-            LiteralValue::Text("al".into()),
-            LiteralValue::Text("beta".into()),
-        ]]));
-        let pat_al_star = lit(LiteralValue::Text("al*".into())); // matches all starting with al
-        let pat_q = lit(LiteralValue::Text("alp?".into())); // matches four-char starting alp?
-        let pat_star_et = lit(LiteralValue::Text("*et".into())); // ends with et
-        let f = ctx.context.get_function("", "COUNTIF").unwrap();
-        let ctxf = ctx.function_context(None);
-        // Current wildcard matcher is case-sensitive and non-greedy but supports * and ?; pattern 'al*' should match alpha, alphabet, alp, al (4)
-        assert_eq!(
-            f.dispatch(
-                &[
-                    ArgumentHandle::new(&data, &ctx),
-                    ArgumentHandle::new(&pat_al_star, &ctx)
-                ],
-                &ctxf
-            )
-            .unwrap(),
-            LiteralValue::Number(4.0)
-        );
-        // 'alp?' matches exactly four-char strings starting with 'alp'. We have 'alph' prefix inside 'alpha' but pattern must consume entire string, so only 'alp?' -> no exact 4-length match; expect 0.
-        assert_eq!(
-            f.dispatch(
-                &[
-                    ArgumentHandle::new(&data, &ctx),
-                    ArgumentHandle::new(&pat_q, &ctx)
-                ],
-                &ctxf
-            )
-            .unwrap(),
-            LiteralValue::Number(0.0)
-        );
-        // '*et' matches words ending with 'et' (alphabet)
-        assert_eq!(
-            f.dispatch(
-                &[
-                    ArgumentHandle::new(&data, &ctx),
-                    ArgumentHandle::new(&pat_star_et, &ctx)
-                ],
-                &ctxf
-            )
-            .unwrap(),
-            LiteralValue::Number(1.0)
-        );
-    }
-
-    #[test]
-    fn criteria_boolean_text_and_numeric_equivalence() {
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountIfFn));
-        let ctx = interp(&wb);
-        let data = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Boolean(true),
-            LiteralValue::Boolean(false),
-            LiteralValue::Text("TRUE".into()),
-            LiteralValue::Int(1),
-            LiteralValue::Int(0),
-        ]]));
-        // Criteria TRUE should match Boolean(true) only (NOT text TRUE unless equality logic coerces); we rely on current parse -> Eq(Boolean(true))
-        let crit_true = lit(LiteralValue::Text("TRUE".into()));
-        let args_true = vec![
-            ArgumentHandle::new(&data, &ctx),
-            ArgumentHandle::new(&crit_true, &ctx),
-        ];
-        let f = ctx.context.get_function("", "COUNTIF").unwrap();
-        let res = f.dispatch(&args_true, &ctx.function_context(None)).unwrap();
-        // Current semantics: boolean Eq(TRUE) matches Boolean(TRUE) and Number(1).
-        assert_eq!(res, LiteralValue::Number(2.0));
-    }
-
-    #[test]
-    fn criteria_empty_and_blank() {
-        // COUNTIF to distinguish blank vs non-blank using criteria "=" and "<>" patterns
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountIfFn));
-        let ctx = interp(&wb);
-        let arr = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Empty,
-            LiteralValue::Text("".into()),
-            LiteralValue::Text(" ".into()),
-            LiteralValue::Int(0),
-        ]]));
-        let crit_blank = lit(LiteralValue::Text("=".into())); // equality with empty -> treated as Eq(Text("")) by parser? Actually '=' prefix branch with rhs '' -> Eq(Number?) fallback -> becomes Eq(Text(""))
-        let crit_not_blank = lit(LiteralValue::Text("<>".into())); // Eq(Text("<>")) fallback due to parse path; document current semantics
-        let f = ctx.context.get_function("", "COUNTIF").unwrap();
-        let ctxf = ctx.function_context(None);
-        let blank_result = f
-            .dispatch(
-                &[
-                    ArgumentHandle::new(&arr, &ctx),
-                    ArgumentHandle::new(&crit_blank, &ctx),
-                ],
-                &ctxf,
-            )
-            .unwrap();
-        // Current parser: '=' recognized, rhs empty -> numeric parse fails, becomes Eq(Text("")) so matches Empty? criteria_match treats Eq(Text) vs Empty -> false, so only Text("") counts.
-        // After equality adjustment, '=' with empty rhs matches both true blank and empty text => expect 2.
-        assert_eq!(blank_result, LiteralValue::Number(2.0));
-        let not_blank_result = f
-            .dispatch(
-                &[
-                    ArgumentHandle::new(&arr, &ctx),
-                    ArgumentHandle::new(&crit_not_blank, &ctx),
-                ],
-                &ctxf,
-            )
-            .unwrap();
-        // Expect 0 with current simplistic parsing (since becomes Eq(Text("<>")) none match) -> acts as regression guard; adjust if semantics improved later.
-        // '<>' with empty rhs -> Ne(Text("")) now excludes both blank and empty text; counts others (space, 0) => 2.
-        assert_eq!(not_blank_result, LiteralValue::Number(2.0));
-    }
-
-    #[test]
-    fn criteria_non_numeric_relational_fallback() {
-        // SUMIF with relational operator against non-numeric should degrade to equality on full string per parse_criteria implementation comment.
-        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfFn));
-        let ctx = interp(&wb);
-        let range = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Text("apple".into()),
-            LiteralValue::Text("banana".into()),
-        ]]));
-        let sum_range = lit(LiteralValue::Array(vec![vec![
-            LiteralValue::Int(10),
-            LiteralValue::Int(20),
-        ]]));
-        let crit = lit(LiteralValue::Text(">apple".into())); // will parse '>' then fail numeric parse -> equality on full expression '>apple'
-        let args = vec![
-            ArgumentHandle::new(&range, &ctx),
-            ArgumentHandle::new(&crit, &ctx),
-            ArgumentHandle::new(&sum_range, &ctx),
-        ];
-        let f = ctx.context.get_function("", "SUMIF").unwrap();
-        // No element equals the literal string '>apple'
-        assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
-            LiteralValue::Number(0.0)
         );
     }
 

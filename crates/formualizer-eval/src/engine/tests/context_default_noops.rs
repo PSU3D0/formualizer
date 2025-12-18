@@ -9,7 +9,7 @@ mod tests {
     // Mock implementation of FunctionContext for testing
     struct DefaultContext;
 
-    impl FunctionContext for DefaultContext {
+    impl<'ctx> FunctionContext<'ctx> for DefaultContext {
         // Required trait methods with minimal implementations
         fn locale(&self) -> crate::locale::Locale {
             crate::locale::Locale::invariant()
@@ -27,7 +27,7 @@ mod tests {
             None
         }
 
-        fn cancellation_token(&self) -> Option<&std::sync::atomic::AtomicBool> {
+        fn cancellation_token(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
             None
         }
 
@@ -51,7 +51,16 @@ mod tests {
             None
         }
 
-        // The optional methods we're testing default to None
+        fn resolve_range_view(
+            &self,
+            _reference: &ReferenceType,
+            _current_sheet: &str,
+        ) -> Result<crate::engine::range_view::RangeView<'ctx>, formualizer_common::ExcelError>
+        {
+            Err(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::NImpl,
+            ))
+        }
     }
 
     #[test]
@@ -87,7 +96,7 @@ mod tests {
         let ctx = DefaultContext;
 
         // The context should still be a valid FunctionContext
-        fn accepts_context(_ctx: &dyn FunctionContext) {
+        fn accepts_context(_ctx: &dyn FunctionContext<'_>) {
             // Function that accepts any FunctionContext
         }
 

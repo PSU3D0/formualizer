@@ -91,10 +91,10 @@ impl Function for IndexFn {
         &SCHEMA
     }
 
-    fn eval_reference<'a, 'b>(
+    fn eval_reference<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
     ) -> Option<Result<ReferenceType, ExcelError>> {
         // args: array(by_ref), row, col
         if args.len() < 3 {
@@ -105,17 +105,17 @@ impl Function for IndexFn {
             Err(e) => return Some(Err(e)),
         };
         let row = match args[1].value() {
-            Ok(v) => match v.as_ref() {
-                LiteralValue::Number(n) => *n as i64,
-                LiteralValue::Int(i) => *i,
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Number(n) => n as i64,
+                LiteralValue::Int(i) => i,
                 _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
             },
             Err(e) => return Some(Err(e)),
         };
         let col = match args[2].value() {
-            Ok(v) => match v.as_ref() {
-                LiteralValue::Number(n) => *n as i64,
-                LiteralValue::Int(i) => *i,
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Number(n) => n as i64,
+                LiteralValue::Int(i) => i,
                 _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
             },
             Err(e) => return Some(Err(e)),
@@ -154,11 +154,11 @@ impl Function for IndexFn {
         }))
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if let Some(Ok(r)) = self.eval_reference(args, ctx) {
             // Materialize to value
             let current_sheet = ctx.current_sheet();
@@ -166,20 +166,19 @@ impl Function for IndexFn {
                 Ok(rv) => {
                     let (rows, cols) = rv.dims();
                     if rows == 1 && cols == 1 {
-                        Ok(rv.as_1x1().unwrap_or(LiteralValue::Empty))
+                        Ok(crate::traits::CalcValue::Scalar(
+                            rv.as_1x1().unwrap_or(LiteralValue::Empty),
+                        ))
                     } else {
-                        let mut rows_out: Vec<Vec<LiteralValue>> = Vec::new();
-                        rv.for_each_row(&mut |row| {
-                            rows_out.push(row.to_vec());
-                            Ok(())
-                        })?;
-                        Ok(LiteralValue::Array(rows_out))
+                        Ok(crate::traits::CalcValue::Range(rv))
                     }
                 }
-                Err(e) => Ok(LiteralValue::Error(e)),
+                Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
             }
         } else {
-            Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)))
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Ref),
+            )))
         }
     }
 }
@@ -203,10 +202,10 @@ impl Function for OffsetFn {
         &SCHEMA
     }
 
-    fn eval_reference<'a, 'b>(
+    fn eval_reference<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
     ) -> Option<Result<ReferenceType, ExcelError>> {
         if args.len() < 3 {
             return Some(Err(ExcelError::new(ExcelErrorKind::Value)));
@@ -216,17 +215,17 @@ impl Function for OffsetFn {
             Err(e) => return Some(Err(e)),
         };
         let dr = match args[1].value() {
-            Ok(v) => match v.as_ref() {
-                LiteralValue::Number(n) => *n as i64,
-                LiteralValue::Int(i) => *i,
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Number(n) => n as i64,
+                LiteralValue::Int(i) => i,
                 _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
             },
             Err(e) => return Some(Err(e)),
         };
         let dc = match args[2].value() {
-            Ok(v) => match v.as_ref() {
-                LiteralValue::Number(n) => *n as i64,
-                LiteralValue::Int(i) => *i,
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Number(n) => n as i64,
+                LiteralValue::Int(i) => i,
                 _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
             },
             Err(e) => return Some(Err(e)),
@@ -251,9 +250,9 @@ impl Function for OffsetFn {
         let nsc = (sc as i64) + dc;
         let height = if args.len() >= 4 {
             match args[3].value() {
-                Ok(v) => match v.as_ref() {
-                    LiteralValue::Number(n) => *n as i64,
-                    LiteralValue::Int(i) => *i,
+                Ok(cv) => match cv.into_literal() {
+                    LiteralValue::Number(n) => n as i64,
+                    LiteralValue::Int(i) => i,
                     _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
                 },
                 Err(e) => return Some(Err(e)),
@@ -263,9 +262,9 @@ impl Function for OffsetFn {
         };
         let width = if args.len() >= 5 {
             match args[4].value() {
-                Ok(v) => match v.as_ref() {
-                    LiteralValue::Number(n) => *n as i64,
-                    LiteralValue::Int(i) => *i,
+                Ok(cv) => match cv.into_literal() {
+                    LiteralValue::Number(n) => n as i64,
+                    LiteralValue::Int(i) => i,
                     _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
                 },
                 Err(e) => return Some(Err(e)),
@@ -297,31 +296,30 @@ impl Function for OffsetFn {
         }
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if let Some(Ok(r)) = self.eval_reference(args, ctx) {
             let current_sheet = ctx.current_sheet();
             match ctx.resolve_range_view(&r, current_sheet) {
                 Ok(rv) => {
                     let (rows, cols) = rv.dims();
                     if rows == 1 && cols == 1 {
-                        Ok(rv.as_1x1().unwrap_or(LiteralValue::Empty))
+                        Ok(crate::traits::CalcValue::Scalar(
+                            rv.as_1x1().unwrap_or(LiteralValue::Empty),
+                        ))
                     } else {
-                        let mut rows_out: Vec<Vec<LiteralValue>> = Vec::new();
-                        rv.for_each_row(&mut |row| {
-                            rows_out.push(row.to_vec());
-                            Ok(())
-                        })?;
-                        Ok(LiteralValue::Array(rows_out))
+                        Ok(crate::traits::CalcValue::Range(rv))
                     }
                 }
-                Err(e) => Ok(LiteralValue::Error(e)),
+                Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
             }
         } else {
-            Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)))
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Ref),
+            )))
         }
     }
 }
@@ -389,7 +387,10 @@ mod tests {
             ArgumentHandle::new(&col, &ctx),
         ];
         let f = ctx.context.get_function("", "INDEX").unwrap();
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(v, LiteralValue::Number(42.0));
     }
 
@@ -434,7 +435,10 @@ mod tests {
             ArgumentHandle::new(&dc, &ctx),
         ];
         let f = ctx.context.get_function("", "OFFSET").unwrap();
-        let v = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(v, LiteralValue::Number(5.0));
     }
 }

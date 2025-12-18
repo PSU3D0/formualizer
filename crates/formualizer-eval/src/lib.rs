@@ -6,12 +6,10 @@ pub mod function;
 pub mod function_registry;
 pub mod interpreter;
 pub mod locale;
-pub mod map_ctx;
 pub mod rng;
 pub mod stripes;
 pub mod timezone;
 pub mod traits;
-pub mod window_ctx;
 
 pub mod builtins;
 pub mod reference;

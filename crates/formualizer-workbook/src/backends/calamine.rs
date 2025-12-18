@@ -63,10 +63,10 @@ impl CalamineAdapter {
             };
 
             let mut xml = String::new();
-            if entry.read_to_string(&mut xml).is_ok() {
-                if let Some(target) = extract_target(&xml) {
-                    out.insert(idx, target);
-                }
+            if entry.read_to_string(&mut xml).is_ok()
+                && let Some(target) = extract_target(&xml)
+            {
+                out.insert(idx, target);
             }
         }
         out

@@ -220,40 +220,17 @@ impl TestWorkbook {
 
 /* ─────────────────────── trait impls ─────────────────────── */
 impl EvaluationContext for TestWorkbook {
+    fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        None
+    }
+
     fn resolve_range_view<'c>(
         &'c self,
         reference: &ReferenceType,
         current_sheet: &str,
     ) -> Result<RangeView<'c>, ExcelError> {
+        use formualizer_common::LiteralValue as V;
         use formualizer_parse::parser::ReferenceType as RT;
-
-        fn qualify_reference(reference: &RT, current_sheet: &str) -> RT {
-            match reference {
-                RT::Cell {
-                    sheet: None,
-                    row,
-                    col,
-                } => RT::Cell {
-                    sheet: Some(current_sheet.to_string()),
-                    row: *row,
-                    col: *col,
-                },
-                RT::Range {
-                    sheet: None,
-                    start_row,
-                    start_col,
-                    end_row,
-                    end_col,
-                } => RT::Range {
-                    sheet: Some(current_sheet.to_string()),
-                    start_row: *start_row,
-                    start_col: *start_col,
-                    end_row: *end_row,
-                    end_col: *end_col,
-                },
-                _ => reference.clone(),
-            }
-        }
 
         match reference {
             // Preserve #REF! for invalid single-cell references by embedding as a 1x1 value
@@ -273,8 +250,7 @@ impl EvaluationContext for TestWorkbook {
             }
             // Tables and rectangular ranges: materialize via generic path
             _ => {
-                let qualified = qualify_reference(reference, current_sheet);
-                let range_box = self.resolve_range_like(&qualified)?;
+                let range_box = self.resolve_range_like(reference)?;
                 let owned: Vec<Vec<V>> = range_box.materialise().into_owned();
                 Ok(RangeView::from_owned_rows(owned, self.date_system()))
             }

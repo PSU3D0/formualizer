@@ -1,6 +1,6 @@
 use super::super::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
 use crate::args::ArgSchema;
-use crate::function::{FnFoldCtx, Function};
+use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use arrow_array::Array;
 use formualizer_common::{ExcelError, LiteralValue};
@@ -27,11 +27,11 @@ impl Function for SumFn {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut total = 0.0;
         for arg in args {
             if let Ok(view) = arg.range_view() {
@@ -42,9 +42,11 @@ impl Function for SumFn {
                         if col.null_count() < col.len() {
                             for i in 0..col.len() {
                                 if !col.is_null(i) {
-                                    return Ok(LiteralValue::Error(ExcelError::new(
-                                        crate::arrow_store::unmap_error_code(col.value(i)),
-                                    )));
+                                    return Ok(crate::traits::CalcValue::Scalar(
+                                        LiteralValue::Error(ExcelError::new(
+                                            crate::arrow_store::unmap_error_code(col.value(i)),
+                                        )),
+                                    ));
                                 }
                             }
                         }
@@ -59,30 +61,18 @@ impl Function for SumFn {
                     }
                 }
             } else {
-                match arg.value()?.as_ref() {
-                    LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
-                    v => total += coerce_num(v)?,
+                let v = arg.value()?.into_literal();
+                match v {
+                    LiteralValue::Error(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                    v => total += coerce_num(&v)?,
                 }
             }
         }
-        Ok(LiteralValue::Number(total))
-    }
-
-    fn eval_fold(&self, f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
-        let mut acc = 0.0f64;
-        // Stream numeric chunks using the fold context. Use a moderate default chunk size.
-        let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
-            for &n in chunk.data {
-                acc += n;
-            }
-            Ok(())
-        };
-        if let Err(e) = f.for_each_numeric_chunk(4096, &mut cb) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        let out = LiteralValue::Number(acc);
-        f.write_result(out.clone());
-        Some(Ok(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            total,
+        )))
     }
 }
 
@@ -107,11 +97,11 @@ impl Function for CountFn {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut count: i64 = 0;
         for arg in args {
             if let Ok(view) = arg.range_view() {
@@ -122,32 +112,18 @@ impl Function for CountFn {
                     }
                 }
             } else {
-                match arg.value()?.as_ref() {
-                    LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
-                    v => {
-                        if !matches!(v, LiteralValue::Empty) && coerce_num(v).is_ok() {
-                            count += 1;
-                        }
-                    }
+                let v = arg.value()?.into_literal();
+                if let LiteralValue::Error(e) = v {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                if !matches!(v, LiteralValue::Empty) && coerce_num(&v).is_ok() {
+                    count += 1;
                 }
             }
         }
-        Ok(LiteralValue::Number(count as f64))
-    }
-
-    fn eval_fold(&self, f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
-        let mut cnt: i64 = 0;
-        let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
-            // Empty cells are excluded at packing time; all values here are numerics
-            cnt += chunk.data.len() as i64;
-            Ok(())
-        };
-        if let Err(e) = f.for_each_numeric_chunk(4096, &mut cb) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        let out = LiteralValue::Number(cnt as f64);
-        f.write_result(out.clone());
-        Some(Ok(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            count as f64,
+        )))
     }
 }
 
@@ -172,11 +148,11 @@ impl Function for AverageFn {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut sum = 0.0f64;
         let mut cnt: i64 = 0;
         for arg in args {
@@ -188,9 +164,11 @@ impl Function for AverageFn {
                         if col.null_count() < col.len() {
                             for i in 0..col.len() {
                                 if !col.is_null(i) {
-                                    return Ok(LiteralValue::Error(ExcelError::new(
-                                        crate::arrow_store::unmap_error_code(col.value(i)),
-                                    )));
+                                    return Ok(crate::traits::CalcValue::Scalar(
+                                        LiteralValue::Error(ExcelError::new(
+                                            crate::arrow_store::unmap_error_code(col.value(i)),
+                                        )),
+                                    ));
                                 }
                             }
                         }
@@ -205,44 +183,24 @@ impl Function for AverageFn {
                     }
                 }
             } else {
-                match arg.value()?.as_ref() {
-                    LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
-                    v => {
-                        if let Ok(n) = coerce_num(v) {
-                            sum += n;
-                            cnt += 1;
-                        }
-                    }
+                let v = arg.value()?.into_literal();
+                if let LiteralValue::Error(e) = v {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                if let Ok(n) = crate::coercion::to_number_lenient_with_locale(&v, &ctx.locale()) {
+                    sum += n;
+                    cnt += 1;
                 }
             }
         }
         if cnt == 0 {
-            return Ok(LiteralValue::Error(ExcelError::new_div()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
         }
-        Ok(LiteralValue::Number(sum / (cnt as f64)))
-    }
-
-    fn eval_fold(&self, f: &mut dyn FnFoldCtx) -> Option<Result<LiteralValue, ExcelError>> {
-        let mut sum = 0.0f64;
-        let mut cnt: i64 = 0;
-        let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
-            for &n in chunk.data {
-                sum += n;
-                cnt += 1;
-            }
-            Ok(())
-        };
-        if let Err(e) = f.for_each_numeric_chunk(4096, &mut cb) {
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        if cnt == 0 {
-            let e = ExcelError::new_div();
-            f.write_result(LiteralValue::Error(e.clone()));
-            return Some(Ok(LiteralValue::Error(e)));
-        }
-        let out = LiteralValue::Number(sum / (cnt as f64));
-        f.write_result(out.clone());
-        Some(Ok(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            sum / (cnt as f64),
+        )))
     }
 }
 
@@ -269,15 +227,15 @@ impl Function for SumProductFn {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         use crate::broadcast::{broadcast_shape, project_index};
 
         if args.is_empty() {
-            return Ok(LiteralValue::Number(0.0));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
         }
 
         // Helper: materialize an argument to a 2D array of LiteralValue
@@ -290,10 +248,10 @@ impl Function for SumProductFn {
                 })?;
                 Ok(rows)
             } else {
-                let v = ah.value()?;
-                Ok(match v.as_ref() {
-                    LiteralValue::Array(arr) => arr.clone(),
-                    other => vec![vec![other.clone()]],
+                let v = ah.value()?.into_literal();
+                Ok(match v {
+                    LiteralValue::Array(arr) => arr,
+                    other => vec![vec![other]],
                 })
             }
         };
@@ -312,7 +270,9 @@ impl Function for SumProductFn {
         let target = match broadcast_shape(&shapes) {
             Ok(s) => s,
             Err(_) => {
-                return Ok(LiteralValue::Error(ExcelError::new_value()));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
             }
         };
 
@@ -329,7 +289,9 @@ impl Function for SumProductFn {
                         .cloned()
                         .unwrap_or(LiteralValue::Empty);
                     match lv {
-                        LiteralValue::Error(e) => return Ok(LiteralValue::Error(e)),
+                        LiteralValue::Error(e) => {
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                        }
                         _ => match super::super::utils::coerce_num(&lv) {
                             Ok(n) => {
                                 prod *= n;
@@ -344,7 +306,9 @@ impl Function for SumProductFn {
                 total += prod;
             }
         }
-        Ok(LiteralValue::Number(total))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            total,
+        )))
     }
 }
 
@@ -386,7 +350,9 @@ mod tests_sumproduct {
         let args = vec![ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&b, &ctx)];
         let f = ctx.context.get_function("", "SUMPRODUCT").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(32.0)
         );
     }
@@ -406,7 +372,9 @@ mod tests_sumproduct {
         ];
         let f = ctx.context.get_function("", "SUMPRODUCT").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(22.0)
         );
     }
@@ -425,7 +393,9 @@ mod tests_sumproduct {
         let args = vec![ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&s, &ctx)];
         let f = ctx.context.get_function("", "SUMPRODUCT").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(60.0)
         );
     }
@@ -445,7 +415,9 @@ mod tests_sumproduct {
         let args = vec![ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&b, &ctx)];
         let f = ctx.context.get_function("", "SUMPRODUCT").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(160.0)
         );
     }
@@ -468,7 +440,9 @@ mod tests_sumproduct {
         let args = vec![ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&b, &ctx)];
         let f = ctx.context.get_function("", "SUMPRODUCT").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(4.0)
         );
     }
@@ -484,7 +458,11 @@ mod tests_sumproduct {
         );
         let args = vec![ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&e, &ctx)];
         let f = ctx.context.get_function("", "SUMPRODUCT").unwrap();
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(err) => assert_eq!(err, "#N/A"),
             v => panic!("expected error, got {v:?}"),
         }
@@ -503,7 +481,11 @@ mod tests_sumproduct {
         let b = arr(vec![vec![LiteralValue::Int(4), LiteralValue::Int(5)]]);
         let args = vec![ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&b, &ctx)];
         let f = ctx.context.get_function("", "SUMPRODUCT").unwrap();
-        match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
             v => panic!("expected value error, got {v:?}"),
         }
@@ -563,7 +545,7 @@ mod tests {
         ];
 
         let sum_fn = ctx.context.get_function("", "SUM").unwrap();
-        let result = sum_fn.dispatch(&args, &fctx).unwrap();
+        let result = sum_fn.dispatch(&args, &fctx).unwrap().into_literal();
         assert_eq!(result, LiteralValue::Number(6.0));
     }
 }
@@ -596,7 +578,10 @@ mod tests_count {
         let args = vec![ArgumentHandle::new(&node, &ctx)];
         let f = ctx.context.get_function("", "COUNT").unwrap();
         let fctx = ctx.function_context(None);
-        assert_eq!(f.dispatch(&args, &fctx).unwrap(), LiteralValue::Number(3.0));
+        assert_eq!(
+            f.dispatch(&args, &fctx).unwrap().into_literal(),
+            LiteralValue::Number(3.0)
+        );
     }
 
     #[test]
@@ -615,7 +600,10 @@ mod tests_count {
         let f = ctx.context.get_function("", "COUNT").unwrap();
         // Two from array + scalar 10 = 3
         let fctx = ctx.function_context(None);
-        assert_eq!(f.dispatch(&args, &fctx).unwrap(), LiteralValue::Number(3.0));
+        assert_eq!(
+            f.dispatch(&args, &fctx).unwrap().into_literal(),
+            LiteralValue::Number(3.0)
+        );
     }
 
     #[test]
@@ -631,7 +619,7 @@ mod tests_count {
         let args = vec![ArgumentHandle::new(&err, &ctx)];
         let f = ctx.context.get_function("", "COUNT").unwrap();
         let fctx = ctx.function_context(None);
-        match f.dispatch(&args, &fctx).unwrap() {
+        match f.dispatch(&args, &fctx).unwrap().into_literal() {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("unexpected {v:?}"),
         }
@@ -664,7 +652,9 @@ mod tests_average {
         let args = vec![ArgumentHandle::new(&node, &ctx)];
         let f = ctx.context.get_function("", "AVERAGE").unwrap();
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(4.0)
         );
     }
@@ -683,7 +673,9 @@ mod tests_average {
         let f = ctx.context.get_function("", "AVERAGE").unwrap();
         // average of 2 and 6 = 4
         assert_eq!(
-            f.dispatch(&args, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(4.0)
         );
     }
@@ -700,7 +692,7 @@ mod tests_average {
         let args = vec![ArgumentHandle::new(&node, &ctx)];
         let f = ctx.context.get_function("", "AVERAGE").unwrap();
         let fctx = ctx.function_context(None);
-        match f.dispatch(&args, &fctx).unwrap() {
+        match f.dispatch(&args, &fctx).unwrap().into_literal() {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("expected #DIV/0!, got {v:?}"),
         }
@@ -719,7 +711,7 @@ mod tests_average {
         let args = vec![ArgumentHandle::new(&err, &ctx)];
         let f = ctx.context.get_function("", "AVERAGE").unwrap();
         let fctx = ctx.function_context(None);
-        match f.dispatch(&args, &fctx).unwrap() {
+        match f.dispatch(&args, &fctx).unwrap().into_literal() {
             LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
             v => panic!("unexpected {v:?}"),
         }

@@ -216,6 +216,11 @@ pub struct ArrowSheet {
     pub columns: Vec<ArrowColumn>,
     pub nrows: u32,
     pub chunk_starts: Vec<usize>,
+    /// Preferred chunk size (rows) for capacity growth operations.
+    ///
+    /// For Arrow-ingested sheets this matches the ingest `chunk_rows`. For sparse/overlay-created
+    /// sheets this defaults to 32k to avoid creating thousands of tiny chunks during growth.
+    pub chunk_rows: usize,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -668,6 +673,7 @@ impl IngestBuilder {
             columns,
             nrows: self.total_rows,
             chunk_starts,
+            chunk_rows: self.chunk_rows,
         }
     }
 }
@@ -828,18 +834,7 @@ impl ArrowSheet {
             self.chunk_starts.push(0);
         }
 
-        // Determine a chunk size hint from the existing chunk map, fallback to 32k.
-        //
-        // Prefer the most recent full chunk boundary rather than relying on any particular column
-        // being materialized (important for sparse sheets).
-        let mut chunk_size = 32 * 1024;
-        if self.chunk_starts.len() >= 2 {
-            let last = self.chunk_starts[self.chunk_starts.len() - 1];
-            let prev = self.chunk_starts[self.chunk_starts.len() - 2];
-            chunk_size = last.saturating_sub(prev).max(1);
-        } else if self.chunk_starts.len() == 1 && self.nrows > 0 {
-            chunk_size = (self.nrows as usize).max(1);
-        }
+        let chunk_size = self.chunk_rows.max(1);
 
         let mut cur_rows = self.nrows as usize;
         while cur_rows < target_rows {

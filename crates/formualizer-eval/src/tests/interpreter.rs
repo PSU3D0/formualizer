@@ -17,7 +17,23 @@ mod tests {
 
         let interpreter = wb.interpreter();
 
-        interpreter.evaluate_ast(&ast)
+        let cv = interpreter.evaluate_ast(&ast)?;
+        if formula.contains('{') {
+            Ok(match cv {
+                crate::traits::CalcValue::Scalar(v) => v,
+                crate::traits::CalcValue::Range(rv) => {
+                    let (rows, _cols) = rv.dims();
+                    let mut data = Vec::with_capacity(rows);
+                    let _ = rv.for_each_row(&mut |row| {
+                        data.push(row.to_vec());
+                        Ok(())
+                    });
+                    LiteralValue::Array(data)
+                }
+            })
+        } else {
+            Ok(cv.into_literal())
+        }
     }
 
     fn create_workbook() -> TestWorkbook {
@@ -43,7 +59,7 @@ mod tests {
         let mut parser = Parser::new(tokenizer.items, false);
         let ast = parser.parse().unwrap();
         let interp = wb.interpreter();
-        let res = interp.evaluate_ast(&ast).unwrap();
+        let res = interp.evaluate_ast(&ast).unwrap().into_literal();
         assert_eq!(res, LiteralValue::Number(20.0));
     }
 
@@ -614,57 +630,47 @@ mod tests {
 
     #[test]
     fn test_binary_ops_with_int_and_number() {
-        let wb = create_workbook();
-        let result = evaluate_formula("={1}+{2.5}", &wb).unwrap();
-        if let LiteralValue::Array(arr) = result {
-            assert_eq!(arr[0][0], LiteralValue::Number(3.5));
-        } else {
-            panic!("Expected array result");
+        fn unwrap_1x1(value: LiteralValue) -> LiteralValue {
+            match value {
+                LiteralValue::Array(arr) => {
+                    if arr.len() == 1 && arr[0].len() == 1 {
+                        arr[0][0].clone()
+                    } else {
+                        panic!("Expected 1x1 array result");
+                    }
+                }
+                other => other,
+            }
         }
+
+        let wb = create_workbook();
+
+        let v = unwrap_1x1(evaluate_formula("={1}+{2.5}", &wb).unwrap());
+        assert_eq!(v, LiteralValue::Number(3.5));
 
         // Test Number + Int
-        let result = evaluate_formula("={2.5}+{1}", &wb).unwrap();
-        if let LiteralValue::Array(arr) = result {
-            assert_eq!(arr[0][0], LiteralValue::Number(3.5));
-        } else {
-            panic!("Expected array result");
-        }
+        let v = unwrap_1x1(evaluate_formula("={2.5}+{1}", &wb).unwrap());
+        assert_eq!(v, LiteralValue::Number(3.5));
 
         // Test Int - Number
-        let result = evaluate_formula("={5}-{2.5}", &wb).unwrap();
-        if let LiteralValue::Array(arr) = result {
-            assert_eq!(arr[0][0], LiteralValue::Number(2.5));
-        } else {
-            panic!("Expected array result");
-        }
+        let v = unwrap_1x1(evaluate_formula("={5}-{2.5}", &wb).unwrap());
+        assert_eq!(v, LiteralValue::Number(2.5));
 
         // Test Int * Number
-        let result = evaluate_formula("={3}*{1.5}", &wb).unwrap();
-        if let LiteralValue::Array(arr) = result {
-            assert_eq!(arr[0][0], LiteralValue::Number(4.5));
-        } else {
-            panic!("Expected array result");
-        }
+        let v = unwrap_1x1(evaluate_formula("={3}*{1.5}", &wb).unwrap());
+        assert_eq!(v, LiteralValue::Number(4.5));
 
         // Test Int / Number
-        let result = evaluate_formula("={6}/{2.5}", &wb).unwrap();
-        if let LiteralValue::Array(arr) = result {
-            assert_eq!(arr[0][0], LiteralValue::Number(2.4));
-        } else {
-            panic!("Expected array result");
-        }
+        let v = unwrap_1x1(evaluate_formula("={6}/{2.5}", &wb).unwrap());
+        assert_eq!(v, LiteralValue::Number(2.4));
 
         // Test Int ^ Number
-        let result = evaluate_formula("={2}^{2.5}", &wb).unwrap();
-        if let LiteralValue::Array(arr) = result {
-            if let LiteralValue::Number(n) = arr[0][0] {
-                // Due to floating point precision issues, we compare with an epsilon
-                assert!((n - 5.65685424949238).abs() < 0.000000001);
-            } else {
-                panic!("Expected number result in array");
-            }
+        let v = unwrap_1x1(evaluate_formula("={2}^{2.5}", &wb).unwrap());
+        if let LiteralValue::Number(n) = v {
+            // Due to floating point precision issues, we compare with an epsilon
+            assert!((n - 5.65685424949238).abs() < 0.000000001);
         } else {
-            panic!("Expected array result");
+            panic!("Expected numeric result");
         }
     }
 }

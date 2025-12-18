@@ -19,13 +19,15 @@ impl Function for RandFn {
         0
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        _args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut rng = ctx.rng_for_current(self.function_salt());
-        Ok(LiteralValue::Number(rng.gen_range(0.0..1.0)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            rng.gen_range(0.0..1.0),
+        )))
     }
 }
 
@@ -63,7 +65,8 @@ mod tests {
 
         let f = ctx.context.get_function("", "RAND").unwrap();
         let fctx = ctx.function_context(None);
-        let result = f.eval_scalar(&[], &fctx).unwrap();
+        let args: Vec<ArgumentHandle<'_, '_>> = Vec::new();
+        let result = f.dispatch(&args, &fctx).unwrap().into_literal();
         match result {
             LiteralValue::Number(n) => assert!((0.0..1.0).contains(&n)),
             _ => panic!("Expected a number"),
@@ -89,7 +92,7 @@ mod tests {
             ArgumentHandle::new(&lo, &ctx),
             ArgumentHandle::new(&hi, &ctx),
         ];
-        let v = f.eval_scalar(&args, &fctx).unwrap();
+        let v = f.dispatch(&args, &fctx).unwrap().into_literal();
         match v {
             LiteralValue::Int(n) => assert!((1..=3).contains(&n)),
             _ => panic!("Expected Int"),
@@ -113,14 +116,14 @@ impl Function for RandBetweenFn {
         &crate::builtins::utils::ARG_NUM_LENIENT_TWO[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         // Evaluate bounds as integers
-        let lo_v = args[0].value()?.into_owned();
-        let hi_v = args[1].value()?.into_owned();
+        let lo_v = args[0].value()?.into_literal();
+        let hi_v = args[1].value()?.into_literal();
         let lo = match lo_v {
             LiteralValue::Int(n) => n,
             LiteralValue::Number(n) => n as i64,
@@ -141,6 +144,6 @@ impl Function for RandBetweenFn {
         } else {
             rng.gen_range(lo..=hi)
         };
-        Ok(LiteralValue::Int(n))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(n)))
     }
 }

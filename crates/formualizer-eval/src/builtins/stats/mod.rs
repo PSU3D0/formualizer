@@ -23,6 +23,13 @@ use formualizer_common::{ExcelError, LiteralValue};
 // use std::collections::BTreeMap; // removed unused import
 use formualizer_macros::func_caps;
 
+fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    Ok(match arg.value()? {
+        crate::traits::CalcValue::Scalar(v) => v,
+        crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
+    })
+}
+
 /// Collect numeric inputs applying Excel statistical semantics:
 /// - Range references: include only numeric cells; skip text, logical, blank. Errors propagate.
 /// - Direct scalar arguments: attempt numeric coercion (so TRUE/FALSE, numeric text are included if
@@ -61,10 +68,11 @@ fn collect_numeric_stats(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError
                 Ok(())
             })?;
         } else {
-            match a.value()?.as_ref() {
-                LiteralValue::Error(e) => return Err(e.clone()),
+            let v = scalar_like_value(a)?;
+            match v {
+                LiteralValue::Error(e) => return Err(e),
                 other => {
-                    if let Ok(n) = coerce_num(other) {
+                    if let Ok(n) = coerce_num(&other) {
                         out.push(n);
                     }
                 }
@@ -142,27 +150,35 @@ impl Function for RankEqFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_na()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
         }
-        let target = match coerce_num(args[0].value()?.as_ref()) {
+        let target = match coerce_num(&args[0].value()?.into_literal()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_na())),
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_na(),
+                )));
+            }
         };
         // optional order arg at end if 3 args
         let order = if args.len() >= 3 {
-            coerce_num(args[2].value()?.as_ref()).unwrap_or(0.0)
+            coerce_num(&args[2].value()?.into_literal()).unwrap_or(0.0)
         } else {
             0.0
         };
         let nums = collect_numeric_stats(&args[1..2])?; // only one ref range per Excel spec
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new_na()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
         }
         let mut sorted = nums; // copy
         if order.abs() < 1e-12 {
@@ -174,10 +190,14 @@ impl Function for RankEqFn {
         }
         for (i, &v) in sorted.iter().enumerate() {
             if (v - target).abs() < 1e-12 {
-                return Ok(LiteralValue::Number((i + 1) as f64));
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                    (i + 1) as f64,
+                )));
             }
         }
-        Ok(LiteralValue::Error(ExcelError::new_na()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new_na(),
+        )))
     }
 }
 
@@ -198,26 +218,36 @@ impl Function for RankAvgFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_na()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
         }
-        let target = match coerce_num(args[0].value()?.as_ref()) {
+        let t0 = scalar_like_value(&args[0])?;
+        let target = match coerce_num(&t0) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_na())),
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_na(),
+                )));
+            }
         };
         let order = if args.len() >= 3 {
-            coerce_num(args[2].value()?.as_ref()).unwrap_or(0.0)
+            let ord = scalar_like_value(&args[2])?;
+            coerce_num(&ord).unwrap_or(0.0)
         } else {
             0.0
         };
         let nums = collect_numeric_stats(&args[1..2])?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new_na()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
         }
         let mut sorted = nums;
         if order.abs() < 1e-12 {
@@ -232,10 +262,12 @@ impl Function for RankAvgFn {
             }
         }
         if positions.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new_na()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
         }
         let avg = positions.iter().copied().sum::<usize>() as f64 / positions.len() as f64;
-        Ok(LiteralValue::Number(avg))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(avg)))
     }
 }
 
@@ -255,64 +287,40 @@ impl Function for LARGE {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        let k = match coerce_num(args.last().unwrap().value()?.as_ref()) {
+        let k = match coerce_num(&args.last().unwrap().value()?.into_literal()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
         };
         let k = k as i64;
         if k < 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.is_empty() || k as usize > nums.len() {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         nums.sort_by(|a, b| b.partial_cmp(a).unwrap());
-        Ok(LiteralValue::Number(nums[(k as usize) - 1]))
-    }
-    fn eval_fold(
-        &self,
-        f: &mut dyn crate::function::FnFoldCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let args = f.args();
-        if args.len() < 2 {
-            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
-        }
-        let k = match coerce_num(args.last().unwrap().value().ok()?.as_ref()) {
-            Ok(n) => n as i64,
-            Err(_) => {
-                return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#NUM!",
-                ))));
-            }
-        };
-        if k < 1 {
-            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
-        }
-        let mut nums = match collect_numeric_stats(&args[..args.len() - 1]) {
-            Ok(v) => v,
-            Err(e) => return Some(Ok(LiteralValue::Error(e))),
-        };
-        if nums.is_empty() || k as usize > nums.len() {
-            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
-        }
-        // partial selection nth_element style
-        let idx = (k as usize) - 1;
-        // we want k-th largest; convert by selecting at idx in descending => nth on len-1-idx ascending
-        let target = nums.len() - 1 - idx;
-        let (left, nth, _right) =
-            nums.select_nth_unstable_by(target, |a, b| a.partial_cmp(b).unwrap());
-        let val = *nth;
-        f.write_result(LiteralValue::Number(val));
-        Some(Ok(LiteralValue::Number(val)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            nums[(k as usize) - 1],
+        )))
     }
 }
 
@@ -332,61 +340,40 @@ impl Function for SMALL {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        let k = match coerce_num(args.last().unwrap().value()?.as_ref()) {
+        let k = match coerce_num(&args.last().unwrap().value()?.into_literal()) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
         };
         let k = k as i64;
         if k < 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.is_empty() || k as usize > nums.len() {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        Ok(LiteralValue::Number(nums[(k as usize) - 1]))
-    }
-    fn eval_fold(
-        &self,
-        f: &mut dyn crate::function::FnFoldCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let args = f.args();
-        if args.len() < 2 {
-            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
-        }
-        let k = match coerce_num(args.last().unwrap().value().ok()?.as_ref()) {
-            Ok(n) => n as i64,
-            Err(_) => {
-                return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                    "#NUM!",
-                ))));
-            }
-        };
-        if k < 1 {
-            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
-        }
-        let mut nums = match collect_numeric_stats(&args[..args.len() - 1]) {
-            Ok(v) => v,
-            Err(e) => return Some(Ok(LiteralValue::Error(e))),
-        };
-        if nums.is_empty() || k as usize > nums.len() {
-            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
-        }
-        let idx = (k as usize) - 1;
-        let (left, nth, _right) =
-            nums.select_nth_unstable_by(idx, |a, b| a.partial_cmp(b).unwrap());
-        let val = *nth;
-        f.write_result(LiteralValue::Number(val));
-        Some(Ok(LiteralValue::Number(val)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            nums[(k as usize) - 1],
+        )))
     }
 }
 
@@ -406,14 +393,16 @@ impl Function for MEDIAN {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut nums = collect_numeric_stats(args)?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let n = nums.len();
@@ -423,47 +412,7 @@ impl Function for MEDIAN {
         } else {
             (nums[mid - 1] + nums[mid]) / 2.0
         };
-        Ok(LiteralValue::Number(med))
-    }
-    fn eval_fold(
-        &self,
-        f: &mut dyn crate::function::FnFoldCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let args = f.args();
-        let mut nums = match collect_numeric_stats(args) {
-            Ok(v) => v,
-            Err(e) => return Some(Ok(LiteralValue::Error(e))),
-        };
-        if nums.is_empty() {
-            return Some(Ok(LiteralValue::Error(ExcelError::new_num())));
-        }
-        let n = nums.len();
-        let mid = n / 2;
-        if n % 2 == 1 {
-            // odd
-            let (_left, nth, _right) =
-                nums.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap());
-            let val = *nth;
-            let out = LiteralValue::Number(val);
-            f.write_result(out.clone());
-            Some(Ok(out))
-        } else {
-            // even
-            let (_left, nth, _right) =
-                nums.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap());
-            let upper_mid = *nth;
-            // Now the first mid elements are the lower partition (unsorted), scan for its max.
-            let mut lower_max = f64::NEG_INFINITY;
-            for &v in &nums[..mid] {
-                if v > lower_max {
-                    lower_max = v;
-                }
-            }
-            let med = (lower_max + upper_mid) / 2.0;
-            let out = LiteralValue::Number(med);
-            f.write_result(out.clone());
-            Some(Ok(out))
-        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(med)))
     }
 }
 
@@ -486,16 +435,16 @@ impl Function for StdevSample {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let nums = collect_numeric_stats(args)?;
         let n = nums.len();
         if n < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
             )));
         }
         let mean = nums.iter().sum::<f64>() / (n as f64);
@@ -504,39 +453,9 @@ impl Function for StdevSample {
             let d = v - mean;
             ss += d * d;
         }
-        Ok(LiteralValue::Number((ss / ((n - 1) as f64)).sqrt()))
-    }
-    fn eval_fold(
-        &self,
-        f: &mut dyn crate::function::FnFoldCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        // Welford one-pass for sample stdev
-        let mut n: f64 = 0.0;
-        let mut mean: f64 = 0.0;
-        let mut m2: f64 = 0.0;
-        let mut err: Option<ExcelError> = None;
-        let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
-            for &x in chunk.data {
-                n += 1.0;
-                let delta = x - mean;
-                mean += delta / n;
-                let delta2 = x - mean;
-                m2 += delta * delta2;
-            }
-            Ok(())
-        };
-        if let Err(e) = f.for_each_numeric_chunk(4096, &mut cb) {
-            err = Some(e);
-        }
-        let out = if let Some(e) = err {
-            LiteralValue::Error(e)
-        } else if n < 2.0 {
-            LiteralValue::Error(ExcelError::new_div())
-        } else {
-            LiteralValue::Number((m2 / (n - 1.0)).sqrt())
-        };
-        f.write_result(out.clone());
-        Some(Ok(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            (ss / ((n - 1) as f64)).sqrt(),
+        )))
     }
 }
 
@@ -559,16 +478,16 @@ impl Function for StdevPop {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let nums = collect_numeric_stats(args)?;
         let n = nums.len();
         if n == 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
             )));
         }
         let mean = nums.iter().sum::<f64>() / (n as f64);
@@ -577,38 +496,9 @@ impl Function for StdevPop {
             let d = v - mean;
             ss += d * d;
         }
-        Ok(LiteralValue::Number((ss / (n as f64)).sqrt()))
-    }
-    fn eval_fold(
-        &self,
-        f: &mut dyn crate::function::FnFoldCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let mut n: f64 = 0.0;
-        let mut mean = 0.0;
-        let mut m2 = 0.0;
-        let mut err: Option<ExcelError> = None;
-        let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
-            for &x in chunk.data {
-                n += 1.0;
-                let delta = x - mean;
-                mean += delta / n;
-                let delta2 = x - mean;
-                m2 += delta * delta2;
-            }
-            Ok(())
-        };
-        if let Err(e) = f.for_each_numeric_chunk(4096, &mut cb) {
-            err = Some(e);
-        }
-        let out = if let Some(e) = err {
-            LiteralValue::Error(e)
-        } else if n == 0.0 {
-            LiteralValue::Error(ExcelError::new_div())
-        } else {
-            LiteralValue::Number((m2 / n).sqrt())
-        };
-        f.write_result(out.clone());
-        Some(Ok(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            (ss / (n as f64)).sqrt(),
+        )))
     }
 }
 
@@ -631,16 +521,16 @@ impl Function for VarSample {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let nums = collect_numeric_stats(args)?;
         let n = nums.len();
         if n < 2 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
             )));
         }
         let mean = nums.iter().sum::<f64>() / (n as f64);
@@ -649,38 +539,9 @@ impl Function for VarSample {
             let d = v - mean;
             ss += d * d;
         }
-        Ok(LiteralValue::Number(ss / ((n - 1) as f64)))
-    }
-    fn eval_fold(
-        &self,
-        f: &mut dyn crate::function::FnFoldCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let mut n: f64 = 0.0;
-        let mut mean = 0.0;
-        let mut m2 = 0.0;
-        let mut err = None;
-        let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
-            for &x in chunk.data {
-                n += 1.0;
-                let delta = x - mean;
-                mean += delta / n;
-                let delta2 = x - mean;
-                m2 += delta * delta2;
-            }
-            Ok(())
-        };
-        if let Err(e) = f.for_each_numeric_chunk(4096, &mut cb) {
-            err = Some(e);
-        }
-        let out = if let Some(e) = err {
-            LiteralValue::Error(e)
-        } else if n < 2.0 {
-            LiteralValue::Error(ExcelError::new_div())
-        } else {
-            LiteralValue::Number(m2 / (n - 1.0))
-        };
-        f.write_result(out.clone());
-        Some(Ok(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            ss / ((n - 1) as f64),
+        )))
     }
 }
 
@@ -703,16 +564,16 @@ impl Function for VarPop {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let nums = collect_numeric_stats(args)?;
         let n = nums.len();
         if n == 0 {
-            return Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#DIV/0!",
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#DIV/0!"),
             )));
         }
         let mean = nums.iter().sum::<f64>() / (n as f64);
@@ -721,38 +582,9 @@ impl Function for VarPop {
             let d = v - mean;
             ss += d * d;
         }
-        Ok(LiteralValue::Number(ss / (n as f64)))
-    }
-    fn eval_fold(
-        &self,
-        f: &mut dyn crate::function::FnFoldCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let mut n: f64 = 0.0;
-        let mut mean = 0.0;
-        let mut m2 = 0.0;
-        let mut err = None;
-        let mut cb = |chunk: crate::stripes::NumericChunk| -> Result<(), ExcelError> {
-            for &x in chunk.data {
-                n += 1.0;
-                let delta = x - mean;
-                mean += delta / n;
-                let delta2 = x - mean;
-                m2 += delta * delta2;
-            }
-            Ok(())
-        };
-        if let Err(e) = f.for_each_numeric_chunk(4096, &mut cb) {
-            err = Some(e);
-        }
-        let out = if let Some(e) = err {
-            LiteralValue::Error(e)
-        } else if n == 0.0 {
-            LiteralValue::Error(ExcelError::new_div())
-        } else {
-            LiteralValue::Number(m2 / n)
-        };
-        f.write_result(out.clone());
-        Some(Ok(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            ss / (n as f64),
+        )))
     }
 }
 
@@ -776,14 +608,16 @@ impl Function for ModeSingleFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut nums = collect_numeric_stats(args)?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new_na()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let mut best_val = nums[0];
@@ -807,53 +641,14 @@ impl Function for ModeSingleFn {
             best_val = cur_val;
         }
         if best_cnt <= 1 {
-            Ok(LiteralValue::Error(ExcelError::new_na()))
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )))
         } else {
-            Ok(LiteralValue::Number(best_val))
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                best_val,
+            )))
         }
-    }
-    fn eval_fold(
-        &self,
-        f: &mut dyn crate::function::FnFoldCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let args = f.args();
-        let mut nums = match collect_numeric_stats(args) {
-            Ok(v) => v,
-            Err(e) => return Some(Ok(LiteralValue::Error(e))),
-        };
-        if nums.is_empty() {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#N/A",
-            ))));
-        }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let mut best_val = nums[0];
-        let mut best_cnt = 1usize;
-        let mut cur_val = nums[0];
-        let mut cur_cnt = 1usize;
-        for &v in &nums[1..] {
-            if (v - cur_val).abs() < 1e-12 {
-                cur_cnt += 1;
-            } else {
-                if cur_cnt > best_cnt {
-                    best_cnt = cur_cnt;
-                    best_val = cur_val;
-                }
-                cur_val = v;
-                cur_cnt = 1;
-            }
-        }
-        if cur_cnt > best_cnt {
-            best_cnt = cur_cnt;
-            best_val = cur_val;
-        }
-        let out = if best_cnt <= 1 {
-            LiteralValue::Error(ExcelError::new_na())
-        } else {
-            LiteralValue::Number(best_val)
-        };
-        f.write_result(out.clone());
-        Some(Ok(out))
     }
 }
 
@@ -873,14 +668,16 @@ impl Function for ModeMultiFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut nums = collect_numeric_stats(args)?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new_na()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let mut runs: Vec<(f64, usize)> = Vec::new();
@@ -898,57 +695,16 @@ impl Function for ModeMultiFn {
         runs.push((cur_val, cur_cnt));
         let max_freq = runs.iter().map(|r| r.1).max().unwrap_or(0);
         if max_freq <= 1 {
-            return Ok(LiteralValue::Error(ExcelError::new_na()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
         }
         let rows: Vec<Vec<LiteralValue>> = runs
             .into_iter()
             .filter(|&(_, c)| c == max_freq)
             .map(|(v, _)| vec![LiteralValue::Number(v)])
             .collect();
-        Ok(LiteralValue::Array(rows))
-    }
-    fn eval_fold(
-        &self,
-        f: &mut dyn crate::function::FnFoldCtx,
-    ) -> Option<Result<LiteralValue, ExcelError>> {
-        let args = f.args();
-        let mut nums = match collect_numeric_stats(args) {
-            Ok(v) => v,
-            Err(e) => return Some(Ok(LiteralValue::Error(e))),
-        };
-        if nums.is_empty() {
-            return Some(Ok(LiteralValue::Error(ExcelError::from_error_string(
-                "#N/A",
-            ))));
-        }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let mut runs: Vec<(f64, usize)> = Vec::new();
-        let mut cur = nums[0];
-        let mut cnt = 1usize;
-        for &v in &nums[1..] {
-            if (v - cur).abs() < 1e-12 {
-                cnt += 1;
-            } else {
-                runs.push((cur, cnt));
-                cur = v;
-                cnt = 1;
-            }
-        }
-        runs.push((cur, cnt));
-        let max_freq = runs.iter().map(|r| r.1).max().unwrap_or(0);
-        if max_freq <= 1 {
-            let out = LiteralValue::Error(ExcelError::new_na());
-            f.write_result(out.clone());
-            return Some(Ok(out));
-        }
-        let rows: Vec<Vec<LiteralValue>> = runs
-            .into_iter()
-            .filter(|&(_, c)| c == max_freq)
-            .map(|(v, _)| vec![LiteralValue::Number(v)])
-            .collect();
-        let out = LiteralValue::Array(rows);
-        f.write_result(out.clone());
-        Some(Ok(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)))
     }
 }
 
@@ -971,26 +727,35 @@ impl Function for PercentileInc {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        let p = match coerce_num(args.last().unwrap().value()?.as_ref()) {
+        let pv = scalar_like_value(args.last().unwrap())?;
+        let p = match coerce_num(&pv) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
         };
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         match percentile_inc(&nums, p) {
-            Ok(v) => Ok(LiteralValue::Number(v)),
-            Err(e) => Ok(LiteralValue::Error(e)),
+            Ok(v) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v))),
+            Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         }
     }
 }
@@ -1011,26 +776,35 @@ impl Function for PercentileExc {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        let p = match coerce_num(args.last().unwrap().value()?.as_ref()) {
+        let pv = scalar_like_value(args.last().unwrap())?;
+        let p = match coerce_num(&pv) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
         };
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         match percentile_exc(&nums, p) {
-            Ok(v) => Ok(LiteralValue::Number(v)),
-            Err(e) => Ok(LiteralValue::Error(e)),
+            Ok(v) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v))),
+            Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         }
     }
 }
@@ -1054,38 +828,61 @@ impl Function for QuartileInc {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        let q = match coerce_num(args.last().unwrap().value()?.as_ref()) {
+        let qv = scalar_like_value(args.last().unwrap())?;
+        let q = match coerce_num(&qv) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
         };
         let q_i = q as i64;
         if !(0..=4).contains(&q_i) {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.is_empty() {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = match q_i {
-            0 => return Ok(LiteralValue::Number(nums[0])),
-            4 => return Ok(LiteralValue::Number(nums[nums.len() - 1])),
+            0 => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                    nums[0],
+                )));
+            }
+            4 => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                    nums[nums.len() - 1],
+                )));
+            }
             1 => 0.25,
             2 => 0.5,
             3 => 0.75,
-            _ => return Ok(LiteralValue::Error(ExcelError::new_num())),
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
         };
         match percentile_inc(&nums, p) {
-            Ok(v) => Ok(LiteralValue::Number(v)),
-            Err(e) => Ok(LiteralValue::Error(e)),
+            Ok(v) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v))),
+            Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         }
     }
 }
@@ -1106,36 +903,51 @@ impl Function for QuartileExc {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
-        let q = match coerce_num(args.last().unwrap().value()?.as_ref()) {
+        let qv = scalar_like_value(args.last().unwrap())?;
+        let q = match coerce_num(&qv) {
             Ok(n) => n,
-            Err(_) => return Ok(LiteralValue::Error(ExcelError::new_num())),
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
         };
         let q_i = q as i64;
         if !(1..=3).contains(&q_i) {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         let mut nums = collect_numeric_stats(&args[..args.len() - 1])?;
         if nums.len() < 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_num()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
         }
         nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = match q_i {
             1 => 0.25,
             2 => 0.5,
             3 => 0.75,
-            _ => return Ok(LiteralValue::Error(ExcelError::new_num())),
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
         };
         match percentile_exc(&nums, p) {
-            Ok(v) => Ok(LiteralValue::Number(v)),
-            Err(e) => Ok(LiteralValue::Error(e)),
+            Ok(v) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v))),
+            Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         }
     }
 }
@@ -1257,6 +1069,7 @@ mod tests_basic_stats {
                 &ctx.function_context(None),
             )
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Number(v) => assert!((v - 1.75).abs() < 1e-9),
             other => panic!("unexpected {other:?}"),
@@ -1318,7 +1131,8 @@ mod tests_basic_stats {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         match out {
             LiteralValue::Number(v) => assert!((v - 1.5).abs() < 1e-12),
             other => panic!("expected number got {other:?}"),
@@ -1338,17 +1152,26 @@ mod tests_basic_stats {
         let var_p = ctx.context.get_function("", "VAR.P").unwrap();
         let var_s = ctx.context.get_function("", "VAR.S").unwrap();
         let args = [ArgumentHandle::new(&arr_node, &ctx)];
-        match var_p.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match var_p
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(v) => assert!((v - 4.0).abs() < 1e-12),
             other => panic!("unexpected {other:?}"),
         }
-        match var_s.dispatch(&args, &ctx.function_context(None)).unwrap() {
+        match var_s
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
             LiteralValue::Number(v) => assert!((v - 4.571428571428571).abs() < 1e-9),
             other => panic!("unexpected {other:?}"),
         }
         match stdev_p
             .dispatch(&args, &ctx.function_context(None))
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Number(v) => assert!((v - 2.0).abs() < 1e-12),
             other => panic!("unexpected {other:?}"),
@@ -1356,6 +1179,7 @@ mod tests_basic_stats {
         match stdev_s
             .dispatch(&args, &ctx.function_context(None))
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Number(v) => assert!((v - 2.138089935).abs() < 1e-9),
             other => panic!("unexpected {other:?}"),
@@ -1383,6 +1207,7 @@ mod tests_basic_stats {
         match f_inc
             .dispatch(&arg_inc_q1, &ctx.function_context(None))
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Number(v) => assert!((v - 2.0).abs() < 1e-12),
             other => panic!("unexpected {other:?}"),
@@ -1390,6 +1215,7 @@ mod tests_basic_stats {
         match f_inc
             .dispatch(&arg_inc_q2, &ctx.function_context(None))
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Number(v) => assert!((v - 3.0).abs() < 1e-12),
             other => panic!("unexpected {other:?}"),
@@ -1398,6 +1224,7 @@ mod tests_basic_stats {
         match f_exc
             .dispatch(&arg_inc_q1, &ctx.function_context(None))
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Number(v) => assert!((v - 1.5).abs() < 1e-12),
             other => panic!("unexpected {other:?}"),
@@ -1405,13 +1232,14 @@ mod tests_basic_stats {
         match f_exc
             .dispatch(&arg_inc_q2, &ctx.function_context(None))
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Number(v) => assert!((v - 3.0).abs() < 1e-12),
             other => panic!("unexpected {other:?}"),
         }
     }
 
-    // --- eval_fold equivalence tests for variance / stdev ---
+    // --- eval()/dispatch equivalence tests for variance / stdev ---
     #[test]
     fn fold_equivalence_var_stdev() {
         use crate::function::Function as _; // trait import
@@ -1424,7 +1252,7 @@ mod tests_basic_stats {
         let arr_node = arr(vec![1.0, 2.0, 5.0, 5.0, 9.0]);
         let args = [ArgumentHandle::new(&arr_node, &ctx)];
 
-        let var_s_fn = VarSample; // concrete instance to call eval_scalar
+        let var_s_fn = VarSample; // concrete instance to call eval()
         let var_p_fn = VarPop;
         let stdev_s_fn = StdevSample;
         let stdev_p_fn = StdevPop;
@@ -1436,31 +1264,35 @@ mod tests_basic_stats {
             .get_function("", "VAR.S")
             .unwrap()
             .dispatch(&args, &fctx)
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let disp_var_p = ctx
             .context
             .get_function("", "VAR.P")
             .unwrap()
             .dispatch(&args, &fctx)
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let disp_stdev_s = ctx
             .context
             .get_function("", "STDEV.S")
             .unwrap()
             .dispatch(&args, &fctx)
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let disp_stdev_p = ctx
             .context
             .get_function("", "STDEV.P")
             .unwrap()
             .dispatch(&args, &fctx)
-            .unwrap();
+            .unwrap()
+            .into_literal();
 
         // Scalar path results
-        let scalar_var_s = var_s_fn.eval_scalar(&args, &fctx).unwrap();
-        let scalar_var_p = var_p_fn.eval_scalar(&args, &fctx).unwrap();
-        let scalar_stdev_s = stdev_s_fn.eval_scalar(&args, &fctx).unwrap();
-        let scalar_stdev_p = stdev_p_fn.eval_scalar(&args, &fctx).unwrap();
+        let scalar_var_s = var_s_fn.eval(&args, &fctx).unwrap().into_literal();
+        let scalar_var_p = var_p_fn.eval(&args, &fctx).unwrap().into_literal();
+        let scalar_stdev_s = stdev_s_fn.eval(&args, &fctx).unwrap().into_literal();
+        let scalar_stdev_p = stdev_p_fn.eval(&args, &fctx).unwrap().into_literal();
 
         fn assert_close(a: &LiteralValue, b: &LiteralValue) {
             match (a, b) {
@@ -1495,7 +1327,7 @@ mod tests_basic_stats {
             .unwrap()
             .dispatch(&args_single, &fctx)
             .unwrap();
-        let scalar_var_s = VarSample.eval_scalar(&args_single, &fctx).unwrap();
+        let scalar_var_s = VarSample.eval(&args_single, &fctx).unwrap().into_literal();
         assert_eq!(disp_var_s, scalar_var_s);
         let disp_var_p = ctx
             .context
@@ -1503,7 +1335,7 @@ mod tests_basic_stats {
             .unwrap()
             .dispatch(&args_single, &fctx)
             .unwrap();
-        let scalar_var_p = VarPop.eval_scalar(&args_single, &fctx).unwrap();
+        let scalar_var_p = VarPop.eval(&args_single, &fctx).unwrap().into_literal();
         assert_eq!(disp_var_p, scalar_var_p);
         let disp_stdev_p = ctx
             .context
@@ -1511,7 +1343,7 @@ mod tests_basic_stats {
             .unwrap()
             .dispatch(&args_single, &fctx)
             .unwrap();
-        let scalar_stdev_p = StdevPop.eval_scalar(&args_single, &fctx).unwrap();
+        let scalar_stdev_p = StdevPop.eval(&args_single, &fctx).unwrap().into_literal();
         assert_eq!(disp_stdev_p, scalar_stdev_p);
         let disp_stdev_s = ctx
             .context
@@ -1519,7 +1351,10 @@ mod tests_basic_stats {
             .unwrap()
             .dispatch(&args_single, &fctx)
             .unwrap();
-        let scalar_stdev_s = StdevSample.eval_scalar(&args_single, &fctx).unwrap();
+        let scalar_stdev_s = StdevSample
+            .eval(&args_single, &fctx)
+            .unwrap()
+            .into_literal();
         assert_eq!(disp_stdev_s, scalar_stdev_s);
     }
 
@@ -1551,39 +1386,45 @@ mod tests_basic_stats {
             .get_function("", "PERCENTILE.INC")
             .unwrap()
             .dispatch(&args_p, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let legacy_p = ctx
             .context
             .get_function("", "PERCENTILE")
             .unwrap()
             .dispatch(&args_p, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(modern_p, legacy_p);
         let modern_q = ctx
             .context
             .get_function("", "QUARTILE.INC")
             .unwrap()
             .dispatch(&args_q, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let legacy_q = ctx
             .context
             .get_function("", "QUARTILE")
             .unwrap()
             .dispatch(&args_q, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(modern_q, legacy_q);
         let modern_rank = ctx
             .context
             .get_function("", "RANK.EQ")
             .unwrap()
             .dispatch(&args_rank, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let legacy_rank = ctx
             .context
             .get_function("", "RANK")
             .unwrap()
             .dispatch(&args_rank, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(modern_rank, legacy_rank);
     }
 
@@ -1598,14 +1439,16 @@ mod tests_basic_stats {
             .get_function("", "MODE.SNGL")
             .unwrap()
             .dispatch(&args, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(mode_sngl, LiteralValue::Number(3.0));
         let mode_alias = ctx
             .context
             .get_function("", "MODE")
             .unwrap()
             .dispatch(&args, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(mode_alias, mode_sngl);
     }
 
@@ -1620,7 +1463,8 @@ mod tests_basic_stats {
             .get_function("", "MODE.SNGL")
             .unwrap()
             .dispatch(&args, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         match out {
             LiteralValue::Error(e) => assert!(e.to_string().contains("#N/A")),
             _ => panic!("expected #N/A"),
@@ -1638,7 +1482,8 @@ mod tests_basic_stats {
             .get_function("", "MODE.MULT")
             .unwrap()
             .dispatch(&args, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let expected = LiteralValue::Array(vec![
             vec![LiteralValue::Number(2.0)],
             vec![LiteralValue::Number(3.0)],
@@ -1661,18 +1506,22 @@ mod tests_basic_stats {
         let f_large = ctx.context.get_function("", "LARGE").unwrap();
         let disp_large = f_large
             .dispatch(&args, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let scalar_large = LARGE
-            .eval_scalar(&args, &ctx.function_context(None))
-            .unwrap();
+            .eval(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(disp_large, scalar_large);
         let f_small = ctx.context.get_function("", "SMALL").unwrap();
         let disp_small = f_small
             .dispatch(&args, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let scalar_small = SMALL
-            .eval_scalar(&args, &ctx.function_context(None))
-            .unwrap();
+            .eval(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(disp_small, scalar_small);
     }
 
@@ -1687,18 +1536,22 @@ mod tests_basic_stats {
         let f_single = ctx.context.get_function("", "MODE.SNGL").unwrap();
         let disp_single = f_single
             .dispatch(&args, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let scalar_single = ModeSingleFn
-            .eval_scalar(&args, &ctx.function_context(None))
-            .unwrap();
+            .eval(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(disp_single, scalar_single);
         let f_multi = ctx.context.get_function("", "MODE.MULT").unwrap();
         let disp_multi = f_multi
             .dispatch(&args, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         let scalar_multi = ModeMultiFn
-            .eval_scalar(&args, &ctx.function_context(None))
-            .unwrap();
+            .eval(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(disp_multi, scalar_multi);
     }
 
@@ -1709,10 +1562,14 @@ mod tests_basic_stats {
         let arr_node = arr(vec![7.0, 1.0, 9.0, 5.0]); // sorted: 1,5,7,9 median=(5+7)/2=6
         let args = [ArgumentHandle::new(&arr_node, &ctx)];
         let f_med = ctx.context.get_function("", "MEDIAN").unwrap();
-        let disp = f_med.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let disp = f_med
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         let scalar = MEDIAN
-            .eval_scalar(&args, &ctx.function_context(None))
-            .unwrap();
+            .eval(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(disp, scalar);
         assert_eq!(disp, LiteralValue::Number(6.0));
     }
@@ -1724,10 +1581,14 @@ mod tests_basic_stats {
         let arr_node = arr(vec![9.0, 2.0, 5.0]); // sorted 2,5,9 median=5
         let args = [ArgumentHandle::new(&arr_node, &ctx)];
         let f_med = ctx.context.get_function("", "MEDIAN").unwrap();
-        let disp = f_med.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let disp = f_med
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         let scalar = MEDIAN
-            .eval_scalar(&args, &ctx.function_context(None))
-            .unwrap();
+            .eval(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(disp, scalar);
         assert_eq!(disp, LiteralValue::Number(5.0));
     }
@@ -1750,11 +1611,15 @@ mod tests_basic_stats {
             ArgumentHandle::new(&p1, &ctx),
         ];
         assert_eq!(
-            f.dispatch(&args0, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args0, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(10.0)
         );
         assert_eq!(
-            f.dispatch(&args1, &ctx.function_context(None)).unwrap(),
+            f.dispatch(&args1, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
             LiteralValue::Number(40.0)
         );
     }
@@ -1772,7 +1637,11 @@ mod tests_basic_stats {
                 ArgumentHandle::new(&arr_node, &ctx),
                 ArgumentHandle::new(bad, &ctx),
             ];
-            match f.dispatch(&args, &ctx.function_context(None)).unwrap() {
+            match f
+                .dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal()
+            {
                 LiteralValue::Error(e) => assert!(e.to_string().contains("#NUM!")),
                 other => panic!("expected #NUM! got {other:?}"),
             }
@@ -1798,6 +1667,7 @@ mod tests_basic_stats {
             .unwrap()
             .dispatch(&args_bad_inc, &ctx.function_context(None))
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Error(e) => assert!(e.to_string().contains("#NUM!")),
             other => panic!("expected #NUM! {other:?}"),
@@ -1814,6 +1684,7 @@ mod tests_basic_stats {
             .unwrap()
             .dispatch(&args_bad_exc, &ctx.function_context(None))
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Error(e) => assert!(e.to_string().contains("#NUM!")),
             other => panic!("expected #NUM! {other:?}"),
@@ -1839,6 +1710,7 @@ mod tests_basic_stats {
                 .unwrap()
                 .dispatch(&args, &ctx.function_context(None))
                 .unwrap()
+                .into_literal()
             {
                 LiteralValue::Error(e) => assert!(e.to_string().contains("#N/A")),
                 other => panic!("expected #N/A {other:?}"),
@@ -1858,7 +1730,8 @@ mod tests_basic_stats {
             .get_function("", "MODE.MULT")
             .unwrap()
             .dispatch(&args, &ctx.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
         match out {
             LiteralValue::Array(rows) => {
                 let vals: Vec<f64> = rows
@@ -1896,7 +1769,8 @@ mod tests_basic_stats {
                 &[ArgumentHandle::new(&mixed, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         // NOTE: Inline array literal is treated as a direct scalar argument (not a range reference),
         // so boolean TRUE is coerced to 1. Dataset becomes {1,1,4}; population stdev = sqrt(6/3)=sqrt(2).
         match out {
@@ -1918,7 +1792,10 @@ mod tests_basic_stats {
             ArgumentHandle::new(&one, &ctx),
             ArgumentHandle::new(&t, &ctx),
         ];
-        let out = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+        let out = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
         assert_eq!(out, LiteralValue::Number(0.0));
     }
 }

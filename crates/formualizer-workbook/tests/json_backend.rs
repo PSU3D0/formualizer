@@ -168,8 +168,10 @@ fn json_loader_declares_sources_before_formula_ingest_eager_mode() {
 
     let mut adapter = JsonAdapter::open_bytes(bytes).unwrap();
 
-    let mut cfg = EvalConfig::default();
-    cfg.defer_graph_building = false;
+    let cfg = EvalConfig {
+        defer_graph_building: false,
+        ..Default::default()
+    };
 
     let mut engine: Engine<_> = Engine::new(ctx.clone(), cfg);
     adapter.stream_into_engine(&mut engine).unwrap();

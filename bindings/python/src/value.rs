@@ -8,6 +8,8 @@ use pyo3::types::{
     PyInt, PyList, PyString, PyTime, PyTimeAccess,
 };
 
+type PyObject = pyo3::Py<pyo3::PyAny>;
+
 /// Python representation of a LiteralValue from the formula engine
 #[pyclass(name = "LiteralValue")]
 #[derive(Clone, Debug)]
@@ -515,7 +517,7 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
     if value.is_instance_of::<PyString>() {
         return Ok(LiteralValue::Text(value.extract::<String>()?));
     }
-    if let Ok(py_dt) = value.downcast::<PyDateTime>() {
+    if let Ok(py_dt) = value.cast::<PyDateTime>() {
         let date = NaiveDate::from_ymd_opt(
             py_dt.get_year(),
             py_dt.get_month() as u32,
@@ -531,7 +533,7 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid datetime"))?;
         return Ok(LiteralValue::DateTime(NaiveDateTime::new(date, time)));
     }
-    if let Ok(py_date) = value.downcast::<PyDate>() {
+    if let Ok(py_date) = value.cast::<PyDate>() {
         let date = NaiveDate::from_ymd_opt(
             py_date.get_year(),
             py_date.get_month() as u32,
@@ -540,7 +542,7 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid date"))?;
         return Ok(LiteralValue::Date(date));
     }
-    if let Ok(py_time) = value.downcast::<PyTime>() {
+    if let Ok(py_time) = value.cast::<PyTime>() {
         let time = NaiveTime::from_hms_micro_opt(
             py_time.get_hour() as u32,
             py_time.get_minute() as u32,
@@ -550,13 +552,13 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid time"))?;
         return Ok(LiteralValue::Time(time));
     }
-    if let Ok(py_delta) = value.downcast::<PyDelta>() {
+    if let Ok(py_delta) = value.cast::<PyDelta>() {
         let secs = (py_delta.get_days() * 86_400 + py_delta.get_seconds()) as i64;
         let micros = py_delta.get_microseconds() as i64;
         let duration = chrono::Duration::seconds(secs) + chrono::Duration::microseconds(micros);
         return Ok(LiteralValue::Duration(duration));
     }
-    if let Ok(dict) = value.downcast::<PyDict>()
+    if let Ok(dict) = value.cast::<PyDict>()
         && let Some(kind_obj) = dict.get_item("type")?
     {
         let type_tag: String = kind_obj.extract()?;
@@ -813,10 +815,10 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
             }
         }
     }
-    if let Ok(list) = value.downcast::<PyList>() {
+    if let Ok(list) = value.cast::<PyList>() {
         let mut rows = Vec::with_capacity(list.len());
         for (row_idx, item) in list.iter().enumerate() {
-            if let Ok(sub) = item.downcast::<PyList>() {
+            if let Ok(sub) = item.cast::<PyList>() {
                 let mut row = Vec::with_capacity(sub.len());
                 for cell in sub.iter() {
                     row.push(py_to_literal(&cell)?);

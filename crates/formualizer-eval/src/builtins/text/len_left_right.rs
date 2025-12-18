@@ -5,6 +5,13 @@ use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
+fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    Ok(match arg.value()? {
+        crate::traits::CalcValue::Scalar(v) => v,
+        crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
+    })
+}
+
 #[derive(Debug)]
 pub struct LenFn;
 impl Function for LenFn {
@@ -18,19 +25,21 @@ impl Function for LenFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        let v = args[0].value()?;
-        let count = match v.as_ref() {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let v = scalar_like_value(&args[0])?;
+        let count = match v {
             LiteralValue::Text(s) => s.chars().count() as i64,
             LiteralValue::Empty => 0,
-            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             other => other.to_string().chars().count() as i64,
         };
-        Ok(LiteralValue::Int(count))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(count)))
     }
 }
 
@@ -50,19 +59,23 @@ impl Function for LeftFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.is_empty() || args.len() > 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let s_val = args[0].value()?;
-        let s = match s_val.as_ref() {
-            LiteralValue::Text(t) => t.clone(),
+        let s_val = scalar_like_value(&args[0])?;
+        let s = match s_val {
+            LiteralValue::Text(t) => t,
             LiteralValue::Empty => String::new(),
-            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             other => other.to_string(),
         };
         let n: i64 = if args.len() == 2 {
@@ -71,11 +84,15 @@ impl Function for LeftFn {
             1
         };
         if n < 0 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         let chars: Vec<char> = s.chars().collect();
         let take = (n as usize).min(chars.len());
-        Ok(LiteralValue::Text(chars[..take].iter().collect()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+            chars[..take].iter().collect(),
+        )))
     }
 }
 
@@ -95,19 +112,23 @@ impl Function for RightFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.is_empty() || args.len() > 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let s_val = args[0].value()?;
-        let s = match s_val.as_ref() {
-            LiteralValue::Text(t) => t.clone(),
+        let s_val = scalar_like_value(&args[0])?;
+        let s = match s_val {
+            LiteralValue::Text(t) => t,
             LiteralValue::Empty => String::new(),
-            LiteralValue::Error(e) => return Ok(LiteralValue::Error(e.clone())),
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             other => other.to_string(),
         };
         let n: i64 = if args.len() == 2 {
@@ -116,30 +137,34 @@ impl Function for RightFn {
             1
         };
         if n < 0 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
         let chars: Vec<char> = s.chars().collect();
         let len = chars.len();
         let start = len.saturating_sub(n as usize);
-        Ok(LiteralValue::Text(chars[start..].iter().collect()))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+            chars[start..].iter().collect(),
+        )))
     }
 }
 
 fn number_like<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<i64, ExcelError> {
-    let v = arg.value()?;
-    Ok(match v.as_ref() {
-        LiteralValue::Int(i) => *i,
-        LiteralValue::Number(f) => *f as i64,
+    let v = scalar_like_value(arg)?;
+    Ok(match v {
+        LiteralValue::Int(i) => i,
+        LiteralValue::Number(f) => f as i64,
         LiteralValue::Empty => 0,
         LiteralValue::Text(t) => t.parse::<i64>().unwrap_or(0),
         LiteralValue::Boolean(b) => {
-            if *b {
+            if b {
                 1
             } else {
                 0
             }
         }
-        LiteralValue::Error(e) => return Err(e.clone()),
+        LiteralValue::Error(e) => return Err(e),
         other => other.to_string().parse::<i64>().unwrap_or(0),
     })
 }
@@ -173,7 +198,7 @@ mod tests {
                 &ctx.function_context(None),
             )
             .unwrap();
-        assert_eq!(out, LiteralValue::Int(3));
+        assert_eq!(out.into_literal(), LiteralValue::Int(3));
     }
     #[test]
     fn left_right() {
@@ -190,7 +215,8 @@ mod tests {
                 &[ArgumentHandle::new(&s, &ctx), ArgumentHandle::new(&n, &ctx)],
                 &ctx.function_context(None)
             )
-            .unwrap(),
+            .unwrap()
+            .into_literal(),
             LiteralValue::Text("he".into())
         );
         assert_eq!(
@@ -198,7 +224,8 @@ mod tests {
                 &[ArgumentHandle::new(&s, &ctx), ArgumentHandle::new(&n, &ctx)],
                 &ctx.function_context(None)
             )
-            .unwrap(),
+            .unwrap()
+            .into_literal(),
             LiteralValue::Text("lo".into())
         );
     }

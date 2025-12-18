@@ -103,6 +103,7 @@ mod tests {
                 &ctx.function_context(None),
             )
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Error(e) => assert_eq!(e.to_string(), "#VALUE!"),
             _ => panic!("Expected #VALUE! error"),
@@ -130,6 +131,7 @@ mod tests {
                 &ctx.function_context(None),
             )
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Error(e) => assert_eq!(e.to_string(), "#VALUE!"),
             _ => panic!("Expected #VALUE! error"),
@@ -190,6 +192,7 @@ mod tests {
                 &ctx.function_context(None),
             )
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Error(e) => assert_eq!(e.to_string(), "#VALUE!"),
             _ => panic!("Expected #VALUE! error"),
@@ -413,6 +416,7 @@ mod tests {
                 &ctx.function_context(None),
             )
             .unwrap()
+            .into_literal()
         {
             LiteralValue::Error(e) => assert_eq!(e.to_string(), "#VALUE!"),
             _ => panic!("Expected #VALUE! error"),

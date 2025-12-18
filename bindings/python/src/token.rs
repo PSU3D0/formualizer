@@ -3,6 +3,8 @@ use formualizer_parse::tokenizer::Token;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+type PyObject = pyo3::Py<pyo3::PyAny>;
+
 #[pyclass(module = "formualizer")]
 #[derive(Clone)]
 pub struct PyToken {

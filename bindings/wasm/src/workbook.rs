@@ -188,7 +188,7 @@ impl Workbook {
         let mut wb = self.inner.write().map_err(|_| JsValue::from_str("lock"))?;
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        wb.evaluate_all_cancellable(&self.cancel_flag)
+        wb.evaluate_all_cancellable(self.cancel_flag.clone())
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(())
     }
@@ -204,11 +204,11 @@ impl Workbook {
                 .get(0)
                 .as_string()
                 .ok_or_else(|| JsValue::from_str("Invalid sheet name"))?;
-            let row = arr
+            let _row = arr
                 .get(1)
                 .as_f64()
                 .ok_or_else(|| JsValue::from_str("Invalid row"))? as u32;
-            let col = arr
+            let _col = arr
                 .get(2)
                 .as_f64()
                 .ok_or_else(|| JsValue::from_str("Invalid col"))? as u32;
@@ -227,7 +227,7 @@ impl Workbook {
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
         let results = wb
-            .evaluate_cells_cancellable(&target_vec, &self.cancel_flag)
+            .evaluate_cells_cancellable(&target_vec, self.cancel_flag.clone())
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let out = js_sys::Array::new();

@@ -5,13 +5,20 @@ use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
+fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    Ok(match arg.value()? {
+        crate::traits::CalcValue::Scalar(v) => v,
+        crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
+    })
+}
+
 fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
-    let v = a.value()?;
-    Ok(match v.as_ref() {
-        LiteralValue::Text(s) => s.clone(),
+    let v = scalar_like_value(a)?;
+    Ok(match v {
+        LiteralValue::Text(s) => s,
         LiteralValue::Empty => String::new(),
         LiteralValue::Boolean(b) => {
-            if *b {
+            if b {
                 "TRUE".into()
             } else {
                 "FALSE".into()
@@ -19,7 +26,7 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
         }
         LiteralValue::Int(i) => i.to_string(),
         LiteralValue::Number(f) => f.to_string(),
-        LiteralValue::Error(e) => return Err(e.clone()),
+        LiteralValue::Error(e) => return Err(e),
         other => other.to_string(),
     })
 }
@@ -38,15 +45,17 @@ impl Function for ValueFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        a: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        let s = to_text(&a[0])?;
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let s = to_text(&args[0])?;
         match s.trim().parse::<f64>() {
-            Ok(n) => Ok(LiteralValue::Number(n)),
-            Err(_) => Ok(LiteralValue::Error(ExcelError::new_value())),
+            Ok(n) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(n))),
+            Err(_) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            ))),
         }
     }
 }
@@ -65,31 +74,36 @@ impl Function for TextFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        a: &'a [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
-        if a.len() != 2 {
-            return Ok(LiteralValue::Error(ExcelError::new_value()));
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
         }
-        let val = a[0].value()?;
-        if let LiteralValue::Error(e) = val.as_ref() {
-            return Ok(LiteralValue::Error(e.clone()));
+        let val = scalar_like_value(&args[0])?;
+        if let LiteralValue::Error(e) = val {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
-        let fmt = to_text(&a[1])?;
-        let num = match val.as_ref() {
-            LiteralValue::Number(f) => *f,
-            LiteralValue::Int(i) => *i as f64,
+        let fmt = to_text(&args[1])?;
+        let num = match val {
+            LiteralValue::Number(f) => f,
+            LiteralValue::Int(i) => i as f64,
             LiteralValue::Text(t) => t.parse::<f64>().unwrap_or(0.0),
             LiteralValue::Boolean(b) => {
-                if *b {
+                if b {
                     1.0
                 } else {
                     0.0
                 }
             }
             LiteralValue::Empty => 0.0,
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             _ => 0.0,
         };
         let out = if fmt.contains('%') {
@@ -110,7 +124,7 @@ impl Function for TextFn {
                 num.to_string()
             }
         };
-        Ok(LiteralValue::Text(out))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(out)))
     }
 }
 
@@ -174,7 +188,8 @@ mod tests {
                 &[ArgumentHandle::new(&s, &ctx)],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(out, LiteralValue::Number(12.5));
     }
     #[test]
@@ -192,7 +207,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
         assert_eq!(out, LiteralValue::Text("12.34".into()));
     }
 }

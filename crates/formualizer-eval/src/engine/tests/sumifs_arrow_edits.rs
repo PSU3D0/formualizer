@@ -82,7 +82,7 @@ fn sumifs_arrow_edits_start_mid_end() {
             ArgumentHandle::new(&c2, &interp),
         ];
         let fctx = DefaultFunctionContext::new_with_sheet(eng, None, eng.default_sheet_name());
-        fun.dispatch(&args, &fctx).unwrap()
+        fun.dispatch(&args, &fctx).unwrap().into_literal()
     };
 
     // Initial check

@@ -9,16 +9,16 @@ use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
 fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
-    let v = arg.value()?;
-    match v.as_ref() {
-        LiteralValue::Int(i) => Ok(*i as i32),
+    let v = arg.value()?.into_literal();
+    match v {
+        LiteralValue::Int(i) => Ok(i as i32),
         LiteralValue::Number(f) => Ok(f.trunc() as i32),
         LiteralValue::Text(s) => s.parse::<f64>().map(|f| f.trunc() as i32).map_err(|_| {
             ExcelError::new_value().with_message("DATE/TIME argument is not a valid number")
         }),
-        LiteralValue::Boolean(b) => Ok(if *b { 1 } else { 0 }),
+        LiteralValue::Boolean(b) => Ok(if b { 1 } else { 0 }),
         LiteralValue::Empty => Ok(0),
-        LiteralValue::Error(e) => Err(e.clone()),
+        LiteralValue::Error(e) => Err(e),
         _ => Err(ExcelError::new_value()
             .with_message("DATE/TIME expects numeric or text-numeric arguments")),
     }
@@ -52,11 +52,11 @@ impl Function for DateFn {
         &SCHEMA[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let year = coerce_to_int(&args[0])?;
         let month = coerce_to_int(&args[1])?;
         let day = coerce_to_int(&args[2])?;
@@ -71,7 +71,9 @@ impl Function for DateFn {
         let date = create_date_normalized(adjusted_year, month, day)?;
         let serial = super::serial::date_to_serial_for(ctx.date_system(), &date);
 
-        Ok(LiteralValue::Number(serial))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            serial,
+        )))
     }
 }
 
@@ -103,11 +105,11 @@ impl Function for TimeFn {
         &SCHEMA[..]
     }
 
-    fn eval_scalar<'a, 'b>(
+    fn eval<'a, 'b, 'c>(
         &self,
-        args: &'a [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext,
-    ) -> Result<LiteralValue, ExcelError> {
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let hour = coerce_to_int(&args[0])?;
         let minute = coerce_to_int(&args[1])?;
         let second = coerce_to_int(&args[2])?;
@@ -132,7 +134,9 @@ impl Function for TimeFn {
         match NaiveTime::from_hms_opt(hours, minutes, seconds) {
             Some(time) => {
                 let fraction = time_to_fraction(&time);
-                Ok(LiteralValue::Number(fraction))
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                    fraction,
+                )))
             }
             None => Err(ExcelError::new_num()),
         }
@@ -176,7 +180,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
 
         match result {
             LiteralValue::Number(n) => {
@@ -212,7 +217,7 @@ mod tests {
             .unwrap();
 
         // Just verify it returns a valid number
-        assert!(matches!(result, LiteralValue::Number(_)));
+        assert!(matches!(result.into_literal(), LiteralValue::Number(_)));
     }
 
     #[test]
@@ -235,7 +240,8 @@ mod tests {
         ];
         let v1900 = f
             .dispatch(&args, &interp_1900.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
 
         // Engine with 1904 system
         let cfg_1904 = EvalConfig {
@@ -252,7 +258,8 @@ mod tests {
         ];
         let v1904 = f2
             .dispatch(&args2, &interp_1904.function_context(None))
-            .unwrap();
+            .unwrap()
+            .into_literal();
 
         match (v1900, v1904) {
             (LiteralValue::Number(a), LiteralValue::Number(b)) => {
@@ -284,7 +291,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
 
         match result {
             LiteralValue::Number(n) => {
@@ -314,7 +322,8 @@ mod tests {
                 ],
                 &ctx.function_context(None),
             )
-            .unwrap();
+            .unwrap()
+            .into_literal();
 
         match result {
             LiteralValue::Number(n) => {
