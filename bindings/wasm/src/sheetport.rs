@@ -1,3 +1,4 @@
+use crate::utils::{js_error, js_error_with_cause};
 use crate::workbook::{Workbook, js_to_literal, literal_to_js};
 use formualizer_common::{LiteralValue, RangeAddress};
 use formualizer_sheetport::{
@@ -229,8 +230,9 @@ fn js_to_input_update(
         let binding = bindings
             .get(&port)
             .ok_or_else(|| js_error(format!("unknown port `{port}`")))?;
-        let js_value = js_sys::Reflect::get(&obj, &JsValue::from_str(&port))
-            .map_err(|err| js_error(format!("failed to read update for `{port}`: {err:?}`")))?;
+        let js_value = js_sys::Reflect::get(&obj, &JsValue::from_str(&port)).map_err(|err| {
+            js_error_with_cause(format!("failed to read update for `{port}`"), err)
+        })?;
         let port_value = js_to_port_value(binding, &js_value)?;
         update.insert(port, port_value);
     }
@@ -267,7 +269,7 @@ fn js_to_port_value(binding: &PortBinding, value: &JsValue) -> Result<PortValue,
                 }
                 let js_value =
                     js_sys::Reflect::get(&obj, &JsValue::from_str(&field)).map_err(|err| {
-                        js_error(format!("failed to read record field `{field}`: {err:?}"))
+                        js_error_with_cause(format!("failed to read record field `{field}`"), err)
                     })?;
                 map.insert(field, js_to_literal(&js_value));
             }
@@ -330,8 +332,10 @@ fn js_to_table_value(table: &TableBinding, value: &JsValue) -> Result<TableValue
                     "table update references unknown column `{column}`"
                 )));
             }
-            let cell = js_sys::Reflect::get(&object, &JsValue::from_str(&column))
-                .map_err(|err| js_error(format!("failed to read column `{column}`: {err:?}")))?;
+            let cell =
+                js_sys::Reflect::get(&object, &JsValue::from_str(&column)).map_err(|err| {
+                    js_error_with_cause(format!("failed to read column `{column}`"), err)
+                })?;
             map.insert(column, js_to_literal(&cell));
         }
         collected.push(TableRow::new(map));
@@ -521,11 +525,7 @@ fn get_optional_number(obj: &js_sys::Object, key: &str) -> Result<Option<f64>, J
 fn set(target: &js_sys::Object, key: impl AsRef<str>, value: JsValue) -> Result<(), JsValue> {
     js_sys::Reflect::set(target, &JsValue::from_str(key.as_ref()), &value)
         .map(|_| ())
-        .map_err(|err| js_error(format!("failed to set `{}`: {err:?}", key.as_ref())))
-}
-
-fn js_error(message: impl AsRef<str>) -> JsValue {
-    JsValue::from(js_sys::Error::new(message.as_ref()))
+        .map_err(|err| js_error_with_cause(format!("failed to set `{}`", key.as_ref()), err))
 }
 
 fn sheetport_error_to_js(err: formualizer_sheetport::SheetPortError) -> JsValue {

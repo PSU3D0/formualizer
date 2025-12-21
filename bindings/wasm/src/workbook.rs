@@ -1,3 +1,4 @@
+use crate::utils::{js_error, js_error_with_cause};
 use std::sync::{Arc, RwLock};
 use wasm_bindgen::prelude::*;
 
@@ -50,7 +51,8 @@ pub(crate) fn literal_to_js(v: formualizer_common::LiteralValue) -> JsValue {
 
 fn set(obj: &js_sys::Object, key: &str, value: JsValue) -> Result<(), JsValue> {
     js_sys::Reflect::set(obj, &JsValue::from_str(key), &value)
-        .map_err(|_| JsValue::from_str("object set failed"))
+        .map(|_| ())
+        .map_err(|err| js_error_with_cause(format!("failed to set `{key}`"), err))
 }
 
 fn eval_plan_to_js(plan: &formualizer_eval::engine::eval::EvalPlan) -> Result<JsValue, JsValue> {
@@ -153,14 +155,14 @@ impl Workbook {
             use formualizer_workbook::backends::JsonAdapter;
             use formualizer_workbook::traits::SpreadsheetReader;
             let adapter = <JsonAdapter as SpreadsheetReader>::open_bytes(json.into_bytes())
-                .map_err(|e| JsValue::from_str(&format!("open failed: {e}")))?;
+                .map_err(|e| js_error(format!("open failed: {e}")))?;
             let cfg = formualizer_workbook::WorkbookConfig::interactive();
             let wb = formualizer_workbook::Workbook::from_reader(
                 adapter,
                 formualizer_workbook::LoadStrategy::EagerAll,
                 cfg,
             )
-            .map_err(|e| JsValue::from_str(&format!("load failed: {e}")))?;
+            .map_err(|e| js_error(format!("load failed: {e}")))?;
             Ok(Workbook {
                 inner: Arc::new(RwLock::new(wb)),
                 cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -169,7 +171,7 @@ impl Workbook {
         #[cfg(not(feature = "json"))]
         {
             let _ = json;
-            Err(JsValue::from_str("json feature not enabled"))
+            Err(js_error("json feature not enabled"))
         }
     }
 
@@ -218,9 +220,9 @@ impl Workbook {
         let lv = js_to_literal(&value);
         self.inner
             .write()
-            .map_err(|_| JsValue::from_str("lock"))?
+            .map_err(|_| js_error("failed to lock workbook for write"))?
             .set_value(&sheet, row, col, lv)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| js_error(format!("set_value failed for {sheet}!R{row}C{col}: {e}")))
     }
 
     #[wasm_bindgen(js_name = "setFormula")]
@@ -233,9 +235,9 @@ impl Workbook {
     ) -> Result<(), JsValue> {
         self.inner
             .write()
-            .map_err(|_| JsValue::from_str("lock"))?
+            .map_err(|_| js_error("failed to lock workbook for write"))?
             .set_formula(&sheet, row, col, &formula)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| js_error(format!("set_formula failed for {sheet}!R{row}C{col}: {e}")))
     }
 
     #[wasm_bindgen(js_name = "evaluateCell")]
@@ -243,19 +245,26 @@ impl Workbook {
         let v = self
             .inner
             .write()
-            .map_err(|_| JsValue::from_str("lock"))?
+            .map_err(|_| js_error("failed to lock workbook for write"))?
             .evaluate_cell(&sheet, row, col)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| {
+                js_error(format!(
+                    "evaluate_cell failed for {sheet}!R{row}C{col}: {e}"
+                ))
+            })?;
         Ok(literal_to_js(v))
     }
 
     #[wasm_bindgen(js_name = "evaluateAll")]
     pub fn evaluate_all(&self) -> Result<(), JsValue> {
-        let mut wb = self.inner.write().map_err(|_| JsValue::from_str("lock"))?;
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?;
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
         wb.evaluate_all_cancellable(self.cancel_flag.clone())
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| js_error(format!("evaluate_all failed: {e}")))?;
         Ok(())
     }
 
@@ -269,15 +278,17 @@ impl Workbook {
             let sheet = arr
                 .get(0)
                 .as_string()
-                .ok_or_else(|| JsValue::from_str("Invalid sheet name"))?;
+                .ok_or_else(|| js_error(format!("invalid sheet name at index {i}")))?;
             let _row = arr
                 .get(1)
                 .as_f64()
-                .ok_or_else(|| JsValue::from_str("Invalid row"))? as u32;
+                .ok_or_else(|| js_error(format!("invalid row at index {i}")))?
+                as u32;
             let _col = arr
                 .get(2)
                 .as_f64()
-                .ok_or_else(|| JsValue::from_str("Invalid col"))? as u32;
+                .ok_or_else(|| js_error(format!("invalid col at index {i}")))?
+                as u32;
             sheet_names.push(sheet);
         }
 
@@ -288,13 +299,16 @@ impl Workbook {
             target_vec.push((name.as_str(), row, col));
         }
 
-        let mut wb = self.inner.write().map_err(|_| JsValue::from_str("lock"))?;
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?;
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
         let results = wb
             .evaluate_cells_cancellable(&target_vec, self.cancel_flag.clone())
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| js_error(format!("evaluate_cells failed: {e}")))?;
 
         let out = js_sys::Array::new();
         for v in results {
@@ -312,17 +326,21 @@ impl Workbook {
             let sheet = arr
                 .get(0)
                 .as_string()
-                .ok_or_else(|| JsValue::from_str("Invalid sheet name"))?;
+                .ok_or_else(|| js_error(format!("invalid sheet name at index {i}")))?;
             let row = arr
                 .get(1)
                 .as_f64()
-                .ok_or_else(|| JsValue::from_str("Invalid row"))? as u32;
+                .ok_or_else(|| js_error(format!("invalid row at index {i}")))?
+                as u32;
             let col = arr
                 .get(2)
                 .as_f64()
-                .ok_or_else(|| JsValue::from_str("Invalid col"))? as u32;
+                .ok_or_else(|| js_error(format!("invalid col at index {i}")))?
+                as u32;
             if row == 0 || col == 0 {
-                return Err(JsValue::from_str("Row/col are 1-based"));
+                return Err(js_error(format!(
+                    "row/col are 1-based at index {i} (row={row}, col={col})"
+                )));
             }
             target_vec.push((sheet, row, col));
         }
@@ -332,10 +350,13 @@ impl Workbook {
             .map(|(s, r, c)| (s.as_str(), *r, *c))
             .collect();
 
-        let wb = self.inner.read().map_err(|_| JsValue::from_str("lock"))?;
+        let wb = self
+            .inner
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
         let plan = wb
             .get_eval_plan(&refs)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| js_error(format!("get_eval_plan failed: {e}")))?;
         eval_plan_to_js(&plan)
     }
 
@@ -354,21 +375,30 @@ impl Workbook {
     // ----- Changelog / Undo / Redo -----
     #[wasm_bindgen(js_name = "setChangelogEnabled")]
     pub fn set_changelog_enabled(&self, enabled: bool) -> Result<(), JsValue> {
-        let mut wb = self.inner.write().map_err(|_| JsValue::from_str("lock"))?;
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?;
         wb.set_changelog_enabled(enabled);
         Ok(())
     }
 
     #[wasm_bindgen(js_name = "beginAction")]
     pub fn begin_action(&self, description: String) -> Result<(), JsValue> {
-        let mut wb = self.inner.write().map_err(|_| JsValue::from_str("lock"))?;
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?;
         wb.begin_action(description);
         Ok(())
     }
 
     #[wasm_bindgen(js_name = "endAction")]
     pub fn end_action(&self) -> Result<(), JsValue> {
-        let mut wb = self.inner.write().map_err(|_| JsValue::from_str("lock"))?;
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?;
         wb.end_action();
         Ok(())
     }
@@ -377,18 +407,18 @@ impl Workbook {
     pub fn undo(&self) -> Result<(), JsValue> {
         self.inner
             .write()
-            .map_err(|_| JsValue::from_str("lock"))?
+            .map_err(|_| js_error("failed to lock workbook for write"))?
             .undo()
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| js_error(format!("undo failed: {e}")))
     }
 
     #[wasm_bindgen]
     pub fn redo(&self) -> Result<(), JsValue> {
         self.inner
             .write()
-            .map_err(|_| JsValue::from_str("lock"))?
+            .map_err(|_| js_error("failed to lock workbook for write"))?
             .redo()
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| js_error(format!("redo failed: {e}")))
     }
 
     pub(crate) fn inner_arc(&self) -> Arc<RwLock<formualizer_workbook::Workbook>> {
@@ -409,18 +439,28 @@ impl Sheet {
         let lv = js_to_literal(&value);
         self.wb
             .write()
-            .map_err(|_| JsValue::from_str("lock"))?
+            .map_err(|_| js_error("failed to lock workbook for write"))?
             .set_value(&self.name, row, col, lv)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| {
+                js_error(format!(
+                    "set_value failed for {sheet}!R{row}C{col}: {e}",
+                    sheet = self.name
+                ))
+            })
     }
 
     #[wasm_bindgen(js_name = "setFormula")]
     pub fn set_formula(&self, row: u32, col: u32, formula: String) -> Result<(), JsValue> {
         self.wb
             .write()
-            .map_err(|_| JsValue::from_str("lock"))?
+            .map_err(|_| js_error("failed to lock workbook for write"))?
             .set_formula(&self.name, row, col, &formula)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| {
+                js_error(format!(
+                    "set_formula failed for {sheet}!R{row}C{col}: {e}",
+                    sheet = self.name
+                ))
+            })
     }
 
     #[wasm_bindgen(js_name = "getValue")]
@@ -428,7 +468,7 @@ impl Sheet {
         let v = self
             .wb
             .read()
-            .map_err(|_| JsValue::from_str("lock"))?
+            .map_err(|_| js_error("failed to lock workbook for read"))?
             .get_value(&self.name, row, col)
             .unwrap_or(formualizer_common::LiteralValue::Empty);
         Ok(literal_to_js(v))
@@ -458,11 +498,19 @@ impl Sheet {
             }
             rows.push(row_vec);
         }
-        let mut wb = self.wb.write().map_err(|_| JsValue::from_str("lock"))?;
+        let mut wb = self
+            .wb
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?;
         wb.begin_action("batch: set values".to_string());
         let res = wb
             .set_values(&self.name, start_row, start_col, &rows)
-            .map_err(|e| JsValue::from_str(&e.to_string()));
+            .map_err(|e| {
+                js_error(format!(
+                    "set_values failed for {sheet}!R{start_row}C{start_col}: {e}",
+                    sheet = self.name
+                ))
+            });
         wb.end_action();
         res
     }
@@ -486,11 +534,19 @@ impl Sheet {
             }
             rows.push(row_vec);
         }
-        let mut wb = self.wb.write().map_err(|_| JsValue::from_str("lock"))?;
+        let mut wb = self
+            .wb
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?;
         wb.begin_action("batch: set formulas".to_string());
         let res = wb
             .set_formulas(&self.name, start_row, start_col, &rows)
-            .map_err(|e| JsValue::from_str(&e.to_string()));
+            .map_err(|e| {
+                js_error(format!(
+                    "set_formulas failed for {sheet}!R{start_row}C{start_col}: {e}",
+                    sheet = self.name
+                ))
+            });
         wb.end_action();
         res
     }
@@ -500,9 +556,14 @@ impl Sheet {
         let v = self
             .wb
             .write()
-            .map_err(|_| JsValue::from_str("lock"))?
+            .map_err(|_| js_error("failed to lock workbook for write"))?
             .evaluate_cell(&self.name, row, col)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| {
+                js_error(format!(
+                    "evaluate_cell failed for {sheet}!R{row}C{col}: {e}",
+                    sheet = self.name
+                ))
+            })?;
         Ok(literal_to_js(v))
     }
 
@@ -522,7 +583,7 @@ impl Sheet {
         let vals = self
             .wb
             .read()
-            .map_err(|_| JsValue::from_str("lock"))?
+            .map_err(|_| js_error("failed to lock workbook for read"))?
             .read_range(&addr);
         let outer = js_sys::Array::new();
         for row in vals {
