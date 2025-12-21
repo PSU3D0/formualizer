@@ -1,4 +1,4 @@
-use formualizer_parse::Token as CoreToken;
+use formualizer::Token as CoreToken;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 

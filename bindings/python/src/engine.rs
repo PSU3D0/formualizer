@@ -1,4 +1,4 @@
-use formualizer_eval::engine::{DateSystem, EvalConfig};
+use formualizer::eval::engine::{DateSystem, EvalConfig};
 use pyo3::prelude::*;
 
 /// Configuration for workbook-backed evaluation.
@@ -224,7 +224,7 @@ impl PyEvaluationPlan {
     }
 }
 
-pub(crate) fn eval_plan_to_py(plan: formualizer_eval::engine::eval::EvalPlan) -> PyEvaluationPlan {
+pub(crate) fn eval_plan_to_py(plan: formualizer::eval::engine::eval::EvalPlan) -> PyEvaluationPlan {
     let py_layers: Vec<PyLayerInfo> = plan
         .layers
         .into_iter()

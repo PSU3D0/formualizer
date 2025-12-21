@@ -1,4 +1,4 @@
-use formualizer_parse::parser::ReferenceType;
+use formualizer::parse::parser::ReferenceType;
 use pyo3::conversion::IntoPyObject;
 use pyo3::{prelude::*, types::PyType};
 

@@ -1,4 +1,4 @@
-use formualizer_parse::FormulaDialect as CoreFormulaDialect;
+use formualizer::FormulaDialect as CoreFormulaDialect;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]

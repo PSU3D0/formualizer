@@ -1,4 +1,4 @@
-use formualizer_common::error::{
+use formualizer::common::error::{
     ErrorContext, ExcelError as RustExcelError, ExcelErrorExtra, ExcelErrorKind,
 };
 use pyo3::exceptions::PyException;

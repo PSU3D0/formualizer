@@ -5,17 +5,17 @@ use std::path::Path;
 use crate::errors::ExcelEvaluationError;
 use crate::value::{literal_to_py, py_to_literal};
 use crate::workbook::PyWorkbook;
-use formualizer_common::LiteralValue;
-use formualizer_sheetport::{
+use formualizer::common::LiteralValue;
+use formualizer::sheetport::{
     ConstraintViolation, ManifestBindings, PortBinding, PortValue, SheetPort,
     SheetPortError as RuntimeSheetPortError, TableRow, TableValue,
 };
+use formualizer::sheetport_spec::{Direction, Manifest, ManifestIssue};
 use pyo3::conversion::IntoPyObjectExt;
 use pyo3::exceptions::{PyException, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
 use serde_json::Value as JsonValue;
-use sheetport_spec::{Direction, Manifest, ManifestIssue};
 
 pyo3::create_exception!(formualizer, SheetPortError, PyException);
 pyo3::create_exception!(formualizer, SheetPortManifestError, SheetPortError);
@@ -106,10 +106,10 @@ impl PySheetPortSession {
             entry.set_item(
                 "shape",
                 match binding.kind {
-                    formualizer_sheetport::BoundPort::Scalar(_) => "scalar",
-                    formualizer_sheetport::BoundPort::Record(_) => "record",
-                    formualizer_sheetport::BoundPort::Range(_) => "range",
-                    formualizer_sheetport::BoundPort::Table(_) => "table",
+                    formualizer::sheetport::BoundPort::Scalar(_) => "scalar",
+                    formualizer::sheetport::BoundPort::Record(_) => "record",
+                    formualizer::sheetport::BoundPort::Range(_) => "range",
+                    formualizer::sheetport::BoundPort::Table(_) => "table",
                 },
             )?;
             if let Some(constraints) = &binding.constraints {
@@ -165,7 +165,7 @@ impl PySheetPortSession {
         freeze_volatile: bool,
         rng_seed: Option<u64>,
     ) -> PyResult<PyObject> {
-        let options = formualizer_sheetport::EvalOptions {
+        let options = formualizer::sheetport::EvalOptions {
             freeze_volatile,
             rng_seed,
             ..Default::default()
@@ -217,8 +217,8 @@ fn bind_manifest(
 fn py_to_input_update(
     bindings: &ManifestBindings,
     dict: &Bound<'_, PyDict>,
-) -> PyResult<formualizer_sheetport::InputUpdate> {
-    let mut update = formualizer_sheetport::InputUpdate::default();
+) -> PyResult<formualizer::sheetport::InputUpdate> {
+    let mut update = formualizer::sheetport::InputUpdate::default();
     for (key, value) in dict.iter() {
         let port_id: String = key.extract()?;
         let binding = bindings
@@ -270,19 +270,19 @@ fn table_value_to_py(py: Python<'_>, table: &TableValue) -> PyResult<PyObject> {
 fn py_to_port_value(binding: &PortBinding, value: &Bound<'_, PyAny>) -> PyResult<PortValue> {
     if value.is_none() {
         return Ok(match &binding.kind {
-            formualizer_sheetport::BoundPort::Scalar(_) => PortValue::Scalar(LiteralValue::Empty),
-            formualizer_sheetport::BoundPort::Record(_) => PortValue::Record(BTreeMap::new()),
-            formualizer_sheetport::BoundPort::Range(_) => PortValue::Range(Vec::new()),
-            formualizer_sheetport::BoundPort::Table(_) => PortValue::Table(TableValue::default()),
+            formualizer::sheetport::BoundPort::Scalar(_) => PortValue::Scalar(LiteralValue::Empty),
+            formualizer::sheetport::BoundPort::Record(_) => PortValue::Record(BTreeMap::new()),
+            formualizer::sheetport::BoundPort::Range(_) => PortValue::Range(Vec::new()),
+            formualizer::sheetport::BoundPort::Table(_) => PortValue::Table(TableValue::default()),
         });
     }
 
     match &binding.kind {
-        formualizer_sheetport::BoundPort::Scalar(_) => {
+        formualizer::sheetport::BoundPort::Scalar(_) => {
             let literal = py_to_literal(value)?;
             Ok(PortValue::Scalar(literal))
         }
-        formualizer_sheetport::BoundPort::Record(record) => {
+        formualizer::sheetport::BoundPort::Record(record) => {
             let dict = value
                 .cast::<PyDict>()
                 .map_err(|_| PyErr::new::<PyTypeError, _>("record inputs must be dictionaries"))?;
@@ -299,7 +299,7 @@ fn py_to_port_value(binding: &PortBinding, value: &Bound<'_, PyAny>) -> PyResult
             }
             Ok(PortValue::Record(map))
         }
-        formualizer_sheetport::BoundPort::Range(_) => {
+        formualizer::sheetport::BoundPort::Range(_) => {
             let iter = value.try_iter().map_err(|_| {
                 PyErr::new::<PyTypeError, _>("range inputs must be an iterable of rows")
             })?;
@@ -335,12 +335,12 @@ fn py_to_port_value(binding: &PortBinding, value: &Bound<'_, PyAny>) -> PyResult
             }
             Ok(PortValue::Range(rows))
         }
-        formualizer_sheetport::BoundPort::Table(table) => {
+        formualizer::sheetport::BoundPort::Table(table) => {
             let iter = value.try_iter().map_err(|_| {
                 PyErr::new::<PyTypeError, _>("table inputs must be an iterable of row mappings")
             })?;
             let mut rows = Vec::new();
-            let known_columns: BTreeMap<&str, &formualizer_sheetport::TableColumnBinding> = table
+            let known_columns: BTreeMap<&str, &formualizer::sheetport::TableColumnBinding> = table
                 .columns
                 .iter()
                 .map(|col| (col.name.as_str(), col))
@@ -383,19 +383,19 @@ fn snapshot_to_py(py: Python<'_>, map: &BTreeMap<String, PortValue>) -> PyResult
 fn location_summary(py: Python<'_>, binding: &PortBinding) -> PyResult<PyObject> {
     let dict = PyDict::new(py);
     match &binding.kind {
-        formualizer_sheetport::BoundPort::Scalar(scalar) => {
+        formualizer::sheetport::BoundPort::Scalar(scalar) => {
             dict.set_item("kind", "scalar")?;
             dict.set_item("selector", scalar_location_to_py(py, &scalar.location)?)?;
         }
-        formualizer_sheetport::BoundPort::Record(record) => {
+        formualizer::sheetport::BoundPort::Record(record) => {
             dict.set_item("kind", "record")?;
             dict.set_item("selector", area_location_to_py(py, &record.location)?)?;
         }
-        formualizer_sheetport::BoundPort::Range(range) => {
+        formualizer::sheetport::BoundPort::Range(range) => {
             dict.set_item("kind", "range")?;
             dict.set_item("selector", area_location_to_py(py, &range.location)?)?;
         }
-        formualizer_sheetport::BoundPort::Table(table) => {
+        formualizer::sheetport::BoundPort::Table(table) => {
             dict.set_item("kind", "table")?;
             dict.set_item("selector", table_location_to_py(py, &table.location)?)?;
             let columns = PyList::empty(py);
@@ -419,16 +419,16 @@ fn location_summary(py: Python<'_>, binding: &PortBinding) -> PyResult<PyObject>
 
 fn scalar_location_to_py(
     py: Python<'_>,
-    location: &formualizer_sheetport::ScalarLocation,
+    location: &formualizer::sheetport::ScalarLocation,
 ) -> PyResult<PyObject> {
     match location {
-        formualizer_sheetport::ScalarLocation::Cell(addr) => range_address_to_py(py, addr),
-        formualizer_sheetport::ScalarLocation::Name(name) => {
+        formualizer::sheetport::ScalarLocation::Cell(addr) => range_address_to_py(py, addr),
+        formualizer::sheetport::ScalarLocation::Name(name) => {
             let dict = PyDict::new(py);
             dict.set_item("name", name)?;
             Ok(dict.into_pyobject(py)?.into_any().unbind())
         }
-        formualizer_sheetport::ScalarLocation::StructRef(reference) => {
+        formualizer::sheetport::ScalarLocation::StructRef(reference) => {
             let dict = PyDict::new(py);
             dict.set_item("struct_ref", reference)?;
             Ok(dict.into_pyobject(py)?.into_any().unbind())
@@ -438,21 +438,21 @@ fn scalar_location_to_py(
 
 fn area_location_to_py(
     py: Python<'_>,
-    location: &formualizer_sheetport::AreaLocation,
+    location: &formualizer::sheetport::AreaLocation,
 ) -> PyResult<PyObject> {
     match location {
-        formualizer_sheetport::AreaLocation::Range(addr) => range_address_to_py(py, addr),
-        formualizer_sheetport::AreaLocation::Name(name) => {
+        formualizer::sheetport::AreaLocation::Range(addr) => range_address_to_py(py, addr),
+        formualizer::sheetport::AreaLocation::Name(name) => {
             let dict = PyDict::new(py);
             dict.set_item("name", name)?;
             Ok(dict.into_pyobject(py)?.into_any().unbind())
         }
-        formualizer_sheetport::AreaLocation::StructRef(reference) => {
+        formualizer::sheetport::AreaLocation::StructRef(reference) => {
             let dict = PyDict::new(py);
             dict.set_item("struct_ref", reference)?;
             Ok(dict.into_pyobject(py)?.into_any().unbind())
         }
-        formualizer_sheetport::AreaLocation::Layout(layout) => {
+        formualizer::sheetport::AreaLocation::Layout(layout) => {
             let value = serde_json::to_value(layout).map_err(|err| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "layout serialization failed: {err}"
@@ -465,10 +465,10 @@ fn area_location_to_py(
 
 fn table_location_to_py(
     py: Python<'_>,
-    location: &formualizer_sheetport::TableLocation,
+    location: &formualizer::sheetport::TableLocation,
 ) -> PyResult<PyObject> {
     match location {
-        formualizer_sheetport::TableLocation::Table(selector) => {
+        formualizer::sheetport::TableLocation::Table(selector) => {
             let value = serde_json::to_value(selector).map_err(|err| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "table selector serialization failed: {err}"
@@ -476,7 +476,7 @@ fn table_location_to_py(
             })?;
             json_to_py(py, &value)
         }
-        formualizer_sheetport::TableLocation::Layout(layout) => {
+        formualizer::sheetport::TableLocation::Layout(layout) => {
             let value = serde_json::to_value(layout).map_err(|err| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "layout serialization failed: {err}"
@@ -489,7 +489,7 @@ fn table_location_to_py(
 
 fn range_address_to_py(
     py: Python<'_>,
-    addr: &formualizer_common::RangeAddress,
+    addr: &formualizer::common::RangeAddress,
 ) -> PyResult<PyObject> {
     let dict = PyDict::new(py);
     dict.set_item("sheet", &addr.sheet)?;

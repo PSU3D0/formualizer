@@ -1,11 +1,11 @@
 use crate::utils::{js_error, js_error_with_cause};
 use crate::workbook::{Workbook, js_to_literal, literal_to_js};
-use formualizer_common::{LiteralValue, RangeAddress};
-use formualizer_sheetport::{
+use formualizer::sheetport_spec::{Direction, Manifest, ManifestIssue};
+use formualizer::{
     BoundPort, ConstraintViolation, EvalOptions, ManifestBindings, PortBinding, PortValue,
     TableBinding, TableRow, TableValue,
 };
-use sheetport_spec::{Direction, Manifest, ManifestIssue};
+use formualizer::{LiteralValue, RangeAddress};
 use std::collections::{BTreeMap, BTreeSet};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -130,18 +130,15 @@ impl SheetPortSession {
 
     fn with_sheetport<F, T>(&mut self, f: F) -> Result<T, JsValue>
     where
-        F: FnOnce(
-            &mut formualizer_sheetport::SheetPort,
-        ) -> Result<T, formualizer_sheetport::SheetPortError>,
+        F: FnOnce(&mut formualizer::SheetPort) -> Result<T, formualizer::SheetPortError>,
     {
         let arc = self.workbook.inner_arc();
         let mut guard = arc
             .write()
             .map_err(|_| js_error("failed to lock workbook"))?;
         let bindings_clone = self.bindings.clone();
-        let mut sheetport =
-            formualizer_sheetport::SheetPort::from_bindings(&mut guard, bindings_clone)
-                .map_err(sheetport_error_to_js)?;
+        let mut sheetport = formualizer::SheetPort::from_bindings(&mut guard, bindings_clone)
+            .map_err(sheetport_error_to_js)?;
         match f(&mut sheetport) {
             Ok(value) => {
                 let (_, bindings) = sheetport.into_parts();
@@ -158,8 +155,8 @@ fn bind_manifest(workbook: &Workbook, manifest: Manifest) -> Result<ManifestBind
     let mut guard = arc
         .write()
         .map_err(|_| js_error("failed to lock workbook"))?;
-    let sheetport = formualizer_sheetport::SheetPort::new(&mut guard, manifest)
-        .map_err(sheetport_error_to_js)?;
+    let sheetport =
+        formualizer::SheetPort::new(&mut guard, manifest).map_err(sheetport_error_to_js)?;
     let (_, bindings) = sheetport.into_parts();
     Ok(bindings)
 }
@@ -213,16 +210,16 @@ fn table_value_to_js(table: &TableValue) -> Result<JsValue, JsValue> {
 fn js_to_input_update(
     bindings: &ManifestBindings,
     value: &JsValue,
-) -> Result<formualizer_sheetport::InputUpdate, JsValue> {
+) -> Result<formualizer::InputUpdate, JsValue> {
     if value.is_null() || value.is_undefined() {
-        return Ok(formualizer_sheetport::InputUpdate::default());
+        return Ok(formualizer::InputUpdate::default());
     }
     let obj = value
         .clone()
         .dyn_into::<js_sys::Object>()
         .map_err(|_| js_error("input updates must be an object"))?;
     let keys = js_sys::Object::keys(&obj);
-    let mut update = formualizer_sheetport::InputUpdate::default();
+    let mut update = formualizer::InputUpdate::default();
     for key in keys.iter() {
         let port = key
             .as_string()
@@ -396,17 +393,15 @@ fn location_summary(binding: &PortBinding) -> Result<JsValue, JsValue> {
     Ok(obj.into())
 }
 
-fn scalar_location_to_js(
-    location: &formualizer_sheetport::ScalarLocation,
-) -> Result<JsValue, JsValue> {
+fn scalar_location_to_js(location: &formualizer::ScalarLocation) -> Result<JsValue, JsValue> {
     match location {
-        formualizer_sheetport::ScalarLocation::Cell(addr) => Ok(range_address_to_js(addr)),
-        formualizer_sheetport::ScalarLocation::Name(name) => {
+        formualizer::ScalarLocation::Cell(addr) => Ok(range_address_to_js(addr)),
+        formualizer::ScalarLocation::Name(name) => {
             let obj = js_sys::Object::new();
             set(&obj, "name", JsValue::from_str(name))?;
             Ok(obj.into())
         }
-        formualizer_sheetport::ScalarLocation::StructRef(reference) => {
+        formualizer::ScalarLocation::StructRef(reference) => {
             let obj = js_sys::Object::new();
             set(&obj, "structRef", JsValue::from_str(reference))?;
             Ok(obj.into())
@@ -414,36 +409,30 @@ fn scalar_location_to_js(
     }
 }
 
-fn area_location_to_js(location: &formualizer_sheetport::AreaLocation) -> Result<JsValue, JsValue> {
+fn area_location_to_js(location: &formualizer::AreaLocation) -> Result<JsValue, JsValue> {
     match location {
-        formualizer_sheetport::AreaLocation::Range(addr) => Ok(range_address_to_js(addr)),
-        formualizer_sheetport::AreaLocation::Name(name) => {
+        formualizer::AreaLocation::Range(addr) => Ok(range_address_to_js(addr)),
+        formualizer::AreaLocation::Name(name) => {
             let obj = js_sys::Object::new();
             set(&obj, "name", JsValue::from_str(name))?;
             Ok(obj.into())
         }
-        formualizer_sheetport::AreaLocation::StructRef(reference) => {
+        formualizer::AreaLocation::StructRef(reference) => {
             let obj = js_sys::Object::new();
             set(&obj, "structRef", JsValue::from_str(reference))?;
             Ok(obj.into())
         }
-        formualizer_sheetport::AreaLocation::Layout(layout) => serde_wasm_bindgen::to_value(layout)
+        formualizer::AreaLocation::Layout(layout) => serde_wasm_bindgen::to_value(layout)
             .map_err(|err| js_error(format!("layout serialization failed: {err}"))),
     }
 }
 
-fn table_location_to_js(
-    location: &formualizer_sheetport::TableLocation,
-) -> Result<JsValue, JsValue> {
+fn table_location_to_js(location: &formualizer::TableLocation) -> Result<JsValue, JsValue> {
     match location {
-        formualizer_sheetport::TableLocation::Table(selector) => {
-            serde_wasm_bindgen::to_value(selector)
-                .map_err(|err| js_error(format!("table selector serialization failed: {err}")))
-        }
-        formualizer_sheetport::TableLocation::Layout(layout) => {
-            serde_wasm_bindgen::to_value(layout)
-                .map_err(|err| js_error(format!("layout serialization failed: {err}")))
-        }
+        formualizer::TableLocation::Table(selector) => serde_wasm_bindgen::to_value(selector)
+            .map_err(|err| js_error(format!("table selector serialization failed: {err}"))),
+        formualizer::TableLocation::Layout(layout) => serde_wasm_bindgen::to_value(layout)
+            .map_err(|err| js_error(format!("layout serialization failed: {err}"))),
     }
 }
 
@@ -528,22 +517,22 @@ fn set(target: &js_sys::Object, key: impl AsRef<str>, value: JsValue) -> Result<
         .map_err(|err| js_error_with_cause(format!("failed to set `{}`", key.as_ref()), err))
 }
 
-fn sheetport_error_to_js(err: formualizer_sheetport::SheetPortError) -> JsValue {
+fn sheetport_error_to_js(err: formualizer::SheetPortError) -> JsValue {
     let error = js_sys::Error::new(&err.to_string());
     let object = error.unchecked_ref::<js_sys::Object>();
     let kind = match &err {
-        formualizer_sheetport::SheetPortError::InvalidManifest { .. } => "InvalidManifest",
-        formualizer_sheetport::SheetPortError::UnsupportedSelector { .. } => "UnsupportedSelector",
-        formualizer_sheetport::SheetPortError::InvalidReference { .. } => "InvalidReference",
-        formualizer_sheetport::SheetPortError::MissingSheet { .. } => "MissingSheet",
-        formualizer_sheetport::SheetPortError::InvariantViolation { .. } => "InvariantViolation",
-        formualizer_sheetport::SheetPortError::ConstraintViolation { .. } => "ConstraintViolation",
-        formualizer_sheetport::SheetPortError::Engine { .. } => "Engine",
-        formualizer_sheetport::SheetPortError::Workbook { .. } => "Workbook",
+        formualizer::SheetPortError::InvalidManifest { .. } => "InvalidManifest",
+        formualizer::SheetPortError::UnsupportedSelector { .. } => "UnsupportedSelector",
+        formualizer::SheetPortError::InvalidReference { .. } => "InvalidReference",
+        formualizer::SheetPortError::MissingSheet { .. } => "MissingSheet",
+        formualizer::SheetPortError::InvariantViolation { .. } => "InvariantViolation",
+        formualizer::SheetPortError::ConstraintViolation { .. } => "ConstraintViolation",
+        formualizer::SheetPortError::Engine { .. } => "Engine",
+        formualizer::SheetPortError::Workbook { .. } => "Workbook",
     };
     let _ = js_sys::Reflect::set(object, &JsValue::from_str("kind"), &JsValue::from_str(kind));
     match err {
-        formualizer_sheetport::SheetPortError::InvalidManifest { issues } => {
+        formualizer::SheetPortError::InvalidManifest { issues } => {
             let list = js_sys::Array::new();
             for ManifestIssue { path, message } in issues {
                 let entry = js_sys::Object::new();
@@ -561,14 +550,14 @@ fn sheetport_error_to_js(err: formualizer_sheetport::SheetPortError) -> JsValue 
             }
             let _ = js_sys::Reflect::set(object, &JsValue::from_str("issues"), &list.into());
         }
-        formualizer_sheetport::SheetPortError::ConstraintViolation { violations } => {
+        formualizer::SheetPortError::ConstraintViolation { violations } => {
             let list = js_sys::Array::new();
             for violation in violations {
                 list.push(&constraint_violation_to_js(&violation));
             }
             let _ = js_sys::Reflect::set(object, &JsValue::from_str("violations"), &list.into());
         }
-        formualizer_sheetport::SheetPortError::UnsupportedSelector { port, reason } => {
+        formualizer::SheetPortError::UnsupportedSelector { port, reason } => {
             let _ = js_sys::Reflect::set(
                 object,
                 &JsValue::from_str("port"),
@@ -580,7 +569,7 @@ fn sheetport_error_to_js(err: formualizer_sheetport::SheetPortError) -> JsValue 
                 &JsValue::from_str(&reason),
             );
         }
-        formualizer_sheetport::SheetPortError::InvalidReference {
+        formualizer::SheetPortError::InvalidReference {
             port,
             reference,
             details,
@@ -601,7 +590,7 @@ fn sheetport_error_to_js(err: formualizer_sheetport::SheetPortError) -> JsValue 
                 &JsValue::from_str(&details),
             );
         }
-        formualizer_sheetport::SheetPortError::MissingSheet { port, sheet } => {
+        formualizer::SheetPortError::MissingSheet { port, sheet } => {
             let _ = js_sys::Reflect::set(
                 object,
                 &JsValue::from_str("port"),
@@ -613,7 +602,7 @@ fn sheetport_error_to_js(err: formualizer_sheetport::SheetPortError) -> JsValue 
                 &JsValue::from_str(&sheet),
             );
         }
-        formualizer_sheetport::SheetPortError::InvariantViolation { port, message } => {
+        formualizer::SheetPortError::InvariantViolation { port, message } => {
             let _ = js_sys::Reflect::set(
                 object,
                 &JsValue::from_str("port"),
@@ -625,14 +614,14 @@ fn sheetport_error_to_js(err: formualizer_sheetport::SheetPortError) -> JsValue 
                 &JsValue::from_str(&message),
             );
         }
-        formualizer_sheetport::SheetPortError::Engine { source } => {
+        formualizer::SheetPortError::Engine { source } => {
             let _ = js_sys::Reflect::set(
                 object,
                 &JsValue::from_str("source"),
                 &JsValue::from_str(&source.to_string()),
             );
         }
-        formualizer_sheetport::SheetPortError::Workbook { source } => {
+        formualizer::SheetPortError::Workbook { source } => {
             let _ = js_sys::Reflect::set(
                 object,
                 &JsValue::from_str("source"),

@@ -2,8 +2,8 @@ use crate::ast::PyASTNode;
 use crate::enums::PyFormulaDialect;
 use crate::errors::ParserError;
 use crate::tokenizer::PyTokenizer;
-use formualizer_parse::parser::{Parser, parse_with_dialect};
-use formualizer_parse::types::FormulaDialect;
+use formualizer::parse::parser::{Parser, parse_with_dialect};
+use formualizer::parse::types::FormulaDialect;
 use pyo3::prelude::*;
 
 #[pyclass(module = "formualizer")]
@@ -51,7 +51,7 @@ impl PyParser {
                 // Extract the inner token - we need to access the inner field
                 // This is a bit of a hack since we can't directly access private fields
                 // Instead, we'll recreate the token from the public interface
-                formualizer_parse::tokenizer::Token::new(
+                formualizer::parse::tokenizer::Token::new(
                     py_token.value().to_string(),
                     py_token.token_type().into(),
                     py_token.subtype().into(),

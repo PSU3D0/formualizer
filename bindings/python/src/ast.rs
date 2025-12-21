@@ -1,7 +1,7 @@
 use crate::reference::{ReferenceLike, reference_type_to_py};
 use crate::token::PyToken;
-use formualizer_common::LiteralValue;
-use formualizer_parse::parser::{ASTNode, ASTNodeType};
+use formualizer::common::LiteralValue;
+use formualizer::parse::parser::{ASTNode, ASTNodeType};
 use pyo3::conversion::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -29,7 +29,7 @@ impl PyASTNode {
 
     /// Round-trips the node back to canonical Excel formula (with leading '=').
     pub fn to_formula(&self) -> String {
-        formualizer_parse::pretty::canonical_formula(&self.inner)
+        formualizer::parse::pretty::canonical_formula(&self.inner)
     }
 
     /// Get a stable fingerprint hash of this AST structure

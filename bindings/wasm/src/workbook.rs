@@ -2,8 +2,8 @@ use crate::utils::{js_error, js_error_with_cause};
 use std::sync::{Arc, RwLock};
 use wasm_bindgen::prelude::*;
 
-pub(crate) fn js_to_literal(value: &JsValue) -> formualizer_common::LiteralValue {
-    use formualizer_common::LiteralValue;
+pub(crate) fn js_to_literal(value: &JsValue) -> formualizer::LiteralValue {
+    use formualizer::LiteralValue;
     if value.is_null() || value.is_undefined() {
         LiteralValue::Empty
     } else if let Some(b) = value.as_bool() {
@@ -22,18 +22,18 @@ pub(crate) fn js_to_literal(value: &JsValue) -> formualizer_common::LiteralValue
     }
 }
 
-pub(crate) fn literal_to_js(v: formualizer_common::LiteralValue) -> JsValue {
+pub(crate) fn literal_to_js(v: formualizer::LiteralValue) -> JsValue {
     match v {
-        formualizer_common::LiteralValue::Empty => JsValue::NULL,
-        formualizer_common::LiteralValue::Boolean(b) => JsValue::from_bool(b),
-        formualizer_common::LiteralValue::Int(i) => JsValue::from_f64(i as f64),
-        formualizer_common::LiteralValue::Number(n) => JsValue::from_f64(n),
-        formualizer_common::LiteralValue::Text(s) => JsValue::from_str(&s),
-        formualizer_common::LiteralValue::Date(d) => JsValue::from_str(&d.to_string()),
-        formualizer_common::LiteralValue::DateTime(dt) => JsValue::from_str(&dt.to_string()),
-        formualizer_common::LiteralValue::Time(t) => JsValue::from_str(&t.to_string()),
-        formualizer_common::LiteralValue::Duration(dur) => JsValue::from_str(&format!("{dur:?}")),
-        formualizer_common::LiteralValue::Array(values) => {
+        formualizer::LiteralValue::Empty => JsValue::NULL,
+        formualizer::LiteralValue::Boolean(b) => JsValue::from_bool(b),
+        formualizer::LiteralValue::Int(i) => JsValue::from_f64(i as f64),
+        formualizer::LiteralValue::Number(n) => JsValue::from_f64(n),
+        formualizer::LiteralValue::Text(s) => JsValue::from_str(&s),
+        formualizer::LiteralValue::Date(d) => JsValue::from_str(&d.to_string()),
+        formualizer::LiteralValue::DateTime(dt) => JsValue::from_str(&dt.to_string()),
+        formualizer::LiteralValue::Time(t) => JsValue::from_str(&t.to_string()),
+        formualizer::LiteralValue::Duration(dur) => JsValue::from_str(&format!("{dur:?}")),
+        formualizer::LiteralValue::Array(values) => {
             let outer = js_sys::Array::new();
             for row in values {
                 let arr = js_sys::Array::new();
@@ -44,8 +44,8 @@ pub(crate) fn literal_to_js(v: formualizer_common::LiteralValue) -> JsValue {
             }
             outer.into()
         }
-        formualizer_common::LiteralValue::Pending => JsValue::from_str("Pending"),
-        formualizer_common::LiteralValue::Error(err) => JsValue::from_str(&err.to_string()),
+        formualizer::LiteralValue::Pending => JsValue::from_str("Pending"),
+        formualizer::LiteralValue::Error(err) => JsValue::from_str(&err.to_string()),
     }
 }
 
@@ -55,7 +55,7 @@ fn set(obj: &js_sys::Object, key: &str, value: JsValue) -> Result<(), JsValue> {
         .map_err(|err| js_error_with_cause(format!("failed to set `{key}`"), err))
 }
 
-fn eval_plan_to_js(plan: &formualizer_eval::engine::eval::EvalPlan) -> Result<JsValue, JsValue> {
+fn eval_plan_to_js(plan: &formualizer::EvalPlan) -> Result<JsValue, JsValue> {
     let obj = js_sys::Object::new();
     set(
         &obj,
@@ -118,14 +118,14 @@ fn eval_plan_to_js(plan: &formualizer_eval::engine::eval::EvalPlan) -> Result<Js
 
 #[wasm_bindgen]
 pub struct Workbook {
-    inner: Arc<RwLock<formualizer_workbook::Workbook>>,
+    inner: Arc<RwLock<formualizer::workbook::Workbook>>,
     cancel_flag: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for Workbook {
     fn default() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(formualizer_workbook::Workbook::new())),
+            inner: Arc::new(RwLock::new(formualizer::workbook::Workbook::new())),
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
@@ -152,14 +152,14 @@ impl Workbook {
     pub fn from_json(json: String) -> Result<Workbook, JsValue> {
         #[cfg(feature = "json")]
         {
-            use formualizer_workbook::backends::JsonAdapter;
-            use formualizer_workbook::traits::SpreadsheetReader;
+            use formualizer::workbook::backends::JsonAdapter;
+            use formualizer::workbook::traits::SpreadsheetReader;
             let adapter = <JsonAdapter as SpreadsheetReader>::open_bytes(json.into_bytes())
                 .map_err(|e| js_error(format!("open failed: {e}")))?;
-            let cfg = formualizer_workbook::WorkbookConfig::interactive();
-            let wb = formualizer_workbook::Workbook::from_reader(
+            let cfg = formualizer::workbook::WorkbookConfig::interactive();
+            let wb = formualizer::workbook::Workbook::from_reader(
                 adapter,
-                formualizer_workbook::LoadStrategy::EagerAll,
+                formualizer::workbook::LoadStrategy::EagerAll,
                 cfg,
             )
             .map_err(|e| js_error(format!("load failed: {e}")))?;
@@ -421,14 +421,14 @@ impl Workbook {
             .map_err(|e| js_error(format!("redo failed: {e}")))
     }
 
-    pub(crate) fn inner_arc(&self) -> Arc<RwLock<formualizer_workbook::Workbook>> {
+    pub(crate) fn inner_arc(&self) -> Arc<RwLock<formualizer::workbook::Workbook>> {
         Arc::clone(&self.inner)
     }
 }
 
 #[wasm_bindgen]
 pub struct Sheet {
-    wb: Arc<RwLock<formualizer_workbook::Workbook>>,
+    wb: Arc<RwLock<formualizer::workbook::Workbook>>,
     name: String,
 }
 
@@ -470,7 +470,7 @@ impl Sheet {
             .read()
             .map_err(|_| js_error("failed to lock workbook for read"))?
             .get_value(&self.name, row, col)
-            .unwrap_or(formualizer_common::LiteralValue::Empty);
+            .unwrap_or(formualizer::LiteralValue::Empty);
         Ok(literal_to_js(v))
     }
 
@@ -487,7 +487,7 @@ impl Sheet {
         data: js_sys::Array,
     ) -> Result<(), JsValue> {
         // data: Array<Array<any>>
-        let mut rows: Vec<Vec<formualizer_common::LiteralValue>> =
+        let mut rows: Vec<Vec<formualizer::LiteralValue>> =
             Vec::with_capacity(data.length() as usize);
         for r in 0..data.length() {
             let row_val = data.get(r);
@@ -576,7 +576,7 @@ impl Sheet {
         end_row: u32,
         end_col: u32,
     ) -> Result<js_sys::Array, JsValue> {
-        let addr = formualizer_workbook::RangeAddress::new(
+        let addr = formualizer::workbook::RangeAddress::new(
             &self.name, start_row, start_col, end_row, end_col,
         )
         .map_err(JsValue::from)?;

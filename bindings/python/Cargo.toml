@@ -14,16 +14,11 @@ default = []
 # Usage:
 #  - maturin develop --release --features tracing
 #  - maturin develop --release --features tracing,tracing_chrome
-tracing = ["formualizer-eval/tracing", "formualizer-workbook/tracing"]
-tracing_chrome = ["tracing", "formualizer-eval/tracing_chrome"]
+tracing = ["formualizer/tracing"]
+tracing_chrome = ["tracing", "formualizer/tracing_chrome"]
 
 [dependencies]
 pyo3 = { workspace = true, features = ["extension-module", "chrono"] }
-formualizer-parse = { path = "../../crates/formualizer-parse" }
-formualizer-common = { path = "../../crates/formualizer-common" }
-formualizer-eval = { path = "../../crates/formualizer-eval" }
-formualizer-workbook = { path = "../../crates/formualizer-workbook", features = ["calamine"] }
-formualizer-sheetport = { path = "../../crates/formualizer-sheetport" }
-sheetport-spec = { path = "../../crates/sheetport-spec" }
+formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine"] }
 chrono = { workspace = true }
 serde_json = { workspace = true }

@@ -1,6 +1,6 @@
 use crate::{enums::PyFormulaDialect, errors::TokenizerError, token::PyToken};
-use formualizer_parse::tokenizer::Tokenizer;
-use formualizer_parse::types::FormulaDialect;
+use formualizer::parse::tokenizer::Tokenizer;
+use formualizer::parse::types::FormulaDialect;
 use pyo3::prelude::*;
 
 #[pyclass(module = "formualizer")]

@@ -5,7 +5,7 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 
 use crate::value::literal_to_py;
 use crate::workbook::{PyCell, PyWorkbook};
-use formualizer_workbook::WorksheetHandle;
+use formualizer::workbook::WorksheetHandle;
 
 /// Sheet class - represents a view into workbook data
 #[pyclass(name = "Sheet", module = "formualizer")]
@@ -69,7 +69,7 @@ impl PySheet {
                 .value
                 .clone()
                 .or_else(|| self.handle.get_value(row, col))
-                .unwrap_or(formualizer_common::LiteralValue::Empty);
+                .unwrap_or(formualizer::common::LiteralValue::Empty);
             let formula = data
                 .formula
                 .clone()
@@ -80,7 +80,7 @@ impl PySheet {
         let value = self
             .handle
             .get_value(row, col)
-            .unwrap_or(formualizer_common::LiteralValue::Empty);
+            .unwrap_or(formualizer::common::LiteralValue::Empty);
         let formula = self.handle.get_formula(row, col);
         Ok(PyCell::new(value, formula))
     }
@@ -148,7 +148,7 @@ impl PySheet {
         py: Python<'_>,
         range: &crate::workbook::PyRangeAddress,
     ) -> PyResult<Vec<Vec<PyObject>>> {
-        let ra = formualizer_workbook::RangeAddress::new(
+        let ra = formualizer::workbook::RangeAddress::new(
             &range.sheet,
             range.start_row,
             range.start_col,
@@ -171,7 +171,7 @@ impl PySheet {
         &self,
         range: &crate::workbook::PyRangeAddress,
     ) -> PyResult<Vec<Vec<String>>> {
-        let ra = formualizer_workbook::RangeAddress::new(
+        let ra = formualizer::workbook::RangeAddress::new(
             &range.sheet,
             range.start_row,
             range.start_col,

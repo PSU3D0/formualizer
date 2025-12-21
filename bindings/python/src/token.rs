@@ -1,5 +1,5 @@
 use crate::enums::{PyTokenSubType, PyTokenType};
-use formualizer_parse::tokenizer::Token;
+use formualizer::parse::tokenizer::Token;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -81,8 +81,8 @@ impl PyToken {
     fn get_precedence(&self) -> Option<(u8, String)> {
         self.inner.get_precedence().map(|(prec, assoc)| {
             let assoc_str = match assoc {
-                formualizer_parse::tokenizer::Associativity::Left => "Left".to_string(),
-                formualizer_parse::tokenizer::Associativity::Right => "Right".to_string(),
+                formualizer::parse::tokenizer::Associativity::Left => "Left".to_string(),
+                formualizer::parse::tokenizer::Associativity::Right => "Right".to_string(),
             };
             (prec, assoc_str)
         })

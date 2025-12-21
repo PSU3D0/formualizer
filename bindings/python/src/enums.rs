@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
-use formualizer_parse::tokenizer::{TokenSubType as CoreTokenSubType, TokenType as CoreTokenType};
-use formualizer_parse::types::FormulaDialect as CoreFormulaDialect;
+use formualizer::parse::tokenizer::{TokenSubType as CoreTokenSubType, TokenType as CoreTokenType};
+use formualizer::parse::types::FormulaDialect as CoreFormulaDialect;
 use pyo3::prelude::*;
 
 /// Python-exposed token type enum

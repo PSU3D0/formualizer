@@ -19,12 +19,7 @@ js-sys = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = { version = "0.1", optional = true }
-formualizer-parse = { path = "../../crates/formualizer-parse" }
-formualizer-common = { path = "../../crates/formualizer-common" }
-formualizer-workbook = { path = "../../crates/formualizer-workbook", default-features = false, features = ["json"] }
-formualizer-eval = { path = "../../crates/formualizer-eval" }
-formualizer-sheetport = { path = "../../crates/formualizer-sheetport" }
-sheetport-spec = { path = "../../crates/sheetport-spec" }
+formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "json"] }
 serde_json = { workspace = true }
 
 [dependencies.web-sys]
@@ -40,7 +35,7 @@ wasm-bindgen-test = "0.3"
 default = ["console_panic", "json"]
 console_panic = ["console_error_panic_hook"]
 # Expose a local `json` feature and forward it to the workbook dependency
-json = ["formualizer-workbook/json"]
+json = ["formualizer/json"]
 
 # Ensure getrandom works on wasm32-unknown-unknown by enabling the `js` feature.
 # Most of the dependency graph still pulls getrandom 0.2 via rand, so we

@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-use formualizer_common::LiteralValue;
+use formualizer::common::LiteralValue;
 
 use crate::engine::{PyEvaluationConfig, eval_plan_to_py};
 use crate::enums::PyWorkbookMode;
@@ -16,7 +16,7 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 #[derive(Clone)]
 pub struct PyWorkbookConfig {
     mode: PyWorkbookMode,
-    eval: Option<formualizer_eval::engine::EvalConfig>,
+    eval: Option<formualizer::eval::engine::EvalConfig>,
     enable_changelog: Option<bool>,
 }
 
@@ -51,7 +51,7 @@ impl PyWorkbookConfig {
 #[pyclass(name = "Workbook", module = "formualizer")]
 #[derive(Clone)]
 pub struct PyWorkbook {
-    inner: std::sync::Arc<std::sync::RwLock<formualizer_workbook::Workbook>>,
+    inner: std::sync::Arc<std::sync::RwLock<formualizer::workbook::Workbook>>,
     // Compatibility cache for old sheet API used by some wrappers
     pub(crate) sheets: std::sync::Arc<std::sync::RwLock<SheetCache>>,
     cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -65,7 +65,7 @@ impl PyWorkbook {
         let cfg = resolve_workbook_config(mode, config)?;
         Ok(Self {
             inner: std::sync::Arc::new(std::sync::RwLock::new(
-                formualizer_workbook::Workbook::new_with_config(cfg),
+                formualizer::workbook::Workbook::new_with_config(cfg),
             )),
             sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
             cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -98,7 +98,7 @@ impl PyWorkbook {
             wb.add_sheet(name);
         }
         let handle =
-            formualizer_workbook::WorksheetHandle::new(self.inner.clone(), name.to_string());
+            formualizer::workbook::WorksheetHandle::new(self.inner.clone(), name.to_string());
         Ok(crate::sheet::PySheet {
             workbook: self.clone(),
             name: name.to_string(),
@@ -119,16 +119,16 @@ impl PyWorkbook {
         let cfg = resolve_workbook_config(mode, config)?;
         match backend {
             "calamine" => {
-                use formualizer_workbook::backends::CalamineAdapter;
-                use formualizer_workbook::traits::SpreadsheetReader;
+                use formualizer::workbook::backends::CalamineAdapter;
+                use formualizer::workbook::traits::SpreadsheetReader;
                 let adapter =
                     <CalamineAdapter as SpreadsheetReader>::open_path(std::path::Path::new(path))
                         .map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
                     })?;
-                let wb = formualizer_workbook::Workbook::from_reader(
+                let wb = formualizer::workbook::Workbook::from_reader(
                     adapter,
-                    formualizer_workbook::LoadStrategy::EagerAll,
+                    formualizer::workbook::LoadStrategy::EagerAll,
                     cfg,
                 )
                 .map_err(|e| {
@@ -510,7 +510,7 @@ impl PyWorkbook {
             wb.add_sheet(name);
         }
         let handle =
-            formualizer_workbook::WorksheetHandle::new(self.inner.clone(), name.to_string());
+            formualizer::workbook::WorksheetHandle::new(self.inner.clone(), name.to_string());
         Ok(crate::sheet::PySheet {
             workbook: self.clone(),
             name: name.to_string(),
@@ -585,7 +585,7 @@ impl PyRangeAddress {
         end_col: u32,
     ) -> PyResult<Self> {
         // Validate via core type
-        formualizer_workbook::RangeAddress::new(
+        formualizer::workbook::RangeAddress::new(
             sheet.clone(),
             start_row,
             start_col,
@@ -607,7 +607,7 @@ impl PyRangeAddress {
 impl PyWorkbook {
     pub(crate) fn with_workbook_mut<T, F>(&self, f: F) -> PyResult<T>
     where
-        F: FnOnce(&mut formualizer_workbook::Workbook) -> PyResult<T>,
+        F: FnOnce(&mut formualizer::workbook::Workbook) -> PyResult<T>,
     {
         // Mutations performed through internal helpers (e.g. SheetPort) bypass the
         // legacy `sheets` cache; invalidate it so `get_value()` stays correct.
@@ -624,7 +624,7 @@ impl PyWorkbook {
 fn resolve_workbook_config(
     mode: Option<PyWorkbookMode>,
     config: Option<PyWorkbookConfig>,
-) -> PyResult<formualizer_workbook::WorkbookConfig> {
+) -> PyResult<formualizer::workbook::WorkbookConfig> {
     let resolved = if let Some(cfg) = config {
         if let Some(requested) = mode
             && requested != cfg.mode
@@ -634,8 +634,8 @@ fn resolve_workbook_config(
             ));
         }
         let mut base = match cfg.mode {
-            PyWorkbookMode::Ephemeral => formualizer_workbook::WorkbookConfig::ephemeral(),
-            PyWorkbookMode::Interactive => formualizer_workbook::WorkbookConfig::interactive(),
+            PyWorkbookMode::Ephemeral => formualizer::workbook::WorkbookConfig::ephemeral(),
+            PyWorkbookMode::Interactive => formualizer::workbook::WorkbookConfig::interactive(),
         };
         if let Some(eval) = cfg.eval {
             base.eval = eval;
@@ -646,8 +646,8 @@ fn resolve_workbook_config(
         base
     } else {
         match mode.unwrap_or(PyWorkbookMode::Interactive) {
-            PyWorkbookMode::Ephemeral => formualizer_workbook::WorkbookConfig::ephemeral(),
-            PyWorkbookMode::Interactive => formualizer_workbook::WorkbookConfig::interactive(),
+            PyWorkbookMode::Ephemeral => formualizer::workbook::WorkbookConfig::ephemeral(),
+            PyWorkbookMode::Interactive => formualizer::workbook::WorkbookConfig::interactive(),
         }
     };
 
