@@ -32,50 +32,6 @@ symbols:
     signature: "(self)->None"
     maps: [ "FZ-MAP-PY-NAMES-001" ]
 
-  # Engine class
-  - cid: "FZ-API-ENG-001"
-    public: "Engine.__init__"
-    signature: "(self, config:Optional[EvaluationConfig])->None"
-    maps: [ "FZ-MAP-PY-NAMES-001" ]
-  - cid: "FZ-API-ENG-002"
-    public: "Engine.evaluate_all"
-    signature: "(self)->EvaluationResult"
-    maps: [ "FZ-MAP-PY-NAMES-001" ]
-  - cid: "FZ-API-ENG-003"
-    public: "Engine.evaluate_cell"
-    signature: "(self, sheet:str, row:int, col:int)->Optional[LiteralValue]"
-    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-INDEX-001" ]
-  - cid: "FZ-API-ENG-004"
-    public: "Engine.evaluate_cells"
-    signature: "(self, cells:List[Tuple[str,int,int]])->List[Optional[LiteralValue]]"
-    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-INDEX-001" ]
-  - cid: "FZ-API-ENG-005"
-    public: "Engine.get_value"
-    signature: "(self, sheet:str, row:int, col:int)->Optional[LiteralValue]"
-    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-INDEX-001" ]
-  - cid: "FZ-API-ENG-006"
-    public: "Engine.recalc_epoch"
-    signature: "(self)->int"
-    maps: [ "FZ-MAP-PY-NAMES-001" ]
-  - cid: "FZ-API-ENG-008"
-    public: "Engine.ensure_builtins_loaded"
-    signature: "(self)->None"
-    maps: [ "FZ-MAP-PY-NAMES-001" ]
-  - cid: "FZ-API-ENG-014"
-    public: "Engine.set_workbook_seed"
-    signature: "(self, seed:int)->None"
-    maps: [ "FZ-MAP-PY-NAMES-001" ]
-
-  # Engine cell manipulation
-  - cid: "FZ-API-SH-001"  # Reusing sheet API CID for Engine.set_value
-    public: "Engine.set_value"
-    signature: "(self, sheet:str, row:int, col:int, value:LiteralValue)->None"
-    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-INDEX-001" ]
-  - cid: "FZ-API-SH-002"  # Reusing sheet API CID for Engine.set_formula
-    public: "Engine.set_formula"
-    signature: "(self, sheet:str, row:int, col:int, formula:str)->None"
-    maps: [ "FZ-MAP-PY-NAMES-001", "FZ-INDEX-001" ]
-
   # Value types
   - cid: "FZ-TYPE-LV-001"
     public: "LiteralValue"
@@ -103,11 +59,6 @@ coverage:
       "FZ-API-FORM-001", "FZ-API-FORM-002",
       # Tokenizer
       "FZ-API-FORM-TOK-001", "FZ-API-FORM-TOK-002", "FZ-API-FORM-TOK-003", "FZ-API-FORM-TOK-004",
-      # Engine
-      "FZ-API-ENG-001", "FZ-API-ENG-002", "FZ-API-ENG-003", "FZ-API-ENG-004", "FZ-API-ENG-005",
-      "FZ-API-ENG-006", "FZ-API-ENG-008", "FZ-API-ENG-014",
-      # Sheet operations via Engine
-      "FZ-API-SH-001", "FZ-API-SH-002",
       # Types
       "FZ-TYPE-LV-001", "FZ-TYPE-ERR-001"
     ]

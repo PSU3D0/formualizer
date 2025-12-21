@@ -11,7 +11,7 @@ use formualizer_sheetport::{
     BatchInput, BatchOptions, BatchProgress, ConstraintViolation, EvalOptions, InputSnapshot,
     InputUpdate, OutputSnapshot, PortValue, SheetPort, SheetPortError, TableRow, TableValue,
 };
-use formualizer_workbook::{LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook};
+use formualizer_workbook::{LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig};
 use sheetport_spec::Manifest;
 use workbook_common::build_workbook as build_umya_fixture;
 
@@ -616,7 +616,11 @@ fn table_updates_require_all_columns() -> Result<(), SheetPortError> {
 fn umya_loads_manifest_end_to_end() -> Result<(), SheetPortError> {
     let path = build_umya_inventory_fixture();
     let adapter = UmyaAdapter::open_path(&path).expect("open XLSX fixture");
-    let mut workbook = Workbook::from_reader(adapter, LoadStrategy::EagerAll, Default::default())
+    let mut workbook = Workbook::from_reader(
+        adapter,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
         .map_err(SheetPortError::from)?;
     workbook.evaluate_all().map_err(SheetPortError::from)?;
     workbook

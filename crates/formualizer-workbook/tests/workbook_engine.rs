@@ -1,6 +1,5 @@
 use formualizer_common::{LiteralValue, RangeAddress};
-use formualizer_eval::engine::EvalConfig;
-use formualizer_workbook::{LoadStrategy, Workbook};
+use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
 
 #[test]
 fn values_roundtrip_and_range() {
@@ -59,7 +58,7 @@ fn load_from_json_reader() {
     )
     .unwrap();
 
-    let cfg = formualizer_eval::engine::EvalConfig::default();
+    let cfg = WorkbookConfig::interactive();
     let mut wb = Workbook::from_reader(json, LoadStrategy::EagerAll, cfg).unwrap();
     // Deferred mode: formula not evaluated yet (no stored value)
     assert_eq!(wb.get_value("S", 1, 2), None);
@@ -209,10 +208,9 @@ fn changelog_undo_redo_values() {
 #[test]
 fn changelog_with_formulas_non_deferred() {
     // Disable deferral so formula graph exists → logs capture formula edits
-    let mut wb = Workbook::new_with_config(EvalConfig {
-        defer_graph_building: false,
-        ..Default::default()
-    });
+    let mut cfg = WorkbookConfig::ephemeral();
+    cfg.eval.defer_graph_building = false;
+    let mut wb = Workbook::new_with_config(cfg);
     wb.set_changelog_enabled(true);
     wb.add_sheet("S");
     wb.set_value("S", 1, 1, LiteralValue::Int(2)).unwrap();

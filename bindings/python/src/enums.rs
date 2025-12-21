@@ -200,9 +200,32 @@ impl From<CoreFormulaDialect> for PyFormulaDialect {
     }
 }
 
+/// Workbook mode enum exposed to Python.
+#[pyclass(name = "WorkbookMode", module = "formualizer")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PyWorkbookMode {
+    Ephemeral,
+    Interactive,
+}
+
+#[pymethods]
+impl PyWorkbookMode {
+    fn __str__(&self) -> &'static str {
+        match self {
+            PyWorkbookMode::Ephemeral => "ephemeral",
+            PyWorkbookMode::Interactive => "interactive",
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("WorkbookMode.{}", self.__str__())
+    }
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTokenType>()?;
     m.add_class::<PyTokenSubType>()?;
     m.add_class::<PyFormulaDialect>()?;
+    m.add_class::<PyWorkbookMode>()?;
     Ok(())
 }

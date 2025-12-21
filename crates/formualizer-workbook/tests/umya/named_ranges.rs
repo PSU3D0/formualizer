@@ -1,8 +1,7 @@
 use formualizer_common::LiteralValue;
-use formualizer_eval::engine::EvalConfig;
 use formualizer_workbook::{
     CellData, LoadStrategy, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter, Workbook,
-    traits::NamedRangeScope,
+    WorkbookConfig, traits::NamedRangeScope,
 };
 
 fn build_named_range_workbook() -> Workbook {
@@ -22,9 +21,12 @@ fn build_named_range_workbook() -> Workbook {
     umya_spreadsheet::writer::xlsx::write(&book, &path).expect("write workbook");
 
     let backend = UmyaAdapter::open_path(&path).expect("open workbook for runtime evaluation");
-    let mut workbook =
-        Workbook::from_reader(backend, LoadStrategy::EagerAll, EvalConfig::default())
-            .expect("load workbook");
+    let mut workbook = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load workbook");
     workbook.evaluate_all().expect("initial evaluate");
     workbook
 }
@@ -109,9 +111,12 @@ fn umya_named_range_loader_evaluates() {
 
     // Load through Workbook loader to ensure evaluation paths see the named ranges.
     let backend = UmyaAdapter::open_path(&path).expect("open workbook");
-    let mut workbook =
-        Workbook::from_reader(backend, LoadStrategy::EagerAll, EvalConfig::default())
-            .expect("load workbook");
+    let mut workbook = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load workbook");
     workbook.evaluate_all().expect("evaluate");
 
     let addr = workbook
@@ -139,9 +144,12 @@ fn umya_named_range_loader_evaluates() {
     adapter.save().expect("save workbook");
 
     let backend2 = UmyaAdapter::open_path(&path).expect("reopen updated workbook");
-    let mut workbook2 =
-        Workbook::from_reader(backend2, LoadStrategy::EagerAll, EvalConfig::default())
-            .expect("reload workbook");
+    let mut workbook2 = Workbook::from_reader(
+        backend2,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("reload workbook");
     workbook2.evaluate_all().expect("re-evaluate");
     let updated = workbook2.get_value("Sheet1", 1, 2).expect("updated output");
     assert!(matches!(updated, LiteralValue::Number(n) if (n - 30.0).abs() < 1e-9));

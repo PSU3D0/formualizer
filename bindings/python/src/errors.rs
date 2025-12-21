@@ -37,36 +37,6 @@ impl ParserError {
     }
 }
 
-/// Build a rich Python exception from a Rust ExcelError, including location if known.
-pub fn excel_eval_pyerr(
-    sheet: Option<&str>,
-    fallback_row: Option<u32>,
-    fallback_col: Option<u32>,
-    err: &RustExcelError,
-) -> PyErr {
-    // Prefer explicit error.context if present, otherwise fall back to provided location
-    let (row, col) = match &err.context {
-        Some(ErrorContext { row, col, .. }) => (row.unwrap_or_default(), col.unwrap_or_default()),
-        None => (
-            fallback_row.unwrap_or_default(),
-            fallback_col.unwrap_or_default(),
-        ),
-    };
-
-    let location = match (sheet, row, col) {
-        (Some(s), r, c) if r > 0 && c > 0 => format!(" at {s}!R{r}C{c}"),
-        (None, r, c) if r > 0 && c > 0 => format!(" at R{r}C{c}"),
-        _ => String::new(),
-    };
-
-    let msg = match &err.message {
-        Some(m) if !m.is_empty() => format!("{kind}: {m}{location}", kind = err.kind),
-        _ => format!("{kind}{location}", kind = err.kind),
-    };
-
-    PyErr::new::<ExcelEvaluationError, _>(msg)
-}
-
 /// Python representation of Excel domain errors
 #[pyclass(name = "ExcelError")]
 #[derive(Clone, Debug)]

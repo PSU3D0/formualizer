@@ -48,6 +48,74 @@ pub(crate) fn literal_to_js(v: formualizer_common::LiteralValue) -> JsValue {
     }
 }
 
+fn set(obj: &js_sys::Object, key: &str, value: JsValue) -> Result<(), JsValue> {
+    js_sys::Reflect::set(obj, &JsValue::from_str(key), &value)
+        .map_err(|_| JsValue::from_str("object set failed"))
+}
+
+fn eval_plan_to_js(
+    plan: &formualizer_eval::engine::eval::EvalPlan,
+) -> Result<JsValue, JsValue> {
+    let obj = js_sys::Object::new();
+    set(
+        &obj,
+        "total_vertices_to_evaluate",
+        JsValue::from_f64(plan.total_vertices_to_evaluate as f64),
+    )?;
+    let layers = js_sys::Array::new();
+    for layer in &plan.layers {
+        let entry = js_sys::Object::new();
+        set(
+            &entry,
+            "vertex_count",
+            JsValue::from_f64(layer.vertex_count as f64),
+        )?;
+        set(
+            &entry,
+            "parallel_eligible",
+            JsValue::from_bool(layer.parallel_eligible),
+        )?;
+        let sample_cells = js_sys::Array::new();
+        for cell in &layer.sample_cells {
+            sample_cells.push(&JsValue::from_str(cell));
+        }
+        set(&entry, "sample_cells", sample_cells.into())?;
+        layers.push(&entry);
+    }
+    set(&obj, "layers", layers.into())?;
+    set(
+        &obj,
+        "cycles_detected",
+        JsValue::from_f64(plan.cycles_detected as f64),
+    )?;
+    set(
+        &obj,
+        "dirty_count",
+        JsValue::from_f64(plan.dirty_count as f64),
+    )?;
+    set(
+        &obj,
+        "volatile_count",
+        JsValue::from_f64(plan.volatile_count as f64),
+    )?;
+    set(
+        &obj,
+        "parallel_enabled",
+        JsValue::from_bool(plan.parallel_enabled),
+    )?;
+    set(
+        &obj,
+        "estimated_parallel_layers",
+        JsValue::from_f64(plan.estimated_parallel_layers as f64),
+    )?;
+    let targets = js_sys::Array::new();
+    for cell in &plan.target_cells {
+        targets.push(&JsValue::from_str(cell));
+    }
+    set(&obj, "target_cells", targets.into())?;
+    Ok(obj.into())
+}
+
 #[wasm_bindgen]
 pub struct Workbook {
     inner: Arc<RwLock<formualizer_workbook::Workbook>>,
@@ -88,7 +156,7 @@ impl Workbook {
             use formualizer_workbook::traits::SpreadsheetReader;
             let adapter = <JsonAdapter as SpreadsheetReader>::open_bytes(json.into_bytes())
                 .map_err(|e| JsValue::from_str(&format!("open failed: {e}")))?;
-            let cfg = formualizer_eval::engine::EvalConfig::default();
+            let cfg = formualizer_workbook::WorkbookConfig::interactive();
             let wb = formualizer_workbook::Workbook::from_reader(
                 adapter,
                 formualizer_workbook::LoadStrategy::EagerAll,
@@ -235,6 +303,42 @@ impl Workbook {
             out.push(&literal_to_js(v));
         }
         Ok(out)
+    }
+
+    #[wasm_bindgen(js_name = "getEvalPlan")]
+    pub fn get_eval_plan(&self, targets: js_sys::Array) -> Result<JsValue, JsValue> {
+        let mut target_vec = Vec::with_capacity(targets.length() as usize);
+        for i in 0..targets.length() {
+            let item = targets.get(i);
+            let arr: js_sys::Array = item.into();
+            let sheet = arr
+                .get(0)
+                .as_string()
+                .ok_or_else(|| JsValue::from_str("Invalid sheet name"))?;
+            let row = arr
+                .get(1)
+                .as_f64()
+                .ok_or_else(|| JsValue::from_str("Invalid row"))? as u32;
+            let col = arr
+                .get(2)
+                .as_f64()
+                .ok_or_else(|| JsValue::from_str("Invalid col"))? as u32;
+            if row == 0 || col == 0 {
+                return Err(JsValue::from_str("Row/col are 1-based"));
+            }
+            target_vec.push((sheet, row, col));
+        }
+
+        let refs: Vec<(&str, u32, u32)> = target_vec
+            .iter()
+            .map(|(s, r, c)| (s.as_str(), *r, *c))
+            .collect();
+
+        let wb = self.inner.read().map_err(|_| JsValue::from_str("lock"))?;
+        let plan = wb
+            .get_eval_plan(&refs)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        eval_plan_to_js(&plan)
     }
 
     #[wasm_bindgen]

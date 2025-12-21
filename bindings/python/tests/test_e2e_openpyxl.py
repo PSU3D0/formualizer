@@ -41,17 +41,10 @@ def test_openpyxl_roundtrip(tmp_path: Path):
     # Load the actual workbook from disk using Calamine adapter
     wb = fz.load_workbook(str(xlsx_path), strategy="eager_all")
 
-    # Create an engine from the workbook
-    engine = fz.Engine.from_workbook(wb)
-
     # Evaluate and check values
-    assert engine.evaluate_cell("Sheet1", 1, 2) == 6.0
-    assert engine.evaluate_cell("Sheet1", 1, 3) == 12.0
-    assert engine.evaluate_cell("Sheet1", 1, 4) == 6.0
-
-    # Note: With the new pattern, mutation happens through the workbook
-    # but evaluation happens through the engine
-    # For now, we'll skip the mutation test as it would require re-loading the workbook into the engine
+    assert wb.evaluate_cell("Sheet1", 1, 2) == 6.0
+    assert wb.evaluate_cell("Sheet1", 1, 3) == 12.0
+    assert wb.evaluate_cell("Sheet1", 1, 4) == 6.0
 
 
 def test_batch_values_and_formulas():
@@ -80,12 +73,9 @@ def test_batch_values_and_formulas():
         ],
     )
 
-    # Create engine from the workbook
-    engine = fz.Engine.from_workbook(wb)
-
     # Evaluate the formula cells
-    assert engine.evaluate_cell("Data", 1, 4) == 6.0
-    assert engine.evaluate_cell("Data", 2, 4) == 15.0
+    assert wb.evaluate_cell("Data", 1, 4) == 6.0
+    assert wb.evaluate_cell("Data", 2, 4) == 15.0
 
     # Check that formulas were stored correctly
     forms = s.get_formulas(fz.RangeAddress("Data", 1, 4, 2, 4))
@@ -116,9 +106,6 @@ def test_load_workbook_from_disk(tmp_path: Path):
     # Load with formualizer
     fz_wb = fz.load_workbook(str(xlsx_path))
 
-    # Create engine with the workbook
-    engine = fz.Engine(fz_wb)
-
     # Check values were loaded (raw values from workbook)
     sheet = fz_wb.sheet("Data")
     assert sheet.get_cell(1, 1).value == 100.0
@@ -126,14 +113,13 @@ def test_load_workbook_from_disk(tmp_path: Path):
     assert sheet.get_cell(3, 1).value == 300.0
 
     # Check formulas were loaded and can be evaluated
-    assert engine.evaluate_cell("Data", 1, 2) == 200.0  # A1*2
-    assert engine.evaluate_cell("Data", 2, 2) == 500.0  # A2+A3
-    assert engine.evaluate_cell("Data", 3, 2) == 600.0  # SUM(A1:A3)
+    assert fz_wb.evaluate_cell("Data", 1, 2) == 200.0  # A1*2
+    assert fz_wb.evaluate_cell("Data", 2, 2) == 500.0  # A2+A3
+    assert fz_wb.evaluate_cell("Data", 3, 2) == 600.0  # SUM(A1:A3)
 
     # Test using classmethod directly
     fz_wb2 = fz.Workbook.load_path(str(xlsx_path), strategy="eager_all")
-    engine2 = fz.Engine.from_workbook(fz_wb2)
-    assert engine2.evaluate_cell("Data", 1, 1) == 100.0
+    assert fz_wb2.evaluate_cell("Data", 1, 1) == 100.0
 
 
 def test_formula_evaluation_types():
@@ -153,23 +139,20 @@ def test_formula_evaluation_types():
     s.set_formula(4, 2, "=SUM(A1:A3)")  # SUM function
     s.set_formula(5, 2, "=AVERAGE(A1:A3)")  # AVERAGE (definitely float)
 
-    # Create engine from the workbook to evaluate formulas
-    engine = fz.Engine.from_workbook(wb)
-
     # Check the types and values through evaluation
-    add_result = engine.evaluate_cell("Test", 1, 2)
+    add_result = wb.evaluate_cell("Test", 1, 2)
     assert add_result == 30.0
 
-    mult_result = engine.evaluate_cell("Test", 2, 2)
+    mult_result = wb.evaluate_cell("Test", 2, 2)
     assert mult_result == 20.0
 
-    div_result = engine.evaluate_cell("Test", 3, 2)
+    div_result = wb.evaluate_cell("Test", 3, 2)
     assert isinstance(div_result, float)
     assert div_result == 5.0
 
-    sum_result = engine.evaluate_cell("Test", 4, 2)
+    sum_result = wb.evaluate_cell("Test", 4, 2)
     assert sum_result == 60.0
 
-    avg_result = engine.evaluate_cell("Test", 5, 2)
+    avg_result = wb.evaluate_cell("Test", 5, 2)
     assert isinstance(avg_result, float)
     assert avg_result == 20.0

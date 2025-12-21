@@ -15,6 +15,9 @@ default = ["eval", "workbook", "sheetport"]
 eval = ["dep:formualizer-eval"]
 workbook = ["dep:formualizer-workbook"]
 sheetport = ["workbook", "dep:sheetport-spec", "dep:formualizer-sheetport"]
+calamine = ["workbook", "formualizer-workbook/calamine"]
+json = ["workbook", "formualizer-workbook/json"]
+umya = ["workbook", "formualizer-workbook/umya"]
 
 [dependencies]
 formualizer-eval = { path = "../formualizer-eval", version = "0.3.0", optional = true }

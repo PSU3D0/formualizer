@@ -7,7 +7,6 @@ mod enums;
 mod errors;
 mod parser;
 mod reference;
-mod resolver;
 mod sheet; // retain for compatibility
 mod sheetport;
 mod token;
@@ -43,6 +42,8 @@ fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<wor
         &py.get_type::<workbook::PyWorkbook>(),
         path,
         Some("calamine"),
+        None,
+        None,
     )
 }
 

@@ -33,8 +33,7 @@ Use what you need: parse only, run the engine against your own sheet model, or l
 
 ### Python (bindings/python)
 
-- Engine: evaluate formulas on demand (`Engine.from_path`, `Engine.from_workbook`, `evaluate_cell`, `evaluate_all`)
-- Workbook: set values/formulas, batch operations, undo/redo; evaluation via `Engine.from_workbook(wb)`
+- Workbook: set values/formulas, batch operations, undo/redo, and evaluation
 - No begin/end required: single edits are individually undoable; batch methods auto‑group as one undo step
 
 Install: `pip install formualizer` (see bindings/python/README.md)
@@ -72,8 +71,7 @@ s.set_value(1, 1, fz.LiteralValue.int(10))
 s.set_value(1, 2, fz.LiteralValue.int(20))
 s.set_formula(1, 3, "=A1+B1")
 
-eng = fz.Engine.from_workbook(wb)
-assert eng.evaluate_cell("Data", 1, 3).as_number() == 30.0
+assert wb.evaluate_cell("Data", 1, 3) == 30.0
 ```
 
 ### WASM (browser)

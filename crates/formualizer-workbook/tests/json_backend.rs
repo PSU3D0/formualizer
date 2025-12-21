@@ -10,8 +10,7 @@ use formualizer_workbook::{CellData, LiteralValue, SpreadsheetReader, Spreadshee
 #[cfg(feature = "json")]
 #[test]
 fn json_loader_declares_sources_before_formulas() {
-    use formualizer_eval::engine::EvalConfig;
-    use formualizer_workbook::{LoadStrategy, Workbook};
+    use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
 
     let bytes = br#"{
         "version": 1,
@@ -29,8 +28,7 @@ fn json_loader_declares_sources_before_formulas() {
     .to_vec();
 
     let adapter = JsonAdapter::open_bytes(bytes).unwrap();
-    let cfg = EvalConfig::default();
-
+    let cfg = WorkbookConfig::interactive();
     let mut wb = Workbook::from_reader(adapter, LoadStrategy::EagerAll, cfg).unwrap();
     let v = wb.evaluate_cell("S", 1, 1).unwrap();
 

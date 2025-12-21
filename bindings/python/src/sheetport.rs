@@ -52,7 +52,13 @@ impl PySheetPortSession {
         })?;
         let manifest = Manifest::from_yaml_str(&manifest_yaml)
             .map_err(|err| SheetPortManifestError::new_err(format!("{err}")))?;
-        let workbook = PyWorkbook::from_path(&py.get_type::<PyWorkbook>(), workbook_path, backend)?;
+        let workbook = PyWorkbook::from_path(
+            &py.get_type::<PyWorkbook>(),
+            workbook_path,
+            backend,
+            None,
+            None,
+        )?;
         Self::from_components(py, workbook, manifest)
     }
 

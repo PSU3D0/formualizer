@@ -20,3 +20,6 @@ pub use formualizer_sheetport::{
     AreaLocation, BoundPort, ManifestBindings, PortBinding, RecordBinding, RecordFieldBinding,
     ScalarBinding, ScalarLocation, SheetPort, TableBinding, TableLocation,
 };
+
+#[cfg(feature = "workbook")]
+pub use formualizer_workbook::{WorkbookConfig, WorkbookMode};

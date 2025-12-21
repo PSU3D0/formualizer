@@ -5,6 +5,7 @@ use formualizer_common::{
     LiteralValue, RangeAddress,
     error::{ExcelError, ExcelErrorKind},
 };
+use formualizer_eval::engine::eval::EvalPlan;
 use formualizer_eval::engine::named_range::NamedDefinition;
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -96,6 +97,38 @@ pub struct Workbook {
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkbookMode {
+    /// Fastpath parity with direct Engine usage.
+    Ephemeral,
+    /// Default workbook behavior (changelog + deferred graph build).
+    Interactive,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkbookConfig {
+    pub eval: formualizer_eval::engine::EvalConfig,
+    pub enable_changelog: bool,
+}
+
+impl WorkbookConfig {
+    pub fn ephemeral() -> Self {
+        Self {
+            eval: formualizer_eval::engine::EvalConfig::default(),
+            enable_changelog: false,
+        }
+    }
+
+    pub fn interactive() -> Self {
+        let mut eval = formualizer_eval::engine::EvalConfig::default();
+        eval.defer_graph_building = true;
+        Self {
+            eval,
+            enable_changelog: true,
+        }
+    }
+}
+
 impl Default for Workbook {
     fn default() -> Self {
         Self::new()
@@ -103,24 +136,29 @@ impl Default for Workbook {
 }
 
 impl Workbook {
-    pub fn new_with_config(mut config: formualizer_eval::engine::EvalConfig) -> Self {
-        config.arrow_storage_enabled = true;
-        config.delta_overlay_enabled = true;
-        config.write_formula_overlay_enabled = true;
-        let engine = formualizer_eval::engine::Engine::new(WBResolver, config);
+    pub fn new_with_config(mut config: WorkbookConfig) -> Self {
+        config.eval.arrow_storage_enabled = true;
+        config.eval.delta_overlay_enabled = true;
+        config.eval.write_formula_overlay_enabled = true;
+        let engine = formualizer_eval::engine::Engine::new(WBResolver, config.eval);
+        let mut log = formualizer_eval::engine::ChangeLog::new();
+        log.set_enabled(config.enable_changelog);
         Self {
             engine,
-            enable_changelog: false,
-            log: formualizer_eval::engine::ChangeLog::new(),
+            enable_changelog: config.enable_changelog,
+            log,
             undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new(),
         }
     }
-    pub fn new() -> Self {
-        let cfg = formualizer_eval::engine::EvalConfig {
-            defer_graph_building: true,
-            ..Default::default()
+    pub fn new_with_mode(mode: WorkbookMode) -> Self {
+        let config = match mode {
+            WorkbookMode::Ephemeral => WorkbookConfig::ephemeral(),
+            WorkbookMode::Interactive => WorkbookConfig::interactive(),
         };
-        Self::new_with_config(cfg)
+        Self::new_with_config(config)
+    }
+    pub fn new() -> Self {
+        Self::new_with_mode(WorkbookMode::Interactive)
     }
 
     pub fn engine(&self) -> &formualizer_eval::engine::Engine<WBResolver> {
@@ -128,6 +166,9 @@ impl Workbook {
     }
     pub fn engine_mut(&mut self) -> &mut formualizer_eval::engine::Engine<WBResolver> {
         &mut self.engine
+    }
+    pub fn eval_config(&self) -> &formualizer_eval::engine::EvalConfig {
+        &self.engine.config
     }
 
     // Changelog controls
@@ -371,9 +412,38 @@ impl Workbook {
     ) -> Result<(), IoError> {
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         if self.engine.config.defer_graph_building {
-            self.engine
-                .stage_formula_text(sheet, row, col, formula.to_string());
-            Ok(())
+            if self.engine.get_cell(sheet, row, col).is_some() {
+                let with_eq = if formula.starts_with('=') {
+                    formula.to_string()
+                } else {
+                    format!("={formula}")
+                };
+                let ast = formualizer_parse::parser::parse(&with_eq)
+                    .map_err(|e| IoError::from_backend("parser", e))?;
+                if self.enable_changelog {
+                    let sheet_id = self
+                        .engine
+                        .sheet_id(sheet)
+                        .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
+                    let cell = formualizer_eval::reference::CellRef::new(
+                        sheet_id,
+                        formualizer_eval::reference::Coord::from_excel(row, col, true, true),
+                    );
+                    self.engine.edit_with_logger(&mut self.log, |editor| {
+                        editor.set_cell_formula(cell, ast);
+                    });
+                    self.engine.mark_data_edited();
+                    Ok(())
+                } else {
+                    self.engine
+                        .set_cell_formula(sheet, row, col, ast)
+                        .map_err(IoError::Engine)
+                }
+            } else {
+                self.engine
+                    .stage_formula_text(sheet, row, col, formula.to_string());
+                Ok(())
+            }
         } else {
             let with_eq = if formula.starts_with('=') {
                 formula.to_string()
@@ -772,6 +842,18 @@ impl Workbook {
         })
     }
 
+    pub fn get_eval_plan(
+        &self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<EvalPlan, IoError> {
+        ACTIVE_WORKBOOK.with(|cell| {
+            let previous = cell.replace(self as *const _);
+            let result = self.engine.get_eval_plan(targets).map_err(IoError::Engine);
+            cell.set(previous);
+            result
+        })
+    }
+
     /// Resolve a named range (workbook-scoped or unique sheet-scoped) to an absolute address.
     pub fn named_range_address(&self, name: &str) -> Option<RangeAddress> {
         if let Some((_, named)) = self
@@ -835,18 +917,45 @@ impl Workbook {
     pub fn from_reader<B>(
         mut backend: B,
         _strategy: LoadStrategy,
-        mut config: formualizer_eval::engine::EvalConfig,
+        config: WorkbookConfig,
     ) -> Result<Self, IoError>
     where
         B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
         IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
     {
-        config.defer_graph_building = true;
         let mut wb = Self::new_with_config(config);
         backend
             .stream_into_engine(&mut wb.engine)
             .map_err(IoError::from)?;
         Ok(wb)
+    }
+
+    pub fn from_reader_with_config<B>(
+        backend: B,
+        strategy: LoadStrategy,
+        config: WorkbookConfig,
+    ) -> Result<Self, IoError>
+    where
+        B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
+        IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
+    {
+        Self::from_reader(backend, strategy, config)
+    }
+
+    pub fn from_reader_with_mode<B>(
+        backend: B,
+        strategy: LoadStrategy,
+        mode: WorkbookMode,
+    ) -> Result<Self, IoError>
+    where
+        B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
+        IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
+    {
+        let config = match mode {
+            WorkbookMode::Ephemeral => WorkbookConfig::ephemeral(),
+            WorkbookMode::Interactive => WorkbookConfig::interactive(),
+        };
+        Self::from_reader(backend, strategy, config)
     }
 }
 

@@ -26,5 +26,5 @@ pub use transaction::{WriteOp, WriteTransaction};
 
 // Re-export for convenience
 pub use formualizer_common::{LiteralValue, RangeAddress};
-pub use workbook::Workbook;
+pub use workbook::{Workbook, WorkbookConfig, WorkbookMode};
 pub use worksheet::WorksheetHandle;

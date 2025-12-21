@@ -2,6 +2,8 @@ use pyo3::prelude::*;
 
 use formualizer_common::LiteralValue;
 
+use crate::engine::{PyEvaluationConfig, eval_plan_to_py};
+use crate::enums::PyWorkbookMode;
 use crate::value::{literal_to_py, py_to_literal};
 use std::collections::HashMap;
 
@@ -9,6 +11,43 @@ type SheetCellMap = HashMap<(u32, u32), CellData>;
 type SheetCache = HashMap<String, SheetCellMap>;
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
+
+#[pyclass(name = "WorkbookConfig", module = "formualizer")]
+#[derive(Clone)]
+pub struct PyWorkbookConfig {
+    mode: PyWorkbookMode,
+    eval: Option<formualizer_eval::engine::EvalConfig>,
+    enable_changelog: Option<bool>,
+}
+
+#[pymethods]
+impl PyWorkbookConfig {
+    #[new]
+    #[pyo3(signature = (*, mode = PyWorkbookMode::Interactive, eval_config = None, enable_changelog = None))]
+    pub fn new(
+        mode: PyWorkbookMode,
+        eval_config: Option<PyEvaluationConfig>,
+        enable_changelog: Option<bool>,
+    ) -> Self {
+        Self {
+            mode,
+            eval: eval_config.map(|c| c.inner),
+            enable_changelog,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        let mode = match self.mode {
+            PyWorkbookMode::Ephemeral => "ephemeral",
+            PyWorkbookMode::Interactive => "interactive",
+        };
+        format!(
+            "WorkbookConfig(mode={}, enable_changelog={:?})",
+            mode,
+            self.enable_changelog
+        )
+    }
+}
 
 #[pyclass(name = "Workbook", module = "formualizer")]
 #[derive(Clone)]
@@ -22,10 +61,12 @@ pub struct PyWorkbook {
 #[pymethods]
 impl PyWorkbook {
     #[new]
-    pub fn new() -> PyResult<Self> {
+    #[pyo3(signature = (*, mode=None, config=None))]
+    pub fn new(mode: Option<PyWorkbookMode>, config: Option<PyWorkbookConfig>) -> PyResult<Self> {
+        let cfg = resolve_workbook_config(mode, config)?;
         Ok(Self {
             inner: std::sync::Arc::new(std::sync::RwLock::new(
-                formualizer_workbook::Workbook::new(),
+                formualizer_workbook::Workbook::new_with_config(cfg),
             )),
             sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
             cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -34,15 +75,17 @@ impl PyWorkbook {
 
     /// Class method: load a workbook from a file path
     #[classmethod]
-    #[pyo3(signature = (path, strategy=None, backend=None))]
+    #[pyo3(signature = (path, strategy=None, backend=None, *, mode=None, config=None))]
     pub fn load_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
         strategy: Option<&str>,
         backend: Option<&str>,
+        mode: Option<PyWorkbookMode>,
+        config: Option<PyWorkbookConfig>,
     ) -> PyResult<Self> {
         let _ = strategy; // currently unused, default eager
-        Self::from_path(_cls, path, backend)
+        Self::from_path(_cls, path, backend, mode, config)
     }
 
     /// Get or create a sheet by name
@@ -65,12 +108,16 @@ impl PyWorkbook {
     }
 
     #[classmethod]
+    #[pyo3(signature = (path, backend=None, *, mode=None, config=None))]
     pub fn from_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
         backend: Option<&str>,
+        mode: Option<PyWorkbookMode>,
+        config: Option<PyWorkbookConfig>,
     ) -> PyResult<Self> {
         let backend = backend.unwrap_or("calamine");
+        let cfg = resolve_workbook_config(mode, config)?;
         match backend {
             "calamine" => {
                 use formualizer_workbook::backends::CalamineAdapter;
@@ -80,7 +127,6 @@ impl PyWorkbook {
                         .map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
                     })?;
-                let cfg = formualizer_eval::engine::EvalConfig::default();
                 let wb = formualizer_workbook::Workbook::from_reader(
                     adapter,
                     formualizer_workbook::LoadStrategy::EagerAll,
@@ -239,6 +285,39 @@ impl PyWorkbook {
             py_results.append(literal_to_py(py, &v)?)?;
         }
         Ok(py_results.into())
+    }
+
+    pub fn get_eval_plan(
+        &self,
+        targets: &Bound<'_, pyo3::types::PyList>,
+    ) -> PyResult<crate::engine::PyEvaluationPlan> {
+        let mut target_vec = Vec::with_capacity(targets.len());
+        for item in targets.iter() {
+            let tuple: &Bound<'_, pyo3::types::PyTuple> = item.cast()?;
+            let sheet: String = tuple.get_item(0)?.extract()?;
+            let row: u32 = tuple.get_item(1)?.extract()?;
+            let col: u32 = tuple.get_item(2)?.extract()?;
+            if row == 0 || col == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Row/col are 1-based",
+                ));
+            }
+            target_vec.push((sheet, row, col));
+        }
+
+        let refs: Vec<(&str, u32, u32)> = target_vec
+            .iter()
+            .map(|(s, r, c)| (s.as_str(), *r, *c))
+            .collect();
+
+        let wb = self
+            .inner
+            .read()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let plan = wb
+            .get_eval_plan(&refs)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        Ok(eval_plan_to_py(plan))
     }
 
     pub fn cancel(&self) {
@@ -443,6 +522,7 @@ impl PyWorkbook {
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWorkbook>()?;
+    m.add_class::<PyWorkbookConfig>()?;
     m.add_class::<PyRangeAddress>()?;
     Ok(())
 }
@@ -540,95 +620,37 @@ impl PyWorkbook {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         f(&mut wb)
     }
+}
 
-    pub(crate) fn sheet_names_snapshot(&self) -> PyResult<Vec<String>> {
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        Ok(wb.sheet_names())
-    }
-    pub(crate) fn sheet_dimensions(&self, name: &str) -> PyResult<Option<(u32, u32)>> {
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        Ok(wb.sheet_dimensions(name))
-    }
-    pub(crate) fn get_value_inner(
-        &self,
-        sheet: &str,
-        row: u32,
-        col: u32,
-    ) -> PyResult<Option<formualizer_common::LiteralValue>> {
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        Ok(wb.get_value(sheet, row, col))
-    }
-    pub(crate) fn get_formula_inner(
-        &self,
-        sheet: &str,
-        row: u32,
-        col: u32,
-    ) -> PyResult<Option<String>> {
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        Ok(wb.get_formula(sheet, row, col))
-    }
-    pub(crate) fn set_cell_data(
-        &self,
-        sheet: &str,
-        row: u32,
-        col: u32,
-        data: CellData,
-    ) -> PyResult<()> {
-        if let Some(v) = data.value.clone() {
-            let mut wb = self.inner.write().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
-            })?;
-            wb.set_value(sheet, row, col, v)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+fn resolve_workbook_config(
+    mode: Option<PyWorkbookMode>,
+    config: Option<PyWorkbookConfig>,
+) -> PyResult<formualizer_workbook::WorkbookConfig> {
+    let resolved = if let Some(cfg) = config {
+        if let Some(requested) = mode
+            && requested != cfg.mode
+        {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "mode conflicts with WorkbookConfig.mode",
+            ));
         }
-        if let Some(f) = data.formula.as_ref() {
-            let mut wb = self.inner.write().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
-            })?;
-            wb.set_formula(sheet, row, col, f)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let mut base = match cfg.mode {
+            PyWorkbookMode::Ephemeral => formualizer_workbook::WorkbookConfig::ephemeral(),
+            PyWorkbookMode::Interactive => formualizer_workbook::WorkbookConfig::interactive(),
+        };
+        if let Some(eval) = cfg.eval {
+            base.eval = eval;
         }
-        let mut sheets = self.sheets.write().unwrap();
-        let sheet_map = sheets.entry(sheet.to_string()).or_default();
-        sheet_map.insert((row, col), data);
-        Ok(())
-    }
+        if let Some(enabled) = cfg.enable_changelog {
+            base.enable_changelog = enabled;
+        }
+        base
+    } else {
+        match mode.unwrap_or(PyWorkbookMode::Interactive) {
+            PyWorkbookMode::Ephemeral => formualizer_workbook::WorkbookConfig::ephemeral(),
+            PyWorkbookMode::Interactive => formualizer_workbook::WorkbookConfig::interactive(),
+        }
+    };
 
-    #[allow(dead_code)]
-    pub(crate) fn get_cell_data(
-        &self,
-        sheet: &str,
-        row: u32,
-        col: u32,
-    ) -> PyResult<Option<CellData>> {
-        // Try from engine-backed workbook
-        if let Ok(wb) = self.inner.read() {
-            let v = wb.get_value(sheet, row, col);
-            let f = wb.get_formula(sheet, row, col);
-            if v.is_some() || f.is_some() {
-                return Ok(Some(CellData {
-                    value: v,
-                    formula: f,
-                }));
-            }
-        }
-        Ok(self
-            .sheets
-            .read()
-            .ok()
-            .and_then(|m| m.get(sheet).cloned())
-            .and_then(|m| m.get(&(row, col)).cloned()))
-    }
+    Ok(resolved)
 }
