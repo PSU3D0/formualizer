@@ -93,6 +93,32 @@ impl UndoEngine {
                     } => {
                         let _ = editor.move_vertex(id, new_coord);
                     }
+                    ChangeEvent::DefineName {
+                        name,
+                        scope,
+                        definition,
+                    } => {
+                        let _ = editor.define_name(&name, definition, scope);
+                    }
+                    ChangeEvent::UpdateName {
+                        name,
+                        scope,
+                        new_definition,
+                        ..
+                    } => {
+                        let _ = editor.update_name(&name, new_definition, scope);
+                    }
+                    ChangeEvent::DeleteName { name, scope, .. } => {
+                        let _ = editor.delete_name(&name, scope);
+                    }
+                    ChangeEvent::NamedRangeAdjusted {
+                        name,
+                        scope,
+                        new_definition,
+                        ..
+                    } => {
+                        let _ = editor.update_name(&name, new_definition, scope);
+                    }
                     _ => {}
                 }
             }

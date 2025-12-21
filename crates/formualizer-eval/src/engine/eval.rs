@@ -659,6 +659,19 @@ where
         self.graph.define_name(name, definition, scope)
     }
 
+    pub fn update_name(
+        &mut self,
+        name: &str,
+        definition: NamedDefinition,
+        scope: NameScope,
+    ) -> Result<(), ExcelError> {
+        self.graph.update_name(name, definition, scope)
+    }
+
+    pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), ExcelError> {
+        self.graph.delete_name(name, scope)
+    }
+
     pub fn define_table(
         &mut self,
         name: &str,

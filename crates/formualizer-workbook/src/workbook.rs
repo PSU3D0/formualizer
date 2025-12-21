@@ -6,14 +6,8 @@ use formualizer_common::{
     error::{ExcelError, ExcelErrorKind},
 };
 use formualizer_eval::engine::eval::EvalPlan;
-use formualizer_eval::engine::named_range::NamedDefinition;
-use std::cell::Cell;
+use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
 use std::collections::BTreeMap;
-use std::ptr;
-
-thread_local! {
-    static ACTIVE_WORKBOOK: Cell<*const Workbook> = const { Cell::new(ptr::null()) };
-}
 
 /// Minimal resolver for engine-backed workbook (cells/ranges via graph/arrow; functions via registry).
 #[derive(Default, Debug, Clone, Copy)]
@@ -51,18 +45,7 @@ impl formualizer_eval::traits::NamedRangeResolver for WBResolver {
         &self,
         _name: &str,
     ) -> Result<Vec<Vec<LiteralValue>>, formualizer_common::error::ExcelError> {
-        ACTIVE_WORKBOOK.with(|cell| {
-            let ptr = cell.get();
-            if ptr.is_null() {
-                return Err(ExcelError::new(ExcelErrorKind::Name));
-            }
-            let workbook = unsafe { &*ptr };
-            if let Some(addr) = workbook.named_range_address(_name) {
-                Ok(workbook.read_range(&addr))
-            } else {
-                Err(ExcelError::new(ExcelErrorKind::Name))
-            }
-        })
+        Err(ExcelError::new(ExcelErrorKind::Name))
     }
 }
 impl formualizer_eval::traits::TableResolver for WBResolver {
@@ -750,36 +733,24 @@ impl Workbook {
         row: u32,
         col: u32,
     ) -> Result<LiteralValue, IoError> {
-        ACTIVE_WORKBOOK.with(|cell| {
-            let previous = cell.replace(self as *const _);
-            let result = self
-                .engine
-                .evaluate_cell(sheet, row, col)
-                .map_err(IoError::Engine)
-                .map(|value| value.unwrap_or(LiteralValue::Empty));
-            cell.set(previous);
-            result
-        })
+        self.engine
+            .evaluate_cell(sheet, row, col)
+            .map_err(IoError::Engine)
+            .map(|value| value.unwrap_or(LiteralValue::Empty))
     }
     pub fn evaluate_cells(
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<Vec<LiteralValue>, IoError> {
-        ACTIVE_WORKBOOK.with(|cell| {
-            let previous = cell.replace(self as *const _);
-            let result = self
-                .engine
-                .evaluate_cells(targets)
-                .map_err(IoError::Engine)
-                .map(|values| {
-                    values
-                        .into_iter()
-                        .map(|v| v.unwrap_or(LiteralValue::Empty))
-                        .collect()
-                });
-            cell.set(previous);
-            result
-        })
+        self.engine
+            .evaluate_cells(targets)
+            .map_err(IoError::Engine)
+            .map(|values| {
+                values
+                    .into_iter()
+                    .map(|v| v.unwrap_or(LiteralValue::Empty))
+                    .collect()
+            })
     }
 
     pub fn evaluate_cells_cancellable(
@@ -787,71 +758,101 @@ impl Workbook {
         targets: &[(&str, u32, u32)],
         cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Vec<LiteralValue>, IoError> {
-        ACTIVE_WORKBOOK.with(|cell| {
-            let previous = cell.replace(self as *const _);
-            let result = self
-                .engine
-                .evaluate_cells_cancellable(targets, cancel_flag)
-                .map_err(IoError::Engine)
-                .map(|values| {
-                    values
-                        .into_iter()
-                        .map(|v| v.unwrap_or(LiteralValue::Empty))
-                        .collect()
-                });
-            cell.set(previous);
-            result
-        })
+        self.engine
+            .evaluate_cells_cancellable(targets, cancel_flag)
+            .map_err(IoError::Engine)
+            .map(|values| {
+                values
+                    .into_iter()
+                    .map(|v| v.unwrap_or(LiteralValue::Empty))
+                    .collect()
+            })
     }
     pub fn evaluate_all(&mut self) -> Result<formualizer_eval::engine::EvalResult, IoError> {
-        ACTIVE_WORKBOOK.with(|cell| {
-            let previous = cell.replace(self as *const _);
-            let result = self.engine.evaluate_all().map_err(IoError::Engine);
-            cell.set(previous);
-            result
-        })
+        self.engine.evaluate_all().map_err(IoError::Engine)
     }
 
     pub fn evaluate_all_cancellable(
         &mut self,
         cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
-        ACTIVE_WORKBOOK.with(|cell| {
-            let previous = cell.replace(self as *const _);
-            let result = self
-                .engine
-                .evaluate_all_cancellable(cancel_flag)
-                .map_err(IoError::Engine);
-            cell.set(previous);
-            result
-        })
+        self.engine
+            .evaluate_all_cancellable(cancel_flag)
+            .map_err(IoError::Engine)
     }
 
     pub fn evaluate_with_plan(
         &mut self,
         plan: &formualizer_eval::engine::RecalcPlan,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
-        ACTIVE_WORKBOOK.with(|cell| {
-            let previous = cell.replace(self as *const _);
-            let result = self
-                .engine
-                .evaluate_recalc_plan(plan)
-                .map_err(IoError::Engine);
-            cell.set(previous);
-            result
-        })
+        self.engine
+            .evaluate_recalc_plan(plan)
+            .map_err(IoError::Engine)
     }
 
     pub fn get_eval_plan(
         &self,
         targets: &[(&str, u32, u32)],
     ) -> Result<EvalPlan, IoError> {
-        ACTIVE_WORKBOOK.with(|cell| {
-            let previous = cell.replace(self as *const _);
-            let result = self.engine.get_eval_plan(targets).map_err(IoError::Engine);
-            cell.set(previous);
-            result
-        })
+        self.engine.get_eval_plan(targets).map_err(IoError::Engine)
+    }
+
+    // Named ranges
+    pub fn define_named_range(
+        &mut self,
+        name: &str,
+        address: &RangeAddress,
+        scope: crate::traits::NamedRangeScope,
+    ) -> Result<(), IoError> {
+        let (definition, scope) = self.named_definition_with_scope(address, scope)?;
+        if self.enable_changelog {
+            let result = self.engine.edit_with_logger(&mut self.log, |editor| {
+                editor.define_name(name, definition, scope)
+            });
+            result.map_err(|e| IoError::from_backend("editor", e))
+        } else {
+            self.engine
+                .define_name(name, definition, scope)
+                .map_err(IoError::Engine)
+        }
+    }
+
+    pub fn update_named_range(
+        &mut self,
+        name: &str,
+        address: &RangeAddress,
+        scope: crate::traits::NamedRangeScope,
+    ) -> Result<(), IoError> {
+        let (definition, scope) = self.named_definition_with_scope(address, scope)?;
+        if self.enable_changelog {
+            let result = self.engine.edit_with_logger(&mut self.log, |editor| {
+                editor.update_name(name, definition, scope)
+            });
+            result.map_err(|e| IoError::from_backend("editor", e))
+        } else {
+            self.engine
+                .update_name(name, definition, scope)
+                .map_err(IoError::Engine)
+        }
+    }
+
+    pub fn delete_named_range(
+        &mut self,
+        name: &str,
+        scope: crate::traits::NamedRangeScope,
+        sheet: Option<&str>,
+    ) -> Result<(), IoError> {
+        let scope = self.name_scope_from_hint(scope, sheet)?;
+        if self.enable_changelog {
+            let result = self.engine.edit_with_logger(&mut self.log, |editor| {
+                editor.delete_name(name, scope)
+            });
+            result.map_err(|e| IoError::from_backend("editor", e))
+        } else {
+            self.engine
+                .delete_name(name, scope)
+                .map_err(IoError::Engine)
+        }
     }
 
     /// Resolve a named range (workbook-scoped or unique sheet-scoped) to an absolute address.
@@ -876,6 +877,80 @@ impl Workbook {
             }
         }
         resolved
+    }
+
+    fn named_definition_with_scope(
+        &mut self,
+        address: &RangeAddress,
+        scope: crate::traits::NamedRangeScope,
+    ) -> Result<(NamedDefinition, NameScope), IoError> {
+        let sheet_id = self.ensure_sheet_for_address(address)?;
+        let scope = match scope {
+            crate::traits::NamedRangeScope::Workbook => NameScope::Workbook,
+            crate::traits::NamedRangeScope::Sheet => NameScope::Sheet(sheet_id),
+        };
+        let sr0 = address.start_row.saturating_sub(1);
+        let sc0 = address.start_col.saturating_sub(1);
+        let er0 = address.end_row.saturating_sub(1);
+        let ec0 = address.end_col.saturating_sub(1);
+        let start_ref = formualizer_eval::reference::CellRef::new(
+            sheet_id,
+            formualizer_eval::reference::Coord::new(sr0, sc0, true, true),
+        );
+        if sr0 == er0 && sc0 == ec0 {
+            Ok((NamedDefinition::Cell(start_ref), scope))
+        } else {
+            let end_ref = formualizer_eval::reference::CellRef::new(
+                sheet_id,
+                formualizer_eval::reference::Coord::new(er0, ec0, true, true),
+            );
+            let range_ref = formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+            Ok((NamedDefinition::Range(range_ref), scope))
+        }
+    }
+
+    fn name_scope_from_hint(
+        &mut self,
+        scope: crate::traits::NamedRangeScope,
+        sheet: Option<&str>,
+    ) -> Result<NameScope, IoError> {
+        match scope {
+            crate::traits::NamedRangeScope::Workbook => Ok(NameScope::Workbook),
+            crate::traits::NamedRangeScope::Sheet => {
+                let sheet = sheet.ok_or_else(|| IoError::Backend {
+                    backend: "workbook".to_string(),
+                    message: "Sheet scope requires a sheet name".to_string(),
+                })?;
+                let sheet_id = self
+                    .engine
+                    .sheet_id(sheet)
+                    .ok_or_else(|| IoError::Backend {
+                        backend: "workbook".to_string(),
+                        message: "Sheet not found".to_string(),
+                    })?;
+                Ok(NameScope::Sheet(sheet_id))
+            }
+        }
+    }
+
+    fn ensure_sheet_for_address(
+        &mut self,
+        address: &RangeAddress,
+    ) -> Result<formualizer_eval::SheetId, IoError> {
+        let sheet_id = self
+            .engine
+            .sheet_id(&address.sheet)
+            .or_else(|| self.engine.add_sheet(&address.sheet).ok())
+            .ok_or_else(|| IoError::Backend {
+                backend: "workbook".to_string(),
+                message: "Sheet not found".to_string(),
+            })?;
+        self.ensure_arrow_sheet_capacity(
+            &address.sheet,
+            address.end_row as usize,
+            address.end_col as usize,
+        );
+        Ok(sheet_id)
     }
 
     fn named_definition_to_address(&self, definition: &NamedDefinition) -> Option<RangeAddress> {

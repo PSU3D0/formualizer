@@ -306,11 +306,17 @@ impl DependencyGraph {
         };
 
         if let Some(named_range) = named_range {
-            // Mark all dependent formulas as needing recalculation with #NAME! error
+            let mut affected: FxHashSet<VertexId> = FxHashSet::default();
             for &vertex_id in &named_range.dependents {
-                // Mark as dirty to trigger recalculation (will error during eval)
+                affected.insert(vertex_id);
+            }
+            for (vertex_id, names) in self.vertex_to_names.iter() {
+                if names.iter().any(|vid| *vid == named_range.vertex) {
+                    affected.insert(*vertex_id);
+                }
+            }
+            for vertex_id in affected {
                 self.mark_vertex_dirty(vertex_id);
-                // Remove from vertex_to_names mapping
                 if let Some(names) = self.vertex_to_names.get_mut(&vertex_id) {
                     names.retain(|vid| *vid != named_range.vertex);
                     if names.is_empty() {

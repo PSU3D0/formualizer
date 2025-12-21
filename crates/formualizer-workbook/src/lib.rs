@@ -19,8 +19,9 @@ pub use error::{IoError, with_cell_context};
 pub use resolver::IoResolver;
 pub use session::{EditorSession, IoConfig};
 pub use traits::{
-    AccessGranularity, BackendCaps, CellData, LoadStrategy, MergedRange, NamedRange, SheetData,
-    SpreadsheetIO, SpreadsheetReader, SpreadsheetWriter, TableDefinition,
+    AccessGranularity, BackendCaps, CellData, LoadStrategy, MergedRange, NamedRange,
+    NamedRangeScope, SheetData, SpreadsheetIO, SpreadsheetReader, SpreadsheetWriter,
+    TableDefinition,
 };
 pub use transaction::{WriteOp, WriteTransaction};
 
