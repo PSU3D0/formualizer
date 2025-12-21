@@ -11,7 +11,9 @@ use formualizer_sheetport::{
     BatchInput, BatchOptions, BatchProgress, ConstraintViolation, EvalOptions, InputSnapshot,
     InputUpdate, OutputSnapshot, PortValue, SheetPort, SheetPortError, TableRow, TableValue,
 };
-use formualizer_workbook::{LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig};
+use formualizer_workbook::{
+    LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
+};
 use sheetport_spec::Manifest;
 use workbook_common::build_workbook as build_umya_fixture;
 
@@ -621,7 +623,7 @@ fn umya_loads_manifest_end_to_end() -> Result<(), SheetPortError> {
         LoadStrategy::EagerAll,
         WorkbookConfig::interactive(),
     )
-        .map_err(SheetPortError::from)?;
+    .map_err(SheetPortError::from)?;
     workbook.evaluate_all().map_err(SheetPortError::from)?;
     workbook
         .set_value(

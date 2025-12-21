@@ -2,7 +2,9 @@
 
 use crate::common::build_workbook;
 use formualizer_common::LiteralValue;
-use formualizer_workbook::{LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig};
+use formualizer_workbook::{
+    LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
+};
 
 #[test]
 fn umya_loads_native_table_metadata_and_eval_structured_ref() {
@@ -27,8 +29,12 @@ fn umya_loads_native_table_metadata_and_eval_structured_ref() {
     });
 
     let backend = UmyaAdapter::open_path(&path).expect("open workbook");
-    let mut wb = Workbook::from_reader(backend, LoadStrategy::EagerAll, WorkbookConfig::interactive())
-        .expect("load into engine workbook");
+    let mut wb = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load into engine workbook");
 
     let v = wb.evaluate_cell("Sheet1", 1, 4).unwrap();
     assert_eq!(v, LiteralValue::Number(30.0));

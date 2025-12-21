@@ -53,9 +53,7 @@ fn set(obj: &js_sys::Object, key: &str, value: JsValue) -> Result<(), JsValue> {
         .map_err(|_| JsValue::from_str("object set failed"))
 }
 
-fn eval_plan_to_js(
-    plan: &formualizer_eval::engine::eval::EvalPlan,
-) -> Result<JsValue, JsValue> {
+fn eval_plan_to_js(plan: &formualizer_eval::engine::eval::EvalPlan) -> Result<JsValue, JsValue> {
     let obj = js_sys::Object::new();
     set(
         &obj,

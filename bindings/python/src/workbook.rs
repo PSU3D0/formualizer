@@ -43,8 +43,7 @@ impl PyWorkbookConfig {
         };
         format!(
             "WorkbookConfig(mode={}, enable_changelog={:?})",
-            mode,
-            self.enable_changelog
+            mode, self.enable_changelog
         )
     }
 }

@@ -790,10 +790,7 @@ impl Workbook {
             .map_err(IoError::Engine)
     }
 
-    pub fn get_eval_plan(
-        &self,
-        targets: &[(&str, u32, u32)],
-    ) -> Result<EvalPlan, IoError> {
+    pub fn get_eval_plan(&self, targets: &[(&str, u32, u32)]) -> Result<EvalPlan, IoError> {
         self.engine.get_eval_plan(targets).map_err(IoError::Engine)
     }
 
@@ -844,9 +841,9 @@ impl Workbook {
     ) -> Result<(), IoError> {
         let scope = self.name_scope_from_hint(scope, sheet)?;
         if self.enable_changelog {
-            let result = self.engine.edit_with_logger(&mut self.log, |editor| {
-                editor.delete_name(name, scope)
-            });
+            let result = self
+                .engine
+                .edit_with_logger(&mut self.log, |editor| editor.delete_name(name, scope));
             result.map_err(|e| IoError::from_backend("editor", e))
         } else {
             self.engine

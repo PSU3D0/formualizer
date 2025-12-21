@@ -19,9 +19,7 @@ fn workbook_named_range_crud() {
         .set_formula("Sheet1", 1, 2, "=Input*2")
         .expect("set formula");
 
-    let initial = workbook
-        .evaluate_cell("Sheet1", 1, 2)
-        .expect("evaluate");
+    let initial = workbook.evaluate_cell("Sheet1", 1, 2).expect("evaluate");
     assert!(
         matches!(initial, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9),
         "expected 20, got {initial:?}"
