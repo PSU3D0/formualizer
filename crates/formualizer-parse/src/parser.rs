@@ -138,13 +138,79 @@ pub enum ExternalRefKind {
     Cell {
         row: u32,
         col: u32,
+        row_abs: bool,
+        col_abs: bool,
     },
     Range {
         start_row: Option<u32>,
         start_col: Option<u32>,
         end_row: Option<u32>,
         end_col: Option<u32>,
+        start_row_abs: bool,
+        start_col_abs: bool,
+        end_row_abs: bool,
+        end_col_abs: bool,
     },
+}
+
+impl ExternalRefKind {
+    pub fn cell(row: u32, col: u32) -> Self {
+        Self::Cell {
+            row,
+            col,
+            row_abs: false,
+            col_abs: false,
+        }
+    }
+
+    pub fn cell_with_abs(row: u32, col: u32, row_abs: bool, col_abs: bool) -> Self {
+        Self::Cell {
+            row,
+            col,
+            row_abs,
+            col_abs,
+        }
+    }
+
+    pub fn range(
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+    ) -> Self {
+        Self::Range {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs: false,
+            start_col_abs: false,
+            end_row_abs: false,
+            end_col_abs: false,
+        }
+    }
+
+    pub fn range_with_abs(
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+        start_row_abs: bool,
+        start_col_abs: bool,
+        end_row_abs: bool,
+        end_col_abs: bool,
+    ) -> Self {
+        Self::Range {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -162,6 +228,8 @@ pub enum ReferenceType {
         sheet: Option<String>,
         row: u32,
         col: u32,
+        row_abs: bool,
+        col_abs: bool,
     },
     Range {
         sheet: Option<String>,
@@ -169,6 +237,10 @@ pub enum ReferenceType {
         start_col: Option<u32>,
         end_row: Option<u32>,
         end_col: Option<u32>,
+        start_row_abs: bool,
+        start_col_abs: bool,
+        end_row_abs: bool,
+        end_col_abs: bool,
     },
     External(ExternalReference),
     Table(TableReference),
@@ -260,6 +332,80 @@ struct OpenFormulaRefPart {
 }
 
 impl ReferenceType {
+    /// Build a cell reference with relative anchors.
+    pub fn cell(sheet: Option<String>, row: u32, col: u32) -> Self {
+        Self::Cell {
+            sheet,
+            row,
+            col,
+            row_abs: false,
+            col_abs: false,
+        }
+    }
+
+    /// Build a cell reference with explicit anchors.
+    pub fn cell_with_abs(
+        sheet: Option<String>,
+        row: u32,
+        col: u32,
+        row_abs: bool,
+        col_abs: bool,
+    ) -> Self {
+        Self::Cell {
+            sheet,
+            row,
+            col,
+            row_abs,
+            col_abs,
+        }
+    }
+
+    /// Build a range reference with relative anchors.
+    pub fn range(
+        sheet: Option<String>,
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+    ) -> Self {
+        Self::Range {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs: false,
+            start_col_abs: false,
+            end_row_abs: false,
+            end_col_abs: false,
+        }
+    }
+
+    /// Build a range reference with explicit anchors.
+    pub fn range_with_abs(
+        sheet: Option<String>,
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+        start_row_abs: bool,
+        start_col_abs: bool,
+        end_row_abs: bool,
+        end_col_abs: bool,
+    ) -> Self {
+        Self::Range {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+        }
+    }
+
     /// Create a reference from a string. Can be A1, A:A, A1:B2, Table1[Column], etc.
     pub fn from_string(reference: &str) -> Result<Self, ParsingError> {
         Self::parse_excel_reference(reference)
@@ -297,21 +443,23 @@ impl ReferenceType {
     }
 
     /// Lossy conversion from parsed ReferenceType into SheetRef.
-    /// Absolute anchors are not recoverable from ReferenceType and default to relative.
+    /// External, table, and named ranges are discarded; anchors are preserved.
     pub fn to_sheet_ref_lossy(&self) -> Option<SheetRef<'_>> {
-        fn bound_from_1based(v: Option<u32>) -> Option<AxisBound> {
-            v.and_then(|x| x.checked_sub(1).map(|i| AxisBound::new(i, false)))
-        }
-
         match self {
-            ReferenceType::Cell { sheet, row, col } => {
+            ReferenceType::Cell {
+                sheet,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => {
                 let row0 = row.checked_sub(1)?;
                 let col0 = col.checked_sub(1)?;
                 let sheet_loc = match sheet.as_deref() {
                     Some(name) => SheetLocator::from_name(name),
                     None => SheetLocator::Current,
                 };
-                let coord = RelativeCoord::new(row0, col0, false, false);
+                let coord = RelativeCoord::new(row0, col0, *row_abs, *col_abs);
                 Some(SheetRef::Cell(SheetCellRef::new(sheet_loc, coord)))
             }
             ReferenceType::Range {
@@ -320,24 +468,32 @@ impl ReferenceType {
                 start_col,
                 end_row,
                 end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
             } => {
                 let sheet_loc = match sheet.as_deref() {
                     Some(name) => SheetLocator::from_name(name),
                     None => SheetLocator::Current,
                 };
-                let sr = bound_from_1based(*start_row);
+                let sr = start_row
+                    .and_then(|v| v.checked_sub(1).map(|i| AxisBound::new(i, *start_row_abs)));
                 if start_row.is_some() && sr.is_none() {
                     return None;
                 }
-                let sc = bound_from_1based(*start_col);
+                let sc = start_col
+                    .and_then(|v| v.checked_sub(1).map(|i| AxisBound::new(i, *start_col_abs)));
                 if start_col.is_some() && sc.is_none() {
                     return None;
                 }
-                let er = bound_from_1based(*end_row);
+                let er =
+                    end_row.and_then(|v| v.checked_sub(1).map(|i| AxisBound::new(i, *end_row_abs)));
                 if end_row.is_some() && er.is_none() {
                     return None;
                 }
-                let ec = bound_from_1based(*end_col);
+                let ec =
+                    end_col.and_then(|v| v.checked_sub(1).map(|i| AxisBound::new(i, *end_col_abs)));
                 if end_col.is_some() && ec.is_none() {
                     return None;
                 }
@@ -372,6 +528,11 @@ impl ReferenceType {
             let (start_col, start_row) = Self::parse_range_part_with_abs(start)?;
             let (end_col, end_row) = Self::parse_range_part_with_abs(end)?;
 
+            let start_col = Self::axis_bound_from_1based(start_col)?;
+            let start_row = Self::axis_bound_from_1based(start_row)?;
+            let end_col = Self::axis_bound_from_1based(end_col)?;
+            let end_row = Self::axis_bound_from_1based(end_row)?;
+
             let range =
                 SheetRangeRef::from_parts(sheet_loc, start_row, start_col, end_row, end_col)
                     .map_err(|err| ParsingError::InvalidReference(err.to_string()))?;
@@ -388,13 +549,22 @@ impl ReferenceType {
         Self::parse_excel_sheet_ref(reference)
     }
 
+    fn axis_bound_from_1based(
+        bound: Option<(u32, bool)>,
+    ) -> Result<Option<AxisBound>, ParsingError> {
+        match bound {
+            Some((index, abs)) => AxisBound::from_excel_1based(index, abs)
+                .map(Some)
+                .map_err(|err| ParsingError::InvalidReference(err.to_string())),
+            None => Ok(None),
+        }
+    }
+
     fn parse_range_part_with_abs(
         part: &str,
-    ) -> Result<(Option<AxisBound>, Option<AxisBound>), ParsingError> {
+    ) -> Result<(Option<(u32, bool)>, Option<(u32, bool)>), ParsingError> {
         if let Ok((row, col, row_abs, col_abs)) = parse_a1_1based(part) {
-            let row_b = AxisBound::new(row - 1, row_abs);
-            let col_b = AxisBound::new(col - 1, col_abs);
-            return Ok((Some(col_b), Some(row_b)));
+            return Ok((Some((col, col_abs)), Some((row, row_abs))));
         }
 
         let bytes = part.as_bytes();
@@ -419,8 +589,7 @@ impl ReferenceType {
             let col1 = Self::column_to_number(col_str)?;
 
             if i == len {
-                let col_b = AxisBound::new(col1 - 1, col_abs);
-                return Ok((Some(col_b), None));
+                return Ok((Some((col1, col_abs)), None));
             }
 
             if i < len && bytes[i] == b'$' {
@@ -455,9 +624,7 @@ impl ReferenceType {
                 )));
             }
 
-            let col_b = AxisBound::new(col1 - 1, col_abs);
-            let row_b = AxisBound::new(row1 - 1, row_abs);
-            return Ok((Some(col_b), Some(row_b)));
+            return Ok((Some((col1, col_abs)), Some((row1, row_abs))));
         }
 
         i = 0;
@@ -487,7 +654,7 @@ impl ReferenceType {
             )));
         }
 
-        Ok((None, Some(AxisBound::new(row1 - 1, row_abs))))
+        Ok((None, Some((row1, row_abs))))
     }
 
     fn parse_excel_reference(reference: &str) -> Result<Self, ParsingError> {
@@ -527,8 +694,17 @@ impl ReferenceType {
             let end = parts.next().ok_or_else(|| {
                 ParsingError::InvalidReference(format!("Invalid range: {ref_part}"))
             })?;
-            let (start_col, start_row) = Self::parse_range_part(start)?;
-            let (end_col, end_row) = Self::parse_range_part(end)?;
+            let (start_col, start_row) = Self::parse_range_part_with_abs(start)?;
+            let (end_col, end_row) = Self::parse_range_part_with_abs(end)?;
+
+            let split = |bound: Option<(u32, bool)>| match bound {
+                Some((index, abs)) => (Some(index), abs),
+                None => (None, false),
+            };
+            let (start_col, start_col_abs) = split(start_col);
+            let (start_row, start_row_abs) = split(start_row);
+            let (end_col, end_col_abs) = split(end_col);
+            let (end_row, end_row_abs) = split(end_row);
 
             if let Some((book_token, sheet_name)) = external_sheet {
                 Ok(ReferenceType::External(ExternalReference {
@@ -540,6 +716,10 @@ impl ReferenceType {
                         start_col,
                         end_row,
                         end_col,
+                        start_row_abs,
+                        start_col_abs,
+                        end_row_abs,
+                        end_col_abs,
                     },
                 }))
             } else {
@@ -549,21 +729,36 @@ impl ReferenceType {
                     start_col,
                     end_row,
                     end_col,
+                    start_row_abs,
+                    start_col_abs,
+                    end_row_abs,
+                    end_col_abs,
                 })
             }
         } else {
             // Try to parse as a single cell reference
             match Self::parse_cell_reference(&ref_part) {
-                Ok((col, row)) => {
+                Ok((col, row, col_abs, row_abs)) => {
                     if let Some((book_token, sheet_name)) = external_sheet {
                         Ok(ReferenceType::External(ExternalReference {
                             raw: reference.to_string(),
                             book: ExternalBookRef::Token(book_token.to_string()),
                             sheet: sheet_name.to_string(),
-                            kind: ExternalRefKind::Cell { row, col },
+                            kind: ExternalRefKind::Cell {
+                                row,
+                                col,
+                                row_abs,
+                                col_abs,
+                            },
                         }))
                     } else {
-                        Ok(ReferenceType::Cell { sheet, row, col })
+                        Ok(ReferenceType::Cell {
+                            sheet,
+                            row,
+                            col,
+                            row_abs,
+                            col_abs,
+                        })
                     }
                 }
                 Err(_) => {
@@ -574,88 +769,10 @@ impl ReferenceType {
         }
     }
 
-    /// Parse a part of a range reference (either start or end).
-    /// Returns (column, row) where either can be None for infinite ranges.
-    fn parse_range_part(part: &str) -> Result<(Option<u32>, Option<u32>), ParsingError> {
-        // Try to parse as a normal cell reference (A1, B2, etc.)
-        if let Ok((col, row)) = Self::parse_cell_reference(part) {
-            return Ok((Some(col), Some(row)));
-        }
-
-        // Try to parse as column-only or row-only
-        let bytes = part.as_bytes();
-        let mut i = 0;
-
-        // Skip optional $
-        if i < bytes.len() && bytes[i] == b'$' {
-            i += 1;
-        }
-
-        // Check if we have letters (column)
-        let col_start = i;
-        while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
-            i += 1;
-        }
-
-        if i > col_start {
-            // We have a column
-            let col_str = &part[col_start..i];
-            let col = Self::column_to_number(col_str)?;
-
-            // Skip optional $ before row
-            if i < bytes.len() && bytes[i] == b'$' {
-                i += 1;
-            }
-
-            // Check if we have digits (row)
-            let row_start = i;
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                i += 1;
-            }
-
-            if i > row_start && i == bytes.len() {
-                // We have both column and row (shouldn't happen as parse_cell_reference should have caught it)
-                let row_str = &part[row_start..i];
-                let row = row_str.parse::<u32>().map_err(|_| {
-                    ParsingError::InvalidReference(format!("Invalid row: {row_str}"))
-                })?;
-                return Ok((Some(col), Some(row)));
-            } else if i == col_start + col_str.len()
-                || (i == col_start + col_str.len() + 1 && bytes[col_start + col_str.len()] == b'$')
-            {
-                // Just a column
-                return Ok((Some(col), None));
-            }
-        } else {
-            // No column, check for row-only reference
-            i = 0;
-            if i < bytes.len() && bytes[i] == b'$' {
-                i += 1;
-            }
-
-            let row_start = i;
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                i += 1;
-            }
-
-            if i > row_start && i == bytes.len() {
-                let row_str = &part[row_start..i];
-                let row = row_str.parse::<u32>().map_err(|_| {
-                    ParsingError::InvalidReference(format!("Invalid row: {row_str}"))
-                })?;
-                return Ok((None, Some(row)));
-            }
-        }
-
-        Err(ParsingError::InvalidReference(format!(
-            "Invalid range part: {part}"
-        )))
-    }
-
     /// Parse a cell reference like "A1" into (column, row) using byte-based parsing.
-    fn parse_cell_reference(reference: &str) -> Result<(u32, u32), ParsingError> {
+    fn parse_cell_reference(reference: &str) -> Result<(u32, u32, bool, bool), ParsingError> {
         parse_a1_1based(reference)
-            .map(|(row, col, _, _)| (col, row))
+            .map(|(row, col, row_abs, col_abs)| (col, row, col_abs, row_abs))
             .map_err(|_| {
                 ParsingError::InvalidReference(format!("Invalid cell reference: {reference}"))
             })
@@ -679,6 +796,22 @@ impl ReferenceType {
 
         col_letters_from_1based(num).unwrap_or_default()
     }
+
+    fn format_col(col: u32, abs: bool) -> String {
+        if abs {
+            format!("${}", Self::number_to_column(col))
+        } else {
+            Self::number_to_column(col)
+        }
+    }
+
+    fn format_row(row: u32, abs: bool) -> String {
+        if abs {
+            format!("${row}")
+        } else {
+            row.to_string()
+        }
+    }
 }
 
 impl Display for ReferenceType {
@@ -687,9 +820,15 @@ impl Display for ReferenceType {
             f,
             "{}",
             match self {
-                ReferenceType::Cell { sheet, row, col } => {
-                    let col_str = Self::number_to_column(*col);
-                    let row_str = row.to_string();
+                ReferenceType::Cell {
+                    sheet,
+                    row,
+                    col,
+                    row_abs,
+                    col_abs,
+                } => {
+                    let col_str = Self::format_col(*col, *col_abs);
+                    let row_str = Self::format_row(*row, *row_abs);
 
                     if let Some(sheet_name) = sheet {
                         if sheet_name_needs_quoting(sheet_name) {
@@ -709,24 +848,32 @@ impl Display for ReferenceType {
                     start_col,
                     end_row,
                     end_col,
+                    start_row_abs,
+                    start_col_abs,
+                    end_row_abs,
+                    end_col_abs,
                 } => {
                     // Format start reference
                     let start_ref = match (start_col, start_row) {
-                        (Some(col), Some(row)) => {
-                            format!("{}{}", Self::number_to_column(*col), row)
-                        }
-                        (Some(col), None) => Self::number_to_column(*col),
-                        (None, Some(row)) => row.to_string(),
+                        (Some(col), Some(row)) => format!(
+                            "{}{}",
+                            Self::format_col(*col, *start_col_abs),
+                            Self::format_row(*row, *start_row_abs)
+                        ),
+                        (Some(col), None) => Self::format_col(*col, *start_col_abs),
+                        (None, Some(row)) => Self::format_row(*row, *start_row_abs),
                         (None, None) => "".to_string(), // Should not happen in normal usage
                     };
 
                     // Format end reference
                     let end_ref = match (end_col, end_row) {
-                        (Some(col), Some(row)) => {
-                            format!("{}{}", Self::number_to_column(*col), row)
-                        }
-                        (Some(col), None) => Self::number_to_column(*col),
-                        (None, Some(row)) => row.to_string(),
+                        (Some(col), Some(row)) => format!(
+                            "{}{}",
+                            Self::format_col(*col, *end_col_abs),
+                            Self::format_row(*row, *end_row_abs)
+                        ),
+                        (Some(col), None) => Self::format_col(*col, *end_col_abs),
+                        (None, Some(row)) => Self::format_row(*row, *end_row_abs),
                         (None, None) => "".to_string(), // Should not happen in normal usage
                     };
 
@@ -1136,16 +1283,24 @@ impl ReferenceType {
     /// Get the Excel-style string representation of this reference
     pub fn to_excel_string(&self) -> String {
         match self {
-            ReferenceType::Cell { sheet, row, col } => {
+            ReferenceType::Cell {
+                sheet,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => {
+                let col_str = Self::format_col(*col, *col_abs);
+                let row_str = Self::format_row(*row, *row_abs);
                 if let Some(s) = sheet {
                     if sheet_name_needs_quoting(s) {
                         let escaped_name = s.replace('\'', "''");
-                        format!("'{}'!{}{}", escaped_name, Self::number_to_column(*col), row)
+                        format!("'{}'!{}{}", escaped_name, col_str, row_str)
                     } else {
-                        format!("{}!{}{}", s, Self::number_to_column(*col), row)
+                        format!("{}!{}{}", s, col_str, row_str)
                     }
                 } else {
-                    format!("{}{}", Self::number_to_column(*col), row)
+                    format!("{}{}", col_str, row_str)
                 }
             }
             ReferenceType::Range {
@@ -1154,20 +1309,32 @@ impl ReferenceType {
                 start_col,
                 end_row,
                 end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
             } => {
                 // Format start reference
                 let start_ref = match (start_col, start_row) {
-                    (Some(col), Some(row)) => format!("{}{}", Self::number_to_column(*col), row),
-                    (Some(col), None) => Self::number_to_column(*col),
-                    (None, Some(row)) => row.to_string(),
+                    (Some(col), Some(row)) => format!(
+                        "{}{}",
+                        Self::format_col(*col, *start_col_abs),
+                        Self::format_row(*row, *start_row_abs)
+                    ),
+                    (Some(col), None) => Self::format_col(*col, *start_col_abs),
+                    (None, Some(row)) => Self::format_row(*row, *start_row_abs),
                     (None, None) => "".to_string(), // Should not happen in normal usage
                 };
 
                 // Format end reference
                 let end_ref = match (end_col, end_row) {
-                    (Some(col), Some(row)) => format!("{}{}", Self::number_to_column(*col), row),
-                    (Some(col), None) => Self::number_to_column(*col),
-                    (None, Some(row)) => row.to_string(),
+                    (Some(col), Some(row)) => format!(
+                        "{}{}",
+                        Self::format_col(*col, *end_col_abs),
+                        Self::format_row(*row, *end_row_abs)
+                    ),
+                    (Some(col), None) => Self::format_col(*col, *end_col_abs),
+                    (None, Some(row)) => Self::format_row(*row, *end_row_abs),
                     (None, None) => "".to_string(), // Should not happen in normal usage
                 };
 
@@ -1413,10 +1580,18 @@ impl ASTNode {
     pub fn collect_references(&self, policy: &CollectPolicy) -> SmallVec<[ReferenceType; 4]> {
         let mut out: SmallVec<[ReferenceType; 4]> = SmallVec::new();
         self.visit_refs(|rv| match rv {
-            RefView::Cell { sheet, row, col } => out.push(ReferenceType::Cell {
+            RefView::Cell {
+                sheet,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => out.push(ReferenceType::Cell {
                 sheet: sheet.map(|s| s.to_string()),
                 row,
                 col,
+                row_abs,
+                col_abs,
             }),
             RefView::Range {
                 sheet,
@@ -1424,6 +1599,10 @@ impl ASTNode {
                 start_col,
                 end_row,
                 end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
             } => {
                 // Optionally expand very small finite ranges into individual cells
                 if policy.expand_small_ranges
@@ -1434,12 +1613,16 @@ impl ASTNode {
                     let cols = ec.saturating_sub(sc) + 1;
                     let area = rows.saturating_mul(cols);
                     if area as usize <= policy.range_expansion_limit {
+                        let row_abs = start_row_abs && end_row_abs;
+                        let col_abs = start_col_abs && end_col_abs;
                         for r in sr..=er {
                             for c in sc..=ec {
                                 out.push(ReferenceType::Cell {
                                     sheet: sheet.map(|s| s.to_string()),
                                     row: r,
                                     col: c,
+                                    row_abs,
+                                    col_abs,
                                 });
                             }
                         }
@@ -1452,6 +1635,10 @@ impl ASTNode {
                     start_col,
                     end_row,
                     end_col,
+                    start_row_abs,
+                    start_col_abs,
+                    end_row_abs,
+                    end_col_abs,
                 });
             }
             RefView::External {
@@ -1486,6 +1673,8 @@ pub enum RefView<'a> {
         sheet: Option<&'a str>,
         row: u32,
         col: u32,
+        row_abs: bool,
+        col_abs: bool,
     },
     Range {
         sheet: Option<&'a str>,
@@ -1493,6 +1682,10 @@ pub enum RefView<'a> {
         start_col: Option<u32>,
         end_row: Option<u32>,
         end_col: Option<u32>,
+        start_row_abs: bool,
+        start_col_abs: bool,
+        end_row_abs: bool,
+        end_col_abs: bool,
     },
     External {
         raw: &'a str,
@@ -1512,10 +1705,18 @@ pub enum RefView<'a> {
 impl<'a> From<&'a ReferenceType> for RefView<'a> {
     fn from(r: &'a ReferenceType) -> Self {
         match r {
-            ReferenceType::Cell { sheet, row, col } => RefView::Cell {
+            ReferenceType::Cell {
+                sheet,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => RefView::Cell {
                 sheet: sheet.as_deref(),
                 row: *row,
                 col: *col,
+                row_abs: *row_abs,
+                col_abs: *col_abs,
             },
             ReferenceType::Range {
                 sheet,
@@ -1523,12 +1724,20 @@ impl<'a> From<&'a ReferenceType> for RefView<'a> {
                 start_col,
                 end_row,
                 end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
             } => RefView::Range {
                 sheet: sheet.as_deref(),
                 start_row: *start_row,
                 start_col: *start_col,
                 end_row: *end_row,
                 end_col: *end_col,
+                start_row_abs: *start_row_abs,
+                start_col_abs: *start_col_abs,
+                end_row_abs: *end_row_abs,
+                end_col_abs: *end_col_abs,
             },
             ReferenceType::External(ext) => RefView::External {
                 raw: ext.raw.as_str(),
@@ -1620,13 +1829,20 @@ pub struct Parser {
     dialect: FormulaDialect,
 }
 
-impl<T> From<T> for Parser
-where
-    T: AsRef<str>,
-{
-    fn from(formula: T) -> Self {
-        let tokens = Tokenizer::new(formula.as_ref()).unwrap().items;
-        Self::new(tokens, false)
+impl TryFrom<&str> for Parser {
+    type Error = TokenizerError;
+
+    fn try_from(formula: &str) -> Result<Self, Self::Error> {
+        let tokens = Tokenizer::new(formula)?.items;
+        Ok(Self::new(tokens, false))
+    }
+}
+
+impl TryFrom<String> for Parser {
+    type Error = TokenizerError;
+
+    fn try_from(formula: String) -> Result<Self, Self::Error> {
+        Self::try_from(formula.as_str())
     }
 }
 
@@ -1650,6 +1866,11 @@ impl Parser {
             volatility_classifier: None,
             dialect,
         }
+    }
+
+    pub fn try_from_formula(formula: &str) -> Result<Self, TokenizerError> {
+        let tokens = Tokenizer::new(formula)?.items;
+        Ok(Self::new(tokens, false))
     }
 
     /// Provide a function-volatility classifier for this parser.

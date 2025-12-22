@@ -29,6 +29,15 @@ mod tests {
         parser.parse()
     }
 
+    #[test]
+    fn parser_try_from_formula_is_fallible() {
+        let err = match Parser::try_from_formula("=\"unterminated") {
+            Ok(_) => panic!("expected tokenizer error"),
+            Err(err) => err,
+        };
+        assert!(err.message.contains("Reached end"));
+    }
+
     // Helper function to check if a formula contains a range reference with expected properties
     fn check_range_in_formula(formula: &str, range_check: impl Fn(&ReferenceType) -> bool) -> bool {
         let ast = parse_formula(formula).unwrap();
@@ -68,7 +77,9 @@ mod tests {
 
         // Expect first is A1 cell
         match refs.first().unwrap() {
-            RefView::Cell { sheet, row, col } => {
+            RefView::Cell {
+                sheet, row, col, ..
+            } => {
                 assert!(sheet.is_none());
                 assert_eq!((*row, *col), (1, 1));
             }
@@ -163,14 +174,7 @@ mod tests {
 
         match &args[0].node_type {
             ASTNodeType::Reference { reference, .. } => {
-                assert_eq!(
-                    reference,
-                    &ReferenceType::Cell {
-                        sheet: None,
-                        row: 1,
-                        col: 1,
-                    }
-                );
+                assert_eq!(reference, &ReferenceType::cell(None, 1, 1));
             }
             other => panic!("expected Reference argument, got {other:?}"),
         }
@@ -196,13 +200,13 @@ mod tests {
             ASTNodeType::Reference { reference, .. } => {
                 assert_eq!(
                     reference,
-                    &ReferenceType::Range {
-                        sheet: Some("Sheet One".to_string()),
-                        start_row: Some(1),
-                        start_col: Some(1),
-                        end_row: Some(2),
-                        end_col: Some(2),
-                    }
+                    &ReferenceType::range(
+                        Some("Sheet One".to_string()),
+                        Some(1),
+                        Some(1),
+                        Some(2),
+                        Some(2),
+                    )
                 );
             }
             other => panic!("expected range reference, got {other:?}"),
@@ -217,27 +221,13 @@ mod tests {
             assert_eq!(op, "+");
 
             if let ASTNodeType::Reference { reference, .. } = left.node_type {
-                assert_eq!(
-                    reference,
-                    ReferenceType::Cell {
-                        sheet: None,
-                        row: 1,
-                        col: 1
-                    }
-                );
+                assert_eq!(reference, ReferenceType::cell(None, 1, 1));
             } else {
                 panic!("Expected Reference node for left operand");
             }
 
             if let ASTNodeType::Reference { reference, .. } = right.node_type {
-                assert_eq!(
-                    reference,
-                    ReferenceType::Cell {
-                        sheet: None,
-                        row: 2,
-                        col: 2
-                    }
-                );
+                assert_eq!(reference, ReferenceType::cell(None, 2, 2));
             } else {
                 panic!("Expected Reference node for right operand");
             }
@@ -264,13 +254,7 @@ mod tests {
                 assert_eq!(original, "A1:B2");
                 assert_eq!(
                     reference,
-                    &ReferenceType::Range {
-                        sheet: None,
-                        start_row: Some(1),
-                        start_col: Some(1),
-                        end_row: Some(2),
-                        end_col: Some(2)
-                    }
+                    &ReferenceType::range(None, Some(1), Some(1), Some(2), Some(2))
                 );
             } else {
                 panic!("Expected Reference node for function argument");
@@ -293,14 +277,7 @@ mod tests {
             assert_eq!(op1, "+");
 
             if let ASTNodeType::Reference { reference, .. } = left1.node_type {
-                assert_eq!(
-                    reference,
-                    ReferenceType::Cell {
-                        sheet: None,
-                        row: 1,
-                        col: 1
-                    }
-                );
+                assert_eq!(reference, ReferenceType::cell(None, 1, 1));
             } else {
                 panic!("Expected Reference node for left operand of +");
             }
@@ -314,27 +291,13 @@ mod tests {
                 assert_eq!(op2, "*");
 
                 if let ASTNodeType::Reference { reference, .. } = left2.node_type {
-                    assert_eq!(
-                        reference,
-                        ReferenceType::Cell {
-                            sheet: None,
-                            row: 2,
-                            col: 2
-                        }
-                    );
+                    assert_eq!(reference, ReferenceType::cell(None, 2, 2));
                 } else {
                     panic!("Expected Reference node for left operand of *");
                 }
 
                 if let ASTNodeType::Reference { reference, .. } = right2.node_type {
-                    assert_eq!(
-                        reference,
-                        ReferenceType::Cell {
-                            sheet: None,
-                            row: 3,
-                            col: 3
-                        }
-                    );
+                    assert_eq!(reference, ReferenceType::cell(None, 3, 3));
                 } else {
                     panic!("Expected Reference node for right operand of *");
                 }
@@ -360,14 +323,7 @@ mod tests {
             }
 
             if let ASTNodeType::Reference { reference, .. } = right.node_type {
-                assert_eq!(
-                    reference,
-                    ReferenceType::Cell {
-                        sheet: None,
-                        row: 3,
-                        col: 3
-                    }
-                );
+                assert_eq!(reference, ReferenceType::cell(None, 3, 3));
             } else {
                 panic!("Expected Reference node for right operand");
             }
@@ -395,27 +351,13 @@ mod tests {
 
             // Check second and third arguments (true/false results)
             if let ASTNodeType::Reference { reference, .. } = &args[1].node_type {
-                assert_eq!(
-                    *reference,
-                    ReferenceType::Cell {
-                        sheet: None,
-                        row: 1,
-                        col: 2
-                    }
-                );
+                assert_eq!(reference, &ReferenceType::cell(None, 1, 2));
             } else {
                 panic!("Expected Reference node for second argument");
             }
 
             if let ASTNodeType::Reference { reference, .. } = &args[2].node_type {
-                assert_eq!(
-                    *reference,
-                    ReferenceType::Cell {
-                        sheet: None,
-                        row: 1,
-                        col: 3
-                    }
-                );
+                assert_eq!(reference, &ReferenceType::cell(None, 1, 3));
             } else {
                 panic!("Expected Reference node for third argument");
             }
@@ -570,14 +512,7 @@ mod tests {
             assert_eq!(op, "-");
 
             if let ASTNodeType::Reference { reference, .. } = expr.node_type {
-                assert_eq!(
-                    reference,
-                    ReferenceType::Cell {
-                        sheet: None,
-                        row: 1,
-                        col: 1
-                    }
-                );
+                assert_eq!(reference, ReferenceType::cell(None, 1, 1));
             } else {
                 panic!("Expected Reference node for operand");
             }
@@ -800,27 +735,13 @@ mod tests {
             assert_eq!(op, "+");
 
             if let ASTNodeType::Reference { reference, .. } = left.node_type {
-                assert_eq!(
-                    reference,
-                    ReferenceType::Cell {
-                        sheet: None,
-                        row: 1,
-                        col: 1
-                    }
-                );
+                assert_eq!(reference, ReferenceType::cell(None, 1, 1));
             } else {
                 panic!("Expected Reference node for left operand");
             }
 
             if let ASTNodeType::Reference { reference, .. } = right.node_type {
-                assert_eq!(
-                    reference,
-                    ReferenceType::Cell {
-                        sheet: None,
-                        row: 2,
-                        col: 2
-                    }
-                );
+                assert_eq!(reference, ReferenceType::cell(None, 2, 2));
             } else {
                 panic!("Expected Reference node for right operand");
             }
@@ -1038,13 +959,13 @@ mod normalise_tests {
     fn test_normalise_cell_references() {
         // Test normalizing cell references
         assert_eq!(normalise_reference("a1").unwrap(), "A1");
-        assert_eq!(normalise_reference("$a$1").unwrap(), "A1");
-        assert_eq!(normalise_reference("$A$1").unwrap(), "A1");
-        assert_eq!(normalise_reference("Sheet1!$b$2").unwrap(), "Sheet1!B2");
-        assert_eq!(normalise_reference("'Sheet1'!$b$2").unwrap(), "Sheet1!B2");
+        assert_eq!(normalise_reference("$a$1").unwrap(), "$A$1");
+        assert_eq!(normalise_reference("$A$1").unwrap(), "$A$1");
+        assert_eq!(normalise_reference("Sheet1!$b$2").unwrap(), "Sheet1!$B$2");
+        assert_eq!(normalise_reference("'Sheet1'!$b$2").unwrap(), "Sheet1!$B$2");
         assert_eq!(
             normalise_reference("'my sheet'!$b$2").unwrap(),
-            "'my sheet'!B2"
+            "'my sheet'!$B$2"
         );
     }
 
@@ -1052,19 +973,17 @@ mod normalise_tests {
     fn test_normalise_range_references() {
         // Test normalizing range references
         assert_eq!(normalise_reference("a1:b2").unwrap(), "A1:B2");
-        assert_eq!(normalise_reference("$a$1:$b$2").unwrap(), "A1:B2");
+        assert_eq!(normalise_reference("$a$1:$b$2").unwrap(), "$A$1:$B$2");
         assert_eq!(
             normalise_reference("Sheet1!$a$1:$b$2").unwrap(),
-            "Sheet1!A1:B2"
+            "Sheet1!$A$1:$B$2"
         );
         assert_eq!(
             normalise_reference("'my sheet'!$a$1:$b$2").unwrap(),
-            "'my sheet'!A1:B2"
+            "'my sheet'!$A$1:$B$2"
         );
-        assert_eq!(normalise_reference("a:a").unwrap(), "A:A");
-        assert_eq!(normalise_reference("$a:$a").unwrap(), "A:A");
-        assert_eq!(normalise_reference("1:1").unwrap(), "1:1");
-        assert_eq!(normalise_reference("$1:$1").unwrap(), "1:1");
+        assert_eq!(normalise_reference("$a:$a").unwrap(), "$A:$A");
+        assert_eq!(normalise_reference("$1:$1").unwrap(), "$1:$1");
     }
 
     #[test]
@@ -1105,7 +1024,7 @@ mod normalise_tests {
         assert_eq!(normalise_reference("a1").unwrap(), "A1");
         assert_eq!(
             normalise_reference("'my sheet'!$b$2").unwrap(),
-            "'my sheet'!B2"
+            "'my sheet'!$B$2"
         );
         assert_eq!(normalise_reference("A:A").unwrap(), "A:A");
         assert_eq!(
@@ -1126,25 +1045,14 @@ mod reference_tests {
         // Simple cell reference
         let reference = "A1";
         let ref_type = ReferenceType::from_string(reference).unwrap();
-        assert_eq!(
-            ref_type,
-            ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 1
-            }
-        );
+        assert_eq!(ref_type, ReferenceType::cell(None, 1, 1));
 
         // Cell reference with sheet
         let reference = "Sheet1!B2";
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Cell {
-                sheet: Some("Sheet1".to_string()),
-                row: 2,
-                col: 2
-            }
+            ReferenceType::cell(Some("Sheet1".to_string()), 2, 2)
         );
 
         // Cell reference with quoted sheet name
@@ -1152,11 +1060,7 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Cell {
-                sheet: Some("Sheet 1".to_string()),
-                row: 3,
-                col: 3
-            }
+            ReferenceType::cell(Some("Sheet 1".to_string()), 3, 3)
         );
 
         // Cell reference with absolute reference
@@ -1164,11 +1068,7 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Cell {
-                sheet: None,
-                row: 4,
-                col: 4
-            }
+            ReferenceType::cell_with_abs(None, 4, 4, true, true)
         );
     }
 
@@ -1179,13 +1079,7 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: None,
-                start_row: Some(1),
-                start_col: Some(1),
-                end_row: Some(2),
-                end_col: Some(2)
-            }
+            ReferenceType::range(None, Some(1), Some(1), Some(2), Some(2))
         );
 
         // Range with sheet
@@ -1193,13 +1087,13 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: Some("Sheet1".to_string()),
-                start_row: Some(3),
-                start_col: Some(3),
-                end_row: Some(4),
-                end_col: Some(4)
-            }
+            ReferenceType::range(
+                Some("Sheet1".to_string()),
+                Some(3),
+                Some(3),
+                Some(4),
+                Some(4),
+            )
         );
 
         // Range with quoted sheet name
@@ -1207,13 +1101,13 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: Some("Sheet 1".to_string()),
-                start_row: Some(5),
-                start_col: Some(5),
-                end_row: Some(6),
-                end_col: Some(6)
-            }
+            ReferenceType::range(
+                Some("Sheet 1".to_string()),
+                Some(5),
+                Some(5),
+                Some(6),
+                Some(6),
+            )
         );
 
         // Range with absolute references
@@ -1221,13 +1115,17 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: None,
-                start_row: Some(7),
-                start_col: Some(7),
-                end_row: Some(8),
-                end_col: Some(8)
-            }
+            ReferenceType::range_with_abs(
+                None,
+                Some(7),
+                Some(7),
+                Some(8),
+                Some(8),
+                true,
+                true,
+                true,
+                true
+            )
         );
     }
 
@@ -1238,13 +1136,7 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: None,
-                start_row: None,
-                start_col: Some(1),
-                end_row: None,
-                end_col: Some(1)
-            }
+            ReferenceType::range(None, None, Some(1), None, Some(1))
         );
 
         // Infinite row range (1:1)
@@ -1252,13 +1144,23 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: None,
-                start_row: Some(1),
-                start_col: None,
-                end_row: Some(1),
-                end_col: None
-            }
+            ReferenceType::range(None, Some(1), None, Some(1), None)
+        );
+
+        // Row range with sheet
+        let reference = "Sheet1!3:4";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(Some("Sheet1".to_string()), Some(3), None, Some(4), None)
+        );
+
+        // Column range with sheet
+        let reference = "Sheet1!C:D";
+        let ref_type = ReferenceType::from_string(reference).unwrap();
+        assert_eq!(
+            ref_type,
+            ReferenceType::range(Some("Sheet1".to_string()), None, Some(3), None, Some(4))
         );
 
         // Infinite column range with sheet (Sheet1!A:A)
@@ -1266,13 +1168,7 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: Some("Sheet1".to_string()),
-                start_row: None,
-                start_col: Some(1),
-                end_row: None,
-                end_col: Some(1)
-            }
+            ReferenceType::range(Some("Sheet1".to_string()), None, Some(1), None, Some(1))
         );
 
         // Range with column-only to column-only (A:B)
@@ -1280,13 +1176,7 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: None,
-                start_row: None,
-                start_col: Some(1),
-                end_row: None,
-                end_col: Some(2)
-            }
+            ReferenceType::range(None, None, Some(1), None, Some(2))
         );
 
         // Range with row-only to row-only (1:5)
@@ -1294,13 +1184,7 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: None,
-                start_row: Some(1),
-                start_col: None,
-                end_row: Some(5),
-                end_col: None
-            }
+            ReferenceType::range(None, Some(1), None, Some(5), None)
         );
 
         // Range with bounded start, unbounded end (A1:A)
@@ -1308,13 +1192,7 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: None,
-                start_row: Some(1),
-                start_col: Some(1),
-                end_row: None,
-                end_col: Some(1)
-            }
+            ReferenceType::range(None, Some(1), Some(1), None, Some(1))
         );
 
         // Range with unbounded start, bounded end (A:A10)
@@ -1322,66 +1200,31 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string(reference).unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Range {
-                sheet: None,
-                start_row: None,
-                start_col: Some(1),
-                end_row: Some(10),
-                end_col: Some(1)
-            }
+            ReferenceType::range(None, None, Some(1), Some(10), Some(1))
         );
     }
 
     #[test]
     fn test_range_to_string() {
         // Test to_string representation for normal ranges
-        let range = ReferenceType::Range {
-            sheet: None,
-            start_row: Some(1),
-            start_col: Some(1),
-            end_row: Some(2),
-            end_col: Some(2),
-        };
+        let range = ReferenceType::range(None, Some(1), Some(1), Some(2), Some(2));
         assert_eq!(range.to_excel_string(), "A1:B2");
 
         // Test to_string for infinite column range
-        let range = ReferenceType::Range {
-            sheet: None,
-            start_row: None,
-            start_col: Some(1),
-            end_row: None,
-            end_col: Some(1),
-        };
+        let range = ReferenceType::range(None, None, Some(1), None, Some(1));
         assert_eq!(range.to_excel_string(), "A:A");
 
         // Test to_string for infinite row range
-        let range = ReferenceType::Range {
-            sheet: None,
-            start_row: Some(1),
-            start_col: None,
-            end_row: Some(1),
-            end_col: None,
-        };
+        let range = ReferenceType::range(None, Some(1), None, Some(1), None);
         assert_eq!(range.to_excel_string(), "1:1");
 
         // Test to_string for partially infinite range (A1:A)
-        let range = ReferenceType::Range {
-            sheet: None,
-            start_row: Some(1),
-            start_col: Some(1),
-            end_row: None,
-            end_col: Some(1),
-        };
+        let range = ReferenceType::range(None, Some(1), Some(1), None, Some(1));
         assert_eq!(range.to_excel_string(), "A1:A");
 
         // Test to_string for partially infinite range with sheet
-        let range = ReferenceType::Range {
-            sheet: Some("Sheet1".to_string()),
-            start_row: None,
-            start_col: Some(1),
-            end_row: Some(10),
-            end_col: Some(1),
-        };
+        let range =
+            ReferenceType::range(Some("Sheet1".to_string()), None, Some(1), Some(10), Some(1));
         assert_eq!(range.to_excel_string(), "Sheet1!A:A10");
     }
 
@@ -1414,12 +1257,16 @@ mod reference_tests {
                 raw: "[33]Sheet1!$B:$B".to_string(),
                 book: ExternalBookRef::Token("[33]".to_string()),
                 sheet: "Sheet1".to_string(),
-                kind: ExternalRefKind::Range {
-                    start_row: None,
-                    start_col: Some(2),
-                    end_row: None,
-                    end_col: Some(2),
-                },
+                kind: ExternalRefKind::range_with_abs(
+                    None,
+                    Some(2),
+                    None,
+                    Some(2),
+                    false,
+                    true,
+                    false,
+                    true,
+                ),
             })
         );
 
@@ -1430,7 +1277,7 @@ mod reference_tests {
                 raw: "'[My Book.xlsx]Sheet1'!A1".to_string(),
                 book: ExternalBookRef::Token("[My Book.xlsx]".to_string()),
                 sheet: "Sheet1".to_string(),
-                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+                kind: ExternalRefKind::cell(1, 1),
             })
         );
     }
@@ -1444,7 +1291,7 @@ mod reference_tests {
                 raw: "'[C:\\Users\\me\\Book.xlsx]Sheet1'!A1".to_string(),
                 book: ExternalBookRef::Token("[C:\\Users\\me\\Book.xlsx]".to_string()),
                 sheet: "Sheet1".to_string(),
-                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+                kind: ExternalRefKind::cell(1, 1),
             })
         );
 
@@ -1455,7 +1302,7 @@ mod reference_tests {
                 raw: "'C:\\Users\\me\\[Book.xlsx]Sheet1'!A1".to_string(),
                 book: ExternalBookRef::Token("C:\\Users\\me\\[Book.xlsx]".to_string()),
                 sheet: "Sheet1".to_string(),
-                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+                kind: ExternalRefKind::cell(1, 1),
             })
         );
 
@@ -1467,7 +1314,7 @@ mod reference_tests {
                 raw: "[\\\\server\\share\\Book.xlsx]Sheet1!A1".to_string(),
                 book: ExternalBookRef::Token("[\\\\server\\share\\Book.xlsx]".to_string()),
                 sheet: "Sheet1".to_string(),
-                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+                kind: ExternalRefKind::cell(1, 1),
             })
         );
 
@@ -1479,12 +1326,7 @@ mod reference_tests {
                 raw: "'[https://example.com/Book.xlsx]Sheet1'!1:3".to_string(),
                 book: ExternalBookRef::Token("[https://example.com/Book.xlsx]".to_string()),
                 sheet: "Sheet1".to_string(),
-                kind: ExternalRefKind::Range {
-                    start_row: Some(1),
-                    start_col: None,
-                    end_row: Some(3),
-                    end_col: None,
-                },
+                kind: ExternalRefKind::range(Some(1), None, Some(3), None),
             })
         );
 
@@ -1492,11 +1334,7 @@ mod reference_tests {
         let ref_type = ReferenceType::from_string("'foo]bar'!A1").unwrap();
         assert_eq!(
             ref_type,
-            ReferenceType::Cell {
-                sheet: Some("foo]bar".to_string()),
-                row: 1,
-                col: 1,
-            }
+            ReferenceType::cell(Some("foo]bar".to_string()), 1, 1)
         );
     }
 
@@ -1509,7 +1347,7 @@ mod reference_tests {
                 raw: "'[Book.xlsx]My Sheet'!$A$1".to_string(),
                 book: ExternalBookRef::Token("[Book.xlsx]".to_string()),
                 sheet: "My Sheet".to_string(),
-                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+                kind: ExternalRefKind::cell_with_abs(1, 1, true, true),
             })
         );
     }
@@ -1523,7 +1361,7 @@ mod reference_tests {
                 raw: "'/tmp/[Book.xlsx]Sheet1'!A1".to_string(),
                 book: ExternalBookRef::Token("/tmp/[Book.xlsx]".to_string()),
                 sheet: "Sheet1".to_string(),
-                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+                kind: ExternalRefKind::cell(1, 1),
             })
         );
     }
@@ -1538,7 +1376,7 @@ mod reference_tests {
                 raw: "'C:\\Users\\me\\[Book.xlsx]S]heet1'!A1".to_string(),
                 book: ExternalBookRef::Token("C:\\Users\\me\\[Book.xlsx]".to_string()),
                 sheet: "S]heet1".to_string(),
-                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+                kind: ExternalRefKind::cell(1, 1),
             })
         );
     }
@@ -1552,7 +1390,7 @@ mod reference_tests {
                 raw: "'[O''Reilly.xlsx]Sheet1'!A1".to_string(),
                 book: ExternalBookRef::Token("[O'Reilly.xlsx]".to_string()),
                 sheet: "Sheet1".to_string(),
-                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+                kind: ExternalRefKind::cell(1, 1),
             })
         );
 
@@ -1563,7 +1401,7 @@ mod reference_tests {
                 raw: "'[Book.xlsx]Bob''s Sheet'!A1".to_string(),
                 book: ExternalBookRef::Token("[Book.xlsx]".to_string()),
                 sheet: "Bob's Sheet".to_string(),
-                kind: ExternalRefKind::Cell { row: 1, col: 1 },
+                kind: ExternalRefKind::cell(1, 1),
             })
         );
     }
@@ -1625,23 +1463,15 @@ mod reference_tests {
 
         let deps: Vec<ReferenceType> = dependencies.into_iter().cloned().collect();
 
-        assert!(deps.contains(&ReferenceType::Cell {
-            sheet: None,
-            row: 1,
-            col: 1
-        })); // A1
-        assert!(deps.contains(&ReferenceType::Cell {
-            sheet: None,
-            row: 1,
-            col: 2
-        })); // B1
-        assert!(deps.contains(&ReferenceType::Range {
-            sheet: None,
-            start_row: Some(1),
-            start_col: Some(3),
-            end_row: Some(2),
-            end_col: Some(4)
-        })); // C1:D2
+        assert!(deps.contains(&ReferenceType::cell(None, 1, 1))); // A1
+        assert!(deps.contains(&ReferenceType::cell(None, 1, 2))); // B1
+        assert!(deps.contains(&ReferenceType::range(
+            None,
+            Some(1),
+            Some(3),
+            Some(2),
+            Some(4)
+        ))); // C1:D2
     }
 
     #[test]
@@ -2063,11 +1893,7 @@ mod sheet_ref_tests {
 
     #[test]
     fn to_sheet_ref_lossy_defaults_to_relative() {
-        let rt = ReferenceType::Cell {
-            sheet: None,
-            row: 1,
-            col: 1,
-        };
+        let rt = ReferenceType::cell(None, 1, 1);
         let sr = rt.to_sheet_ref_lossy().unwrap();
         match sr {
             SheetRef::Cell(cell) => {
@@ -2078,13 +1904,7 @@ mod sheet_ref_tests {
             _ => panic!("expected cell"),
         }
 
-        let rt = ReferenceType::Range {
-            sheet: Some("Sheet1".to_string()),
-            start_row: None,
-            start_col: Some(1),
-            end_row: None,
-            end_col: Some(1),
-        };
+        let rt = ReferenceType::range(Some("Sheet1".to_string()), None, Some(1), None, Some(1));
         let sr = rt.to_sheet_ref_lossy().unwrap();
         match sr {
             SheetRef::Range(range) => {
@@ -2146,11 +1966,7 @@ mod semantics_regressions {
         let r = ReferenceType::from_string("'Bob''s Sheet'!A1").unwrap();
         assert_eq!(
             r,
-            ReferenceType::Cell {
-                sheet: Some("Bob's Sheet".to_string()),
-                row: 1,
-                col: 1,
-            }
+            ReferenceType::cell(Some("Bob's Sheet".to_string()), 1, 1)
         );
     }
 }

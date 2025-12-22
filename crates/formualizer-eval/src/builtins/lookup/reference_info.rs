@@ -338,11 +338,7 @@ mod tests {
         let b5_ref = ASTNode::new(
             ASTNodeType::Reference {
                 original: "B5".into(),
-                reference: ReferenceType::Cell {
-                    sheet: None,
-                    row: 5,
-                    col: 2,
-                },
+                reference: ReferenceType::cell(None, 5, 2),
             },
             None,
         );
@@ -358,13 +354,7 @@ mod tests {
         let range_ref = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:C3".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(3),
-                    end_col: Some(3),
-                },
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(3), Some(3)),
             },
             None,
         );
@@ -387,13 +377,7 @@ mod tests {
         let range_ref = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:A5".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(5),
-                    end_col: Some(1),
-                },
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(5), Some(1)),
             },
             None,
         );
@@ -409,13 +393,7 @@ mod tests {
         let range_ref2 = ASTNode::new(
             ASTNodeType::Reference {
                 original: "B2:D10".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(2),
-                    start_col: Some(2),
-                    end_row: Some(10),
-                    end_col: Some(4),
-                },
+                reference: ReferenceType::range(None, Some(2), Some(2), Some(10), Some(4)),
             },
             None,
         );
@@ -431,11 +409,7 @@ mod tests {
         let cell_ref = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1".into(),
-                reference: ReferenceType::Cell {
-                    sheet: None,
-                    row: 1,
-                    col: 1,
-                },
+                reference: ReferenceType::cell(None, 1, 1),
             },
             None,
         );
@@ -458,11 +432,7 @@ mod tests {
         let c5_ref = ASTNode::new(
             ASTNodeType::Reference {
                 original: "C5".into(),
-                reference: ReferenceType::Cell {
-                    sheet: None,
-                    row: 5,
-                    col: 3,
-                },
+                reference: ReferenceType::cell(None, 5, 3),
             },
             None,
         );
@@ -478,13 +448,7 @@ mod tests {
         let range_ref = ASTNode::new(
             ASTNodeType::Reference {
                 original: "B2:D4".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(2),
-                    start_col: Some(2),
-                    end_row: Some(4),
-                    end_col: Some(4),
-                },
+                reference: ReferenceType::range(None, Some(2), Some(2), Some(4), Some(4)),
             },
             None,
         );
@@ -507,13 +471,7 @@ mod tests {
         let range_ref = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:E1".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(1),
-                    end_col: Some(5),
-                },
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(1), Some(5)),
             },
             None,
         );
@@ -529,13 +487,7 @@ mod tests {
         let range_ref2 = ASTNode::new(
             ASTNodeType::Reference {
                 original: "B2:D10".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(2),
-                    start_col: Some(2),
-                    end_row: Some(10),
-                    end_col: Some(4),
-                },
+                reference: ReferenceType::range(None, Some(2), Some(2), Some(10), Some(4)),
             },
             None,
         );
@@ -551,11 +503,7 @@ mod tests {
         let cell_ref = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1".into(),
-                reference: ReferenceType::Cell {
-                    sheet: None,
-                    row: 1,
-                    col: 1,
-                },
+                reference: ReferenceType::cell(None, 1, 1),
             },
             None,
         );
@@ -580,13 +528,7 @@ mod tests {
         let rev_range = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A5:A1".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(5),
-                    start_col: Some(1),
-                    end_row: Some(1),
-                    end_col: Some(1),
-                },
+                reference: ReferenceType::range(None, Some(5), Some(1), Some(1), Some(1)),
             },
             None,
         );

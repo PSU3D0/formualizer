@@ -388,7 +388,13 @@ impl DataStore {
         sheet_registry: &SheetRegistry,
     ) -> CompactRefType {
         match ref_type {
-            ReferenceType::Cell { sheet, row, col } => {
+            ReferenceType::Cell {
+                sheet,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => {
                 let sheet = match sheet.as_ref() {
                     Some(s) => match sheet_registry.get_id(s) {
                         Some(id) => Some(SheetKey::Id(id)),
@@ -400,6 +406,8 @@ impl DataStore {
                     sheet,
                     row: *row,
                     col: *col,
+                    row_abs: *row_abs,
+                    col_abs: *col_abs,
                 }
             }
 
@@ -409,6 +417,10 @@ impl DataStore {
                 start_col,
                 end_row,
                 end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
             } => {
                 let sheet = match sheet.as_ref() {
                     Some(s) => match sheet_registry.get_id(s) {
@@ -424,6 +436,10 @@ impl DataStore {
                     start_col: start_col.unwrap_or(0),
                     end_row: end_row.unwrap_or(u32::MAX),
                     end_col: end_col.unwrap_or(u32::MAX),
+                    start_row_abs: *start_row_abs,
+                    start_col_abs: *start_col_abs,
+                    end_row_abs: *end_row_abs,
+                    end_col_abs: *end_col_abs,
                 }
             }
 
@@ -548,7 +564,13 @@ impl DataStore {
         sheet_registry: &SheetRegistry,
     ) -> ReferenceType {
         match ref_type {
-            CompactRefType::Cell { sheet, row, col } => {
+            CompactRefType::Cell {
+                sheet,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => {
                 let sheet = match sheet {
                     Some(SheetKey::Id(id)) => Some(sheet_registry.name(*id).to_string()),
                     Some(SheetKey::Name(name_id)) => {
@@ -560,6 +582,8 @@ impl DataStore {
                     sheet,
                     row: *row,
                     col: *col,
+                    row_abs: *row_abs,
+                    col_abs: *col_abs,
                 }
             }
 
@@ -569,6 +593,10 @@ impl DataStore {
                 start_col,
                 end_row,
                 end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
             } => {
                 let sheet = match sheet {
                     Some(SheetKey::Id(id)) => Some(sheet_registry.name(*id).to_string()),
@@ -600,6 +628,10 @@ impl DataStore {
                     } else {
                         Some(*end_col)
                     },
+                    start_row_abs: *start_row_abs,
+                    start_col_abs: *start_col_abs,
+                    end_row_abs: *end_row_abs,
+                    end_col_abs: *end_col_abs,
                 }
             }
 

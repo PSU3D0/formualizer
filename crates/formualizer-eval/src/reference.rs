@@ -130,15 +130,16 @@ pub fn combine_references(
     // Extract sheet and bounds as (sheet, (sr, sc, er, ec))
     fn to_bounds(r: &ReferenceType) -> Option<SheetBounds> {
         match r {
-            ReferenceType::Cell { sheet, row, col } => {
-                Some((sheet.clone(), (*row, *col, *row, *col)))
-            }
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => Some((sheet.clone(), (*row, *col, *row, *col))),
             ReferenceType::Range {
                 sheet,
                 start_row,
                 start_col,
                 end_row,
                 end_col,
+                ..
             } => {
                 let (sr, sc, er, ec) = match (start_row, start_col, end_row, end_col) {
                     (Some(sr), Some(sc), Some(er), Some(ec)) => (*sr, *sc, *er, *ec),
@@ -174,6 +175,10 @@ pub fn combine_references(
         start_col: Some(sc),
         end_row: Some(er),
         end_col: Some(ec),
+        start_row_abs: false,
+        start_col_abs: false,
+        end_row_abs: false,
+        end_col_abs: false,
     })
 }
 

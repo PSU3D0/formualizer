@@ -87,7 +87,9 @@ where
         let refs = ast.collect_references(policy);
         for r in refs {
             match r {
-                ReferenceType::Cell { sheet, row, col } => {
+                ReferenceType::Cell {
+                    sheet, row, col, ..
+                } => {
                     let dep_sheet = sheet
                         .as_deref()
                         .map(|name| sheet_reg.id_for(name))
@@ -110,6 +112,7 @@ where
                     start_col,
                     end_row,
                     end_col,
+                    ..
                 } => {
                     let dep_sheet = sheet
                         .as_deref()

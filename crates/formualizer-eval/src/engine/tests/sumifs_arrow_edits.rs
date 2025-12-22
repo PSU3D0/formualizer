@@ -12,6 +12,10 @@ fn range_ref(sheet: &str, sr: u32, sc: u32, er: u32, ec: u32) -> ASTNode {
         start_col: Some(sc),
         end_row: Some(er),
         end_col: Some(ec),
+        start_row_abs: false,
+        start_col_abs: false,
+        end_row_abs: false,
+        end_col_abs: false,
     };
     ASTNode::new(
         ASTNodeType::Reference {

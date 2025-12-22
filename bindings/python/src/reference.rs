@@ -63,15 +63,21 @@ impl CellRef {
         default_sheet: Option<&str>,
     ) -> Result<Self, PyErr> {
         match ReferenceType::from_string(reference) {
-            Ok(ReferenceType::Cell { sheet, row, col }) => {
+            Ok(ReferenceType::Cell {
+                sheet,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            }) => {
                 let sheet =
                     sheet.or_else(|| default_sheet.map(|default_sheet| default_sheet.to_string()));
                 Ok(CellRef::new(
                     sheet,
                     row,
                     NumericOrStringColumn::Numeric(col),
-                    false,
-                    false,
+                    row_abs,
+                    col_abs,
                 ))
             }
             Ok(_) => Err(ParserError::new_with_pos(
@@ -290,56 +296,49 @@ fn number_to_column(mut col: u32) -> String {
 /// Convert a ReferenceType to a ReferenceLike
 pub fn reference_type_to_py(ref_type: &ReferenceType, original: &str) -> ReferenceLike {
     match ref_type {
-        ReferenceType::Cell { sheet, row, col } => {
-            // For now, assume absolute references (we could parse the original to detect $)
-            let abs_row = original.contains(&format!("${row}"));
-            let col_str = number_to_column(*col);
-            let abs_col = original.contains(&format!("${col_str}"));
-
-            ReferenceLike::Cell(CellRef::new(
-                sheet.clone(),
-                *row,
-                NumericOrStringColumn::Numeric(*col),
-                abs_row,
-                abs_col,
-            ))
-        }
+        ReferenceType::Cell {
+            sheet,
+            row,
+            col,
+            row_abs,
+            col_abs,
+        } => ReferenceLike::Cell(CellRef::new(
+            sheet.clone(),
+            *row,
+            NumericOrStringColumn::Numeric(*col),
+            *row_abs,
+            *col_abs,
+        )),
         ReferenceType::Range {
             sheet,
             start_row,
             start_col,
             end_row,
             end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
         } => {
             let start = match (start_col, start_row) {
-                (Some(col), Some(row)) => {
-                    let abs_row = original.contains(&format!("${row}"));
-                    let col_str = number_to_column(*col);
-                    let abs_col = original.contains(&format!("${col_str}"));
-                    Some(CellRef::new(
-                        None,
-                        *row,
-                        NumericOrStringColumn::Numeric(*col),
-                        abs_row,
-                        abs_col,
-                    ))
-                }
+                (Some(col), Some(row)) => Some(CellRef::new(
+                    None,
+                    *row,
+                    NumericOrStringColumn::Numeric(*col),
+                    *start_row_abs,
+                    *start_col_abs,
+                )),
                 _ => None,
             };
 
             let end = match (end_col, end_row) {
-                (Some(col), Some(row)) => {
-                    let abs_row = original.contains(&format!("${row}"));
-                    let col_str = number_to_column(*col);
-                    let abs_col = original.contains(&format!("${col_str}"));
-                    Some(CellRef::new(
-                        None,
-                        *row,
-                        NumericOrStringColumn::Numeric(*col),
-                        abs_row,
-                        abs_col,
-                    ))
-                }
+                (Some(col), Some(row)) => Some(CellRef::new(
+                    None,
+                    *row,
+                    NumericOrStringColumn::Numeric(*col),
+                    *end_row_abs,
+                    *end_col_abs,
+                )),
                 _ => None,
             };
 

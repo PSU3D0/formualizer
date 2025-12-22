@@ -119,7 +119,9 @@ fn resolve_selector(
 
 fn parse_a1_range(port_id: &str, raw: &str) -> Result<RangeAddress, SheetPortError> {
     match ReferenceType::from_string(raw) {
-        Ok(ReferenceType::Cell { sheet, row, col }) => {
+        Ok(ReferenceType::Cell {
+            sheet, row, col, ..
+        }) => {
             let sheet = sheet.unwrap_or_default();
             if sheet.is_empty() {
                 return Err(SheetPortError::InvariantViolation {
@@ -140,6 +142,7 @@ fn parse_a1_range(port_id: &str, raw: &str) -> Result<RangeAddress, SheetPortErr
             start_col,
             end_row,
             end_col,
+            ..
         }) => {
             let sheet = sheet.unwrap_or_default();
             if sheet.is_empty() {

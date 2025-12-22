@@ -358,6 +358,7 @@ impl Function for VLookupFn {
                 start_col: Some(sc),
                 end_row: Some(er),
                 end_col: Some(ec),
+                ..
             } => (sheet.clone(), *sr, *sc, *er, *ec),
             _ => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -518,6 +519,7 @@ impl Function for HLookupFn {
                 start_col: Some(sc),
                 end_row: Some(er),
                 end_col: Some(ec),
+                ..
             } => (sheet.clone(), *sr, *sc, *er, *ec),
             _ => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -601,13 +603,7 @@ mod tests {
         let range = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:A4".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(4),
-                    end_col: Some(1),
-                },
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(4), Some(1)),
             },
             None,
         );
@@ -662,13 +658,7 @@ mod tests {
         let range2 = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:A5".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(5),
-                    end_col: Some(1),
-                },
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(5), Some(1)),
             },
             None,
         );
@@ -709,13 +699,7 @@ mod tests {
         let range3 = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:A5".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(5),
-                    end_col: Some(1),
-                },
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(5), Some(1)),
             },
             None,
         );
@@ -740,13 +724,7 @@ mod tests {
         let range4 = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:A5".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(5),
-                    end_col: Some(1),
-                },
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(5), Some(1)),
             },
             None,
         );
@@ -775,13 +753,7 @@ mod tests {
         let range = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:A5".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(5),
-                    end_col: Some(1),
-                },
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(5), Some(1)),
             },
             None,
         );
@@ -822,13 +794,7 @@ mod tests {
         let table = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:B2".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(2),
-                    end_col: Some(2),
-                },
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(2), Some(2)),
             },
             None,
         );
@@ -861,13 +827,7 @@ mod tests {
         let table = ASTNode::new(
             ASTNodeType::Reference {
                 original: "A1:B2".into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(1),
-                    start_col: Some(1),
-                    end_row: Some(2),
-                    end_col: Some(2),
-                },
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(2), Some(2)),
             },
             None,
         );

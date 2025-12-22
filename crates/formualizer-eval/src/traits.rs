@@ -925,6 +925,7 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                 start_col,
                 end_row,
                 end_col,
+                ..
             } => self.resolve_range_reference(
                 sheet.as_deref(),
                 *start_row,
@@ -1056,7 +1057,9 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                 let v = self.resolve_named_range_reference(n)?;
                 Ok(Box::new(InMemoryRange::new(v)))
             }
-            ReferenceType::Cell { sheet, row, col } => {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => {
                 let v = self.resolve_cell_reference(sheet.as_deref(), *row, *col)?;
                 Ok(Box::new(InMemoryRange::new(vec![vec![v]])))
             }

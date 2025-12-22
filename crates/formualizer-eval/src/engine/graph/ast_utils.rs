@@ -9,12 +9,20 @@ pub(super) fn update_sheet_references_in_ast(
     match &ast.node_type {
         ASTNodeType::Reference { reference, .. } => {
             let updated_ref = match reference {
-                ReferenceType::Cell { sheet, row, col } => {
+                ReferenceType::Cell {
+                    sheet,
+                    row,
+                    col,
+                    row_abs,
+                    col_abs,
+                } => {
                     if sheet.as_deref() == Some(old_name) {
                         ReferenceType::Cell {
                             sheet: Some(new_name.to_string()),
                             row: *row,
                             col: *col,
+                            row_abs: *row_abs,
+                            col_abs: *col_abs,
                         }
                     } else {
                         reference.clone()
@@ -26,6 +34,10 @@ pub(super) fn update_sheet_references_in_ast(
                     start_col,
                     end_row,
                     end_col,
+                    start_row_abs,
+                    start_col_abs,
+                    end_row_abs,
+                    end_col_abs,
                 } => {
                     if sheet.as_deref() == Some(old_name) {
                         ReferenceType::Range {
@@ -34,6 +46,10 @@ pub(super) fn update_sheet_references_in_ast(
                             start_col: *start_col,
                             end_row: *end_row,
                             end_col: *end_col,
+                            start_row_abs: *start_row_abs,
+                            start_col_abs: *start_col_abs,
+                            end_row_abs: *end_row_abs,
+                            end_col_abs: *end_col_abs,
                         }
                     } else {
                         reference.clone()
@@ -108,13 +124,21 @@ pub(super) fn update_internal_sheet_references(
     match &ast.node_type {
         ASTNodeType::Reference { reference, .. } => {
             let updated_ref = match reference {
-                ReferenceType::Cell { sheet, row, col } => {
+                ReferenceType::Cell {
+                    sheet,
+                    row,
+                    col,
+                    row_abs,
+                    col_abs,
+                } => {
                     // Update references without sheet name (internal) or with source sheet name.
                     if sheet.is_none() || sheet.as_deref() == Some(source_name) {
                         ReferenceType::Cell {
                             sheet: Some(new_name.to_string()),
                             row: *row,
                             col: *col,
+                            row_abs: *row_abs,
+                            col_abs: *col_abs,
                         }
                     } else {
                         reference.clone()
@@ -126,6 +150,10 @@ pub(super) fn update_internal_sheet_references(
                     start_col,
                     end_row,
                     end_col,
+                    start_row_abs,
+                    start_col_abs,
+                    end_row_abs,
+                    end_col_abs,
                 } => {
                     if sheet.is_none() || sheet.as_deref() == Some(source_name) {
                         ReferenceType::Range {
@@ -134,6 +162,10 @@ pub(super) fn update_internal_sheet_references(
                             start_col: *start_col,
                             end_row: *end_row,
                             end_col: *end_col,
+                            start_row_abs: *start_row_abs,
+                            start_col_abs: *start_col_abs,
+                            end_row_abs: *end_row_abs,
+                            end_col_abs: *end_col_abs,
                         }
                     } else {
                         reference.clone()

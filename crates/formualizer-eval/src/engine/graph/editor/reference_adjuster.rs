@@ -189,7 +189,15 @@ impl ReferenceAdjuster {
         let shared = reference.to_sheet_ref_lossy();
 
         match (reference, shared) {
-            (ReferenceType::Cell { sheet, .. }, Some(crate::reference::SharedRef::Cell(cell))) => {
+            (
+                ReferenceType::Cell {
+                    sheet,
+                    row_abs,
+                    col_abs,
+                    ..
+                },
+                Some(crate::reference::SharedRef::Cell(cell)),
+            ) => {
                 let sheet_id = match op {
                     ShiftOperation::InsertRows { sheet_id, .. }
                     | ShiftOperation::DeleteRows { sheet_id, .. }
@@ -198,7 +206,7 @@ impl ReferenceAdjuster {
                 };
                 let temp_ref = CellRef::new(
                     sheet_id,
-                    Coord::new(cell.coord.row(), cell.coord.col(), false, false),
+                    Coord::new(cell.coord.row(), cell.coord.col(), *row_abs, *col_abs),
                 );
 
                 match self.adjust_cell_ref(&temp_ref, op) {
@@ -206,16 +214,27 @@ impl ReferenceAdjuster {
                         sheet: Some("#REF".to_string()),
                         row: 0,
                         col: 0,
+                        row_abs: *row_abs,
+                        col_abs: *col_abs,
                     },
                     Some(adjusted) => ReferenceType::Cell {
                         sheet: sheet.clone(),
                         row: adjusted.coord.row() + 1,
                         col: adjusted.coord.col() + 1,
+                        row_abs: *row_abs,
+                        col_abs: *col_abs,
                     },
                 }
             }
             (
-                ReferenceType::Range { sheet, .. },
+                ReferenceType::Range {
+                    sheet,
+                    start_row_abs,
+                    start_col_abs,
+                    end_row_abs,
+                    end_col_abs,
+                    ..
+                },
                 Some(crate::reference::SharedRef::Range(range)),
             ) => {
                 let is_unbounded_column = range.start_row.is_none() && range.end_row.is_none();
@@ -224,26 +243,44 @@ impl ReferenceAdjuster {
                     return reference.clone();
                 }
 
-                let sr0 = range.start_row.map(|b| b.index);
-                let sc0 = range.start_col.map(|b| b.index);
-                let er0 = range.end_row.map(|b| b.index);
-                let ec0 = range.end_col.map(|b| b.index);
+                let sr = range.start_row;
+                let sc = range.start_col;
+                let er = range.end_row;
+                let ec = range.end_col;
+
+                let adjust_insert = |b: formualizer_common::AxisBound, before: u32, count: u32| {
+                    if b.abs {
+                        b.index
+                    } else if b.index >= before {
+                        b.index + count
+                    } else {
+                        b.index
+                    }
+                };
+
+                let adjust_delete = |idx: u32, abs: bool, start: u32, count: u32| {
+                    if abs {
+                        idx
+                    } else if idx >= start + count {
+                        idx - count
+                    } else if idx >= start {
+                        start
+                    } else {
+                        idx
+                    }
+                };
 
                 let (adj_sr0, adj_er0) = match op {
-                    ShiftOperation::InsertRows { before, count, .. } => match (sr0, er0) {
-                        (Some(start), Some(end)) => {
-                            let adj_start = if start >= *before {
-                                start + count
-                            } else {
-                                start
-                            };
-                            let adj_end = if end >= *before { end + count } else { end };
-                            (Some(adj_start), Some(adj_end))
-                        }
-                        _ => (sr0, er0),
-                    },
-                    ShiftOperation::DeleteRows { start, count, .. } => match (sr0, er0) {
-                        (Some(range_start), Some(range_end)) => {
+                    ShiftOperation::InsertRows { before, count, .. } => (
+                        sr.map(|b| adjust_insert(b, *before, *count)),
+                        er.map(|b| adjust_insert(b, *before, *count)),
+                    ),
+                    ShiftOperation::DeleteRows { start, count, .. } => match (sr, er) {
+                        (Some(range_start), Some(range_end))
+                            if !range_start.abs && !range_end.abs =>
+                        {
+                            let range_start = range_start.index;
+                            let range_end = range_end.index;
                             if range_end < *start || range_start >= start + count {
                                 let adj_start = if range_start >= start + count {
                                     range_start - count
@@ -263,6 +300,10 @@ impl ReferenceAdjuster {
                                     start_col: Some(0),
                                     end_row: Some(0),
                                     end_col: Some(0),
+                                    start_row_abs: *start_row_abs,
+                                    start_col_abs: *start_col_abs,
+                                    end_row_abs: *end_row_abs,
+                                    end_col_abs: *end_col_abs,
                                 };
                             } else {
                                 let adj_start = if range_start < *start {
@@ -278,26 +319,32 @@ impl ReferenceAdjuster {
                                 (Some(adj_start), Some(adj_end))
                             }
                         }
-                        _ => (sr0, er0),
+                        (Some(range_start), Some(range_end)) => {
+                            let adj_start =
+                                adjust_delete(range_start.index, range_start.abs, *start, *count);
+                            let adj_end =
+                                adjust_delete(range_end.index, range_end.abs, *start, *count);
+                            (Some(adj_start), Some(adj_end))
+                        }
+                        _ => (
+                            sr.map(|b| adjust_delete(b.index, b.abs, *start, *count)),
+                            er.map(|b| adjust_delete(b.index, b.abs, *start, *count)),
+                        ),
                     },
-                    _ => (sr0, er0),
+                    _ => (sr.map(|b| b.index), er.map(|b| b.index)),
                 };
 
                 let (adj_sc0, adj_ec0) = match op {
-                    ShiftOperation::InsertColumns { before, count, .. } => match (sc0, ec0) {
-                        (Some(start), Some(end)) => {
-                            let adj_start = if start >= *before {
-                                start + count
-                            } else {
-                                start
-                            };
-                            let adj_end = if end >= *before { end + count } else { end };
-                            (Some(adj_start), Some(adj_end))
-                        }
-                        _ => (sc0, ec0),
-                    },
-                    ShiftOperation::DeleteColumns { start, count, .. } => match (sc0, ec0) {
-                        (Some(range_start), Some(range_end)) => {
+                    ShiftOperation::InsertColumns { before, count, .. } => (
+                        sc.map(|b| adjust_insert(b, *before, *count)),
+                        ec.map(|b| adjust_insert(b, *before, *count)),
+                    ),
+                    ShiftOperation::DeleteColumns { start, count, .. } => match (sc, ec) {
+                        (Some(range_start), Some(range_end))
+                            if !range_start.abs && !range_end.abs =>
+                        {
+                            let range_start = range_start.index;
+                            let range_end = range_end.index;
                             if range_end < *start || range_start >= start + count {
                                 let adj_start = if range_start >= start + count {
                                     range_start - count
@@ -317,6 +364,10 @@ impl ReferenceAdjuster {
                                     start_col: Some(0),
                                     end_row: Some(0),
                                     end_col: Some(0),
+                                    start_row_abs: *start_row_abs,
+                                    start_col_abs: *start_col_abs,
+                                    end_row_abs: *end_row_abs,
+                                    end_col_abs: *end_col_abs,
                                 };
                             } else {
                                 let adj_start = if range_start < *start {
@@ -332,9 +383,19 @@ impl ReferenceAdjuster {
                                 (Some(adj_start), Some(adj_end))
                             }
                         }
-                        _ => (sc0, ec0),
+                        (Some(range_start), Some(range_end)) => {
+                            let adj_start =
+                                adjust_delete(range_start.index, range_start.abs, *start, *count);
+                            let adj_end =
+                                adjust_delete(range_end.index, range_end.abs, *start, *count);
+                            (Some(adj_start), Some(adj_end))
+                        }
+                        _ => (
+                            sc.map(|b| adjust_delete(b.index, b.abs, *start, *count)),
+                            ec.map(|b| adjust_delete(b.index, b.abs, *start, *count)),
+                        ),
                     },
-                    _ => (sc0, ec0),
+                    _ => (sc.map(|b| b.index), ec.map(|b| b.index)),
                 };
 
                 ReferenceType::Range {
@@ -343,6 +404,10 @@ impl ReferenceAdjuster {
                     start_col: adj_sc0.map(|i| i + 1),
                     end_row: adj_er0.map(|i| i + 1),
                     end_col: adj_ec0.map(|i| i + 1),
+                    start_row_abs: *start_row_abs,
+                    start_col_abs: *start_col_abs,
+                    end_row_abs: *end_row_abs,
+                    end_col_abs: *end_col_abs,
                 }
             }
             _ => reference.clone(),
@@ -448,6 +513,8 @@ impl RelativeReferenceAdjuster {
                     sheet: sheet.clone(),
                     row: new_row0 + 1,
                     col: new_col0 + 1,
+                    row_abs,
+                    col_abs,
                 }
             }
             (ReferenceType::Range { sheet, .. }, crate::reference::SharedRef::Range(range)) => {
@@ -466,12 +533,21 @@ impl RelativeReferenceAdjuster {
                 let adj_end_row = owned.end_row.map(|b| adj_axis(b, self.row_offset) + 1);
                 let adj_end_col = owned.end_col.map(|b| adj_axis(b, self.col_offset) + 1);
 
+                let start_row_abs = owned.start_row.map(|b| b.abs).unwrap_or(false);
+                let start_col_abs = owned.start_col.map(|b| b.abs).unwrap_or(false);
+                let end_row_abs = owned.end_row.map(|b| b.abs).unwrap_or(false);
+                let end_col_abs = owned.end_col.map(|b| b.abs).unwrap_or(false);
+
                 ReferenceType::Range {
                     sheet: sheet.clone(),
                     start_row: adj_start_row,
                     start_col: adj_start_col,
                     end_row: adj_end_row,
                     end_col: adj_end_col,
+                    start_row_abs,
+                    start_col_abs,
+                    end_row_abs,
+                    end_col_abs,
                 }
             }
             _ => reference.clone(),
@@ -676,6 +752,8 @@ impl MoveReferenceAdjuster {
                 let owned = cell.into_owned();
                 let row0 = owned.coord.row();
                 let col0 = owned.coord.col();
+                let row_abs = owned.coord.row_abs();
+                let col_abs = owned.coord.col_abs();
 
                 if row0 < self.from_start_row
                     || row0 > self.from_end_row
@@ -699,6 +777,8 @@ impl MoveReferenceAdjuster {
                         sheet: new_sheet,
                         row: new_row0 + 1,
                         col: new_col0 + 1,
+                        row_abs,
+                        col_abs,
                     },
                     true,
                 )
@@ -718,6 +798,10 @@ impl MoveReferenceAdjuster {
                 let sc0 = sc.index;
                 let er0 = er.index;
                 let ec0 = ec.index;
+                let start_row_abs = sr.abs;
+                let start_col_abs = sc.abs;
+                let end_row_abs = er.abs;
+                let end_col_abs = ec.abs;
 
                 let fully_contained = sr0 >= self.from_start_row
                     && er0 <= self.from_end_row
@@ -745,6 +829,10 @@ impl MoveReferenceAdjuster {
                         start_col: Some(new_sc0 + 1),
                         end_row: Some(new_er0 + 1),
                         end_col: Some(new_ec0 + 1),
+                        start_row_abs,
+                        start_col_abs,
+                        end_row_abs,
+                        end_col_abs,
                     },
                     true,
                 )

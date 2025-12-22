@@ -295,7 +295,7 @@ mod tests {
     fn test_pretty_print_references() {
         let formula = "=Sheet1!$a$1:$b$2";
         let pretty = pretty_parse_render(formula).unwrap();
-        assert_eq!(pretty, "=Sheet1!A1:B2");
+        assert_eq!(pretty, "=Sheet1!$A$1:$B$2");
 
         let formula = "='My Sheet'!a1";
         let pretty = pretty_parse_render(formula).unwrap();

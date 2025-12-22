@@ -55,23 +55,27 @@ impl fmt::Display for ExcelErrorKind {
 }
 
 impl ExcelErrorKind {
-    pub fn parse(s: &str) -> Self {
+    pub fn try_parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "#null!" => Self::Null,
-            "#ref!" => Self::Ref,
-            "#name?" => Self::Name,
-            "#value!" => Self::Value,
-            "#div/0!" => Self::Div,
-            "#n/a" => Self::Na,
-            "#num!" => Self::Num,
-            "#error!" => Self::Error,
-            "#n/impl!" => Self::NImpl,
-            "#spill!" => Self::Spill,
-            "#calc!" => Self::Calc,
-            "#circ!" => Self::Circ,
-            "#cancelled!" => Self::Cancelled,
-            _ => panic!("Unknown error kind '{s}'"),
+            "#null!" => Some(Self::Null),
+            "#ref!" => Some(Self::Ref),
+            "#name?" => Some(Self::Name),
+            "#value!" => Some(Self::Value),
+            "#div/0!" => Some(Self::Div),
+            "#n/a" => Some(Self::Na),
+            "#num!" => Some(Self::Num),
+            "#error!" => Some(Self::Error),
+            "#n/impl!" => Some(Self::NImpl),
+            "#spill!" => Some(Self::Spill),
+            "#calc!" => Some(Self::Calc),
+            "#circ!" => Some(Self::Circ),
+            "#cancelled!" => Some(Self::Cancelled),
+            _ => None,
         }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        Self::try_parse(s).unwrap_or(Self::Error)
     }
 }
 
@@ -187,8 +191,12 @@ impl ExcelError {
     }
 
     pub fn from_error_string(s: &str) -> Self {
-        let kind = ExcelErrorKind::parse(s);
-        Self::new(kind)
+        match ExcelErrorKind::try_parse(s) {
+            Some(kind) => Self::new(kind),
+            None => {
+                Self::new(ExcelErrorKind::Error).with_message(format!("Unknown error code: {s}"))
+            }
+        }
     }
 
     pub fn new_value() -> Self {
@@ -292,5 +300,24 @@ impl PartialEq<&str> for ExcelError {
 impl PartialEq<str> for ExcelError {
     fn eq(&self, other: &str) -> bool {
         self.kind.to_string() == other
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_known_error_kind() {
+        assert_eq!(ExcelErrorKind::parse("#DIV/0!"), ExcelErrorKind::Div);
+        assert_eq!(ExcelErrorKind::parse("#n/a"), ExcelErrorKind::Na);
+    }
+
+    #[test]
+    fn parse_unknown_error_kind_falls_back() {
+        assert_eq!(ExcelErrorKind::parse("#BOGUS!"), ExcelErrorKind::Error);
+        let err = ExcelError::from_error_string("#BOGUS!");
+        assert_eq!(err.kind, ExcelErrorKind::Error);
+        assert!(err.message.unwrap_or_default().contains("#BOGUS!"));
     }
 }

@@ -282,13 +282,13 @@ mod tests {
         ASTNode::new(
             ASTNodeType::Reference {
                 original: r.into(),
-                reference: ReferenceType::Range {
-                    sheet: None,
-                    start_row: Some(sr as u32),
-                    start_col: Some(sc as u32),
-                    end_row: Some(er as u32),
-                    end_col: Some(ec as u32),
-                },
+                reference: ReferenceType::range(
+                    None,
+                    Some(sr as u32),
+                    Some(sc as u32),
+                    Some(er as u32),
+                    Some(ec as u32),
+                ),
             },
             None,
         )

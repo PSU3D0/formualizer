@@ -32,6 +32,10 @@ fn whole_column_reference_uses_configured_cap_when_bounds_unknown() {
         start_col: Some(1),
         end_row: None,
         end_col: Some(1),
+        start_row_abs: false,
+        start_col_abs: false,
+        end_row_abs: false,
+        end_col_abs: false,
     };
 
     let view = engine.resolve_range_view(&r, "Sheet1").unwrap();

@@ -1522,6 +1522,8 @@ where
                 sheet: sheet_to_opt_name(cell.sheet.clone())?,
                 row: cell.coord.row() + 1,
                 col: cell.coord.col() + 1,
+                row_abs: cell.coord.row_abs(),
+                col_abs: cell.coord.col_abs(),
             },
             formualizer_common::SheetRef::Range(range) => ReferenceType::Range {
                 sheet: sheet_to_opt_name(range.sheet.clone())?,
@@ -1529,6 +1531,10 @@ where
                 start_col: range.start_col.map(|b| b.index + 1),
                 end_row: range.end_row.map(|b| b.index + 1),
                 end_col: range.end_col.map(|b| b.index + 1),
+                start_row_abs: range.start_row.map(|b| b.abs).unwrap_or(false),
+                start_col_abs: range.start_col.map(|b| b.abs).unwrap_or(false),
+                end_row_abs: range.end_row.map(|b| b.abs).unwrap_or(false),
+                end_col_abs: range.end_col.map(|b| b.abs).unwrap_or(false),
             },
         };
 
@@ -3699,11 +3705,15 @@ where
             SheetRef as SharedRef,
         };
 
-        // ReferenceType does not retain $ anchors. For evaluation and identity
-        // we treat all coordinates as absolute to match graph cell addressing.
-        // Anchor semantics are handled separately by rewrite/adjustment passes.
+        // Preserve anchor flags from the parsed reference when possible.
         let sr = match reference {
-            ReferenceType::Cell { sheet, row, col } => {
+            ReferenceType::Cell {
+                sheet,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => {
                 let row0 = row
                     .checked_sub(1)
                     .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
@@ -3714,7 +3724,7 @@ where
                     Some(name) => SheetLocator::from_name(name),
                     None => SheetLocator::Current,
                 };
-                let coord = formualizer_common::RelativeCoord::new(row0, col0, true, true);
+                let coord = formualizer_common::RelativeCoord::new(row0, col0, *row_abs, *col_abs);
                 SharedRef::Cell(SharedCellRef::new(sheet_loc, coord))
             }
             ReferenceType::Range {
@@ -3723,43 +3733,42 @@ where
                 start_col,
                 end_row,
                 end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
             } => {
                 let sheet_loc = match sheet.as_deref() {
                     Some(name) => SheetLocator::from_name(name),
                     None => SheetLocator::Current,
                 };
-
-                fn bound_from_1based(v: Option<u32>) -> Option<formualizer_common::AxisBound> {
-                    v.and_then(|x| {
-                        x.checked_sub(1)
-                            .map(|i| formualizer_common::AxisBound::new(i, true))
-                    })
-                }
-
-                let sr = bound_from_1based(*start_row);
-                if start_row.is_some() && sr.is_none() {
-                    return Err(ExcelError::new(ExcelErrorKind::Ref));
-                }
-                let sc = bound_from_1based(*start_col);
-                if start_col.is_some() && sc.is_none() {
-                    return Err(ExcelError::new(ExcelErrorKind::Ref));
-                }
-                let er = bound_from_1based(*end_row);
-                if end_row.is_some() && er.is_none() {
-                    return Err(ExcelError::new(ExcelErrorKind::Ref));
-                }
-                let ec = bound_from_1based(*end_col);
-                if end_col.is_some() && ec.is_none() {
-                    return Err(ExcelError::new(ExcelErrorKind::Ref));
-                }
-
-                let range = SharedRangeRef::from_parts(sheet_loc, sr, sc, er, ec)
-                    .map_err(|_| ExcelError::new(ExcelErrorKind::Ref))?;
+                let sr = start_row
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?
+                    .checked_sub(1)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                let sc = start_col
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?
+                    .checked_sub(1)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                let er = end_row
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?
+                    .checked_sub(1)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                let ec = end_col
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?
+                    .checked_sub(1)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                let range = SharedRangeRef::from_parts(
+                    sheet_loc,
+                    Some(formualizer_common::AxisBound::new(sr, *start_row_abs)),
+                    Some(formualizer_common::AxisBound::new(sc, *start_col_abs)),
+                    Some(formualizer_common::AxisBound::new(er, *end_row_abs)),
+                    Some(formualizer_common::AxisBound::new(ec, *end_col_abs)),
+                )
+                .map_err(|_| ExcelError::new(ExcelErrorKind::Ref))?;
                 SharedRef::Range(range)
             }
-            _ => {
-                return Err(ExcelError::new(ExcelErrorKind::Ref));
-            }
+            _ => return Err(ExcelError::new(ExcelErrorKind::Ref)),
         };
 
         let current_id = self

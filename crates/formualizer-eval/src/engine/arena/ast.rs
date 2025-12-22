@@ -84,6 +84,8 @@ pub enum CompactRefType {
         sheet: Option<SheetKey>,
         row: u32,
         col: u32,
+        row_abs: bool,
+        col_abs: bool,
     },
     Range {
         sheet: Option<SheetKey>,
@@ -91,6 +93,10 @@ pub enum CompactRefType {
         start_col: u32,
         end_row: u32,
         end_col: u32,
+        start_row_abs: bool,
+        start_col_abs: bool,
+        end_row_abs: bool,
+        end_col_abs: bool,
     },
     External {
         raw_id: StringId,
@@ -495,6 +501,8 @@ mod tests {
                 sheet: None,
                 row: 1,
                 col: 1,
+                row_abs: false,
+                col_abs: false,
             },
         );
 
@@ -516,6 +524,8 @@ mod tests {
                 sheet: None,
                 row: 1,
                 col: 1,
+                row_abs: false,
+                col_abs: false,
             },
         );
         assert_eq!(a1_ref, a1_ref2);
@@ -561,6 +571,10 @@ mod tests {
                 start_col: 1,
                 end_row: 10,
                 end_col: 1,
+                start_row_abs: false,
+                start_col_abs: false,
+                end_row_abs: false,
+                end_col_abs: false,
             },
         );
 
@@ -574,6 +588,8 @@ mod tests {
                 sheet: None,
                 row: 1,
                 col: 2,
+                row_abs: false,
+                col_abs: false,
             },
         );
 
@@ -590,6 +606,8 @@ mod tests {
                 sheet: None,
                 row: 1,
                 col: 3,
+                row_abs: false,
+                col_abs: false,
             },
         );
         let d1 = arena.insert_reference(
@@ -598,6 +616,8 @@ mod tests {
                 sheet: None,
                 row: 1,
                 col: 4,
+                row_abs: false,
+                col_abs: false,
             },
         );
 

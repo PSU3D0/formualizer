@@ -97,6 +97,7 @@ impl DependencyGraph {
                     start_col,
                     end_row,
                     end_col,
+                    ..
                 } => {
                     // If any bound is missing (infinite/partial range), always keep compressed.
                     let has_unbounded = start_row.is_none()
@@ -259,7 +260,9 @@ impl DependencyGraph {
         created_placeholders: &mut Vec<CellRef>,
     ) -> Result<VertexId, ExcelError> {
         match reference {
-            ReferenceType::Cell { sheet, row, col } => {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => {
                 let sheet_id = match sheet {
                     Some(name) => self.resolve_existing_sheet_id(name)?,
                     None => current_sheet_id,

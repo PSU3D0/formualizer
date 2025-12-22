@@ -129,11 +129,14 @@ impl Function for IndexFn {
                 start_col,
                 end_row,
                 end_col,
+                ..
             } => match (start_row, start_col, end_row, end_col) {
                 (Some(sr), Some(sc), Some(er), Some(ec)) => (sheet, sr, sc, er, ec),
                 _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
             },
-            ReferenceType::Cell { sheet, row, col } => (sheet, row, col, row, col),
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => (sheet, row, col, row, col),
             _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
         };
 
@@ -147,11 +150,7 @@ impl Function for IndexFn {
             return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
         }
 
-        Some(Ok(ReferenceType::Cell {
-            sheet,
-            row: r,
-            col: c,
-        }))
+        Some(Ok(ReferenceType::cell(sheet, r, c)))
     }
 
     fn eval<'a, 'b, 'c>(
@@ -238,11 +237,14 @@ impl Function for OffsetFn {
                 start_col,
                 end_row,
                 end_col,
+                ..
             } => match (start_row, start_col, end_row, end_col) {
                 (Some(sr), Some(sc), Some(er), Some(ec)) => (sheet, sr, sc, er, ec),
                 _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
             },
-            ReferenceType::Cell { sheet, row, col } => (sheet, row, col, row, col),
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => (sheet, row, col, row, col),
             _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
         };
 
@@ -280,19 +282,15 @@ impl Function for OffsetFn {
         let nec = nsc + width - 1;
 
         if height == 1 && width == 1 {
-            Some(Ok(ReferenceType::Cell {
-                sheet,
-                row: nsr as u32,
-                col: nsc as u32,
-            }))
+            Some(Ok(ReferenceType::cell(sheet, nsr as u32, nsc as u32)))
         } else {
-            Some(Ok(ReferenceType::Range {
+            Some(Ok(ReferenceType::range(
                 sheet,
-                start_row: Some(nsr as u32),
-                start_col: Some(nsc as u32),
-                end_row: Some(ner as u32),
-                end_col: Some(nec as u32),
-            }))
+                Some(nsr as u32),
+                Some(nsc as u32),
+                Some(ner as u32),
+                Some(nec as u32),
+            )))
         }
     }
 
@@ -357,6 +355,10 @@ mod tests {
                     start_col: Some(1),
                     end_row: Some(3),
                     end_col: Some(3),
+                    start_row_abs: false,
+                    start_col_abs: false,
+                    end_row_abs: false,
+                    end_col_abs: false,
                 },
             },
             None,
@@ -409,6 +411,8 @@ mod tests {
                     sheet: None,
                     row: 1,
                     col: 1,
+                    row_abs: false,
+                    col_abs: false,
                 },
             },
             None,

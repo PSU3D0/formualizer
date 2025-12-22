@@ -494,7 +494,9 @@ impl UmyaAdapter {
         let reference = ReferenceType::from_string(trimmed).ok()?;
 
         let (sheet_name, start_row, start_col, end_row, end_col) = match reference {
-            ReferenceType::Cell { sheet, row, col } => {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => {
                 let sheet = sheet.unwrap_or_else(|| current_sheet.to_string());
                 (sheet, row, col, row, col)
             }
@@ -504,6 +506,7 @@ impl UmyaAdapter {
                 start_col,
                 end_row,
                 end_col,
+                ..
             } => {
                 let sr = start_row?;
                 let sc = start_col?;

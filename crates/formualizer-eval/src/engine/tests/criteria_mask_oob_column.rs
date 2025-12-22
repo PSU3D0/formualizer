@@ -27,6 +27,10 @@ fn criteria_mask_text_oob_column_uses_physical_rows() {
         start_col: Some(3),
         end_row: None,
         end_col: Some(3),
+        start_row_abs: false,
+        start_col_abs: false,
+        end_row_abs: false,
+        end_col_abs: false,
     };
     let view = engine.resolve_range_view(&c_whole_col, "Sheet1").unwrap();
 

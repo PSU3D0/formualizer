@@ -4,6 +4,7 @@ uv = "latest"
 "github:BurntSushi/ripgrep" = "latest"
 "npm:@anthropic-ai/claude-code" = "latest"
 "npm:@openai/codex" = "latest"
+"npm:opencode-ai" = "latest"
 "cargo:wasm-pack" = "latest"
 
 [settings]
