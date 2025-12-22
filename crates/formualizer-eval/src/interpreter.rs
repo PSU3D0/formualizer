@@ -335,6 +335,7 @@ impl<'a> Interpreter<'a> {
                     start_col,
                     end_row,
                     end_col,
+                    ..
                 } => {
                     let sheet_name = sheet.as_deref().unwrap_or(&current_sheet);
                     // Start with provided values, fill None from used-region or sheet bounds.

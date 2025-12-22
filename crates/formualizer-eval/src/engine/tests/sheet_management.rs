@@ -198,11 +198,7 @@ mod tests {
 
         let wb = TestWorkbook::new();
         let engine = Engine::new(wb, EvalConfig::default());
-        let r = ReferenceType::Cell {
-            sheet: Some("NoSuchSheet".to_string()),
-            row: 1,
-            col: 1,
-        };
+        let r = ReferenceType::cell(Some("NoSuchSheet".to_string()), 1, 1);
         assert!(engine.resolve_range_view(&r, "Sheet1").is_err());
     }
 }

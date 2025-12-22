@@ -9,11 +9,7 @@ fn simple_formula(row: u32, col: u32) -> ASTNode {
     ASTNode {
         node_type: ASTNodeType::Reference {
             original: format!("A{row}"),
-            reference: formualizer_parse::parser::ReferenceType::Cell {
-                sheet: None,
-                row,
-                col,
-            },
+            reference: formualizer_parse::parser::ReferenceType::cell(None, row, col),
         },
         source_token: None,
         contains_volatile: false,

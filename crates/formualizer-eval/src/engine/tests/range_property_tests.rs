@@ -27,13 +27,13 @@ fn range_ast(
                 end_row,
                 end_col
             ),
-            reference: ReferenceType::Range {
-                sheet: sheet.map(|s| s.to_string()),
-                start_row: Some(start_row),
-                start_col: Some(start_col),
-                end_row: Some(end_row),
-                end_col: Some(end_col),
-            },
+            reference: ReferenceType::range(
+                sheet.map(|s| s.to_string()),
+                Some(start_row),
+                Some(start_col),
+                Some(end_row),
+                Some(end_col),
+            ),
         },
         source_token: None,
         contains_volatile: false,

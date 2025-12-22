@@ -55,13 +55,8 @@ fn criteria_mask_text_oob_column_empty_sheet_is_zero_len() {
 
     // Sheet exists in Arrow store but has nrows=0. An open-ended whole-column reference should not
     // force allocating a 1M-row lowered-text array just to build a criteria mask.
-    let c_whole_col = ReferenceType::Range {
-        sheet: Some("Sheet1".to_string()),
-        start_row: None,
-        start_col: Some(3),
-        end_row: None,
-        end_col: Some(3),
-    };
+    let c_whole_col =
+        ReferenceType::range(Some("Sheet1".to_string()), None, Some(3), None, Some(3));
     let view = engine.resolve_range_view(&c_whole_col, "Sheet1").unwrap();
 
     let pred = crate::args::parse_criteria(&LiteralValue::Text("".into())).unwrap();

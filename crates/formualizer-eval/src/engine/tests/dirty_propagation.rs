@@ -16,11 +16,7 @@ fn test_mark_dirty_propagation() {
     let ast_ref_a1 = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 1, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -31,11 +27,7 @@ fn test_mark_dirty_propagation() {
     let ast_ref_a2 = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A2".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 2,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 2, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -46,11 +38,7 @@ fn test_mark_dirty_propagation() {
     let ast_ref_a3 = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A3".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 3,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 3, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -128,11 +116,7 @@ fn test_mark_dirty_diamond_dependency() {
     let ast_ref_a1 = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 1, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -151,11 +135,7 @@ fn test_mark_dirty_diamond_dependency() {
             left: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
                     original: "A2".to_string(),
-                    reference: ReferenceType::Cell {
-                        sheet: None,
-                        row: 2,
-                        col: 1,
-                    },
+                    reference: ReferenceType::cell(None, 2, 1),
                 },
                 source_token: None,
                 contains_volatile: false,
@@ -163,11 +143,7 @@ fn test_mark_dirty_diamond_dependency() {
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
                     original: "A3".to_string(),
-                    reference: ReferenceType::Cell {
-                        sheet: None,
-                        row: 3,
-                        col: 1,
-                    },
+                    reference: ReferenceType::cell(None, 3, 1),
                 },
                 source_token: None,
                 contains_volatile: false,
@@ -210,11 +186,7 @@ fn test_dirty_flag_clearing() {
     let ast_ref_a1 = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 1, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -311,11 +283,7 @@ fn test_evaluation_vertices_combined() {
     let ast_ref = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 1, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -349,11 +317,7 @@ fn test_dirty_propagation_performance() {
         let ast_ref = ASTNode {
             node_type: ASTNodeType::Reference {
                 original: format!("A{}", i - 1),
-                reference: ReferenceType::Cell {
-                    sheet: None,
-                    row: i - 1,
-                    col: 1,
-                },
+                reference: ReferenceType::cell(None, 1, 1),
             },
             source_token: None,
             contains_volatile: false,

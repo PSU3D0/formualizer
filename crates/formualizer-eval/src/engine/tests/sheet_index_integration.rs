@@ -10,11 +10,7 @@ fn sum_formula(row1: u32, col1: u32, row2: u32, col2: u32) -> ASTNode {
             left: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
                     original: format!("A{row1}"),
-                    reference: ReferenceType::Cell {
-                        sheet: None,
-                        row: row1,
-                        col: col1,
-                    },
+                    reference: ReferenceType::cell(None, row1, col1),
                 },
                 source_token: None,
                 contains_volatile: false,
@@ -22,11 +18,7 @@ fn sum_formula(row1: u32, col1: u32, row2: u32, col2: u32) -> ASTNode {
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
                     original: format!("A{row2}"),
-                    reference: ReferenceType::Cell {
-                        sheet: None,
-                        row: row2,
-                        col: col2,
-                    },
+                    reference: ReferenceType::cell(None, row2, col2),
                 },
                 source_token: None,
                 contains_volatile: false,

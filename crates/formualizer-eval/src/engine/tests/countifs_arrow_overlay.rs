@@ -7,13 +7,7 @@ use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 fn whole_col_ref(sheet: &str, col: u32) -> ASTNode {
-    let r = ReferenceType::Range {
-        sheet: Some(sheet.to_string()),
-        start_row: None,
-        start_col: Some(col),
-        end_row: None,
-        end_col: Some(col),
-    };
+    let r = ReferenceType::range(Some(sheet.to_string()), None, Some(col), None, Some(col));
     ASTNode::new(
         ASTNodeType::Reference {
             original: String::new(),

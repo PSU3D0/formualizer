@@ -18,11 +18,7 @@ fn ref_cell(row: u32, col: u32) -> ASTNode {
     ASTNode::new(
         ASTNodeType::Reference {
             original: format!("R{row}C{col}"),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row,
-                col,
-            },
+            reference: ReferenceType::cell(None, row, col),
         },
         None,
     )

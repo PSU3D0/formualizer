@@ -251,49 +251,25 @@ fn unbounded_ranges_resolve_with_expected_dims() {
     let engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     let sheet = "Sheet1";
     // A:A
-    let r1 = ReferenceType::Range {
-        sheet: Some(sheet.into()),
-        start_row: None,
-        start_col: Some(1),
-        end_row: None,
-        end_col: Some(1),
-    };
+    let r1 = ReferenceType::range(Some(sheet.into()), None, Some(1), None, Some(1));
     let rv1 = engine.resolve_range_view(&r1, sheet).unwrap();
     let (r1_rows, r1_cols) = rv1.dims();
     assert_eq!(r1_cols, 1);
     assert!(r1_rows >= 1_000_000, "expected full column height");
     // 1:1
-    let r2 = ReferenceType::Range {
-        sheet: Some(sheet.into()),
-        start_row: Some(1),
-        start_col: None,
-        end_row: Some(1),
-        end_col: None,
-    };
+    let r2 = ReferenceType::range(Some(sheet.into()), Some(1), None, Some(1), None);
     let rv2 = engine.resolve_range_view(&r2, sheet).unwrap();
     let (r2_rows, r2_cols) = rv2.dims();
     assert_eq!(r2_rows, 1);
     assert!(r2_cols >= 10_000, "expected wide row");
     // A1:A (partial)
-    let r3 = ReferenceType::Range {
-        sheet: Some(sheet.into()),
-        start_row: Some(1),
-        start_col: Some(1),
-        end_row: None,
-        end_col: Some(1),
-    };
+    let r3 = ReferenceType::range(Some(sheet.into()), Some(1), Some(1), None, Some(1));
     let rv3 = engine.resolve_range_view(&r3, sheet).unwrap();
     let (r3_rows, r3_cols) = rv3.dims();
     assert_eq!(r3_cols, 1);
     assert!(r3_rows >= 1_000_000);
     // A:A10 (partial)
-    let r4 = ReferenceType::Range {
-        sheet: Some(sheet.into()),
-        start_row: None,
-        start_col: Some(1),
-        end_row: Some(10),
-        end_col: Some(1),
-    };
+    let r4 = ReferenceType::range(Some(sheet.into()), None, Some(1), Some(10), Some(1));
     let rv4 = engine.resolve_range_view(&r4, sheet).unwrap();
     let (r4_rows, r4_cols) = rv4.dims();
     assert_eq!(r4_cols, 1);

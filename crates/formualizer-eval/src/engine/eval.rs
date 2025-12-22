@@ -3743,27 +3743,35 @@ where
                     None => SheetLocator::Current,
                 };
                 let sr = start_row
-                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?
-                    .checked_sub(1)
-                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                    .map(|r| {
+                        r.checked_sub(1)
+                            .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))
+                    })
+                    .transpose()?;
                 let sc = start_col
-                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?
-                    .checked_sub(1)
-                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                    .map(|c| {
+                        c.checked_sub(1)
+                            .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))
+                    })
+                    .transpose()?;
                 let er = end_row
-                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?
-                    .checked_sub(1)
-                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                    .map(|r| {
+                        r.checked_sub(1)
+                            .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))
+                    })
+                    .transpose()?;
                 let ec = end_col
-                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?
-                    .checked_sub(1)
-                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                    .map(|c| {
+                        c.checked_sub(1)
+                            .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))
+                    })
+                    .transpose()?;
                 let range = SharedRangeRef::from_parts(
                     sheet_loc,
-                    Some(formualizer_common::AxisBound::new(sr, *start_row_abs)),
-                    Some(formualizer_common::AxisBound::new(sc, *start_col_abs)),
-                    Some(formualizer_common::AxisBound::new(er, *end_row_abs)),
-                    Some(formualizer_common::AxisBound::new(ec, *end_col_abs)),
+                    sr.map(|idx| formualizer_common::AxisBound::new(idx, *start_row_abs)),
+                    sc.map(|idx| formualizer_common::AxisBound::new(idx, *start_col_abs)),
+                    er.map(|idx| formualizer_common::AxisBound::new(idx, *end_row_abs)),
+                    ec.map(|idx| formualizer_common::AxisBound::new(idx, *end_col_abs)),
                 )
                 .map_err(|_| ExcelError::new(ExcelErrorKind::Ref))?;
                 SharedRef::Range(range)

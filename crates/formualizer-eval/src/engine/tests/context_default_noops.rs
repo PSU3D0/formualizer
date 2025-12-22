@@ -68,23 +68,19 @@ mod tests {
         let ctx = DefaultContext;
 
         // Test with a simple cell reference
-        let cell_ref = ReferenceType::Cell {
-            sheet: Some("Sheet1".to_string()),
-            row: 1,
-            col: 1,
-        };
+        let cell_ref = ReferenceType::cell(Some("Sheet1".to_string()), 1, 1);
 
         // Default implementation should return None
         // flats removed
 
         // Test with a range reference
-        let range_ref = ReferenceType::Range {
-            sheet: Some("Sheet1".to_string()),
-            start_row: Some(1),
-            start_col: Some(1),
-            end_row: Some(10),
-            end_col: Some(5),
-        };
+        let range_ref = ReferenceType::range(
+            Some("Sheet1".to_string()),
+            Some(1),
+            Some(1),
+            Some(10),
+            Some(5),
+        );
 
         // flats removed
     }
@@ -104,11 +100,7 @@ mod tests {
 
         // Multiple calls should all return None consistently
         for _ in 0..10 {
-            let cell_ref = ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 1,
-            };
+            let cell_ref = ReferenceType::cell(None, 1, 1);
             // flats removed
         }
     }

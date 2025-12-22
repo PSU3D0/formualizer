@@ -27,13 +27,13 @@ fn criteria_mask_text_is_built_per_chunk_and_handles_empty_string_semantics() {
         ab.finish().unwrap();
     }
 
-    let rng = ReferenceType::Range {
-        sheet: Some("Sheet1".to_string()),
-        start_row: Some(1),
-        start_col: Some(1),
-        end_row: Some(total_rows),
-        end_col: Some(1),
-    };
+    let rng = ReferenceType::range(
+        Some("Sheet1".to_string()),
+        Some(1),
+        Some(1),
+        Some(total_rows),
+        Some(1),
+    );
     let view = engine.resolve_range_view(&rng, "Sheet1").unwrap();
 
     // Eq("") should treat Empty as equal and yield all true (no nulls).
@@ -86,13 +86,13 @@ fn criteria_mask_text_matches_values_across_chunks() {
         ab.finish().unwrap();
     }
 
-    let rng = ReferenceType::Range {
-        sheet: Some("Sheet1".to_string()),
-        start_row: Some(1),
-        start_col: Some(1),
-        end_row: Some(total_rows),
-        end_col: Some(1),
-    };
+    let rng = ReferenceType::range(
+        Some("Sheet1".to_string()),
+        Some(1),
+        Some(1),
+        Some(total_rows),
+        Some(1),
+    );
     let view = engine.resolve_range_view(&rng, "Sheet1").unwrap();
 
     let pred = crate::args::parse_criteria(&LiteralValue::Text("Yes".into())).unwrap();

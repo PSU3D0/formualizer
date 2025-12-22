@@ -912,7 +912,10 @@ mod tests {
         // C1 -> #REF! (deleted), F1 -> D1 (shifted left by 2)
         if let ASTNodeType::BinaryOp { left, right, .. } = &adjusted.node_type {
             if let ASTNodeType::Reference {
-                reference: formualizer_parse::parser::ReferenceType::Cell { sheet, row, col },
+                reference:
+                    formualizer_parse::parser::ReferenceType::Cell {
+                        sheet, row, col, ..
+                    },
                 ..
             } = &left.node_type
             {

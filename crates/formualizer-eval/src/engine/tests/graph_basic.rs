@@ -194,11 +194,11 @@ fn create_cell_ref_ast(
     formualizer_parse::parser::ASTNode {
         node_type: formualizer_parse::parser::ASTNodeType::Reference {
             original: original.to_string(),
-            reference: formualizer_parse::parser::ReferenceType::Cell {
-                sheet: sheet.map(|s| s.to_string()),
+            reference: formualizer_parse::parser::ReferenceType::cell(
+                sheet.map(|s| s.to_string()),
                 row,
                 col,
-            },
+            ),
         },
         source_token: None,
         contains_volatile: false,

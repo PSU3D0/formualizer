@@ -234,7 +234,9 @@ impl EvaluationContext for TestWorkbook {
 
         match reference {
             // Preserve #REF! for invalid single-cell references by embedding as a 1x1 value
-            RT::Cell { sheet, row, col } => {
+            RT::Cell {
+                sheet, row, col, ..
+            } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
                 let v = match self.resolve_cell_reference(Some(sheet_name), *row, *col) {
                     Ok(val) => val,

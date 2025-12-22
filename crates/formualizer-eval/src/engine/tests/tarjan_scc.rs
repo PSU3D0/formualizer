@@ -8,11 +8,7 @@ fn create_cell_ref_ast(sheet: Option<&str>, row: u32, col: u32, original: &str) 
     ASTNode {
         node_type: ASTNodeType::Reference {
             original: original.to_string(),
-            reference: ReferenceType::Cell {
-                sheet: sheet.map(|s| s.to_string()),
-                row,
-                col,
-            },
+            reference: ReferenceType::cell(sheet.map(|s| s.to_string()), row, col),
         },
         source_token: None,
         contains_volatile: false,

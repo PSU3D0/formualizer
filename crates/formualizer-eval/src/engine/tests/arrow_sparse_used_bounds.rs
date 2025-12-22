@@ -28,13 +28,7 @@ fn used_rows_for_columns_sees_sparse_overlay_for_whole_column_refs() {
         .unwrap();
 
     // A:A
-    let r = ReferenceType::Range {
-        sheet: Some(sheet.to_string()),
-        start_row: None,
-        start_col: Some(1),
-        end_row: None,
-        end_col: Some(1),
-    };
+    let r = ReferenceType::range(Some(sheet.to_string()), None, Some(1), None, Some(1));
 
     let view = engine.resolve_range_view(&r, sheet).unwrap();
     let av = view;
@@ -75,13 +69,13 @@ fn used_cols_for_rows_sees_sparse_overlay_for_whole_row_refs() {
         .unwrap();
 
     // far_row:far_row
-    let r = ReferenceType::Range {
-        sheet: Some(sheet.to_string()),
-        start_row: Some(far_row),
-        start_col: None,
-        end_row: Some(far_row),
-        end_col: None,
-    };
+    let r = ReferenceType::range(
+        Some(sheet.to_string()),
+        Some(far_row),
+        None,
+        Some(far_row),
+        None,
+    );
 
     let view = engine.resolve_range_view(&r, sheet).unwrap();
     let av = view;

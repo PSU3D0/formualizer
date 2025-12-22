@@ -19,11 +19,7 @@ fn test_dependency_extraction_from_ast() {
     let ast_with_ref = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None, // Same sheet
-                row: 1,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 1, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -81,11 +77,7 @@ fn test_dependency_extraction_multiple_references() {
             left: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
                     original: "A1".to_string(),
-                    reference: ReferenceType::Cell {
-                        sheet: None,
-                        row: 1,
-                        col: 1,
-                    },
+                    reference: ReferenceType::cell(None, 1, 1),
                 },
                 source_token: None,
                 contains_volatile: false,
@@ -93,11 +85,7 @@ fn test_dependency_extraction_multiple_references() {
             right: Box::new(ASTNode {
                 node_type: ASTNodeType::Reference {
                     original: "B1".to_string(),
-                    reference: ReferenceType::Cell {
-                        sheet: None,
-                        row: 1,
-                        col: 2,
-                    },
+                    reference: ReferenceType::cell(None, 1, 2),
                 },
                 source_token: None,
                 contains_volatile: false,
@@ -144,11 +132,7 @@ fn test_dependency_edge_management() {
     let ast_ref_a1 = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 1, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -175,11 +159,7 @@ fn test_dependency_edge_management() {
     let ast_ref_b1 = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "B1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 2,
-            },
+            reference: ReferenceType::cell(None, 1, 2),
         },
         source_token: None,
         contains_volatile: false,
@@ -221,11 +201,7 @@ fn test_circular_dependency_detection() {
     let ast_self_ref = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 1, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -264,11 +240,7 @@ fn test_complex_circular_dependency() {
     let ast_ref_b1 = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "B1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 2,
-            },
+            reference: ReferenceType::cell(None, 1, 2),
         },
         source_token: None,
         contains_volatile: false,
@@ -281,11 +253,7 @@ fn test_complex_circular_dependency() {
     let ast_ref_a1 = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 1, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -336,11 +304,7 @@ fn test_cross_sheet_dependencies() {
     let ast_cross_sheet = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "Sheet1!A1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: Some("Sheet1".to_string()),
-                row: 1,
-                col: 1,
-            },
+            reference: ReferenceType::cell(Some("Sheet1".to_string()), 1, 1),
         },
         source_token: None,
         contains_volatile: false,
@@ -390,11 +354,7 @@ fn test_relative_sheet_dependency() {
     let ast_relative_ref = ASTNode {
         node_type: ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: ReferenceType::Cell {
-                sheet: None, // This is the key: no explicit sheet
-                row: 1,
-                col: 1,
-            },
+            reference: ReferenceType::cell(None, 1, 1),
         },
         source_token: None,
         contains_volatile: false,

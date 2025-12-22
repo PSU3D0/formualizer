@@ -85,11 +85,7 @@ fn by_ref_accepts_ast_reference() {
     let a0 = formualizer_parse::parser::ASTNode::new(
         formualizer_parse::parser::ASTNodeType::Reference {
             original: "A1".to_string(),
-            reference: formualizer_parse::parser::ReferenceType::Cell {
-                sheet: None,
-                row: 1,
-                col: 1,
-            },
+            reference: formualizer_parse::parser::ReferenceType::cell(None, 1, 1),
         },
         None,
     );
