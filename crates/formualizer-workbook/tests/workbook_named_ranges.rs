@@ -4,7 +4,7 @@ use formualizer_workbook::{Workbook, traits::NamedRangeScope};
 #[test]
 fn workbook_named_range_crud() {
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Sheet1");
+    workbook.add_sheet("Sheet1").unwrap();
 
     workbook
         .set_value("Sheet1", 1, 1, LiteralValue::Number(10.0))

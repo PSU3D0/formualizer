@@ -95,7 +95,8 @@ impl PyWorkbook {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
             })?;
             // add_sheet is idempotent on duplicate names
-            wb.add_sheet(name);
+            wb.add_sheet(name)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         }
         let handle =
             formualizer::workbook::WorksheetHandle::new(self.inner.clone(), name.to_string());
@@ -151,7 +152,8 @@ impl PyWorkbook {
             .inner
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        wb.add_sheet(name);
+        wb.add_sheet(name)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         let mut sheets = self.sheets.write().unwrap();
         sheets.entry(name.to_string()).or_default();
         Ok(())
@@ -507,7 +509,8 @@ impl PyWorkbook {
             let mut wb = self.inner.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
             })?;
-            wb.add_sheet(name);
+            wb.add_sheet(name)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         }
         let handle =
             formualizer::workbook::WorksheetHandle::new(self.inner.clone(), name.to_string());

@@ -5,9 +5,9 @@ use sheetport_spec::Manifest;
 
 fn make_test_workbook() -> Workbook {
     let mut wb = Workbook::new();
-    wb.add_sheet("Inputs");
-    wb.add_sheet("Inventory");
-    wb.add_sheet("Outputs");
+    wb.add_sheet("Inputs").unwrap();
+    wb.add_sheet("Inventory").unwrap();
+    wb.add_sheet("Outputs").unwrap();
     wb
 }
 
@@ -25,8 +25,8 @@ fn sheetport_fails_for_missing_sheet() {
     let yaml = include_str!("../../sheetport-spec/tests/fixtures/supply_planning.yaml");
     let manifest: Manifest = Manifest::from_yaml_str(yaml).expect("fixture parses");
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Inputs");
-    workbook.add_sheet("Outputs");
+    workbook.add_sheet("Inputs").unwrap();
+    workbook.add_sheet("Outputs").unwrap();
 
     let err = match SheetPort::new(&mut workbook, manifest) {
         Ok(_) => panic!("expected missing sheet error"),
@@ -73,7 +73,7 @@ ports:
         Manifest::from_yaml_str(manifest_yaml).expect("session manifest parses");
 
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Sheet");
+    workbook.add_sheet("Sheet").unwrap();
     workbook
         .set_value("Sheet", 1, 1, LiteralValue::Number(5.0))
         .expect("set A1");
@@ -128,7 +128,7 @@ fn sheetport_rejects_unsupported_profile() {
     let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
 
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Sheet");
+    workbook.add_sheet("Sheet").unwrap();
 
     let err = match SheetPort::new(&mut workbook, manifest) {
         Ok(_) => panic!("expected unsupported profile error"),
@@ -163,7 +163,7 @@ ports:
     let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
 
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Sheet");
+    workbook.add_sheet("Sheet").unwrap();
 
     let err = match SheetPort::new(&mut workbook, manifest) {
         Ok(_) => panic!("expected invalid manifest"),
@@ -201,7 +201,7 @@ ports:
     let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
 
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Sheet");
+    workbook.add_sheet("Sheet").unwrap();
 
     let err = match SheetPort::new(&mut workbook, manifest) {
         Ok(_) => panic!("expected invalid manifest"),
@@ -239,7 +239,7 @@ ports:
     let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
 
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Sheet");
+    workbook.add_sheet("Sheet").unwrap();
 
     let err = match SheetPort::new(&mut workbook, manifest) {
         Ok(_) => panic!("expected invalid manifest"),
@@ -277,7 +277,7 @@ ports:
     let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
 
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Sheet");
+    workbook.add_sheet("Sheet").unwrap();
 
     let err = match SheetPort::new(&mut workbook, manifest) {
         Ok(_) => panic!("expected invalid manifest"),

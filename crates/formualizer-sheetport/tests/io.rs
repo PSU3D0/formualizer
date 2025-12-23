@@ -148,9 +148,9 @@ ports:
 
 fn build_workbook() -> Result<Workbook, SheetPortError> {
     let mut wb = Workbook::new();
-    wb.add_sheet("Inputs");
-    wb.add_sheet("Inventory");
-    wb.add_sheet("Outputs");
+    wb.add_sheet("Inputs").map_err(SheetPortError::from)?;
+    wb.add_sheet("Inventory").map_err(SheetPortError::from)?;
+    wb.add_sheet("Outputs").map_err(SheetPortError::from)?;
 
     set_value(&mut wb, "Inputs", 2, 2, LiteralValue::Text("WH-001".into()))?;
     set_value(&mut wb, "Inputs", 1, 2, LiteralValue::Int(3))?;
@@ -236,7 +236,7 @@ fn build_workbook() -> Result<Workbook, SheetPortError> {
 
 fn build_rng_workbook() -> Result<Workbook, SheetPortError> {
     let mut wb = Workbook::new();
-    wb.add_sheet("Random");
+    wb.add_sheet("Random").map_err(SheetPortError::from)?;
     set_formula(&mut wb, "Random", 1, 1, "RAND()")?;
     Ok(wb)
 }
@@ -841,7 +841,7 @@ ports:
 #[test]
 fn enum_constraints_use_exact_json_equality() -> Result<(), SheetPortError> {
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Sheet");
+    workbook.add_sheet("Sheet").map_err(SheetPortError::from)?;
     workbook
         .set_value("Sheet", 1, 1, LiteralValue::Number(5.0))
         .map_err(SheetPortError::from)?;
@@ -876,7 +876,7 @@ ports:
 #[test]
 fn enum_constraints_accept_exact_float_match() -> Result<(), SheetPortError> {
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Sheet");
+    workbook.add_sheet("Sheet").map_err(SheetPortError::from)?;
     workbook
         .set_value("Sheet", 1, 1, LiteralValue::Number(5.0))
         .map_err(SheetPortError::from)?;

@@ -4,7 +4,7 @@ use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
 #[test]
 fn values_roundtrip_and_range() {
     let mut wb = Workbook::new();
-    wb.add_sheet("S");
+    wb.add_sheet("S").unwrap();
     wb.set_value("S", 1, 1, LiteralValue::Int(10)).unwrap();
     wb.set_value("S", 2, 1, LiteralValue::Number(2.5)).unwrap();
 
@@ -22,13 +22,13 @@ fn values_roundtrip_and_range() {
 #[test]
 fn deferred_formula_evaluation() {
     let mut wb = Workbook::new();
-    wb.add_sheet("S");
+    wb.add_sheet("S").unwrap();
     wb.set_value("S", 1, 1, LiteralValue::Int(7)).unwrap();
     // Stage a formula without '='; deferred graph building should handle it
     wb.set_formula("S", 1, 2, "A1*3").unwrap();
 
     // Not evaluated yet; no value stored for a staged formula
-    assert_eq!(wb.get_value("S", 1, 2), None);
+    assert_eq!(wb.get_value("S", 1, 2), Some(LiteralValue::Empty));
 
     // Demand-driven eval builds graph for sheet S and computes
     let v = wb.evaluate_cell("S", 1, 2).unwrap();
@@ -61,7 +61,7 @@ fn load_from_json_reader() {
     let cfg = WorkbookConfig::interactive();
     let mut wb = Workbook::from_reader(json, LoadStrategy::EagerAll, cfg).unwrap();
     // Deferred mode: formula not evaluated yet (no stored value)
-    assert_eq!(wb.get_value("S", 1, 2), None);
+    assert_eq!(wb.get_value("S", 1, 2), Some(LiteralValue::Empty));
     // Evaluate
     let v = wb.evaluate_cell("S", 1, 2).unwrap();
     assert_eq!(v, LiteralValue::Number(20.0));
@@ -70,7 +70,7 @@ fn load_from_json_reader() {
 #[test]
 fn value_edit_triggers_recompute_in_deferred_mode() {
     let mut wb = Workbook::new();
-    wb.add_sheet("S");
+    wb.add_sheet("S").unwrap();
     wb.set_value("S", 1, 1, LiteralValue::Int(3)).unwrap();
     wb.set_formula("S", 1, 2, "A1*2").unwrap();
 
@@ -89,7 +89,7 @@ fn value_edit_triggers_recompute_in_deferred_mode() {
 #[test]
 fn staged_formula_edit_recomputes_on_demand() {
     let mut wb = Workbook::new();
-    wb.add_sheet("S");
+    wb.add_sheet("S").unwrap();
     wb.set_value("S", 1, 1, LiteralValue::Int(5)).unwrap();
     wb.set_formula("S", 1, 2, "A1*2").unwrap();
     assert_eq!(
@@ -109,7 +109,7 @@ fn bulk_write_mixed_values_and_formulas() {
     use std::collections::BTreeMap;
 
     let mut wb = Workbook::new();
-    wb.add_sheet("S");
+    wb.add_sheet("S").unwrap();
 
     let mut cells: BTreeMap<(u32, u32), CellData> = BTreeMap::new();
     cells.insert((1, 1), CellData::from_value(LiteralValue::Int(2)));
@@ -136,7 +136,7 @@ fn bulk_write_mixed_values_and_formulas() {
 #[test]
 fn set_values_batch_and_undo() {
     let mut wb = Workbook::new();
-    wb.add_sheet("S");
+    wb.add_sheet("S").unwrap();
     wb.set_changelog_enabled(true);
 
     let rows = vec![
@@ -166,7 +166,7 @@ fn set_values_batch_and_undo() {
 #[test]
 fn set_formulas_batch_deferred_then_eval() {
     let mut wb = Workbook::new();
-    wb.add_sheet("S");
+    wb.add_sheet("S").unwrap();
     wb.set_values(
         "S",
         1,
@@ -177,7 +177,7 @@ fn set_formulas_batch_deferred_then_eval() {
     let forms = vec![vec!["A1*2".to_string(), "B1+1".to_string()]];
     wb.set_formulas("S", 2, 1, &forms).unwrap();
     // No values yet for staged formulas
-    assert_eq!(wb.get_value("S", 2, 1), None);
+    assert_eq!(wb.get_value("S", 2, 1), Some(LiteralValue::Empty));
     // Evaluate both
     let out = wb.evaluate_cells(&[("S", 2, 1), ("S", 2, 2)]).unwrap();
     assert_eq!(out[0], LiteralValue::Number(10.0));
@@ -189,7 +189,7 @@ fn changelog_undo_redo_values() {
     // Use default deferred mode
     let mut wb = Workbook::new();
     wb.set_changelog_enabled(true);
-    wb.add_sheet("S");
+    wb.add_sheet("S").unwrap();
     wb.set_value("S", 1, 1, LiteralValue::Int(1)).unwrap();
     wb.set_value("S", 1, 2, LiteralValue::Int(2)).unwrap();
     assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(1)));
@@ -212,7 +212,7 @@ fn changelog_with_formulas_non_deferred() {
     cfg.eval.defer_graph_building = false;
     let mut wb = Workbook::new_with_config(cfg);
     wb.set_changelog_enabled(true);
-    wb.add_sheet("S");
+    wb.add_sheet("S").unwrap();
     wb.set_value("S", 1, 1, LiteralValue::Int(2)).unwrap();
     wb.set_formula("S", 1, 2, "A1*3").unwrap();
     assert_eq!(

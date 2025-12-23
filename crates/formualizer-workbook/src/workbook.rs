@@ -331,27 +331,30 @@ impl Workbook {
     pub fn has_sheet(&self, name: &str) -> bool {
         self.engine.sheet_id(name).is_some()
     }
-    pub fn add_sheet(&mut self, name: &str) {
-        let _ = self.engine.add_sheet(name);
+    pub fn add_sheet(&mut self, name: &str) -> Result<(), ExcelError> {
+        self.engine.add_sheet(name)?;
         self.ensure_arrow_sheet_capacity(name, 0, 0);
+        Ok(())
     }
-    pub fn delete_sheet(&mut self, name: &str) {
+    pub fn delete_sheet(&mut self, name: &str) -> Result<(), ExcelError> {
         if let Some(id) = self.engine.sheet_id(name) {
-            let _ = self.engine.remove_sheet(id);
+            self.engine.remove_sheet(id)?;
         }
         // Remove from Arrow store as well
         self.engine
             .sheet_store_mut()
             .sheets
             .retain(|s| s.name.as_ref() != name);
+        Ok(())
     }
-    pub fn rename_sheet(&mut self, old: &str, new: &str) {
+    pub fn rename_sheet(&mut self, old: &str, new: &str) -> Result<(), ExcelError> {
         if let Some(id) = self.engine.sheet_id(old) {
-            let _ = self.engine.rename_sheet(id, new);
+            self.engine.rename_sheet(id, new)?;
         }
         if let Some(asheet) = self.engine.sheet_store_mut().sheet_mut(old) {
             asheet.name = std::sync::Arc::<str>::from(new);
         }
+        Ok(())
     }
 
     // Cells
@@ -458,10 +461,7 @@ impl Workbook {
     }
 
     pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
-        match self.engine.get_cell_value(sheet, row, col) {
-            Some(LiteralValue::Empty) | None => None,
-            Some(v) => Some(v),
-        }
+        self.engine.get_cell_value(sheet, row, col)
     }
     pub fn get_formula(&self, sheet: &str, row: u32, col: u32) -> Option<String> {
         if let Some(s) = self.engine.get_staged_formula_text(sheet, row, col) {
@@ -1074,16 +1074,13 @@ impl SpreadsheetWriter for Workbook {
         Ok(())
     }
     fn create_sheet(&mut self, name: &str) -> Result<(), Self::Error> {
-        self.add_sheet(name);
-        Ok(())
+        self.add_sheet(name).map_err(IoError::Engine)
     }
     fn delete_sheet(&mut self, name: &str) -> Result<(), Self::Error> {
-        self.delete_sheet(name);
-        Ok(())
+        self.delete_sheet(name).map_err(IoError::Engine)
     }
     fn rename_sheet(&mut self, old: &str, new: &str) -> Result<(), Self::Error> {
-        self.rename_sheet(old, new);
-        Ok(())
+        self.rename_sheet(old, new).map_err(IoError::Engine)
     }
     fn flush(&mut self) -> Result<(), Self::Error> {
         Ok(())

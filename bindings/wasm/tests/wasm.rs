@@ -119,7 +119,7 @@ fn test_array_formula() {
 #[wasm_bindgen_test]
 fn test_workbook_sheet_eval() {
     let wb = Workbook::new();
-    wb.add_sheet("Data".to_string());
+    wb.add_sheet("Data".to_string()).unwrap();
     // Set values via workbook
     wb.set_value("Data".to_string(), 1, 1, JsValue::from_f64(1.0))
         .unwrap();
@@ -129,8 +129,8 @@ fn test_workbook_sheet_eval() {
     wb.set_formula("Data".to_string(), 1, 3, "=A1+B1".to_string())
         .unwrap();
     // Ensure sheet facade works without triggering evaluation (Instant::now unsupported in wasm32 tests)
-    wb.add_sheet("Sheet2".to_string());
-    let sheet = wb.sheet("Sheet2".to_string());
+    wb.add_sheet("Sheet2".to_string()).unwrap();
+    let sheet = wb.sheet("Sheet2".to_string()).unwrap();
     sheet.set_value(1, 1, JsValue::from_f64(10.0)).unwrap();
     sheet.set_formula(1, 2, "=A1*3".to_string()).unwrap();
     let formula = sheet.get_formula(1, 2).unwrap();
@@ -140,7 +140,7 @@ fn test_workbook_sheet_eval() {
 #[wasm_bindgen_test]
 fn test_changelog_undo_redo() {
     let wb = Workbook::new();
-    wb.add_sheet("S".to_string());
+    wb.add_sheet("S".to_string()).unwrap();
     wb.set_changelog_enabled(true).unwrap();
     wb.set_value("S".to_string(), 1, 1, JsValue::from_f64(10.0))
         .unwrap();
@@ -150,7 +150,7 @@ fn test_changelog_undo_redo() {
 
     // Undo: back to 10
     wb.undo().unwrap();
-    let sheet = wb.sheet("S".to_string());
+    let sheet = wb.sheet("S".to_string()).unwrap();
     let v = sheet.get_value(1, 1).unwrap();
     assert_eq!(v.as_f64().unwrap(), 10.0);
 
@@ -210,8 +210,8 @@ ports:
 
 fn build_sheetport_workbook() -> Workbook {
     let wb = Workbook::new();
-    wb.add_sheet("Inputs".to_string());
-    wb.add_sheet("Outputs".to_string());
+    wb.add_sheet("Inputs".to_string()).unwrap();
+    wb.add_sheet("Outputs".to_string()).unwrap();
 
     wb.set_value("Inputs".to_string(), 1, 1, JsValue::from_f64(120.0))
         .unwrap();
@@ -305,7 +305,7 @@ fn test_sheetport_session_read_write_roundtrip() {
     assert_eq!(label_after, "seed");
 
     // Workbook reflects updates
-    let sheet = wb.sheet("Inputs".to_string());
+    let sheet = wb.sheet("Inputs".to_string()).unwrap();
     let stored = sheet.get_value(1, 1).unwrap();
     assert_eq!(stored.as_f64().unwrap(), 250.5);
 

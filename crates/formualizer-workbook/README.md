@@ -22,7 +22,7 @@ support, and optional IO backends for XLSX/ODS/json import/export.
 # use formualizer_workbook::{IoError, Workbook};
 # fn main() -> Result<(), IoError> {
 let mut wb = Workbook::new();
-wb.add_sheet("Sheet1");
+wb.add_sheet("Sheet1")?;
 wb.set_value("Sheet1", 1, 1, LiteralValue::Number(2.0))?;
 wb.set_value("Sheet1", 1, 2, LiteralValue::Number(3.0))?;
 wb.set_formula("Sheet1", 1, 3, "=A1+A2")?;

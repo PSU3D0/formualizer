@@ -6,7 +6,7 @@ use formualizer_workbook::Workbook;
 #[test]
 fn named_range_formula_recalculates_and_marks_dirty() {
     let mut workbook = Workbook::new();
-    workbook.add_sheet("Sheet1");
+    workbook.add_sheet("Sheet1").unwrap();
 
     let sheet_id = workbook.engine_mut().sheet_id_mut("Sheet1");
 

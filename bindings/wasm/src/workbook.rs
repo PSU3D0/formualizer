@@ -176,10 +176,12 @@ impl Workbook {
     }
 
     #[wasm_bindgen(js_name = "addSheet")]
-    pub fn add_sheet(&self, name: String) {
-        if let Ok(mut wb) = self.inner.write() {
-            wb.add_sheet(&name);
-        }
+    pub fn add_sheet(&self, name: String) -> Result<(), JsValue> {
+        self.inner
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?
+            .add_sheet(&name)
+            .map_err(|e| js_error(format!("add_sheet failed: {e}")))
     }
 
     #[wasm_bindgen(js_name = "sheetNames")]
@@ -199,14 +201,17 @@ impl Workbook {
 
     /// Get a sheet facade by name (creates if missing)
     #[wasm_bindgen(js_name = "sheet")]
-    pub fn sheet(&self, name: String) -> Sheet {
-        if let Ok(mut wb) = self.inner.write() {
-            wb.add_sheet(&name);
-        }
-        Sheet {
+    pub fn sheet(&self, name: String) -> Result<Sheet, JsValue> {
+        self.inner
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?
+            .add_sheet(&name)
+            .map_err(|e| js_error(format!("failed to ensure sheet exists: {e}")))?;
+
+        Ok(Sheet {
             wb: self.inner.clone(),
             name,
-        }
+        })
     }
 
     #[wasm_bindgen(js_name = "setValue")]

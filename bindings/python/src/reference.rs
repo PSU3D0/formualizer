@@ -294,7 +294,7 @@ fn number_to_column(mut col: u32) -> String {
 }
 
 /// Convert a ReferenceType to a ReferenceLike
-pub fn reference_type_to_py(ref_type: &ReferenceType, original: &str) -> ReferenceLike {
+pub fn reference_type_to_py(ref_type: &ReferenceType, _original: &str) -> ReferenceLike {
     match ref_type {
         ReferenceType::Cell {
             sheet,
