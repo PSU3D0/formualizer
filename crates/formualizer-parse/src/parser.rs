@@ -2,6 +2,9 @@ use crate::tokenizer::{Associativity, Token, TokenSubType, TokenType, Tokenizer,
 use crate::types::{FormulaDialect, ParsingError};
 use crate::{ExcelError, LiteralValue};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::hasher::FormulaHasher;
 use formualizer_common::coord::{
     col_index_from_letters_1based, col_letters_from_1based, parse_a1_1based,
@@ -57,6 +60,7 @@ static COLUMN_LOOKUP: Lazy<Vec<String>> = Lazy::new(|| {
 });
 
 /// A structured table reference specifier for accessing specific parts of a table
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum TableSpecifier {
     /// The entire table
@@ -80,6 +84,7 @@ pub enum TableSpecifier {
 }
 
 /// Specifies which row(s) to use in a table reference
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum TableRowSpecifier {
     /// The current row (context dependent)
@@ -97,6 +102,7 @@ pub enum TableRowSpecifier {
 }
 
 /// Special items in structured references
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum SpecialItem {
     /// The #Headers item
@@ -112,6 +118,7 @@ pub enum SpecialItem {
 }
 
 /// A reference to a table including specifiers
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct TableReference {
     /// The name of the table
@@ -120,6 +127,7 @@ pub struct TableReference {
     pub specifier: Option<TableSpecifier>,
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ExternalBookRef {
     Token(String),
@@ -133,6 +141,7 @@ impl ExternalBookRef {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExternalRefKind {
     Cell {
@@ -213,6 +222,7 @@ impl ExternalRefKind {
     }
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ExternalReference {
     pub raw: String,
@@ -222,6 +232,7 @@ pub struct ExternalReference {
 }
 
 /// A reference to something outside the cell.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ReferenceType {
     Cell {
@@ -1365,6 +1376,7 @@ impl ReferenceType {
 }
 
 /// The different types of AST nodes.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ASTNodeType {
     Literal(LiteralValue),
@@ -1404,6 +1416,7 @@ impl Display for ASTNodeType {
 }
 
 /// An AST node represents a parsed formula element
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ASTNode {
     pub node_type: ASTNodeType,

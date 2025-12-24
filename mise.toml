@@ -43,6 +43,10 @@ depends = ["wasm-install"]
 description = "Run Rust workspace tests"
 run = "cargo test --workspace"
 
+[tasks.cffi-smoke]
+description = "Build and run CFFI smoke test"
+run = "cargo run -p formualizer-cffi --bin cffi_smoke_setup && cargo build -p formualizer-cffi && cc crates/formualizer-cffi/tests/cffi_smoke.c -I crates/formualizer-cffi/include -L target/debug -lformualizer_cffi -Wl,-rpath,$PWD/target/debug -o target/cffi_smoke && target/cffi_smoke"
+
 [tasks.py-tests]
 description = "Run Python bindings test suite via uv"
 run = "uv run -- python -m pytest -q bindings/python/tests"

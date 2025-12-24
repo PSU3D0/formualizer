@@ -94,6 +94,9 @@ jobs:
       with:
         components: rustfmt, clippy
 
+    - name: Set up mise
+      uses: jdx/mise-action@v2
+
     - name: Cache Rust dependencies
       uses: actions/cache@v4
       with:
@@ -113,6 +116,9 @@ jobs:
 
     - name: Run Rust tests
       run: cargo test --all-features
+
+    - name: Run CFFI smoke test
+      run: mise run cffi-smoke
 
   build-wheels:
     runs-on: ${{ matrix.os }}

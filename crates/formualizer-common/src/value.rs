@@ -6,6 +6,9 @@ use std::{
 
 use crate::ExcelError;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /* ───────────────────── Excel date-serial utilities ───────────────────
 Serial 0  = 1899-12-30  (Excel’s epoch; includes bogus 1900-02-29)
 Serial 60 = 1900-02-29  (non-existent – keep to preserve offsets)
@@ -64,6 +67,7 @@ impl Display for DateSystem {
 
 /// An **interpeter** LiteralValue. This is distinct
 /// from the possible types that can be stored in a cell.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum LiteralValue {
     Int(i64),

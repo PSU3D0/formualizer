@@ -15,5 +15,5 @@ default = []
 serde = ["dep:serde"]
 
 [dependencies]
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true, optional = true, features = ["derive"] }

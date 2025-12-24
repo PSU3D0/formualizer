@@ -3,6 +3,9 @@ use std::error::Error;
 use std::fmt::{self, Display};
 use std::sync::Arc;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::types::FormulaDialect;
 
 const TOKEN_ENDERS: &str = ",;}) +-*/^&=><%";
@@ -58,6 +61,7 @@ impl fmt::Display for TokenizerError {
 impl Error for TokenizerError {}
 
 /// The type of a token.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenType {
     Literal,
@@ -71,7 +75,6 @@ pub enum TokenType {
     OpPostfix,
     Whitespace,
 }
-
 impl Display for TokenType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self:?}")
@@ -79,6 +82,7 @@ impl Display for TokenType {
 }
 
 /// The subtype of a token.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenSubType {
     None,
@@ -92,7 +96,6 @@ pub enum TokenSubType {
     Arg,
     Row,
 }
-
 impl Display for TokenSubType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self:?}")
@@ -100,6 +103,7 @@ impl Display for TokenSubType {
 }
 
 /// A token in an Excel formula.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Token {
     pub value: String, // We'll keep this for API compatibility but compute it lazily

@@ -1,0 +1,23 @@
+[package]
+name = "formualizer-cffi"
+version = "0.1.0"
+edition = "2024"
+description = "C-compatible FFI for Formualizer"
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+formualizer-common = { workspace = true, features = ["serde"] }
+formualizer-parse = { workspace = true, features = ["serde"] }
+formualizer-workbook = { workspace = true, features = ["umya"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+ciborium = "0.2"
+libc = "0.2"
+umya-spreadsheet = "2.3.2"
+
+[dev-dependencies]
+anyhow = { workspace = true }
+tempfile = { workspace = true }
+umya-spreadsheet = "2.3.2"

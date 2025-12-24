@@ -7,6 +7,7 @@ members = [
   "crates/formualizer-eval",
   "crates/formualizer-macros",
   "crates/formualizer-workbook",
+  "crates/formualizer-cffi",
   "bindings/python",
   "bindings/wasm",
   "crates/sheetport-spec",
@@ -26,6 +27,7 @@ formualizer-common = { version = "1.0.0", path = "crates/formualizer-common" }
 formualizer-macros = { version = "0.3.0", path = "crates/formualizer-macros" }
 formualizer-parse = { version = "1.0.0", path = "crates/formualizer-parse" }
 formualizer-eval = { version = "0.3.0", path = "crates/formualizer-eval" }
+formualizer-workbook = { version = "0.3.0", path = "crates/formualizer-workbook" }
 
 chrono = "0.4.41"
 serde = "1.0.228"

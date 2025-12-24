@@ -11,12 +11,16 @@
 
 use std::{error::Error, fmt};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::LiteralValue;
 
 /// All recognised Excel error codes.
 ///
 /// **Note:** names are CamelCase (idiomatic Rust) while `Display`
 /// renders them exactly as Excel shows them (`#DIV/0!`, …).
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ExcelErrorKind {
     Null,
@@ -83,6 +87,7 @@ impl ExcelErrorKind {
 ///
 /// Keep this minimal—anything only one error kind needs belongs in
 /// `ExcelErrorExtra`.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ErrorContext {
     pub row: Option<u32>,
@@ -96,6 +101,7 @@ pub struct ErrorContext {
 /// Kind-specific payloads (“extension slot”).
 ///
 /// Only variants that need extra data get it—rest stay at `None`.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum ExcelErrorExtra {
     /// No additional payload (the vast majority of errors).
@@ -121,6 +127,7 @@ pub enum ExcelErrorExtra {
 ///
 /// † If you *never* need row/col you can build the value with
 ///   `ExcelError::from(kind)`, which sets `context = None`.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExcelError {
     pub kind: ExcelErrorKind,
