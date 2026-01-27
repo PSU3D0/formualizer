@@ -1,0 +1,137 @@
+{
+  "name": "date_time",
+  "generated": "2026-01-21T12:26:08.314484",
+  "generator": "LibreOffice",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=DATE(2024,6,15)",
+      "result": {
+        "type": "datetime",
+        "value": "2024-06-15T00:00:00"
+      },
+      "result_type": "datetime",
+      "description": "create date"
+    },
+    {
+      "formula": "=YEAR(DATE(2024,6,15))",
+      "result": 2024,
+      "result_type": "int",
+      "description": "extract year"
+    },
+    {
+      "formula": "=MONTH(DATE(2024,6,15))",
+      "result": 6,
+      "result_type": "int",
+      "description": "extract month"
+    },
+    {
+      "formula": "=DAY(DATE(2024,6,15))",
+      "result": 15,
+      "result_type": "int",
+      "description": "extract day"
+    },
+    {
+      "formula": "=WEEKDAY(DATE(2024,6,15))",
+      "result": 7,
+      "result_type": "int",
+      "description": "weekday"
+    },
+    {
+      "formula": "=WEEKNUM(DATE(2024,6,15))",
+      "result": 24,
+      "result_type": "int",
+      "description": "week number"
+    },
+    {
+      "formula": "=EOMONTH(DATE(2024,6,15),0)",
+      "result": 45473,
+      "result_type": "int",
+      "description": "end of month"
+    },
+    {
+      "formula": "=EOMONTH(DATE(2024,6,15),1)",
+      "result": 45504,
+      "result_type": "int",
+      "description": "end of next month"
+    },
+    {
+      "formula": "=EDATE(DATE(2024,6,15),3)",
+      "result": 45550,
+      "result_type": "int",
+      "description": "add 3 months"
+    },
+    {
+      "formula": "=DAYS(DATE(2024,12,31),DATE(2024,1,1))",
+      "result": "#NAME?",
+      "result_type": "str",
+      "description": "days between"
+    },
+    {
+      "formula": "=DATEDIF(DATE(2020,1,1),DATE(2024,6,15),\"Y\")",
+      "result": 4,
+      "result_type": "int",
+      "description": "years between"
+    },
+    {
+      "formula": "=DATEDIF(DATE(2020,1,1),DATE(2024,6,15),\"M\")",
+      "result": 53,
+      "result_type": "int",
+      "description": "months between"
+    },
+    {
+      "formula": "=DATEDIF(DATE(2020,1,1),DATE(2024,6,15),\"D\")",
+      "result": 1627,
+      "result_type": "int",
+      "description": "days between datedif"
+    },
+    {
+      "formula": "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,31))",
+      "result": 23,
+      "result_type": "int",
+      "description": "network days"
+    },
+    {
+      "formula": "=WORKDAY(DATE(2024,1,1),10)",
+      "result": 45306,
+      "result_type": "int",
+      "description": "workday"
+    },
+    {
+      "formula": "=TIME(14,30,0)",
+      "result": 0.604166666666667,
+      "result_type": "float",
+      "description": "create time"
+    },
+    {
+      "formula": "=HOUR(TIME(14,30,45))",
+      "result": 14,
+      "result_type": "int",
+      "description": "extract hour"
+    },
+    {
+      "formula": "=MINUTE(TIME(14,30,45))",
+      "result": 30,
+      "result_type": "int",
+      "description": "extract minute"
+    },
+    {
+      "formula": "=SECOND(TIME(14,30,45))",
+      "result": 45,
+      "result_type": "int",
+      "description": "extract second"
+    },
+    {
+      "formula": "=DATEVALUE(\"2024-06-15\")",
+      "result": 45458,
+      "result_type": "int",
+      "description": "datevalue"
+    },
+    {
+      "formula": "=TIMEVALUE(\"14:30:00\")",
+      "result": 0.604166666666667,
+      "result_type": "float",
+      "description": "timevalue"
+    }
+  ]
+}

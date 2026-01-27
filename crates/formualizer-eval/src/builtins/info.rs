@@ -447,6 +447,173 @@ impl Function for TFn {
     }
 }
 
+/// ISEVEN(number) - Returns TRUE if number is even
+#[derive(Debug)]
+pub struct IsEvenFn;
+impl Function for IsEvenFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISEVEN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        let n = match v {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)))
+            }
+            LiteralValue::Int(i) => i as f64,
+            LiteralValue::Number(n) => n,
+            LiteralValue::Boolean(b) => {
+                if b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )))
+            }
+        };
+        // Excel truncates to integer first
+        let n = n.trunc() as i64;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            n % 2 == 0,
+        )))
+    }
+}
+
+/// ISODD(number) - Returns TRUE if number is odd
+#[derive(Debug)]
+pub struct IsOddFn;
+impl Function for IsOddFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISODD"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        let n = match v {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)))
+            }
+            LiteralValue::Int(i) => i as f64,
+            LiteralValue::Number(n) => n,
+            LiteralValue::Boolean(b) => {
+                if b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )))
+            }
+        };
+        let n = n.trunc() as i64;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            n % 2 != 0,
+        )))
+    }
+}
+
+/// ERROR.TYPE(error_val) - Returns a number corresponding to an error type
+/// Returns:
+///   1 = #NULL!
+///   2 = #DIV/0!
+///   3 = #VALUE!
+///   4 = #REF!
+///   5 = #NAME?
+///   6 = #NUM!
+///   7 = #N/A
+///   8 = #GETTING_DATA (not commonly used)
+///   #N/A if the value is not an error
+///
+/// NOTE: Error codes 9-13 are non-standard extensions for internal error types.
+#[derive(Debug)]
+pub struct ErrorTypeFn;
+impl Function for ErrorTypeFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ERROR.TYPE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        match v {
+            LiteralValue::Error(e) => {
+                let code = match e.kind {
+                    ExcelErrorKind::Null => 1,
+                    ExcelErrorKind::Div => 2,
+                    ExcelErrorKind::Value => 3,
+                    ExcelErrorKind::Ref => 4,
+                    ExcelErrorKind::Name => 5,
+                    ExcelErrorKind::Num => 6,
+                    ExcelErrorKind::Na => 7,
+                    ExcelErrorKind::Error => 8,
+                    // Non-standard extensions (codes 9-13)
+                    ExcelErrorKind::NImpl => 9,
+                    ExcelErrorKind::Spill => 10,
+                    ExcelErrorKind::Calc => 11,
+                    ExcelErrorKind::Circ => 12,
+                    ExcelErrorKind::Cancelled => 13,
+                };
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(code)))
+            }
+            _ => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            ))),
+        }
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(IsNumberFn));
@@ -457,6 +624,9 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(IsErrFn));
     crate::function_registry::register_function(Arc::new(IsNaFn));
     crate::function_registry::register_function(Arc::new(IsFormulaFn));
+    crate::function_registry::register_function(Arc::new(IsEvenFn));
+    crate::function_registry::register_function(Arc::new(IsOddFn));
+    crate::function_registry::register_function(Arc::new(ErrorTypeFn));
     crate::function_registry::register_function(Arc::new(TypeFn));
     crate::function_registry::register_function(Arc::new(NaFn));
     crate::function_registry::register_function(Arc::new(NFn));

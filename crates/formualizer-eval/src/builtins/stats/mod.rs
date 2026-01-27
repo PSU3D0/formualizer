@@ -952,8 +952,4482 @@ impl Function for QuartileExc {
     }
 }
 
+/// PRODUCT(number1, [number2], ...) - Multiplies all arguments
+#[derive(Debug)]
+pub struct ProductFn;
+impl Function for ProductFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "PRODUCT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_stats(args)?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+        }
+        let result = nums.iter().product::<f64>();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// GEOMEAN(number1, [number2], ...) - Returns the geometric mean
+#[derive(Debug)]
+pub struct GeomeanFn;
+impl Function for GeomeanFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "GEOMEAN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_stats(args)?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        // All values must be positive
+        if nums.iter().any(|&n| n <= 0.0) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        // Geometric mean = (x1 * x2 * ... * xn)^(1/n)
+        // Use log to avoid overflow: exp(mean(ln(x)))
+        let log_sum: f64 = nums.iter().map(|x| x.ln()).sum();
+        let result = (log_sum / nums.len() as f64).exp();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// HARMEAN(number1, [number2], ...) - Returns the harmonic mean
+#[derive(Debug)]
+pub struct HarmeanFn;
+impl Function for HarmeanFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "HARMEAN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_stats(args)?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        // All values must be positive
+        if nums.iter().any(|&n| n <= 0.0) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        // Harmonic mean = n / sum(1/x)
+        let sum_reciprocals: f64 = nums.iter().map(|x| 1.0 / x).sum();
+        let result = nums.len() as f64 / sum_reciprocals;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// AVEDEV(number1, [number2], ...) - Returns the average of absolute deviations from mean
+#[derive(Debug)]
+pub struct AvedevFn;
+impl Function for AvedevFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "AVEDEV"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_stats(args)?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        let mean = nums.iter().sum::<f64>() / nums.len() as f64;
+        let avedev = nums.iter().map(|x| (x - mean).abs()).sum::<f64>() / nums.len() as f64;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(avedev)))
+    }
+}
+
+/// DEVSQ(number1, [number2], ...) - Returns the sum of squared deviations from mean
+#[derive(Debug)]
+pub struct DevsqFn;
+
+/* ─────────────────────────── MAXIFS / MINIFS ──────────────────────────── */
+
+use super::utils::{ARG_ANY_ONE, criteria_match};
+
+/// MAXIFS(max_range, criteria_range1, criteria1, [criteria_range2, criteria2], ...)
+/// Returns the maximum value among cells specified by given conditions.
+#[derive(Debug)]
+pub struct MaxIfsFn;
+impl Function for MaxIfsFn {
+    func_caps!(PURE, REDUCTION);
+    fn name(&self) -> &'static str {
+        "MAXIFS"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_maxminifs(args, true)
+    }
+}
+
+/// MINIFS(min_range, criteria_range1, criteria1, [criteria_range2, criteria2], ...)
+/// Returns the minimum value among cells specified by given conditions.
+#[derive(Debug)]
+pub struct MinIfsFn;
+impl Function for MinIfsFn {
+    func_caps!(PURE, REDUCTION);
+    fn name(&self) -> &'static str {
+        "MINIFS"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_maxminifs(args, false)
+    }
+}
+
+/// Shared implementation for MAXIFS and MINIFS
+fn eval_maxminifs<'a, 'b>(
+    args: &[ArgumentHandle<'a, 'b>],
+    is_max: bool,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    // Validate argument count: must be target_range + N pairs
+    if args.len() < 3 || (args.len() - 1) % 2 != 0 {
+        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new_value().with_message(format!(
+                "Function expects 1 target_range followed by N pairs (criteria_range, criteria); got {} args",
+                args.len()
+            )),
+        )));
+    }
+
+    // Get target range
+    let target_view = match args[0].range_view() {
+        Ok(v) => v,
+        Err(_) => {
+            // Single value case - if criteria match, return that value
+            let target_val = args[0].value()?.into_literal();
+            if let LiteralValue::Error(e) = target_val {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            // Check all criteria against empty/scalar
+            let mut all_match = true;
+            for i in (1..args.len()).step_by(2) {
+                let crit_val = args[i].value()?.into_literal();
+                let pred = crate::args::parse_criteria(&args[i + 1].value()?.into_literal())?;
+                if !criteria_match(&pred, &crit_val) {
+                    all_match = false;
+                    break;
+                }
+            }
+            if all_match {
+                return match coerce_num(&target_val) {
+                    Ok(n) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(n))),
+                    Err(_) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
+                };
+            }
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+        }
+    };
+
+    let (rows, cols) = target_view.dims();
+
+    // Parse all criteria
+    let mut criteria_ranges = Vec::new();
+    let mut predicates = Vec::new();
+    for i in (1..args.len()).step_by(2) {
+        let crit_view = args[i].range_view().ok();
+        let pred = crate::args::parse_criteria(&args[i + 1].value()?.into_literal())?;
+        criteria_ranges.push(crit_view);
+        predicates.push(pred);
+    }
+
+    // Iterate through all cells and find max/min where all criteria match
+    let mut result: Option<f64> = None;
+
+    for r in 0..rows {
+        for c in 0..cols {
+            // Check all criteria
+            let mut all_match = true;
+            for (crit_idx, pred) in predicates.iter().enumerate() {
+                let crit_val = match &criteria_ranges[crit_idx] {
+                    Some(view) => {
+                        let (cr, cc) = view.dims();
+                        if r < cr && c < cc {
+                            view.get_cell(r, c)
+                        } else {
+                            LiteralValue::Empty
+                        }
+                    }
+                    None => LiteralValue::Empty,
+                };
+                if !criteria_match(pred, &crit_val) {
+                    all_match = false;
+                    break;
+                }
+            }
+
+            if all_match {
+                let target_val = target_view.get_cell(r, c);
+                match target_val {
+                    LiteralValue::Error(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                    LiteralValue::Number(n) => {
+                        result = Some(match result {
+                            None => n,
+                            Some(curr) => if is_max { curr.max(n) } else { curr.min(n) },
+                        });
+                    }
+                    LiteralValue::Int(i) => {
+                        let n = i as f64;
+                        result = Some(match result {
+                            None => n,
+                            Some(curr) => if is_max { curr.max(n) } else { curr.min(n) },
+                        });
+                    }
+                    _ => {} // Skip non-numeric
+                }
+            }
+        }
+    }
+
+    // Excel returns 0 if no matches found
+    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+        result.unwrap_or(0.0),
+    )))
+}
+
+/* ─────────────────────────── TRIMMEAN ──────────────────────────── */
+
+/// TRIMMEAN(array, percent) - Returns the mean of the interior of a data set
+/// Excludes a percentage of data points from both ends
+#[derive(Debug)]
+pub struct TrimmeanFn;
+impl Function for TrimmeanFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "TRIMMEAN"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let mut nums = collect_numeric_stats(&args[0..1])?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let percent = match args[1].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+
+        // Percent must be between 0 and 1 (exclusive of 1)
+        if percent < 0.0 || percent >= 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        nums.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let n = nums.len();
+        // Number of values to exclude from each end
+        let exclude = ((n as f64 * percent) / 2.0).floor() as usize;
+
+        if 2 * exclude >= n {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let trimmed = &nums[exclude..n - exclude];
+        let sum: f64 = trimmed.iter().sum();
+        let mean = sum / trimmed.len() as f64;
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(mean)))
+    }
+}
+
+/* ─────────────────────────── CORREL ──────────────────────────── */
+
+/// Helper to collect two paired arrays for regression/correlation functions
+fn collect_paired_arrays(args: &[ArgumentHandle]) -> Result<(Vec<f64>, Vec<f64>), ExcelError> {
+    let y_nums = collect_numeric_stats(&args[0..1])?;
+    let x_nums = collect_numeric_stats(&args[1..2])?;
+
+    // Arrays must have same length
+    if y_nums.len() != x_nums.len() {
+        return Err(ExcelError::new_na());
+    }
+
+    if y_nums.is_empty() {
+        return Err(ExcelError::new_div());
+    }
+
+    Ok((y_nums, x_nums))
+}
+
+/// CORREL(array1, array2) - Returns the correlation coefficient between two data sets
+#[derive(Debug)]
+pub struct CorrelFn;
+impl Function for CorrelFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "CORREL"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let (y, x) = match collect_paired_arrays(args) {
+            Ok(v) => v,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+
+        let n = x.len() as f64;
+        let mean_x = x.iter().sum::<f64>() / n;
+        let mean_y = y.iter().sum::<f64>() / n;
+
+        let mut sum_xy = 0.0;
+        let mut sum_x2 = 0.0;
+        let mut sum_y2 = 0.0;
+
+        for i in 0..x.len() {
+            let dx = x[i] - mean_x;
+            let dy = y[i] - mean_y;
+            sum_xy += dx * dy;
+            sum_x2 += dx * dx;
+            sum_y2 += dy * dy;
+        }
+
+        let denom = (sum_x2 * sum_y2).sqrt();
+        if denom == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        let correl = sum_xy / denom;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(correl)))
+    }
+}
+
+/* ─────────────────────────── SLOPE ──────────────────────────── */
+
+/// SLOPE(known_y's, known_x's) - Returns the slope of the linear regression line
+#[derive(Debug)]
+pub struct SlopeFn;
+impl Function for SlopeFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "SLOPE"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let (y, x) = match collect_paired_arrays(args) {
+            Ok(v) => v,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+
+        let n = x.len() as f64;
+        let mean_x = x.iter().sum::<f64>() / n;
+        let mean_y = y.iter().sum::<f64>() / n;
+
+        let mut sum_xy = 0.0;
+        let mut sum_x2 = 0.0;
+
+        for i in 0..x.len() {
+            let dx = x[i] - mean_x;
+            let dy = y[i] - mean_y;
+            sum_xy += dx * dy;
+            sum_x2 += dx * dx;
+        }
+
+        if sum_x2 == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        let slope = sum_xy / sum_x2;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(slope)))
+    }
+}
+
+/* ─────────────────────────── INTERCEPT ──────────────────────────── */
+
+/// INTERCEPT(known_y's, known_x's) - Returns the y-intercept of the linear regression line
+#[derive(Debug)]
+pub struct InterceptFn;
+impl Function for InterceptFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "INTERCEPT"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let (y, x) = match collect_paired_arrays(args) {
+            Ok(v) => v,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+
+        let n = x.len() as f64;
+        let mean_x = x.iter().sum::<f64>() / n;
+        let mean_y = y.iter().sum::<f64>() / n;
+
+        let mut sum_xy = 0.0;
+        let mut sum_x2 = 0.0;
+
+        for i in 0..x.len() {
+            let dx = x[i] - mean_x;
+            let dy = y[i] - mean_y;
+            sum_xy += dx * dy;
+            sum_x2 += dx * dx;
+        }
+
+        if sum_x2 == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        let slope = sum_xy / sum_x2;
+        let intercept = mean_y - slope * mean_x;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(intercept)))
+    }
+}
+
+impl Function for DevsqFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "DEVSQ"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_stats(args)?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        let mean = nums.iter().sum::<f64>() / nums.len() as f64;
+        let devsq = nums.iter().map(|x| (x - mean).powi(2)).sum::<f64>();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(devsq)))
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   STATISTICAL DISTRIBUTION FUNCTIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/// Helper: Standard normal CDF using error function approximation
+fn std_norm_cdf(z: f64) -> f64 {
+    // Use the complementary error function: Φ(z) = 0.5 * erfc(-z / sqrt(2))
+    // Approximation using Abramowitz and Stegun formula 7.1.26
+    let a1 = 0.254829592;
+    let a2 = -0.284496736;
+    let a3 = 1.421413741;
+    let a4 = -1.453152027;
+    let a5 = 1.061405429;
+    let p = 0.3275911;
+
+    let sign = if z < 0.0 { -1.0 } else { 1.0 };
+    let z_abs = z.abs() / std::f64::consts::SQRT_2;
+
+    let t = 1.0 / (1.0 + p * z_abs);
+    let y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * (-z_abs * z_abs).exp();
+
+    0.5 * (1.0 + sign * y)
+}
+
+/// Helper: Standard normal PDF
+fn std_norm_pdf(z: f64) -> f64 {
+    let inv_sqrt_2pi = 1.0 / (2.0 * std::f64::consts::PI).sqrt();
+    inv_sqrt_2pi * (-0.5 * z * z).exp()
+}
+
+/// Helper: Inverse standard normal CDF (probit function)
+/// Uses Rational approximation from Abramowitz and Stegun
+fn std_norm_inv(p: f64) -> Option<f64> {
+    if p <= 0.0 || p >= 1.0 {
+        return None;
+    }
+
+    // Coefficients for rational approximation
+    const A: [f64; 6] = [
+        -3.969683028665376e+01,
+        2.209460984245205e+02,
+        -2.759285104469687e+02,
+        1.383577518672690e+02,
+        -3.066479806614716e+01,
+        2.506628277459239e+00,
+    ];
+    const B: [f64; 5] = [
+        -5.447609879822406e+01,
+        1.615858368580409e+02,
+        -1.556989798598866e+02,
+        6.680131188771972e+01,
+        -1.328068155288572e+01,
+    ];
+    const C: [f64; 6] = [
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e+00,
+        -2.549732539343734e+00,
+        4.374664141464968e+00,
+        2.938163982698783e+00,
+    ];
+    const D: [f64; 4] = [
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e+00,
+        3.754408661907416e+00,
+    ];
+
+    const P_LOW: f64 = 0.02425;
+    const P_HIGH: f64 = 1.0 - P_LOW;
+
+    let q = p - 0.5;
+
+    if p < P_LOW {
+        // Lower tail
+        let r = (-2.0 * p.ln()).sqrt();
+        let num = ((((C[0] * r + C[1]) * r + C[2]) * r + C[3]) * r + C[4]) * r + C[5];
+        let den = (((D[0] * r + D[1]) * r + D[2]) * r + D[3]) * r + 1.0;
+        Some(num / den)
+    } else if p <= P_HIGH {
+        // Central region
+        let r = q * q;
+        let num = ((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5];
+        let den = ((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0;
+        Some(q * num / den)
+    } else {
+        // Upper tail
+        let r = (-2.0 * (1.0 - p).ln()).sqrt();
+        let num = ((((C[0] * r + C[1]) * r + C[2]) * r + C[3]) * r + C[4]) * r + C[5];
+        let den = (((D[0] * r + D[1]) * r + D[2]) * r + D[3]) * r + 1.0;
+        Some(-num / den)
+    }
+}
+
+/// NORM.S.DIST(z, cumulative) - Standard normal distribution
+#[derive(Debug)]
+pub struct NormSDistFn;
+impl Function for NormSDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NORM.S.DIST"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let z = coerce_num(&scalar_like_value(&args[0])?)?;
+        let cumulative = coerce_num(&scalar_like_value(&args[1])?)? != 0.0;
+
+        let result = if cumulative {
+            std_norm_cdf(z)
+        } else {
+            std_norm_pdf(z)
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// NORM.S.INV(probability) - Inverse standard normal distribution
+#[derive(Debug)]
+pub struct NormSInvFn;
+impl Function for NormSInvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NORM.S.INV"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> =
+            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+
+        match std_norm_inv(p) {
+            Some(z) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(z))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/// NORM.DIST(x, mean, standard_dev, cumulative) - Normal distribution
+#[derive(Debug)]
+pub struct NormDistFn;
+impl Function for NormDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NORM.DIST"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let mean = coerce_num(&scalar_like_value(&args[1])?)?;
+        let std_dev = coerce_num(&scalar_like_value(&args[2])?)?;
+        let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
+
+        if std_dev <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let z = (x - mean) / std_dev;
+
+        let result = if cumulative {
+            std_norm_cdf(z)
+        } else {
+            std_norm_pdf(z) / std_dev
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// NORM.INV(probability, mean, standard_dev) - Inverse normal distribution
+#[derive(Debug)]
+pub struct NormInvFn;
+impl Function for NormInvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NORM.INV"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+        let mean = coerce_num(&scalar_like_value(&args[1])?)?;
+        let std_dev = coerce_num(&scalar_like_value(&args[2])?)?;
+
+        if std_dev <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        match std_norm_inv(p) {
+            Some(z) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                mean + z * std_dev,
+            ))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/// LOGNORM.DIST(x, mean, standard_dev, cumulative) - Log-normal distribution
+#[derive(Debug)]
+pub struct LognormDistFn;
+impl Function for LognormDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "LOGNORM.DIST"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let mean = coerce_num(&scalar_like_value(&args[1])?)?;
+        let std_dev = coerce_num(&scalar_like_value(&args[2])?)?;
+        let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
+
+        if x <= 0.0 || std_dev <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let z = (x.ln() - mean) / std_dev;
+
+        let result = if cumulative {
+            std_norm_cdf(z)
+        } else {
+            std_norm_pdf(z) / (x * std_dev)
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// LOGNORM.INV(probability, mean, standard_dev) - Inverse log-normal distribution
+#[derive(Debug)]
+pub struct LognormInvFn;
+impl Function for LognormInvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "LOGNORM.INV"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+        let mean = coerce_num(&scalar_like_value(&args[1])?)?;
+        let std_dev = coerce_num(&scalar_like_value(&args[2])?)?;
+
+        if std_dev <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        match std_norm_inv(p) {
+            Some(z) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                (mean + z * std_dev).exp(),
+            ))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/// PHI(x) - Standard normal distribution density function (alias for NORM.S.DIST PDF)
+#[derive(Debug)]
+pub struct PhiFn;
+impl Function for PhiFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "PHI"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> =
+            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let z = coerce_num(&scalar_like_value(&args[0])?)?;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            std_norm_pdf(z),
+        )))
+    }
+}
+
+/// GAUSS(z) - Returns the probability that a member of a standard normal population will fall between the mean and z standard deviations from the mean
+#[derive(Debug)]
+pub struct GaussFn;
+impl Function for GaussFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "GAUSS"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> =
+            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let z = coerce_num(&scalar_like_value(&args[0])?)?;
+        // GAUSS(z) = Φ(z) - 0.5
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            std_norm_cdf(z) - 0.5,
+        )))
+    }
+}
+
+/// Helper: Log-gamma function
+fn ln_gamma(x: f64) -> f64 {
+    // Lanczos approximation
+    const G: f64 = 7.0;
+    const C: [f64; 9] = [
+        0.99999999999980993,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7,
+    ];
+
+    if x < 0.5 {
+        // Reflection formula
+        let pi = std::f64::consts::PI;
+        pi.ln() - (pi * x).sin().ln() - ln_gamma(1.0 - x)
+    } else {
+        let x = x - 1.0;
+        let mut ag = C[0];
+        for i in 1..9 {
+            ag += C[i] / (x + i as f64);
+        }
+        let tmp = x + G + 0.5;
+        0.5 * (2.0 * std::f64::consts::PI).ln() + (tmp).ln() * (x + 0.5) - tmp + ag.ln()
+    }
+}
+
+/// Helper: Regularized lower incomplete gamma function P(a, x)
+fn gamma_p(a: f64, x: f64) -> f64 {
+    if x < 0.0 || a <= 0.0 {
+        return 0.0;
+    }
+    if x == 0.0 {
+        return 0.0;
+    }
+
+    // Use series expansion for x < a+1
+    if x < a + 1.0 {
+        gamma_series(a, x)
+    } else {
+        // Use continued fraction for x >= a+1
+        1.0 - gamma_cf(a, x)
+    }
+}
+
+/// Helper: Series expansion for incomplete gamma
+fn gamma_series(a: f64, x: f64) -> f64 {
+    let ln_ga = ln_gamma(a);
+    let mut sum = 1.0 / a;
+    let mut term = sum;
+    for n in 1..200 {
+        term *= x / (a + n as f64);
+        sum += term;
+        if term.abs() < sum.abs() * 1e-15 {
+            break;
+        }
+    }
+    sum * (-x + a * x.ln() - ln_ga).exp()
+}
+
+/// Helper: Continued fraction for upper incomplete gamma Q(a,x)
+/// Using modified Lentz's algorithm (Numerical Recipes formulation)
+fn gamma_cf(a: f64, x: f64) -> f64 {
+    let ln_ga = ln_gamma(a);
+    const TINY: f64 = 1e-30;
+    const EPS: f64 = 1e-14;
+
+    // Set up for evaluating continued fraction by modified Lentz's method
+    let mut b = x + 1.0 - a;
+    let mut c = 1.0 / TINY;
+    let mut d = 1.0 / b;
+    let mut h = d;
+
+    for i in 1..=200 {
+        let an = -(i as f64) * (i as f64 - a);
+        b += 2.0;
+        d = an * d + b;
+        if d.abs() < TINY { d = TINY; }
+        c = b + an / c;
+        if c.abs() < TINY { c = TINY; }
+        d = 1.0 / d;
+        let delta = d * c;
+        h *= delta;
+        if (delta - 1.0).abs() <= EPS {
+            break;
+        }
+    }
+
+    h * (-x + a * x.ln() - ln_ga).exp()
+}
+
+/// Helper: Regularized incomplete beta function I_x(a,b)
+/// Uses the continued fraction representation (NIST DLMF 8.17.22)
+fn beta_i(x: f64, a: f64, b: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if x >= 1.0 {
+        return 1.0;
+    }
+    if a <= 0.0 || b <= 0.0 {
+        return f64::NAN;
+    }
+
+    // Use symmetry for better convergence: I_x(a,b) = 1 - I_{1-x}(b,a)
+    if x > (a + 1.0) / (a + b + 2.0) {
+        return 1.0 - beta_i(1.0 - x, b, a);
+    }
+
+    // Compute the prefactor: x^a * (1-x)^b / (a * B(a,b))
+    let ln_beta = ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b);
+    let ln_prefactor = a * x.ln() + b * (1.0 - x).ln() - ln_beta - a.ln();
+    let prefactor = ln_prefactor.exp();
+
+    // Evaluate the continued fraction using modified Lentz algorithm
+    // The CF is: 1 / (1 + d1/(1 + d2/(1 + ...)))
+    // where d_{2m+1} = -(a+m)(a+b+m)x / ((a+2m)(a+2m+1))
+    //       d_{2m}   = m(b-m)x / ((a+2m-1)(a+2m))
+    const EPS: f64 = 1e-14;
+    const TINY: f64 = 1e-30;
+
+    let mut qab = a + b;
+    let mut qap = a + 1.0;
+    let mut qam = a - 1.0;
+    let mut c = 1.0;
+    let mut d = 1.0 - qab * x / qap;
+    if d.abs() < TINY { d = TINY; }
+    d = 1.0 / d;
+    let mut h = d;
+
+    for m in 1..=200 {
+        let m_f64 = m as f64;
+        let m2 = 2.0 * m_f64;
+
+        // Even step: d_{2m} = m(b-m)x / ((a+2m-1)(a+2m))
+        let aa = m_f64 * (b - m_f64) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa * d;
+        if d.abs() < TINY { d = TINY; }
+        c = 1.0 + aa / c;
+        if c.abs() < TINY { c = TINY; }
+        d = 1.0 / d;
+        h *= d * c;
+
+        // Odd step: d_{2m+1} = -(a+m)(a+b+m)x / ((a+2m)(a+2m+1))
+        let aa = -((a + m_f64) * (qab + m_f64) * x) / ((a + m2) * (qap + m2));
+        d = 1.0 + aa * d;
+        if d.abs() < TINY { d = TINY; }
+        c = 1.0 + aa / c;
+        if c.abs() < TINY { c = TINY; }
+        d = 1.0 / d;
+        let delta = d * c;
+        h *= delta;
+
+        if (delta - 1.0).abs() <= EPS {
+            break;
+        }
+    }
+
+    prefactor * h
+}
+
+/// Helper: T distribution CDF
+fn t_cdf(t: f64, df: f64) -> f64 {
+    let x = df / (df + t * t);
+    0.5 * (1.0 + t.signum() * (1.0 - beta_i(x, df / 2.0, 0.5)))
+}
+
+/// Helper: T distribution inverse CDF using Newton-Raphson
+fn t_inv(p: f64, df: f64) -> Option<f64> {
+    if p <= 0.0 || p >= 1.0 {
+        return None;
+    }
+
+    // Initial guess using normal approximation
+    let mut t = std_norm_inv(p)?;
+
+    // Newton-Raphson iteration
+    for _ in 0..50 {
+        let cdf = t_cdf(t, df);
+        let pdf = t_pdf(t, df);
+        if pdf.abs() < 1e-30 {
+            break;
+        }
+        let delta = (cdf - p) / pdf;
+        t -= delta;
+        if delta.abs() < 1e-12 {
+            break;
+        }
+    }
+
+    Some(t)
+}
+
+/// Helper: T distribution PDF
+fn t_pdf(t: f64, df: f64) -> f64 {
+    let coef = (ln_gamma((df + 1.0) / 2.0) - ln_gamma(df / 2.0) - 0.5 * (df * std::f64::consts::PI).ln()).exp();
+    coef * (1.0 + t * t / df).powf(-(df + 1.0) / 2.0)
+}
+
+/// Helper: Chi-square CDF
+fn chisq_cdf(x: f64, df: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    gamma_p(df / 2.0, x / 2.0)
+}
+
+/// Helper: Chi-square inverse CDF using Newton-Raphson
+fn chisq_inv(p: f64, df: f64) -> Option<f64> {
+    if p <= 0.0 || p >= 1.0 {
+        return None;
+    }
+
+    // Initial guess
+    let mut x = df.max(1.0);
+    if p < 0.5 {
+        x = x.min(1.0);
+    }
+
+    // Newton-Raphson iteration
+    for _ in 0..100 {
+        let cdf = chisq_cdf(x, df);
+        let pdf = chisq_pdf(x, df);
+        if pdf.abs() < 1e-30 {
+            break;
+        }
+        let delta = (cdf - p) / pdf;
+        let new_x = (x - delta).max(1e-15);
+        if (new_x - x).abs() < 1e-12 * x {
+            x = new_x;
+            break;
+        }
+        x = new_x;
+    }
+
+    Some(x)
+}
+
+/// Helper: Chi-square PDF
+fn chisq_pdf(x: f64, df: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let k = df / 2.0;
+    ((k - 1.0) * x.ln() - x / 2.0 - k * 2.0_f64.ln() - ln_gamma(k)).exp()
+}
+
+/// Helper: F distribution CDF
+fn f_cdf(f: f64, d1: f64, d2: f64) -> f64 {
+    if f <= 0.0 {
+        return 0.0;
+    }
+    let x = d1 * f / (d1 * f + d2);
+    beta_i(x, d1 / 2.0, d2 / 2.0)
+}
+
+/// Helper: F distribution inverse CDF using Newton-Raphson
+fn f_inv(p: f64, d1: f64, d2: f64) -> Option<f64> {
+    if p <= 0.0 || p >= 1.0 {
+        return None;
+    }
+
+    // Initial guess
+    let mut f = 1.0;
+
+    // Newton-Raphson iteration
+    for _ in 0..100 {
+        let cdf = f_cdf(f, d1, d2);
+        let pdf = f_pdf(f, d1, d2);
+        if pdf.abs() < 1e-30 {
+            break;
+        }
+        let delta = (cdf - p) / pdf;
+        let new_f = (f - delta).max(1e-15);
+        if (new_f - f).abs() < 1e-12 * f {
+            f = new_f;
+            break;
+        }
+        f = new_f;
+    }
+
+    Some(f)
+}
+
+/// Helper: F distribution PDF
+fn f_pdf(f: f64, d1: f64, d2: f64) -> f64 {
+    if f <= 0.0 {
+        return 0.0;
+    }
+    let ln_beta = ln_gamma(d1 / 2.0) + ln_gamma(d2 / 2.0) - ln_gamma((d1 + d2) / 2.0);
+    let coef = (d1 / 2.0) * (d1 / d2).ln() + (d1 / 2.0 - 1.0) * f.ln()
+        - ((d1 + d2) / 2.0) * (1.0 + d1 * f / d2).ln()
+        - ln_beta;
+    coef.exp()
+}
+
+/// T.DIST(x, deg_freedom, cumulative) - Student's t-distribution
+#[derive(Debug)]
+pub struct TDistFn;
+impl Function for TDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "T.DIST"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let df = coerce_num(&scalar_like_value(&args[1])?)?;
+        let cumulative = coerce_num(&scalar_like_value(&args[2])?)? != 0.0;
+
+        if df < 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let result = if cumulative {
+            t_cdf(x, df)
+        } else {
+            t_pdf(x, df)
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// T.INV(probability, deg_freedom) - Inverse of Student's t-distribution
+#[derive(Debug)]
+pub struct TInvFn;
+impl Function for TInvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "T.INV"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+        let df = coerce_num(&scalar_like_value(&args[1])?)?;
+
+        if df < 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        match t_inv(p, df) {
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/// CHISQ.DIST(x, deg_freedom, cumulative) - Chi-squared distribution
+#[derive(Debug)]
+pub struct ChisqDistFn;
+impl Function for ChisqDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CHISQ.DIST"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let df = coerce_num(&scalar_like_value(&args[1])?)?;
+        let cumulative = coerce_num(&scalar_like_value(&args[2])?)? != 0.0;
+
+        if df < 1.0 || x < 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let result = if cumulative {
+            chisq_cdf(x, df)
+        } else {
+            chisq_pdf(x, df)
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// CHISQ.INV(probability, deg_freedom) - Inverse of chi-squared distribution
+#[derive(Debug)]
+pub struct ChisqInvFn;
+impl Function for ChisqInvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CHISQ.INV"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+        let df = coerce_num(&scalar_like_value(&args[1])?)?;
+
+        if df < 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        match chisq_inv(p, df) {
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/// F.DIST(x, deg_freedom1, deg_freedom2, cumulative) - F distribution
+#[derive(Debug)]
+pub struct FDistFn;
+impl Function for FDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "F.DIST"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let d1 = coerce_num(&scalar_like_value(&args[1])?)?;
+        let d2 = coerce_num(&scalar_like_value(&args[2])?)?;
+        let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
+
+        if d1 < 1.0 || d2 < 1.0 || x < 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let result = if cumulative {
+            f_cdf(x, d1, d2)
+        } else {
+            f_pdf(x, d1, d2)
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// F.INV(probability, deg_freedom1, deg_freedom2) - Inverse of F distribution
+#[derive(Debug)]
+pub struct FInvFn;
+impl Function for FInvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "F.INV"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+        let d1 = coerce_num(&scalar_like_value(&args[1])?)?;
+        let d2 = coerce_num(&scalar_like_value(&args[2])?)?;
+
+        if d1 < 1.0 || d2 < 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        match f_inv(p, d1, d2) {
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/// STANDARDIZE(x, mean, standard_dev) - Returns the normalized value
+#[derive(Debug)]
+pub struct StandardizeFn;
+impl Function for StandardizeFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "STANDARDIZE"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let mean = coerce_num(&scalar_like_value(&args[1])?)?;
+        let std_dev = coerce_num(&scalar_like_value(&args[2])?)?;
+
+        if std_dev <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            (x - mean) / std_dev,
+        )))
+    }
+}
+
+/// Helper: Factorial function
+fn factorial(n: i64) -> f64 {
+    if n < 0 {
+        return f64::NAN;
+    }
+    if n <= 1 {
+        return 1.0;
+    }
+    // For large n, use gamma function: n! = Gamma(n+1)
+    if n > 20 {
+        return ln_gamma((n + 1) as f64).exp();
+    }
+    let mut result = 1.0;
+    for i in 2..=n {
+        result *= i as f64;
+    }
+    result
+}
+
+/// Helper: Log of binomial coefficient (n choose k)
+fn ln_binom(n: i64, k: i64) -> f64 {
+    if k < 0 || k > n {
+        return f64::NEG_INFINITY;
+    }
+    if k == 0 || k == n {
+        return 0.0;
+    }
+    ln_gamma((n + 1) as f64) - ln_gamma((k + 1) as f64) - ln_gamma((n - k + 1) as f64)
+}
+
+/// BINOM.DIST(number_s, trials, probability_s, cumulative) - Binomial distribution
+#[derive(Debug)]
+pub struct BinomDistFn;
+impl Function for BinomDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "BINOM.DIST"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let k = coerce_num(&scalar_like_value(&args[0])?)?.trunc() as i64;
+        let n = coerce_num(&scalar_like_value(&args[1])?)?.trunc() as i64;
+        let p = coerce_num(&scalar_like_value(&args[2])?)?;
+        let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
+
+        if n < 0 || k < 0 || k > n || p < 0.0 || p > 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let result = if cumulative {
+            // CDF: sum from i=0 to k of P(X=i)
+            let mut sum = 0.0;
+            for i in 0..=k {
+                let ln_prob = ln_binom(n, i) + (i as f64) * p.ln() + ((n - i) as f64) * (1.0 - p).ln();
+                sum += ln_prob.exp();
+            }
+            sum
+        } else {
+            // PMF: P(X=k)
+            let ln_prob = ln_binom(n, k) + (k as f64) * p.ln() + ((n - k) as f64) * (1.0 - p).ln();
+            ln_prob.exp()
+        };
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// POISSON.DIST(x, mean, cumulative) - Poisson distribution
+#[derive(Debug)]
+pub struct PoissonDistFn;
+impl Function for PoissonDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "POISSON.DIST"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let k = coerce_num(&scalar_like_value(&args[0])?)?.trunc() as i64;
+        let lambda = coerce_num(&scalar_like_value(&args[1])?)?;
+        let cumulative = coerce_num(&scalar_like_value(&args[2])?)? != 0.0;
+
+        if k < 0 || lambda < 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let result = if cumulative {
+            // CDF: sum from i=0 to k of P(X=i) = 1 - Q(k+1, lambda)
+            // Using the regularized incomplete gamma function
+            1.0 - gamma_p((k + 1) as f64, lambda)
+        } else {
+            // PMF: P(X=k) = lambda^k * e^(-lambda) / k!
+            // Use log to avoid overflow
+            let ln_prob = (k as f64) * lambda.ln() - lambda - ln_gamma((k + 1) as f64);
+            ln_prob.exp()
+        };
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// EXPON.DIST(x, lambda, cumulative) - Exponential distribution
+#[derive(Debug)]
+pub struct ExponDistFn;
+impl Function for ExponDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "EXPON.DIST"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let lambda = coerce_num(&scalar_like_value(&args[1])?)?;
+        let cumulative = coerce_num(&scalar_like_value(&args[2])?)? != 0.0;
+
+        if x < 0.0 || lambda <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let result = if cumulative {
+            // CDF: 1 - e^(-lambda*x)
+            1.0 - (-lambda * x).exp()
+        } else {
+            // PDF: lambda * e^(-lambda*x)
+            lambda * (-lambda * x).exp()
+        };
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// GAMMA.DIST(x, alpha, beta, cumulative) - Gamma distribution
+#[derive(Debug)]
+pub struct GammaDistFn;
+impl Function for GammaDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "GAMMA.DIST"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let alpha = coerce_num(&scalar_like_value(&args[1])?)?;  // shape
+        let beta = coerce_num(&scalar_like_value(&args[2])?)?;   // scale
+        let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
+
+        if x < 0.0 || alpha <= 0.0 || beta <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let result = if cumulative {
+            // CDF: P(alpha, x/beta) where P is the regularized lower incomplete gamma
+            gamma_p(alpha, x / beta)
+        } else {
+            // PDF: x^(alpha-1) * e^(-x/beta) / (beta^alpha * Gamma(alpha))
+            let ln_pdf = (alpha - 1.0) * x.ln() - x / beta - alpha * beta.ln() - ln_gamma(alpha);
+            ln_pdf.exp()
+        };
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// WEIBULL.DIST(x, alpha, beta, cumulative) - Weibull distribution
+/// alpha = shape parameter, beta = scale parameter
+#[derive(Debug)]
+pub struct WeibullDistFn;
+impl Function for WeibullDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "WEIBULL.DIST"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let alpha = coerce_num(&scalar_like_value(&args[1])?)?;  // shape
+        let beta = coerce_num(&scalar_like_value(&args[2])?)?;   // scale
+        let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
+
+        if x < 0.0 || alpha <= 0.0 || beta <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let result = if cumulative {
+            // CDF: 1 - e^(-(x/beta)^alpha)
+            1.0 - (-(x / beta).powf(alpha)).exp()
+        } else {
+            // PDF: (alpha/beta) * (x/beta)^(alpha-1) * e^(-(x/beta)^alpha)
+            if x == 0.0 {
+                if alpha < 1.0 {
+                    f64::INFINITY
+                } else if alpha == 1.0 {
+                    alpha / beta
+                } else {
+                    0.0
+                }
+            } else {
+                (alpha / beta) * (x / beta).powf(alpha - 1.0) * (-(x / beta).powf(alpha)).exp()
+            }
+        };
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// BETA.DIST(x, alpha, beta, cumulative, [A], [B]) - Beta distribution
+/// A and B are optional bounds, defaults to 0 and 1
+#[derive(Debug)]
+pub struct BetaDistFn;
+impl Function for BetaDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "BETA.DIST"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let alpha = coerce_num(&scalar_like_value(&args[1])?)?;
+        let beta_param = coerce_num(&scalar_like_value(&args[2])?)?;
+        let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
+
+        // Optional bounds A and B (default 0 and 1)
+        let a = if args.len() > 4 {
+            coerce_num(&scalar_like_value(&args[4])?)?
+        } else {
+            0.0
+        };
+        let b = if args.len() > 5 {
+            coerce_num(&scalar_like_value(&args[5])?)?
+        } else {
+            1.0
+        };
+
+        if alpha <= 0.0 || beta_param <= 0.0 || a >= b {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // x must be in [a, b]
+        if x < a || x > b {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // Transform x to standard [0,1] interval
+        let x_std = (x - a) / (b - a);
+
+        let result = if cumulative {
+            // CDF: I_x(alpha, beta) - regularized incomplete beta function
+            beta_i(x_std, alpha, beta_param)
+        } else {
+            // PDF: (x-A)^(alpha-1) * (B-x)^(beta-1) / ((B-A)^(alpha+beta-1) * B(alpha, beta))
+            let ln_beta = ln_gamma(alpha) + ln_gamma(beta_param) - ln_gamma(alpha + beta_param);
+            let scale = b - a;
+            if x_std == 0.0 && alpha < 1.0 {
+                f64::INFINITY
+            } else if x_std == 1.0 && beta_param < 1.0 {
+                f64::INFINITY
+            } else if x_std == 0.0 {
+                if alpha == 1.0 {
+                    (1.0 - x_std).powf(beta_param - 1.0) / (scale * ln_beta.exp())
+                } else {
+                    0.0
+                }
+            } else if x_std == 1.0 {
+                if beta_param == 1.0 {
+                    x_std.powf(alpha - 1.0) / (scale * ln_beta.exp())
+                } else {
+                    0.0
+                }
+            } else {
+                let ln_pdf = (alpha - 1.0) * x_std.ln() + (beta_param - 1.0) * (1.0 - x_std).ln() - ln_beta;
+                ln_pdf.exp() / scale
+            }
+        };
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// NEGBINOM.DIST(number_f, number_s, probability_s, cumulative) - Negative binomial distribution
+/// number_f = number of failures, number_s = threshold number of successes, probability_s = probability of success
+#[derive(Debug)]
+pub struct NegbinomDistFn;
+impl Function for NegbinomDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NEGBINOM.DIST"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let number_f = coerce_num(&scalar_like_value(&args[0])?)?.trunc() as i64;  // number of failures
+        let number_s = coerce_num(&scalar_like_value(&args[1])?)?.trunc() as i64;  // number of successes
+        let prob_s = coerce_num(&scalar_like_value(&args[2])?)?;  // probability of success
+        let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
+
+        if number_f < 0 || number_s < 1 || prob_s <= 0.0 || prob_s >= 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let result = if cumulative {
+            // CDF: sum from i=0 to number_f of P(X=i)
+            // This is equivalent to I_{prob_s}(number_s, number_f + 1) using regularized beta
+            beta_i(prob_s, number_s as f64, (number_f + 1) as f64)
+        } else {
+            // PMF: C(number_f + number_s - 1, number_s - 1) * prob_s^number_s * (1-prob_s)^number_f
+            // = C(k + r - 1, r - 1) * p^r * (1-p)^k where k = number_f, r = number_s
+            let ln_prob = ln_binom(number_f + number_s - 1, number_s - 1)
+                + (number_s as f64) * prob_s.ln()
+                + (number_f as f64) * (1.0 - prob_s).ln();
+            ln_prob.exp()
+        };
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// HYPGEOM.DIST(sample_s, number_sample, population_s, number_pop, cumulative) - Hypergeometric distribution
+/// sample_s = number of successes in sample
+/// number_sample = sample size
+/// population_s = number of successes in population
+/// number_pop = population size
+#[derive(Debug)]
+pub struct HypgeomDistFn;
+impl Function for HypgeomDistFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "HYPGEOM.DIST"
+    }
+    fn min_args(&self) -> usize {
+        5
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let sample_s = coerce_num(&scalar_like_value(&args[0])?)?.trunc() as i64;     // successes in sample
+        let number_sample = coerce_num(&scalar_like_value(&args[1])?)?.trunc() as i64; // sample size
+        let population_s = coerce_num(&scalar_like_value(&args[2])?)?.trunc() as i64;  // successes in population
+        let number_pop = coerce_num(&scalar_like_value(&args[3])?)?.trunc() as i64;    // population size
+        let cumulative = coerce_num(&scalar_like_value(&args[4])?)? != 0.0;
+
+        // Validation
+        if number_pop <= 0
+            || population_s < 0
+            || population_s > number_pop
+            || number_sample < 0
+            || number_sample > number_pop
+            || sample_s < 0
+        {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // sample_s must be at least max(0, number_sample - (number_pop - population_s))
+        // and at most min(number_sample, population_s)
+        let min_successes = 0.max(number_sample - (number_pop - population_s));
+        let max_successes = number_sample.min(population_s);
+
+        if sample_s < min_successes || sample_s > max_successes {
+            // Return 0 for PMF, or appropriate CDF value
+            if cumulative {
+                if sample_s < min_successes {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+                } else {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(1.0)));
+                }
+            } else {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+            }
+        }
+
+        let result = if cumulative {
+            // CDF: sum from i=min_successes to sample_s of P(X=i)
+            let mut sum = 0.0;
+            for i in min_successes..=sample_s {
+                sum += hypgeom_pmf(i, number_sample, population_s, number_pop);
+            }
+            sum
+        } else {
+            // PMF: C(population_s, sample_s) * C(number_pop - population_s, number_sample - sample_s) / C(number_pop, number_sample)
+            hypgeom_pmf(sample_s, number_sample, population_s, number_pop)
+        };
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// Helper: Hypergeometric PMF
+fn hypgeom_pmf(k: i64, n: i64, k_pop: i64, n_pop: i64) -> f64 {
+    // P(X=k) = C(K, k) * C(N-K, n-k) / C(N, n)
+    // Using logs to avoid overflow
+    let ln_prob = ln_binom(k_pop, k)
+        + ln_binom(n_pop - k_pop, n - k)
+        - ln_binom(n_pop, n);
+    ln_prob.exp()
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COVARIANCE AND CORRELATION FUNCTIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/// COVARIANCE.P(array1, array2) - Population covariance
+#[derive(Debug)]
+pub struct CovariancePFn;
+impl Function for CovariancePFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "COVARIANCE.P"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["COVAR"]
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let (y, x) = match collect_paired_arrays(args) {
+            Ok(v) => v,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+
+        let n = x.len() as f64;
+        let mean_x = x.iter().sum::<f64>() / n;
+        let mean_y = y.iter().sum::<f64>() / n;
+
+        let mut sum_xy = 0.0;
+        for i in 0..x.len() {
+            let dx = x[i] - mean_x;
+            let dy = y[i] - mean_y;
+            sum_xy += dx * dy;
+        }
+
+        // Population covariance divides by n
+        let covar = sum_xy / n;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(covar)))
+    }
+}
+
+/// COVARIANCE.S(array1, array2) - Sample covariance
+#[derive(Debug)]
+pub struct CovarianceSFn;
+impl Function for CovarianceSFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "COVARIANCE.S"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let (y, x) = match collect_paired_arrays(args) {
+            Ok(v) => v,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+
+        let n = x.len();
+        if n < 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        let mean_x = x.iter().sum::<f64>() / n as f64;
+        let mean_y = y.iter().sum::<f64>() / n as f64;
+
+        let mut sum_xy = 0.0;
+        for i in 0..n {
+            let dx = x[i] - mean_x;
+            let dy = y[i] - mean_y;
+            sum_xy += dx * dy;
+        }
+
+        // Sample covariance divides by (n - 1)
+        let covar = sum_xy / (n - 1) as f64;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(covar)))
+    }
+}
+
+/// PEARSON(array1, array2) - Pearson correlation coefficient (same as CORREL)
+#[derive(Debug)]
+pub struct PearsonFn;
+impl Function for PearsonFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "PEARSON"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let (y, x) = match collect_paired_arrays(args) {
+            Ok(v) => v,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+
+        let n = x.len() as f64;
+        let mean_x = x.iter().sum::<f64>() / n;
+        let mean_y = y.iter().sum::<f64>() / n;
+
+        let mut sum_xy = 0.0;
+        let mut sum_x2 = 0.0;
+        let mut sum_y2 = 0.0;
+
+        for i in 0..x.len() {
+            let dx = x[i] - mean_x;
+            let dy = y[i] - mean_y;
+            sum_xy += dx * dy;
+            sum_x2 += dx * dx;
+            sum_y2 += dy * dy;
+        }
+
+        let denom = (sum_x2 * sum_y2).sqrt();
+        if denom == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        let correl = sum_xy / denom;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(correl)))
+    }
+}
+
+/// RSQ(known_y's, known_x's) - R-squared value (square of correlation)
+#[derive(Debug)]
+pub struct RsqFn;
+impl Function for RsqFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "RSQ"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let (y, x) = match collect_paired_arrays(args) {
+            Ok(v) => v,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+
+        let n = x.len() as f64;
+        let mean_x = x.iter().sum::<f64>() / n;
+        let mean_y = y.iter().sum::<f64>() / n;
+
+        let mut sum_xy = 0.0;
+        let mut sum_x2 = 0.0;
+        let mut sum_y2 = 0.0;
+
+        for i in 0..x.len() {
+            let dx = x[i] - mean_x;
+            let dy = y[i] - mean_y;
+            sum_xy += dx * dy;
+            sum_x2 += dx * dx;
+            sum_y2 += dy * dy;
+        }
+
+        let denom = sum_x2 * sum_y2;
+        if denom == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        // R-squared = r^2 = (sum_xy)^2 / (sum_x2 * sum_y2)
+        let rsq = (sum_xy * sum_xy) / denom;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(rsq)))
+    }
+}
+
+/// STEYX(known_y's, known_x's) - Standard error of the predicted y-value
+#[derive(Debug)]
+pub struct SteyxFn;
+impl Function for SteyxFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "STEYX"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let (y, x) = match collect_paired_arrays(args) {
+            Ok(v) => v,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+
+        let n = x.len();
+        if n < 3 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        let n_f = n as f64;
+        let mean_x = x.iter().sum::<f64>() / n_f;
+        let mean_y = y.iter().sum::<f64>() / n_f;
+
+        let mut sum_xy = 0.0;
+        let mut sum_x2 = 0.0;
+        let mut sum_y2 = 0.0;
+
+        for i in 0..n {
+            let dx = x[i] - mean_x;
+            let dy = y[i] - mean_y;
+            sum_xy += dx * dy;
+            sum_x2 += dx * dx;
+            sum_y2 += dy * dy;
+        }
+
+        if sum_x2 == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        // STEYX = sqrt((sum_y2 - (sum_xy)^2 / sum_x2) / (n - 2))
+        let sse = sum_y2 - (sum_xy * sum_xy) / sum_x2;
+        if sse < 0.0 {
+            // This can happen due to floating point errors; return 0 in such case
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+        }
+        let steyx = (sse / (n_f - 2.0)).sqrt();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(steyx)))
+    }
+}
+
+/* ─────────────────────────── SKEW ──────────────────────────── */
+
+/// SKEW(number1, [number2], ...) - Skewness of a distribution
+#[derive(Debug)]
+pub struct SkewFn;
+impl Function for SkewFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "SKEW"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_stats(args)?;
+        let n = nums.len();
+
+        // SKEW requires at least 3 data points
+        if n < 3 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        let n_f = n as f64;
+        let mean = nums.iter().sum::<f64>() / n_f;
+
+        // Calculate sample standard deviation
+        let mut sum_sq = 0.0;
+        for &v in &nums {
+            let d = v - mean;
+            sum_sq += d * d;
+        }
+        let stdev = (sum_sq / (n_f - 1.0)).sqrt();
+
+        if stdev == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        // Calculate sum of cubed deviations normalized by stdev
+        let mut sum_cubed = 0.0;
+        for &v in &nums {
+            let d = (v - mean) / stdev;
+            sum_cubed += d * d * d;
+        }
+
+        // Excel SKEW formula: n / ((n-1)*(n-2)) * sum((xi - mean)/stdev)^3
+        let skew = (n_f / ((n_f - 1.0) * (n_f - 2.0))) * sum_cubed;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(skew)))
+    }
+}
+
+/* ─────────────────────────── KURT ──────────────────────────── */
+
+/// KURT(number1, [number2], ...) - Kurtosis of a distribution
+#[derive(Debug)]
+pub struct KurtFn;
+impl Function for KurtFn {
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    fn name(&self) -> &'static str {
+        "KURT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_stats(args)?;
+        let n = nums.len();
+
+        // KURT requires at least 4 data points
+        if n < 4 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        let n_f = n as f64;
+        let mean = nums.iter().sum::<f64>() / n_f;
+
+        // Calculate sample standard deviation
+        let mut sum_sq = 0.0;
+        for &v in &nums {
+            let d = v - mean;
+            sum_sq += d * d;
+        }
+        let stdev = (sum_sq / (n_f - 1.0)).sqrt();
+
+        if stdev == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        // Calculate sum of fourth powers of deviations normalized by stdev
+        let mut sum_fourth = 0.0;
+        for &v in &nums {
+            let d = (v - mean) / stdev;
+            sum_fourth += d * d * d * d;
+        }
+
+        // Excel KURT formula (excess kurtosis):
+        // n*(n+1) / ((n-1)*(n-2)*(n-3)) * sum((xi - mean)/stdev)^4 - 3*(n-1)^2 / ((n-2)*(n-3))
+        let term1 = (n_f * (n_f + 1.0)) / ((n_f - 1.0) * (n_f - 2.0) * (n_f - 3.0)) * sum_fourth;
+        let term2 = (3.0 * (n_f - 1.0) * (n_f - 1.0)) / ((n_f - 2.0) * (n_f - 3.0));
+        let kurt = term1 - term2;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(kurt)))
+    }
+}
+
+/* ─────────────────────────── FISHER ──────────────────────────── */
+
+/// FISHER(x) - Fisher transformation
+#[derive(Debug)]
+pub struct FisherFn;
+impl Function for FisherFn {
+    func_caps!(PURE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "FISHER"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+
+        // FISHER requires -1 < x < 1
+        if x <= -1.0 || x >= 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // Fisher transformation: 0.5 * ln((1 + x) / (1 - x))
+        let fisher = 0.5 * ((1.0 + x) / (1.0 - x)).ln();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(fisher)))
+    }
+}
+
+/* ─────────────────────────── FISHERINV ──────────────────────────── */
+
+/// FISHERINV(y) - Inverse Fisher transformation
+#[derive(Debug)]
+pub struct FisherInvFn;
+impl Function for FisherInvFn {
+    func_caps!(PURE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "FISHERINV"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let y = coerce_num(&scalar_like_value(&args[0])?)?;
+
+        // Inverse Fisher transformation: (e^(2y) - 1) / (e^(2y) + 1)
+        let e2y = (2.0 * y).exp();
+        let fisherinv = (e2y - 1.0) / (e2y + 1.0);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(fisherinv)))
+    }
+}
+
+/* ─────────────────────────── FORECAST.LINEAR ──────────────────────────── */
+
+/// FORECAST.LINEAR(x, known_y's, known_x's) - Returns predicted y value for x using linear regression
+/// The formula is: y = intercept + slope * x
+/// where slope = sum((xi - mean_x)(yi - mean_y)) / sum((xi - mean_x)^2)
+/// and intercept = mean_y - slope * mean_x
+#[derive(Debug)]
+pub struct ForecastLinearFn;
+impl Function for ForecastLinearFn {
+    func_caps!(PURE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "FORECAST.LINEAR"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["FORECAST"]
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // args[0] = x value to forecast
+        // args[1] = known_y's
+        // args[2] = known_x's
+        let x = match coerce_num(&scalar_like_value(&args[0])?) {
+            Ok(n) => n,
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+        };
+
+        let y_vals = collect_numeric_stats(&args[1..2])?;
+        let x_vals = collect_numeric_stats(&args[2..3])?;
+
+        // Arrays must have same length
+        if y_vals.len() != x_vals.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        if y_vals.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        let n = x_vals.len() as f64;
+        let mean_x = x_vals.iter().sum::<f64>() / n;
+        let mean_y = y_vals.iter().sum::<f64>() / n;
+
+        let mut sum_xy = 0.0;
+        let mut sum_x2 = 0.0;
+
+        for i in 0..x_vals.len() {
+            let dx = x_vals[i] - mean_x;
+            let dy = y_vals[i] - mean_y;
+            sum_xy += dx * dy;
+            sum_x2 += dx * dx;
+        }
+
+        if sum_x2 == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        let slope = sum_xy / sum_x2;
+        let intercept = mean_y - slope * mean_x;
+        let forecast = intercept + slope * x;
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(forecast)))
+    }
+}
+
+/* ─────────────────────────── LINEST ──────────────────────────── */
+
+/// LINEST(known_y's, known_x's, [const], [stats]) - Returns statistics describing the linear trend
+/// With stats=FALSE (default): returns 1x2 array [slope, intercept]
+/// With stats=TRUE: returns 5x2 array with regression statistics
+#[derive(Debug)]
+pub struct LinestFn;
+impl Function for LinestFn {
+    func_caps!(PURE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "LINEST"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // args[0] = known_y's (required)
+        // args[1] = known_x's (optional, defaults to {1,2,3,...})
+        // args[2] = const (optional, default TRUE - whether to compute intercept)
+        // args[3] = stats (optional, default FALSE - whether to return additional statistics)
+
+        let y_vals = collect_numeric_stats(&args[0..1])?;
+
+        if y_vals.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        // Get known_x's or generate default {1, 2, 3, ...}
+        let x_vals = if args.len() >= 2 {
+            collect_numeric_stats(&args[1..2])?
+        } else {
+            (1..=y_vals.len()).map(|i| i as f64).collect()
+        };
+
+        // Arrays must have same length
+        if y_vals.len() != x_vals.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_ref(),
+            )));
+        }
+
+        // Parse const argument (default TRUE)
+        let use_const = if args.len() >= 3 {
+            match scalar_like_value(&args[2])? {
+                LiteralValue::Boolean(b) => b,
+                LiteralValue::Number(n) => n != 0.0,
+                LiteralValue::Int(i) => i != 0,
+                _ => true,
+            }
+        } else {
+            true
+        };
+
+        // Parse stats argument (default FALSE)
+        let return_stats = if args.len() >= 4 {
+            match scalar_like_value(&args[3])? {
+                LiteralValue::Boolean(b) => b,
+                LiteralValue::Number(n) => n != 0.0,
+                LiteralValue::Int(i) => i != 0,
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        let n = x_vals.len() as f64;
+
+        // Calculate regression coefficients
+        let (slope, intercept) = if use_const {
+            // Normal linear regression with intercept
+            let mean_x = x_vals.iter().sum::<f64>() / n;
+            let mean_y = y_vals.iter().sum::<f64>() / n;
+
+            let mut sum_xy = 0.0;
+            let mut sum_x2 = 0.0;
+
+            for i in 0..x_vals.len() {
+                let dx = x_vals[i] - mean_x;
+                let dy = y_vals[i] - mean_y;
+                sum_xy += dx * dy;
+                sum_x2 += dx * dx;
+            }
+
+            if sum_x2 == 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )));
+            }
+
+            let slope = sum_xy / sum_x2;
+            let intercept = mean_y - slope * mean_x;
+            (slope, intercept)
+        } else {
+            // Regression through origin (intercept = 0)
+            let mut sum_xy = 0.0;
+            let mut sum_x2 = 0.0;
+
+            for i in 0..x_vals.len() {
+                sum_xy += x_vals[i] * y_vals[i];
+                sum_x2 += x_vals[i] * x_vals[i];
+            }
+
+            if sum_x2 == 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )));
+            }
+
+            let slope = sum_xy / sum_x2;
+            (slope, 0.0)
+        };
+
+        if !return_stats {
+            // Return just slope and intercept as 1x2 array: [[slope, intercept]]
+            let row = vec![
+                LiteralValue::Number(slope),
+                LiteralValue::Number(intercept),
+            ];
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![row])));
+        }
+
+        // Calculate additional statistics for stats=TRUE
+        // Row 1: [slope, intercept]
+        // Row 2: [se_slope, se_intercept]
+        // Row 3: [r_squared, se_y]
+        // Row 4: [F_statistic, df]
+        // Row 5: [ss_reg, ss_resid]
+
+        let mean_y = y_vals.iter().sum::<f64>() / n;
+
+        // Calculate residuals and sums of squares
+        let mut ss_resid = 0.0; // Sum of squared residuals
+        let mut ss_tot = 0.0;   // Total sum of squares
+
+        for i in 0..x_vals.len() {
+            let y_pred = slope * x_vals[i] + intercept;
+            let residual = y_vals[i] - y_pred;
+            ss_resid += residual * residual;
+            let dy_tot = y_vals[i] - mean_y;
+            ss_tot += dy_tot * dy_tot;
+        }
+
+        let ss_reg = ss_tot - ss_resid; // Regression sum of squares
+
+        // R-squared
+        let r_squared = if ss_tot == 0.0 {
+            1.0 // Perfect fit or all y values are the same
+        } else {
+            1.0 - (ss_resid / ss_tot)
+        };
+
+        // Degrees of freedom
+        let df = if use_const {
+            (n as i64 - 2).max(1) as f64 // n - k - 1 where k=1 (one predictor)
+        } else {
+            (n as i64 - 1).max(1) as f64 // n - k when no intercept
+        };
+
+        // Standard error of y estimate
+        let se_y = if df > 0.0 {
+            (ss_resid / df).sqrt()
+        } else {
+            0.0
+        };
+
+        // Standard errors of coefficients
+        let mean_x = x_vals.iter().sum::<f64>() / n;
+        let mut sum_x2_centered = 0.0;
+        let mut sum_x2_raw = 0.0;
+        for &xi in &x_vals {
+            sum_x2_centered += (xi - mean_x).powi(2);
+            sum_x2_raw += xi * xi;
+        }
+
+        let se_slope = if sum_x2_centered > 0.0 && df > 0.0 {
+            se_y / sum_x2_centered.sqrt()
+        } else {
+            f64::NAN
+        };
+
+        let se_intercept = if use_const && sum_x2_centered > 0.0 && df > 0.0 {
+            se_y * (sum_x2_raw / (n * sum_x2_centered)).sqrt()
+        } else {
+            f64::NAN
+        };
+
+        // F-statistic
+        let f_stat = if ss_resid > 0.0 && df > 0.0 {
+            (ss_reg / 1.0) / (ss_resid / df) // MSR / MSE
+        } else if ss_resid == 0.0 {
+            f64::INFINITY // Perfect fit
+        } else {
+            f64::NAN
+        };
+
+        // Build 5x2 result array
+        let rows = vec![
+            vec![LiteralValue::Number(slope), LiteralValue::Number(intercept)],
+            vec![LiteralValue::Number(se_slope), LiteralValue::Number(se_intercept)],
+            vec![LiteralValue::Number(r_squared), LiteralValue::Number(se_y)],
+            vec![LiteralValue::Number(f_stat), LiteralValue::Number(df)],
+            vec![LiteralValue::Number(ss_reg), LiteralValue::Number(ss_resid)],
+        ];
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)))
+    }
+}
+
+/* ─────────────────────────── CONFIDENCE.NORM ──────────────────────────── */
+
+/// CONFIDENCE.NORM(alpha, standard_dev, size) - Returns the confidence interval for a population mean
+/// using a normal distribution.
+/// Formula: z_crit * standard_dev / sqrt(size), where z_crit = NORM.S.INV(1 - alpha/2)
+#[derive(Debug)]
+pub struct ConfidenceNormFn;
+impl Function for ConfidenceNormFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CONFIDENCE.NORM"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["CONFIDENCE"]
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let alpha = coerce_num(&scalar_like_value(&args[0])?)?;
+        let std_dev = coerce_num(&scalar_like_value(&args[1])?)?;
+        let size = coerce_num(&scalar_like_value(&args[2])?)?;
+
+        // Validate inputs
+        if alpha <= 0.0 || alpha >= 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        if std_dev <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        if size < 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // z_crit = NORM.S.INV(1 - alpha/2)
+        let z_crit = match std_norm_inv(1.0 - alpha / 2.0) {
+            Some(z) => z,
+            None => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
+        };
+
+        let result = z_crit * std_dev / size.sqrt();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/* ─────────────────────────── CONFIDENCE.T ──────────────────────────── */
+
+/// CONFIDENCE.T(alpha, standard_dev, size) - Returns the confidence interval for a population mean
+/// using a Student's t-distribution.
+/// Formula: t_crit * standard_dev / sqrt(size), where t_crit = T.INV(1 - alpha/2, size - 1)
+#[derive(Debug)]
+pub struct ConfidenceTFn;
+impl Function for ConfidenceTFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CONFIDENCE.T"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let alpha = coerce_num(&scalar_like_value(&args[0])?)?;
+        let std_dev = coerce_num(&scalar_like_value(&args[1])?)?;
+        let size = coerce_num(&scalar_like_value(&args[2])?)?;
+
+        // Validate inputs - size must be >= 2 for t-distribution (df = size - 1 >= 1)
+        if alpha <= 0.0 || alpha >= 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        if std_dev <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        if size < 2.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let df = size - 1.0;
+
+        // t_crit = T.INV(1 - alpha/2, df)
+        let t_crit = match t_inv(1.0 - alpha / 2.0, df) {
+            Some(t) => t,
+            None => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
+        };
+
+        let result = t_crit * std_dev / size.sqrt();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/* ─────────────────────────── Z.TEST ──────────────────────────── */
+
+/// Z.TEST(array, x, [sigma]) - Returns the one-tailed P-value of a z-test.
+/// z = (mean(array) - x) / (sigma / sqrt(n))
+/// Returns 1 - NORM.S.DIST(z, TRUE)
+/// If sigma is omitted, uses the population standard deviation of the array.
+#[derive(Debug)]
+pub struct ZTestFn;
+impl Function for ZTestFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "Z.TEST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["ZTEST"]
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                {
+                    let mut s = ArgSchema::number_lenient_scalar();
+                    s.shape = crate::args::ShapeKind::Range;
+                    s.coercion = formualizer_common::CoercionPolicy::NumberLenientText;
+                    s
+                },
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(), // optional sigma
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // Collect numeric values from the array argument
+        let data = collect_numeric_stats(&args[0..1])?;
+
+        if data.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        let x = coerce_num(&scalar_like_value(&args[1])?)?;
+
+        let n = data.len() as f64;
+        let mean: f64 = data.iter().sum::<f64>() / n;
+
+        // Calculate sigma: use provided value or compute population std dev
+        let sigma = if args.len() > 2 {
+            let s = coerce_num(&scalar_like_value(&args[2])?)?;
+            if s <= 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
+            s
+        } else {
+            // Population standard deviation
+            let variance: f64 = data.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
+            let std_dev = variance.sqrt();
+            if std_dev == 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )));
+            }
+            std_dev
+        };
+
+        // z = (mean - x) / (sigma / sqrt(n))
+        let z = (mean - x) / (sigma / n.sqrt());
+
+        // P-value = 1 - NORM.S.DIST(z, TRUE)
+        let p_value = 1.0 - std_norm_cdf(z);
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(p_value)))
+    }
+}
+
+/* ─────────────────────────── TREND ──────────────────────────── */
+
+/// TREND(known_y's, [known_x's], [new_x's], [const]) - Returns y values along a linear trend
+/// Uses linear regression y = mx + b
+/// - If new_x's provided, calculates trend values for those x's
+/// - If new_x's omitted, uses known_x's
+/// - const=TRUE (default): calculate intercept normally
+/// - const=FALSE: force intercept through origin
+#[derive(Debug)]
+pub struct TrendFn;
+impl Function for TrendFn {
+    func_caps!(PURE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "TREND"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // TREND: args[0] = known_y's (required)
+        // args[1] = known_x's (optional, defaults to {1,2,3,...})
+        // args[2] = new_x's (optional, defaults to known_x's)
+        // args[3] = const (optional, default TRUE - whether to compute intercept)
+
+        let y_vals = collect_numeric_stats(&args[0..1])?;
+
+        if y_vals.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        // Helper to check if argument is empty/omitted
+        // Note: Empty arguments are represented as empty text strings by the parser
+        fn is_arg_empty(arg: &ArgumentHandle) -> bool {
+            match scalar_like_value(arg) {
+                Ok(LiteralValue::Empty) => true,
+                Ok(LiteralValue::Text(s)) if s.is_empty() => true,
+                _ => false,
+            }
+        }
+
+        // Get known_x's or generate default {1, 2, 3, ...}
+        let x_vals = if args.len() >= 2 && !is_arg_empty(&args[1]) {
+            collect_numeric_stats(&args[1..2])?
+        } else {
+            (1..=y_vals.len()).map(|i| i as f64).collect()
+        };
+
+        // Arrays must have same length
+        if y_vals.len() != x_vals.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_ref(),
+            )));
+        }
+
+        // Get new_x's or use known_x's - check if argument is empty/omitted
+        let new_x_vals = if args.len() >= 3 && !is_arg_empty(&args[2]) {
+            collect_numeric_stats(&args[2..3])?
+        } else {
+            x_vals.clone()
+        };
+
+        if new_x_vals.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        // Parse const argument (default TRUE)
+        let use_const = if args.len() >= 4 {
+            match scalar_like_value(&args[3])? {
+                LiteralValue::Boolean(b) => b,
+                LiteralValue::Number(n) => n != 0.0,
+                LiteralValue::Int(i) => i != 0,
+                LiteralValue::Empty => true, // empty defaults to TRUE
+                _ => true,
+            }
+        } else {
+            true
+        };
+
+        let n = x_vals.len() as f64;
+
+        // Calculate regression coefficients
+        let (slope, intercept) = if use_const {
+            // Normal linear regression with intercept
+            let mean_x = x_vals.iter().sum::<f64>() / n;
+            let mean_y = y_vals.iter().sum::<f64>() / n;
+
+            let mut sum_xy = 0.0;
+            let mut sum_x2 = 0.0;
+
+            for i in 0..x_vals.len() {
+                let dx = x_vals[i] - mean_x;
+                let dy = y_vals[i] - mean_y;
+                sum_xy += dx * dy;
+                sum_x2 += dx * dx;
+            }
+
+            if sum_x2 == 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )));
+            }
+
+            let slope = sum_xy / sum_x2;
+            let intercept = mean_y - slope * mean_x;
+            (slope, intercept)
+        } else {
+            // Regression through origin (intercept = 0)
+            let mut sum_xy = 0.0;
+            let mut sum_x2 = 0.0;
+
+            for i in 0..x_vals.len() {
+                sum_xy += x_vals[i] * y_vals[i];
+                sum_x2 += x_vals[i] * x_vals[i];
+            }
+
+            if sum_x2 == 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )));
+            }
+
+            let slope = sum_xy / sum_x2;
+            (slope, 0.0)
+        };
+
+        // Calculate predicted y values for new_x's
+        let predicted: Vec<LiteralValue> = new_x_vals
+            .iter()
+            .map(|&x| LiteralValue::Number(slope * x + intercept))
+            .collect();
+
+        // Return as 1xN array (row vector)
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![predicted])))
+    }
+}
+
+/* ─────────────────────────── GROWTH ──────────────────────────── */
+
+/// GROWTH(known_y's, [known_x's], [new_x's], [const]) - Returns values along exponential growth trend
+/// Uses exponential regression y = b * m^x
+/// - Similar parameters to TREND but for exponential growth
+/// - const=TRUE: calculate b normally
+/// - const=FALSE: force b = 1
+#[derive(Debug)]
+pub struct GrowthFn;
+impl Function for GrowthFn {
+    func_caps!(PURE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "GROWTH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // GROWTH: args[0] = known_y's (required)
+        // args[1] = known_x's (optional, defaults to {1,2,3,...})
+        // args[2] = new_x's (optional, defaults to known_x's)
+        // args[3] = const (optional, default TRUE - whether to compute intercept)
+
+        let y_vals = collect_numeric_stats(&args[0..1])?;
+
+        if y_vals.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        // Check that all y values are positive (required for log transformation)
+        for &y in &y_vals {
+            if y <= 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
+        }
+
+        // Helper to check if argument is empty/omitted
+        // Note: Empty arguments are represented as empty text strings by the parser
+        fn is_arg_empty(arg: &ArgumentHandle) -> bool {
+            match scalar_like_value(arg) {
+                Ok(LiteralValue::Empty) => true,
+                Ok(LiteralValue::Text(s)) if s.is_empty() => true,
+                _ => false,
+            }
+        }
+
+        // Get known_x's or generate default {1, 2, 3, ...}
+        let x_vals = if args.len() >= 2 && !is_arg_empty(&args[1]) {
+            collect_numeric_stats(&args[1..2])?
+        } else {
+            (1..=y_vals.len()).map(|i| i as f64).collect()
+        };
+
+        // Arrays must have same length
+        if y_vals.len() != x_vals.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_ref(),
+            )));
+        }
+
+        // Get new_x's or use known_x's - check if argument is empty/omitted
+        let new_x_vals = if args.len() >= 3 && !is_arg_empty(&args[2]) {
+            collect_numeric_stats(&args[2..3])?
+        } else {
+            x_vals.clone()
+        };
+
+        if new_x_vals.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        // Parse const argument (default TRUE)
+        let use_const = if args.len() >= 4 {
+            match scalar_like_value(&args[3])? {
+                LiteralValue::Boolean(b) => b,
+                LiteralValue::Number(n) => n != 0.0,
+                LiteralValue::Int(i) => i != 0,
+                LiteralValue::Empty => true, // empty defaults to TRUE
+                _ => true,
+            }
+        } else {
+            true
+        };
+
+        // Transform to log space: ln(y) = ln(b) + x*ln(m)
+        // This is linear regression on log-transformed y values
+        let ln_y_vals: Vec<f64> = y_vals.iter().map(|&y| y.ln()).collect();
+
+        let n = x_vals.len() as f64;
+
+        // Calculate regression coefficients in log space
+        let (ln_m, ln_b) = if use_const {
+            // Normal linear regression with intercept
+            let mean_x = x_vals.iter().sum::<f64>() / n;
+            let mean_ln_y = ln_y_vals.iter().sum::<f64>() / n;
+
+            let mut sum_xy = 0.0;
+            let mut sum_x2 = 0.0;
+
+            for i in 0..x_vals.len() {
+                let dx = x_vals[i] - mean_x;
+                let dy = ln_y_vals[i] - mean_ln_y;
+                sum_xy += dx * dy;
+                sum_x2 += dx * dx;
+            }
+
+            if sum_x2 == 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )));
+            }
+
+            let ln_m = sum_xy / sum_x2;
+            let ln_b = mean_ln_y - ln_m * mean_x;
+            (ln_m, ln_b)
+        } else {
+            // Regression through origin in log space (ln_b = 0, so b = 1)
+            let mut sum_xy = 0.0;
+            let mut sum_x2 = 0.0;
+
+            for i in 0..x_vals.len() {
+                sum_xy += x_vals[i] * ln_y_vals[i];
+                sum_x2 += x_vals[i] * x_vals[i];
+            }
+
+            if sum_x2 == 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )));
+            }
+
+            let ln_m = sum_xy / sum_x2;
+            (ln_m, 0.0)
+        };
+
+        // Convert back from log space: m = e^ln_m, b = e^ln_b
+        let m = ln_m.exp();
+        let b = ln_b.exp();
+
+        // Calculate predicted y values: y = b * m^x
+        let predicted: Vec<LiteralValue> = new_x_vals
+            .iter()
+            .map(|&x| LiteralValue::Number(b * m.powf(x)))
+            .collect();
+
+        // Return as 1xN array (row vector)
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![predicted])))
+    }
+}
+
+/* ─────────────────────────── LOGEST ──────────────────────────── */
+
+/// LOGEST(known_y's, [known_x's], [const], [stats]) - Returns parameters of exponential curve
+/// Returns array: [[m, b]] when stats=FALSE
+/// Returns 5x2 array with statistics when stats=TRUE (like LINEST)
+/// The exponential curve is y = b * m^x
+#[derive(Debug)]
+pub struct LogestFn;
+impl Function for LogestFn {
+    func_caps!(PURE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "LOGEST"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // args[0] = known_y's (required)
+        // args[1] = known_x's (optional, defaults to {1,2,3,...})
+        // args[2] = const (optional, default TRUE - whether to compute b)
+        // args[3] = stats (optional, default FALSE - whether to return additional statistics)
+
+        let y_vals = collect_numeric_stats(&args[0..1])?;
+
+        if y_vals.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        // Check that all y values are positive (required for log transformation)
+        for &y in &y_vals {
+            if y <= 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
+        }
+
+        // Get known_x's or generate default {1, 2, 3, ...}
+        let x_vals = if args.len() >= 2 {
+            collect_numeric_stats(&args[1..2])?
+        } else {
+            (1..=y_vals.len()).map(|i| i as f64).collect()
+        };
+
+        // Arrays must have same length
+        if y_vals.len() != x_vals.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_ref(),
+            )));
+        }
+
+        // Parse const argument (default TRUE)
+        let use_const = if args.len() >= 3 {
+            match scalar_like_value(&args[2])? {
+                LiteralValue::Boolean(b) => b,
+                LiteralValue::Number(n) => n != 0.0,
+                LiteralValue::Int(i) => i != 0,
+                _ => true,
+            }
+        } else {
+            true
+        };
+
+        // Parse stats argument (default FALSE)
+        let return_stats = if args.len() >= 4 {
+            match scalar_like_value(&args[3])? {
+                LiteralValue::Boolean(b) => b,
+                LiteralValue::Number(n) => n != 0.0,
+                LiteralValue::Int(i) => i != 0,
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        // Transform to log space: ln(y) = ln(b) + x*ln(m)
+        let ln_y_vals: Vec<f64> = y_vals.iter().map(|&y| y.ln()).collect();
+
+        let n = x_vals.len() as f64;
+
+        // Calculate regression coefficients in log space
+        let (ln_m, ln_b) = if use_const {
+            // Normal linear regression with intercept
+            let mean_x = x_vals.iter().sum::<f64>() / n;
+            let mean_ln_y = ln_y_vals.iter().sum::<f64>() / n;
+
+            let mut sum_xy = 0.0;
+            let mut sum_x2 = 0.0;
+
+            for i in 0..x_vals.len() {
+                let dx = x_vals[i] - mean_x;
+                let dy = ln_y_vals[i] - mean_ln_y;
+                sum_xy += dx * dy;
+                sum_x2 += dx * dx;
+            }
+
+            if sum_x2 == 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )));
+            }
+
+            let ln_m = sum_xy / sum_x2;
+            let ln_b = mean_ln_y - ln_m * mean_x;
+            (ln_m, ln_b)
+        } else {
+            // Regression through origin in log space (ln_b = 0, so b = 1)
+            let mut sum_xy = 0.0;
+            let mut sum_x2 = 0.0;
+
+            for i in 0..x_vals.len() {
+                sum_xy += x_vals[i] * ln_y_vals[i];
+                sum_x2 += x_vals[i] * x_vals[i];
+            }
+
+            if sum_x2 == 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_div(),
+                )));
+            }
+
+            let ln_m = sum_xy / sum_x2;
+            (ln_m, 0.0)
+        };
+
+        // Convert from log space to get m and b
+        let m = ln_m.exp();
+        let b = ln_b.exp();
+
+        if !return_stats {
+            // Return just m and b as 1x2 array: [[m, b]]
+            let row = vec![
+                LiteralValue::Number(m),
+                LiteralValue::Number(b),
+            ];
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![row])));
+        }
+
+        // Calculate additional statistics for stats=TRUE
+        // Statistics are computed in log space, then converted
+        // Row 1: [m, b]
+        // Row 2: [se_m, se_b] - standard errors (converted from log space)
+        // Row 3: [r_squared, se_y] - R-squared and standard error of y estimate
+        // Row 4: [F_statistic, df] - F-statistic and degrees of freedom
+        // Row 5: [ss_reg, ss_resid] - regression sum of squares and residual sum of squares
+
+        let mean_ln_y = ln_y_vals.iter().sum::<f64>() / n;
+
+        // Calculate residuals and sums of squares in log space
+        let mut ss_resid = 0.0;
+        let mut ss_tot = 0.0;
+
+        for i in 0..x_vals.len() {
+            let ln_y_pred = ln_m * x_vals[i] + ln_b;
+            let residual = ln_y_vals[i] - ln_y_pred;
+            ss_resid += residual * residual;
+            let dy_tot = ln_y_vals[i] - mean_ln_y;
+            ss_tot += dy_tot * dy_tot;
+        }
+
+        let ss_reg = ss_tot - ss_resid;
+
+        // R-squared (same in both spaces for transformed regression)
+        let r_squared = if ss_tot == 0.0 {
+            1.0
+        } else {
+            1.0 - (ss_resid / ss_tot)
+        };
+
+        // Degrees of freedom
+        let df = if use_const {
+            (n as i64 - 2).max(1) as f64
+        } else {
+            (n as i64 - 1).max(1) as f64
+        };
+
+        // Standard error of y estimate (in log space)
+        let se_ln_y = if df > 0.0 {
+            (ss_resid / df).sqrt()
+        } else {
+            0.0
+        };
+
+        // Standard errors of coefficients in log space
+        let mean_x = x_vals.iter().sum::<f64>() / n;
+        let mut sum_x2_centered = 0.0;
+        let mut sum_x2_raw = 0.0;
+        for &xi in &x_vals {
+            sum_x2_centered += (xi - mean_x).powi(2);
+            sum_x2_raw += xi * xi;
+        }
+
+        let se_ln_m = if sum_x2_centered > 0.0 && df > 0.0 {
+            se_ln_y / sum_x2_centered.sqrt()
+        } else {
+            f64::NAN
+        };
+
+        let se_ln_b = if use_const && sum_x2_centered > 0.0 && df > 0.0 {
+            se_ln_y * (sum_x2_raw / (n * sum_x2_centered)).sqrt()
+        } else {
+            f64::NAN
+        };
+
+        // Convert standard errors: se_m = m * se_ln_m (delta method approximation)
+        let se_m = m * se_ln_m;
+        let se_b = b * se_ln_b;
+
+        // Standard error of y estimate - convert from log space
+        // This is an approximation; for exponential models, se_y in original space varies with x
+        let se_y = se_ln_y;
+
+        // F-statistic
+        let f_stat = if ss_resid > 0.0 && df > 0.0 {
+            (ss_reg / 1.0) / (ss_resid / df)
+        } else if ss_resid == 0.0 {
+            f64::INFINITY
+        } else {
+            f64::NAN
+        };
+
+        // Build 5x2 result array
+        let rows = vec![
+            vec![LiteralValue::Number(m), LiteralValue::Number(b)],
+            vec![LiteralValue::Number(se_m), LiteralValue::Number(se_b)],
+            vec![LiteralValue::Number(r_squared), LiteralValue::Number(se_y)],
+            vec![LiteralValue::Number(f_stat), LiteralValue::Number(df)],
+            vec![LiteralValue::Number(ss_reg), LiteralValue::Number(ss_resid)],
+        ];
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)))
+    }
+}
+
+/* ─────────────────────────── PERCENTRANK ──────────────────────────── */
+
+/// PERCENTRANK.INC(array, x, [significance]) - Returns percentage rank (inclusive)
+/// Returns rank of x in array as percentage (0 to 1 inclusive)
+/// Uses interpolation for values between data points
+/// significance: number of significant digits (default 3)
+#[derive(Debug)]
+pub struct PercentRankIncFn;
+impl Function for PercentRankIncFn {
+    func_caps!(PURE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "PERCENTRANK.INC"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["PERCENTRANK"]
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() < 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // Get x value (the value to find the rank of)
+        let x = match coerce_num(&scalar_like_value(&args[1])?) {
+            Ok(n) => n,
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
+        };
+
+        // Get optional significance (default 3)
+        let significance = if args.len() > 2 {
+            match coerce_num(&scalar_like_value(&args[2])?) {
+                Ok(n) => {
+                    let s = n as i32;
+                    if s < 1 {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new_num(),
+                        )));
+                    }
+                    s as u32
+                }
+                Err(_) => 3,
+            }
+        } else {
+            3
+        };
+
+        // Collect and sort the data array
+        let mut nums = collect_numeric_stats(&args[0..1])?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let n = nums.len();
+
+        // Check if x is outside the range
+        if x < nums[0] || x > nums[n - 1] {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        // Find the rank using linear interpolation
+        // For PERCENTRANK.INC, the formula is: rank = (position) / (n-1)
+        // where position is 0-based and uses linear interpolation
+        let rank = if n == 1 {
+            // Single element - rank is 0 (or 1.0 if we want, but Excel returns 0)
+            0.0
+        } else {
+            let mut rank_val = 0.0;
+            for i in 0..n - 1 {
+                if (nums[i] - x).abs() < 1e-12 {
+                    // Exact match at position i
+                    rank_val = (i as f64) / ((n - 1) as f64);
+                    break;
+                } else if nums[i] < x && x < nums[i + 1] {
+                    // Interpolate between positions i and i+1
+                    let frac = (x - nums[i]) / (nums[i + 1] - nums[i]);
+                    rank_val = ((i as f64) + frac) / ((n - 1) as f64);
+                    break;
+                } else if i == n - 2 && (nums[n - 1] - x).abs() < 1e-12 {
+                    // Exact match at last position
+                    rank_val = 1.0;
+                }
+            }
+            rank_val
+        };
+
+        // Truncate to significance decimal places
+        let multiplier = 10_f64.powi(significance as i32);
+        let truncated = (rank * multiplier).trunc() / multiplier;
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(truncated)))
+    }
+}
+
+/// PERCENTRANK.EXC(array, x, [significance]) - Returns percentage rank (exclusive)
+/// Same as PERCENTRANK.INC but excludes 0 and 1 from range
+/// Range is 1/(n+1) to n/(n+1)
+#[derive(Debug)]
+pub struct PercentRankExcFn;
+impl Function for PercentRankExcFn {
+    func_caps!(PURE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "PERCENTRANK.EXC"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() < 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // Get x value (the value to find the rank of)
+        let x = match coerce_num(&scalar_like_value(&args[1])?) {
+            Ok(n) => n,
+            Err(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
+        };
+
+        // Get optional significance (default 3)
+        let significance = if args.len() > 2 {
+            match coerce_num(&scalar_like_value(&args[2])?) {
+                Ok(n) => {
+                    let s = n as i32;
+                    if s < 1 {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new_num(),
+                        )));
+                    }
+                    s as u32
+                }
+                Err(_) => 3,
+            }
+        } else {
+            3
+        };
+
+        // Collect and sort the data array
+        let mut nums = collect_numeric_stats(&args[0..1])?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let n = nums.len();
+
+        // Check if x is outside the range
+        if x < nums[0] || x > nums[n - 1] {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        // For PERCENTRANK.EXC, the formula is: rank = position / (n+1)
+        // where position is 1-based and uses linear interpolation
+        let rank = {
+            let mut rank_val = 0.0;
+            for i in 0..n {
+                if (nums[i] - x).abs() < 1e-12 {
+                    // Exact match at position i (1-based: i+1)
+                    rank_val = ((i + 1) as f64) / ((n + 1) as f64);
+                    break;
+                } else if i < n - 1 && nums[i] < x && x < nums[i + 1] {
+                    // Interpolate between positions i and i+1 (1-based: i+1 and i+2)
+                    let frac = (x - nums[i]) / (nums[i + 1] - nums[i]);
+                    let position = ((i + 1) as f64) + frac;
+                    rank_val = position / ((n + 1) as f64);
+                    break;
+                }
+            }
+            rank_val
+        };
+
+        // Truncate to significance decimal places
+        let multiplier = 10_f64.powi(significance as i32);
+        let truncated = (rank * multiplier).trunc() / multiplier;
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(truncated)))
+    }
+}
+
+/* ─────────────────────────── FREQUENCY ──────────────────────────── */
+
+/// FREQUENCY(data_array, bins_array) - Returns frequency distribution
+/// Returns vertical array of frequencies
+/// Counts values in each bin: <= bin[0], (bin[0], bin[1]], ..., > bin[n-1]
+/// Returns array with one more element than bins_array
+#[derive(Debug)]
+pub struct FrequencyFn;
+impl Function for FrequencyFn {
+    func_caps!(PURE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "FREQUENCY"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        false
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() < 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // Collect data array
+        let data = collect_numeric_stats(&args[0..1])?;
+
+        // Collect bins array
+        let mut bins = collect_numeric_stats(&args[1..2])?;
+
+        // Handle empty bins - return single count of all data
+        if bins.is_empty() {
+            let rows = vec![vec![LiteralValue::Number(data.len() as f64)]];
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)));
+        }
+
+        // Sort bins
+        bins.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // Calculate frequencies
+        // Result has bins.len() + 1 elements
+        let mut frequencies = vec![0usize; bins.len() + 1];
+
+        for &value in &data {
+            // Find which bin the value belongs to
+            let mut found = false;
+            for (i, &bin) in bins.iter().enumerate() {
+                if i == 0 {
+                    // First bin: count values <= bins[0]
+                    if value <= bin {
+                        frequencies[0] += 1;
+                        found = true;
+                        break;
+                    }
+                } else {
+                    // Intermediate bins: count values > bins[i-1] AND <= bins[i]
+                    if value <= bin {
+                        frequencies[i] += 1;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            // Last bin: values > bins[last]
+            if !found {
+                frequencies[bins.len()] += 1;
+            }
+        }
+
+        // Return as vertical array (column vector)
+        let rows: Vec<Vec<LiteralValue>> = frequencies
+            .into_iter()
+            .map(|f| vec![LiteralValue::Number(f as f64)])
+            .collect();
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)))
+    }
+}
+
+/* ─────────────────────────── T.DIST.2T ──────────────────────────── */
+
+/// T.DIST.2T(x, deg_freedom) - Returns the two-tailed Student's t-distribution
+/// Returns P(|T| > x) = 2 * (1 - t_cdf(|x|, df))
+#[derive(Debug)]
+pub struct TDist2TFn;
+impl Function for TDist2TFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "T.DIST.2T"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let df = coerce_num(&scalar_like_value(&args[1])?)?;
+
+        // x must be non-negative for T.DIST.2T, df must be >= 1
+        if x < 0.0 || df < 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // Two-tailed: P(|T| > x) = 2 * (1 - t_cdf(x, df))
+        let p = 2.0 * (1.0 - t_cdf(x, df));
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(p)))
+    }
+}
+
+/* ─────────────────────────── T.INV.2T ──────────────────────────── */
+
+/// T.INV.2T(probability, deg_freedom) - Returns the two-tailed inverse of Student's t-distribution
+/// Returns the value t such that P(|T| > t) = probability
+/// This is equivalent to t_inv(1 - probability/2, df)
+#[derive(Debug)]
+pub struct TInv2TFn;
+impl Function for TInv2TFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "T.INV.2T"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["TINV"]
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+        let df = coerce_num(&scalar_like_value(&args[1])?)?;
+
+        // probability must be in (0, 1], df >= 1
+        if p <= 0.0 || p > 1.0 || df < 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // For two-tailed: we want t such that P(|T| > t) = p
+        // P(|T| > t) = 2 * (1 - F(t)) where F is CDF
+        // So 1 - F(t) = p/2, meaning F(t) = 1 - p/2
+        // Thus t = t_inv(1 - p/2, df)
+        match t_inv(1.0 - p / 2.0, df) {
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/* ─────────────────────────── T.TEST ──────────────────────────── */
+
+/// T.TEST(array1, array2, tails, type) - Returns probability for Student's t-test
+/// tails: 1 for one-tailed, 2 for two-tailed
+/// type: 1=paired, 2=two-sample equal variance, 3=two-sample unequal variance (Welch's)
+#[derive(Debug)]
+pub struct TTestFn;
+impl Function for TTestFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "T.TEST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["TTEST"]
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                {
+                    let mut s = ArgSchema::number_lenient_scalar();
+                    s.shape = crate::args::ShapeKind::Range;
+                    s.coercion = formualizer_common::CoercionPolicy::NumberLenientText;
+                    s
+                },
+                {
+                    let mut s = ArgSchema::number_lenient_scalar();
+                    s.shape = crate::args::ShapeKind::Range;
+                    s.coercion = formualizer_common::CoercionPolicy::NumberLenientText;
+                    s
+                },
+                ArgSchema::number_lenient_scalar(), // tails
+                ArgSchema::number_lenient_scalar(), // type
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let array1 = collect_numeric_stats(&args[0..1])?;
+        let array2 = collect_numeric_stats(&args[1..2])?;
+        let tails = coerce_num(&scalar_like_value(&args[2])?)? as i32;
+        let test_type = coerce_num(&scalar_like_value(&args[3])?)? as i32;
+
+        // Validate tails (1 or 2) and type (1, 2, or 3)
+        if tails < 1 || tails > 2 || test_type < 1 || test_type > 3 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let n1 = array1.len();
+        let n2 = array2.len();
+
+        // For paired test, arrays must have same length
+        if test_type == 1 && n1 != n2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        // Need at least 2 data points for meaningful t-test
+        if n1 < 2 || n2 < 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let (t_stat, df) = match test_type {
+            1 => {
+                // Paired t-test
+                let n = n1 as f64;
+                let diffs: Vec<f64> = array1
+                    .iter()
+                    .zip(array2.iter())
+                    .map(|(a, b)| a - b)
+                    .collect();
+                let mean_diff = diffs.iter().sum::<f64>() / n;
+                let var_diff =
+                    diffs.iter().map(|d| (d - mean_diff).powi(2)).sum::<f64>() / (n - 1.0);
+                if var_diff == 0.0 {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new_div(),
+                    )));
+                }
+                let se = (var_diff / n).sqrt();
+                (mean_diff / se, n - 1.0)
+            }
+            2 => {
+                // Two-sample equal variance (pooled)
+                let n1f = n1 as f64;
+                let n2f = n2 as f64;
+                let mean1 = array1.iter().sum::<f64>() / n1f;
+                let mean2 = array2.iter().sum::<f64>() / n2f;
+                let var1 = array1.iter().map(|x| (x - mean1).powi(2)).sum::<f64>() / (n1f - 1.0);
+                let var2 = array2.iter().map(|x| (x - mean2).powi(2)).sum::<f64>() / (n2f - 1.0);
+
+                // Pooled variance
+                let sp2 = ((n1f - 1.0) * var1 + (n2f - 1.0) * var2) / (n1f + n2f - 2.0);
+                if sp2 == 0.0 {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new_div(),
+                    )));
+                }
+                let se = (sp2 * (1.0 / n1f + 1.0 / n2f)).sqrt();
+                ((mean1 - mean2) / se, n1f + n2f - 2.0)
+            }
+            3 => {
+                // Welch's t-test (unequal variance)
+                let n1f = n1 as f64;
+                let n2f = n2 as f64;
+                let mean1 = array1.iter().sum::<f64>() / n1f;
+                let mean2 = array2.iter().sum::<f64>() / n2f;
+                let var1 = array1.iter().map(|x| (x - mean1).powi(2)).sum::<f64>() / (n1f - 1.0);
+                let var2 = array2.iter().map(|x| (x - mean2).powi(2)).sum::<f64>() / (n2f - 1.0);
+
+                let s1_n = var1 / n1f;
+                let s2_n = var2 / n2f;
+                let se = (s1_n + s2_n).sqrt();
+                if se == 0.0 {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new_div(),
+                    )));
+                }
+
+                // Welch-Satterthwaite degrees of freedom
+                let df_num = (s1_n + s2_n).powi(2);
+                let df_denom = s1_n.powi(2) / (n1f - 1.0) + s2_n.powi(2) / (n2f - 1.0);
+                let df = if df_denom == 0.0 {
+                    1.0
+                } else {
+                    df_num / df_denom
+                };
+                ((mean1 - mean2) / se, df)
+            }
+            _ => unreachable!(),
+        };
+
+        // Calculate p-value based on tails
+        let t_abs = t_stat.abs();
+        let p = if tails == 1 {
+            1.0 - t_cdf(t_abs, df)
+        } else {
+            2.0 * (1.0 - t_cdf(t_abs, df))
+        };
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(p)))
+    }
+}
+
+/* ─────────────────────────── F.TEST ──────────────────────────── */
+
+/// F.TEST(array1, array2) - Returns result of F-test for comparing variances
+/// Returns the two-tailed probability that variances are not significantly different
+/// F = larger_variance / smaller_variance
+#[derive(Debug)]
+pub struct FTestFn;
+impl Function for FTestFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "F.TEST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["FTEST"]
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                {
+                    let mut s = ArgSchema::number_lenient_scalar();
+                    s.shape = crate::args::ShapeKind::Range;
+                    s.coercion = formualizer_common::CoercionPolicy::NumberLenientText;
+                    s
+                },
+                {
+                    let mut s = ArgSchema::number_lenient_scalar();
+                    s.shape = crate::args::ShapeKind::Range;
+                    s.coercion = formualizer_common::CoercionPolicy::NumberLenientText;
+                    s
+                },
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let array1 = collect_numeric_stats(&args[0..1])?;
+        let array2 = collect_numeric_stats(&args[1..2])?;
+
+        let n1 = array1.len();
+        let n2 = array2.len();
+
+        // Need at least 2 points in each array
+        if n1 < 2 || n2 < 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        let n1f = n1 as f64;
+        let n2f = n2 as f64;
+
+        let mean1 = array1.iter().sum::<f64>() / n1f;
+        let mean2 = array2.iter().sum::<f64>() / n2f;
+
+        let var1 = array1.iter().map(|x| (x - mean1).powi(2)).sum::<f64>() / (n1f - 1.0);
+        let var2 = array2.iter().map(|x| (x - mean2).powi(2)).sum::<f64>() / (n2f - 1.0);
+
+        // Handle zero variance
+        if var1 == 0.0 || var2 == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+
+        // F-statistic: Excel's F.TEST uses var1/var2 (order matters for degrees of freedom)
+        // and returns two-tailed p-value
+        let f = var1 / var2;
+        let df1 = n1f - 1.0;
+        let df2 = n2f - 1.0;
+
+        // Two-tailed p-value: min(F.DIST(f), 1-F.DIST(f)) * 2
+        let p_lower = f_cdf(f, df1, df2);
+        let p_upper = 1.0 - p_lower;
+        let p = 2.0 * p_lower.min(p_upper);
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(p)))
+    }
+}
+
+/* ─────────────────────────── CHISQ.TEST ──────────────────────────── */
+
+/// CHISQ.TEST(actual_range, expected_range) - Returns chi-squared test for independence
+/// Returns p-value from chi-squared distribution
+#[derive(Debug)]
+pub struct ChisqTestFn;
+impl Function for ChisqTestFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CHISQ.TEST"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["CHITEST"]
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                {
+                    let mut s = ArgSchema::number_lenient_scalar();
+                    s.shape = crate::args::ShapeKind::Range;
+                    s.coercion = formualizer_common::CoercionPolicy::NumberLenientText;
+                    s
+                },
+                {
+                    let mut s = ArgSchema::number_lenient_scalar();
+                    s.shape = crate::args::ShapeKind::Range;
+                    s.coercion = formualizer_common::CoercionPolicy::NumberLenientText;
+                    s
+                },
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let actual = collect_numeric_stats(&args[0..1])?;
+        let expected = collect_numeric_stats(&args[1..2])?;
+
+        // Arrays must have same length
+        if actual.len() != expected.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        if actual.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+
+        // Calculate chi-squared statistic: sum((observed - expected)^2 / expected)
+        let mut chi_sq = 0.0;
+        for (obs, exp) in actual.iter().zip(expected.iter()) {
+            if *exp <= 0.0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
+            chi_sq += (obs - exp).powi(2) / exp;
+        }
+
+        // Degrees of freedom = number of categories - 1
+        let df = (actual.len() - 1) as f64;
+
+        if df < 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // P-value = 1 - CHISQ.DIST(chi_sq, df, TRUE) = right-tail probability
+        let p = 1.0 - chisq_cdf(chi_sq, df);
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(p)))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
+    crate::function_registry::register_function(Arc::new(ForecastLinearFn));
+    crate::function_registry::register_function(Arc::new(LinestFn));
     crate::function_registry::register_function(Arc::new(LARGE));
     crate::function_registry::register_function(Arc::new(SMALL));
     crate::function_registry::register_function(Arc::new(MEDIAN));
@@ -969,6 +5443,71 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(RankAvgFn));
     crate::function_registry::register_function(Arc::new(ModeSingleFn));
     crate::function_registry::register_function(Arc::new(ModeMultiFn));
+    crate::function_registry::register_function(Arc::new(ProductFn));
+    crate::function_registry::register_function(Arc::new(GeomeanFn));
+    crate::function_registry::register_function(Arc::new(HarmeanFn));
+    crate::function_registry::register_function(Arc::new(AvedevFn));
+    crate::function_registry::register_function(Arc::new(DevsqFn));
+    crate::function_registry::register_function(Arc::new(MaxIfsFn));
+    crate::function_registry::register_function(Arc::new(MinIfsFn));
+    crate::function_registry::register_function(Arc::new(TrimmeanFn));
+    crate::function_registry::register_function(Arc::new(CorrelFn));
+    crate::function_registry::register_function(Arc::new(SlopeFn));
+    crate::function_registry::register_function(Arc::new(InterceptFn));
+    // Covariance and correlation functions
+    crate::function_registry::register_function(Arc::new(CovariancePFn));
+    crate::function_registry::register_function(Arc::new(CovarianceSFn));
+    crate::function_registry::register_function(Arc::new(PearsonFn));
+    crate::function_registry::register_function(Arc::new(RsqFn));
+    crate::function_registry::register_function(Arc::new(SteyxFn));
+    crate::function_registry::register_function(Arc::new(SkewFn));
+    crate::function_registry::register_function(Arc::new(KurtFn));
+    crate::function_registry::register_function(Arc::new(FisherFn));
+    crate::function_registry::register_function(Arc::new(FisherInvFn));
+    // Statistical distributions
+    crate::function_registry::register_function(Arc::new(NormSDistFn));
+    crate::function_registry::register_function(Arc::new(NormSInvFn));
+    crate::function_registry::register_function(Arc::new(NormDistFn));
+    crate::function_registry::register_function(Arc::new(NormInvFn));
+    crate::function_registry::register_function(Arc::new(LognormDistFn));
+    crate::function_registry::register_function(Arc::new(LognormInvFn));
+    crate::function_registry::register_function(Arc::new(PhiFn));
+    crate::function_registry::register_function(Arc::new(GaussFn));
+    crate::function_registry::register_function(Arc::new(StandardizeFn));
+    crate::function_registry::register_function(Arc::new(TDistFn));
+    crate::function_registry::register_function(Arc::new(TInvFn));
+    crate::function_registry::register_function(Arc::new(ChisqDistFn));
+    crate::function_registry::register_function(Arc::new(ChisqInvFn));
+    crate::function_registry::register_function(Arc::new(FDistFn));
+    crate::function_registry::register_function(Arc::new(FInvFn));
+    // Discrete distributions
+    crate::function_registry::register_function(Arc::new(BinomDistFn));
+    crate::function_registry::register_function(Arc::new(PoissonDistFn));
+    crate::function_registry::register_function(Arc::new(ExponDistFn));
+    crate::function_registry::register_function(Arc::new(GammaDistFn));
+    // Additional distributions
+    crate::function_registry::register_function(Arc::new(WeibullDistFn));
+    crate::function_registry::register_function(Arc::new(BetaDistFn));
+    crate::function_registry::register_function(Arc::new(NegbinomDistFn));
+    crate::function_registry::register_function(Arc::new(HypgeomDistFn));
+    // Confidence intervals and hypothesis testing
+    crate::function_registry::register_function(Arc::new(ConfidenceNormFn));
+    crate::function_registry::register_function(Arc::new(ConfidenceTFn));
+    crate::function_registry::register_function(Arc::new(ZTestFn));
+    // Regression and trend functions
+    crate::function_registry::register_function(Arc::new(TrendFn));
+    crate::function_registry::register_function(Arc::new(GrowthFn));
+    crate::function_registry::register_function(Arc::new(LogestFn));
+    // Percent rank and frequency functions
+    crate::function_registry::register_function(Arc::new(PercentRankIncFn));
+    crate::function_registry::register_function(Arc::new(PercentRankExcFn));
+    crate::function_registry::register_function(Arc::new(FrequencyFn));
+    // Hypothesis testing functions
+    crate::function_registry::register_function(Arc::new(TDist2TFn));
+    crate::function_registry::register_function(Arc::new(TInv2TFn));
+    crate::function_registry::register_function(Arc::new(TTestFn));
+    crate::function_registry::register_function(Arc::new(FTestFn));
+    crate::function_registry::register_function(Arc::new(ChisqTestFn));
 }
 
 #[cfg(test)]

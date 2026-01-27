@@ -1,0 +1,159 @@
+{
+  "name": "statistical",
+  "generated": "2026-01-21T12:25:54.442517",
+  "generator": "LibreOffice",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=SUM(1,2,3,4,5)",
+      "result": 15,
+      "result_type": "int",
+      "description": "sum of values"
+    },
+    {
+      "formula": "=AVERAGE(1,2,3,4,5)",
+      "result": 3,
+      "result_type": "int",
+      "description": "average"
+    },
+    {
+      "formula": "=MEDIAN(1,2,3,4,5)",
+      "result": 3,
+      "result_type": "int",
+      "description": "median odd"
+    },
+    {
+      "formula": "=MEDIAN(1,2,3,4)",
+      "result": 2.5,
+      "result_type": "float",
+      "description": "median even"
+    },
+    {
+      "formula": "=MIN(5,2,8,1,9)",
+      "result": 1,
+      "result_type": "int",
+      "description": "minimum"
+    },
+    {
+      "formula": "=MAX(5,2,8,1,9)",
+      "result": 9,
+      "result_type": "int",
+      "description": "maximum"
+    },
+    {
+      "formula": "=COUNT(1,2,3,\"a\",TRUE)",
+      "result": 4,
+      "result_type": "int",
+      "description": "count numbers"
+    },
+    {
+      "formula": "=COUNTA(1,2,3,\"a\",TRUE)",
+      "result": 5,
+      "result_type": "int",
+      "description": "count non-empty"
+    },
+    {
+      "formula": "=COUNTBLANK(A1:A5)",
+      "result": 0,
+      "result_type": "int",
+      "description": "count blank",
+      "context": {"A1": 1, "A2": 2, "A3": 3, "A4": 4, "A5": 5}
+    },
+    {
+      "formula": "=PRODUCT(2,3,4)",
+      "result": 24,
+      "result_type": "int",
+      "description": "product"
+    },
+    {
+      "formula": "=STDEV(1,2,3,4,5)",
+      "result": 1.58113883008419,
+      "result_type": "float",
+      "description": "standard deviation sample"
+    },
+    {
+      "formula": "=STDEVP(1,2,3,4,5)",
+      "result": 1.4142135623731,
+      "result_type": "float",
+      "description": "standard deviation population"
+    },
+    {
+      "formula": "=VAR(1,2,3,4,5)",
+      "result": 2.5,
+      "result_type": "float",
+      "description": "variance sample"
+    },
+    {
+      "formula": "=VARP(1,2,3,4,5)",
+      "result": 2,
+      "result_type": "int",
+      "description": "variance population"
+    },
+    {
+      "formula": "=LARGE({5,2,8,1,9},1)",
+      "result": 9,
+      "result_type": "int",
+      "description": "1st largest"
+    },
+    {
+      "formula": "=LARGE({5,2,8,1,9},3)",
+      "result": 5,
+      "result_type": "int",
+      "description": "3rd largest"
+    },
+    {
+      "formula": "=SMALL({5,2,8,1,9},1)",
+      "result": 1,
+      "result_type": "int",
+      "description": "1st smallest"
+    },
+    {
+      "formula": "=SMALL({5,2,8,1,9},3)",
+      "result": 5,
+      "result_type": "int",
+      "description": "3rd smallest"
+    },
+    {
+      "formula": "=PERCENTILE({1,2,3,4,5},0.5)",
+      "result": 3,
+      "result_type": "int",
+      "description": "50th percentile"
+    },
+    {
+      "formula": "=QUARTILE({1,2,3,4,5},2)",
+      "result": 3,
+      "result_type": "int",
+      "description": "2nd quartile"
+    },
+    {
+      "formula": "=MODE(1,2,2,3,3,3)",
+      "result": 3,
+      "result_type": "int",
+      "description": "mode"
+    },
+    {
+      "formula": "=GEOMEAN(2,4,8)",
+      "result": 4,
+      "result_type": "int",
+      "description": "geometric mean"
+    },
+    {
+      "formula": "=HARMEAN(2,4,8)",
+      "result": 3.42857142857143,
+      "result_type": "float",
+      "description": "harmonic mean"
+    },
+    {
+      "formula": "=AVEDEV(1,2,3,4,5)",
+      "result": 1.2,
+      "result_type": "float",
+      "description": "average deviation"
+    },
+    {
+      "formula": "=DEVSQ(1,2,3,4,5)",
+      "result": 10,
+      "result_type": "int",
+      "description": "sum of squared deviations"
+    }
+  ]
+}
