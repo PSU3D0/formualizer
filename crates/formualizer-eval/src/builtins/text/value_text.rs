@@ -108,6 +108,9 @@ impl Function for TextFn {
         };
         let out = if fmt.contains('%') {
             format_percent(num)
+        } else if fmt.contains('#') && fmt.contains(',') {
+            // Handle formats like #,##0 or #,##0.00
+            format_with_thousands(num, &fmt)
         } else if fmt.contains("0.00") {
             format!("{num:.2}")
         } else if fmt.contains("0") {
@@ -136,6 +139,60 @@ fn format_number_basic(n: f64) -> String {
         format!("{n:.0}")
     } else {
         n.to_string()
+    }
+}
+
+fn format_with_thousands(n: f64, fmt: &str) -> String {
+    // Determine decimal places from format
+    let decimal_places = if fmt.contains(".00") {
+        2
+    } else if fmt.contains(".0") {
+        1
+    } else {
+        0
+    };
+
+    let abs_n = n.abs();
+    let formatted = if decimal_places > 0 {
+        format!("{:.prec$}", abs_n, prec = decimal_places)
+    } else {
+        format!("{:.0}", abs_n)
+    };
+
+    // Split into integer and decimal parts
+    let parts: Vec<&str> = formatted.split('.').collect();
+    let int_part = parts[0];
+    let dec_part = parts.get(1);
+
+    // Add thousands separators to integer part
+    let int_with_commas: String = int_part
+        .chars()
+        .rev()
+        .enumerate()
+        .flat_map(|(i, c)| {
+            if i > 0 && i % 3 == 0 {
+                vec![',', c]
+            } else {
+                vec![c]
+            }
+        })
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+
+    // Combine with decimal part
+    let result = if let Some(dec) = dec_part {
+        format!("{}.{}", int_with_commas, dec)
+    } else {
+        int_with_commas
+    };
+
+    // Handle negative numbers
+    if n < 0.0 {
+        format!("-{}", result)
+    } else {
+        result
     }
 }
 

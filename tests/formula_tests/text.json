@@ -1,0 +1,134 @@
+{
+  "name": "text",
+  "generated": "2026-01-21T12:26:04.659281",
+  "generator": "LibreOffice",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=LEN(\"hello\")",
+      "result": 5,
+      "result_type": "int",
+      "description": "string length"
+    },
+    {
+      "formula": "=LEFT(\"hello\",2)",
+      "result": "he",
+      "result_type": "str",
+      "description": "left 2 chars"
+    },
+    {
+      "formula": "=RIGHT(\"hello\",2)",
+      "result": "lo",
+      "result_type": "str",
+      "description": "right 2 chars"
+    },
+    {
+      "formula": "=MID(\"hello\",2,3)",
+      "result": "ell",
+      "result_type": "str",
+      "description": "mid substring"
+    },
+    {
+      "formula": "=UPPER(\"hello\")",
+      "result": "HELLO",
+      "result_type": "str",
+      "description": "uppercase"
+    },
+    {
+      "formula": "=LOWER(\"HELLO\")",
+      "result": "hello",
+      "result_type": "str",
+      "description": "lowercase"
+    },
+    {
+      "formula": "=PROPER(\"hello world\")",
+      "result": "Hello World",
+      "result_type": "str",
+      "description": "proper case"
+    },
+    {
+      "formula": "=TRIM(\"  hello  \")",
+      "result": "hello",
+      "result_type": "str",
+      "description": "trim spaces"
+    },
+    {
+      "formula": "=CONCATENATE(\"a\",\"b\",\"c\")",
+      "result": "abc",
+      "result_type": "str",
+      "description": "concatenate"
+    },
+    {
+      "formula": "=\"a\"&\"b\"&\"c\"",
+      "result": "abc",
+      "result_type": "str",
+      "description": "concat operator"
+    },
+    {
+      "formula": "=REPT(\"ab\",3)",
+      "result": "ababab",
+      "result_type": "str",
+      "description": "repeat string"
+    },
+    {
+      "formula": "=SUBSTITUTE(\"hello\",\"l\",\"L\")",
+      "result": "heLLo",
+      "result_type": "str",
+      "description": "substitute"
+    },
+    {
+      "formula": "=REPLACE(\"hello\",2,3,\"XYZ\")",
+      "result": "hXYZo",
+      "result_type": "str",
+      "description": "replace"
+    },
+    {
+      "formula": "=FIND(\"l\",\"hello\")",
+      "result": 3,
+      "result_type": "int",
+      "description": "find case sensitive"
+    },
+    {
+      "formula": "=SEARCH(\"L\",\"hello\")",
+      "result": 3,
+      "result_type": "int",
+      "description": "search case insensitive"
+    },
+    {
+      "formula": "=TEXT(1234.5,\"#,##0.00\")",
+      "result": "1,234.50",
+      "result_type": "str",
+      "description": "text format number"
+    },
+    {
+      "formula": "=VALUE(\"123.45\")",
+      "result": 123.45,
+      "result_type": "float",
+      "description": "value from string"
+    },
+    {
+      "formula": "=CHAR(65)",
+      "result": "A",
+      "result_type": "str",
+      "description": "char from code"
+    },
+    {
+      "formula": "=CODE(\"A\")",
+      "result": 65,
+      "result_type": "int",
+      "description": "code from char"
+    },
+    {
+      "formula": "=EXACT(\"Hello\",\"hello\")",
+      "result": false,
+      "result_type": "bool",
+      "description": "exact match"
+    },
+    {
+      "formula": "=EXACT(\"Hello\",\"Hello\")",
+      "result": true,
+      "result_type": "bool",
+      "description": "exact match true"
+    }
+  ]
+}
