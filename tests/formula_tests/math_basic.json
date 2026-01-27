@@ -1,0 +1,63 @@
+{
+  "name": "math_basic",
+  "generated": "2026-01-21T12:25:43.991184",
+  "generator": "LibreOffice",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=1+2",
+      "result": 3,
+      "result_type": "int",
+      "description": "addition"
+    },
+    {
+      "formula": "=10-3",
+      "result": 7,
+      "result_type": "int",
+      "description": "subtraction"
+    },
+    {
+      "formula": "=4*5",
+      "result": 20,
+      "result_type": "int",
+      "description": "multiplication"
+    },
+    {
+      "formula": "=20/4",
+      "result": 5,
+      "result_type": "int",
+      "description": "division"
+    },
+    {
+      "formula": "=2^10",
+      "result": 1024,
+      "result_type": "int",
+      "description": "exponentiation"
+    },
+
+    {
+      "formula": "=-5",
+      "result": -5,
+      "result_type": "int",
+      "description": "negation"
+    },
+    {
+      "formula": "=10%",
+      "result": 0.1,
+      "result_type": "float",
+      "description": "percentage"
+    },
+    {
+      "formula": "=(2+3)*4",
+      "result": 20,
+      "result_type": "int",
+      "description": "parentheses"
+    },
+    {
+      "formula": "=1+2*3",
+      "result": 7,
+      "result_type": "int",
+      "description": "operator precedence"
+    }
+  ]
+}

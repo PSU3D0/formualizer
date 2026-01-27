@@ -1,0 +1,206 @@
+{
+  "name": "math_functions",
+  "generated": "2026-01-21T12:25:47.605561",
+  "generator": "LibreOffice",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=ABS(-5)",
+      "result": 5,
+      "result_type": "int",
+      "description": "absolute value"
+    },
+    {
+      "formula": "=ABS(5)",
+      "result": 5,
+      "result_type": "int",
+      "description": "absolute value positive"
+    },
+    {
+      "formula": "=SQRT(16)",
+      "result": 4,
+      "result_type": "int",
+      "description": "square root"
+    },
+    {
+      "formula": "=SQRT(2)",
+      "result": 1.4142135623731,
+      "result_type": "float",
+      "description": "square root irrational"
+    },
+    {
+      "formula": "=POWER(2,10)",
+      "result": 1024,
+      "result_type": "int",
+      "description": "power function"
+    },
+    {
+      "formula": "=EXP(1)",
+      "result": 2.71828182845905,
+      "result_type": "float",
+      "description": "e^1"
+    },
+    {
+      "formula": "=LN(2.718281828)",
+      "result": 0.999999999831127,
+      "result_type": "float",
+      "description": "natural log"
+    },
+    {
+      "formula": "=LOG(100)",
+      "result": 2,
+      "result_type": "int",
+      "description": "log base 10"
+    },
+    {
+      "formula": "=LOG(8,2)",
+      "result": 3,
+      "result_type": "int",
+      "description": "log base 2"
+    },
+    {
+      "formula": "=ROUND(3.14159,2)",
+      "result": 3.14,
+      "result_type": "float",
+      "description": "round to 2 decimals"
+    },
+    {
+      "formula": "=ROUND(3.5,0)",
+      "result": 4,
+      "result_type": "int",
+      "description": "round half"
+    },
+    {
+      "formula": "=ROUNDUP(3.1,0)",
+      "result": 4,
+      "result_type": "int",
+      "description": "round up"
+    },
+    {
+      "formula": "=ROUNDDOWN(3.9,0)",
+      "result": 3,
+      "result_type": "int",
+      "description": "round down"
+    },
+    {
+      "formula": "=CEILING(3.1,1)",
+      "result": 4,
+      "result_type": "int",
+      "description": "ceiling"
+    },
+    {
+      "formula": "=FLOOR(3.9,1)",
+      "result": 3,
+      "result_type": "int",
+      "description": "floor"
+    },
+    {
+      "formula": "=INT(3.9)",
+      "result": 3,
+      "result_type": "int",
+      "description": "integer part"
+    },
+    {
+      "formula": "=INT(-3.9)",
+      "result": -4,
+      "result_type": "int",
+      "description": "integer part negative"
+    },
+    {
+      "formula": "=TRUNC(3.9)",
+      "result": 3,
+      "result_type": "int",
+      "description": "truncate"
+    },
+    {
+      "formula": "=TRUNC(-3.9)",
+      "result": -3,
+      "result_type": "int",
+      "description": "truncate negative"
+    },
+    {
+      "formula": "=MOD(17,5)",
+      "result": 2,
+      "result_type": "int",
+      "description": "modulo function"
+    },
+    {
+      "formula": "=MOD(-17,5)",
+      "result": 3,
+      "result_type": "int",
+      "description": "modulo negative"
+    },
+    {
+      "formula": "=SIGN(-5)",
+      "result": -1,
+      "result_type": "int",
+      "description": "sign negative"
+    },
+    {
+      "formula": "=SIGN(5)",
+      "result": 1,
+      "result_type": "int",
+      "description": "sign positive"
+    },
+    {
+      "formula": "=SIGN(0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "sign zero"
+    },
+    {
+      "formula": "=PI()",
+      "result": 3.14159265358979,
+      "result_type": "float",
+      "description": "pi constant"
+    },
+    {
+      "formula": "=RAND()>0",
+      "result": true,
+      "result_type": "bool",
+      "description": "random > 0"
+    },
+    {
+      "formula": "=RANDBETWEEN(1,10)>=1",
+      "result": true,
+      "result_type": "bool",
+      "description": "randbetween lower bound"
+    },
+    {
+      "formula": "=RANDBETWEEN(1,10)<=10",
+      "result": true,
+      "result_type": "bool",
+      "description": "randbetween upper bound"
+    },
+    {
+      "formula": "=GCD(12,18)",
+      "result": 6,
+      "result_type": "int",
+      "description": "greatest common divisor"
+    },
+    {
+      "formula": "=LCM(4,6)",
+      "result": 12,
+      "result_type": "int",
+      "description": "least common multiple"
+    },
+    {
+      "formula": "=FACT(5)",
+      "result": 120,
+      "result_type": "int",
+      "description": "factorial"
+    },
+    {
+      "formula": "=COMBIN(10,3)",
+      "result": 120,
+      "result_type": "int",
+      "description": "combinations"
+    },
+    {
+      "formula": "=PERMUT(10,3)",
+      "result": 720,
+      "result_type": "int",
+      "description": "permutations"
+    }
+  ]
+}

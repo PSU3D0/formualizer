@@ -1,6 +1,6 @@
 use super::super::utils::{
-    ARG_ANY_ONE, ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, EPSILON_NEAR_ZERO,
-    binary_numeric_elementwise, unary_numeric_arg, unary_numeric_elementwise,
+    binary_numeric_elementwise, unary_numeric_arg, unary_numeric_elementwise, ARG_ANY_ONE,
+    ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, EPSILON_NEAR_ZERO,
 };
 use crate::args::ArgSchema;
 use crate::function::Function;
@@ -1336,7 +1336,7 @@ impl Function for CschFn {
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = unary_numeric_arg(args)?;
-        let s = x.sin();
+        let s = x.sinh(); // CSCH = 1/sinh(x), not 1/sin(x)
         if s.abs() < EPSILON_NEAR_ZERO {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::from_error_string("#DIV/0!"),
@@ -1370,20 +1370,22 @@ mod tests_csch {
     fn test_csch_basic_and_div0() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CschFn));
         let ctx = interp(&wb);
-        let csc = ctx.context.get_function("", "CSCH").unwrap();
-        let a0 = make_num_ast(PI / 2.0);
+        let csch = ctx.context.get_function("", "CSCH").unwrap();
+        // CSCH(1) = 1/sinh(1) ~= 0.8509
+        let a0 = make_num_ast(1.0);
         let args = vec![ArgumentHandle::new(&a0, &ctx)];
-        match csc
+        match csch
             .dispatch(&args, &ctx.function_context(None))
             .unwrap()
             .into_literal()
         {
-            LiteralValue::Number(n) => assert_close(n, 1.0),
+            LiteralValue::Number(n) => assert_close(n, 0.8509181282393216),
             v => panic!("unexpected {v:?}"),
         }
+        // CSCH(0) should be #DIV/0! since sinh(0) = 0
         let a1 = make_num_ast(0.0);
         let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
-        match csc
+        match csch
             .dispatch(&args2, &ctx.function_context(None))
             .unwrap()
             .into_literal()
