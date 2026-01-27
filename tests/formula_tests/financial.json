@@ -1,0 +1,80 @@
+{
+  "name": "financial",
+  "generated": "2026-01-21T12:26:19.208335",
+  "generator": "LibreOffice",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=PMT(0.05/12,360,200000)",
+      "result": -1073.64324602428,
+      "result_type": "float",
+      "description": "monthly payment"
+    },
+    {
+      "formula": "=PV(0.05/12,360,-1073.64)",
+      "result": 199999.395325348,
+      "result_type": "float",
+      "description": "present value"
+    },
+    {
+      "formula": "=FV(0.05/12,360,-500)",
+      "result": 416129.317680733,
+      "result_type": "float",
+      "description": "future value"
+    },
+    {
+      "formula": "=NPV(0.1,{-10000,3000,4200,6800})",
+      "result": 1188.44341233522,
+      "result_type": "float",
+      "description": "npv"
+    },
+    {
+      "formula": "=NPER(0.05/12,-500,0,50000)",
+      "result": 83.7676392829766,
+      "result_type": "float",
+      "description": "periods"
+    },
+    {
+      "formula": "=RATE(360,-1073.64,200000)",
+      "result": 0.00416664453635995,
+      "result_type": "float",
+      "description": "rate"
+    },
+    {
+      "formula": "=IPMT(0.05/12,1,360,200000)",
+      "result": -833.333333333333,
+      "result_type": "float",
+      "description": "interest payment"
+    },
+    {
+      "formula": "=PPMT(0.05/12,1,360,200000)",
+      "result": -240.309912690945,
+      "result_type": "float",
+      "description": "principal payment"
+    },
+    {
+      "formula": "=SLN(10000,1000,5)",
+      "result": 1800,
+      "result_type": "int",
+      "description": "straight line depreciation"
+    },
+    {
+      "formula": "=SYD(10000,1000,5,1)",
+      "result": 3000,
+      "result_type": "int",
+      "description": "sum of years depreciation"
+    },
+    {
+      "formula": "=DB(10000,1000,5,1)",
+      "result": 3690,
+      "result_type": "int",
+      "description": "declining balance"
+    },
+    {
+      "formula": "=DDB(10000,1000,5,1)",
+      "result": 4000,
+      "result_type": "int",
+      "description": "double declining balance"
+    }
+  ]
+}
