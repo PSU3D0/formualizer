@@ -6,11 +6,8 @@
   "tests": [
     {
       "formula": "=DATE(2024,6,15)",
-      "result": {
-        "type": "datetime",
-        "value": "2024-06-15T00:00:00"
-      },
-      "result_type": "datetime",
+      "result": 45458,
+      "result_type": "int",
       "description": "create date"
     },
     {

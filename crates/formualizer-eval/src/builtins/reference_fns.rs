@@ -19,10 +19,11 @@ fn number_strict_scalar() -> ArgSchema {
 
 fn arg_byref_array() -> Vec<ArgSchema> {
     vec![
+        // Accept both references and array literals
         ArgSchema {
-            kinds: smallvec::smallvec![ArgKind::Range],
+            kinds: smallvec::smallvec![ArgKind::Any],
             required: true,
-            by_ref: true,
+            by_ref: false,
             shape: ShapeKind::Range,
             coercion: CoercionPolicy::None,
             max: None,
@@ -30,7 +31,17 @@ fn arg_byref_array() -> Vec<ArgSchema> {
             default: None,
         },
         number_strict_scalar(),
-        number_strict_scalar(),
+        // Column is optional for 1D arrays
+        ArgSchema {
+            kinds: smallvec::smallvec![ArgKind::Number],
+            required: false,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::NumberStrict,
+            max: None,
+            repeating: None,
+            default: None,
+        },
     ]
 }
 
@@ -83,7 +94,7 @@ impl Function for IndexFn {
         "INDEX"
     }
     fn min_args(&self) -> usize {
-        3
+        2
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use once_cell::sync::Lazy;
@@ -96,13 +107,14 @@ impl Function for IndexFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Option<Result<ReferenceType, ExcelError>> {
-        // args: array(by_ref), row, col
-        if args.len() < 3 {
+        // args: array(by_ref), row, col (col optional for 1D)
+        if args.len() < 2 {
             return Some(Err(ExcelError::new(ExcelErrorKind::Value)));
         }
+        // Return None for array literals so eval() handles them
         let base = match args[0].as_reference_or_eval() {
             Ok(r) => r,
-            Err(e) => return Some(Err(e)),
+            Err(_) => return None,
         };
         let row = match args[1].value() {
             Ok(cv) => match cv.into_literal() {
@@ -112,13 +124,18 @@ impl Function for IndexFn {
             },
             Err(e) => return Some(Err(e)),
         };
-        let col = match args[2].value() {
-            Ok(cv) => match cv.into_literal() {
-                LiteralValue::Number(n) => n as i64,
-                LiteralValue::Int(i) => i,
-                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
-            },
-            Err(e) => return Some(Err(e)),
+        let col = if args.len() >= 3 {
+            match args[2].value() {
+                Ok(cv) => match cv.into_literal() {
+                    LiteralValue::Number(n) => n as i64,
+                    LiteralValue::Int(i) => i,
+                    _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
+                },
+                Err(e) => return Some(Err(e)),
+            }
+        } else {
+            // TODO(phase6): Document INDEX 1D behavior when col omitted.
+            1
         };
 
         // Only Range supported for now
@@ -158,26 +175,101 @@ impl Function for IndexFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        if let Some(Ok(r)) = self.eval_reference(args, ctx) {
-            // Materialize to value
-            let current_sheet = ctx.current_sheet();
-            match ctx.resolve_range_view(&r, current_sheet) {
-                Ok(rv) => {
-                    let (rows, cols) = rv.dims();
-                    if rows == 1 && cols == 1 {
-                        Ok(crate::traits::CalcValue::Scalar(
-                            rv.as_1x1().unwrap_or(LiteralValue::Empty),
-                        ))
-                    } else {
-                        Ok(crate::traits::CalcValue::Range(rv))
+        // First try to handle as a reference
+        if let Some(result) = self.eval_reference(args, ctx) {
+            match result {
+                Ok(r) => {
+                    // Materialize to value
+                    let current_sheet = ctx.current_sheet();
+                    match ctx.resolve_range_view(&r, current_sheet) {
+                        Ok(rv) => {
+                            let (rows, cols) = rv.dims();
+                            if rows == 1 && cols == 1 {
+                                Ok(crate::traits::CalcValue::Scalar(
+                                    rv.as_1x1().unwrap_or(LiteralValue::Empty),
+                                ))
+                            } else {
+                                Ok(crate::traits::CalcValue::Range(rv))
+                            }
+                        }
+                        Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
                     }
                 }
                 Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
             }
         } else {
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Ref),
-            )))
+            // Handle array literal
+            if args.len() < 2 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Value),
+                )));
+            }
+            let v = args[0].value()?.into_literal();
+            let table: Vec<Vec<LiteralValue>> = match v {
+                LiteralValue::Array(rows) => rows,
+                other => vec![vec![other]],
+            };
+            let index = match args[1].value()?.into_literal() {
+                LiteralValue::Number(n) => n as i64,
+                LiteralValue::Int(i) => i,
+                _ => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Value),
+                    )));
+                }
+            };
+
+            // Determine if this is a 1D array (single row or single column)
+            let is_single_row = table.len() == 1;
+            let is_single_col = table.iter().all(|r| r.len() == 1);
+
+            // For 1D arrays with 2 args, index is position in the array
+            if args.len() == 2 && (is_single_row || is_single_col) {
+                // TODO(phase6): Document INDEX 1D behavior when col omitted.
+                if index <= 0 {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Ref),
+                    )));
+                }
+                let idx = (index - 1) as usize;
+                let val = if is_single_row {
+                    table[0].get(idx).cloned()
+                } else {
+                    table.get(idx).and_then(|r| r.first()).cloned()
+                };
+                return Ok(crate::traits::CalcValue::Scalar(val.unwrap_or_else(|| {
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))
+                })));
+            }
+
+            // 2D array or 3 arguments: use row and col indexing
+            let row = index as usize;
+            let col = if args.len() >= 3 {
+                match args[2].value()?.into_literal() {
+                    LiteralValue::Number(n) => n as usize,
+                    LiteralValue::Int(i) => i as usize,
+                    _ => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Value),
+                        )));
+                    }
+                }
+            } else {
+                1
+            };
+
+            // 1-based indexing
+            if row == 0 || col == 0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Ref),
+                )));
+            }
+            let val = table
+                .get(row - 1)
+                .and_then(|r| r.get(col - 1))
+                .cloned()
+                .unwrap_or_else(|| LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)));
+            Ok(crate::traits::CalcValue::Scalar(val))
         }
     }
 }

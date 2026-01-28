@@ -110,11 +110,11 @@ impl Function for RowsFn {
         use once_cell::sync::Lazy;
         static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
             vec![
-                // Required reference/range
+                // Required reference/range or array
                 ArgSchema {
-                    kinds: smallvec::smallvec![ArgKind::Range],
+                    kinds: smallvec::smallvec![ArgKind::Any],
                     required: true,
-                    by_ref: true,
+                    by_ref: false,
                     shape: ShapeKind::Range,
                     coercion: CoercionPolicy::None,
                     max: None,
@@ -137,34 +137,38 @@ impl Function for RowsFn {
             )));
         }
 
-        // Get reference
-        let reference = match args[0].as_reference_or_eval() {
-            Ok(r) => r,
-            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
-        };
-
-        // Calculate number of rows
-        let rows = match &reference {
-            ReferenceType::Cell { .. } => 1,
-            ReferenceType::Range {
-                start_row: Some(sr),
-                end_row: Some(er),
-                ..
-            } => {
-                if *er >= *sr {
-                    (*er - *sr + 1) as i64
-                } else {
-                    1
+        // Try to get reference first, fall back to array literal
+        if let Ok(reference) = args[0].as_reference_or_eval() {
+            // Calculate number of rows
+            let rows = match &reference {
+                ReferenceType::Cell { .. } => 1,
+                ReferenceType::Range {
+                    start_row: Some(sr),
+                    end_row: Some(er),
+                    ..
+                } => {
+                    if *er >= *sr {
+                        (*er - *sr + 1) as i64
+                    } else {
+                        1
+                    }
                 }
-            }
-            _ => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Ref),
-                )));
-            }
-        };
-
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(rows)))
+                _ => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Ref),
+                    )));
+                }
+            };
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(rows)))
+        } else {
+            // Handle array literal
+            let v = args[0].value()?.into_literal();
+            let rows = match v {
+                LiteralValue::Array(arr) => arr.len() as i64,
+                _ => 1,
+            };
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(rows)))
+        }
     }
 }
 
@@ -263,11 +267,11 @@ impl Function for ColumnsFn {
         use once_cell::sync::Lazy;
         static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
             vec![
-                // Required reference/range
+                // Required reference/range or array
                 ArgSchema {
-                    kinds: smallvec::smallvec![ArgKind::Range],
+                    kinds: smallvec::smallvec![ArgKind::Any],
                     required: true,
-                    by_ref: true,
+                    by_ref: false,
                     shape: ShapeKind::Range,
                     coercion: CoercionPolicy::None,
                     max: None,
@@ -290,34 +294,38 @@ impl Function for ColumnsFn {
             )));
         }
 
-        // Get reference
-        let reference = match args[0].as_reference_or_eval() {
-            Ok(r) => r,
-            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
-        };
-
-        // Calculate number of columns
-        let cols = match &reference {
-            ReferenceType::Cell { .. } => 1,
-            ReferenceType::Range {
-                start_col: Some(sc),
-                end_col: Some(ec),
-                ..
-            } => {
-                if *ec >= *sc {
-                    (*ec - *sc + 1) as i64
-                } else {
-                    1
+        // Try to get reference first, fall back to array literal
+        if let Ok(reference) = args[0].as_reference_or_eval() {
+            // Calculate number of columns
+            let cols = match &reference {
+                ReferenceType::Cell { .. } => 1,
+                ReferenceType::Range {
+                    start_col: Some(sc),
+                    end_col: Some(ec),
+                    ..
+                } => {
+                    if *ec >= *sc {
+                        (*ec - *sc + 1) as i64
+                    } else {
+                        1
+                    }
                 }
-            }
-            _ => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Ref),
-                )));
-            }
-        };
-
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(cols)))
+                _ => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Ref),
+                    )));
+                }
+            };
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(cols)))
+        } else {
+            // Handle array literal
+            let v = args[0].value()?.into_literal();
+            let cols = match v {
+                LiteralValue::Array(arr) => arr.first().map(|r| r.len()).unwrap_or(0) as i64,
+                _ => 1,
+            };
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(cols)))
+        }
     }
 }
 

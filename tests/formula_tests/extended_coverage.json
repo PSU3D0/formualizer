@@ -1,0 +1,2469 @@
+{
+  "name": "extended_coverage",
+  "generated": "2026-01-21T15:00:00",
+  "generator": "Manual",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=TRUE",
+      "result": true,
+      "result_type": "bool",
+      "description": "TRUE constant"
+    },
+    {
+      "formula": "=FALSE",
+      "result": false,
+      "result_type": "bool",
+      "description": "FALSE constant"
+    },
+    {
+      "formula": "=ACOSH(1)",
+      "result": 0,
+      "result_type": "int",
+      "description": "inverse hyperbolic cosine of 1"
+    },
+    {
+      "formula": "=ACOSH(2)",
+      "result": 1.3169578969248166,
+      "result_type": "float",
+      "description": "inverse hyperbolic cosine"
+    },
+    {
+      "formula": "=ASINH(0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "inverse hyperbolic sine of 0"
+    },
+    {
+      "formula": "=ASINH(1)",
+      "result": 0.881373587019543,
+      "result_type": "float",
+      "description": "inverse hyperbolic sine"
+    },
+    {
+      "formula": "=ATANH(0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "inverse hyperbolic tangent of 0"
+    },
+    {
+      "formula": "=ATANH(0.5)",
+      "result": 0.5493061443340549,
+      "result_type": "float",
+      "description": "inverse hyperbolic tangent"
+    },
+    {
+      "formula": "=ATAN2(1,1)",
+      "result": 0.7853981633974483,
+      "result_type": "float",
+      "description": "atan2 quadrant 1"
+    },
+    {
+      "formula": "=ATAN2(-1,1)",
+      "result": 2.356194490192345,
+      "result_type": "float",
+      "description": "atan2 quadrant 2"
+    },
+    {
+      "formula": "=COT(1)",
+      "result": 0.6420926159343306,
+      "result_type": "float",
+      "description": "cotangent"
+    },
+    {
+      "formula": "=COTH(1)",
+      "result": 1.3130352854993312,
+      "result_type": "float",
+      "description": "hyperbolic cotangent"
+    },
+    {
+      "formula": "=CSC(1)",
+      "result": 1.1883951057781212,
+      "result_type": "float",
+      "description": "cosecant"
+    },
+    {
+      "formula": "=CSCH(1)",
+      "result": 0.8509181282393216,
+      "result_type": "float",
+      "description": "hyperbolic cosecant"
+    },
+    {
+      "formula": "=SEC(0)",
+      "result": 1,
+      "result_type": "int",
+      "description": "secant of 0"
+    },
+    {
+      "formula": "=SEC(1)",
+      "result": 1.8508157176809255,
+      "result_type": "float",
+      "description": "secant"
+    },
+    {
+      "formula": "=SECH(0)",
+      "result": 1,
+      "result_type": "int",
+      "description": "hyperbolic secant of 0"
+    },
+    {
+      "formula": "=SECH(1)",
+      "result": 0.6480542736638855,
+      "result_type": "float",
+      "description": "hyperbolic secant"
+    },
+    {
+      "formula": "=ACOT(1)",
+      "result": 0.7853981633974483,
+      "result_type": "float",
+      "description": "inverse cotangent"
+    },
+    {
+      "formula": "=LOG10(100)",
+      "result": 2,
+      "result_type": "int",
+      "description": "log base 10"
+    },
+    {
+      "formula": "=LOG10(1000)",
+      "result": 3,
+      "result_type": "int",
+      "description": "log base 10 of 1000"
+    },
+    {
+      "formula": "=CEILING.MATH(6.3)",
+      "result": 7,
+      "result_type": "int",
+      "description": "ceiling math"
+    },
+    {
+      "formula": "=CEILING.MATH(-6.3)",
+      "result": -6,
+      "result_type": "int",
+      "description": "ceiling math negative"
+    },
+    {
+      "formula": "=FLOOR.MATH(6.7)",
+      "result": 6,
+      "result_type": "int",
+      "description": "floor math"
+    },
+    {
+      "formula": "=FLOOR.MATH(-6.7)",
+      "result": -7,
+      "result_type": "int",
+      "description": "floor math negative"
+    },
+    {
+      "formula": "=COUNTIFS({1,2,3,4,5},\">2\")",
+      "result": 3,
+      "result_type": "int",
+      "description": "countifs single criteria"
+    },
+    {
+      "formula": "=AVERAGEIFS({10,20,30,40,50},{1,2,3,4,5},\">2\")",
+      "result": 40,
+      "result_type": "int",
+      "description": "averageifs"
+    },
+    {
+      "formula": "=RANK.EQ(3,{5,4,3,2,1})",
+      "result": 3,
+      "result_type": "int",
+      "description": "rank equal descending"
+    },
+    {
+      "formula": "=RANK.AVG(3,{5,4,3,3,1})",
+      "result": 3.5,
+      "result_type": "float",
+      "description": "rank average with ties"
+    },
+    {
+      "formula": "=MODE.SNGL(1,2,2,3,3,3)",
+      "result": 3,
+      "result_type": "int",
+      "description": "mode single"
+    },
+    {
+      "formula": "=PERCENTILE.INC({1,2,3,4,5},0.5)",
+      "result": 3,
+      "result_type": "int",
+      "description": "percentile inclusive"
+    },
+    {
+      "formula": "=PERCENTILE.EXC({1,2,3,4,5},0.5)",
+      "result": 3,
+      "result_type": "int",
+      "description": "percentile exclusive"
+    },
+    {
+      "formula": "=QUARTILE.INC({1,2,3,4,5},2)",
+      "result": 3,
+      "result_type": "int",
+      "description": "quartile inclusive"
+    },
+    {
+      "formula": "=QUARTILE.EXC({1,2,3,4,5},2)",
+      "result": 3,
+      "result_type": "int",
+      "description": "quartile exclusive"
+    },
+    {
+      "formula": "=STDEV.S(1,2,3,4,5)",
+      "result": 1.5811388300841898,
+      "result_type": "float",
+      "description": "sample standard deviation"
+    },
+    {
+      "formula": "=STDEV.P(1,2,3,4,5)",
+      "result": 1.4142135623730951,
+      "result_type": "float",
+      "description": "population standard deviation"
+    },
+    {
+      "formula": "=VAR.S(1,2,3,4,5)",
+      "result": 2.5,
+      "result_type": "float",
+      "description": "sample variance"
+    },
+    {
+      "formula": "=VAR.P(1,2,3,4,5)",
+      "result": 2,
+      "result_type": "int",
+      "description": "population variance"
+    },
+    {
+      "formula": "=ISERR(1/0)",
+      "result": true,
+      "result_type": "bool",
+      "description": "iserr div by zero"
+    },
+    {
+      "formula": "=ISERR(NA())",
+      "result": false,
+      "result_type": "bool",
+      "description": "iserr not for NA"
+    },
+    {
+      "formula": "=TODAY()>0",
+      "result": true,
+      "result_type": "bool",
+      "description": "today returns valid date serial"
+    },
+    {
+      "formula": "=NOW()>0",
+      "result": true,
+      "result_type": "bool",
+      "description": "now returns valid datetime serial"
+    },
+    {
+      "formula": "=CLEAN(\"Hello\"&CHAR(7)&\"World\")",
+      "result": "HelloWorld",
+      "result_type": "str",
+      "description": "clean removes non-printable"
+    },
+    {
+      "formula": "=UNICHAR(65)",
+      "result": "A",
+      "result_type": "str",
+      "description": "unichar returns unicode char"
+    },
+    {
+      "formula": "=UNICHAR(8364)",
+      "result": "€",
+      "result_type": "str",
+      "description": "unichar euro sign"
+    },
+    {
+      "formula": "=UNICODE(\"A\")",
+      "result": 65,
+      "result_type": "int",
+      "description": "unicode returns code point"
+    },
+    {
+      "formula": "=UNICODE(\"€\")",
+      "result": 8364,
+      "result_type": "int",
+      "description": "unicode euro sign"
+    },
+    {
+      "formula": "=TEXTBEFORE(\"hello-world\",\"-\")",
+      "result": "hello",
+      "result_type": "str",
+      "description": "textbefore first delimiter"
+    },
+    {
+      "formula": "=TEXTBEFORE(\"a-b-c-d\",\"-\",2)",
+      "result": "a-b",
+      "result_type": "str",
+      "description": "textbefore second delimiter"
+    },
+    {
+      "formula": "=TEXTAFTER(\"hello-world\",\"-\")",
+      "result": "world",
+      "result_type": "str",
+      "description": "textafter first delimiter"
+    },
+    {
+      "formula": "=TEXTAFTER(\"a-b-c-d\",\"-\",2)",
+      "result": "c-d",
+      "result_type": "str",
+      "description": "textafter second delimiter"
+    },
+    {
+      "formula": "=DOLLAR(1234.567)",
+      "result": "$1,234.57",
+      "result_type": "str",
+      "description": "dollar format"
+    },
+    {
+      "formula": "=DOLLAR(1234.567,0)",
+      "result": "$1,235",
+      "result_type": "str",
+      "description": "dollar no decimals"
+    },
+    {
+      "formula": "=FIXED(1234.567,2)",
+      "result": "1,234.57",
+      "result_type": "str",
+      "description": "fixed with commas"
+    },
+    {
+      "formula": "=FIXED(1234.567,2,TRUE)",
+      "result": "1234.57",
+      "result_type": "str",
+      "description": "fixed no commas"
+    },
+    {
+      "formula": "=QUOTIENT(10,3)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "quotient integer division"
+    },
+    {
+      "formula": "=QUOTIENT(-10,3)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "quotient negative"
+    },
+    {
+      "formula": "=QUOTIENT(5,0)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "quotient div by zero"
+    },
+    {
+      "formula": "=MROUND(10,3)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "mround to nearest multiple"
+    },
+    {
+      "formula": "=MROUND(1.3,0.2)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "mround decimal multiple"
+    },
+    {
+      "formula": "=MROUND(-10,-3)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "mround negative"
+    },
+    {
+      "formula": "=EVEN(1.5)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "even rounds up positive"
+    },
+    {
+      "formula": "=EVEN(3)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "even odd number"
+    },
+    {
+      "formula": "=EVEN(-1)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "even negative rounds away from zero"
+    },
+    {
+      "formula": "=EVEN(2)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "even already even"
+    },
+    {
+      "formula": "=ODD(1.5)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "odd rounds up positive"
+    },
+    {
+      "formula": "=ODD(2)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "odd even number"
+    },
+    {
+      "formula": "=ODD(-1)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "odd already odd negative"
+    },
+    {
+      "formula": "=ODD(0)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "odd of zero"
+    },
+    {
+      "formula": "=SUMSQ(1,2,3)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "sumsq basic"
+    },
+    {
+      "formula": "=SUMSQ({1,2,3,4})",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "sumsq array"
+    },
+    {
+      "formula": "=MAXIFS({10,20,30,40,50},{1,2,3,4,5},\">2\")",
+      "result": 50,
+      "result_type": "int",
+      "description": "maxifs basic"
+    },
+    {
+      "formula": "=MINIFS({10,20,30,40,50},{1,2,3,4,5},\">2\")",
+      "result": 30,
+      "result_type": "int",
+      "description": "minifs basic"
+    },
+    {
+      "formula": "=MAXIFS({1,2,3,4,5},{\"a\",\"b\",\"a\",\"b\",\"a\"},\"a\")",
+      "result": 5,
+      "result_type": "int",
+      "description": "maxifs text criteria"
+    },
+    {
+      "formula": "=MINIFS({1,2,3,4,5},{\"a\",\"b\",\"a\",\"b\",\"a\"},\"a\")",
+      "result": 1,
+      "result_type": "int",
+      "description": "minifs text criteria"
+    },
+    {
+      "formula": "=TRIMMEAN({1,2,3,4,5,6,7,8,9,10},0.2)",
+      "result": 5.5,
+      "result_type": "float",
+      "description": "trimmean 20 percent"
+    },
+    {
+      "formula": "=CORREL({1,2,3,4,5},{2,4,6,8,10})",
+      "result": 1,
+      "result_type": "int",
+      "description": "correl perfect positive"
+    },
+    {
+      "formula": "=CORREL({1,2,3,4,5},{5,4,3,2,1})",
+      "result": -1,
+      "result_type": "int",
+      "description": "correl perfect negative"
+    },
+    {
+      "formula": "=SLOPE({2,4,6,8,10},{1,2,3,4,5})",
+      "result": 2,
+      "result_type": "int",
+      "description": "slope basic"
+    },
+    {
+      "formula": "=INTERCEPT({2,4,6,8,10},{1,2,3,4,5})",
+      "result": 0,
+      "result_type": "int",
+      "description": "intercept basic"
+    },
+    {
+      "formula": "=INTERCEPT({3,5,7,9,11},{1,2,3,4,5})",
+      "result": 1,
+      "result_type": "int",
+      "description": "intercept with offset"
+    },
+    {
+      "formula": "=BITAND(13,25)",
+      "result": 9,
+      "result_type": "int",
+      "description": "bitand basic"
+    },
+    {
+      "formula": "=BITOR(13,25)",
+      "result": 29,
+      "result_type": "int",
+      "description": "bitor basic"
+    },
+    {
+      "formula": "=BITXOR(13,25)",
+      "result": 20,
+      "result_type": "int",
+      "description": "bitxor basic"
+    },
+    {
+      "formula": "=BITLSHIFT(4,2)",
+      "result": 16,
+      "result_type": "int",
+      "description": "bitlshift basic"
+    },
+    {
+      "formula": "=BITRSHIFT(16,2)",
+      "result": 4,
+      "result_type": "int",
+      "description": "bitrshift basic"
+    },
+    {
+      "formula": "=BIN2DEC(\"1100100\")",
+      "result": 100,
+      "result_type": "int",
+      "description": "bin2dec basic"
+    },
+    {
+      "formula": "=DEC2BIN(100)",
+      "result": "1100100",
+      "result_type": "str",
+      "description": "dec2bin basic"
+    },
+    {
+      "formula": "=HEX2DEC(\"FF\")",
+      "result": 255,
+      "result_type": "int",
+      "description": "hex2dec basic"
+    },
+    {
+      "formula": "=DEC2HEX(255)",
+      "result": "FF",
+      "result_type": "str",
+      "description": "dec2hex basic"
+    },
+    {
+      "formula": "=OCT2DEC(\"144\")",
+      "result": 100,
+      "result_type": "int",
+      "description": "oct2dec basic"
+    },
+    {
+      "formula": "=DEC2OCT(100)",
+      "result": "144",
+      "result_type": "str",
+      "description": "dec2oct basic"
+    },
+    {
+      "formula": "=BIN2HEX(\"1111\")",
+      "result": "F",
+      "result_type": "str",
+      "description": "bin2hex basic"
+    },
+    {
+      "formula": "=BIN2HEX(\"11111111\")",
+      "result": "FF",
+      "result_type": "str",
+      "description": "bin2hex 255"
+    },
+    {
+      "formula": "=HEX2BIN(\"F\")",
+      "result": "1111",
+      "result_type": "str",
+      "description": "hex2bin basic"
+    },
+    {
+      "formula": "=HEX2BIN(\"1F\", 8)",
+      "result": "00011111",
+      "result_type": "str",
+      "description": "hex2bin with places"
+    },
+    {
+      "formula": "=BIN2OCT(\"111\")",
+      "result": "7",
+      "result_type": "str",
+      "description": "bin2oct basic"
+    },
+    {
+      "formula": "=BIN2OCT(\"1000000\")",
+      "result": "100",
+      "result_type": "str",
+      "description": "bin2oct 64"
+    },
+    {
+      "formula": "=OCT2BIN(\"7\")",
+      "result": "111",
+      "result_type": "str",
+      "description": "oct2bin basic"
+    },
+    {
+      "formula": "=OCT2BIN(\"100\")",
+      "result": "1000000",
+      "result_type": "str",
+      "description": "oct2bin 64"
+    },
+    {
+      "formula": "=HEX2OCT(\"F\")",
+      "result": "17",
+      "result_type": "str",
+      "description": "hex2oct basic"
+    },
+    {
+      "formula": "=HEX2OCT(\"FF\")",
+      "result": "377",
+      "result_type": "str",
+      "description": "hex2oct 255"
+    },
+    {
+      "formula": "=OCT2HEX(\"17\")",
+      "result": "F",
+      "result_type": "str",
+      "description": "oct2hex basic"
+    },
+    {
+      "formula": "=OCT2HEX(\"377\")",
+      "result": "FF",
+      "result_type": "str",
+      "description": "oct2hex 255"
+    },
+    {
+      "formula": "=DELTA(5, 5)",
+      "result": 1,
+      "result_type": "int",
+      "description": "delta equal"
+    },
+    {
+      "formula": "=DELTA(5, 4)",
+      "result": 0,
+      "result_type": "int",
+      "description": "delta not equal"
+    },
+    {
+      "formula": "=DELTA(5)",
+      "result": 0,
+      "result_type": "int",
+      "description": "delta single arg (vs 0)"
+    },
+    {
+      "formula": "=DELTA(0)",
+      "result": 1,
+      "result_type": "int",
+      "description": "delta zero equals zero"
+    },
+    {
+      "formula": "=GESTEP(5, 4)",
+      "result": 1,
+      "result_type": "int",
+      "description": "gestep greater"
+    },
+    {
+      "formula": "=GESTEP(4, 5)",
+      "result": 0,
+      "result_type": "int",
+      "description": "gestep less"
+    },
+    {
+      "formula": "=GESTEP(5, 5)",
+      "result": 1,
+      "result_type": "int",
+      "description": "gestep equal"
+    },
+    {
+      "formula": "=GESTEP(5)",
+      "result": 1,
+      "result_type": "int",
+      "description": "gestep single arg (vs 0)"
+    },
+    {
+      "formula": "=EFFECT(0.1, 4)",
+      "result": 0.10381289062499977,
+      "result_type": "float",
+      "description": "effect 10% quarterly"
+    },
+    {
+      "formula": "=EFFECT(0.12, 12)",
+      "result": 0.12682503013196977,
+      "result_type": "float",
+      "description": "effect 12% monthly"
+    },
+    {
+      "formula": "=NOMINAL(0.10381289062499977, 4)",
+      "result": 0.1,
+      "result_type": "float",
+      "description": "nominal from effective quarterly"
+    },
+    {
+      "formula": "=NOMINAL(0.12682503013196977, 12)",
+      "result": 0.12,
+      "result_type": "float",
+      "description": "nominal from effective monthly"
+    },
+    {
+      "formula": "=DAYS(45000, 44000)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "days between dates"
+    },
+    {
+      "formula": "=DAYS(44000, 45000)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "days negative"
+    },
+    {
+      "formula": "=DAYS360(44927, 45292)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "days360 US method one year"
+    },
+    {
+      "formula": "=DAYS360(44927, 45292, TRUE)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "days360 European method"
+    },
+    {
+      "formula": "=YEARFRAC(44927, 45292, 0)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "yearfrac 30/360 US one year"
+    },
+    {
+      "formula": "=YEARFRAC(44927, 45292, 3)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "yearfrac actual/365"
+    },
+    {
+      "formula": "=ISOWEEKNUM(44927)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "isoweeknum 2023-01-01"
+    },
+    {
+      "formula": "=ISOWEEKNUM(44934)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "isoweeknum 2023-01-08 (week 1)"
+    },
+    {
+      "formula": "=SQRTPI(1)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "sqrtpi(1) = sqrt(PI)"
+    },
+    {
+      "formula": "=SQRTPI(2)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "sqrtpi(2)"
+    },
+    {
+      "formula": "=MULTINOMIAL(2, 3)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "multinomial 5!/(2!*3!)"
+    },
+    {
+      "formula": "=MULTINOMIAL(2, 3, 4)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "multinomial 9!/(2!*3!*4!)"
+    },
+    {
+      "formula": "=SERIESSUM(2, 0, 1, {1,2,3})",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "seriessum 1*2^0 + 2*2^1 + 3*2^2"
+    },
+    {
+      "formula": "=ROMAN(499)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "roman 499"
+    },
+    {
+      "formula": "=ROMAN(2023)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "roman 2023"
+    },
+    {
+      "formula": "=ROMAN(0)",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "roman 0 is empty"
+    },
+    {
+      "formula": "=ARABIC(\"MMXXIII\")",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "arabic MMXXIII"
+    },
+    {
+      "formula": "=ARABIC(\"CDXCIX\")",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "arabic CDXCIX"
+    },
+    {
+      "formula": "=ARABIC(\"XIV\")",
+      "result": "#NAME?",
+      "result_type": "error",
+      "description": "arabic XIV"
+    },
+    {
+      "formula": "=IRR({-100, 30, 40, 50, 60})",
+      "result": 0.24888335662407088,
+      "result_type": "float",
+      "description": "IRR basic investment"
+    },
+    {
+      "formula": "=MIRR({-100, 30, 40, 50, 60}, 0.05, 0.08)",
+      "result": 0.18689235215502342,
+      "result_type": "float",
+      "description": "MIRR with 5% finance and 8% reinvest"
+    },
+    {
+      "formula": "=CUMIPMT(0.005, 360, 100000, 1, 12, 0)",
+      "result": 5643.128361015309,
+      "result_type": "float",
+      "description": "cumipmt first year of mortgage"
+    },
+    {
+      "formula": "=CUMPRINC(0.005, 360, 100000, 1, 12, 0)",
+      "result": -12837.734662848414,
+      "result_type": "float",
+      "description": "cumprinc first year of mortgage"
+    },
+    {
+      "formula": "=NORM.S.DIST(0, TRUE)",
+      "result": 0.5,
+      "result_type": "float",
+      "description": "standard normal CDF at 0"
+    },
+    {
+      "formula": "=NORM.S.DIST(1.96, TRUE)",
+      "result": 0.9750021738917761,
+      "result_type": "float",
+      "description": "standard normal CDF at 1.96"
+    },
+    {
+      "formula": "=NORM.S.DIST(0, FALSE)",
+      "result": 0.3989422804014327,
+      "result_type": "float",
+      "description": "standard normal PDF at 0"
+    },
+    {
+      "formula": "=NORM.S.INV(0.5)",
+      "result": 0.0,
+      "result_type": "float",
+      "description": "inverse standard normal at 0.5"
+    },
+    {
+      "formula": "=NORM.S.INV(0.975)",
+      "result": 1.9599639845400545,
+      "result_type": "float",
+      "description": "inverse standard normal at 0.975 (~1.96)"
+    },
+    {
+      "formula": "=NORM.DIST(10, 10, 1, TRUE)",
+      "result": 0.5,
+      "result_type": "float",
+      "description": "normal CDF at mean"
+    },
+    {
+      "formula": "=NORM.INV(0.5, 10, 1)",
+      "result": 10.0,
+      "result_type": "float",
+      "description": "inverse normal at 0.5"
+    },
+    {
+      "formula": "=PHI(0)",
+      "result": 0.3989422804014327,
+      "result_type": "float",
+      "description": "PHI at 0 (standard normal PDF)"
+    },
+    {
+      "formula": "=GAUSS(1)",
+      "result": 0.3413447361676363,
+      "result_type": "float",
+      "description": "GAUSS(1) probability"
+    },
+    {
+      "formula": "=STANDARDIZE(10, 5, 2)",
+      "result": 2.5,
+      "result_type": "float",
+      "description": "standardize (10-5)/2"
+    },
+    {
+      "formula": "=T.DIST(0, 10, TRUE)",
+      "result": 0.5,
+      "result_type": "float",
+      "description": "t-distribution CDF at 0"
+    },
+    {
+      "formula": "=T.DIST(2, 10, TRUE)",
+      "result": 0.9633059826146299,
+      "result_type": "float",
+      "description": "t-distribution CDF at 2 with 10 df"
+    },
+    {
+      "formula": "=T.INV(0.5, 10)",
+      "result": 0.0,
+      "result_type": "float",
+      "description": "t-distribution inverse at 0.5"
+    },
+    {
+      "formula": "=T.INV(0.975, 10)",
+      "result": 2.228138851581486,
+      "result_type": "float",
+      "description": "t-distribution inverse at 0.975"
+    },
+    {
+      "formula": "=CHISQ.DIST(5, 3, TRUE)",
+      "result": 0.8282028557032669,
+      "result_type": "float",
+      "description": "chi-square CDF"
+    },
+    {
+      "formula": "=CHISQ.DIST(10, 5, TRUE)",
+      "result": 0.9247647538880301,
+      "result_type": "float",
+      "description": "chi-square CDF at 10, 5 df"
+    },
+    {
+      "formula": "=CHISQ.INV(0.5, 5)",
+      "result": 4.351460191098424,
+      "result_type": "float",
+      "description": "chi-square inverse at 0.5"
+    },
+    {
+      "formula": "=CHISQ.INV(0.95, 10)",
+      "result": 18.307038053275146,
+      "result_type": "float",
+      "description": "chi-square inverse at 0.95"
+    },
+    {
+      "formula": "=F.DIST(1, 5, 10, TRUE)",
+      "result": 0.5348805734622002,
+      "result_type": "float",
+      "description": "F-distribution CDF at 1"
+    },
+    {
+      "formula": "=F.DIST(3, 5, 10, TRUE)",
+      "result": 0.9344424379061559,
+      "result_type": "float",
+      "description": "F-distribution CDF at 3"
+    },
+    {
+      "formula": "=F.INV(0.5, 5, 10)",
+      "result": 0.9319331608510484,
+      "result_type": "float",
+      "description": "F-distribution inverse at 0.5"
+    },
+    {
+      "formula": "=F.INV(0.95, 5, 10)",
+      "result": 3.3258345304130117,
+      "result_type": "float",
+      "description": "F-distribution inverse at 0.95"
+    },
+    {
+      "formula": "=BINOM.DIST(3, 10, 0.5, FALSE)",
+      "result": 0.1171875,
+      "result_type": "float",
+      "description": "binomial PMF"
+    },
+    {
+      "formula": "=BINOM.DIST(5, 10, 0.5, TRUE)",
+      "result": 0.623046875,
+      "result_type": "float",
+      "description": "binomial CDF"
+    },
+    {
+      "formula": "=POISSON.DIST(3, 5, FALSE)",
+      "result": 0.14037389581428059,
+      "result_type": "float",
+      "description": "poisson PMF"
+    },
+    {
+      "formula": "=POISSON.DIST(5, 5, TRUE)",
+      "result": 0.6159606548330632,
+      "result_type": "float",
+      "description": "poisson CDF"
+    },
+    {
+      "formula": "=EXPON.DIST(1, 2, FALSE)",
+      "result": 0.2706705664732254,
+      "result_type": "float",
+      "description": "exponential PDF"
+    },
+    {
+      "formula": "=EXPON.DIST(1, 2, TRUE)",
+      "result": 0.8646647167633873,
+      "result_type": "float",
+      "description": "exponential CDF"
+    },
+    {
+      "formula": "=GAMMA.DIST(5, 2, 2, TRUE)",
+      "result": 0.7127025048163542,
+      "result_type": "float",
+      "description": "gamma CDF"
+    },
+    {
+      "formula": "=ERF(0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "erf(0) = 0"
+    },
+    {
+      "formula": "=ERF(1)",
+      "result": 0.8427007929497149,
+      "result_type": "float",
+      "description": "erf(1)"
+    },
+    {
+      "formula": "=ERF(-1)",
+      "result": -0.8427007929497149,
+      "result_type": "float",
+      "description": "erf(-1) = -erf(1)"
+    },
+    {
+      "formula": "=ERF(2)",
+      "result": 0.9953222650189527,
+      "result_type": "float",
+      "description": "erf(2)"
+    },
+    {
+      "formula": "=ERF(0, 1)",
+      "result": 0.8427007929497149,
+      "result_type": "float",
+      "description": "ERF with lower and upper bounds"
+    },
+    {
+      "formula": "=ERF(1, 2)",
+      "result": 0.15262147206923776,
+      "result_type": "float",
+      "description": "ERF(1,2) = erf(2) - erf(1)"
+    },
+    {
+      "formula": "=ERFC(0)",
+      "result": 1,
+      "result_type": "int",
+      "description": "erfc(0) = 1"
+    },
+    {
+      "formula": "=ERFC(1)",
+      "result": 0.1572992070502851,
+      "result_type": "float",
+      "description": "erfc(1) = 1 - erf(1)"
+    },
+    {
+      "formula": "=ERFC(2)",
+      "result": 0.004677734981047266,
+      "result_type": "float",
+      "description": "erfc(2)"
+    },
+    {
+      "formula": "=ERF.PRECISE(0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "ERF.PRECISE(0) = 0"
+    },
+    {
+      "formula": "=ERF.PRECISE(1)",
+      "result": 0.8427007929497149,
+      "result_type": "float",
+      "description": "ERF.PRECISE(1) same as ERF(1)"
+    },
+    {
+      "formula": "=ERF.PRECISE(-1)",
+      "result": -0.8427007929497149,
+      "result_type": "float",
+      "description": "ERF.PRECISE(-1) = -ERF.PRECISE(1)"
+    },
+    {
+      "formula": "=XNPV(0.1, {-10000, 2750, 4250, 3250, 2750}, {39448, 39508, 39751, 40117, 40483})",
+      "result": 1461.7643975741912,
+      "result_type": "float",
+      "description": "XNPV irregular cash flows"
+    },
+    {
+      "formula": "=XNPV(0.05, {-1000, 300, 400, 500}, {44927, 45292, 45657, 46022})",
+      "result": 80.44487636324374,
+      "result_type": "float",
+      "description": "XNPV with 5% rate"
+    },
+    {
+      "formula": "=XIRR({-10000, 2750, 4250, 3250, 2750}, {39448, 39508, 39751, 40117, 40483})",
+      "result": 0.22893098792809405,
+      "result_type": "float",
+      "description": "XIRR basic irregular cash flows"
+    },
+    {
+      "formula": "=XIRR({-1000, 300, 400, 500}, {44927, 45292, 45657, 46022})",
+      "result": 0.088963394693363,
+      "result_type": "float",
+      "description": "XIRR simple investment"
+    },
+    {
+      "formula": "=DOLLARDE(1.02, 16)",
+      "result": 1.125,
+      "result_type": "float",
+      "description": "DOLLARDE 1 and 2/16"
+    },
+    {
+      "formula": "=DOLLARDE(1.1, 8)",
+      "result": 1.125,
+      "result_type": "float",
+      "description": "DOLLARDE 1 and 1/8"
+    },
+    {
+      "formula": "=DOLLARDE(1.5, 4)",
+      "result": 2.25,
+      "result_type": "float",
+      "description": "DOLLARDE 1 and 5/4"
+    },
+    {
+      "formula": "=DOLLARFR(1.125, 16)",
+      "result": 1.02,
+      "result_type": "float",
+      "description": "DOLLARFR decimal to fractional"
+    },
+    {
+      "formula": "=DOLLARFR(1.125, 8)",
+      "result": 1.1,
+      "result_type": "float",
+      "description": "DOLLARFR with 8ths"
+    },
+    {
+      "formula": "=DOLLARFR(1.5, 4)",
+      "result": 1.2,
+      "result_type": "float",
+      "description": "DOLLARFR 1.5 in quarters"
+    },
+    {
+      "formula": "=WEIBULL.DIST(1, 2, 3, TRUE)",
+      "result": 0.10516068318563022,
+      "result_type": "float",
+      "description": "Weibull CDF"
+    },
+    {
+      "formula": "=WEIBULL.DIST(1, 2, 3, FALSE)",
+      "result": 0.1988531815143044,
+      "result_type": "float",
+      "description": "Weibull PDF"
+    },
+    {
+      "formula": "=WEIBULL.DIST(2, 1.5, 1, TRUE)",
+      "result": 0.9408942534380438,
+      "result_type": "float",
+      "description": "Weibull CDF shape 1.5"
+    },
+    {
+      "formula": "=WEIBULL.DIST(0.5, 3, 2, FALSE)",
+      "result": 0.09229654096925705,
+      "result_type": "float",
+      "description": "Weibull PDF shape 3"
+    },
+    {
+      "formula": "=BETA.DIST(0.5, 2, 3, TRUE)",
+      "result": 0.6875,
+      "result_type": "float",
+      "description": "Beta CDF standard interval"
+    },
+    {
+      "formula": "=BETA.DIST(0.5, 2, 3, FALSE)",
+      "result": 1.5,
+      "result_type": "float",
+      "description": "Beta PDF standard interval"
+    },
+    {
+      "formula": "=BETA.DIST(2, 8, 10, TRUE, 1, 3)",
+      "result": 0.6854705810546875,
+      "result_type": "float",
+      "description": "Beta CDF custom bounds [1,3]"
+    },
+    {
+      "formula": "=BETA.DIST(0.25, 1, 1, TRUE)",
+      "result": 0.25,
+      "result_type": "float",
+      "description": "Beta CDF uniform distribution"
+    },
+    {
+      "formula": "=NEGBINOM.DIST(3, 5, 0.6, FALSE)",
+      "result": 0.17418239999999996,
+      "result_type": "float",
+      "description": "Negative binomial PMF"
+    },
+    {
+      "formula": "=NEGBINOM.DIST(3, 5, 0.6, TRUE)",
+      "result": 0.5940863999999999,
+      "result_type": "float",
+      "description": "Negative binomial CDF"
+    },
+    {
+      "formula": "=NEGBINOM.DIST(0, 1, 0.5, FALSE)",
+      "result": 0.5,
+      "result_type": "float",
+      "description": "Negative binomial PMF zero failures"
+    },
+    {
+      "formula": "=NEGBINOM.DIST(10, 3, 0.4, TRUE)",
+      "result": 0.9420975898624,
+      "result_type": "float",
+      "description": "Negative binomial CDF many failures"
+    },
+    {
+      "formula": "=HYPGEOM.DIST(1, 4, 8, 20, FALSE)",
+      "result": 0.36326109391124867,
+      "result_type": "float",
+      "description": "Hypergeometric PMF"
+    },
+    {
+      "formula": "=HYPGEOM.DIST(1, 4, 8, 20, TRUE)",
+      "result": 0.4654282765737874,
+      "result_type": "float",
+      "description": "Hypergeometric CDF"
+    },
+    {
+      "formula": "=HYPGEOM.DIST(3, 6, 10, 20, FALSE)",
+      "result": 0.371517027863777,
+      "result_type": "float",
+      "description": "Hypergeometric PMF larger sample"
+    },
+    {
+      "formula": "=HYPGEOM.DIST(4, 12, 20, 40, TRUE)",
+      "result": 0.15042239124552806,
+      "result_type": "float",
+      "description": "Hypergeometric CDF larger population"
+    },
+    {
+      "formula": "=COMPLEX(3, 4)",
+      "result": "3+4i",
+      "result_type": "str",
+      "description": "COMPLEX basic"
+    },
+    {
+      "formula": "=COMPLEX(3, 4, \"j\")",
+      "result": "3+4j",
+      "result_type": "str",
+      "description": "COMPLEX with j suffix"
+    },
+    {
+      "formula": "=COMPLEX(1, 0)",
+      "result": "1",
+      "result_type": "str",
+      "description": "COMPLEX purely real"
+    },
+    {
+      "formula": "=COMPLEX(0, 1)",
+      "result": "i",
+      "result_type": "str",
+      "description": "COMPLEX purely imaginary unit"
+    },
+    {
+      "formula": "=COMPLEX(0, -1)",
+      "result": "-i",
+      "result_type": "str",
+      "description": "COMPLEX negative imaginary unit"
+    },
+    {
+      "formula": "=COMPLEX(3, -4)",
+      "result": "3-4i",
+      "result_type": "str",
+      "description": "COMPLEX negative imaginary"
+    },
+    {
+      "formula": "=IMREAL(\"3+4i\")",
+      "result": 3,
+      "result_type": "int",
+      "description": "IMREAL basic"
+    },
+    {
+      "formula": "=IMREAL(\"5i\")",
+      "result": 0,
+      "result_type": "int",
+      "description": "IMREAL purely imaginary"
+    },
+    {
+      "formula": "=IMREAL(5)",
+      "result": 5,
+      "result_type": "int",
+      "description": "IMREAL from number"
+    },
+    {
+      "formula": "=IMAGINARY(\"3+4i\")",
+      "result": 4,
+      "result_type": "int",
+      "description": "IMAGINARY basic"
+    },
+    {
+      "formula": "=IMAGINARY(\"5\")",
+      "result": 0,
+      "result_type": "int",
+      "description": "IMAGINARY purely real"
+    },
+    {
+      "formula": "=IMAGINARY(\"i\")",
+      "result": 1,
+      "result_type": "int",
+      "description": "IMAGINARY unit imaginary"
+    },
+    {
+      "formula": "=IMAGINARY(\"-i\")",
+      "result": -1,
+      "result_type": "int",
+      "description": "IMAGINARY negative unit"
+    },
+    {
+      "formula": "=IMABS(\"3+4i\")",
+      "result": 5,
+      "result_type": "int",
+      "description": "IMABS 3-4-5 triangle"
+    },
+    {
+      "formula": "=IMABS(\"1+i\")",
+      "result": 1.4142135623730951,
+      "result_type": "float",
+      "description": "IMABS sqrt(2)"
+    },
+    {
+      "formula": "=IMABS(\"5\")",
+      "result": 5,
+      "result_type": "int",
+      "description": "IMABS purely real"
+    },
+    {
+      "formula": "=IMARGUMENT(\"1+i\")",
+      "result": 0.7853981633974483,
+      "result_type": "float",
+      "description": "IMARGUMENT 45 degrees (pi/4)"
+    },
+    {
+      "formula": "=IMARGUMENT(\"1\")",
+      "result": 0,
+      "result_type": "int",
+      "description": "IMARGUMENT positive real"
+    },
+    {
+      "formula": "=IMARGUMENT(\"i\")",
+      "result": 1.5707963267948966,
+      "result_type": "float",
+      "description": "IMARGUMENT positive imaginary (pi/2)"
+    },
+    {
+      "formula": "=IMARGUMENT(\"-1\")",
+      "result": 3.141592653589793,
+      "result_type": "float",
+      "description": "IMARGUMENT negative real (pi)"
+    },
+    {
+      "formula": "=IMARGUMENT(\"0\")",
+      "result": "#DIV/0!",
+      "result_type": "error",
+      "description": "IMARGUMENT zero returns error"
+    },
+    {
+      "formula": "=IMCONJUGATE(\"3+4i\")",
+      "result": "3-4i",
+      "result_type": "str",
+      "description": "IMCONJUGATE basic"
+    },
+    {
+      "formula": "=IMCONJUGATE(\"3-4i\")",
+      "result": "3+4i",
+      "result_type": "str",
+      "description": "IMCONJUGATE negative imag"
+    },
+    {
+      "formula": "=IMCONJUGATE(\"5\")",
+      "result": "5",
+      "result_type": "str",
+      "description": "IMCONJUGATE purely real"
+    },
+    {
+      "formula": "=IMSUM(\"3+4i\", \"1+2i\")",
+      "result": "4+6i",
+      "result_type": "str",
+      "description": "IMSUM two complex"
+    },
+    {
+      "formula": "=IMSUM(\"1+i\", \"2+2i\", \"3+3i\")",
+      "result": "6+6i",
+      "result_type": "str",
+      "description": "IMSUM three complex"
+    },
+    {
+      "formula": "=IMSUM(\"5\", \"3i\")",
+      "result": "5+3i",
+      "result_type": "str",
+      "description": "IMSUM real and imaginary"
+    },
+    {
+      "formula": "=IMSUB(\"5+3i\", \"2+i\")",
+      "result": "3+2i",
+      "result_type": "str",
+      "description": "IMSUB basic"
+    },
+    {
+      "formula": "=IMSUB(\"3+4i\", \"3+4i\")",
+      "result": "0",
+      "result_type": "str",
+      "description": "IMSUB same numbers"
+    },
+    {
+      "formula": "=IMPRODUCT(\"3+4i\", \"1+2i\")",
+      "result": "-5+10i",
+      "result_type": "str",
+      "description": "IMPRODUCT basic"
+    },
+    {
+      "formula": "=IMPRODUCT(\"1+i\", \"1-i\")",
+      "result": "2",
+      "result_type": "str",
+      "description": "IMPRODUCT conjugates"
+    },
+    {
+      "formula": "=IMPRODUCT(\"i\", \"i\")",
+      "result": "-1",
+      "result_type": "str",
+      "description": "IMPRODUCT i squared"
+    },
+    {
+      "formula": "=IMDIV(\"5+10i\", \"3+4i\")",
+      "result": "2.2+0.4i",
+      "result_type": "str",
+      "description": "IMDIV basic"
+    },
+    {
+      "formula": "=IMDIV(\"2\", \"1+i\")",
+      "result": "1-i",
+      "result_type": "str",
+      "description": "IMDIV real by complex"
+    },
+    {
+      "formula": "=IMDIV(\"1\", \"0\")",
+      "result": "#DIV/0!",
+      "result_type": "error",
+      "description": "IMDIV by zero"
+    },
+    {
+      "formula": "=ACCRINTM(44927, 45292, 0.1, 1000, 0)",
+      "result": 100.0,
+      "result_type": "float",
+      "description": "ACCRINTM one year 10% rate"
+    },
+    {
+      "formula": "=ACCRINTM(44927, 45292, 0.1, 1000, 3)",
+      "result": 100.0,
+      "result_type": "float",
+      "description": "ACCRINTM one year 10% rate actual/365"
+    },
+    {
+      "formula": "=ACCRINTM(44927, 45292, 0.05, 1000, 0)",
+      "result": 50.0,
+      "result_type": "float",
+      "description": "ACCRINTM one year 5% rate"
+    },
+    {
+      "formula": "=ACCRINTM(44927, 45108, 0.1, 1000, 0)",
+      "result": 50.0,
+      "result_type": "float",
+      "description": "ACCRINTM 6 months 10% rate 30/360 (Jan 1 to Jul 1)"
+    },
+    {
+      "formula": "=ACCRINT(44927, 45292, 45108, 0.1, 1000, 2, 0)",
+      "result": 50.0,
+      "result_type": "float",
+      "description": "ACCRINT 6 months semi-annual 10% rate (Jan 1 to Jul 1)"
+    },
+    {
+      "formula": "=ACCRINT(44927, 45292, 45292, 0.1, 1000, 2, 0)",
+      "result": 100.0,
+      "result_type": "float",
+      "description": "ACCRINT one year semi-annual 10% rate"
+    },
+    {
+      "formula": "=PRICE(44927, 45657, 0.05, 0.05, 100, 2, 0)",
+      "result": 99.99983017019373,
+      "result_type": "float",
+      "description": "PRICE par bond (yield equals coupon)"
+    },
+    {
+      "formula": "=PRICE(44927, 45657, 0.06, 0.05, 100, 2, 0)",
+      "result": 101.878297550153,
+      "result_type": "float",
+      "description": "PRICE premium bond (coupon > yield)"
+    },
+    {
+      "formula": "=PRICE(44927, 45657, 0.04, 0.05, 100, 2, 0)",
+      "result": 98.12136279023447,
+      "result_type": "float",
+      "description": "PRICE discount bond (coupon < yield)"
+    },
+    {
+      "formula": "=YIELD(44927, 45657, 0.05, 100, 100, 2, 0)",
+      "result": 0.04999909594635777,
+      "result_type": "float",
+      "description": "YIELD par bond (approximately coupon rate)"
+    },
+    {
+      "formula": "=YIELD(44927, 45657, 0.06, 101.878297550153, 100, 2, 0)",
+      "result": 0.05,
+      "result_type": "float",
+      "description": "YIELD premium bond"
+    },
+    {
+      "formula": "=YIELD(44927, 45657, 0.04, 98.12136279023447, 100, 2, 0)",
+      "result": 0.05,
+      "result_type": "float",
+      "description": "YIELD discount bond"
+    },
+    {
+      "formula": "=FORECAST.LINEAR(6, {2,4,5,4,5}, {1,2,3,4,5})",
+      "result": 5.8,
+      "result_type": "float",
+      "description": "FORECAST.LINEAR basic linear regression prediction"
+    },
+    {
+      "formula": "=FORECAST(6, {2,4,5,4,5}, {1,2,3,4,5})",
+      "result": 5.8,
+      "result_type": "float",
+      "description": "FORECAST alias for FORECAST.LINEAR"
+    },
+    {
+      "formula": "=FORECAST.LINEAR(10, {3,5,7,9,11}, {1,2,3,4,5})",
+      "result": 21.0,
+      "result_type": "float",
+      "description": "FORECAST.LINEAR perfect linear y=2x+1"
+    },
+    {
+      "formula": "=FORECAST.LINEAR(6, {10,8,6,4,2}, {1,2,3,4,5})",
+      "result": 0.0,
+      "result_type": "float",
+      "description": "FORECAST.LINEAR negative slope y=-2x+12"
+    },
+    {
+      "formula": "=FORECAST.LINEAR(5.5, {3,5,7,9}, {1.5,2.5,3.5,4.5})",
+      "result": 11.0,
+      "result_type": "float",
+      "description": "FORECAST.LINEAR with decimal values"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}), 1, 1)",
+      "result": 0.6,
+      "result_type": "float",
+      "description": "LINEST basic - slope"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}), 1, 2)",
+      "result": 2.2,
+      "result_type": "float",
+      "description": "LINEST basic - intercept"
+    },
+    {
+      "formula": "=INDEX(LINEST({3,5,7,9,11}, {1,2,3,4,5}), 1, 1)",
+      "result": 2.0,
+      "result_type": "float",
+      "description": "LINEST perfect linear - slope"
+    },
+    {
+      "formula": "=INDEX(LINEST({3,5,7,9,11}, {1,2,3,4,5}), 1, 2)",
+      "result": 1.0,
+      "result_type": "float",
+      "description": "LINEST perfect linear - intercept"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}, TRUE, TRUE), 1, 1)",
+      "result": 0.6,
+      "result_type": "float",
+      "description": "LINEST with stats - slope"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}, TRUE, TRUE), 1, 2)",
+      "result": 2.2,
+      "result_type": "float",
+      "description": "LINEST with stats - intercept"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}, TRUE, TRUE), 2, 1)",
+      "result": 0.28284271247461895,
+      "result_type": "float",
+      "description": "LINEST with stats - SE slope"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}, TRUE, TRUE), 2, 2)",
+      "result": 0.9380831519646857,
+      "result_type": "float",
+      "description": "LINEST with stats - SE intercept"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}, TRUE, TRUE), 3, 1)",
+      "result": 0.6,
+      "result_type": "float",
+      "description": "LINEST with stats - R-squared"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}, TRUE, TRUE), 3, 2)",
+      "result": 0.8944271909999159,
+      "result_type": "float",
+      "description": "LINEST with stats - SE y"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}, TRUE, TRUE), 4, 1)",
+      "result": 4.5,
+      "result_type": "float",
+      "description": "LINEST with stats - F statistic"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}, TRUE, TRUE), 4, 2)",
+      "result": 3.0,
+      "result_type": "float",
+      "description": "LINEST with stats - degrees of freedom"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}, TRUE, TRUE), 5, 1)",
+      "result": 3.6,
+      "result_type": "float",
+      "description": "LINEST with stats - SS regression"
+    },
+    {
+      "formula": "=INDEX(LINEST({2,4,5,4,5}, {1,2,3,4,5}, TRUE, TRUE), 5, 2)",
+      "result": 2.4,
+      "result_type": "float",
+      "description": "LINEST with stats - SS residual"
+    },
+    {
+      "formula": "=CONFIDENCE.NORM(0.05, 2.5, 50)",
+      "result": 0.6929519121748389,
+      "result_type": "float",
+      "description": "CONFIDENCE.NORM 95% confidence interval"
+    },
+    {
+      "formula": "=CONFIDENCE.NORM(0.10, 1.5, 30)",
+      "result": 0.4504617176377544,
+      "result_type": "float",
+      "description": "CONFIDENCE.NORM 90% confidence interval"
+    },
+    {
+      "formula": "=CONFIDENCE(0.05, 2.5, 50)",
+      "result": 0.6929519121748389,
+      "result_type": "float",
+      "description": "CONFIDENCE alias for CONFIDENCE.NORM"
+    },
+    {
+      "formula": "=CONFIDENCE.NORM(0, 2.5, 50)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "CONFIDENCE.NORM error for alpha=0"
+    },
+    {
+      "formula": "=CONFIDENCE.NORM(0.05, -1, 50)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "CONFIDENCE.NORM error for negative std_dev"
+    },
+    {
+      "formula": "=CONFIDENCE.T(0.05, 2.5, 50)",
+      "result": 0.7104921387393246,
+      "result_type": "float",
+      "description": "CONFIDENCE.T 95% confidence interval"
+    },
+    {
+      "formula": "=CONFIDENCE.T(0.10, 1.5, 10)",
+      "result": 0.8695218113256841,
+      "result_type": "float",
+      "description": "CONFIDENCE.T 90% confidence interval with small sample"
+    },
+    {
+      "formula": "=CONFIDENCE.T(0.05, 2.5, 1)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "CONFIDENCE.T error for size < 2"
+    },
+    {
+      "formula": "=Z.TEST({3,6,7,8,6,5,4,2,1,9}, 4)",
+      "result": 0.07933464890044983,
+      "result_type": "float",
+      "description": "Z.TEST one-tailed p-value"
+    },
+    {
+      "formula": "=Z.TEST({3,6,7,8,6,5,4,2,1,9}, 6)",
+      "result": 0.8756017155164422,
+      "result_type": "float",
+      "description": "Z.TEST with x close to mean"
+    },
+    {
+      "formula": "=Z.TEST({3,6,7,8,6,5,4,2,1,9}, 4, 2.5)",
+      "result": 0.082051809658099,
+      "result_type": "float",
+      "description": "Z.TEST with explicit sigma"
+    },
+    {
+      "formula": "=ZTEST({3,6,7,8,6,5,4,2,1,9}, 4)",
+      "result": 0.07933464890044983,
+      "result_type": "float",
+      "description": "ZTEST alias for Z.TEST"
+    },
+    {
+      "formula": "=DSUM({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": 105000,
+      "result_type": "int",
+      "description": "DSUM with Age=30 criteria"
+    },
+    {
+      "formula": "=DSUM({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},3,{\"Name\"})",
+      "result": 210000,
+      "result_type": "int",
+      "description": "DSUM all records with field as column number"
+    },
+    {
+      "formula": "=DAVERAGE({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";\">25\"})",
+      "result": 55000,
+      "result_type": "int",
+      "description": "DAVERAGE with Age>25 criteria"
+    },
+    {
+      "formula": "=DAVERAGE({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": 52500,
+      "result_type": "float",
+      "description": "DAVERAGE with Age=30 criteria"
+    },
+    {
+      "formula": "=DCOUNT({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": 2,
+      "result_type": "int",
+      "description": "DCOUNT with Age=30 criteria"
+    },
+    {
+      "formula": "=DCOUNT({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Name\"})",
+      "result": 4,
+      "result_type": "int",
+      "description": "DCOUNT all records"
+    },
+    {
+      "formula": "=DMAX({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Name\"})",
+      "result": 60000,
+      "result_type": "int",
+      "description": "DMAX all records"
+    },
+    {
+      "formula": "=DMAX({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": 55000,
+      "result_type": "int",
+      "description": "DMAX with Age=30 criteria"
+    },
+    {
+      "formula": "=DMIN({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Name\"})",
+      "result": 45000,
+      "result_type": "int",
+      "description": "DMIN all records"
+    },
+    {
+      "formula": "=DMIN({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": 50000,
+      "result_type": "int",
+      "description": "DMIN with Age=30 criteria"
+    },
+    {
+      "formula": "=DSUM({\"Product\",\"Qty\",\"Price\";\"Apple\",10,1.5;\"Banana\",20,0.75;\"Apple\",15,1.5;\"Cherry\",5,3.0},\"Qty\",{\"Product\";\"Apple\"})",
+      "result": 25,
+      "result_type": "int",
+      "description": "DSUM text criteria matching"
+    },
+    {
+      "formula": "=DCOUNT({\"Product\",\"Qty\",\"Price\";\"Apple\",10,1.5;\"Banana\",20,0.75;\"Apple\",15,1.5;\"Cherry\",5,3.0},\"Qty\",{\"Price\";\"<2\"})",
+      "result": 3,
+      "result_type": "int",
+      "description": "DCOUNT with comparison criteria"
+    },
+    {
+      "formula": "=IMEXP(\"2\")",
+      "result": "7.38905609893065",
+      "result_type": "str",
+      "description": "IMEXP exponential of real number"
+    },
+    {
+      "formula": "=IMEXP(\"3+4i\")",
+      "result": "-13.128783081462158-15.200784463067954i",
+      "result_type": "str",
+      "description": "IMEXP exponential of complex number"
+    },
+    {
+      "formula": "=IMEXP(\"i\")",
+      "result": "0.5403023058681398+0.8414709848078965i",
+      "result_type": "str",
+      "description": "IMEXP exponential of i (e^i)"
+    },
+    {
+      "formula": "=IMLN(\"1\")",
+      "result": "0",
+      "result_type": "str",
+      "description": "IMLN natural log of 1"
+    },
+    {
+      "formula": "=IMLN(\"3+4i\")",
+      "result": "1.6094379124341003+0.9272952180016122i",
+      "result_type": "str",
+      "description": "IMLN natural log of complex number"
+    },
+    {
+      "formula": "=IMLN(\"0\")",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "IMLN natural log of 0 returns error"
+    },
+    {
+      "formula": "=IMLOG10(\"10\")",
+      "result": "1",
+      "result_type": "str",
+      "description": "IMLOG10 base-10 log of 10"
+    },
+    {
+      "formula": "=IMLOG10(\"100\")",
+      "result": "2",
+      "result_type": "str",
+      "description": "IMLOG10 base-10 log of 100"
+    },
+    {
+      "formula": "=IMLOG10(\"3+4i\")",
+      "result": "0.6989700043360187+0.4027191962733731i",
+      "result_type": "str",
+      "description": "IMLOG10 base-10 log of complex number"
+    },
+    {
+      "formula": "=IMLOG2(\"8\")",
+      "result": "3",
+      "result_type": "str",
+      "description": "IMLOG2 base-2 log of 8"
+    },
+    {
+      "formula": "=IMLOG2(\"4\")",
+      "result": "2",
+      "result_type": "str",
+      "description": "IMLOG2 base-2 log of 4"
+    },
+    {
+      "formula": "=IMLOG2(\"3+4i\")",
+      "result": "2.321928094887362+1.3378042124509761i",
+      "result_type": "str",
+      "description": "IMLOG2 base-2 log of complex number"
+    },
+    {
+      "formula": "=IMPOWER(\"3+4i\", 2)",
+      "result": "-7+24i",
+      "result_type": "str",
+      "description": "IMPOWER complex number squared"
+    },
+    {
+      "formula": "=IMPOWER(\"3+4i\", 3)",
+      "result": "-117+44i",
+      "result_type": "str",
+      "description": "IMPOWER complex number cubed"
+    },
+    {
+      "formula": "=IMPOWER(\"1+i\", 2)",
+      "result": "2i",
+      "result_type": "str",
+      "description": "IMPOWER (1+i)^2 = 2i"
+    },
+    {
+      "formula": "=IMSQRT(\"4\")",
+      "result": "2",
+      "result_type": "str",
+      "description": "IMSQRT square root of 4"
+    },
+    {
+      "formula": "=IMSQRT(\"3+4i\")",
+      "result": "2+i",
+      "result_type": "str",
+      "description": "IMSQRT square root of 3+4i"
+    },
+    {
+      "formula": "=IMSQRT(\"-1\")",
+      "result": "i",
+      "result_type": "str",
+      "description": "IMSQRT square root of -1"
+    },
+    {
+      "formula": "=IMSIN(\"0\")",
+      "result": "0",
+      "result_type": "str",
+      "description": "IMSIN sine of 0"
+    },
+    {
+      "formula": "=IMSIN(\"3+4i\")",
+      "result": "3.853738037919377-27.016813258003932i",
+      "result_type": "str",
+      "description": "IMSIN sine of complex number"
+    },
+    {
+      "formula": "=IMSIN(\"i\")",
+      "result": "1.1752011936438014i",
+      "result_type": "str",
+      "description": "IMSIN sine of i"
+    },
+    {
+      "formula": "=IMCOS(\"0\")",
+      "result": "1",
+      "result_type": "str",
+      "description": "IMCOS cosine of 0"
+    },
+    {
+      "formula": "=IMCOS(\"3+4i\")",
+      "result": "-27.034945603074224-3.851153334811777i",
+      "result_type": "str",
+      "description": "IMCOS cosine of complex number"
+    },
+    {
+      "formula": "=IMCOS(\"i\")",
+      "result": "1.5430806348152437",
+      "result_type": "str",
+      "description": "IMCOS cosine of i (cosh(1))"
+    },
+    {
+      "formula": "=INDEX(TREND({1,2,3,4,5}),1,1)",
+      "result": 1.0,
+      "result_type": "float",
+      "description": "TREND first element with perfect linear data"
+    },
+    {
+      "formula": "=INDEX(TREND({2,4,6,8},{1,2,3,4},{5}),1,1)",
+      "result": 10.0,
+      "result_type": "float",
+      "description": "TREND predicting new x value"
+    },
+    {
+      "formula": "=INDEX(TREND({3,5,7,9},{1,2,3,4},{1,2,3,4,5}),1,1)",
+      "result": 3.0,
+      "result_type": "float",
+      "description": "TREND first element of extrapolated series"
+    },
+    {
+      "formula": "=INDEX(TREND({3,5,7,9},{1,2,3,4},{1,2,3,4,5}),1,5)",
+      "result": 11.0,
+      "result_type": "float",
+      "description": "TREND extrapolated 5th element"
+    },
+    {
+      "formula": "=INDEX(TREND({1,3,5,7},{0,1,2,3},,FALSE),1,1)",
+      "result": 0.0,
+      "result_type": "float",
+      "description": "TREND through origin at x=0"
+    },
+    {
+      "formula": "=INDEX(TREND({10,20,30},{1,2,3},{0}),1,1)",
+      "result": 0.0,
+      "result_type": "float",
+      "description": "TREND predict at x=0"
+    },
+    {
+      "formula": "=INDEX(TREND({5,10,15,20,25},{1,2,3,4,5},{6,7}),1,1)",
+      "result": 30.0,
+      "result_type": "float",
+      "description": "TREND prediction at x=6"
+    },
+    {
+      "formula": "=INDEX(GROWTH({2,4,8,16}),1,1)",
+      "result": 2.0,
+      "result_type": "float",
+      "description": "GROWTH first element with perfect exponential"
+    },
+    {
+      "formula": "=INDEX(GROWTH({1,2,4,8},{1,2,3,4},{5}),1,1)",
+      "result": 16.0,
+      "result_type": "float",
+      "description": "GROWTH predicting at x=5"
+    },
+    {
+      "formula": "=INDEX(GROWTH({10,20,40,80},{1,2,3,4},{0}),1,1)",
+      "result": 5.0,
+      "result_type": "float",
+      "description": "GROWTH predict at x=0"
+    },
+    {
+      "formula": "=INDEX(GROWTH({2,4,8},{1,2,3},{1,2,3,4}),1,1)",
+      "result": 2.0,
+      "result_type": "float",
+      "description": "GROWTH first element of series"
+    },
+    {
+      "formula": "=INDEX(GROWTH({2,4,8},{1,2,3},{1,2,3,4}),1,4)",
+      "result": 16.0,
+      "result_type": "float",
+      "description": "GROWTH extrapolated 4th element"
+    },
+    {
+      "formula": "=INDEX(GROWTH({100,200,400},{0,1,2},{3}),1,1)",
+      "result": 800.0,
+      "result_type": "float",
+      "description": "GROWTH prediction at x=3"
+    },
+    {
+      "formula": "=INDEX(LOGEST({2,4,8,16}),1,1)",
+      "result": 2.0,
+      "result_type": "float",
+      "description": "LOGEST m coefficient for base-2 exponential"
+    },
+    {
+      "formula": "=INDEX(LOGEST({2,4,8,16}),1,2)",
+      "result": 1.0,
+      "result_type": "float",
+      "description": "LOGEST b coefficient for base-2 exponential"
+    },
+    {
+      "formula": "=INDEX(LOGEST({10,30,90,270},{1,2,3,4}),1,1)",
+      "result": 3.0,
+      "result_type": "float",
+      "description": "LOGEST m for base-3 growth"
+    },
+    {
+      "formula": "=INDEX(LOGEST({10,30,90,270},{1,2,3,4}),1,2)",
+      "result": 3.333333333333333,
+      "result_type": "float",
+      "description": "LOGEST b for base-3 growth with intercept"
+    },
+    {
+      "formula": "=INDEX(LOGEST({1,2.718281828,7.389056099},{0,1,2}),1,1)",
+      "result": 2.718281828459045,
+      "result_type": "float",
+      "description": "LOGEST m for natural exponential (e^x)"
+    },
+    {
+      "formula": "=INDEX(LOGEST({5,10,20,40},{1,2,3,4},FALSE),1,2)",
+      "result": 1.0,
+      "result_type": "float",
+      "description": "LOGEST b=1 when const=FALSE"
+    },
+    {
+      "formula": "=DPRODUCT({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": 2750000000,
+      "result_type": "float",
+      "description": "DPRODUCT with Age=30 criteria"
+    },
+    {
+      "formula": "=DPRODUCT({\"Item\",\"Qty\";\"A\",2;\"B\",3;\"A\",4},\"Qty\",{\"Item\";\"A\"})",
+      "result": 8,
+      "result_type": "int",
+      "description": "DPRODUCT text criteria"
+    },
+    {
+      "formula": "=DPRODUCT({\"X\",\"Y\";\"A\",1;\"B\",2;\"C\",3},\"Y\",{\"X\"})",
+      "result": 6,
+      "result_type": "int",
+      "description": "DPRODUCT all records"
+    },
+    {
+      "formula": "=DSTDEV({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": 3535.533905932738,
+      "result_type": "float",
+      "description": "DSTDEV sample standard deviation Age=30"
+    },
+    {
+      "formula": "=DSTDEV({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Name\"})",
+      "result": 6454.972243679028,
+      "result_type": "float",
+      "description": "DSTDEV sample standard deviation all"
+    },
+    {
+      "formula": "=DSTDEV({\"X\",\"Y\";\"A\",10;\"B\",20;\"C\",30},\"Y\",{\"X\"})",
+      "result": 10,
+      "result_type": "int",
+      "description": "DSTDEV simple values"
+    },
+    {
+      "formula": "=DSTDEVP({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": 2500,
+      "result_type": "int",
+      "description": "DSTDEVP population standard deviation Age=30"
+    },
+    {
+      "formula": "=DSTDEVP({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Name\"})",
+      "result": 5590.169943749474,
+      "result_type": "float",
+      "description": "DSTDEVP population standard deviation all"
+    },
+    {
+      "formula": "=DSTDEVP({\"X\",\"Y\";\"A\",10;\"B\",20;\"C\",30},\"Y\",{\"X\"})",
+      "result": 8.16496580927726,
+      "result_type": "float",
+      "description": "DSTDEVP simple values"
+    },
+    {
+      "formula": "=DVAR({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": 12500000,
+      "result_type": "int",
+      "description": "DVAR sample variance Age=30"
+    },
+    {
+      "formula": "=DVAR({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Name\"})",
+      "result": 41666666.666666664,
+      "result_type": "float",
+      "description": "DVAR sample variance all"
+    },
+    {
+      "formula": "=DVAR({\"X\",\"Y\";\"A\",10;\"B\",20;\"C\",30},\"Y\",{\"X\"})",
+      "result": 100,
+      "result_type": "int",
+      "description": "DVAR simple values"
+    },
+    {
+      "formula": "=DVARP({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": 6250000,
+      "result_type": "int",
+      "description": "DVARP population variance Age=30"
+    },
+    {
+      "formula": "=DVARP({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Name\"})",
+      "result": 31250000,
+      "result_type": "int",
+      "description": "DVARP population variance all"
+    },
+    {
+      "formula": "=DVARP({\"X\",\"Y\";\"A\",10;\"B\",20;\"C\",30},\"Y\",{\"X\"})",
+      "result": 66.66666666666667,
+      "result_type": "float",
+      "description": "DVARP simple values"
+    },
+    {
+      "formula": "=DGET({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Name\";\"Alice\"})",
+      "result": 50000,
+      "result_type": "int",
+      "description": "DGET single match by name"
+    },
+    {
+      "formula": "=DGET({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Name\",{\"Age\";35})",
+      "result": "Carol",
+      "result_type": "str",
+      "description": "DGET returns text value"
+    },
+    {
+      "formula": "=DGET({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";30})",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "DGET multiple matches error"
+    },
+    {
+      "formula": "=DGET({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Salary\",{\"Age\";99})",
+      "result": "#VALUE!",
+      "result_type": "error",
+      "description": "DGET no match error"
+    },
+    {
+      "formula": "=DCOUNTA({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Name\",{\"Age\";30})",
+      "result": 2,
+      "result_type": "int",
+      "description": "DCOUNTA counts text cells"
+    },
+    {
+      "formula": "=DCOUNTA({\"Name\",\"Age\",\"Salary\";\"Alice\",30,50000;\"Bob\",25,45000;\"Carol\",35,60000;\"Dave\",30,55000},\"Name\",{\"Name\"})",
+      "result": 4,
+      "result_type": "int",
+      "description": "DCOUNTA all text values"
+    },
+    {
+      "formula": "=DCOUNTA({\"A\",\"B\";\"text\",1;\"more\",2;\"\",3},\"A\",{\"A\"})",
+      "result": 2,
+      "result_type": "int",
+      "description": "DCOUNTA skips empty strings (treats them as blank cells)"
+    },
+    {
+      "formula": "=PERCENTRANK.INC({1,2,3,4,5},1)",
+      "result": 0,
+      "result_type": "int",
+      "description": "PERCENTRANK.INC minimum value rank"
+    },
+    {
+      "formula": "=PERCENTRANK.INC({1,2,3,4,5},3)",
+      "result": 0.5,
+      "result_type": "float",
+      "description": "PERCENTRANK.INC middle value rank"
+    },
+    {
+      "formula": "=PERCENTRANK.INC({1,2,3,4,5},5)",
+      "result": 1,
+      "result_type": "int",
+      "description": "PERCENTRANK.INC maximum value rank"
+    },
+    {
+      "formula": "=PERCENTRANK.INC({1,2,3,4,5},2.5)",
+      "result": 0.375,
+      "result_type": "float",
+      "description": "PERCENTRANK.INC interpolated value"
+    },
+    {
+      "formula": "=PERCENTRANK.INC({1,2,3,4,5},0)",
+      "result": "#N/A",
+      "result_type": "error",
+      "description": "PERCENTRANK.INC value out of range"
+    },
+    {
+      "formula": "=PERCENTRANK({1,2,3,4,5},3)",
+      "result": 0.5,
+      "result_type": "float",
+      "description": "PERCENTRANK alias for PERCENTRANK.INC"
+    },
+    {
+      "formula": "=PERCENTRANK.EXC({1,2,3,4,5},1)",
+      "result": 0.166,
+      "result_type": "float",
+      "description": "PERCENTRANK.EXC minimum value rank (1/6 truncated)"
+    },
+    {
+      "formula": "=PERCENTRANK.EXC({1,2,3,4,5},3)",
+      "result": 0.5,
+      "result_type": "float",
+      "description": "PERCENTRANK.EXC middle value rank"
+    },
+    {
+      "formula": "=PERCENTRANK.EXC({1,2,3,4,5},5)",
+      "result": 0.833,
+      "result_type": "float",
+      "description": "PERCENTRANK.EXC maximum value rank (5/6 truncated)"
+    },
+    {
+      "formula": "=PERCENTRANK.EXC({1,2,3,4,5},2.5)",
+      "result": 0.416,
+      "result_type": "float",
+      "description": "PERCENTRANK.EXC interpolated value (truncated)"
+    },
+    {
+      "formula": "=PERCENTRANK.EXC({1,2,3,4,5},6)",
+      "result": "#N/A",
+      "result_type": "error",
+      "description": "PERCENTRANK.EXC value out of range"
+    },
+    {
+      "formula": "=PERCENTRANK.INC({1,2,3,4,5},2.5,2)",
+      "result": 0.37,
+      "result_type": "float",
+      "description": "PERCENTRANK.INC with significance 2"
+    },
+    {
+      "formula": "=INDEX(FREQUENCY({1,2,3,4,5,6,7,8,9,10},{3,6}),1,1)",
+      "result": 3,
+      "result_type": "int",
+      "description": "FREQUENCY first bin count (<=3)"
+    },
+    {
+      "formula": "=INDEX(FREQUENCY({1,2,3,4,5,6,7,8,9,10},{3,6}),2,1)",
+      "result": 3,
+      "result_type": "int",
+      "description": "FREQUENCY middle bin count (3<x<=6)"
+    },
+    {
+      "formula": "=INDEX(FREQUENCY({1,2,3,4,5,6,7,8,9,10},{3,6}),3,1)",
+      "result": 4,
+      "result_type": "int",
+      "description": "FREQUENCY last bin count (>6)"
+    },
+    {
+      "formula": "=INDEX(FREQUENCY({79,85,78,85,50,81,95,88,97},{70,79,89}),1,1)",
+      "result": 1,
+      "result_type": "int",
+      "description": "FREQUENCY exam scores <=70"
+    },
+    {
+      "formula": "=INDEX(FREQUENCY({79,85,78,85,50,81,95,88,97},{70,79,89}),2,1)",
+      "result": 2,
+      "result_type": "int",
+      "description": "FREQUENCY exam scores 70<x<=79"
+    },
+    {
+      "formula": "=INDEX(FREQUENCY({79,85,78,85,50,81,95,88,97},{70,79,89}),3,1)",
+      "result": 4,
+      "result_type": "int",
+      "description": "FREQUENCY exam scores 79<x<=89"
+    },
+    {
+      "formula": "=INDEX(FREQUENCY({79,85,78,85,50,81,95,88,97},{70,79,89}),4,1)",
+      "result": 2,
+      "result_type": "int",
+      "description": "FREQUENCY exam scores >89"
+    },
+    {
+      "formula": "=INDEX(FREQUENCY({1,2,3,4,5},{3}),1,1)",
+      "result": 3,
+      "result_type": "int",
+      "description": "FREQUENCY single bin count (<=3)"
+    },
+    {
+      "formula": "=INDEX(FREQUENCY({1,2,3,4,5},{3}),2,1)",
+      "result": 2,
+      "result_type": "int",
+      "description": "FREQUENCY single bin count (>3)"
+    },
+    {
+      "formula": "=T.DIST.2T(2,10)",
+      "result": 0.07338803477074037,
+      "result_type": "float",
+      "description": "T.DIST.2T two-tailed probability"
+    },
+    {
+      "formula": "=T.DIST.2T(1.5,5)",
+      "result": 0.19390368024247318,
+      "result_type": "float",
+      "description": "T.DIST.2T with small df"
+    },
+    {
+      "formula": "=T.DIST.2T(0,10)",
+      "result": 1,
+      "result_type": "int",
+      "description": "T.DIST.2T at x=0 returns 1"
+    },
+    {
+      "formula": "=T.DIST.2T(3,30)",
+      "result": 0.005389964065651945,
+      "result_type": "float",
+      "description": "T.DIST.2T large t value"
+    },
+    {
+      "formula": "=T.INV.2T(0.05,10)",
+      "result": 2.228138851986274,
+      "result_type": "float",
+      "description": "T.INV.2T alpha=0.05"
+    },
+    {
+      "formula": "=T.INV.2T(0.1,20)",
+      "result": 1.7247182429207875,
+      "result_type": "float",
+      "description": "T.INV.2T alpha=0.1"
+    },
+    {
+      "formula": "=T.INV.2T(0.01,30)",
+      "result": 2.7499956535672254,
+      "result_type": "float",
+      "description": "T.INV.2T alpha=0.01"
+    },
+    {
+      "formula": "=T.INV.2T(1,10)",
+      "result": 0,
+      "result_type": "int",
+      "description": "T.INV.2T probability=1 returns 0"
+    },
+    {
+      "formula": "=T.TEST({3,4,5,8,9,1,2,4,5},{6,19,3,2,14,4,5,17,1},2,1)",
+      "result": 0.19601578492528207,
+      "result_type": "float",
+      "description": "T.TEST paired two-tailed"
+    },
+    {
+      "formula": "=T.TEST({3,4,5,8,9,1,2,4,5},{6,19,3,2,14,4,5,17,1},1,1)",
+      "result": 0.09800789246264104,
+      "result_type": "float",
+      "description": "T.TEST paired one-tailed"
+    },
+    {
+      "formula": "=T.TEST({3,4,5,8,9,1,2,4,5},{6,19,3,2,14,4,5,17,1},2,2)",
+      "result": 0.19199588676039625,
+      "result_type": "float",
+      "description": "T.TEST equal variance two-tailed"
+    },
+    {
+      "formula": "=T.TEST({3,4,5,8,9,1,2,4,5},{6,19,3,2,14,4,5,17,1},2,3)",
+      "result": 0.2022939233686779,
+      "result_type": "float",
+      "description": "T.TEST Welch two-tailed"
+    },
+    {
+      "formula": "=F.TEST({6,7,9,15,21},{20,28,31,38,40})",
+      "result": 0.6483178467861745,
+      "result_type": "float",
+      "description": "F.TEST different variances"
+    },
+    {
+      "formula": "=F.TEST({1,2,3,4,5,6},{2,3,4,5,6,7})",
+      "result": 1,
+      "result_type": "int",
+      "description": "F.TEST equal variances returns 1"
+    },
+    {
+      "formula": "=F.TEST({1,2,3,4,5},{10,20,30,40,50})",
+      "result": 0.0005842952690524594,
+      "result_type": "float",
+      "description": "F.TEST proportional data (F=100, p very small)"
+    },
+    {
+      "formula": "=F.TEST({1,1,2,2},{5,10,15,20})",
+      "result": 0.00239489397979715,
+      "result_type": "float",
+      "description": "F.TEST very different variances"
+    },
+    {
+      "formula": "=CHISQ.TEST({58,35,15,42},{45.35,35.09,16.81,52.75})",
+      "result": 0.11584540679945854,
+      "result_type": "float",
+      "description": "CHISQ.TEST goodness of fit"
+    },
+    {
+      "formula": "=CHISQ.TEST({20,30,25,25},{25,25,25,25})",
+      "result": 0.5724067044708798,
+      "result_type": "float",
+      "description": "CHISQ.TEST uniform distribution"
+    },
+    {
+      "formula": "=CHISQ.TEST({10,20,30},{10,20,30})",
+      "result": 1,
+      "result_type": "int",
+      "description": "CHISQ.TEST perfect fit returns 1"
+    },
+    {
+      "formula": "=CHISQ.TEST({100,50,50,100},{75,75,75,75})",
+      "result": 2.739211446556311e-07,
+      "result_type": "float",
+      "description": "CHISQ.TEST significant difference"
+    },
+    {
+      "formula": "=GROUPBY(A1:A5,B1:B5,\"SUM\",0)",
+      "result": [["A", 80], ["B", 70]],
+      "result_type": "array",
+      "description": "GROUPBY sum with no headers",
+      "context": {"A1": "A", "A2": "A", "A3": "B", "A4": "B", "A5": "A", "B1": 10, "B2": 20, "B3": 30, "B4": 40, "B5": 50}
+    },
+    {
+      "formula": "=GROUPBY(A1:A5,B1:B5,\"COUNT\",0)",
+      "result": [["A", 3], ["B", 2]],
+      "result_type": "array",
+      "description": "GROUPBY count with no headers",
+      "context": {"A1": "A", "A2": "A", "A3": "B", "A4": "B", "A5": "A", "B1": 10, "B2": 20, "B3": 30, "B4": 40, "B5": 50}
+    },
+    {
+      "formula": "=GROUPBY(A1:A5,B1:B5,\"AVERAGE\",0)",
+      "result": [["A", 26.666666666666668], ["B", 35]],
+      "result_type": "array",
+      "description": "GROUPBY average with no headers",
+      "context": {"A1": "A", "A2": "A", "A3": "B", "A4": "B", "A5": "A", "B1": 10, "B2": 20, "B3": 30, "B4": 40, "B5": 50}
+    },
+    {
+      "formula": "=GROUPBY(A1:A5,B1:B5,\"MAX\",0)",
+      "result": [["A", 50], ["B", 40]],
+      "result_type": "array",
+      "description": "GROUPBY max with no headers",
+      "context": {"A1": "A", "A2": "A", "A3": "B", "A4": "B", "A5": "A", "B1": 10, "B2": 20, "B3": 30, "B4": 40, "B5": 50}
+    },
+    {
+      "formula": "=GROUPBY(A1:A5,B1:B5,\"MIN\",0)",
+      "result": [["A", 10], ["B", 30]],
+      "result_type": "array",
+      "description": "GROUPBY min with no headers",
+      "context": {"A1": "A", "A2": "A", "A3": "B", "A4": "B", "A5": "A", "B1": 10, "B2": 20, "B3": 30, "B4": 40, "B5": 50}
+    },
+    {
+      "formula": "=PIVOTBY(A2:A5,B2:B5,C2:C5,\"SUM\",1)",
+      "result": [[null, "West", "East"], ["Fruit", 200, null], ["Veggie", 75, 50]],
+      "result_type": "array",
+      "description": "PIVOTBY sum with headers",
+      "context": {"A1": "Category", "A2": "Fruit", "A3": "Fruit", "A4": "Veggie", "A5": "Veggie", "B1": "Region", "B2": "East", "B3": "West", "B4": "East", "B5": "West", "C1": "Sales", "C2": 100, "C3": 200, "C4": 50, "C5": 75}
+    },
+    {
+      "formula": "=PIVOTBY(A2:A5,B2:B5,C2:C5,\"COUNT\",1)",
+      "result": [[null, "West", "East"], ["Fruit", 1, null], ["Veggie", 1, 1]],
+      "result_type": "array",
+      "description": "PIVOTBY count with headers",
+      "context": {"A1": "Category", "A2": "Fruit", "A3": "Fruit", "A4": "Veggie", "A5": "Veggie", "B1": "Region", "B2": "East", "B3": "West", "B4": "East", "B5": "West", "C1": "Sales", "C2": 100, "C3": 200, "C4": 50, "C5": 75}
+    }
+  ]
+}

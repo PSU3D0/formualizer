@@ -9,5 +9,6 @@ repomix-output.xml
 opencode.json
 
 *coverage*
+!tests/formula_tests/extended_coverage.json
 *.xlsx
 test-wb/

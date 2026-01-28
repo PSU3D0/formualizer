@@ -5,7 +5,7 @@
 //! before reporting, rather than failing on the first mismatch.
 
 #[cfg(test)]
-use formualizer_common::LiteralValue;
+use formualizer_common::{parse_a1_1based, ExcelError, ExcelErrorKind, LiteralValue};
 #[cfg(test)]
 use formualizer_parse::parser::Parser;
 #[cfg(test)]
@@ -27,6 +27,8 @@ struct TestCase {
     result_type: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    context: Option<serde_json::Value>,
 }
 
 /// Represents a test file containing multiple test cases.
@@ -61,6 +63,50 @@ fn create_test_workbook() -> crate::test_workbook::TestWorkbook {
     crate::test_workbook::TestWorkbook::new()
 }
 
+#[cfg(test)]
+fn json_to_literal(value: &serde_json::Value) -> Option<LiteralValue> {
+    match value {
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(LiteralValue::Int(i))
+            } else {
+                n.as_f64().map(LiteralValue::Number)
+            }
+        }
+        serde_json::Value::Bool(b) => Some(LiteralValue::Boolean(*b)),
+        serde_json::Value::String(s) => {
+            if s.starts_with('#') {
+                Some(LiteralValue::Error(ExcelError::from_error_string(s)))
+            } else {
+                Some(LiteralValue::Text(s.clone()))
+            }
+        }
+        serde_json::Value::Null => Some(LiteralValue::Empty),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+fn apply_context(
+    mut wb: crate::test_workbook::TestWorkbook,
+    context: &serde_json::Value,
+) -> crate::test_workbook::TestWorkbook {
+    let Some(map) = context.as_object() else {
+        return wb;
+    };
+
+    for (cell_ref, value) in map {
+        let Ok((row, col, _, _)) = parse_a1_1based(cell_ref) else {
+            continue;
+        };
+        if let Some(literal) = json_to_literal(value) {
+            wb = wb.with_cell("Sheet1", row, col, literal);
+        }
+    }
+
+    wb
+}
+
 /// Evaluate a formula string and return the result.
 #[cfg(test)]
 fn evaluate_formula(
@@ -89,6 +135,11 @@ fn compare_result(
     result_type: Option<&str>,
 ) -> bool {
     let _ = result_type; // Unused for now, but may be useful later
+    compare_literal_json(actual, expected)
+}
+
+#[cfg(test)]
+fn compare_literal_json(actual: &LiteralValue, expected: &serde_json::Value) -> bool {
     match expected {
         serde_json::Value::Number(n) => {
             let expected_num = n.as_f64().unwrap();
@@ -107,16 +158,76 @@ fn compare_result(
             matches!(actual, LiteralValue::Boolean(actual_bool) if actual_bool == expected_bool)
         }
         serde_json::Value::String(expected_str) => {
-            // Check if it's an error string
-            if expected_str.starts_with('#') && expected_str.ends_with('!') {
-                matches!(actual, LiteralValue::Error(e) if e.to_string() == *expected_str)
+            if expected_str.starts_with('#') {
+                if let Some(expected_kind) = parse_error_kind_prefix(expected_str) {
+                    matches!(actual, LiteralValue::Error(e) if e.kind == expected_kind)
+                } else {
+                    matches!(actual, LiteralValue::Error(e) if e.to_string() == *expected_str)
+                }
             } else {
                 matches!(actual, LiteralValue::Text(actual_str) if actual_str == expected_str)
             }
         }
         serde_json::Value::Null => matches!(actual, LiteralValue::Empty),
+        serde_json::Value::Array(_) => compare_array(actual, expected),
         _ => false,
     }
+}
+
+#[cfg(test)]
+fn compare_array(actual: &LiteralValue, expected: &serde_json::Value) -> bool {
+    let actual_rows = match actual {
+        LiteralValue::Array(rows) => rows,
+        _ => return false,
+    };
+
+    let expected_rows = match expected {
+        serde_json::Value::Array(rows) => rows,
+        _ => return false,
+    };
+
+    let expected_matrix: Vec<Vec<&serde_json::Value>> = if expected_rows
+        .iter()
+        .all(|row| matches!(row, serde_json::Value::Array(_)))
+    {
+        expected_rows
+            .iter()
+            .map(|row| row.as_array().unwrap().iter().collect())
+            .collect()
+    } else {
+        vec![expected_rows.iter().collect()]
+    };
+
+    if actual_rows.len() != expected_matrix.len() {
+        return false;
+    }
+
+    for (row_idx, expected_row) in expected_matrix.iter().enumerate() {
+        let actual_row = &actual_rows[row_idx];
+        if actual_row.len() != expected_row.len() {
+            return false;
+        }
+        for (col_idx, expected_cell) in expected_row.iter().enumerate() {
+            if !compare_literal_json(&actual_row[col_idx], expected_cell) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+#[cfg(test)]
+fn parse_error_kind_prefix(value: &str) -> Option<ExcelErrorKind> {
+    let trimmed = value.trim();
+    if !trimmed.starts_with('#') {
+        return None;
+    }
+
+    let end = trimmed
+        .find(|c: char| c == ':' || c == ' ' || c == '(' || c == '[')
+        .unwrap_or(trimmed.len());
+    ExcelErrorKind::try_parse(&trimmed[..end])
 }
 
 /// Format a LiteralValue for display.
@@ -207,9 +318,14 @@ fn run_formula_tests(test_dir: &Path) -> (usize, Vec<TestFailure>) {
             }
         };
 
-        let wb = create_test_workbook();
-
         for test_case in &test_file.tests {
+            let mut wb = create_test_workbook();
+            if let Some(context) = test_file.context_data.as_ref() {
+                wb = apply_context(wb, context);
+            }
+            if let Some(context) = test_case.context.as_ref() {
+                wb = apply_context(wb, context);
+            }
             let description = test_case.description.clone().unwrap_or_default();
 
             match evaluate_formula(&test_case.formula, &wb) {

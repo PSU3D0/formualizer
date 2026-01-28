@@ -53,11 +53,10 @@
       "description": "count non-empty"
     },
     {
-      "formula": "=COUNTBLANK(A1:A5)",
-      "result": 0,
+      "formula": "=COUNTBLANK({\"\", \"\", \"\"})",
+      "result": 3,
       "result_type": "int",
-      "description": "count blank",
-      "context": {"A1": 1, "A2": 2, "A3": 3, "A4": 4, "A5": 5}
+      "description": "count blank"
     },
     {
       "formula": "=PRODUCT(2,3,4)",

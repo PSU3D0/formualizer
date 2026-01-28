@@ -1,0 +1,80 @@
+{
+  "name": "lookup",
+  "generated": "2026-01-21T12:26:15.793540",
+  "generator": "LibreOffice",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=VLOOKUP(2,{1,\"a\";2,\"b\";3,\"c\"},2,FALSE)",
+      "result": "b",
+      "result_type": "str",
+      "description": "vlookup exact"
+    },
+    {
+      "formula": "=HLOOKUP(2,{1,2,3;\"a\",\"b\",\"c\"},2,FALSE)",
+      "result": "b",
+      "result_type": "str",
+      "description": "hlookup exact"
+    },
+    {
+      "formula": "=INDEX({1,2,3;4,5,6;7,8,9},2,3)",
+      "result": 6,
+      "result_type": "int",
+      "description": "index 2d"
+    },
+    {
+      "formula": "=MATCH(3,{1,2,3,4,5},0)",
+      "result": 3,
+      "result_type": "int",
+      "description": "match exact"
+    },
+    {
+      "formula": "=MATCH(3.5,{1,2,3,4,5},1)",
+      "result": 3,
+      "result_type": "int",
+      "description": "match approx"
+    },
+    {
+      "formula": "=CHOOSE(2,\"a\",\"b\",\"c\",\"d\")",
+      "result": "b",
+      "result_type": "str",
+      "description": "choose"
+    },
+    {
+      "formula": "=ROW(A5)",
+      "result": 5,
+      "result_type": "int",
+      "description": "row function"
+    },
+    {
+      "formula": "=COLUMN(E1)",
+      "result": 5,
+      "result_type": "int",
+      "description": "column function"
+    },
+    {
+      "formula": "=ROWS({1,2,3;4,5,6})",
+      "result": 2,
+      "result_type": "int",
+      "description": "rows count"
+    },
+    {
+      "formula": "=COLUMNS({1,2,3;4,5,6})",
+      "result": 3,
+      "result_type": "int",
+      "description": "columns count"
+    },
+    {
+      "formula": "=ADDRESS(1,1)",
+      "result": "$A$1",
+      "result_type": "str",
+      "description": "address"
+    },
+    {
+      "formula": "=ADDRESS(1,1,4)",
+      "result": "A1",
+      "result_type": "str",
+      "description": "address relative"
+    }
+  ]
+}
