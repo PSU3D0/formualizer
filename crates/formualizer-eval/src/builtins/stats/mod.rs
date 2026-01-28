@@ -979,7 +979,9 @@ impl Function for ProductFn {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
         }
         let result = nums.iter().product::<f64>();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -1021,7 +1023,9 @@ impl Function for GeomeanFn {
         // Use log to avoid overflow: exp(mean(ln(x)))
         let log_sum: f64 = nums.iter().map(|x| x.ln()).sum();
         let result = (log_sum / nums.len() as f64).exp();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -1062,7 +1066,9 @@ impl Function for HarmeanFn {
         // Harmonic mean = n / sum(1/x)
         let sum_reciprocals: f64 = nums.iter().map(|x| 1.0 / x).sum();
         let result = nums.len() as f64 / sum_reciprocals;
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -1096,7 +1102,9 @@ impl Function for AvedevFn {
         }
         let mean = nums.iter().sum::<f64>() / nums.len() as f64;
         let avedev = nums.iter().map(|x| (x - mean).abs()).sum::<f64>() / nums.len() as f64;
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(avedev)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            avedev,
+        )))
     }
 }
 
@@ -1252,14 +1260,26 @@ fn eval_maxminifs<'a, 'b>(
                     LiteralValue::Number(n) => {
                         result = Some(match result {
                             None => n,
-                            Some(curr) => if is_max { curr.max(n) } else { curr.min(n) },
+                            Some(curr) => {
+                                if is_max {
+                                    curr.max(n)
+                                } else {
+                                    curr.min(n)
+                                }
+                            }
                         });
                     }
                     LiteralValue::Int(i) => {
                         let n = i as f64;
                         result = Some(match result {
                             None => n,
-                            Some(curr) => if is_max { curr.max(n) } else { curr.min(n) },
+                            Some(curr) => {
+                                if is_max {
+                                    curr.max(n)
+                                } else {
+                                    curr.min(n)
+                                }
+                            }
                         });
                     }
                     _ => {} // Skip non-numeric
@@ -1404,7 +1424,9 @@ impl Function for CorrelFn {
         }
 
         let correl = sum_xy / denom;
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(correl)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            correl,
+        )))
     }
 }
 
@@ -1455,7 +1477,9 @@ impl Function for SlopeFn {
         }
 
         let slope = sum_xy / sum_x2;
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(slope)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            slope,
+        )))
     }
 }
 
@@ -1507,7 +1531,9 @@ impl Function for InterceptFn {
 
         let slope = sum_xy / sum_x2;
         let intercept = mean_y - slope * mean_x;
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(intercept)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            intercept,
+        )))
     }
 }
 
@@ -1538,13 +1564,15 @@ impl Function for DevsqFn {
         }
         let mean = nums.iter().sum::<f64>() / nums.len() as f64;
         let devsq = nums.iter().map(|x| (x - mean).powi(2)).sum::<f64>();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(devsq)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            devsq,
+        )))
     }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   STATISTICAL DISTRIBUTION FUNCTIONS
-   ═══════════════════════════════════════════════════════════════════════════ */
+STATISTICAL DISTRIBUTION FUNCTIONS
+═══════════════════════════════════════════════════════════════════════════ */
 
 /// Helper: Standard normal CDF using error function approximation
 fn std_norm_cdf(z: f64) -> f64 {
@@ -1670,7 +1698,9 @@ impl Function for NormSDistFn {
         } else {
             std_norm_pdf(z)
         };
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -1753,7 +1783,9 @@ impl Function for NormDistFn {
         } else {
             std_norm_pdf(z) / std_dev
         };
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -1851,7 +1883,9 @@ impl Function for LognormDistFn {
         } else {
             std_norm_pdf(z) / (x * std_dev)
         };
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -2043,9 +2077,13 @@ fn gamma_cf(a: f64, x: f64) -> f64 {
         let an = -(i as f64) * (i as f64 - a);
         b += 2.0;
         d = an * d + b;
-        if d.abs() < TINY { d = TINY; }
+        if d.abs() < TINY {
+            d = TINY;
+        }
         c = b + an / c;
-        if c.abs() < TINY { c = TINY; }
+        if c.abs() < TINY {
+            c = TINY;
+        }
         d = 1.0 / d;
         let delta = d * c;
         h *= delta;
@@ -2092,7 +2130,9 @@ fn beta_i(x: f64, a: f64, b: f64) -> f64 {
     let mut qam = a - 1.0;
     let mut c = 1.0;
     let mut d = 1.0 - qab * x / qap;
-    if d.abs() < TINY { d = TINY; }
+    if d.abs() < TINY {
+        d = TINY;
+    }
     d = 1.0 / d;
     let mut h = d;
 
@@ -2103,18 +2143,26 @@ fn beta_i(x: f64, a: f64, b: f64) -> f64 {
         // Even step: d_{2m} = m(b-m)x / ((a+2m-1)(a+2m))
         let aa = m_f64 * (b - m_f64) * x / ((qam + m2) * (a + m2));
         d = 1.0 + aa * d;
-        if d.abs() < TINY { d = TINY; }
+        if d.abs() < TINY {
+            d = TINY;
+        }
         c = 1.0 + aa / c;
-        if c.abs() < TINY { c = TINY; }
+        if c.abs() < TINY {
+            c = TINY;
+        }
         d = 1.0 / d;
         h *= d * c;
 
         // Odd step: d_{2m+1} = -(a+m)(a+b+m)x / ((a+2m)(a+2m+1))
         let aa = -((a + m_f64) * (qab + m_f64) * x) / ((a + m2) * (qap + m2));
         d = 1.0 + aa * d;
-        if d.abs() < TINY { d = TINY; }
+        if d.abs() < TINY {
+            d = TINY;
+        }
         c = 1.0 + aa / c;
-        if c.abs() < TINY { c = TINY; }
+        if c.abs() < TINY {
+            c = TINY;
+        }
         d = 1.0 / d;
         let delta = d * c;
         h *= delta;
@@ -2161,7 +2209,9 @@ fn t_inv(p: f64, df: f64) -> Option<f64> {
 
 /// Helper: T distribution PDF
 fn t_pdf(t: f64, df: f64) -> f64 {
-    let coef = (ln_gamma((df + 1.0) / 2.0) - ln_gamma(df / 2.0) - 0.5 * (df * std::f64::consts::PI).ln()).exp();
+    let coef =
+        (ln_gamma((df + 1.0) / 2.0) - ln_gamma(df / 2.0) - 0.5 * (df * std::f64::consts::PI).ln())
+            .exp();
     coef * (1.0 + t * t / df).powf(-(df + 1.0) / 2.0)
 }
 
@@ -2304,7 +2354,9 @@ impl Function for TDistFn {
         } else {
             t_pdf(x, df)
         };
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -2344,7 +2396,9 @@ impl Function for TInvFn {
         }
 
         match t_inv(p, df) {
-            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result))),
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                result,
+            ))),
             None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             ))),
@@ -2394,7 +2448,9 @@ impl Function for ChisqDistFn {
         } else {
             chisq_pdf(x, df)
         };
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -2434,7 +2490,9 @@ impl Function for ChisqInvFn {
         }
 
         match chisq_inv(p, df) {
-            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result))),
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                result,
+            ))),
             None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             ))),
@@ -2486,7 +2544,9 @@ impl Function for FDistFn {
         } else {
             f_pdf(x, d1, d2)
         };
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -2528,7 +2588,9 @@ impl Function for FInvFn {
         }
 
         match f_inv(p, d1, d2) {
-            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result))),
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                result,
+            ))),
             None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             ))),
@@ -2652,7 +2714,8 @@ impl Function for BinomDistFn {
             // CDF: sum from i=0 to k of P(X=i)
             let mut sum = 0.0;
             for i in 0..=k {
-                let ln_prob = ln_binom(n, i) + (i as f64) * p.ln() + ((n - i) as f64) * (1.0 - p).ln();
+                let ln_prob =
+                    ln_binom(n, i) + (i as f64) * p.ln() + ((n - i) as f64) * (1.0 - p).ln();
                 sum += ln_prob.exp();
             }
             sum
@@ -2662,7 +2725,9 @@ impl Function for BinomDistFn {
             ln_prob.exp()
         };
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -2714,7 +2779,9 @@ impl Function for PoissonDistFn {
             ln_prob.exp()
         };
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -2763,7 +2830,9 @@ impl Function for ExponDistFn {
             lambda * (-lambda * x).exp()
         };
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -2796,8 +2865,8 @@ impl Function for GammaDistFn {
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = coerce_num(&scalar_like_value(&args[0])?)?;
-        let alpha = coerce_num(&scalar_like_value(&args[1])?)?;  // shape
-        let beta = coerce_num(&scalar_like_value(&args[2])?)?;   // scale
+        let alpha = coerce_num(&scalar_like_value(&args[1])?)?; // shape
+        let beta = coerce_num(&scalar_like_value(&args[2])?)?; // scale
         let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
 
         if x < 0.0 || alpha <= 0.0 || beta <= 0.0 {
@@ -2815,7 +2884,9 @@ impl Function for GammaDistFn {
             ln_pdf.exp()
         };
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -2849,8 +2920,8 @@ impl Function for WeibullDistFn {
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = coerce_num(&scalar_like_value(&args[0])?)?;
-        let alpha = coerce_num(&scalar_like_value(&args[1])?)?;  // shape
-        let beta = coerce_num(&scalar_like_value(&args[2])?)?;   // scale
+        let alpha = coerce_num(&scalar_like_value(&args[1])?)?; // shape
+        let beta = coerce_num(&scalar_like_value(&args[2])?)?; // scale
         let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
 
         if x < 0.0 || alpha <= 0.0 || beta <= 0.0 {
@@ -2877,7 +2948,9 @@ impl Function for WeibullDistFn {
             }
         };
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -2972,12 +3045,15 @@ impl Function for BetaDistFn {
                     0.0
                 }
             } else {
-                let ln_pdf = (alpha - 1.0) * x_std.ln() + (beta_param - 1.0) * (1.0 - x_std).ln() - ln_beta;
+                let ln_pdf =
+                    (alpha - 1.0) * x_std.ln() + (beta_param - 1.0) * (1.0 - x_std).ln() - ln_beta;
                 ln_pdf.exp() / scale
             }
         };
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -3010,9 +3086,9 @@ impl Function for NegbinomDistFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let number_f = coerce_num(&scalar_like_value(&args[0])?)?.trunc() as i64;  // number of failures
-        let number_s = coerce_num(&scalar_like_value(&args[1])?)?.trunc() as i64;  // number of successes
-        let prob_s = coerce_num(&scalar_like_value(&args[2])?)?;  // probability of success
+        let number_f = coerce_num(&scalar_like_value(&args[0])?)?.trunc() as i64; // number of failures
+        let number_s = coerce_num(&scalar_like_value(&args[1])?)?.trunc() as i64; // number of successes
+        let prob_s = coerce_num(&scalar_like_value(&args[2])?)?; // probability of success
         let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
 
         if number_f < 0 || number_s < 1 || prob_s <= 0.0 || prob_s >= 1.0 {
@@ -3034,7 +3110,9 @@ impl Function for NegbinomDistFn {
             ln_prob.exp()
         };
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -3071,10 +3149,10 @@ impl Function for HypgeomDistFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let sample_s = coerce_num(&scalar_like_value(&args[0])?)?.trunc() as i64;     // successes in sample
+        let sample_s = coerce_num(&scalar_like_value(&args[0])?)?.trunc() as i64; // successes in sample
         let number_sample = coerce_num(&scalar_like_value(&args[1])?)?.trunc() as i64; // sample size
-        let population_s = coerce_num(&scalar_like_value(&args[2])?)?.trunc() as i64;  // successes in population
-        let number_pop = coerce_num(&scalar_like_value(&args[3])?)?.trunc() as i64;    // population size
+        let population_s = coerce_num(&scalar_like_value(&args[2])?)?.trunc() as i64; // successes in population
+        let number_pop = coerce_num(&scalar_like_value(&args[3])?)?.trunc() as i64; // population size
         let cumulative = coerce_num(&scalar_like_value(&args[4])?)? != 0.0;
 
         // Validation
@@ -3120,7 +3198,9 @@ impl Function for HypgeomDistFn {
             hypgeom_pmf(sample_s, number_sample, population_s, number_pop)
         };
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -3128,15 +3208,13 @@ impl Function for HypgeomDistFn {
 fn hypgeom_pmf(k: i64, n: i64, k_pop: i64, n_pop: i64) -> f64 {
     // P(X=k) = C(K, k) * C(N-K, n-k) / C(N, n)
     // Using logs to avoid overflow
-    let ln_prob = ln_binom(k_pop, k)
-        + ln_binom(n_pop - k_pop, n - k)
-        - ln_binom(n_pop, n);
+    let ln_prob = ln_binom(k_pop, k) + ln_binom(n_pop - k_pop, n - k) - ln_binom(n_pop, n);
     ln_prob.exp()
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   COVARIANCE AND CORRELATION FUNCTIONS
-   ═══════════════════════════════════════════════════════════════════════════ */
+COVARIANCE AND CORRELATION FUNCTIONS
+═══════════════════════════════════════════════════════════════════════════ */
 
 /// COVARIANCE.P(array1, array2) - Population covariance
 #[derive(Debug)]
@@ -3178,7 +3256,9 @@ impl Function for CovariancePFn {
 
         // Population covariance divides by n
         let covar = sum_xy / n;
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(covar)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            covar,
+        )))
     }
 }
 
@@ -3225,7 +3305,9 @@ impl Function for CovarianceSFn {
 
         // Sample covariance divides by (n - 1)
         let covar = sum_xy / (n - 1) as f64;
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(covar)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            covar,
+        )))
     }
 }
 
@@ -3277,7 +3359,9 @@ impl Function for PearsonFn {
         }
 
         let correl = sum_xy / denom;
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(correl)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            correl,
+        )))
     }
 }
 
@@ -3394,7 +3478,9 @@ impl Function for SteyxFn {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
         }
         let steyx = (sse / (n_f - 2.0)).sqrt();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(steyx)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            steyx,
+        )))
     }
 }
 
@@ -3561,7 +3647,9 @@ impl Function for FisherFn {
 
         // Fisher transformation: 0.5 * ln((1 + x) / (1 - x))
         let fisher = 0.5 * ((1.0 + x) / (1.0 - x)).ln();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(fisher)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            fisher,
+        )))
     }
 }
 
@@ -3591,7 +3679,9 @@ impl Function for FisherInvFn {
         // Inverse Fisher transformation: (e^(2y) - 1) / (e^(2y) + 1)
         let e2y = (2.0 * y).exp();
         let fisherinv = (e2y - 1.0) / (e2y + 1.0);
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(fisherinv)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            fisherinv,
+        )))
     }
 }
 
@@ -3674,7 +3764,9 @@ impl Function for ForecastLinearFn {
         let intercept = mean_y - slope * mean_x;
         let forecast = intercept + slope * x;
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(forecast)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            forecast,
+        )))
     }
 }
 
@@ -3804,11 +3896,10 @@ impl Function for LinestFn {
 
         if !return_stats {
             // Return just slope and intercept as 1x2 array: [[slope, intercept]]
-            let row = vec![
-                LiteralValue::Number(slope),
-                LiteralValue::Number(intercept),
-            ];
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![row])));
+            let row = vec![LiteralValue::Number(slope), LiteralValue::Number(intercept)];
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
+                row,
+            ])));
         }
 
         // Calculate additional statistics for stats=TRUE
@@ -3822,7 +3913,7 @@ impl Function for LinestFn {
 
         // Calculate residuals and sums of squares
         let mut ss_resid = 0.0; // Sum of squared residuals
-        let mut ss_tot = 0.0;   // Total sum of squares
+        let mut ss_tot = 0.0; // Total sum of squares
 
         for i in 0..x_vals.len() {
             let y_pred = slope * x_vals[i] + intercept;
@@ -3888,7 +3979,10 @@ impl Function for LinestFn {
         // Build 5x2 result array
         let rows = vec![
             vec![LiteralValue::Number(slope), LiteralValue::Number(intercept)],
-            vec![LiteralValue::Number(se_slope), LiteralValue::Number(se_intercept)],
+            vec![
+                LiteralValue::Number(se_slope),
+                LiteralValue::Number(se_intercept),
+            ],
             vec![LiteralValue::Number(r_squared), LiteralValue::Number(se_y)],
             vec![LiteralValue::Number(f_stat), LiteralValue::Number(df)],
             vec![LiteralValue::Number(ss_reg), LiteralValue::Number(ss_resid)],
@@ -3964,7 +4058,9 @@ impl Function for ConfidenceNormFn {
         };
 
         let result = z_crit * std_dev / size.sqrt();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -4033,7 +4129,9 @@ impl Function for ConfidenceTFn {
         };
 
         let result = t_crit * std_dev / size.sqrt();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
     }
 }
 
@@ -4121,7 +4219,9 @@ impl Function for ZTestFn {
         // P-value = 1 - NORM.S.DIST(z, TRUE)
         let p_value = 1.0 - std_norm_cdf(z);
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(p_value)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            p_value,
+        )))
     }
 }
 
@@ -4271,7 +4371,9 @@ impl Function for TrendFn {
             .collect();
 
         // Return as 1xN array (row vector)
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![predicted])))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
+            predicted,
+        ])))
     }
 }
 
@@ -4437,7 +4539,9 @@ impl Function for GrowthFn {
             .collect();
 
         // Return as 1xN array (row vector)
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![predicted])))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
+            predicted,
+        ])))
     }
 }
 
@@ -4584,11 +4688,10 @@ impl Function for LogestFn {
 
         if !return_stats {
             // Return just m and b as 1x2 array: [[m, b]]
-            let row = vec![
-                LiteralValue::Number(m),
-                LiteralValue::Number(b),
-            ];
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![row])));
+            let row = vec![LiteralValue::Number(m), LiteralValue::Number(b)];
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(vec![
+                row,
+            ])));
         }
 
         // Calculate additional statistics for stats=TRUE
@@ -4799,7 +4902,9 @@ impl Function for PercentRankIncFn {
         let multiplier = 10_f64.powi(significance as i32);
         let truncated = (rank * multiplier).trunc() / multiplier;
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(truncated)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            truncated,
+        )))
     }
 }
 
@@ -4903,7 +5008,9 @@ impl Function for PercentRankExcFn {
         let multiplier = 10_f64.powi(significance as i32);
         let truncated = (rank * multiplier).trunc() / multiplier;
 
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(truncated)))
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            truncated,
+        )))
     }
 }
 
@@ -5088,7 +5195,9 @@ impl Function for TInv2TFn {
         // So 1 - F(t) = p/2, meaning F(t) = 1 - p/2
         // Thus t = t_inv(1 - p/2, df)
         match t_inv(1.0 - p / 2.0, df) {
-            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(result))),
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                result,
+            ))),
             None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             ))),

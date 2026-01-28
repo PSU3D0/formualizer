@@ -16,7 +16,9 @@ mod stack; // stacking & concatenation functions (HSTACK, VSTACK)
 pub use address::AddressFn;
 pub use choose::ChooseFn;
 pub use core::{HLookupFn, MatchFn, VLookupFn};
-pub use dynamic::{FilterFn, GroupByFn, PivotByFn, RandArrayFn, SortByFn, SortFn, UniqueFn, XLookupFn, XMatchFn};
+pub use dynamic::{
+    FilterFn, GroupByFn, PivotByFn, RandArrayFn, SortByFn, SortFn, UniqueFn, XLookupFn, XMatchFn,
+};
 pub use reference_info::{ColumnFn, ColumnsFn, RowFn, RowsFn};
 pub use stack::{HStackFn, VStackFn};
 // CHOOSECOLS / CHOOSEROWS live in choose.rs alongside CHOOSE

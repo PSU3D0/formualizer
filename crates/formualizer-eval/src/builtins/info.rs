@@ -474,7 +474,7 @@ impl Function for IsEvenFn {
         let v = args[0].value()?.into_literal();
         let n = match v {
             LiteralValue::Error(e) => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)))
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
             LiteralValue::Int(i) => i as f64,
             LiteralValue::Number(n) => n,
@@ -488,7 +488,7 @@ impl Function for IsEvenFn {
             _ => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new_value(),
-                )))
+                )));
             }
         };
         // Excel truncates to integer first
@@ -526,7 +526,7 @@ impl Function for IsOddFn {
         let v = args[0].value()?.into_literal();
         let n = match v {
             LiteralValue::Error(e) => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)))
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
             LiteralValue::Int(i) => i as f64,
             LiteralValue::Number(n) => n,
@@ -540,7 +540,7 @@ impl Function for IsOddFn {
             _ => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new_value(),
-                )))
+                )));
             }
         };
         let n = n.trunc() as i64;

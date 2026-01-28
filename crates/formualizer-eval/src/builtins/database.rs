@@ -24,8 +24,8 @@
 //! - Multiple columns in same row have AND relationship
 //! - Supports comparison operators (>, <, >=, <=, <>), wildcards (*, ?)
 
-use super::utils::{coerce_num, criteria_match, ARG_ANY_ONE};
-use crate::args::{parse_criteria, ArgSchema, CriteriaPredicate};
+use super::utils::{ARG_ANY_ONE, coerce_num, criteria_match};
+use crate::args::{ArgSchema, CriteriaPredicate, parse_criteria};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
@@ -60,7 +60,8 @@ fn resolve_field_index(
                     }
                 }
             }
-            Err(ExcelError::new_value().with_message(format!("Field '{}' not found in database headers", name)))
+            Err(ExcelError::new_value()
+                .with_message(format!("Field '{}' not found in database headers", name)))
         }
         LiteralValue::Number(n) => {
             let idx = *n as i64;
@@ -218,7 +219,8 @@ fn eval_d_function<'a, 'b>(
     let (db_rows, db_cols) = db_view.dims();
     if db_rows < 2 || db_cols < 1 {
         return Ok(CalcValue::Scalar(LiteralValue::Error(
-            ExcelError::new_value().with_message("Database must have headers and at least one data row"),
+            ExcelError::new_value()
+                .with_message("Database must have headers and at least one data row"),
         )));
     }
 
@@ -338,10 +340,10 @@ fn eval_d_function<'a, 'b>(
 /// Statistical operation type for database variance/stdev functions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DStatOp {
-    VarSample,    // DVAR - sample variance (n-1 denominator)
-    VarPop,       // DVARP - population variance (n denominator)
-    StdevSample,  // DSTDEV - sample standard deviation (n-1 denominator)
-    StdevPop,     // DSTDEVP - population standard deviation (n denominator)
+    VarSample,   // DVAR - sample variance (n-1 denominator)
+    VarPop,      // DVARP - population variance (n denominator)
+    StdevSample, // DSTDEV - sample standard deviation (n-1 denominator)
+    StdevPop,    // DSTDEVP - population standard deviation (n denominator)
 }
 
 /// Core evaluation function for database statistical functions (DVAR, DVARP, DSTDEV, DSTDEVP).
@@ -380,7 +382,8 @@ fn eval_d_stat_function<'a, 'b>(
     let (db_rows, db_cols) = db_view.dims();
     if db_rows < 2 || db_cols < 1 {
         return Ok(CalcValue::Scalar(LiteralValue::Error(
-            ExcelError::new_value().with_message("Database must have headers and at least one data row"),
+            ExcelError::new_value()
+                .with_message("Database must have headers and at least one data row"),
         )));
     }
 
@@ -482,10 +485,8 @@ fn eval_dget<'a, 'b>(
 ) -> Result<CalcValue<'b>, ExcelError> {
     if args.len() != 3 {
         return Ok(CalcValue::Scalar(LiteralValue::Error(
-            ExcelError::new_value().with_message(format!(
-                "DGET expects 3 arguments, got {}",
-                args.len()
-            )),
+            ExcelError::new_value()
+                .with_message(format!("DGET expects 3 arguments, got {}", args.len())),
         )));
     }
 
@@ -510,7 +511,8 @@ fn eval_dget<'a, 'b>(
     let (db_rows, db_cols) = db_view.dims();
     if db_rows < 2 || db_cols < 1 {
         return Ok(CalcValue::Scalar(LiteralValue::Error(
-            ExcelError::new_value().with_message("Database must have headers and at least one data row"),
+            ExcelError::new_value()
+                .with_message("Database must have headers and at least one data row"),
         )));
     }
 
@@ -558,7 +560,9 @@ fn eval_dget<'a, 'b>(
     let result = if matching_values.is_empty() {
         LiteralValue::Error(ExcelError::new_value().with_message("No record matches criteria"))
     } else if matching_values.len() > 1 {
-        LiteralValue::Error(ExcelError::new_num().with_message("More than one record matches criteria"))
+        LiteralValue::Error(
+            ExcelError::new_num().with_message("More than one record matches criteria"),
+        )
     } else {
         matching_values.into_iter().next().unwrap()
     };
@@ -573,10 +577,8 @@ fn eval_dcounta<'a, 'b>(
 ) -> Result<CalcValue<'b>, ExcelError> {
     if args.len() != 3 {
         return Ok(CalcValue::Scalar(LiteralValue::Error(
-            ExcelError::new_value().with_message(format!(
-                "DCOUNTA expects 3 arguments, got {}",
-                args.len()
-            )),
+            ExcelError::new_value()
+                .with_message(format!("DCOUNTA expects 3 arguments, got {}", args.len())),
         )));
     }
 
@@ -601,7 +603,8 @@ fn eval_dcounta<'a, 'b>(
     let (db_rows, db_cols) = db_view.dims();
     if db_rows < 2 || db_cols < 1 {
         return Ok(CalcValue::Scalar(LiteralValue::Error(
-            ExcelError::new_value().with_message("Database must have headers and at least one data row"),
+            ExcelError::new_value()
+                .with_message("Database must have headers and at least one data row"),
         )));
     }
 

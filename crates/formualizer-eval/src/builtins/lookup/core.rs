@@ -42,11 +42,7 @@ fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32)
                 }
             }
         }
-        if lo == 0 {
-            None
-        } else {
-            Some(lo - 1)
-        }
+        if lo == 0 { None } else { Some(lo - 1) }
     } else {
         // -1 mode handled via linear fallback since semantics differ (smallest >=)
         let mut best: Option<usize> = None;

@@ -1,6 +1,6 @@
 //! Extended text functions: CLEAN, UNICHAR, UNICODE, TEXTBEFORE, TEXTAFTER, TEXTSPLIT, DOLLAR, FIXED
 
-use super::super::utils::{coerce_num, ARG_ANY_ONE};
+use super::super::utils::{ARG_ANY_ONE, coerce_num};
 use crate::args::{ArgSchema, ShapeKind};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};

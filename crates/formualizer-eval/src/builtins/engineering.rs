@@ -1,7 +1,7 @@
 //! Engineering functions
 //! Bitwise: BITAND, BITOR, BITXOR, BITLSHIFT, BITRSHIFT
 
-use super::utils::{coerce_num, ARG_ANY_TWO, ARG_NUM_LENIENT_TWO};
+use super::utils::{ARG_ANY_TWO, ARG_NUM_LENIENT_TWO, coerce_num};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -208,11 +208,7 @@ impl Function for BitLShiftFn {
             shifted
         } else {
             let rshift = (-shift) as u32;
-            if rshift >= 48 {
-                0
-            } else {
-                n >> rshift
-            }
+            if rshift >= 48 { 0 } else { n >> rshift }
         };
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
@@ -260,11 +256,7 @@ impl Function for BitRShiftFn {
 
         // Negative shift means left shift
         let result = if shift >= 0 {
-            if shift >= 48 {
-                0
-            } else {
-                n >> shift
-            }
+            if shift >= 48 { 0 } else { n >> shift }
         } else {
             let lshift = (-shift) as u32;
             if lshift >= 48 {

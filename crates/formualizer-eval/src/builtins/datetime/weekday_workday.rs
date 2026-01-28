@@ -183,7 +183,7 @@ impl Function for WeekdayFn {
             _ => {
                 return Ok(CalcValue::Scalar(
                     LiteralValue::Error(ExcelError::new_num()),
-                ))
+                ));
             }
         };
 
@@ -247,7 +247,7 @@ impl Function for WeeknumFn {
             _ => {
                 return Ok(CalcValue::Scalar(
                     LiteralValue::Error(ExcelError::new_num()),
-                ))
+                ));
             }
         };
 
@@ -317,7 +317,7 @@ impl Function for DatedifFn {
             _ => {
                 return Ok(CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new_value(),
-                )))
+                )));
             }
         };
 
@@ -419,7 +419,7 @@ impl Function for DatedifFn {
             _ => {
                 return Ok(CalcValue::Scalar(
                     LiteralValue::Error(ExcelError::new_num()),
-                ))
+                ));
             }
         };
 

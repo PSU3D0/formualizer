@@ -1,6 +1,6 @@
 use super::super::utils::{
-    binary_numeric_elementwise, unary_numeric_arg, unary_numeric_elementwise, ARG_ANY_ONE,
-    ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, EPSILON_NEAR_ZERO,
+    ARG_ANY_ONE, ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, EPSILON_NEAR_ZERO,
+    binary_numeric_elementwise, unary_numeric_arg, unary_numeric_elementwise,
 };
 use crate::args::ArgSchema;
 use crate::function::Function;

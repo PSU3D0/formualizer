@@ -2,9 +2,9 @@
 mod tests {
     use crate::test_workbook::TestWorkbook;
     use formualizer_common::error::{ExcelError, ExcelErrorKind};
-    use formualizer_parse::parser::Parser;
     use formualizer_parse::LiteralValue;
     use formualizer_parse::Tokenizer;
+    use formualizer_parse::parser::Parser;
     use std::sync::Arc;
 
     /// Helper function to parse and evaluate a formula.
@@ -584,11 +584,12 @@ mod tests {
         let result = evaluate_formula("=IF(TRUE,1,2,3,4)", &wb).unwrap();
         if let LiteralValue::Error(ref e) = result {
             // expected should mention "at most 3"
-            assert!(e
-                .message
-                .clone()
-                .unwrap()
-                .contains("expects 2 or 3 arguments, got 5"));
+            assert!(
+                e.message
+                    .clone()
+                    .unwrap()
+                    .contains("expects 2 or 3 arguments, got 5")
+            );
         } else {
             panic!("Expected wrong argument count error for IF");
         }
