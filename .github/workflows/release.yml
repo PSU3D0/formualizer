@@ -325,23 +325,84 @@ jobs:
           publish_with_retry formualizer-sheetport
           publish_with_retry formualizer
 
-  publish-pypi:
+  build-wheels:
     if: startsWith(github.ref_name, 'v')
     needs: publish-product-crates
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+          - os: ubuntu-latest
+            target: aarch64
+          - os: macos-latest
+            target: x86_64
+          - os: macos-latest
+            target: aarch64
+          - os: windows-latest
+            target: x64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Publish to PyPI (maturin)
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          working-directory: bindings/python
+          args: --release --out dist --find-interpreter
+          sccache: 'true'
+          manylinux: auto
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: bindings/python/dist
+
+  build-sdist:
+    if: startsWith(github.ref_name, 'v')
+    needs: publish-product-crates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           working-directory: bindings/python
-          command: publish
-          args: -u __token__ -p ${{ secrets.PYPI_API_TOKEN }}
-          sccache: "true"
+          command: sdist
+          args: --out dist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: bindings/python/dist
+
+  publish-pypi:
+    if: startsWith(github.ref_name, 'v')
+    needs: [build-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          command: upload
+          args: --non-interactive --skip-existing dist/*
 
   publish-npm:
     if: startsWith(github.ref_name, 'v')
