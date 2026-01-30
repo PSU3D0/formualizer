@@ -125,11 +125,40 @@ Release workflows should:
 
 For npm builds, ensure the wasm-pack target matches what we publish (bundler vs web target) and that the generated `pkg/` content matches what `package.json` expects.
 
+## Version Bump Script
+
+Use `scripts/bump-version.py` to update versions across all manifests for a given track:
+
+```bash
+# Product track (Rust product crates + Python + npm)
+./scripts/bump-version.py --track product --version 0.4.0
+
+# Parser/SDK track (formualizer-common + formualizer-parse)
+./scripts/bump-version.py --track parse --version 1.1.0
+
+# Spec track (sheetport-spec only)
+./scripts/bump-version.py --track spec --version 0.4.0
+
+# Preview changes without modifying files
+./scripts/bump-version.py --track product --version 0.4.0 --dry-run
+
+# Skip cargo check verification
+./scripts/bump-version.py --track product --version 0.4.0 --no-verify
+```
+
+The script updates:
+- **Package versions** in `Cargo.toml`, `pyproject.toml`, `package.json`
+- **Workspace dependencies** in root `Cargo.toml`
+- **Internal dependency versions** (e.g., `formualizer-eval = { path = "...", version = "X.Y.Z" }`)
+
+After bumping, the script runs `cargo check` to verify the workspace compiles (use `--no-verify` to skip).
+
 ## Release Checklist (human)
 
-- Decide which track(s) you are releasing.
-- Bump versions for that track (only).
-- Ensure `CHANGELOG` entries exist where applicable.
-- Merge to main.
-- Create the tag(s) on that commit.
-- Verify GitHub Actions publishes successfully.
+1. Decide which track(s) you are releasing.
+2. Run `./scripts/bump-version.py --track <track> --version <version>` (use `--dry-run` first to preview).
+3. Ensure `CHANGELOG` entries exist where applicable.
+4. Commit the version bump: `git commit -am "chore: bump <track> to <version>"`
+5. Create the tag: `git tag v<version>` (or `parse-v<version>` / `sheetport-spec-v<version>`).
+6. Push: `git push && git push --tags`
+7. Verify GitHub Actions publishes successfully.
