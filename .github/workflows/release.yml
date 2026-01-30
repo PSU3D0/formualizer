@@ -340,7 +340,7 @@ jobs:
         with:
           working-directory: bindings/python
           command: publish
-          args: --release -u __token__ -p ${{ secrets.PYPI_API_TOKEN }}
+          args: -u __token__ -p ${{ secrets.PYPI_API_TOKEN }}
           sccache: "true"
 
   publish-npm:
