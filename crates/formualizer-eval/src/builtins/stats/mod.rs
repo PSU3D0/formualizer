@@ -2125,9 +2125,9 @@ fn beta_i(x: f64, a: f64, b: f64) -> f64 {
     const EPS: f64 = 1e-14;
     const TINY: f64 = 1e-30;
 
-    let mut qab = a + b;
-    let mut qap = a + 1.0;
-    let mut qam = a - 1.0;
+    let qab = a + b;
+    let qap = a + 1.0;
+    let qam = a - 1.0;
     let mut c = 1.0;
     let mut d = 1.0 - qab * x / qap;
     if d.abs() < TINY {

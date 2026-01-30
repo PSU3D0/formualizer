@@ -1,6 +1,7 @@
 [tools]
 uv = "latest"
-rust = { version = "1.93.0", profile = "default" }
+rust = "1.93.0"
+act = "latest"
 "github:BurntSushi/ripgrep" = "latest"
 "npm:@anthropic-ai/claude-code" = "latest"
 "npm:@openai/codex" = "latest"
