@@ -37,37 +37,16 @@ PRODUCT_PACKAGE_VERSION_FILES = [
     ("crates/formualizer/Cargo.toml", "toml", ["package", "version"]),
     ("bindings/python/pyproject.toml", "toml", ["project", "version"]),
     ("bindings/wasm/package.json", "json", ["version"]),
-    # Internal product crates (package.version)
-    ("crates/formualizer-macros/Cargo.toml", "toml", ["package", "version"]),
-    ("crates/formualizer-eval/Cargo.toml", "toml", ["package", "version"]),
-    ("crates/formualizer-workbook/Cargo.toml", "toml", ["package", "version"]),
-    ("crates/formualizer-sheetport/Cargo.toml", "toml", ["package", "version"]),
-    ("crates/sheetport-spec/Cargo.toml", "toml", ["package", "version"]),
     # WASM binding crate
     ("bindings/wasm/Cargo.toml", "toml", ["package", "version"]),
 ]
 
 # Workspace dependency versions that track product version
-PRODUCT_WORKSPACE_DEPS = [
-    # Root Cargo.toml workspace.dependencies
-    ("Cargo.toml", "formualizer-macros"),
-    ("Cargo.toml", "formualizer-eval"),
-    ("Cargo.toml", "formualizer-workbook"),
-]
+PRODUCT_WORKSPACE_DEPS = []
 
 # Internal dependency references in product crates (dep name -> new version)
 # These are dependencies with explicit version = "X.Y.Z" alongside path = "..."
-PRODUCT_INTERNAL_DEPS = [
-    # crates/formualizer/Cargo.toml dependencies
-    ("crates/formualizer/Cargo.toml", "formualizer-eval"),
-    ("crates/formualizer/Cargo.toml", "formualizer-workbook"),
-    ("crates/formualizer/Cargo.toml", "formualizer-sheetport"),
-    ("crates/formualizer/Cargo.toml", "sheetport-spec"),
-    # crates/formualizer-sheetport/Cargo.toml dependencies
-    ("crates/formualizer-sheetport/Cargo.toml", "sheetport-spec"),
-    ("crates/formualizer-sheetport/Cargo.toml", "formualizer-workbook"),
-    ("crates/formualizer-sheetport/Cargo.toml", "formualizer-eval"),
-]
+PRODUCT_INTERNAL_DEPS = []
 
 # Parser/SDK track
 PARSE_PACKAGE_VERSION_FILES = [
