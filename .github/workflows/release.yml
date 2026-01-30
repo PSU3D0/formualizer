@@ -185,7 +185,7 @@ jobs:
                 return 0
               fi
 
-              if echo "${out}" | grep -q "is already uploaded"; then
+              if echo "${out}" | grep -qE "is already uploaded|already exists"; then
                 echo "${pkg} already uploaded; skipping"
                 return 0
               fi
@@ -223,7 +223,45 @@ jobs:
       - name: Publish sheetport-spec
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p sheetport-spec --locked
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          publish_with_retry() {
+            local pkg="$1"
+            local attempts="${2:-30}"
+            local sleep_secs="${3:-15}"
+
+            for ((i=1; i<=attempts; i++)); do
+              echo "Publishing ${pkg} (attempt ${i}/${attempts})"
+
+              set +e
+              out="$(cargo publish -p "${pkg}" --locked 2>&1)"
+              status=$?
+              set -e
+
+              if [[ "${status}" -eq 0 ]]; then
+                return 0
+              fi
+
+              if echo "${out}" | grep -qE "is already uploaded|already exists"; then
+                echo "${pkg} already uploaded; skipping"
+                return 0
+              fi
+
+              echo "${out}"
+
+              if [[ "${i}" -lt "${attempts}" ]]; then
+                echo "Publish failed; sleeping ${sleep_secs}s before retry"
+                sleep "${sleep_secs}"
+              fi
+            done
+
+            echo "Failed to publish ${pkg} after ${attempts} attempts"
+            return 1
+          }
+
+          publish_with_retry sheetport-spec
 
   publish-product-crates:
     if: startsWith(github.ref_name, 'v')
@@ -264,7 +302,7 @@ jobs:
                 return 0
               fi
 
-              if echo "${out}" | grep -q "is already uploaded"; then
+              if echo "${out}" | grep -qE "is already uploaded|already exists"; then
                 echo "${pkg} already uploaded; skipping"
                 return 0
               fi
