@@ -89,8 +89,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up mise
-      uses: jdx/mise-action@v2
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.93.0
+        components: rustfmt, clippy
 
     - name: Cache Rust dependencies
       uses: actions/cache@v4
@@ -113,7 +116,18 @@ jobs:
       run: cargo test --all-features
 
     - name: Run CFFI smoke test
-      run: mise run cffi-smoke
+      shell: bash
+      run: |
+        set -euo pipefail
+        cargo run -p formualizer-cffi --bin cffi_smoke_setup
+        cargo build -p formualizer-cffi
+        cc crates/formualizer-cffi/tests/cffi_smoke.c \
+          -I crates/formualizer-cffi/include \
+          -L target/debug \
+          -lformualizer_cffi \
+          -Wl,-rpath,$PWD/target/debug \
+          -o target/cffi_smoke
+        target/cffi_smoke
 
   build-wheels:
     runs-on: ${{ matrix.os }}
