@@ -98,13 +98,11 @@ fn named_range_dirty_propagation_reaches_formula() {
 
     let ast = parse("=Input + 1").unwrap();
     let formula_summary = graph.set_cell_formula("Sheet1", 2, 1, ast).unwrap();
-    assert!(
-        formula_summary.affected_vertices.contains(
-            &graph
-                .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
-                .unwrap()
-        )
-    );
+    assert!(formula_summary.affected_vertices.contains(
+        &graph
+            .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
+            .unwrap()
+    ));
 
     let name_vertex = graph
         .named_ranges_iter()
@@ -220,6 +218,104 @@ fn engine_get_cell_value_handles_named_range_formula() {
         .get_cell_value("Sheet1", 1, 2)
         .expect("graph should reflect updated named range");
     assert!(matches!(updated_graph, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9));
+}
+
+#[test]
+fn engine_sheet_scope_precedence_prefers_sheet_over_workbook() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+
+    let sheet1 = engine.sheet_id_mut("Sheet1");
+    engine.add_sheet("Sheet2").unwrap();
+    let sheet2 = engine.sheet_id_mut("Sheet2");
+
+    engine
+        .define_name(
+            "X",
+            NamedDefinition::Literal(LiteralValue::Number(1.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "X",
+            NamedDefinition::Literal(LiteralValue::Number(2.0)),
+            NameScope::Sheet(sheet1),
+        )
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=X").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet2", 1, 1, parse("=X").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+
+    let v1 = engine.get_cell_value("Sheet1", 1, 1).unwrap();
+    assert!(matches!(v1, LiteralValue::Number(n) if (n - 2.0).abs() < 1e-9));
+
+    let v2 = engine.get_cell_value("Sheet2", 1, 1).unwrap();
+    assert!(matches!(v2, LiteralValue::Number(n) if (n - 1.0).abs() < 1e-9));
+
+    // Ensure lookups are per-sheet.
+    assert!(engine.graph.resolve_name_entry("X", sheet1).is_some());
+    assert!(engine.graph.resolve_name_entry("X", sheet2).is_some());
+}
+
+#[test]
+fn engine_range_named_array_dependency_propagates() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(20.0))
+        .unwrap();
+
+    let sheet_id = engine.sheet_id_mut("Sheet1");
+    let start = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+    let end = CellRef::new(sheet_id, Coord::new(1, 0, true, true));
+    engine
+        .define_name(
+            "InputRange",
+            NamedDefinition::Range(RangeRef::new(start, end)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=SUM(InputRange)").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    let initial = engine.get_cell_value("Sheet1", 1, 2).unwrap();
+    assert!(matches!(initial, LiteralValue::Number(n) if (n - 30.0).abs() < 1e-9));
+
+    let name_vertex = engine
+        .graph
+        .resolve_name_entry("InputRange", sheet_id)
+        .unwrap()
+        .vertex;
+    assert_eq!(
+        engine.graph.get_vertex_kind(name_vertex),
+        VertexKind::NamedArray
+    );
+
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(50.0))
+        .unwrap();
+
+    let pending = engine.evaluation_vertices();
+    assert!(
+        pending.contains(&name_vertex),
+        "named range vertex should be dirtied after dependency edit"
+    );
+
+    engine.evaluate_all().unwrap();
+    let updated = engine.get_cell_value("Sheet1", 1, 2).unwrap();
+    assert!(matches!(updated, LiteralValue::Number(n) if (n - 60.0).abs() < 1e-9));
 }
 
 #[test]
@@ -340,21 +436,15 @@ fn test_invalid_name_rejected() {
     assert!(result.is_err());
 
     // Valid names should work
-    assert!(
-        graph
-            .define_name("MyName", def.clone(), NameScope::Workbook)
-            .is_ok()
-    );
-    assert!(
-        graph
-            .define_name("_Name", def.clone(), NameScope::Sheet(0))
-            .is_ok()
-    );
-    assert!(
-        graph
-            .define_name("Name.Value", def, NameScope::Sheet(0))
-            .is_ok()
-    );
+    assert!(graph
+        .define_name("MyName", def.clone(), NameScope::Workbook)
+        .is_ok());
+    assert!(graph
+        .define_name("_Name", def.clone(), NameScope::Sheet(0))
+        .is_ok());
+    assert!(graph
+        .define_name("Name.Value", def, NameScope::Sheet(0))
+        .is_ok());
 }
 
 #[test]
@@ -373,11 +463,9 @@ fn test_duplicate_name_error() {
     assert!(result.is_err());
 
     // Same name in different scope should succeed
-    assert!(
-        graph
-            .define_name("MyName", def, NameScope::Sheet(0))
-            .is_ok()
-    );
+    assert!(graph
+        .define_name("MyName", def, NameScope::Sheet(0))
+        .is_ok());
 }
 
 #[test]

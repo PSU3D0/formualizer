@@ -1,7 +1,7 @@
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime};
 use formualizer_common::{
-    RangeAddress,
     error::{ExcelError, ExcelErrorKind},
+    RangeAddress,
 };
 #[cfg(feature = "json")]
 use formualizer_workbook::JsonAdapter;
@@ -216,6 +216,65 @@ fn json_roundtrip_in_memory_bytes() {
         data.cells.get(&(2, 1)).unwrap().formula.as_deref(),
         Some("=A1*2")
     );
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn json_defined_names_roundtrip() {
+    use formualizer_workbook::backends::JsonAdapter;
+    use formualizer_workbook::traits::{DefinedName, DefinedNameDefinition, DefinedNameScope};
+
+    let mut adapter = JsonAdapter::new();
+    adapter.create_sheet("Sheet1").unwrap();
+    adapter.create_sheet("Sheet2").unwrap();
+
+    let global_range = DefinedName {
+        name: "GlobalRange".to_string(),
+        scope: DefinedNameScope::Workbook,
+        scope_sheet: None,
+        definition: DefinedNameDefinition::Range {
+            address: RangeAddress::new("Sheet2", 1, 1, 1, 2).unwrap(),
+        },
+    };
+
+    let sheet_literal = DefinedName {
+        name: "LocalLit".to_string(),
+        scope: DefinedNameScope::Sheet,
+        scope_sheet: Some("Sheet1".to_string()),
+        definition: DefinedNameDefinition::Literal {
+            value: LiteralValue::Number(3.5),
+        },
+    };
+
+    // Scope sheet differs from referenced sheet.
+    let scoped_other_sheet_range = DefinedName {
+        name: "ScopedOther".to_string(),
+        scope: DefinedNameScope::Sheet,
+        scope_sheet: Some("Sheet1".to_string()),
+        definition: DefinedNameDefinition::Range {
+            address: RangeAddress::new("Sheet2", 2, 1, 2, 1).unwrap(),
+        },
+    };
+
+    adapter.set_defined_names(vec![
+        global_range.clone(),
+        sheet_literal.clone(),
+        scoped_other_sheet_range.clone(),
+    ]);
+
+    let bytes = adapter.save_to_bytes().unwrap();
+    let mut adapter2 = JsonAdapter::open_bytes(bytes).unwrap();
+    let mut got = adapter2.defined_names().unwrap();
+    got.sort_by(|a, b| {
+        (a.name.clone(), a.scope_sheet.clone()).cmp(&(b.name.clone(), b.scope_sheet.clone()))
+    });
+
+    let mut expected = vec![global_range, sheet_literal, scoped_other_sheet_range];
+    expected.sort_by(|a, b| {
+        (a.name.clone(), a.scope_sheet.clone()).cmp(&(b.name.clone(), b.scope_sheet.clone()))
+    });
+
+    assert_eq!(got, expected);
 }
 
 #[cfg(feature = "json")]

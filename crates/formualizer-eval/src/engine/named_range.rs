@@ -1,6 +1,8 @@
 use formualizer_parse::ASTNode;
 use rustc_hash::FxHashSet;
 
+use formualizer_common::LiteralValue;
+
 use crate::{engine::VertexId, reference::SharedRangeRef, CellRef, RangeRef, SheetId};
 
 /// Scope of a named range
@@ -20,6 +22,8 @@ pub enum NamedDefinition {
     Cell(CellRef),
     /// Reference to a range of cells
     Range(RangeRef),
+    /// Constant literal value
+    Literal(LiteralValue),
     /// Named formula (evaluates to value/range)
     Formula {
         ast: ASTNode,
