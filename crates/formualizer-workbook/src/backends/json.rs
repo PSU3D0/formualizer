@@ -3,6 +3,7 @@ use crate::traits::{
     AccessGranularity, BackendCaps, CellData, MergedRange, NamedRange, SaveDestination, SheetData,
     SpreadsheetReader, SpreadsheetWriter, TableDefinition,
 };
+use crate::traits::{DefinedName, DefinedNameDefinition, DefinedNameScope};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -17,6 +18,10 @@ struct JsonWorkbook {
     compression: Option<CompressionType>,
     #[serde(default)]
     sources: Vec<JsonSource>,
+
+    #[serde(default)]
+    defined_names: Vec<JsonDefinedName>,
+
     #[serde(default)]
     sheets: BTreeMap<String, JsonSheet>,
 }
@@ -50,6 +55,26 @@ struct JsonSheet {
     tables: Vec<TableDefinition>,
     #[serde(default)]
     named_ranges: Vec<NamedRange>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct JsonDefinedName {
+    name: String,
+
+    #[serde(default)]
+    scope: DefinedNameScope,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope_sheet: Option<String>,
+
+    definition: JsonDefinedNameDefinition,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum JsonDefinedNameDefinition {
+    Range { address: formualizer_common::RangeAddress },
+    Literal { value: JsonValue },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -126,6 +151,41 @@ impl JsonAdapter {
         }
     }
 
+    fn migrate_legacy_named_ranges(&mut self) {
+        if !self.data.defined_names.is_empty() {
+            return;
+        }
+
+        use rustc_hash::FxHashSet;
+
+        let mut seen: FxHashSet<(DefinedNameScope, Option<String>, String)> = FxHashSet::default();
+        for (sheet_name, sheet) in &self.data.sheets {
+            for nr in &sheet.named_ranges {
+                let scope = match nr.scope {
+                    crate::traits::NamedRangeScope::Workbook => DefinedNameScope::Workbook,
+                    crate::traits::NamedRangeScope::Sheet => DefinedNameScope::Sheet,
+                };
+                let scope_sheet = match nr.scope {
+                    crate::traits::NamedRangeScope::Workbook => None,
+                    crate::traits::NamedRangeScope::Sheet => Some(sheet_name.clone()),
+                };
+                let key = (scope.clone(), scope_sheet.clone(), nr.name.clone());
+                if !seen.insert(key) {
+                    continue;
+                }
+
+                self.data.defined_names.push(JsonDefinedName {
+                    name: nr.name.clone(),
+                    scope,
+                    scope_sheet,
+                    definition: JsonDefinedNameDefinition::Range {
+                        address: nr.address.clone(),
+                    },
+                });
+            }
+        }
+    }
+
     fn to_sheet_data(js: &JsonSheet) -> SheetData {
         let mut cells: BTreeMap<(u32, u32), CellData> = BTreeMap::new();
         for c in &js.cells {
@@ -178,6 +238,28 @@ impl JsonAdapter {
     pub fn set_named_ranges(&mut self, sheet: &str, named: Vec<NamedRange>) {
         self.ensure_sheet_mut(sheet).named_ranges = named;
     }
+
+    pub fn set_defined_names(&mut self, names: Vec<DefinedName>) {
+        self.data.defined_names = names
+            .into_iter()
+            .map(|dn| match dn.definition {
+                DefinedNameDefinition::Range { address } => JsonDefinedName {
+                    name: dn.name,
+                    scope: dn.scope,
+                    scope_sheet: dn.scope_sheet,
+                    definition: JsonDefinedNameDefinition::Range { address },
+                },
+                DefinedNameDefinition::Literal { value } => JsonDefinedName {
+                    name: dn.name,
+                    scope: dn.scope,
+                    scope_sheet: dn.scope_sheet,
+                    definition: JsonDefinedNameDefinition::Literal {
+                        value: literal_to_json(&value),
+                    },
+                },
+            })
+            .collect();
+    }
 }
 
 impl SpreadsheetReader for JsonAdapter {
@@ -202,11 +284,13 @@ impl SpreadsheetReader for JsonAdapter {
         let file = File::open(path.as_ref())?;
         let reader = BufReader::new(file);
         let data: JsonWorkbook = serde_json::from_reader(reader)?;
-        Ok(JsonAdapter {
+        let mut adapter = JsonAdapter {
             data,
             path: Some(path.as_ref().to_path_buf()),
             ..JsonAdapter::new()
-        })
+        };
+        adapter.migrate_legacy_named_ranges();
+        Ok(adapter)
     }
 
     fn open_reader(reader: Box<dyn Read + Send + Sync>) -> Result<Self, Self::Error>
@@ -214,10 +298,12 @@ impl SpreadsheetReader for JsonAdapter {
         Self: Sized,
     {
         let data: JsonWorkbook = serde_json::from_reader(reader)?;
-        Ok(JsonAdapter {
+        let mut adapter = JsonAdapter {
             data,
             ..JsonAdapter::new()
-        })
+        };
+        adapter.migrate_legacy_named_ranges();
+        Ok(adapter)
     }
 
     fn open_bytes(bytes: Vec<u8>) -> Result<Self, Self::Error>
@@ -225,10 +311,38 @@ impl SpreadsheetReader for JsonAdapter {
         Self: Sized,
     {
         let data: JsonWorkbook = serde_json::from_slice(&bytes)?;
-        Ok(JsonAdapter {
+        let mut adapter = JsonAdapter {
             data,
             ..JsonAdapter::new()
-        })
+        };
+        adapter.migrate_legacy_named_ranges();
+        Ok(adapter)
+    }
+
+    fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
+        self.migrate_legacy_named_ranges();
+        Ok(self
+            .data
+            .defined_names
+            .iter()
+            .map(|dn| DefinedName {
+                name: dn.name.clone(),
+                scope: dn.scope.clone(),
+                scope_sheet: dn.scope_sheet.clone(),
+                definition: match &dn.definition {
+                    JsonDefinedNameDefinition::Range { address } => {
+                        DefinedNameDefinition::Range {
+                            address: address.clone(),
+                        }
+                    }
+                    JsonDefinedNameDefinition::Literal { value } => {
+                        DefinedNameDefinition::Literal {
+                            value: json_to_literal(value),
+                        }
+                    }
+                },
+            })
+            .collect())
     }
 
     fn read_range(
@@ -608,60 +722,73 @@ where
             }
         }
 
-        // Register named ranges (metadata only) into the dependency graph.
+        // Register defined names into the dependency graph.
         {
             use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
             use formualizer_eval::reference::{CellRef, Coord};
             use rustc_hash::FxHashSet;
 
-            let mut seen: FxHashSet<(crate::traits::NamedRangeScope, String, String)> =
-                FxHashSet::default();
+            let defined = self
+                .defined_names()
+                .map_err(|e| IoError::from_backend("json", e))?;
 
-            for (sheet_name, sheet) in self.data.sheets.iter() {
-                for named in &sheet.named_ranges {
-                    if named.address.sheet != *sheet_name {
-                        continue;
-                    }
-
-                    let key = (
-                        named.scope.clone(),
-                        named.address.sheet.clone(),
-                        named.name.clone(),
-                    );
-                    if !seen.insert(key) {
-                        continue;
-                    }
-
-                    let Some(sheet_id) = engine.sheet_id(&named.address.sheet) else {
-                        continue;
-                    };
-
-                    let addr = &named.address;
-                    let sr0 = addr.start_row.saturating_sub(1);
-                    let sc0 = addr.start_col.saturating_sub(1);
-                    let er0 = addr.end_row.saturating_sub(1);
-                    let ec0 = addr.end_col.saturating_sub(1);
-
-                    let start_coord = Coord::new(sr0, sc0, true, true);
-                    let end_coord = Coord::new(er0, ec0, true, true);
-                    let start_ref = CellRef::new(sheet_id, start_coord);
-                    let end_ref = CellRef::new(sheet_id, end_coord);
-
-                    let definition = if sr0 == er0 && sc0 == ec0 {
-                        NamedDefinition::Cell(start_ref)
-                    } else {
-                        let range_ref =
-                            formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
-                        NamedDefinition::Range(range_ref)
-                    };
-
-                    let scope = match named.scope {
-                        crate::traits::NamedRangeScope::Workbook => NameScope::Workbook,
-                        crate::traits::NamedRangeScope::Sheet => NameScope::Sheet(sheet_id),
-                    };
-
-                    engine.define_name(&named.name, definition, scope)?;
+            let mut seen: FxHashSet<(DefinedNameScope, Option<String>, String)> = FxHashSet::default();
+            for dn in defined {
+                let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
+                if !seen.insert(key) {
+                    continue;
                 }
+
+                let scope = match dn.scope {
+                    DefinedNameScope::Workbook => NameScope::Workbook,
+                    DefinedNameScope::Sheet => {
+                        let sheet_name = dn.scope_sheet.as_deref().ok_or_else(|| {
+                            IoError::Backend {
+                                backend: "json".to_string(),
+                                message: format!(
+                                    "sheet-scoped defined name `{}` missing scope_sheet",
+                                    dn.name
+                                ),
+                            }
+                        })?;
+                        let sid = engine.sheet_id(sheet_name).ok_or_else(|| IoError::Backend {
+                            backend: "json".to_string(),
+                            message: format!("scope sheet not found: {sheet_name}"),
+                        })?;
+                        NameScope::Sheet(sid)
+                    }
+                };
+
+                let definition = match dn.definition {
+                    DefinedNameDefinition::Range { address } => {
+                        let sheet_id = engine
+                            .sheet_id(&address.sheet)
+                            .or_else(|| engine.add_sheet(&address.sheet).ok())
+                            .ok_or_else(|| IoError::Backend {
+                                backend: "json".to_string(),
+                                message: format!("sheet not found: {}", address.sheet),
+                            })?;
+
+                        let sr0 = address.start_row.saturating_sub(1);
+                        let sc0 = address.start_col.saturating_sub(1);
+                        let er0 = address.end_row.saturating_sub(1);
+                        let ec0 = address.end_col.saturating_sub(1);
+
+                        let start_ref = CellRef::new(sheet_id, Coord::new(sr0, sc0, true, true));
+                        if sr0 == er0 && sc0 == ec0 {
+                            NamedDefinition::Cell(start_ref)
+                        } else {
+                            let end_ref =
+                                CellRef::new(sheet_id, Coord::new(er0, ec0, true, true));
+                            let range_ref =
+                                formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                            NamedDefinition::Range(range_ref)
+                        }
+                    }
+                    DefinedNameDefinition::Literal { value } => NamedDefinition::Literal(value),
+                };
+
+                engine.define_name(&dn.name, definition, scope)?;
             }
         }
 

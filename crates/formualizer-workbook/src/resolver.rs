@@ -1,7 +1,8 @@
 use crate::traits::SpreadsheetReader;
+use crate::traits::{DefinedNameDefinition, DefinedNameScope};
 use formualizer_common::{
-    LiteralValue,
     error::{ExcelError, ExcelErrorKind},
+    LiteralValue,
 };
 use formualizer_eval::function::Function;
 use formualizer_eval::traits::{
@@ -74,8 +75,69 @@ impl<B: SpreadsheetReader> NamedRangeResolver for IoResolver<B> {
                 .with_message("Backend doesn't support named ranges"));
         }
 
-        // TODO: Implement named range support
-        Err(ExcelError::new(ExcelErrorKind::Name).with_message("Named ranges not yet implemented"))
+        let name = _name;
+
+        let mut guard = self.backend.write();
+        let defined = guard
+            .defined_names()
+            .map_err(|e| ExcelError::new(ExcelErrorKind::NImpl).with_message(e.to_string()))?;
+
+        // Collect candidates (workbook + any sheet scopes). Since this resolver doesn't have
+        // a current-sheet context, sheet-scoped names are only resolvable when unique.
+        let mut matches = defined
+            .into_iter()
+            .filter(|dn| dn.name == name)
+            .collect::<Vec<_>>();
+
+        if matches.is_empty() {
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message(format!("Undefined name: {name}")));
+        }
+
+        // Prefer workbook-scoped if present and unique; otherwise require exactly one match.
+        let chosen = if let Some(wb) = matches
+            .iter()
+            .position(|dn| matches!(dn.scope, DefinedNameScope::Workbook))
+        {
+            // If both workbook + sheet scoped exist, this is ambiguous without a sheet context.
+            if matches.len() > 1 {
+                return Err(ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("Ambiguous name without sheet context: {name}")));
+            }
+            matches.swap_remove(wb)
+        } else {
+            if matches.len() != 1 {
+                return Err(ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("Ambiguous name without sheet context: {name}")));
+            }
+            matches.pop().unwrap()
+        };
+
+        match chosen.definition {
+            DefinedNameDefinition::Range { address } => {
+                // Delegate to RangeResolver reading from backend.
+                let range = guard
+                    .read_range(
+                        &address.sheet,
+                        (address.start_row, address.start_col),
+                        (address.end_row, address.end_col),
+                    )
+                    .map_err(|e| {
+                        ExcelError::new(ExcelErrorKind::NImpl).with_message(e.to_string())
+                    })?;
+
+                let h = (address.end_row - address.start_row + 1) as usize;
+                let w = (address.end_col - address.start_col + 1) as usize;
+                let mut rows = vec![vec![LiteralValue::Empty; w]; h];
+                for ((r, c), cell) in range.into_iter() {
+                    let rr = (r - address.start_row) as usize;
+                    let cc = (c - address.start_col) as usize;
+                    rows[rr][cc] = cell.value.unwrap_or(LiteralValue::Empty);
+                }
+                Ok(rows)
+            }
+            DefinedNameDefinition::Literal { value } => Ok(vec![vec![value]]),
+        }
     }
 }
 

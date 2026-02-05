@@ -1,0 +1,5 @@
+{
+  "id": "named-ranges/scope_precedence_literal",
+  "category": "named-ranges",
+  "targets": ["Sheet1!B1", "Sheet2!B1", "Sheet1!B2"]
+}

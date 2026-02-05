@@ -1,0 +1,7 @@
+{
+  "results": {
+    "Sheet1!B1": {"type": "number", "value": 2.0},
+    "Sheet1!B2": {"type": "number", "value": 30.0},
+    "Sheet2!B1": {"type": "number", "value": 1.0}
+  }
+}

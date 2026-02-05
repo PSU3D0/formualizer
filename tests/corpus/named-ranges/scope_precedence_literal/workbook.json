@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "defined_names": [
+    {
+      "name": "X",
+      "scope": "workbook",
+      "definition": {
+        "type": "literal",
+        "value": {"type": "Number", "value": 1.0}
+      }
+    },
+    {
+      "name": "X",
+      "scope": "sheet",
+      "scope_sheet": "Sheet1",
+      "definition": {
+        "type": "literal",
+        "value": {"type": "Number", "value": 2.0}
+      }
+    },
+    {
+      "name": "R",
+      "scope": "workbook",
+      "definition": {
+        "type": "range",
+        "address": {
+          "sheet": "Sheet1",
+          "start_row": 1,
+          "start_col": 1,
+          "end_row": 2,
+          "end_col": 1
+        }
+      }
+    }
+  ],
+  "sheets": {
+    "Sheet1": {
+      "dimensions": [2, 2],
+      "cells": [
+        {"row": 1, "col": 1, "value": {"type": "Int", "value": 10}},
+        {"row": 2, "col": 1, "value": {"type": "Int", "value": 20}},
+        {"row": 1, "col": 2, "formula": "=X"},
+        {"row": 2, "col": 2, "formula": "=SUM(R)"}
+      ]
+    },
+    "Sheet2": {
+      "dimensions": [1, 2],
+      "cells": [
+        {"row": 1, "col": 2, "formula": "=X"}
+      ]
+    }
+  }
+}

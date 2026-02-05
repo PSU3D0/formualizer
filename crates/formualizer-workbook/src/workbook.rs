@@ -45,7 +45,8 @@ impl formualizer_eval::traits::NamedRangeResolver for WBResolver {
         &self,
         _name: &str,
     ) -> Result<Vec<Vec<LiteralValue>>, formualizer_common::error::ExcelError> {
-        Err(ExcelError::new(ExcelErrorKind::Name))
+        Err(ExcelError::new(ExcelErrorKind::Name)
+            .with_message(format!("Undefined name: {}", _name)))
     }
 }
 impl formualizer_eval::traits::TableResolver for WBResolver {
@@ -997,6 +998,7 @@ impl Workbook {
                 let end_col = range.end.coord.col() + 1;
                 RangeAddress::new(sheet, start_row, start_col, end_row, end_col).ok()
             }
+            NamedDefinition::Literal(_) => None,
             NamedDefinition::Formula { .. } => {
                 #[cfg(feature = "tracing")]
                 tracing::debug!("formula-backed named ranges are not yet supported");
