@@ -15,22 +15,24 @@ fn cffi_open_xlsx_update_evaluate() {
 
     let path_c = CString::new(path.to_string_lossy().as_ref()).expect("cstr path");
     let mut status = fz_status::ok();
-    let wb = fz_workbook_open_xlsx(path_c.as_ptr(), &mut status);
+    let wb = unsafe { fz_workbook_open_xlsx(path_c.as_ptr(), &mut status) };
     assert_eq!(status.code, fz_status_code::FZ_STATUS_OK);
     assert!(!wb.0.is_null());
 
     let sheet = CString::new("Sheet1").unwrap();
     let value_json = "{\"Number\":15.0}";
-    fz_workbook_set_cell_value(
-        wb,
-        sheet.as_ptr(),
-        1,
-        1,
-        value_json.as_ptr(),
-        value_json.len(),
-        fz_encoding_format::FZ_ENCODING_JSON,
-        &mut status,
-    );
+    unsafe {
+        fz_workbook_set_cell_value(
+            wb,
+            sheet.as_ptr(),
+            1,
+            1,
+            value_json.as_ptr(),
+            value_json.len(),
+            fz_encoding_format::FZ_ENCODING_JSON,
+            &mut status,
+        );
+    }
     assert_eq!(status.code, fz_status_code::FZ_STATUS_OK);
 
     #[derive(serde::Serialize)]
@@ -47,13 +49,15 @@ fn cffi_open_xlsx_update_evaluate() {
     }];
     let targets_payload = serde_json::to_vec(&targets).expect("targets json");
 
-    let eval_buffer = fz_workbook_evaluate_cells(
-        wb,
-        targets_payload.as_ptr(),
-        targets_payload.len(),
-        fz_encoding_format::FZ_ENCODING_JSON,
-        &mut status,
-    );
+    let eval_buffer = unsafe {
+        fz_workbook_evaluate_cells(
+            wb,
+            targets_payload.as_ptr(),
+            targets_payload.len(),
+            fz_encoding_format::FZ_ENCODING_JSON,
+            &mut status,
+        )
+    };
     assert_eq!(status.code, fz_status_code::FZ_STATUS_OK);
 
     let bytes = if eval_buffer.data.is_null() || eval_buffer.len == 0 {
@@ -62,7 +66,7 @@ fn cffi_open_xlsx_update_evaluate() {
         unsafe { std::slice::from_raw_parts(eval_buffer.data, eval_buffer.len).to_vec() }
     };
     let values: Vec<LiteralValue> = serde_json::from_slice(&bytes).expect("values json");
-    fz_buffer_free(eval_buffer);
+    unsafe { fz_buffer_free(eval_buffer) };
 
     assert_eq!(values.len(), 1);
     match values[0] {
@@ -70,5 +74,5 @@ fn cffi_open_xlsx_update_evaluate() {
         _ => panic!("expected number result"),
     }
 
-    fz_workbook_free(wb);
+    unsafe { fz_workbook_free(wb) };
 }

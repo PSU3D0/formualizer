@@ -5,11 +5,11 @@
 //! before reporting, rather than failing on the first mismatch.
 
 #[cfg(test)]
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, parse_a1_1based};
-#[cfg(test)]
-use formualizer_parse::Tokenizer;
+use formualizer_common::{parse_a1_1based, ExcelError, ExcelErrorKind, LiteralValue};
 #[cfg(test)]
 use formualizer_parse::parser::Parser;
+#[cfg(test)]
+use formualizer_parse::Tokenizer;
 #[cfg(test)]
 use serde::Deserialize;
 #[cfg(test)]
@@ -225,7 +225,7 @@ fn parse_error_kind_prefix(value: &str) -> Option<ExcelErrorKind> {
     }
 
     let end = trimmed
-        .find(|c: char| c == ':' || c == ' ' || c == '(' || c == '[')
+        .find(|c: char| [':', ' ', '(', '['].contains(&c))
         .unwrap_or(trimmed.len());
     ExcelErrorKind::try_parse(&trimmed[..end])
 }

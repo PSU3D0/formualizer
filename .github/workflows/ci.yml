@@ -109,8 +109,8 @@ jobs:
     - name: Check Rust formatting
       run: cargo fmt --all -- --check
 
-    # - name: Run Rust clippy
-    #   run: cargo clippy --all-targets --all-features -- -D warnings
+    - name: Run Rust clippy
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
     - name: Run Rust tests
       run: cargo test --all-features

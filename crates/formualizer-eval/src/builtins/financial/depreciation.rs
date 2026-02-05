@@ -154,7 +154,7 @@ impl Function for DbFn {
             12.0
         };
 
-        if life <= 0.0 || period <= 0.0 || month < 1.0 || month > 12.0 {
+        if life <= 0.0 || period <= 0.0 || !(1.0..=12.0).contains(&month) {
             return Ok(CalcValue::Scalar(
                 LiteralValue::Error(ExcelError::new_num()),
             ));
@@ -214,6 +214,7 @@ impl Function for DbFn {
 /// 2. Salvage value logic may not match Excel exactly - Excel's DDB doesn't consider salvage
 ///    during the per-period depreciation calculation; it only prevents cumulative depreciation
 ///    from exceeding (cost - salvage).
+///
 /// See merge-review/03-financial.md for full analysis.
 #[derive(Debug)]
 pub struct DdbFn;

@@ -1,0 +1,5 @@
+{
+  "id": "named-ranges/basic_workbook_scope",
+  "category": "named-ranges",
+  "targets": ["Sheet1!B1"]
+}

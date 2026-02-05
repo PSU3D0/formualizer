@@ -1,0 +1,5 @@
+{
+  "id": "range-compression/sum_whole_column",
+  "category": "range-compression",
+  "targets": ["Sheet1!B1"]
+}

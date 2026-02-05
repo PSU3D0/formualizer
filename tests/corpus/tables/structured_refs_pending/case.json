@@ -1,0 +1,6 @@
+{
+  "id": "tables/structured_refs_pending",
+  "category": "tables",
+  "skip": "Structured table references are not yet supported in M0.",
+  "targets": ["Sheet1!C1"]
+}

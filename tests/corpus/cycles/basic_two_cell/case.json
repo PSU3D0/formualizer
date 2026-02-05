@@ -1,0 +1,5 @@
+{
+  "id": "cycles/basic_two_cell",
+  "category": "cycles",
+  "targets": ["Sheet1!A1", "Sheet1!B1"]
+}

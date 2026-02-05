@@ -1,0 +1,6 @@
+{
+  "id": "dynamic-arrays/spill_pending",
+  "category": "dynamic-arrays",
+  "skip": "Dynamic arrays/spill semantics are not implemented yet.",
+  "targets": ["Sheet1!A1"]
+}

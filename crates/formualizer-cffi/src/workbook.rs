@@ -1,4 +1,7 @@
+#![allow(clippy::missing_safety_doc)]
+
 use crate::{fz_buffer, fz_encoding_format, fz_status};
+
 use formualizer_common::{LiteralValue, RangeAddress};
 use formualizer_workbook::{
     LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
@@ -6,7 +9,7 @@ use formualizer_workbook::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::ffi::{CStr, c_char, c_int, c_uint};
+use std::ffi::{c_char, c_int, c_uint, CStr};
 use std::ptr;
 use std::sync::{Arc, RwLock};
 
@@ -70,7 +73,7 @@ fn encode_payload<T: Serialize>(value: &T, format: fz_encoding_format) -> Result
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_create(status: *mut fz_status) -> fz_workbook_h {
+pub unsafe extern "C" fn fz_workbook_create(status: *mut fz_status) -> fz_workbook_h {
     let wb = Workbook::new();
     let opaque = Box::new(OpaqueWorkbook(Arc::new(RwLock::new(wb))));
     if !status.is_null() {
@@ -82,7 +85,7 @@ pub extern "C" fn fz_workbook_create(status: *mut fz_status) -> fz_workbook_h {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_open_xlsx(
+pub unsafe extern "C" fn fz_workbook_open_xlsx(
     path: *const c_char,
     status: *mut fz_status,
 ) -> fz_workbook_h {
@@ -131,7 +134,7 @@ pub extern "C" fn fz_workbook_open_xlsx(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_free(wb: fz_workbook_h) {
+pub unsafe extern "C" fn fz_workbook_free(wb: fz_workbook_h) {
     if !wb.0.is_null() {
         unsafe {
             let _ = Box::from_raw(wb.0 as *mut OpaqueWorkbook);
@@ -140,7 +143,7 @@ pub extern "C" fn fz_workbook_free(wb: fz_workbook_h) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_add_sheet(
+pub unsafe extern "C" fn fz_workbook_add_sheet(
     wb: fz_workbook_h,
     name: *const c_char,
     status: *mut fz_status,
@@ -172,7 +175,7 @@ pub extern "C" fn fz_workbook_add_sheet(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_set_cell_value(
+pub unsafe extern "C" fn fz_workbook_set_cell_value(
     wb: fz_workbook_h,
     sheet: *const c_char,
     row: c_uint,
@@ -231,7 +234,7 @@ pub extern "C" fn fz_workbook_set_cell_value(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_set_cell_formula(
+pub unsafe extern "C" fn fz_workbook_set_cell_formula(
     wb: fz_workbook_h,
     sheet: *const c_char,
     row: c_uint,
@@ -267,7 +270,7 @@ pub extern "C" fn fz_workbook_set_cell_formula(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_get_cell_formula(
+pub unsafe extern "C" fn fz_workbook_get_cell_formula(
     wb: fz_workbook_h,
     sheet: *const c_char,
     row: c_uint,
@@ -310,7 +313,7 @@ pub extern "C" fn fz_workbook_get_cell_formula(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_get_cell_value(
+pub unsafe extern "C" fn fz_workbook_get_cell_value(
     wb: fz_workbook_h,
     sheet: *const c_char,
     row: c_uint,
@@ -368,7 +371,7 @@ pub extern "C" fn fz_workbook_get_cell_value(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_evaluate_all(
+pub unsafe extern "C" fn fz_workbook_evaluate_all(
     wb: fz_workbook_h,
     format: fz_encoding_format,
     status: *mut fz_status,
@@ -446,7 +449,7 @@ pub extern "C" fn fz_workbook_evaluate_all(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_evaluate_cells(
+pub unsafe extern "C" fn fz_workbook_evaluate_cells(
     wb: fz_workbook_h,
     targets_payload: *const u8,
     len: usize,
@@ -482,15 +485,15 @@ pub extern "C" fn fz_workbook_evaluate_cells(
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let mut wb_lock = opaque.0.write().unwrap();
 
-    if let Err(e) = wb_lock.prepare_graph_for_sheets(sheets.iter().copied()) {
-        if wb_lock.prepare_graph_all().is_err() {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e.to_string());
-                }
+    if let Err(e) = wb_lock.prepare_graph_for_sheets(sheets.iter().copied())
+        && wb_lock.prepare_graph_all().is_err()
+    {
+        if !status.is_null() {
+            unsafe {
+                *status = fz_status::error(e.to_string());
             }
-            return fz_buffer::empty();
         }
+        return fz_buffer::empty();
     }
 
     let target_refs: Vec<(&str, u32, u32)> = targets
@@ -531,7 +534,7 @@ pub extern "C" fn fz_workbook_evaluate_cells(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_sheet_names(
+pub unsafe extern "C" fn fz_workbook_sheet_names(
     wb: fz_workbook_h,
     format: fz_encoding_format,
     status: *mut fz_status,
@@ -570,7 +573,7 @@ pub extern "C" fn fz_workbook_sheet_names(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_has_sheet(
+pub unsafe extern "C" fn fz_workbook_has_sheet(
     wb: fz_workbook_h,
     name: *const c_char,
     status: *mut fz_status,
@@ -594,11 +597,15 @@ pub extern "C" fn fz_workbook_has_sheet(
             *status = fz_status::ok();
         }
     }
-    if has { 1 } else { 0 }
+    if has {
+        1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_sheet_dimensions(
+pub unsafe extern "C" fn fz_workbook_sheet_dimensions(
     wb: fz_workbook_h,
     name: *const c_char,
     format: fz_encoding_format,
@@ -648,7 +655,7 @@ pub extern "C" fn fz_workbook_sheet_dimensions(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_delete_sheet(
+pub unsafe extern "C" fn fz_workbook_delete_sheet(
     wb: fz_workbook_h,
     name: *const c_char,
     status: *mut fz_status,
@@ -680,7 +687,7 @@ pub extern "C" fn fz_workbook_delete_sheet(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_rename_sheet(
+pub unsafe extern "C" fn fz_workbook_rename_sheet(
     wb: fz_workbook_h,
     old_name: *const c_char,
     new_name: *const c_char,
@@ -714,7 +721,7 @@ pub extern "C" fn fz_workbook_rename_sheet(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_read_range(
+pub unsafe extern "C" fn fz_workbook_read_range(
     wb: fz_workbook_h,
     range_payload: *const u8,
     len: usize,
@@ -767,7 +774,7 @@ pub extern "C" fn fz_workbook_read_range(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_set_values(
+pub unsafe extern "C" fn fz_workbook_set_values(
     wb: fz_workbook_h,
     sheet: *const c_char,
     start_row: c_uint,
@@ -816,7 +823,7 @@ pub extern "C" fn fz_workbook_set_values(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_workbook_set_formulas(
+pub unsafe extern "C" fn fz_workbook_set_formulas(
     wb: fz_workbook_h,
     sheet: *const c_char,
     start_row: c_uint,
