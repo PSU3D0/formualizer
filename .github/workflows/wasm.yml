@@ -20,6 +20,11 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
@@ -37,6 +42,16 @@ jobs:
       - name: Build WASM (bundler target)
         working-directory: bindings/wasm
         run: wasm-pack build --target bundler --out-dir pkg --release
+
+      - name: Install JS dependencies
+        working-directory: bindings/wasm
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Build TS wrapper
+        working-directory: bindings/wasm
+        run: pnpm run build:ts
 
       - name: Run WASM tests (Node)
         working-directory: bindings/wasm

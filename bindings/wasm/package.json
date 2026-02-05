@@ -2,15 +2,26 @@
   "name": "formualizer",
   "version": "0.3.1",
   "description": "WebAssembly bindings for the Formualizer workbook + formula engine",
-  "main": "pkg/formualizer_wasm.js",
-  "module": "pkg/formualizer_wasm.js",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./pkg/*": "./pkg/*"
+  },
   "files": [
+    "dist",
     "pkg",
     "README.md"
   ],
   "scripts": {
-    "build": "npm run build:wasm",
+    "build": "npm run build:wasm && npm run build:ts",
     "build:wasm": "wasm-pack build --target bundler --out-dir pkg --release",
+    "build:ts": "tsc -p tsconfig.json",
     "test": "wasm-pack test --node",
     "clean": "rimraf dist pkg"
   },
