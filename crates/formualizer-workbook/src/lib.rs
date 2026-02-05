@@ -10,6 +10,8 @@ pub mod worksheet;
 
 #[cfg(feature = "calamine")]
 pub use backends::CalamineAdapter;
+#[cfg(feature = "csv")]
+pub use backends::CsvAdapter;
 #[cfg(feature = "json")]
 pub use backends::JsonAdapter;
 #[cfg(feature = "umya")]
