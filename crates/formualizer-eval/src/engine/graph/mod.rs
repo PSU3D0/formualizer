@@ -1701,6 +1701,16 @@ impl DependencyGraph {
     ) -> Result<(), ExcelError> {
         use rustc_hash::FxHashSet;
 
+        // Anchor cell coordinates (0-based) for special-casing writes.
+        // We must never overwrite the anchor via set_cell_value(), because that would
+        // strip the formula and break incremental recalculation.
+        let anchor_cell = self
+            .get_cell_ref(anchor)
+            .expect("anchor cell ref for spill commit");
+        let anchor_sheet_name = self.sheet_name(anchor_cell.sheet_id).to_string();
+        let anchor_row = anchor_cell.coord.row();
+        let anchor_col = anchor_cell.coord.col();
+
         // Capture previous owned cells for this anchor
         let prev_cells = self
             .spill_anchor_to_cells
@@ -1782,12 +1792,21 @@ impl DependencyGraph {
             {
                 for idx in (0..applied).rev() {
                     let ((ref sheet, row, col), ref old) = old_values[idx];
-                    let _ = self.set_cell_value(sheet, row + 1, col + 1, old.value.clone());
+                    if sheet == &anchor_sheet_name && row == anchor_row && col == anchor_col {
+                        self.update_vertex_value(anchor, old.value.clone());
+                    } else {
+                        let _ = self.set_cell_value(sheet, row + 1, col + 1, old.value.clone());
+                    }
                 }
                 return Err(ExcelError::new(ExcelErrorKind::Error)
                     .with_message("Injected persistence fault during spill commit"));
             }
-            let _ = self.set_cell_value(&op.sheet, op.row + 1, op.col + 1, op.new_value.clone());
+            if op.sheet == anchor_sheet_name && op.row == anchor_row && op.col == anchor_col {
+                self.update_vertex_value(anchor, op.new_value.clone());
+            } else {
+                let _ =
+                    self.set_cell_value(&op.sheet, op.row + 1, op.col + 1, op.new_value.clone());
+            }
         }
 
         // Update spill ownership maps only on success
@@ -1813,15 +1832,20 @@ impl DependencyGraph {
 
     /// Clear an existing spill region for an anchor (set cells to Empty and forget ownership)
     pub fn clear_spill_region(&mut self, anchor: VertexId) {
+        let anchor_cell = self.get_cell_ref(anchor);
         if let Some(cells) = self.spill_anchor_to_cells.remove(&anchor) {
             for cell in cells {
                 let sheet = self.sheet_name(cell.sheet_id).to_string();
-                let _ = self.set_cell_value(
-                    &sheet,
-                    cell.coord.row() + 1,
-                    cell.coord.col() + 1,
-                    LiteralValue::Empty,
-                );
+                // Do not clobber the anchor cell via set_cell_value(); that would strip its formula.
+                let is_anchor = anchor_cell.map(|a| a == cell).unwrap_or(false);
+                if !is_anchor {
+                    let _ = self.set_cell_value(
+                        &sheet,
+                        cell.coord.row() + 1,
+                        cell.coord.col() + 1,
+                        LiteralValue::Empty,
+                    );
+                }
                 self.spill_cell_to_anchor.remove(&cell);
             }
         }

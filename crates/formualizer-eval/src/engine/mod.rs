@@ -357,6 +357,11 @@ pub struct SpillConfig {
     pub cancellation: SpillCancellationPolicy,
     /// Visibility policy for staged writes.
     pub visibility: SpillVisibility,
+
+    /// Hard cap on the number of cells a single spill may project.
+    ///
+    /// This prevents pathological vertex explosions from very large dynamic arrays.
+    pub max_spill_cells: u32,
 }
 
 impl Default for SpillConfig {
@@ -369,6 +374,8 @@ impl Default for SpillConfig {
             memory_budget_bytes: None,
             cancellation: SpillCancellationPolicy::Cooperative,
             visibility: SpillVisibility::OnCommit,
+            // Conservative: enough for common UI patterns, small enough to avoid graph blowups.
+            max_spill_cells: 10_000,
         }
     }
 }

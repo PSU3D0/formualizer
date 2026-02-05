@@ -1771,12 +1771,49 @@ where
                         let sheet_id = anchor.sheet_id;
                         let h = rows.len() as u32;
                         let w = rows.first().map(|r| r.len()).unwrap_or(0) as u32;
+
+                        // Hard cap to avoid vertex explosion from huge dynamic arrays.
+                        let spill_cells = (h as u64).saturating_mul(w as u64);
+                        if spill_cells > self.config.spill.max_spill_cells as u64 {
+                            self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
+                            let spill_err = ExcelError::new(ExcelErrorKind::Spill)
+                                .with_message("SpillTooLarge")
+                                .with_extra(formualizer_common::ExcelErrorExtra::Spill {
+                                    expected_rows: h,
+                                    expected_cols: w,
+                                });
+                            let spill_val = LiteralValue::Error(spill_err.clone());
+                            if let Some(d) = delta.as_deref_mut() {
+                                let old = self
+                                    .graph
+                                    .get_value(vertex_id)
+                                    .unwrap_or(LiteralValue::Empty);
+                                if old != spill_val {
+                                    d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
+                                }
+                            }
+                            self.graph.update_vertex_value(vertex_id, spill_val.clone());
+                            if self.config.arrow_storage_enabled
+                                && self.config.delta_overlay_enabled
+                                && self.config.write_formula_overlay_enabled
+                            {
+                                let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
+                                self.mirror_value_to_overlay(
+                                    &sheet_name,
+                                    anchor.coord.row() + 1,
+                                    anchor.coord.col() + 1,
+                                    &spill_val,
+                                );
+                            }
+                            return Ok(spill_val);
+                        }
                         // Bounds check to avoid out-of-range writes (align to AbsCoord capacity)
                         const PACKED_MAX_ROW: u32 = 1_048_575; // 20-bit max
                         const PACKED_MAX_COL: u32 = 16_383; // 14-bit max
                         let end_row = anchor.coord.row().saturating_add(h).saturating_sub(1);
                         let end_col = anchor.coord.col().saturating_add(w).saturating_sub(1);
                         if end_row > PACKED_MAX_ROW || end_col > PACKED_MAX_COL {
+                            self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
                             let spill_err = ExcelError::new(ExcelErrorKind::Spill)
                                 .with_message("Spill exceeds sheet bounds")
                                 .with_extra(formualizer_common::ExcelErrorExtra::Spill {
@@ -1784,7 +1821,28 @@ where
                                     expected_cols: w,
                                 });
                             let spill_val = LiteralValue::Error(spill_err.clone());
+                            if let Some(d) = delta.as_deref_mut() {
+                                let old = self
+                                    .graph
+                                    .get_value(vertex_id)
+                                    .unwrap_or(LiteralValue::Empty);
+                                if old != spill_val {
+                                    d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
+                                }
+                            }
                             self.graph.update_vertex_value(vertex_id, spill_val.clone());
+                            if self.config.arrow_storage_enabled
+                                && self.config.delta_overlay_enabled
+                                && self.config.write_formula_overlay_enabled
+                            {
+                                let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
+                                self.mirror_value_to_overlay(
+                                    &sheet_name,
+                                    anchor.coord.row() + 1,
+                                    anchor.coord.col() + 1,
+                                    &spill_val,
+                                );
+                            }
                             return Ok(spill_val);
                         }
                         let mut targets = Vec::new();
@@ -1819,6 +1877,10 @@ where
                                     delta.as_deref_mut(),
                                 ) {
                                     // If commit fails, mark as error
+                                    self.clear_spill_projection_and_mirror(
+                                        vertex_id,
+                                        delta.as_deref_mut(),
+                                    );
                                     if let Some(d) = delta.as_deref_mut() {
                                         let old = self
                                             .graph
@@ -1833,11 +1895,22 @@ where
                                             );
                                         }
                                     }
-                                    self.graph.update_vertex_value(
-                                        vertex_id,
-                                        LiteralValue::Error(e.clone()),
-                                    );
-                                    return Ok(LiteralValue::Error(e));
+                                    let err_val = LiteralValue::Error(e.clone());
+                                    self.graph.update_vertex_value(vertex_id, err_val.clone());
+                                    if self.config.arrow_storage_enabled
+                                        && self.config.delta_overlay_enabled
+                                        && self.config.write_formula_overlay_enabled
+                                    {
+                                        let sheet_name =
+                                            self.graph.sheet_name(anchor.sheet_id).to_string();
+                                        self.mirror_value_to_overlay(
+                                            &sheet_name,
+                                            anchor.coord.row() + 1,
+                                            anchor.coord.col() + 1,
+                                            &err_val,
+                                        );
+                                    }
+                                    return Ok(err_val);
                                 }
                                 // Anchor shows the top-left value, like Excel
                                 let top_left = rows
@@ -1849,6 +1922,10 @@ where
                                 Ok(top_left)
                             }
                             Err(e) => {
+                                self.clear_spill_projection_and_mirror(
+                                    vertex_id,
+                                    delta.as_deref_mut(),
+                                );
                                 let spill_err = ExcelError::new(ExcelErrorKind::Spill)
                                     .with_message(
                                         e.message.unwrap_or_else(|| "Spill blocked".to_string()),
@@ -1872,6 +1949,18 @@ where
                                     }
                                 }
                                 self.graph.update_vertex_value(vertex_id, spill_val.clone());
+                                if self.config.arrow_storage_enabled
+                                    && self.config.delta_overlay_enabled
+                                    && self.config.write_formula_overlay_enabled
+                                {
+                                    let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
+                                    self.mirror_value_to_overlay(
+                                        &sheet_name,
+                                        anchor.coord.row() + 1,
+                                        anchor.coord.col() + 1,
+                                        &spill_val,
+                                    );
+                                }
                                 Ok(spill_val)
                             }
                         }
@@ -4440,6 +4529,54 @@ impl<R> Engine<R>
 where
     R: EvaluationContext,
 {
+    fn clear_spill_projection_and_mirror(
+        &mut self,
+        anchor_vertex: VertexId,
+        delta: Option<&mut DeltaCollector>,
+    ) {
+        let spill_cells = self
+            .graph
+            .spill_cells_for_anchor(anchor_vertex)
+            .map(|cells| cells.to_vec())
+            .unwrap_or_default();
+        if spill_cells.is_empty() {
+            return;
+        }
+
+        if let Some(delta) = delta
+            && delta.mode != DeltaMode::Off
+        {
+            let empty = LiteralValue::Empty;
+            for cell in spill_cells.iter() {
+                let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                let old = self
+                    .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .unwrap_or(LiteralValue::Empty);
+                if old != empty {
+                    delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                }
+            }
+        }
+
+        self.graph.clear_spill_region(anchor_vertex);
+
+        if self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled
+        {
+            let empty = LiteralValue::Empty;
+            for cell in spill_cells.iter() {
+                let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+                self.mirror_value_to_overlay(
+                    &sheet_name,
+                    cell.coord.row() + 1,
+                    cell.coord.col() + 1,
+                    &empty,
+                );
+            }
+        }
+    }
+
     /// Helper: commit spill via shim and mirror resulting cells into Arrow overlay when enabled.
     fn commit_spill_and_mirror(
         &mut self,
