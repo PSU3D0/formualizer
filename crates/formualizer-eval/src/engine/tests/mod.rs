@@ -47,6 +47,8 @@ mod spill_config_defaults;
 mod spill_edges;
 mod spill_semantics_101;
 
+mod implicit_intersection_103;
+
 mod arrow_bulk_update;
 mod arrow_chunk_growth;
 mod arrow_sparse_compaction;
