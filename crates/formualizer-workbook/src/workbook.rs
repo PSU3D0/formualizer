@@ -156,6 +156,19 @@ impl Workbook {
         &self.engine.config
     }
 
+    pub fn deterministic_mode(&self) -> &formualizer_eval::engine::DeterministicMode {
+        &self.engine.config.deterministic_mode
+    }
+
+    pub fn set_deterministic_mode(
+        &mut self,
+        mode: formualizer_eval::engine::DeterministicMode,
+    ) -> Result<(), IoError> {
+        self.engine
+            .set_deterministic_mode(mode)
+            .map_err(IoError::Engine)
+    }
+
     // Changelog controls
     pub fn set_changelog_enabled(&mut self, enabled: bool) {
         self.enable_changelog = enabled;

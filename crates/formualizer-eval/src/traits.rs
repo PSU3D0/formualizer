@@ -3,8 +3,8 @@ pub use crate::function::Function;
 use crate::interpreter::Interpreter;
 use crate::reference::CellRef;
 use formualizer_common::{
-    LiteralValue,
     error::{ExcelError, ExcelErrorKind},
+    LiteralValue,
 };
 use std::any::Any;
 use std::borrow::Cow;
@@ -1105,14 +1105,22 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         crate::locale::Locale::invariant()
     }
 
-    /// Timezone provider for date/time functions
-    /// Default: Local (Excel-compatible behavior)
-    /// Functions should use local timezone when this returns Local
-    fn timezone(&self) -> &crate::timezone::TimeZoneSpec {
-        // Static default to avoid allocation
-        static DEFAULT_TZ: std::sync::OnceLock<crate::timezone::TimeZoneSpec> =
+    /// Clock provider for volatile date/time builtins.
+    ///
+    /// Default: SystemClock(Local) for Excel-compatible behavior.
+    fn clock(&self) -> &dyn crate::timezone::ClockProvider {
+        static DEFAULT_CLOCK: std::sync::OnceLock<crate::timezone::SystemClock> =
             std::sync::OnceLock::new();
-        DEFAULT_TZ.get_or_init(crate::timezone::TimeZoneSpec::default)
+        DEFAULT_CLOCK.get_or_init(|| {
+            crate::timezone::SystemClock::new(crate::timezone::TimeZoneSpec::default())
+        })
+    }
+
+    /// Timezone spec for date/time functions.
+    ///
+    /// Default: derived from `clock()`.
+    fn timezone(&self) -> &crate::timezone::TimeZoneSpec {
+        self.clock().timezone()
     }
 
     /// Volatile granularity. Default Always for backwards compatibility.
@@ -1220,6 +1228,7 @@ pub enum VolatileLevel {
 pub trait FunctionContext<'ctx> {
     fn locale(&self) -> crate::locale::Locale;
     fn timezone(&self) -> &crate::timezone::TimeZoneSpec;
+    fn clock(&self) -> &dyn crate::timezone::ClockProvider;
     fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>>;
     fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>>;
     fn chunk_hint(&self) -> Option<usize>;
@@ -1313,6 +1322,10 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
     }
     fn timezone(&self) -> &crate::timezone::TimeZoneSpec {
         self.base.timezone()
+    }
+
+    fn clock(&self) -> &dyn crate::timezone::ClockProvider {
+        self.base.clock()
     }
     fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>> {
         self.base.thread_pool()

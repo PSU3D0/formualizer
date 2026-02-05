@@ -26,7 +26,7 @@ impl Function for TodayFn {
         _args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let today = ctx.timezone().today();
+        let today = ctx.clock().today();
         let serial = date_to_serial_for(ctx.date_system(), &today);
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             serial,
@@ -54,7 +54,7 @@ impl Function for NowFn {
         _args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let now = ctx.timezone().now();
+        let now = ctx.clock().now();
         let serial = datetime_to_serial_for(ctx.date_system(), &now);
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             serial,
