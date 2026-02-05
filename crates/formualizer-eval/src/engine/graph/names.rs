@@ -64,6 +64,9 @@ fn adjust_named_definition(
                 return Err(ExcelError::new(ExcelErrorKind::Ref));
             }
         }
+        NamedDefinition::Literal(_) => {
+            // Constant names are not affected by structural shifts.
+        }
         NamedDefinition::Formula {
             ast,
             dependencies,
@@ -555,6 +558,9 @@ impl DependencyGraph {
                         range_dependencies.push(r.into_owned());
                     }
                 }
+            }
+            NamedDefinition::Literal(_) => {
+                // No dependencies.
             }
             NamedDefinition::Formula {
                 dependencies: formula_deps,
