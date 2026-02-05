@@ -56,6 +56,9 @@ pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 
 use crate::traits::EvaluationContext;
 use crate::traits::VolatileLevel;
+use crate::timezone::TimeZoneSpec;
+use chrono::{DateTime, Utc};
+use formualizer_common::error::{ExcelError, ExcelErrorKind};
 
 impl<R: EvaluationContext> Engine<R> {
     pub fn begin_bulk_ingest(&mut self) -> ingest_builder::BulkIngestBuilder<'_> {
@@ -79,6 +82,73 @@ impl CalcObserver for () {
     fn on_dirty_propagation(&self, _vertex_id: VertexId, _affected_count: usize) {}
 }
 
+/// Deterministic evaluation configuration.
+///
+/// When enabled, volatile sources (clock/timezone) are derived solely from this config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeterministicMode {
+    /// Non-deterministic: uses the system clock.
+    Disabled {
+        /// Timezone used by volatile date/time builtins.
+        timezone: TimeZoneSpec,
+    },
+    /// Deterministic: uses a fixed timestamp in the provided timezone.
+    Enabled {
+        /// Fixed timestamp expressed in UTC.
+        timestamp_utc: DateTime<Utc>,
+        /// Timezone used to interpret `timestamp_utc` for NOW()/TODAY().
+        timezone: TimeZoneSpec,
+    },
+}
+
+impl Default for DeterministicMode {
+    fn default() -> Self {
+        Self::Disabled {
+            timezone: TimeZoneSpec::default(),
+        }
+    }
+}
+
+impl DeterministicMode {
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, DeterministicMode::Enabled { .. })
+    }
+
+    pub fn timezone(&self) -> &TimeZoneSpec {
+        match self {
+            DeterministicMode::Disabled { timezone } => timezone,
+            DeterministicMode::Enabled { timezone, .. } => timezone,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ExcelError> {
+        if let DeterministicMode::Enabled { timezone, .. } = self {
+            timezone
+                .validate_for_determinism()
+                .map_err(|msg| ExcelError::new(ExcelErrorKind::Value).with_message(msg))?;
+        }
+        Ok(())
+    }
+
+    pub fn build_clock(
+        &self,
+    ) -> Result<std::sync::Arc<dyn crate::timezone::ClockProvider>, ExcelError> {
+        self.validate()?;
+        Ok(match self {
+            DeterministicMode::Disabled { timezone } => {
+                std::sync::Arc::new(crate::timezone::SystemClock::new(timezone.clone()))
+            }
+            DeterministicMode::Enabled {
+                timestamp_utc,
+                timezone,
+            } => std::sync::Arc::new(crate::timezone::FixedClock::new(
+                timestamp_utc.clone(),
+                timezone.clone(),
+            )),
+        })
+    }
+}
+
 /// Configuration for the evaluation engine
 #[derive(Debug, Clone)]
 pub struct EvalConfig {
@@ -97,6 +167,9 @@ pub struct EvalConfig {
 
     /// Volatile granularity for RNG seeding and re-evaluation policy
     pub volatile_level: VolatileLevel,
+
+    /// Deterministic evaluation configuration (clock/timezone injection).
+    pub deterministic_mode: DeterministicMode,
 
     // Range handling configuration (Phase 5)
     /// Ranges with size <= this limit are expanded into individual Cell dependencies
@@ -172,6 +245,8 @@ impl Default for EvalConfig {
 
             // Volatile model default
             volatile_level: VolatileLevel::Always,
+
+            deterministic_mode: DeterministicMode::default(),
 
             // Range handling defaults (Phase 5)
             range_expansion_limit: 64,

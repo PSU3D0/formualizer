@@ -22,6 +22,7 @@ pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
     resolver: R,
     pub config: EvalConfig,
+    clock: Arc<dyn crate::timezone::ClockProvider>,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
     pub recalc_epoch: u64,
     snapshot_id: std::sync::atomic::AtomicU64,
@@ -320,6 +321,15 @@ where
     pub fn new(resolver: R, config: EvalConfig) -> Self {
         crate::builtins::load_builtins();
 
+        let clock = config
+            .deterministic_mode
+            .build_clock()
+            .unwrap_or_else(|_| {
+                Arc::new(crate::timezone::SystemClock::new(
+                    crate::timezone::TimeZoneSpec::default(),
+                ))
+            });
+
         // Initialize thread pool based on config
         let thread_pool = if config.enable_parallel {
             let mut builder = ThreadPoolBuilder::new();
@@ -342,6 +352,7 @@ where
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             config,
+            clock,
             thread_pool,
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
@@ -366,10 +377,19 @@ where
         thread_pool: Arc<rayon::ThreadPool>,
     ) -> Self {
         crate::builtins::load_builtins();
+        let clock = config
+            .deterministic_mode
+            .build_clock()
+            .unwrap_or_else(|_| {
+                Arc::new(crate::timezone::SystemClock::new(
+                    crate::timezone::TimeZoneSpec::default(),
+                ))
+            });
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             config,
+            clock,
             thread_pool: Some(thread_pool),
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
@@ -577,6 +597,21 @@ where
     /// Set the volatile level policy (Always/OnRecalc/OnOpen)
     pub fn set_volatile_level(&mut self, level: crate::traits::VolatileLevel) {
         self.config.volatile_level = level;
+    }
+
+    /// Enable/disable deterministic evaluation mode (fixed clock + timezone).
+    pub fn set_deterministic_mode(
+        &mut self,
+        mode: crate::engine::DeterministicMode,
+    ) -> Result<(), ExcelError> {
+        let clock = mode.build_clock()?;
+        self.config.deterministic_mode = mode;
+        self.clock = clock;
+        Ok(())
+    }
+
+    fn validate_deterministic_mode(&self) -> Result<(), ExcelError> {
+        self.config.deterministic_mode.validate()
     }
 
     pub fn sheet_id(&self, name: &str) -> Option<SheetId> {
@@ -2285,6 +2320,7 @@ where
     /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
     pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
         let _source_cache = self.source_cache_session();
+        self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
@@ -2353,6 +2389,7 @@ where
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
         let _source_cache = self.source_cache_session();
+        self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
             // Build graph for all staged formulas before evaluating
             self.build_graph_all()?;
@@ -2533,6 +2570,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        self.validate_deterministic_mode()?;
         if targets.is_empty() {
             return Ok(Vec::new());
         }
@@ -2566,6 +2604,7 @@ where
         targets: &[(&str, u32, u32)],
         cancel_flag: &AtomicBool,
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        self.validate_deterministic_mode()?;
         if targets.is_empty() {
             return Ok(Vec::new());
         }
@@ -2599,6 +2638,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<(Vec<Option<LiteralValue>>, EvalDelta), ExcelError> {
+        self.validate_deterministic_mode()?;
         if targets.is_empty() {
             return Ok((Vec::new(), EvalDelta::default()));
         }
@@ -2958,6 +2998,7 @@ where
         &mut self,
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
+        self.validate_deterministic_mode()?;
         let start = web_time::Instant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
@@ -3931,6 +3972,10 @@ impl<R> crate::traits::EvaluationContext for Engine<R>
 where
     R: EvaluationContext,
 {
+    fn clock(&self) -> &dyn crate::timezone::ClockProvider {
+        self.clock.as_ref()
+    }
+
     fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
         self.thread_pool.as_ref()
     }

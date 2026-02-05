@@ -23,6 +23,14 @@ mod tests {
             &crate::timezone::TimeZoneSpec::Utc
         }
 
+        fn clock(&self) -> &dyn crate::timezone::ClockProvider {
+            static CLOCK: std::sync::OnceLock<crate::timezone::SystemClock> =
+                std::sync::OnceLock::new();
+            CLOCK.get_or_init(|| {
+                crate::timezone::SystemClock::new(crate::timezone::TimeZoneSpec::Utc)
+            })
+        }
+
         fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>> {
             None
         }

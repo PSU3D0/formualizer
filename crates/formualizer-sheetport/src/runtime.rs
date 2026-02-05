@@ -36,6 +36,7 @@ pub struct EvalOptions {
     pub freeze_volatile: bool,
     pub rng_seed: Option<u64>,
     pub mode: EvalMode,
+    pub deterministic_mode: Option<formualizer_eval::engine::DeterministicMode>,
 }
 
 impl Default for EvalOptions {
@@ -44,6 +45,7 @@ impl Default for EvalOptions {
             freeze_volatile: false,
             rng_seed: None,
             mode: EvalMode::Full,
+            deterministic_mode: None,
         }
     }
 }
@@ -161,7 +163,7 @@ impl<'a> SheetPort<'a> {
         &mut self,
         options: EvalOptions,
     ) -> Result<OutputSnapshot, SheetPortError> {
-        let restore = self.apply_eval_options(&options);
+        let restore = self.apply_eval_options(&options)?;
         let result = (|| -> Result<OutputSnapshot, SheetPortError> {
             if self.outputs_require_full_eval() {
                 self.workbook.prepare_graph_all()?;
@@ -408,7 +410,7 @@ impl<'a> SheetPort<'a> {
         plan: &RecalcPlan,
         options: EvalOptions,
     ) -> Result<OutputSnapshot, SheetPortError> {
-        let restore = self.apply_eval_options(&options);
+        let restore = self.apply_eval_options(&options)?;
         let result = (|| -> Result<OutputSnapshot, SheetPortError> {
             self.workbook.evaluate_with_plan(plan)?;
             self.read_outputs()
@@ -951,17 +953,24 @@ fn merge_with_default(mut current: PortValue, default: &PortValue) -> PortValue 
 struct EvalConfigRestore {
     seed: u64,
     volatile_level: VolatileLevel,
+    deterministic_mode: formualizer_eval::engine::DeterministicMode,
     seed_overridden: bool,
     volatile_overridden: bool,
+    deterministic_overridden: bool,
 }
 
 impl<'a> SheetPort<'a> {
-    fn apply_eval_options(&mut self, options: &EvalOptions) -> EvalConfigRestore {
+    fn apply_eval_options(
+        &mut self,
+        options: &EvalOptions,
+    ) -> Result<EvalConfigRestore, SheetPortError> {
         let seed = self.workbook.engine().config.workbook_seed;
         let volatile_level = self.workbook.engine().config.volatile_level;
+        let deterministic_mode = self.workbook.engine().config.deterministic_mode.clone();
 
         let mut seed_overridden = false;
         let mut volatile_overridden = false;
+        let mut deterministic_overridden = false;
 
         if let Some(desired_seed) = options.rng_seed
             && desired_seed != seed
@@ -977,12 +986,24 @@ impl<'a> SheetPort<'a> {
             volatile_overridden = true;
         }
 
-        EvalConfigRestore {
+        if let Some(mode) = options.deterministic_mode.clone() {
+            if mode != deterministic_mode {
+                self.workbook
+                    .engine_mut()
+                    .set_deterministic_mode(mode)
+                    .map_err(SheetPortError::from)?;
+                deterministic_overridden = true;
+            }
+        }
+
+        Ok(EvalConfigRestore {
             seed,
             volatile_level,
+            deterministic_mode,
             seed_overridden,
             volatile_overridden,
-        }
+            deterministic_overridden,
+        })
     }
 
     fn restore_eval_options(&mut self, restore: EvalConfigRestore) {
@@ -994,6 +1015,13 @@ impl<'a> SheetPort<'a> {
             self.workbook
                 .engine_mut()
                 .set_volatile_level(restore.volatile_level);
+        }
+
+        if restore.deterministic_overridden {
+            self.workbook
+                .engine_mut()
+                .set_deterministic_mode(restore.deterministic_mode)
+                .expect("restore deterministic mode");
         }
     }
 }

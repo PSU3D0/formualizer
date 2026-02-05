@@ -5,6 +5,7 @@ mod common;
 mod cycle_detection;
 mod demand_driven;
 mod dependency;
+mod deterministic_clock;
 mod dirty_propagation;
 mod dirty_propagation_precision;
 mod evaluation;

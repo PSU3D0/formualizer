@@ -6,6 +6,8 @@ use crate::errors::ExcelEvaluationError;
 use crate::value::{literal_to_py, py_to_literal};
 use crate::workbook::PyWorkbook;
 use formualizer::common::LiteralValue;
+use formualizer::eval::engine::DeterministicMode;
+use formualizer::eval::timezone::TimeZoneSpec;
 use formualizer::sheetport::{
     ConstraintViolation, ManifestBindings, PortBinding, PortValue, SheetPort,
     SheetPortError as RuntimeSheetPortError, TableRow, TableValue,
@@ -158,20 +160,60 @@ impl PySheetPortSession {
             .map(|_| ())
     }
 
-    #[pyo3(signature = (*, freeze_volatile=false, rng_seed=None))]
+    #[pyo3(signature = (*, freeze_volatile=false, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None))]
     pub fn evaluate_once<'py>(
         &mut self,
         py: Python<'py>,
         freeze_volatile: bool,
         rng_seed: Option<u64>,
+        deterministic_timestamp_utc: Option<chrono::DateTime<chrono::Utc>>,
+        deterministic_timezone: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<PyObject> {
+        let deterministic_mode = if let Some(ts) = deterministic_timestamp_utc {
+            let tz = if let Some(obj) = deterministic_timezone {
+                parse_timezone_spec(obj)?
+            } else {
+                TimeZoneSpec::Utc
+            };
+            Some(DeterministicMode::Enabled {
+                timestamp_utc: ts,
+                timezone: tz,
+            })
+        } else {
+            if deterministic_timezone.is_some() {
+                return Err(PyErr::new::<PyTypeError, _>(
+                    "deterministic_timezone requires deterministic_timestamp_utc",
+                ));
+            }
+            None
+        };
+
         let options = formualizer::sheetport::EvalOptions {
             freeze_volatile,
             rng_seed,
+            deterministic_mode,
             ..Default::default()
         };
         self.with_sheetport(py, |sheetport| sheetport.evaluate_once(options))
             .and_then(|snapshot| snapshot_to_py(py, snapshot.inner()))
+    }
+}
+
+fn parse_timezone_spec(obj: &Bound<'_, PyAny>) -> PyResult<TimeZoneSpec> {
+    if let Ok(s) = obj.extract::<String>() {
+        match s.to_ascii_lowercase().as_str() {
+            "utc" => Ok(TimeZoneSpec::Utc),
+            "local" => Ok(TimeZoneSpec::Local),
+            _ => Err(PyErr::new::<PyTypeError, _>(
+                "timezone must be 'utc', 'local', or an offset in seconds",
+            )),
+        }
+    } else if let Ok(secs) = obj.extract::<i32>() {
+        Ok(TimeZoneSpec::FixedOffsetSeconds(secs))
+    } else {
+        Err(PyErr::new::<PyTypeError, _>(
+            "timezone must be 'utc', 'local', or an offset in seconds",
+        ))
     }
 }
 
