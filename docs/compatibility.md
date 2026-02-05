@@ -37,3 +37,11 @@ This rewrites each `expected.json` with the current engine output.
 - `named-ranges`
 - `tables` (currently skipped)
 - `dynamic-arrays` (currently skipped)
+
+## Locale Contract (M0)
+
+The evaluator uses an invariant locale:
+
+- Numeric parsing uses `.` as the decimal separator and does not accept thousands separators.
+- Locale-specific decimal formats like `"1.234,56"` are not supported and should yield `#VALUE!`
+  when a number is required (e.g. `VALUE()`, `TEXT()` numeric formatting).
