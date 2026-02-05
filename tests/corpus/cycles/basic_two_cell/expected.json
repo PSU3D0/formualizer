@@ -1,0 +1,12 @@
+{
+  "results": {
+    "Sheet1!A1": {
+      "type": "error",
+      "value": "#CIRC!"
+    },
+    "Sheet1!B1": {
+      "type": "error",
+      "value": "#CIRC!"
+    }
+  }
+}

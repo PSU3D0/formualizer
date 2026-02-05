@@ -1,0 +1,6 @@
+{
+  "id": "volatile-determinism/rand_seeded",
+  "category": "volatile-determinism",
+  "config": {"workbook_seed": 42, "volatile_level": "always"},
+  "targets": ["Sheet1!A1"]
+}

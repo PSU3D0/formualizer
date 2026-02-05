@@ -1,4 +1,4 @@
-use super::super::utils::{ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, coerce_num};
+use super::super::utils::{coerce_num, ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
@@ -78,7 +78,11 @@ impl Function for GcdFn {
         _: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
         fn gcd(a: u64, b: u64) -> u64 {
-            if b == 0 { a } else { gcd(b, a % b) }
+            if b == 0 {
+                a
+            } else {
+                gcd(b, a % b)
+            }
         }
 
         let mut result: Option<u64> = None;
@@ -92,7 +96,7 @@ impl Function for GcdFn {
 
             // Excel truncates and requires non-negative
             let n = n.trunc();
-            if n < 0.0 || n > 9.99999999e9 {
+            if !(0.0..=9.99999999e9).contains(&n) {
                 return Ok(CalcValue::Scalar(
                     LiteralValue::Error(ExcelError::new_num()),
                 ));
@@ -134,7 +138,11 @@ impl Function for LcmFn {
         _: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
         fn gcd(a: u64, b: u64) -> u64 {
-            if b == 0 { a } else { gcd(b, a % b) }
+            if b == 0 {
+                a
+            } else {
+                gcd(b, a % b)
+            }
         }
         fn lcm(a: u64, b: u64) -> u64 {
             if a == 0 || b == 0 {
@@ -154,7 +162,7 @@ impl Function for LcmFn {
             };
 
             let n = n.trunc();
-            if n < 0.0 || n > 9.99999999e9 {
+            if !(0.0..=9.99999999e9).contains(&n) {
                 return Ok(CalcValue::Scalar(
                     LiteralValue::Error(ExcelError::new_num()),
                 ));

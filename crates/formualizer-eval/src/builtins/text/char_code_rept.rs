@@ -1,6 +1,6 @@
 //! CHAR, CODE, REPT text functions
 
-use super::super::utils::{ARG_ANY_ONE, ARG_ANY_TWO, coerce_num};
+use super::super::utils::{coerce_num, ARG_ANY_ONE, ARG_ANY_TWO};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
@@ -43,7 +43,7 @@ impl Function for CharFn {
         let code = n.trunc() as i32;
 
         // Excel CHAR accepts 1-255
-        if code < 1 || code > 255 {
+        if !(1..=255).contains(&code) {
             return Ok(CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));

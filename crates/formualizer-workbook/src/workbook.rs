@@ -103,8 +103,10 @@ impl WorkbookConfig {
     }
 
     pub fn interactive() -> Self {
-        let mut eval = formualizer_eval::engine::EvalConfig::default();
-        eval.defer_graph_building = true;
+        let eval = formualizer_eval::engine::EvalConfig {
+            defer_graph_building: true,
+            ..Default::default()
+        };
         Self {
             eval,
             enable_changelog: true,

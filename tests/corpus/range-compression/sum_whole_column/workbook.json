@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "sheets": {
+    "Sheet1": {
+      "dimensions": [100, 2],
+      "cells": [
+        {"row": 1, "col": 1, "value": {"type": "Int", "value": 1}},
+        {"row": 100, "col": 1, "value": {"type": "Int", "value": 2}},
+        {"row": 1, "col": 2, "formula": "=SUM(A:A)"}
+      ]
+    }
+  }
+}

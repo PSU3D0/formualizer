@@ -421,6 +421,20 @@ mod tests {
             LiteralValue::Error(e) => assert_eq!(e.to_string(), "#VALUE!"),
             _ => panic!("Expected #VALUE! error"),
         }
+
+        // Locale-dependent numeric text should not be silently misparsed
+        let comma_decimal = lit(LiteralValue::Text("1.234,56".into()));
+        match f
+            .dispatch(
+                &[ArgumentHandle::new(&comma_decimal, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e.to_string(), "#VALUE!"),
+            other => panic!("Expected #VALUE! error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -458,6 +472,23 @@ mod tests {
             .unwrap(),
             LiteralValue::Text("3.14".into())
         );
+
+        // Locale-dependent numeric text should error (not silently become 0.00)
+        let comma_decimal = lit(LiteralValue::Text("1.234,56".into()));
+        match f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&comma_decimal, &ctx),
+                    ArgumentHandle::new(&dec_fmt, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e.to_string(), "#VALUE!"),
+            other => panic!("Expected #VALUE! error, got {other:?}"),
+        }
     }
 
     #[test]

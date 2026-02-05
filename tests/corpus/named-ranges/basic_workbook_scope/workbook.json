@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "sheets": {
+    "Sheet1": {
+      "dimensions": [1, 2],
+      "named_ranges": [
+        {
+          "name": "X",
+          "scope": "workbook",
+          "address": {
+            "sheet": "Sheet1",
+            "start_row": 1,
+            "start_col": 1,
+            "end_row": 1,
+            "end_col": 1
+          }
+        }
+      ],
+      "cells": [
+        {"row": 1, "col": 1, "value": {"type": "Int", "value": 10}},
+        {"row": 1, "col": 2, "formula": "=X*2"}
+      ]
+    }
+  }
+}

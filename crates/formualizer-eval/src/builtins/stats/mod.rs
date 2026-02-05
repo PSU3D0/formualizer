@@ -15,7 +15,7 @@
 //! - Empty numeric sets produce Excel-specific errors (#NUM! for LARGE/SMALL, #N/A for rank target
 //!   out of range, #DIV/0! for STDEV/VAR sample with n < 2, etc.).
 
-use super::super::builtins::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
+use super::super::builtins::utils::{coerce_num, ARG_RANGE_NUM_LENIENT_ONE};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -1114,7 +1114,7 @@ pub struct DevsqFn;
 
 /* ─────────────────────────── MAXIFS / MINIFS ──────────────────────────── */
 
-use super::utils::{ARG_ANY_ONE, criteria_match};
+use super::utils::{criteria_match, ARG_ANY_ONE};
 
 /// MAXIFS(max_range, criteria_range1, criteria1, [criteria_range2, criteria2], ...)
 /// Returns the maximum value among cells specified by given conditions.
@@ -1176,7 +1176,7 @@ fn eval_maxminifs<'a, 'b>(
     is_max: bool,
 ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
     // Validate argument count: must be target_range + N pairs
-    if args.len() < 3 || (args.len() - 1) % 2 != 0 {
+    if args.len() < 3 || !(args.len() - 1).is_multiple_of(2) {
         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
             ExcelError::new_value().with_message(format!(
                 "Function expects 1 target_range followed by N pairs (criteria_range, criteria); got {} args",
@@ -1331,7 +1331,7 @@ impl Function for TrimmeanFn {
         };
 
         // Percent must be between 0 and 1 (exclusive of 1)
-        if percent < 0.0 || percent >= 1.0 {
+        if !(0.0..1.0).contains(&percent) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -1602,6 +1602,7 @@ fn std_norm_pdf(z: f64) -> f64 {
 
 /// Helper: Inverse standard normal CDF (probit function)
 /// Uses Rational approximation from Abramowitz and Stegun
+#[allow(clippy::excessive_precision)]
 fn std_norm_inv(p: f64) -> Option<f64> {
     if p <= 0.0 || p >= 1.0 {
         return None;
@@ -1997,6 +1998,7 @@ impl Function for GaussFn {
 }
 
 /// Helper: Log-gamma function
+#[allow(clippy::excessive_precision)]
 fn ln_gamma(x: f64) -> f64 {
     // Lanczos approximation
     const G: f64 = 7.0;
@@ -2019,8 +2021,8 @@ fn ln_gamma(x: f64) -> f64 {
     } else {
         let x = x - 1.0;
         let mut ag = C[0];
-        for i in 1..9 {
-            ag += C[i] / (x + i as f64);
+        for (i, c) in C.iter().enumerate().skip(1) {
+            ag += c / (x + i as f64);
         }
         let tmp = x + G + 0.5;
         0.5 * (2.0 * std::f64::consts::PI).ln() + (tmp).ln() * (x + 0.5) - tmp + ag.ln()
@@ -2704,7 +2706,7 @@ impl Function for BinomDistFn {
         let p = coerce_num(&scalar_like_value(&args[2])?)?;
         let cumulative = coerce_num(&scalar_like_value(&args[3])?)? != 0.0;
 
-        if n < 0 || k < 0 || k > n || p < 0.0 || p > 1.0 {
+        if n < 0 || k < 0 || k > n || !(0.0..=1.0).contains(&p) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -3028,9 +3030,7 @@ impl Function for BetaDistFn {
             // PDF: (x-A)^(alpha-1) * (B-x)^(beta-1) / ((B-A)^(alpha+beta-1) * B(alpha, beta))
             let ln_beta = ln_gamma(alpha) + ln_gamma(beta_param) - ln_gamma(alpha + beta_param);
             let scale = b - a;
-            if x_std == 0.0 && alpha < 1.0 {
-                f64::INFINITY
-            } else if x_std == 1.0 && beta_param < 1.0 {
+            if (x_std == 0.0 && alpha < 1.0) || (x_std == 1.0 && beta_param < 1.0) {
                 f64::INFINITY
             } else if x_std == 0.0 {
                 if alpha == 1.0 {
@@ -5256,7 +5256,7 @@ impl Function for TTestFn {
         let test_type = coerce_num(&scalar_like_value(&args[3])?)? as i32;
 
         // Validate tails (1 or 2) and type (1, 2, or 3)
-        if tails < 1 || tails > 2 || test_type < 1 || test_type > 3 {
+        if !(1..=2).contains(&tails) || !(1..=3).contains(&test_type) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -5631,9 +5631,10 @@ mod tests_basic_stats {
     }
     fn arr(vals: Vec<f64>) -> ASTNode {
         ASTNode::new(
-            ASTNodeType::Literal(LiteralValue::Array(vec![
-                vals.into_iter().map(LiteralValue::Number).collect(),
-            ])),
+            ASTNodeType::Literal(LiteralValue::Array(vec![vals
+                .into_iter()
+                .map(LiteralValue::Number)
+                .collect()])),
             None,
         )
     }

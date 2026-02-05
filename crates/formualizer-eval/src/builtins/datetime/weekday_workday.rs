@@ -539,7 +539,8 @@ impl Function for WorkdayFn {
 
         // Collect holidays if provided
         // TODO: Implement holiday array support
-        let holidays: Vec<NaiveDate> = if args.len() > 2 { vec![] } else { vec![] };
+        // Holidays parameter is currently accepted but ignored.
+        let holidays: Vec<NaiveDate> = Vec::new();
 
         let mut current = start_date;
         let mut remaining = days.abs();

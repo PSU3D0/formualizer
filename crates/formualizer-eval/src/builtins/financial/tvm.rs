@@ -892,7 +892,7 @@ impl Function for MirrFn {
             if cf < 0.0 {
                 pv_neg += cf / (1.0 + finance_rate).powi(i as i32);
             } else {
-                fv_pos += cf * (1.0 + reinvest_rate).powi((n - 1 - i as i32) as i32);
+                fv_pos += cf * (1.0 + reinvest_rate).powi(n - 1 - i as i32);
             }
         }
 

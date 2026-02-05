@@ -1,7 +1,7 @@
 use formualizer_parse::ASTNode;
 use rustc_hash::FxHashSet;
 
-use crate::{CellRef, RangeRef, SheetId, engine::VertexId, reference::SharedRangeRef};
+use crate::{engine::VertexId, reference::SharedRangeRef, CellRef, RangeRef, SheetId};
 
 /// Scope of a named range
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,6 +14,7 @@ pub enum NameScope {
 
 /// Definition of what a name refers to
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum NamedDefinition {
     /// Direct reference to a single cell
     Cell(CellRef),

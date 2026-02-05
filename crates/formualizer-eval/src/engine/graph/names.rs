@@ -311,7 +311,7 @@ impl DependencyGraph {
                 affected.insert(vertex_id);
             }
             for (vertex_id, names) in self.vertex_to_names.iter() {
-                if names.iter().any(|vid| *vid == named_range.vertex) {
+                if names.contains(&named_range.vertex) {
                     affected.insert(*vertex_id);
                 }
             }

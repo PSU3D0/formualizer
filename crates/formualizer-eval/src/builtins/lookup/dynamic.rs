@@ -300,7 +300,11 @@ impl Function for XLookupFn {
         let lookup_len = {
             let raw = if vertical { lookup_rows } else { lookup_cols };
             if raw == 0 {
-                if vertical { ret_rows } else { ret_cols }
+                if vertical {
+                    ret_rows
+                } else {
+                    ret_cols
+                }
             } else {
                 raw
             }
@@ -871,7 +875,11 @@ impl Function for SortFn {
                 let val_a = &a.1[sort_row_idx];
                 let val_b = &b.1[sort_row_idx];
                 let cmp = cmp_for_lookup(val_a, val_b).unwrap_or(0);
-                if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
+                if ascending {
+                    cmp.cmp(&0)
+                } else {
+                    0.cmp(&cmp)
+                }
             });
 
             // Reconstruct the array with sorted columns
@@ -907,7 +915,11 @@ impl Function for SortFn {
                 let val_a = &a[sort_col_idx];
                 let val_b = &b[sort_col_idx];
                 let cmp = cmp_for_lookup(val_a, val_b).unwrap_or(0);
-                if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
+                if ascending {
+                    cmp.cmp(&0)
+                } else {
+                    0.cmp(&cmp)
+                }
             });
 
             Ok(collapse_if_scalar(row_data, _ctx.date_system()))
@@ -1370,7 +1382,7 @@ impl GroupAggregation {
                 let mut sorted = values.to_vec();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 let mid = sorted.len() / 2;
-                if sorted.len() % 2 == 0 {
+                if sorted.len().is_multiple_of(2) {
                     (sorted[mid - 1] + sorted[mid]) / 2.0
                 } else {
                     sorted[mid]
@@ -1977,9 +1989,7 @@ impl Function for PivotByFn {
             }
 
             // Add to pivot data
-            let entry = pivot_data
-                .entry((row_key, col_key))
-                .or_insert_with(Vec::new);
+            let entry = pivot_data.entry((row_key, col_key)).or_default();
             if let Some(v) = val {
                 entry.push(v);
             }
@@ -3694,7 +3704,7 @@ mod tests {
                             LiteralValue::Number(n) => *n,
                             other => panic!("expected Int or Number got {other:?}"),
                         };
-                        assert!(n >= 1.0 && n <= 10.0, "Value {n} not in [1, 10]");
+                        assert!((1.0..=10.0).contains(&n), "Value {n} not in [1, 10]");
                         // Verify it's actually a whole number
                         assert!(n.fract() == 0.0, "Value {n} is not a whole number");
                     }

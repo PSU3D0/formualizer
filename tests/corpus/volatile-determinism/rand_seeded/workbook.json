@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "sheets": {
+    "Sheet1": {
+      "dimensions": [1, 1],
+      "cells": [
+        {"row": 1, "col": 1, "formula": "=RAND()"}
+      ]
+    }
+  }
+}
