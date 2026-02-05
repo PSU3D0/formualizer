@@ -1,10 +1,57 @@
 #![cfg(target_arch = "wasm32")]
 
 use formualizer_wasm::{
-    FormulaDialect, Parser, Reference, SheetPortSession, Tokenizer, Workbook, parse, tokenize,
+    parse, tokenize, FormulaDialect, Parser, Reference, SheetPortSession, Tokenizer, Workbook,
 };
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::*;
+
+fn js_get(obj: &js_sys::Object, key: &str) -> JsValue {
+    js_sys::Reflect::get(obj, &JsValue::from_str(key)).unwrap()
+}
+
+fn js_get_string(obj: &js_sys::Object, key: &str) -> String {
+    js_get(obj, key).as_string().unwrap()
+}
+
+fn js_get_f64(obj: &js_sys::Object, key: &str) -> f64 {
+    js_get(obj, key).as_f64().unwrap()
+}
+
+fn js_get_bool(obj: &js_sys::Object, key: &str) -> bool {
+    js_get(obj, key).as_bool().unwrap()
+}
+
+fn assert_ast_reference(
+    node: &js_sys::Object,
+    sheet: Option<&str>,
+    row_start: u32,
+    col_start: u32,
+    row_end: u32,
+    col_end: u32,
+    row_abs_start: bool,
+    col_abs_start: bool,
+    row_abs_end: bool,
+    col_abs_end: bool,
+) {
+    assert_eq!(js_get_string(node, "type"), "reference");
+
+    let ref_obj: js_sys::Object = js_get(node, "reference").dyn_into().unwrap();
+
+    let sheet_val = js_get(&ref_obj, "sheet");
+    let got_sheet = sheet_val.as_string();
+    assert_eq!(got_sheet.as_deref(), sheet);
+
+    assert_eq!(js_get_f64(&ref_obj, "rowStart") as u32, row_start);
+    assert_eq!(js_get_f64(&ref_obj, "colStart") as u32, col_start);
+    assert_eq!(js_get_f64(&ref_obj, "rowEnd") as u32, row_end);
+    assert_eq!(js_get_f64(&ref_obj, "colEnd") as u32, col_end);
+
+    assert_eq!(js_get_bool(&ref_obj, "rowAbsStart"), row_abs_start);
+    assert_eq!(js_get_bool(&ref_obj, "colAbsStart"), col_abs_start);
+    assert_eq!(js_get_bool(&ref_obj, "rowAbsEnd"), row_abs_end);
+    assert_eq!(js_get_bool(&ref_obj, "colAbsEnd"), col_abs_end);
+}
 
 #[wasm_bindgen_test]
 fn test_tokenize() {
@@ -19,6 +66,54 @@ fn test_parse() {
     let ast = parse("=SUM(A1:B2)", None).unwrap();
     let json = ast.to_json().unwrap();
     assert!(json.is_object());
+}
+
+#[wasm_bindgen_test]
+fn test_ast_reference_a1() {
+    let ast = parse("=A1", None).unwrap();
+    let json = ast.to_json().unwrap();
+    let node: js_sys::Object = json.dyn_into().unwrap();
+    assert_ast_reference(&node, None, 1, 1, 1, 1, false, false, false, false);
+}
+
+#[wasm_bindgen_test]
+fn test_ast_reference_range_a1_b2() {
+    let ast = parse("=SUM(A1:B2)", None).unwrap();
+    let json = ast.to_json().unwrap();
+    let node: js_sys::Object = json.dyn_into().unwrap();
+    assert_eq!(js_get_string(&node, "type"), "function");
+
+    let args: js_sys::Array = js_get(&node, "args").dyn_into().unwrap();
+    assert!(args.length() >= 1);
+    let arg0: js_sys::Object = args.get(0).dyn_into().unwrap();
+    assert_ast_reference(&arg0, None, 1, 1, 2, 2, false, false, false, false);
+}
+
+#[wasm_bindgen_test]
+fn test_ast_reference_sheet_qualified() {
+    let ast = parse("='My Sheet'!C3", None).unwrap();
+    let json = ast.to_json().unwrap();
+    let node: js_sys::Object = json.dyn_into().unwrap();
+    assert_ast_reference(
+        &node,
+        Some("My Sheet"),
+        3,
+        3,
+        3,
+        3,
+        false,
+        false,
+        false,
+        false,
+    );
+}
+
+#[wasm_bindgen_test]
+fn test_ast_reference_absolute() {
+    let ast = parse("=$A$1", None).unwrap();
+    let json = ast.to_json().unwrap();
+    let node: js_sys::Object = json.dyn_into().unwrap();
+    assert_ast_reference(&node, None, 1, 1, 1, 1, true, true, true, true);
 }
 
 #[wasm_bindgen_test]
@@ -128,13 +223,21 @@ fn test_workbook_sheet_eval() {
     // Set formula
     wb.set_formula("Data".to_string(), 1, 3, "=A1+B1".to_string())
         .unwrap();
-    // Ensure sheet facade works without triggering evaluation (Instant::now unsupported in wasm32 tests)
+
+    // Workbook evaluation should work under wasm-pack test (Node).
+    let v = wb.evaluate_cell("Data".to_string(), 1, 3).unwrap();
+    assert_eq!(v.as_f64().unwrap(), 3.0);
+
+    // Ensure sheet facade works
     wb.add_sheet("Sheet2".to_string()).unwrap();
     let sheet = wb.sheet("Sheet2".to_string()).unwrap();
     sheet.set_value(1, 1, JsValue::from_f64(10.0)).unwrap();
     sheet.set_formula(1, 2, "=A1*3".to_string()).unwrap();
     let formula = sheet.get_formula(1, 2).unwrap();
     assert_eq!(formula, "=A1*3");
+
+    let v2 = sheet.evaluate_cell(1, 2).unwrap();
+    assert_eq!(v2.as_f64().unwrap(), 30.0);
 }
 
 #[wasm_bindgen_test]
