@@ -1,13 +1,4 @@
-import init, {
-  Tokenizer as WasmTokenizer,
-  Parser as WasmParser,
-  ASTNode as WasmASTNode,
-  Reference as WasmReference,
-  parse as wasmParse,
-  FormulaDialect as WasmFormulaDialect,
-  Workbook as WasmWorkbook,
-  SheetPortSession as WasmSheetPortSession,
-} from '../pkg/formualizer_wasm.js';
+import * as wasm from '../pkg/formualizer_wasm.js';
 
 let wasmInitialized = false;
 let wasmInitPromise: Promise<void> | null = null;
@@ -18,7 +9,8 @@ let wasmInitPromise: Promise<void> | null = null;
  */
 export async function initializeWasm(): Promise<void> {
   if (!wasmInitPromise) {
-    wasmInitPromise = init().then(() => {
+    // wasm-pack `--target bundler` initializes at module import time.
+    wasmInitPromise = Promise.resolve().then(() => {
       wasmInitialized = true;
     });
   }
@@ -72,26 +64,25 @@ export enum FormulaDialect {
   OpenFormula = 'openFormula',
 }
 
-function resolveDialect(dialect?: FormulaDialect): WasmFormulaDialect | undefined {
+function resolveDialect(dialect?: FormulaDialect): wasm.FormulaDialect | undefined {
   if (dialect === undefined) {
     return undefined;
   }
 
   return dialect === FormulaDialect.OpenFormula
-    ? WasmFormulaDialect.OpenFormula
-    : WasmFormulaDialect.Excel;
+    ? wasm.FormulaDialect.OpenFormula
+    : wasm.FormulaDialect.Excel;
 }
 
 export class Tokenizer {
-  private inner: WasmTokenizer;
+  private inner: wasm.Tokenizer;
 
   constructor(formula: string, dialect?: FormulaDialect) {
-    this.inner = new WasmTokenizer(formula, resolveDialect(dialect));
+    this.inner = new wasm.Tokenizer(formula, resolveDialect(dialect));
   }
 
   get tokens(): Token[] {
-    const tokensJson = this.inner.tokens();
-    return JSON.parse(tokensJson);
+    return this.inner.tokens() as unknown as Token[];
   }
 
   render(): string {
@@ -103,8 +94,7 @@ export class Tokenizer {
   }
 
   getToken(index: number): Token {
-    const tokenJson = this.inner.getToken(index);
-    return JSON.parse(tokenJson);
+    return this.inner.getToken(index) as unknown as Token;
   }
 
   toString(): string {
@@ -113,29 +103,27 @@ export class Tokenizer {
 }
 
 export class Parser {
-  private inner: WasmParser;
+  private inner: wasm.Parser;
 
   constructor(formula: string, dialect?: FormulaDialect) {
-    this.inner = new WasmParser(formula, resolveDialect(dialect));
+    this.inner = new wasm.Parser(formula, resolveDialect(dialect));
   }
 
   parse(): ASTNodeData {
     const ast = this.inner.parse();
-    const json = ast.toJSON();
-    return JSON.parse(json);
+    return ast.toJSON() as unknown as ASTNodeData;
   }
 }
 
 export class ASTNode {
-  private inner: WasmASTNode;
+  private inner: wasm.ASTNode;
 
-  constructor(inner: WasmASTNode) {
+  constructor(inner: wasm.ASTNode) {
     this.inner = inner;
   }
 
   toJSON(): ASTNodeData {
-    const json = this.inner.toJSON();
-    return JSON.parse(json);
+    return this.inner.toJSON() as unknown as ASTNodeData;
   }
 
   toString(): string {
@@ -148,7 +136,7 @@ export class ASTNode {
 }
 
 export class Reference {
-  private inner: WasmReference;
+  private inner: wasm.Reference;
 
   constructor(
     sheet: string | undefined,
@@ -161,7 +149,7 @@ export class Reference {
     rowAbsEnd: boolean,
     colAbsEnd: boolean,
   ) {
-    this.inner = new WasmReference(
+    this.inner = new wasm.Reference(
       sheet,
       rowStart,
       colStart,
@@ -223,8 +211,7 @@ export class Reference {
   }
 
   toJSON(): ReferenceData {
-    const json = this.inner.toJSON();
-    return JSON.parse(json);
+    return this.inner.toJSON() as unknown as ReferenceData;
   }
 }
 
@@ -246,13 +233,13 @@ export async function parse(
   dialect?: FormulaDialect,
 ): Promise<ASTNodeData> {
   return ensureInitialized(() => {
-    const ast = wasmParse(formula, resolveDialect(dialect));
-    const json = ast.toJSON();
-    return JSON.parse(json);
+    const ast = wasm.parse(formula, resolveDialect(dialect));
+    return ast.toJSON() as unknown as ASTNodeData;
   });
 }
 
-export { WasmWorkbook as Workbook, WasmSheetPortSession as SheetPortSession };
+export const Workbook = wasm.Workbook;
+export const SheetPortSession = wasm.SheetPortSession;
 
 // Re-export the initialization function as default
 export default initializeWasm;

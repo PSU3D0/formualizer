@@ -432,6 +432,16 @@ jobs:
         working-directory: bindings/wasm
         run: wasm-pack build --target bundler --out-dir pkg --release
 
+      - name: Install JS dependencies
+        working-directory: bindings/wasm
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Build TS wrapper
+        working-directory: bindings/wasm
+        run: pnpm run build:ts
+
       - name: Publish to npm
         working-directory: bindings/wasm
         env:

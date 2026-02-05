@@ -40,7 +40,7 @@ cat > index.html << 'EOF'
             document.getElementById('tokenize').addEventListener('click', () => {
                 try {
                     const tokenizer = tokenize(formulaInput.value);
-                    const tokens = JSON.parse(tokenizer.tokens());
+                    const tokens = tokenizer.tokens();
                     output.textContent = JSON.stringify(tokens, null, 2);
                 } catch (e) {
                     output.textContent = `Error: ${e}`;
@@ -50,7 +50,7 @@ cat > index.html << 'EOF'
             document.getElementById('parse').addEventListener('click', () => {
                 try {
                     const ast = parse(formulaInput.value);
-                    const json = JSON.parse(ast.toJSON());
+                    const json = ast.toJSON();
                     output.textContent = JSON.stringify(json, null, 2);
                 } catch (e) {
                     output.textContent = `Error: ${e}`;
