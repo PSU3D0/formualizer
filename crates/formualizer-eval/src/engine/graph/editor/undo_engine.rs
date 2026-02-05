@@ -1,13 +1,19 @@
 //! Basic Undo/Redo engine scaffold using ChangeLog groups.
-use super::change_log::{ChangeEvent, ChangeLog};
+use super::change_log::{ChangeEvent, ChangeEventMeta, ChangeLog};
 use super::vertex_editor::VertexEditor;
-use crate::engine::graph::DependencyGraph;
 use crate::engine::graph::editor::vertex_editor::EditorError;
+use crate::engine::graph::DependencyGraph;
+
+#[derive(Debug, Clone)]
+struct LoggedChange {
+    event: ChangeEvent,
+    meta: ChangeEventMeta,
+}
 
 #[derive(Debug, Default)]
 pub struct UndoEngine {
     /// Stack of applied groups (their last event index snapshot) for redo separation
-    undone: Vec<Vec<ChangeEvent>>, // redo stack stores full event batches
+    undone: Vec<Vec<LoggedChange>>, // redo stack stores full event batches
 }
 
 impl UndoEngine {
@@ -25,7 +31,13 @@ impl UndoEngine {
         if idxs.is_empty() {
             return Ok(());
         }
-        let batch: Vec<ChangeEvent> = idxs.iter().map(|i| log.events()[*i].clone()).collect();
+        let batch: Vec<LoggedChange> = idxs
+            .iter()
+            .map(|i| LoggedChange {
+                event: log.events()[*i].clone(),
+                meta: log.event_meta(*i).cloned().unwrap_or_default(),
+            })
+            .collect();
         let max_idx = *idxs.iter().max().unwrap();
         if max_idx + 1 == log.events().len() {
             let truncate_to = idxs.iter().min().copied().unwrap();
@@ -36,8 +48,8 @@ impl UndoEngine {
             });
         }
         let mut editor = VertexEditor::new(graph);
-        for ev in batch.iter().rev() {
-            editor.apply_inverse(ev.clone())?;
+        for item in batch.iter().rev() {
+            editor.apply_inverse(item.event.clone())?;
         }
         self.undone.push(batch);
         Ok(())
@@ -49,16 +61,17 @@ impl UndoEngine {
         log: &mut ChangeLog,
     ) -> Result<(), EditorError> {
         if let Some(batch) = self.undone.pop() {
-            let mut editor = VertexEditor::new(graph);
             log.begin_compound("redo".to_string());
-            for ev in batch {
+            for item in batch {
                 // Re-log original event for audit consistency
-                log.record(ev.clone());
-                match ev {
+                log.record_with_meta(item.event.clone(), item.meta.clone());
+                match item.event {
                     ChangeEvent::SetValue { addr, new, .. } => {
+                        let mut editor = VertexEditor::new(graph);
                         editor.set_cell_value(addr, new);
                     }
                     ChangeEvent::SetFormula { addr, new, .. } => {
+                        let mut editor = VertexEditor::new(graph);
                         editor.set_cell_formula(addr, new);
                     }
                     ChangeEvent::AddVertex {
@@ -67,6 +80,7 @@ impl UndoEngine {
                         kind,
                         ..
                     } => {
+                        let mut editor = VertexEditor::new(graph);
                         let meta = crate::engine::graph::editor::vertex_editor::VertexMeta::new(
                             coord.row(),
                             coord.col(),
@@ -79,6 +93,7 @@ impl UndoEngine {
                         coord, sheet_id, ..
                     } => {
                         if let (Some(c), Some(sid)) = (coord, sheet_id) {
+                            let mut editor = VertexEditor::new(graph);
                             let cell_ref = crate::reference::CellRef::new(
                                 sid,
                                 crate::reference::Coord::new(c.row(), c.col(), true, true),
@@ -86,18 +101,22 @@ impl UndoEngine {
                             let _ = editor.remove_vertex_at(cell_ref);
                         }
                     }
-                    ChangeEvent::VertexMoved {
-                        id,
-                        old_coord: _,
-                        new_coord,
-                    } => {
+                    ChangeEvent::VertexMoved { id, new_coord, .. } => {
+                        let mut editor = VertexEditor::new(graph);
                         let _ = editor.move_vertex(id, new_coord);
+                    }
+                    ChangeEvent::FormulaAdjusted { id, new_ast, .. } => {
+                        // Keep it simple: apply directly by vertex id.
+                        // (This is used for structural ops formula rewrites.)
+                        let _ = graph.update_vertex_formula(id, new_ast);
+                        graph.mark_vertex_dirty(id);
                     }
                     ChangeEvent::DefineName {
                         name,
                         scope,
                         definition,
                     } => {
+                        let mut editor = VertexEditor::new(graph);
                         let _ = editor.define_name(&name, definition, scope);
                     }
                     ChangeEvent::UpdateName {
@@ -106,9 +125,11 @@ impl UndoEngine {
                         new_definition,
                         ..
                     } => {
+                        let mut editor = VertexEditor::new(graph);
                         let _ = editor.update_name(&name, new_definition, scope);
                     }
                     ChangeEvent::DeleteName { name, scope, .. } => {
+                        let mut editor = VertexEditor::new(graph);
                         let _ = editor.delete_name(&name, scope);
                     }
                     ChangeEvent::NamedRangeAdjusted {
@@ -117,6 +138,7 @@ impl UndoEngine {
                         new_definition,
                         ..
                     } => {
+                        let mut editor = VertexEditor::new(graph);
                         let _ = editor.update_name(&name, new_definition, scope);
                     }
                     _ => {}
@@ -151,7 +173,7 @@ mod tests {
         let mut undo = UndoEngine::new();
         undo.undo(&mut graph, &mut log).unwrap();
         assert_eq!(log.len(), 0); // event removed (simplified policy)
-        // Redo
+                                  // Redo
         undo.redo(&mut graph, &mut log).unwrap();
         assert!(!log.is_empty());
     }
@@ -176,11 +198,10 @@ mod tests {
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
             editor.insert_rows(0, 6, 2).unwrap(); // shift rows >=6 down by 2
         }
-        assert!(
-            log.events()
-                .iter()
-                .any(|e| matches!(e, ChangeEvent::VertexMoved { .. }))
-        );
+        assert!(log
+            .events()
+            .iter()
+            .any(|e| matches!(e, ChangeEvent::VertexMoved { .. })));
         let moved_count_before = log
             .events()
             .iter()
@@ -217,11 +238,10 @@ mod tests {
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
             editor.insert_columns(0, 5, 2).unwrap();
         }
-        assert!(
-            log.events()
-                .iter()
-                .any(|e| matches!(e, ChangeEvent::VertexMoved { .. }))
-        );
+        assert!(log
+            .events()
+            .iter()
+            .any(|e| matches!(e, ChangeEvent::VertexMoved { .. })));
         let mut undo = UndoEngine::new();
         undo.undo(&mut graph, &mut log).unwrap();
         assert_eq!(log.events().len(), 0);
@@ -259,11 +279,10 @@ mod tests {
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
             editor.remove_vertex(a1_vid).unwrap();
         }
-        assert!(
-            log.events()
-                .iter()
-                .any(|e| matches!(e, ChangeEvent::RemoveVertex { .. }))
-        );
+        assert!(log
+            .events()
+            .iter()
+            .any(|e| matches!(e, ChangeEvent::RemoveVertex { .. })));
         // After removal dependency list should be empty
         let deps_after_remove = graph.get_dependencies(a2_id);
         assert!(deps_after_remove.is_empty());

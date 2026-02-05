@@ -5,13 +5,24 @@
 //! - ChangeEvent: Granular representation of individual changes
 //! - ChangeLogger: Trait for pluggable logging strategies
 
-use crate::SheetId;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::vertex::VertexId;
 use crate::reference::CellRef;
+use crate::SheetId;
 use formualizer_common::Coord as AbsCoord;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::ASTNode;
+
+/// Per-event metadata attached by the caller.
+///
+/// This is intentionally lightweight (Strings) to avoid leaking application types
+/// into the engine layer.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ChangeEventMeta {
+    pub actor_id: Option<String>,
+    pub correlation_id: Option<String>,
+    pub reason: Option<String>,
+}
 
 /// Represents a single change to the dependency graph
 #[derive(Debug, Clone, PartialEq)]
@@ -19,12 +30,14 @@ pub enum ChangeEvent {
     // Simple events
     SetValue {
         addr: CellRef,
-        old: Option<LiteralValue>,
+        old_value: Option<LiteralValue>,
+        old_formula: Option<ASTNode>,
         new: LiteralValue,
     },
     SetFormula {
         addr: CellRef,
-        old: Option<ASTNode>,
+        old_value: Option<LiteralValue>,
+        old_formula: Option<ASTNode>,
         new: ASTNode,
     },
     /// Vertex creation snapshot (for undo). Minimal for now.
@@ -62,11 +75,14 @@ pub enum ChangeEvent {
     // Granular events for compound operations
     VertexMoved {
         id: VertexId,
+        sheet_id: SheetId,
         old_coord: AbsCoord,
         new_coord: AbsCoord,
     },
     FormulaAdjusted {
         id: VertexId,
+        /// Cell address for replay. May be None for non-cell formula vertices.
+        addr: Option<CellRef>,
         old_ast: ASTNode,
         new_ast: ASTNode,
     },
@@ -108,6 +124,7 @@ pub enum ChangeEvent {
 #[derive(Debug, Default)]
 pub struct ChangeLog {
     events: Vec<ChangeEvent>,
+    metas: Vec<ChangeEventMeta>,
     enabled: bool,
     /// Track compound operations for atomic rollback
     compound_depth: usize,
@@ -119,12 +136,15 @@ pub struct ChangeLog {
     /// Stack of active group ids for nested compounds
     group_stack: Vec<u64>,
     next_group_id: u64,
+
+    current_meta: ChangeEventMeta,
 }
 
 impl ChangeLog {
     pub fn new() -> Self {
         Self {
             events: Vec::new(),
+            metas: Vec::new(),
             enabled: true,
             compound_depth: 0,
             seqs: Vec::new(),
@@ -132,6 +152,7 @@ impl ChangeLog {
             next_seq: 0,
             group_stack: Vec::new(),
             next_group_id: 1,
+            current_meta: ChangeEventMeta::default(),
         }
     }
 
@@ -141,6 +162,20 @@ impl ChangeLog {
             self.next_seq += 1;
             let current_group = self.group_stack.last().copied();
             self.events.push(event);
+            self.metas.push(self.current_meta.clone());
+            self.seqs.push(seq);
+            self.groups.push(current_group);
+        }
+    }
+
+    /// Record an event with explicit metadata (used for replay/redo).
+    pub fn record_with_meta(&mut self, event: ChangeEvent, meta: ChangeEventMeta) {
+        if self.enabled {
+            let seq = self.next_seq;
+            self.next_seq += 1;
+            let current_group = self.group_stack.last().copied();
+            self.events.push(event);
+            self.metas.push(meta);
             self.seqs.push(seq);
             self.groups.push(current_group);
         }
@@ -185,15 +220,33 @@ impl ChangeLog {
         &self.events
     }
 
+    pub fn event_meta(&self, index: usize) -> Option<&ChangeEventMeta> {
+        self.metas.get(index)
+    }
+
+    pub fn set_actor_id(&mut self, actor_id: Option<String>) {
+        self.current_meta.actor_id = actor_id;
+    }
+
+    pub fn set_correlation_id(&mut self, correlation_id: Option<String>) {
+        self.current_meta.correlation_id = correlation_id;
+    }
+
+    pub fn set_reason(&mut self, reason: Option<String>) {
+        self.current_meta.reason = reason;
+    }
+
     /// Truncate log (and metadata) to len
     pub fn truncate(&mut self, len: usize) {
         self.events.truncate(len);
+        self.metas.truncate(len);
         self.seqs.truncate(len);
         self.groups.truncate(len);
     }
 
     pub fn clear(&mut self) {
         self.events.clear();
+        self.metas.clear();
         self.seqs.clear();
         self.groups.clear();
         self.compound_depth = 0;
@@ -210,7 +263,11 @@ impl ChangeLog {
 
     /// Extract events from index to end
     pub fn take_from(&mut self, index: usize) -> Vec<ChangeEvent> {
-        self.events.split_off(index)
+        let events = self.events.split_off(index);
+        let _ = self.metas.split_off(index);
+        let _ = self.seqs.split_off(index);
+        let _ = self.groups.split_off(index);
+        events
     }
 
     /// Temporarily disable logging (for rollback operations)

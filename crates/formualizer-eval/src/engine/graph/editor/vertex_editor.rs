@@ -1,14 +1,15 @@
-use crate::SheetId;
-use crate::engine::graph::DependencyGraph;
 use crate::engine::graph::editor::reference_adjuster::{
     MoveReferenceAdjuster, ReferenceAdjuster, RelativeReferenceAdjuster, ShiftOperation,
 };
+use crate::engine::graph::DependencyGraph;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::{ChangeEvent, ChangeLogger, VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
+use crate::SheetId;
 use formualizer_common::Coord as AbsCoord;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::ASTNode;
+use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Metadata for creating a new vertex
@@ -259,6 +260,23 @@ impl<'g> VertexEditor<'g> {
         })
     }
 
+    fn snapshot_named_definitions(&self) -> FxHashMap<(NameScope, String), NamedDefinition> {
+        let mut out: FxHashMap<(NameScope, String), NamedDefinition> = FxHashMap::default();
+        for (name, nr) in self.graph.named_ranges_iter() {
+            out.insert(
+                (NameScope::Workbook, name.clone()),
+                nr.definition.clone(),
+            );
+        }
+        for ((sheet_id, name), nr) in self.graph.sheet_named_ranges_iter() {
+            out.insert(
+                (NameScope::Sheet(*sheet_id), name.clone()),
+                nr.definition.clone(),
+            );
+        }
+        out
+    }
+
     // Transaction support
 
     // Transaction support has been moved to TransactionContext
@@ -267,26 +285,34 @@ impl<'g> VertexEditor<'g> {
     /// Apply the inverse of a change event (used by TransactionContext for rollback)
     pub fn apply_inverse(&mut self, change: ChangeEvent) -> Result<(), EditorError> {
         match change {
-            ChangeEvent::SetValue { addr, old, new: _ } => {
-                // Restore old value
-                if let Some(old_value) = old {
+            ChangeEvent::SetValue {
+                addr,
+                old_value,
+                old_formula,
+                new: _,
+            } => {
+                // Restore previous state. Setting a value can overwrite a formula.
+                if let Some(old_formula) = old_formula {
+                    self.set_cell_formula(addr, old_formula);
+                } else if let Some(old_value) = old_value {
                     self.set_cell_value(addr, old_value);
-                } else {
-                    // Cell didn't exist before, remove it
-                    if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
-                        self.remove_vertex(id)?;
-                    }
+                } else if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
+                    self.remove_vertex(id)?;
                 }
             }
-            ChangeEvent::SetFormula { addr, old, new: _ } => {
-                // Restore old formula
-                if let Some(old_formula) = old {
+            ChangeEvent::SetFormula {
+                addr,
+                old_value,
+                old_formula,
+                new: _,
+            } => {
+                // Restore previous state. Setting a formula can overwrite a value.
+                if let Some(old_formula) = old_formula {
                     self.set_cell_formula(addr, old_formula);
-                } else {
-                    // Cell didn't have formula before, remove it or set to value
-                    if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
-                        self.remove_vertex(id)?;
-                    }
+                } else if let Some(old_value) = old_value {
+                    self.set_cell_value(addr, old_value);
+                } else if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
+                    self.remove_vertex(id)?;
                 }
             }
             ChangeEvent::AddVertex { id, .. } => {
@@ -354,16 +380,21 @@ impl<'g> VertexEditor<'g> {
             ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => {
                 // These are markers, no inverse needed
             }
-            ChangeEvent::VertexMoved { id, old_coord, .. } => {
+            ChangeEvent::VertexMoved {
+                id,
+                sheet_id: _,
+                old_coord,
+                ..
+            } => {
                 // Move back to old position
                 self.move_vertex(id, old_coord)?;
             }
             ChangeEvent::FormulaAdjusted { id, old_ast, .. } => {
-                // Restore old formula
-                // TODO: Need a method to update formula by vertex ID
-                return Err(EditorError::TransactionFailed {
-                    reason: "Cannot rollback formula adjustment yet".to_string(),
-                });
+                // Restore old formula directly by vertex id.
+                self.graph
+                    .update_vertex_formula(id, old_ast)
+                    .map_err(EditorError::Excel)?;
+                self.graph.mark_vertex_dirty(id);
             }
             ChangeEvent::NamedRangeAdjusted {
                 name,
@@ -707,6 +738,7 @@ impl<'g> VertexEditor<'g> {
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
+                    sheet_id,
                     old_coord,
                     new_coord,
                 });
@@ -731,6 +763,14 @@ impl<'g> VertexEditor<'g> {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 // Only update if the formula actually changed
                 if format!("{ast:?}") != format!("{adjusted:?}") {
+                    if self.has_logger() {
+                        self.log_change(ChangeEvent::FormulaAdjusted {
+                            id,
+                            addr: self.graph.get_cell_ref_for_vertex(id),
+                            old_ast: ast.clone(),
+                            new_ast: adjusted.clone(),
+                        });
+                    }
                     self.graph.update_vertex_formula(id, adjusted)?;
                     self.graph.mark_vertex_dirty(id);
                     summary.formulas_updated += 1;
@@ -739,7 +779,27 @@ impl<'g> VertexEditor<'g> {
         }
 
         // 4. Adjust named ranges
+        let old_names = if self.has_logger() {
+            Some(self.snapshot_named_definitions())
+        } else {
+            None
+        };
         self.graph.adjust_named_ranges(&op)?;
+        if let Some(old_names) = old_names {
+            let new_names = self.snapshot_named_definitions();
+            for ((scope, name), old_definition) in old_names {
+                if let Some(new_definition) = new_names.get(&(scope, name.clone()))
+                    && *new_definition != old_definition
+                {
+                    self.log_change(ChangeEvent::NamedRangeAdjusted {
+                        name,
+                        scope,
+                        old_definition,
+                        new_definition: new_definition.clone(),
+                    });
+                }
+            }
+        }
 
         // 5. Log change event
         if let Some(logger) = &mut self.change_logger {
@@ -766,6 +826,12 @@ impl<'g> VertexEditor<'g> {
 
         self.begin_batch();
 
+        if let Some(logger) = &mut self.change_logger {
+            logger.begin_compound(format!(
+                "DeleteRows sheet={sheet_id} start={start} count={count}"
+            ));
+        }
+
         // 1. Delete vertices in the range
         let vertices_to_delete: Vec<VertexId> = self
             .graph
@@ -779,12 +845,6 @@ impl<'g> VertexEditor<'g> {
         for id in vertices_to_delete {
             self.remove_vertex(id)?;
             summary.vertices_deleted.push(id);
-        }
-
-        if let Some(logger) = &mut self.change_logger {
-            logger.begin_compound(format!(
-                "DeleteRows sheet={sheet_id} start={start} count={count}"
-            ));
         }
         // 2. Shift remaining vertices up (emit VertexMoved)
         let vertices_to_shift: Vec<(VertexId, AbsCoord)> = self
@@ -805,6 +865,7 @@ impl<'g> VertexEditor<'g> {
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
+                    sheet_id,
                     old_coord,
                     new_coord,
                 });
@@ -827,6 +888,14 @@ impl<'g> VertexEditor<'g> {
             if let Some(ast) = self.get_formula_ast(id) {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 if format!("{ast:?}") != format!("{adjusted:?}") {
+                    if self.has_logger() {
+                        self.log_change(ChangeEvent::FormulaAdjusted {
+                            id,
+                            addr: self.graph.get_cell_ref_for_vertex(id),
+                            old_ast: ast.clone(),
+                            new_ast: adjusted.clone(),
+                        });
+                    }
                     self.graph.update_vertex_formula(id, adjusted)?;
                     self.graph.mark_vertex_dirty(id);
                     summary.formulas_updated += 1;
@@ -835,7 +904,27 @@ impl<'g> VertexEditor<'g> {
         }
 
         // 4. Adjust named ranges
+        let old_names = if self.has_logger() {
+            Some(self.snapshot_named_definitions())
+        } else {
+            None
+        };
         self.graph.adjust_named_ranges(&op)?;
+        if let Some(old_names) = old_names {
+            let new_names = self.snapshot_named_definitions();
+            for ((scope, name), old_definition) in old_names {
+                if let Some(new_definition) = new_names.get(&(scope, name.clone()))
+                    && *new_definition != old_definition
+                {
+                    self.log_change(ChangeEvent::NamedRangeAdjusted {
+                        name,
+                        scope,
+                        old_definition,
+                        new_definition: new_definition.clone(),
+                    });
+                }
+            }
+        }
 
         // 5. Log change event
         if let Some(logger) = &mut self.change_logger {
@@ -888,6 +977,7 @@ impl<'g> VertexEditor<'g> {
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
+                    sheet_id,
                     old_coord,
                     new_coord,
                 });
@@ -912,6 +1002,14 @@ impl<'g> VertexEditor<'g> {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 // Only update if the formula actually changed
                 if format!("{ast:?}") != format!("{adjusted:?}") {
+                    if self.has_logger() {
+                        self.log_change(ChangeEvent::FormulaAdjusted {
+                            id,
+                            addr: self.graph.get_cell_ref_for_vertex(id),
+                            old_ast: ast.clone(),
+                            new_ast: adjusted.clone(),
+                        });
+                    }
                     self.graph.update_vertex_formula(id, adjusted)?;
                     self.graph.mark_vertex_dirty(id);
                     summary.formulas_updated += 1;
@@ -920,7 +1018,27 @@ impl<'g> VertexEditor<'g> {
         }
 
         // 4. Adjust named ranges
+        let old_names = if self.has_logger() {
+            Some(self.snapshot_named_definitions())
+        } else {
+            None
+        };
         self.graph.adjust_named_ranges(&op)?;
+        if let Some(old_names) = old_names {
+            let new_names = self.snapshot_named_definitions();
+            for ((scope, name), old_definition) in old_names {
+                if let Some(new_definition) = new_names.get(&(scope, name.clone()))
+                    && *new_definition != old_definition
+                {
+                    self.log_change(ChangeEvent::NamedRangeAdjusted {
+                        name,
+                        scope,
+                        old_definition,
+                        new_definition: new_definition.clone(),
+                    });
+                }
+            }
+        }
 
         // 5. Log change event
         if let Some(logger) = &mut self.change_logger {
@@ -947,6 +1065,12 @@ impl<'g> VertexEditor<'g> {
 
         self.begin_batch();
 
+        if let Some(logger) = &mut self.change_logger {
+            logger.begin_compound(format!(
+                "DeleteColumns sheet={sheet_id} start={start} count={count}"
+            ));
+        }
+
         // 1. Delete vertices in the range
         let vertices_to_delete: Vec<VertexId> = self
             .graph
@@ -960,12 +1084,6 @@ impl<'g> VertexEditor<'g> {
         for id in vertices_to_delete {
             self.remove_vertex(id)?;
             summary.vertices_deleted.push(id);
-        }
-
-        if let Some(logger) = &mut self.change_logger {
-            logger.begin_compound(format!(
-                "DeleteColumns sheet={sheet_id} start={start} count={count}"
-            ));
         }
         // 2. Shift remaining vertices left (emit VertexMoved)
         let vertices_to_shift: Vec<(VertexId, AbsCoord)> = self
@@ -986,6 +1104,7 @@ impl<'g> VertexEditor<'g> {
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
+                    sheet_id,
                     old_coord,
                     new_coord,
                 });
@@ -1008,6 +1127,14 @@ impl<'g> VertexEditor<'g> {
             if let Some(ast) = self.get_formula_ast(id) {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 if format!("{ast:?}") != format!("{adjusted:?}") {
+                    if self.has_logger() {
+                        self.log_change(ChangeEvent::FormulaAdjusted {
+                            id,
+                            addr: self.graph.get_cell_ref_for_vertex(id),
+                            old_ast: ast.clone(),
+                            new_ast: adjusted.clone(),
+                        });
+                    }
                     self.graph.update_vertex_formula(id, adjusted)?;
                     self.graph.mark_vertex_dirty(id);
                     summary.formulas_updated += 1;
@@ -1016,7 +1143,27 @@ impl<'g> VertexEditor<'g> {
         }
 
         // 4. Adjust named ranges
+        let old_names = if self.has_logger() {
+            Some(self.snapshot_named_definitions())
+        } else {
+            None
+        };
         self.graph.adjust_named_ranges(&op)?;
+        if let Some(old_names) = old_names {
+            let new_names = self.snapshot_named_definitions();
+            for ((scope, name), old_definition) in old_names {
+                if let Some(new_definition) = new_names.get(&(scope, name.clone()))
+                    && *new_definition != old_definition
+                {
+                    self.log_change(ChangeEvent::NamedRangeAdjusted {
+                        name,
+                        scope,
+                        old_definition,
+                        new_definition: new_definition.clone(),
+                    });
+                }
+            }
+        }
 
         // 5. Log change event
         if let Some(logger) = &mut self.change_logger {
@@ -1040,7 +1187,8 @@ impl<'g> VertexEditor<'g> {
                 sheet_id,
                 coord: Coord::new(start_row, 0, true, true),
             },
-            old: None,
+            old_value: None,
+            old_formula: None,
             new: LiteralValue::Text(format!("Row shift: start={start_row}, delta={delta}")),
         };
         self.log_change(change_event);
@@ -1061,7 +1209,8 @@ impl<'g> VertexEditor<'g> {
                 sheet_id,
                 coord: Coord::new(0, start_col, true, true),
             },
-            old: None,
+            old_value: None,
+            old_formula: None,
             new: LiteralValue::Text(format!("Column shift: start={start_col}, delta={delta}")),
         };
         self.log_change(change_event);
@@ -1074,11 +1223,10 @@ impl<'g> VertexEditor<'g> {
     pub fn set_cell_value(&mut self, cell_ref: CellRef, value: LiteralValue) -> VertexId {
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
 
-        // Capture old value before modification
-        let old_value = self
-            .graph
-            .get_vertex_id_for_address(&cell_ref)
-            .and_then(|&id| self.graph.get_value(id));
+        // Capture old state before modification (value + formula).
+        let old_id = self.graph.get_vertex_id_for_address(&cell_ref).copied();
+        let old_value = old_id.and_then(|id| self.graph.get_value(id));
+        let old_formula = old_id.and_then(|id| self.get_formula_ast(id));
 
         // Use the existing DependencyGraph API
         // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
@@ -1092,7 +1240,8 @@ impl<'g> VertexEditor<'g> {
                 // Log change event
                 let change_event = ChangeEvent::SetValue {
                     addr: cell_ref,
-                    old: old_value,
+                    old_value,
+                    old_formula,
                     new: value,
                 };
                 self.log_change(change_event);
@@ -1111,11 +1260,10 @@ impl<'g> VertexEditor<'g> {
     pub fn set_cell_formula(&mut self, cell_ref: CellRef, formula: ASTNode) -> VertexId {
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
 
-        // Capture old formula before modification
-        let old_formula = self
-            .graph
-            .get_vertex_id_for_address(&cell_ref)
-            .and_then(|&id| self.get_formula_ast(id));
+        // Capture old state before modification (value + formula).
+        let old_id = self.graph.get_vertex_id_for_address(&cell_ref).copied();
+        let old_value = old_id.and_then(|id| self.graph.get_value(id));
+        let old_formula = old_id.and_then(|id| self.get_formula_ast(id));
 
         // Use the existing DependencyGraph API
         // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
@@ -1129,7 +1277,8 @@ impl<'g> VertexEditor<'g> {
                 // Log change event
                 let change_event = ChangeEvent::SetFormula {
                     addr: cell_ref,
-                    old: old_formula,
+                    old_value,
+                    old_formula,
                     new: formula,
                 };
                 self.log_change(change_event);

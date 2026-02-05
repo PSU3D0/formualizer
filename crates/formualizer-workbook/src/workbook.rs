@@ -174,6 +174,19 @@ impl Workbook {
         self.enable_changelog = enabled;
         self.log.set_enabled(enabled);
     }
+
+    // Changelog metadata
+    pub fn set_actor_id(&mut self, actor_id: Option<String>) {
+        self.log.set_actor_id(actor_id);
+    }
+
+    pub fn set_correlation_id(&mut self, correlation_id: Option<String>) {
+        self.log.set_correlation_id(correlation_id);
+    }
+
+    pub fn set_reason(&mut self, reason: Option<String>) {
+        self.log.set_reason(reason);
+    }
     pub fn begin_action(&mut self, description: impl Into<String>) {
         if self.enable_changelog {
             self.log.begin_compound(description.into());
