@@ -1,6 +1,7 @@
 mod arena_debug;
 mod cancellation;
 mod change_log;
+mod changelog_replay;
 mod common;
 mod cycle_detection;
 mod demand_driven;

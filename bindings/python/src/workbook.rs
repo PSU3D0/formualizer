@@ -372,6 +372,37 @@ impl PyWorkbook {
         wb.set_changelog_enabled(enabled);
         Ok(())
     }
+
+    // Changelog metadata
+    #[pyo3(signature = (actor_id=None))]
+    pub fn set_actor_id(&self, actor_id: Option<String>) -> PyResult<()> {
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        wb.set_actor_id(actor_id);
+        Ok(())
+    }
+
+    #[pyo3(signature = (correlation_id=None))]
+    pub fn set_correlation_id(&self, correlation_id: Option<String>) -> PyResult<()> {
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        wb.set_correlation_id(correlation_id);
+        Ok(())
+    }
+
+    #[pyo3(signature = (reason=None))]
+    pub fn set_reason(&self, reason: Option<String>) -> PyResult<()> {
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        wb.set_reason(reason);
+        Ok(())
+    }
     pub fn begin_action(&self, description: &str) -> PyResult<()> {
         let mut wb = self
             .inner
