@@ -15,7 +15,6 @@ These bindings wrap the core `formualizer‑core` and `formualizer‑eval` crat
 | **Pretty‑printing**     | Canonical formatter — returns Excel‑style string with consistent casing, spacing, and minimal parentheses.                         |
 | **Visitor utilities**   | `walk_ast`, `collect_references`, `collect_function_names`, and more for ergonomic tree traversal.                                 |
 | **Evaluation (opt‑in)** | Bring in `formualizer‑eval` to execute the AST with a pluggable workbook/resolver interface.                                       |
-| **Dependency Tracing**  | Comprehensive dependency analysis with precedent/dependent tracing, cycle detection, and intelligent caching.                      |
 | **Rich Errors**         | Typed `TokenizerError` / `ParserError` that annotate byte positions for precise diagnostics.                                       |
 
 ---
@@ -27,11 +26,8 @@ These bindings wrap the core `formualizer‑core` and `formualizer‑eval` crat
 ```bash
 pip install formualizer
 
-# For Excel file support (OpenpyxlResolver)
-pip install formualizer[excel]  # includes openpyxl
-
-# For all optional dependencies
-pip install formualizer[all]    # includes openpyxl, fastexcel
+# For local development (tests + lint/typecheck)
+pip install formualizer[dev]
 ```
 
 ### Build from source
@@ -127,82 +123,23 @@ parse(formula: str, include_whitespace: bool = False) -> ASTNode
 
 ### Dependency Tracing (`formualizer.dependency_tracer`)
 
-The dependency tracer provides a robust, resolver-agnostic system for analyzing formula dependencies with intelligent caching and cycle detection.
+This module is not part of the current Python package.
 
-#### Key Components
+If you need dependency information today, use the workbook engine itself (incremental recalculation + demand-driven evaluation) and treat the sheet as the source of truth. A higher-level dependency analysis API may be added in the future.
 
-* **`DependencyTracer`** — Main engine for tracing precedents/dependents with caching and cycle detection.
-* **`FormulaResolver` (ABC)** — Abstract interface for data source integration (JSON, Excel, custom).
-* **`DependencyNode`** — Unified node representing dependency relationships with directionality.
-* **`TraceResult`** — Container for results with filtering and traversal utilities.
-* **`RangeContainer`** — Smart consolidation and classification of range references.
-* **`LabelProjector`** — Context label discovery for enhanced formula interpretation.
-
-#### Quick Example
+### Workbook Evaluation
 
 ```python
-from formualizer.dependency_tracer import DependencyTracer
-from formualizer.dependency_tracer.resolvers import JsonResolver
+import formualizer as fz
 
-# Set up your data source (JSON, openpyxl, or custom)
-resolver = JsonResolver(workbook_data)
-tracer = DependencyTracer(resolver)
+wb = fz.Workbook()
+s = wb.sheet("Sheet1")
 
-# Trace what a formula depends on (precedents)
-precedents = tracer.trace_precedents("Summary!B4", recursive=True)
-print(f"Found {len(precedents)} precedents")
+s.set_value(1, 1, 10)
+s.set_value(2, 1, 20)
+s.set_formula(1, 2, "=A1+A2")
 
-# Trace what depends on a cell (dependents)  
-dependents = tracer.trace_dependents("Inputs!B2", recursive=True)
-print(f"Found {len(dependents)} dependents")
-
-# Find circular dependencies
-cycles = tracer.find_circular_dependencies()
-if cycles:
-    print(f"Warning: {len(cycles)} circular reference(s) detected")
-
-# Get evaluation order
-try:
-    eval_order = tracer.topological_sort()
-    print("Evaluation order:", [str(cell) for cell in eval_order])
-except ValueError:
-    print("Cannot sort: circular dependencies exist")
-```
-
-#### Built-in Resolvers
-
-* **`JsonResolver`** — Load from JSON files or dictionaries with Excel-style data structure.
-* **`DictResolver`** — Simple nested dictionary resolver for testing and prototyping.
-* **`OpenpyxlResolver`** — Direct integration with openpyxl workbooks (requires `pip install openpyxl`).
-* **`CombinedResolver`** — Chain multiple resolvers with priority fallback for data overlays.
-
-#### Advanced Features
-
-* **Intelligent Caching** — Automatic formula parsing and reference resolution caching with selective invalidation.
-* **Range Classification** — Automatic categorization of ranges as data ranges, lookup columns, or selection ranges.
-* **Label Discovery** — Find contextual text labels near cells for enhanced formula interpretation.
-* **Performance Monitoring** — Built-in cache statistics and performance tracking.
-* **Cycle Detection** — Robust circular dependency detection with detailed cycle reporting.
-
-#### Example Workflows
-
-```python
-# Performance analysis with caching
-tracer = DependencyTracer(resolver, enable_caching=True)
-stats = tracer.get_stats()
-print(f"Cache hit ratio: {stats}")
-
-# Range analysis and consolidation
-precedents = tracer.trace_precedents("Summary!Total")
-range_container = precedents.filter_ranges_only().create_range_container()
-data_ranges = range_container.get_data_ranges()
-lookup_columns = range_container.get_column_ranges()
-
-# Context-aware formula analysis
-from formualizer.dependency_tracer import LabelProjector
-projector = LabelProjector(resolver)
-labels = projector.find_labels_for_cell(CellRef("Sheet1", 5, "B"))
-print(f"Context for B5: {[label.text for label in labels]}")
+assert wb.evaluate_cell("Sheet1", 1, 2) == 30.0
 ```
 
 ---
@@ -213,20 +150,19 @@ print(f"Context for B5: {[label.text for label in labels]}")
 formualizer/
 │
 ├─ crates/               # Pure‑Rust core, common types, evaluator, macros
+│   ├─ formualizer-common    (shared types: values/errors/addresses)
 │   ├─ formualizer-parse      (tokenizer + parser + pretty)
-│   ├─ formualizer-eval      (optional interpreter + built‑ins)
-│   ├─ formualizer-common    (shared literal / error / arg specs)
+│   ├─ formualizer-eval      (calc engine + built‑ins)
+│   ├─ formualizer-workbook  (workbook facade + I/O backends)
+│   ├─ formualizer-sheetport (SheetPort runtime)
 │   └─ formualizer-macros    (proc‑macro helpers)
 │
 └─ bindings/python/      # This package (native module + Python helpers)
-    ├─ formualizer/
-    │   ├─ dependency_tracer/    # Dependency analysis system
-    │   │   ├─ dependency_tracer.py  (main engine + data classes)
-    │   │   ├─ resolvers.py          (data source integrations)
-    │   │   ├─ examples.py           (practical demonstrations)
-    │   │   └─ test_dependency_tracer.py  (test suite)
-    │   └─ visitor.py            # AST traversal utilities
-    └─ src/                  # Rust‑Python bridge
+    ├─ formualizer/          # Python package (helpers + re-exports)
+    │   ├─ __init__.py
+    │   ├─ visitor.py
+    │   └─ _types.py
+    └─ src/                  # Rust‑Python bridge (pyo3)
 ```
 
 The Python wheel links directly against the crates — there is **no runtime FFI overhead** beyond the initial C→Rust boundary.
@@ -235,30 +171,56 @@ The Python wheel links directly against the crates — there is **no runtime FFI
 
 ## Examples & Practical Usage
 
-The `formualizer.dependency_tracer.examples` module provides comprehensive demonstrations:
+### Load an XLSX and evaluate
 
 ```python
-# Run all examples to see the system in action
-from formualizer.dependency_tracer.examples import run_all_examples
-run_all_examples()
+import formualizer as fz
 
-# Or run individual examples
-from formualizer.dependency_tracer.examples import (
-    example_1_simple_json_tracing,      # Basic JSON dependency analysis
-    example_2_openpyxl_integration,     # Real Excel file processing
-    example_3_combined_resolvers,       # Multi-source data overlays
-    example_4_cycle_detection,          # Circular dependency handling
-    example_5_performance_and_caching,  # Performance optimization
-)
+wb = fz.load_workbook("model.xlsx", strategy="eager_all")
+print(wb.evaluate_cell("Sheet1", 1, 2))
 ```
 
-### Real-World Use Cases
+### SheetPort: spreadsheets as typed functions
 
-* **Financial Modeling** — Trace how changes to assumptions ripple through complex financial models
-* **Data Pipeline Analysis** — Understand dependencies between calculated fields in data workflows  
-* **Spreadsheet Auditing** — Identify circular references and optimize calculation order
-* **Formula Documentation** — Auto-generate dependency maps and impact analysis reports
-* **Migration Planning** — Analyze formula complexity before system migrations
+```python
+import textwrap
+
+from formualizer import SheetPortSession, Workbook
+
+manifest_yaml = textwrap.dedent(
+    """
+    spec: fio
+    spec_version: "0.3.0"
+    manifest:
+      id: demo
+      name: Demo
+      workbook:
+        uri: memory://demo.xlsx
+        locale: en-US
+        date_system: 1900
+    ports:
+      - id: demand
+        dir: in
+        shape: scalar
+        location: { a1: Inputs!A1 }
+        schema: { type: number }
+      - id: out
+        dir: out
+        shape: scalar
+        location: { a1: Outputs!A1 }
+        schema: { type: number }
+    """
+)
+
+wb = Workbook()
+wb.add_sheet("Inputs")
+wb.add_sheet("Outputs")
+wb.set_value("Inputs", 1, 1, 120)
+
+session = SheetPortSession.from_manifest_yaml(manifest_yaml, wb)
+session.write_inputs({"demand": 250.5})
+print(session.evaluate_once())
+```
 
 ---
 
@@ -268,11 +230,12 @@ from formualizer.dependency_tracer.examples import (
 # run Rust tests
 cargo test --workspace
 
-# run Python dependency tracer tests
-python -m formualizer.dependency_tracer.test_dependency_tracer
+# run Python tests
+pytest -q bindings/python/tests
 
-# run the examples (also serves as integration tests)
-python -m formualizer.dependency_tracer.examples
+# lint / typecheck
+ruff check bindings/python
+mypy bindings/python/formualizer
 ```
 
 When hacking on the Rust side, you can rebuild the extension in place:
