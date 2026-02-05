@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::FormulaDialect;
 
-const TOKEN_ENDERS: &str = ",;}) +-*/^&=><%";
+const TOKEN_ENDERS: &str = ",;}) +-*/^&=><%@";
 
 const fn build_token_enders() -> [bool; 256] {
     let mut tbl = [false; 256];
@@ -624,7 +624,7 @@ impl<'a> SpanTokenizer<'a> {
                 b'[' => self.parse_brackets()?,
                 b'#' => self.parse_error()?,
                 b' ' | b'\n' => self.parse_whitespace()?,
-                b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' => {
+                b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' | b'@' => {
                     self.parse_operator()?
                 }
                 b'{' | b'(' => self.parse_opener()?,
@@ -826,6 +826,7 @@ impl<'a> SpanTokenizer<'a> {
 
         let curr_byte = self.formula.as_bytes()[self.offset];
         let token_type = match curr_byte {
+            b'@' => TokenType::OpPrefix,
             b'%' => TokenType::OpPostfix,
             b'+' | b'-' => {
                 if self.spans.is_empty() {
@@ -1086,7 +1087,7 @@ impl Tokenizer {
                 b'#' => self.parse_error()?,
                 b' ' | b'\n' => self.parse_whitespace()?,
                 // operator characters
-                b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' => {
+                b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' | b'@' => {
                     self.parse_operator()?
                 }
                 b'{' | b'(' => self.parse_opener()?,
@@ -1358,6 +1359,7 @@ impl Tokenizer {
 
         let curr_byte = self.formula.as_bytes()[self.offset];
         let token_type = match curr_byte {
+            b'@' => TokenType::OpPrefix,
             b'%' => TokenType::OpPostfix,
             b'+' | b'-' => {
                 // Determine if prefix or infix

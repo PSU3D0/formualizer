@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::FormulaDialect;
     use crate::tokenizer::Tokenizer;
+    use crate::FormulaDialect;
     use formualizer_common::{ExcelError, LiteralValue};
 
     use crate::parser::{ASTNode, ASTNodeType, Parser, ParserError, ReferenceType};
@@ -527,6 +527,66 @@ mod tests {
 
         if let ASTNodeType::UnaryOp { op, expr: _ } = ast.node_type {
             assert_eq!(op, "-");
+        }
+    }
+
+    #[test]
+    fn test_implicit_intersection_operator_parses() {
+        use crate::parser::{TableReference, TableSpecifier};
+
+        // Range
+        let ast = parse_formula("=@A1:A3").unwrap();
+        match ast.node_type {
+            ASTNodeType::UnaryOp { op, expr } => {
+                assert_eq!(op, "@");
+                match expr.node_type {
+                    ASTNodeType::Reference { reference, .. } => {
+                        assert_eq!(
+                            reference,
+                            ReferenceType::range(None, Some(1), Some(1), Some(3), Some(1))
+                        );
+                    }
+                    other => panic!("Expected Reference operand for @, got {other:?}"),
+                }
+            }
+            other => panic!("Expected UnaryOp for implicit intersection, got {other:?}"),
+        }
+
+        // Table reference (table evaluation may be unsupported, but parsing should succeed)
+        let ast = parse_formula("=@Table1[Col]").unwrap();
+        match ast.node_type {
+            ASTNodeType::UnaryOp { op, expr } => {
+                assert_eq!(op, "@");
+                match expr.node_type {
+                    ASTNodeType::Reference { reference, .. } => {
+                        assert_eq!(
+                            reference,
+                            ReferenceType::Table(TableReference {
+                                name: "Table1".to_string(),
+                                specifier: Some(TableSpecifier::Column("Col".to_string())),
+                            })
+                        );
+                    }
+                    other => panic!("Expected Reference operand for @, got {other:?}"),
+                }
+            }
+            other => panic!("Expected UnaryOp for implicit intersection, got {other:?}"),
+        }
+
+        // Function call
+        let ast = parse_formula("=@SEQUENCE(3,1)").unwrap();
+        match ast.node_type {
+            ASTNodeType::UnaryOp { op, expr } => {
+                assert_eq!(op, "@");
+                match expr.node_type {
+                    ASTNodeType::Function { name, args } => {
+                        assert_eq!(name, "SEQUENCE");
+                        assert_eq!(args.len(), 2);
+                    }
+                    other => panic!("Expected Function operand for @, got {other:?}"),
+                }
+            }
+            other => panic!("Expected UnaryOp for implicit intersection, got {other:?}"),
         }
     }
 
@@ -1756,16 +1816,12 @@ mod reference_tests {
                 specifier: Some(TableSpecifier::Combination(parts)),
             }) => {
                 assert_eq!(name, "Table1");
-                assert!(
-                    parts
-                        .iter()
-                        .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Headers)))
-                );
-                assert!(
-                    parts
-                        .iter()
-                        .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Data)))
-                );
+                assert!(parts
+                    .iter()
+                    .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Headers))));
+                assert!(parts
+                    .iter()
+                    .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Data))));
             }
             _ => panic!("expected table combination"),
         }
