@@ -1,8 +1,13 @@
+use crate::SheetId;
 use crate::engine::graph::DependencyGraph;
 use crate::engine::vertex::{VertexId, VertexKind};
 use crate::reference::RangeRef;
-use crate::SheetId;
 use formualizer_common::{ExcelError, ExcelErrorKind};
+
+#[inline]
+fn normalize_ascii_key(name: &str) -> String {
+    name.to_ascii_lowercase()
+}
 
 /// Native workbook table (Excel ListObject) metadata.
 #[derive(Debug, Clone)]
@@ -28,8 +33,29 @@ impl TableEntry {
 }
 
 impl DependencyGraph {
+    #[inline]
+    fn table_lookup_key(&self, name: &str) -> String {
+        if self.config.case_sensitive_tables {
+            name.to_string()
+        } else {
+            normalize_ascii_key(name)
+        }
+    }
+
+    fn canonical_table_name(&self, name: &str) -> Option<String> {
+        let key = self.table_lookup_key(name);
+        self.tables_lookup.get(&key).cloned()
+    }
+
     pub fn resolve_table_entry(&self, name: &str) -> Option<&TableEntry> {
-        self.tables.get(name)
+        if self.config.case_sensitive_tables {
+            self.tables.get(name)
+        } else {
+            let key = self.table_lookup_key(name);
+            self.tables_lookup
+                .get(&key)
+                .and_then(|canon| self.tables.get(canon))
+        }
     }
 
     pub fn table_by_vertex(&self, vertex: VertexId) -> Option<&TableEntry> {
@@ -51,9 +77,11 @@ impl DependencyGraph {
                 .with_message("Table name cannot be empty".to_string()));
         }
 
-        if self.tables.contains_key(name) {
-            return Err(ExcelError::new(ExcelErrorKind::Name)
-                .with_message(format!("Table already defined: {name}")));
+        let key = self.table_lookup_key(name);
+        if let Some(existing) = self.tables_lookup.get(&key) {
+            return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                "Table collision under normalization: '{name}' conflicts with '{existing}'"
+            )));
         }
 
         let anchor = range.start;
@@ -78,8 +106,11 @@ impl DependencyGraph {
             vertex,
         };
 
-        self.tables.insert(name.to_string(), entry);
-        self.table_vertex_lookup.insert(vertex, name.to_string());
+        let original = name.to_string();
+        self.tables.insert(original.clone(), entry);
+        self.tables_lookup
+            .insert(self.table_lookup_key(&original), original.clone());
+        self.table_vertex_lookup.insert(vertex, original);
         Ok(())
     }
 
@@ -91,7 +122,12 @@ impl DependencyGraph {
         headers: Vec<String>,
         totals_row: bool,
     ) -> Result<(), ExcelError> {
-        let vertex = self.tables.get(name).map(|t| t.vertex).ok_or_else(|| {
+        let Some(canon) = self.canonical_table_name(name) else {
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message(format!("Unknown table: {name}")));
+        };
+
+        let vertex = self.tables.get(&canon).map(|t| t.vertex).ok_or_else(|| {
             ExcelError::new(ExcelErrorKind::Name).with_message(format!("Unknown table: {name}"))
         })?;
 
@@ -99,7 +135,7 @@ impl DependencyGraph {
         self.remove_dependent_edges(vertex);
         self.register_table_range_deps(vertex, &new_range);
 
-        if let Some(existing) = self.tables.get_mut(name) {
+        if let Some(existing) = self.tables.get_mut(&canon) {
             existing.range = new_range;
             existing.header_row = header_row;
             existing.headers = headers;
@@ -112,10 +148,17 @@ impl DependencyGraph {
     }
 
     pub fn delete_table(&mut self, name: &str) -> Result<(), ExcelError> {
-        let Some(entry) = self.tables.remove(name) else {
+        let Some(canon) = self.canonical_table_name(name) else {
             return Err(ExcelError::new(ExcelErrorKind::Name)
                 .with_message(format!("Unknown table: {name}")));
         };
+
+        let Some(entry) = self.tables.remove(&canon) else {
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message(format!("Unknown table: {name}")));
+        };
+
+        self.tables_lookup.remove(&self.table_lookup_key(&canon));
 
         let vertex = entry.vertex;
         self.table_vertex_lookup.remove(&vertex);

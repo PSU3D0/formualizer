@@ -81,7 +81,7 @@ mod region_lock_tests {
             engine.graph.make_cell_ref("Sheet1", 1, 2),
         ];
         let values = vec![vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)]];
-        let res = shim.commit_array(&mut engine.graph, anchor_vertex, &targets, values);
+        let res = shim.commit_array(&mut engine.graph, anchor_vertex, &targets, values, None);
         assert!(res.is_err());
         assert!(shim.active_locks.is_empty());
     }

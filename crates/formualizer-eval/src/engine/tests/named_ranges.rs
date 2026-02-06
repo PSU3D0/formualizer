@@ -98,11 +98,13 @@ fn named_range_dirty_propagation_reaches_formula() {
 
     let ast = parse("=Input + 1").unwrap();
     let formula_summary = graph.set_cell_formula("Sheet1", 2, 1, ast).unwrap();
-    assert!(formula_summary.affected_vertices.contains(
-        &graph
-            .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
-            .unwrap()
-    ));
+    assert!(
+        formula_summary.affected_vertices.contains(
+            &graph
+                .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
+                .unwrap()
+        )
+    );
 
     let name_vertex = graph
         .named_ranges_iter()
@@ -261,6 +263,78 @@ fn engine_sheet_scope_precedence_prefers_sheet_over_workbook() {
     // Ensure lookups are per-sheet.
     assert!(engine.graph.resolve_name_entry("X", sheet1).is_some());
     assert!(engine.graph.resolve_name_entry("X", sheet2).is_some());
+}
+
+#[test]
+fn named_range_resolution_is_case_insensitive_by_default() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+
+    let sheet_id = engine.sheet_id_mut("Sheet1");
+    let input_ref = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+    engine
+        .define_name(
+            "InputValue",
+            NamedDefinition::Cell(input_ref),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    // Reference the name using different casing.
+    let ast = parse("=inputvalue*2").unwrap();
+    engine.set_cell_formula("Sheet1", 2, 1, ast).unwrap();
+    let v = engine
+        .evaluate_cell("Sheet1", 2, 1)
+        .unwrap()
+        .expect("computed value");
+    assert_eq!(v, LiteralValue::Number(20.0));
+}
+
+#[test]
+fn named_range_definition_rejects_case_insensitive_collisions() {
+    let mut graph = DependencyGraph::new();
+    graph
+        .define_name(
+            "Sales",
+            NamedDefinition::Literal(LiteralValue::Number(1.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    let err = graph
+        .define_name(
+            "sales",
+            NamedDefinition::Literal(LiteralValue::Number(2.0)),
+            NameScope::Workbook,
+        )
+        .err()
+        .expect("expected collision error");
+
+    assert_eq!(err.kind, ExcelErrorKind::Name);
+}
+
+#[test]
+fn named_range_definition_allows_distinct_cases_when_case_sensitive_enabled() {
+    let mut cfg = EvalConfig::default();
+    cfg.case_sensitive_names = true;
+    let mut graph = DependencyGraph::new_with_config(cfg);
+
+    graph
+        .define_name(
+            "Sales",
+            NamedDefinition::Literal(LiteralValue::Number(1.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    graph
+        .define_name(
+            "sales",
+            NamedDefinition::Literal(LiteralValue::Number(2.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
 }
 
 #[test]
@@ -436,15 +510,21 @@ fn test_invalid_name_rejected() {
     assert!(result.is_err());
 
     // Valid names should work
-    assert!(graph
-        .define_name("MyName", def.clone(), NameScope::Workbook)
-        .is_ok());
-    assert!(graph
-        .define_name("_Name", def.clone(), NameScope::Sheet(0))
-        .is_ok());
-    assert!(graph
-        .define_name("Name.Value", def, NameScope::Sheet(0))
-        .is_ok());
+    assert!(
+        graph
+            .define_name("MyName", def.clone(), NameScope::Workbook)
+            .is_ok()
+    );
+    assert!(
+        graph
+            .define_name("_Name", def.clone(), NameScope::Sheet(0))
+            .is_ok()
+    );
+    assert!(
+        graph
+            .define_name("Name.Value", def, NameScope::Sheet(0))
+            .is_ok()
+    );
 }
 
 #[test]
@@ -463,9 +543,11 @@ fn test_duplicate_name_error() {
     assert!(result.is_err());
 
     // Same name in different scope should succeed
-    assert!(graph
-        .define_name("MyName", def, NameScope::Sheet(0))
-        .is_ok());
+    assert!(
+        graph
+            .define_name("MyName", def, NameScope::Sheet(0))
+            .is_ok()
+    );
 }
 
 #[test]

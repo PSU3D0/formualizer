@@ -321,14 +321,11 @@ where
     pub fn new(resolver: R, config: EvalConfig) -> Self {
         crate::builtins::load_builtins();
 
-        let clock = config
-            .deterministic_mode
-            .build_clock()
-            .unwrap_or_else(|_| {
-                Arc::new(crate::timezone::SystemClock::new(
-                    crate::timezone::TimeZoneSpec::default(),
-                ))
-            });
+        let clock = config.deterministic_mode.build_clock().unwrap_or_else(|_| {
+            Arc::new(crate::timezone::SystemClock::new(
+                crate::timezone::TimeZoneSpec::default(),
+            ))
+        });
 
         // Initialize thread pool based on config
         let thread_pool = if config.enable_parallel {
@@ -377,14 +374,11 @@ where
         thread_pool: Arc<rayon::ThreadPool>,
     ) -> Self {
         crate::builtins::load_builtins();
-        let clock = config
-            .deterministic_mode
-            .build_clock()
-            .unwrap_or_else(|_| {
-                Arc::new(crate::timezone::SystemClock::new(
-                    crate::timezone::TimeZoneSpec::default(),
-                ))
-            });
+        let clock = config.deterministic_mode.build_clock().unwrap_or_else(|_| {
+            Arc::new(crate::timezone::SystemClock::new(
+                crate::timezone::TimeZoneSpec::default(),
+            ))
+        });
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -715,7 +709,8 @@ where
         headers: Vec<String>,
         totals_row: bool,
     ) -> Result<(), ExcelError> {
-        self.graph.define_table(name, range, header_row, headers, totals_row)
+        self.graph
+            .define_table(name, range, header_row, headers, totals_row)
     }
 
     pub fn define_source_scalar(
@@ -1790,7 +1785,11 @@ where
                                     .get_value(vertex_id)
                                     .unwrap_or(LiteralValue::Empty);
                                 if old != spill_val {
-                                    d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
+                                    d.record_cell(
+                                        anchor.sheet_id,
+                                        anchor.coord.row(),
+                                        anchor.coord.col(),
+                                    );
                                 }
                             }
                             self.graph.update_vertex_value(vertex_id, spill_val.clone());
@@ -1828,7 +1827,11 @@ where
                                     .get_value(vertex_id)
                                     .unwrap_or(LiteralValue::Empty);
                                 if old != spill_val {
-                                    d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
+                                    d.record_cell(
+                                        anchor.sheet_id,
+                                        anchor.coord.row(),
+                                        anchor.coord.col(),
+                                    );
                                 }
                             }
                             self.graph.update_vertex_value(vertex_id, spill_val.clone());
@@ -1876,6 +1879,7 @@ where
                                     &targets,
                                     rows.clone(),
                                     delta.as_deref_mut(),
+                                    None,
                                 ) {
                                     // If commit fails, mark as error
                                     self.clear_spill_projection_and_mirror(
@@ -1954,7 +1958,8 @@ where
                                     && self.config.delta_overlay_enabled
                                     && self.config.write_formula_overlay_enabled
                                 {
-                                    let sheet_name = self.graph.sheet_name(anchor.sheet_id).to_string();
+                                    let sheet_name =
+                                        self.graph.sheet_name(anchor.sheet_id).to_string();
                                     self.mirror_value_to_overlay(
                                         &sheet_name,
                                         anchor.coord.row() + 1,
@@ -3559,8 +3564,25 @@ where
         // Important: parallel evaluation must preserve spill semantics for array results.
         match results {
             Ok(vertex_results) => {
+                let inflight: rustc_hash::FxHashSet<VertexId> =
+                    layer.vertices.iter().copied().collect();
+
+                // Apply array (spill) results first so that spill registry is established
+                // before applying scalar formula results that might land inside a spilled region.
+                let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
+                let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
                 for (vertex_id, result) in vertex_results {
-                    self.apply_parallel_vertex_result(vertex_id, result, None)?;
+                    if matches!(result, LiteralValue::Array(_)) {
+                        arrays.push((vertex_id, result));
+                    } else {
+                        others.push((vertex_id, result));
+                    }
+                }
+                for (vertex_id, result) in arrays {
+                    self.apply_parallel_vertex_result(vertex_id, result, None, Some(&inflight))?;
+                }
+                for (vertex_id, result) in others {
+                    self.apply_parallel_vertex_result(vertex_id, result, None, Some(&inflight))?;
                 }
                 Ok(layer.vertices.len())
             }
@@ -3593,8 +3615,32 @@ where
 
         match results {
             Ok(vertex_results) => {
+                let inflight: rustc_hash::FxHashSet<VertexId> =
+                    layer.vertices.iter().copied().collect();
+                let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
+                let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
                 for (vertex_id, result) in vertex_results {
-                    self.apply_parallel_vertex_result(vertex_id, result, Some(delta))?;
+                    if matches!(result, LiteralValue::Array(_)) {
+                        arrays.push((vertex_id, result));
+                    } else {
+                        others.push((vertex_id, result));
+                    }
+                }
+                for (vertex_id, result) in arrays {
+                    self.apply_parallel_vertex_result(
+                        vertex_id,
+                        result,
+                        Some(delta),
+                        Some(&inflight),
+                    )?;
+                }
+                for (vertex_id, result) in others {
+                    self.apply_parallel_vertex_result(
+                        vertex_id,
+                        result,
+                        Some(delta),
+                        Some(&inflight),
+                    )?;
                 }
                 Ok(layer.vertices.len())
             }
@@ -3642,8 +3688,22 @@ where
         // Update the graph with results sequentially (thread-safe)
         match results {
             Ok(vertex_results) => {
+                let inflight: rustc_hash::FxHashSet<VertexId> =
+                    layer.vertices.iter().copied().collect();
+                let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
+                let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
                 for (vertex_id, result) in vertex_results {
-                    self.apply_parallel_vertex_result(vertex_id, result, None)?;
+                    if matches!(result, LiteralValue::Array(_)) {
+                        arrays.push((vertex_id, result));
+                    } else {
+                        others.push((vertex_id, result));
+                    }
+                }
+                for (vertex_id, result) in arrays {
+                    self.apply_parallel_vertex_result(vertex_id, result, None, Some(&inflight))?;
+                }
+                for (vertex_id, result) in others {
+                    self.apply_parallel_vertex_result(vertex_id, result, None, Some(&inflight))?;
                 }
                 Ok(layer.vertices.len())
             }
@@ -3660,7 +3720,17 @@ where
         vertex_id: VertexId,
         result: LiteralValue,
         mut delta: Option<&mut DeltaCollector>,
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<(), ExcelError> {
+        // If this vertex's cell is currently covered by a spill from a different anchor,
+        // ignore the computed result. The spill's committed values own the grid.
+        if let Some(cell) = self.graph.get_cell_ref(vertex_id)
+            && let Some(owner) = self.graph.spill_registry_anchor_for_cell(cell)
+            && owner != vertex_id
+        {
+            return Ok(());
+        }
+
         let kind = self.graph.get_vertex_kind(vertex_id);
 
         // Only formula vertices spill dynamic arrays into the grid.
@@ -3668,10 +3738,19 @@ where
         if is_formula {
             match result {
                 LiteralValue::Array(rows) => {
-                    self.apply_array_result_from_parallel(vertex_id, rows, delta.as_deref_mut())?;
+                    self.apply_array_result_from_parallel(
+                        vertex_id,
+                        rows,
+                        delta.as_deref_mut(),
+                        overwritable_formulas,
+                    )?;
                 }
                 other => {
-                    self.apply_non_array_result_from_parallel(vertex_id, other, delta.as_deref_mut());
+                    self.apply_non_array_result_from_parallel(
+                        vertex_id,
+                        other,
+                        delta.as_deref_mut(),
+                    );
                 }
             }
             return Ok(());
@@ -3756,6 +3835,7 @@ where
         vertex_id: VertexId,
         rows: Vec<Vec<LiteralValue>>,
         mut delta: Option<&mut DeltaCollector>,
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<(), ExcelError> {
         // Keep behavior consistent with the sequential spill path in `evaluate_vertex_impl`.
         self.graph
@@ -3783,7 +3863,10 @@ where
             if let Some(d) = delta.as_deref_mut()
                 && d.mode != DeltaMode::Off
             {
-                let old = self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty);
+                let old = self
+                    .graph
+                    .get_value(vertex_id)
+                    .unwrap_or(LiteralValue::Empty);
                 if old != spill_val {
                     d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
                 }
@@ -3810,7 +3893,10 @@ where
             if let Some(d) = delta.as_deref_mut()
                 && d.mode != DeltaMode::Off
             {
-                let old = self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty);
+                let old = self
+                    .graph
+                    .get_value(vertex_id)
+                    .unwrap_or(LiteralValue::Empty);
                 if old != spill_val {
                     d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
                 }
@@ -3846,13 +3932,17 @@ where
                     &targets,
                     rows.clone(),
                     delta.as_deref_mut(),
+                    overwritable_formulas,
                 ) {
                     self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
                     let err_val = LiteralValue::Error(e.clone());
                     if let Some(d) = delta.as_deref_mut()
                         && d.mode != DeltaMode::Off
                     {
-                        let old = self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty);
+                        let old = self
+                            .graph
+                            .get_value(vertex_id)
+                            .unwrap_or(LiteralValue::Empty);
                         if old != err_val {
                             d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
                         }
@@ -3884,7 +3974,10 @@ where
                 if let Some(d) = delta.as_deref_mut()
                     && d.mode != DeltaMode::Off
                 {
-                    let old = self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty);
+                    let old = self
+                        .graph
+                        .get_value(vertex_id)
+                        .unwrap_or(LiteralValue::Empty);
                     if old != spill_val {
                         d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
                     }
@@ -4159,9 +4252,14 @@ impl ShimSpillManager {
         anchor_vertex: VertexId,
         targets: &[CellRef],
         rows: Vec<Vec<LiteralValue>>,
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<(), ExcelError> {
         // Re-run plan on concrete targets before committing to respect blockers.
-        let plan_res = graph.plan_spill_region(anchor_vertex, targets);
+        let plan_res = graph.plan_spill_region_allowing_formula_overwrite(
+            anchor_vertex,
+            targets,
+            overwritable_formulas,
+        );
         if let Err(e) = plan_res {
             if let Some(id) = self.active_locks.remove(&anchor_vertex) {
                 self.region_locks.release(id);
@@ -4188,9 +4286,14 @@ impl ShimSpillManager {
         anchor_vertex: VertexId,
         targets: &[CellRef],
         rows: Vec<Vec<LiteralValue>>,
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<(), ExcelError> {
         // Re-run plan on concrete targets before committing to respect blockers.
-        let plan_res = engine.graph.plan_spill_region(anchor_vertex, targets);
+        let plan_res = engine.graph.plan_spill_region_allowing_formula_overwrite(
+            anchor_vertex,
+            targets,
+            overwritable_formulas,
+        );
         if let Err(e) = plan_res {
             if let Some(id) = self.active_locks.remove(&anchor_vertex) {
                 self.region_locks.release(id);
@@ -5021,6 +5124,7 @@ where
         targets: &[CellRef],
         rows: Vec<Vec<LiteralValue>>,
         delta: Option<&mut DeltaCollector>,
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<(), ExcelError> {
         let prev_spill_cells = self
             .graph
@@ -5082,8 +5186,13 @@ where
         }
 
         // Commit via shim (releases locks)
-        self.spill_mgr
-            .commit_array(&mut self.graph, anchor_vertex, targets, rows.clone())?;
+        self.spill_mgr.commit_array(
+            &mut self.graph,
+            anchor_vertex,
+            targets,
+            rows.clone(),
+            overwritable_formulas,
+        )?;
 
         if self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled

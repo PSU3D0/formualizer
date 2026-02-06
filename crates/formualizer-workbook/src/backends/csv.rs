@@ -101,12 +101,31 @@ impl Default for CsvQuoteStyle {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CsvArrayPolicy {
+    /// Reject exporting arrays to CSV.
+    Error,
+    /// Export only the top-left element (`[0][0]`).
+    TopLeft,
+    /// Export an empty string.
+    Blank,
+}
+
+impl Default for CsvArrayPolicy {
+    fn default() -> Self {
+        Self::Error
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CsvWriteOptions {
     /// Field delimiter as a single byte. Use `b'\t'` for TSV.
     pub delimiter: u8,
     pub newline: CsvNewline,
     pub quote_style: CsvQuoteStyle,
+
+    /// Policy for exporting `LiteralValue::Array` into a single CSV field.
+    pub array_policy: CsvArrayPolicy,
 }
 
 impl Default for CsvWriteOptions {
@@ -115,6 +134,7 @@ impl Default for CsvWriteOptions {
             delimiter: b',',
             newline: CsvNewline::Lf,
             quote_style: CsvQuoteStyle::Necessary,
+            array_policy: CsvArrayPolicy::Error,
         }
     }
 }
@@ -854,10 +874,10 @@ fn write_rect_csv<W: Write + ?Sized>(
     for r in sr..=er {
         let mut record: Vec<String> = Vec::with_capacity((ec - sc + 1) as usize);
         for c in sc..=ec {
-            let s = get(r, c)
-                .as_ref()
-                .map(literal_to_csv_field)
-                .unwrap_or_default();
+            let s = match get(r, c) {
+                Some(v) => literal_to_csv_field(&v, &opts)?,
+                None => String::new(),
+            };
             record.push(s);
         }
         wtr.write_record(record)
@@ -878,7 +898,10 @@ fn write_values_csv<W: Write>(
         .quote_style(csv_quote_style(opts.quote_style));
     let mut wtr = wb.from_writer(writer);
     for row in values {
-        let record: Vec<String> = row.iter().map(literal_to_csv_field).collect();
+        let record: Vec<String> = row
+            .iter()
+            .map(|v| literal_to_csv_field(v, &opts))
+            .collect::<Result<Vec<_>, IoError>>()?;
         wtr.write_record(record)
             .map_err(|e| IoError::from_backend("csv", e))?;
     }
@@ -886,8 +909,23 @@ fn write_values_csv<W: Write>(
     Ok(())
 }
 
-fn literal_to_csv_field(v: &LiteralValue) -> String {
-    match v {
+fn literal_to_csv_field(v: &LiteralValue, opts: &CsvWriteOptions) -> Result<String, IoError> {
+    literal_to_csv_field_inner(v, opts, 0)
+}
+
+fn literal_to_csv_field_inner(
+    v: &LiteralValue,
+    opts: &CsvWriteOptions,
+    depth: u8,
+) -> Result<String, IoError> {
+    if depth > 4 {
+        return Err(IoError::Backend {
+            backend: "csv".to_string(),
+            message: "Array nesting too deep for CSV export".to_string(),
+        });
+    }
+
+    Ok(match v {
         LiteralValue::Empty => String::new(),
         LiteralValue::Text(s) => s.clone(),
         LiteralValue::Int(i) => i.to_string(),
@@ -905,6 +943,22 @@ fn literal_to_csv_field(v: &LiteralValue) -> String {
         LiteralValue::Duration(d) => d.num_seconds().to_string(),
         LiteralValue::Error(e) => e.kind.to_string(),
         LiteralValue::Pending => "Pending".to_string(),
-        LiteralValue::Array(a) => format!("{a:?}"),
-    }
+        LiteralValue::Array(a) => match opts.array_policy {
+            CsvArrayPolicy::Error => {
+                return Err(IoError::Backend {
+                    backend: "csv".to_string(),
+                    message: "Cannot export array value to CSV (array_policy=Error)".to_string(),
+                });
+            }
+            CsvArrayPolicy::Blank => String::new(),
+            CsvArrayPolicy::TopLeft => {
+                if let Some(row0) = a.first() {
+                    if let Some(v0) = row0.first() {
+                        return literal_to_csv_field_inner(v0, opts, depth + 1);
+                    }
+                }
+                String::new()
+            }
+        },
+    })
 }

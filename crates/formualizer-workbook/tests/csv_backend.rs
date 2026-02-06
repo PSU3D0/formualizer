@@ -1,10 +1,12 @@
 #![cfg(feature = "csv")]
 
 use formualizer_common::LiteralValue;
-use formualizer_workbook::traits::{SaveDestination, SheetData, SpreadsheetReader};
+use formualizer_workbook::traits::{
+    SaveDestination, SheetData, SpreadsheetReader, SpreadsheetWriter,
+};
 
 use formualizer_workbook::backends::csv::{
-    CsvAdapter, CsvNewline, CsvReadOptions, CsvTypeInference, CsvWriteOptions,
+    CsvAdapter, CsvArrayPolicy, CsvNewline, CsvReadOptions, CsvTypeInference, CsvWriteOptions,
 };
 
 fn sheet_value_map(sheet: &SheetData) -> std::collections::BTreeMap<(u32, u32), LiteralValue> {
@@ -162,4 +164,100 @@ fn csv_rejects_non_utf8() {
         }
         other => panic!("expected backend error, got {other:?}"),
     }
+}
+
+#[test]
+fn csv_array_export_policy_error_is_default_safe_behavior() {
+    let mut adapter = CsvAdapter::new();
+    adapter
+        .write_cell(
+            "Sheet1",
+            1,
+            1,
+            formualizer_workbook::CellData {
+                value: Some(LiteralValue::Array(vec![vec![LiteralValue::Int(1)]])),
+                formula: None,
+                style: None,
+            },
+        )
+        .unwrap();
+
+    let err = adapter
+        .write_sheet_to("Sheet1", SaveDestination::Bytes, CsvWriteOptions::default())
+        .err()
+        .expect("expected array export error");
+
+    match err {
+        formualizer_workbook::IoError::Backend { backend, .. } => assert_eq!(backend, "csv"),
+        other => panic!("expected backend error, got {other:?}"),
+    }
+}
+
+#[test]
+fn csv_array_export_policy_top_left_exports_first_element() {
+    let mut adapter = CsvAdapter::new();
+    adapter
+        .write_cell(
+            "Sheet1",
+            1,
+            1,
+            formualizer_workbook::CellData {
+                value: Some(LiteralValue::Array(vec![
+                    vec![LiteralValue::Int(1), LiteralValue::Int(2)],
+                    vec![LiteralValue::Int(3), LiteralValue::Int(4)],
+                ])),
+                formula: None,
+                style: None,
+            },
+        )
+        .unwrap();
+
+    let bytes = adapter
+        .write_sheet_to(
+            "Sheet1",
+            SaveDestination::Bytes,
+            CsvWriteOptions {
+                array_policy: CsvArrayPolicy::TopLeft,
+                ..CsvWriteOptions::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let out = String::from_utf8(bytes).unwrap();
+    assert!(out.starts_with("1"));
+}
+
+#[test]
+fn csv_array_export_policy_blank_exports_empty_field() {
+    let mut adapter = CsvAdapter::new();
+    adapter
+        .write_cell(
+            "Sheet1",
+            1,
+            1,
+            formualizer_workbook::CellData {
+                value: Some(LiteralValue::Array(vec![vec![LiteralValue::Int(1)]])),
+                formula: None,
+                style: None,
+            },
+        )
+        .unwrap();
+
+    let bytes = adapter
+        .write_sheet_to(
+            "Sheet1",
+            SaveDestination::Bytes,
+            CsvWriteOptions {
+                array_policy: CsvArrayPolicy::Blank,
+                ..CsvWriteOptions::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let out = String::from_utf8(bytes).unwrap();
+    // CSV writers may or may not emit a trailing record terminator for an all-empty row.
+    assert!(
+        out.is_empty() || out == "\n" || out == "\r\n" || out == "\"\"\n" || out == "\"\"\r\n",
+        "unexpected csv output: {out:?}"
+    );
 }

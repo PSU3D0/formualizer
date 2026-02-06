@@ -133,8 +133,20 @@ pub struct DependencyGraph {
     /// Workbook-scoped named ranges
     named_ranges: FxHashMap<String, NamedRange>,
 
+    /// Normalized-key lookup for workbook-scoped names.
+    ///
+    /// When `config.case_sensitive_names == false`, keys are ASCII-lowercased.
+    /// Values are the canonical (original-cased) name stored in `named_ranges`.
+    named_ranges_lookup: FxHashMap<String, String>,
+
     /// Sheet-scoped named ranges  
     sheet_named_ranges: FxHashMap<(SheetId, String), NamedRange>,
+
+    /// Normalized-key lookup for sheet-scoped names.
+    ///
+    /// Key is (SheetId, normalized_name_key). Value is the canonical (original-cased)
+    /// name stored in `sheet_named_ranges`.
+    sheet_named_ranges_lookup: FxHashMap<(SheetId, String), String>,
 
     /// Reverse mapping: vertex -> names it uses (by vertex id)
     vertex_to_names: FxHashMap<VertexId, Vec<VertexId>>,
@@ -147,6 +159,8 @@ pub struct DependencyGraph {
 
     // Native workbook tables (ListObjects)
     tables: FxHashMap<String, tables::TableEntry>,
+    /// Normalized-key lookup for tables.
+    tables_lookup: FxHashMap<String, String>,
     table_vertex_lookup: FxHashMap<VertexId, String>,
 
     // External sources (SourceVertex)
@@ -485,11 +499,14 @@ impl DependencyGraph {
             sheet_reg,
             default_sheet_id,
             named_ranges: FxHashMap::default(),
+            named_ranges_lookup: FxHashMap::default(),
             sheet_named_ranges: FxHashMap::default(),
+            sheet_named_ranges_lookup: FxHashMap::default(),
             vertex_to_names: FxHashMap::default(),
             name_vertex_lookup: FxHashMap::default(),
             pending_name_links: FxHashMap::default(),
             tables: FxHashMap::default(),
+            tables_lookup: FxHashMap::default(),
             table_vertex_lookup: FxHashMap::default(),
             source_scalars: FxHashMap::default(),
             source_tables: FxHashMap::default(),
@@ -973,7 +990,9 @@ impl DependencyGraph {
             ASTNodeType::Reference { reference, .. } => {
                 self.rewrite_structured_reference(reference, cell)
             }
-            ASTNodeType::UnaryOp { expr, .. } => self.rewrite_structured_references_node(expr, cell),
+            ASTNodeType::UnaryOp { expr, .. } => {
+                self.rewrite_structured_references_node(expr, cell)
+            }
             ASTNodeType::BinaryOp { left, right, .. } => {
                 self.rewrite_structured_references_node(left, cell)?;
                 self.rewrite_structured_references_node(right, cell)
@@ -1033,7 +1052,7 @@ impl DependencyGraph {
                         other => {
                             return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
                                 format!(
-                                    "Unsupported this-row structured reference component: {other}" 
+                                    "Unsupported this-row structured reference component: {other}"
                                 ),
                             ));
                         }
@@ -1058,9 +1077,8 @@ impl DependencyGraph {
         };
 
         let Some(table) = self.find_table_containing_cell(cell) else {
-            return Err(ExcelError::new(ExcelErrorKind::Name).with_message(
-                "This-row structured reference used outside a table".to_string(),
-            ));
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message("This-row structured reference used outside a table".to_string()));
         };
 
         let row0 = cell.coord.row();
@@ -1071,9 +1089,8 @@ impl DependencyGraph {
         let ec0 = table.range.end.coord.col();
 
         if row0 < sr0 || row0 > er0 || col0 < sc0 || col0 > ec0 {
-            return Err(ExcelError::new(ExcelErrorKind::Name).with_message(
-                "This-row structured reference used outside a table".to_string(),
-            ));
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message("This-row structured reference used outside a table".to_string()));
         }
 
         if table.header_row && row0 == sr0 {
@@ -1090,9 +1107,9 @@ impl DependencyGraph {
         }
 
         let Some(idx) = table.col_index(col_name) else {
-            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
-                format!("Unknown table column in this-row reference: {col_name}"),
-            ));
+            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                "Unknown table column in this-row reference: {col_name}"
+            )));
         };
         let target_col0 = sc0 + (idx as u32);
         let target_row = row0 + 1;
@@ -1798,6 +1815,19 @@ impl DependencyGraph {
         anchor: VertexId,
         target_cells: &[CellRef],
     ) -> Result<(), ExcelError> {
+        self.plan_spill_region_allowing_formula_overwrite(anchor, target_cells, None)
+    }
+
+    /// Plan a spill region, optionally allowing specific formula vertices to be overwritten.
+    ///
+    /// This is used by parallel evaluation to allow spill anchors to take precedence over
+    /// other formula vertices that are being evaluated in the same layer.
+    pub(crate) fn plan_spill_region_allowing_formula_overwrite(
+        &self,
+        anchor: VertexId,
+        target_cells: &[CellRef],
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
+    ) -> Result<(), ExcelError> {
         use formualizer_common::{ExcelErrorExtra, ExcelErrorKind};
         // Compute expected spill shape from the target rectangle for better diagnostics
         let (expected_rows, expected_cols) = if target_cells.is_empty() {
@@ -1848,13 +1878,18 @@ impl DependencyGraph {
                 continue;
             }
 
-            // If cell is occupied by another formula anchor, block regardless of value visibility
+            // If cell is occupied by another formula anchor, block unless explicitly allowed.
             if let Some(&vid) = self.cell_to_vertex.get(cell)
                 && vid != anchor
             {
                 // Prevent clobbering formulas (array or scalar) in the target area
                 match self.store.kind(vid) {
                     VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                        if let Some(allow) = overwritable_formulas
+                            && allow.contains(&vid)
+                        {
+                            continue;
+                        }
                         return Err(ExcelError::new(ExcelErrorKind::Spill)
                             .with_message("BlockedByFormula")
                             .with_extra(ExcelErrorExtra::Spill {
@@ -2035,7 +2070,10 @@ impl DependencyGraph {
     }
 
     pub(crate) fn spill_registry_counts(&self) -> (usize, usize) {
-        (self.spill_anchor_to_cells.len(), self.spill_cell_to_anchor.len())
+        (
+            self.spill_anchor_to_cells.len(),
+            self.spill_cell_to_anchor.len(),
+        )
     }
 
     /// Clear an existing spill region for an anchor (set cells to Empty and forget ownership)

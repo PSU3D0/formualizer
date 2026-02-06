@@ -1,10 +1,12 @@
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime};
 use formualizer_common::{
-    error::{ExcelError, ExcelErrorKind},
     RangeAddress,
+    error::{ExcelError, ExcelErrorKind},
 };
 #[cfg(feature = "json")]
 use formualizer_workbook::JsonAdapter;
+#[cfg(feature = "json")]
+use formualizer_workbook::backends::json::JsonReadOptions;
 use formualizer_workbook::{CellData, LiteralValue, SpreadsheetReader, SpreadsheetWriter};
 
 #[cfg(feature = "json")]
@@ -216,6 +218,63 @@ fn json_roundtrip_in_memory_bytes() {
         data.cells.get(&(2, 1)).unwrap().formula.as_deref(),
         Some("=A1*2")
     );
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn json_strict_dates_reject_invalid_date_strings() {
+    let bytes = br#"{
+        "version": 1,
+        "sheets": {
+            "S": {
+                "cells": [
+                    { "row": 1, "col": 1, "value": { "type": "Date", "value": "not-a-date" } }
+                ]
+            }
+        }
+    }"#
+    .to_vec();
+
+    let mut adapter = JsonAdapter::open_bytes(bytes).unwrap();
+    let err = adapter
+        .read_sheet("S")
+        .err()
+        .expect("expected strict parse error");
+    match err {
+        formualizer_workbook::IoError::Backend { backend, message } => {
+            assert_eq!(backend, "json");
+            assert!(message.contains("Invalid date"));
+        }
+        other => panic!("expected backend error, got {other:?}"),
+    }
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn json_non_strict_dates_preserve_invalid_as_text() {
+    let bytes = br#"{
+        "version": 1,
+        "sheets": {
+            "S": {
+                "cells": [
+                    { "row": 1, "col": 1, "value": { "type": "Date", "value": "not-a-date" } }
+                ]
+            }
+        }
+    }"#
+    .to_vec();
+
+    let mut adapter = JsonAdapter::open_bytes(bytes).unwrap();
+    adapter.set_read_options(JsonReadOptions {
+        strict_dates: false,
+    });
+    let sheet = adapter.read_sheet("S").unwrap();
+    let v = sheet
+        .cells
+        .get(&(1, 1))
+        .and_then(|c| c.value.clone())
+        .unwrap();
+    assert_eq!(v, LiteralValue::Text("not-a-date".to_string()));
 }
 
 #[cfg(feature = "json")]

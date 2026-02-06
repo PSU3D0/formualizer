@@ -68,6 +68,28 @@ impl PyEvaluationConfig {
         self.inner.workbook_seed
     }
 
+    /// Enable case-sensitive defined-name resolution.
+    #[setter]
+    pub fn set_case_sensitive_names(&mut self, value: bool) {
+        self.inner.case_sensitive_names = value;
+    }
+
+    #[getter]
+    pub fn get_case_sensitive_names(&self) -> bool {
+        self.inner.case_sensitive_names
+    }
+
+    /// Enable case-sensitive table-name resolution.
+    #[setter]
+    pub fn set_case_sensitive_tables(&mut self, value: bool) {
+        self.inner.case_sensitive_tables = value;
+    }
+
+    #[getter]
+    pub fn get_case_sensitive_tables(&self) -> bool {
+        self.inner.case_sensitive_tables
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "EvaluationConfig(parallel={parallel}, max_threads={max_threads:?}, range_limit={range_limit}, seed={seed})",

@@ -1,6 +1,6 @@
 use crate::engine::{Engine, EvalConfig};
 use crate::reference::{CellRef, Coord, RangeRef};
-use formualizer_common::LiteralValue;
+use formualizer_common::{ExcelErrorKind, LiteralValue};
 
 #[test]
 fn structured_ref_table_column_tracks_cell_edits_via_table_vertex() {
@@ -171,4 +171,65 @@ fn structured_ref_bracket_table_shorthand_selects_data_body() {
         .unwrap()
         .expect("computed value");
     assert_eq!(v, LiteralValue::Number(42.0));
+}
+
+#[test]
+fn structured_ref_table_name_resolution_is_case_insensitive_by_default() {
+    let ctx = crate::test_workbook::TestWorkbook::new();
+    let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
+
+    engine.add_sheet("Sheet1").unwrap();
+
+    // Table region A1:B3 (header + 2 data rows)
+    engine
+        .set_cell_value("Sheet1", 2, 2, LiteralValue::Number(10.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 3, 2, LiteralValue::Number(20.0))
+        .unwrap();
+
+    let sheet_id = engine.sheet_id("Sheet1").unwrap();
+    let start = CellRef::new(sheet_id, Coord::from_excel(1, 1, true, true));
+    let end = CellRef::new(sheet_id, Coord::from_excel(3, 2, true, true));
+    let range = RangeRef::new(start, end);
+    engine
+        .define_table(
+            "Sales",
+            range,
+            true,
+            vec!["Region".into(), "Amount".into()],
+            false,
+        )
+        .unwrap();
+
+    // Reference the table using different casing.
+    let ast = formualizer_parse::parser::parse("=SUM(sales[Amount])").unwrap();
+    engine.set_cell_formula("Sheet1", 1, 4, ast).unwrap();
+    let v = engine
+        .evaluate_cell("Sheet1", 1, 4)
+        .unwrap()
+        .expect("computed value");
+    assert_eq!(v, LiteralValue::Number(30.0));
+}
+
+#[test]
+fn table_definition_rejects_case_insensitive_collisions() {
+    let ctx = crate::test_workbook::TestWorkbook::new();
+    let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
+    engine.add_sheet("Sheet1").unwrap();
+
+    let sheet_id = engine.sheet_id("Sheet1").unwrap();
+    let start = CellRef::new(sheet_id, Coord::from_excel(1, 1, true, true));
+    let end = CellRef::new(sheet_id, Coord::from_excel(1, 1, true, true));
+    let range = RangeRef::new(start, end);
+
+    engine
+        .define_table("Sales", range.clone(), true, vec!["A".into()], false)
+        .unwrap();
+
+    let err = engine
+        .define_table("sales", range, true, vec!["A".into()], false)
+        .err()
+        .expect("expected collision error");
+    assert_eq!(err.kind, ExcelErrorKind::Name);
 }
