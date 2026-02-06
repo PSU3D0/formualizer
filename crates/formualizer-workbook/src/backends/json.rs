@@ -26,6 +26,20 @@ struct JsonWorkbook {
     sheets: BTreeMap<String, JsonSheet>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct JsonReadOptions {
+    /// When true (default), invalid date/time strings are treated as an IO error.
+    ///
+    /// When false, invalid date/time values are preserved as text (never silently coerced).
+    pub strict_dates: bool,
+}
+
+impl Default for JsonReadOptions {
+    fn default() -> Self {
+        Self { strict_dates: true }
+    }
+}
+
 fn default_version() -> u32 {
     1
 }
@@ -73,8 +87,12 @@ struct JsonDefinedName {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum JsonDefinedNameDefinition {
-    Range { address: formualizer_common::RangeAddress },
-    Literal { value: JsonValue },
+    Range {
+        address: formualizer_common::RangeAddress,
+    },
+    Literal {
+        value: JsonValue,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -116,6 +134,7 @@ enum JsonValue {
 pub struct JsonAdapter {
     data: JsonWorkbook,
     path: Option<PathBuf>,
+    read_options: JsonReadOptions,
     caps: BackendCaps,
 }
 
@@ -127,9 +146,14 @@ impl Default for JsonAdapter {
 
 impl JsonAdapter {
     pub fn new() -> Self {
+        Self::new_with_options(JsonReadOptions::default())
+    }
+
+    pub fn new_with_options(read_options: JsonReadOptions) -> Self {
         Self {
             data: JsonWorkbook::default(),
             path: None,
+            read_options,
             caps: BackendCaps {
                 read: true,
                 write: true,
@@ -149,6 +173,14 @@ impl JsonAdapter {
                 shared_formulas: false,
             },
         }
+    }
+
+    pub fn read_options(&self) -> &JsonReadOptions {
+        &self.read_options
+    }
+
+    pub fn set_read_options(&mut self, opts: JsonReadOptions) {
+        self.read_options = opts;
     }
 
     fn migrate_legacy_named_ranges(&mut self) {
@@ -186,10 +218,21 @@ impl JsonAdapter {
         }
     }
 
-    fn to_sheet_data(js: &JsonSheet) -> SheetData {
+    fn to_sheet_data(
+        js: &JsonSheet,
+        sheet_name: &str,
+        opts: &JsonReadOptions,
+    ) -> Result<SheetData, IoError> {
         let mut cells: BTreeMap<(u32, u32), CellData> = BTreeMap::new();
-        for c in &js.cells {
-            let lit = c.value.as_ref().map(json_to_literal);
+        for (idx, c) in js.cells.iter().enumerate() {
+            let lit = match c.value.as_ref() {
+                Some(v) => Some(json_to_literal(
+                    v,
+                    opts,
+                    &format!("sheets.{sheet_name}.cells[{idx}].value"),
+                )?),
+                None => None,
+            };
             cells.insert(
                 (c.row, c.col),
                 CellData {
@@ -199,7 +242,7 @@ impl JsonAdapter {
                 },
             );
         }
-        SheetData {
+        Ok(SheetData {
             cells,
             dimensions: js.dimensions,
             tables: js.tables.clone(),
@@ -207,7 +250,7 @@ impl JsonAdapter {
             date_system_1904: js.date_system_1904,
             merged_cells: js.merged_cells.clone(),
             hidden: js.hidden,
-        }
+        })
     }
 
     pub fn to_json_string(&self) -> Result<String, IoError> {
@@ -325,24 +368,30 @@ impl SpreadsheetReader for JsonAdapter {
             .data
             .defined_names
             .iter()
-            .map(|dn| DefinedName {
-                name: dn.name.clone(),
-                scope: dn.scope.clone(),
-                scope_sheet: dn.scope_sheet.clone(),
-                definition: match &dn.definition {
-                    JsonDefinedNameDefinition::Range { address } => {
-                        DefinedNameDefinition::Range {
-                            address: address.clone(),
-                        }
-                    }
+            .enumerate()
+            .map(|(idx, dn)| {
+                let def = match &dn.definition {
+                    JsonDefinedNameDefinition::Range { address } => DefinedNameDefinition::Range {
+                        address: address.clone(),
+                    },
                     JsonDefinedNameDefinition::Literal { value } => {
                         DefinedNameDefinition::Literal {
-                            value: json_to_literal(value),
+                            value: json_to_literal(
+                                value,
+                                &self.read_options,
+                                &format!("defined_names[{idx}].definition.value"),
+                            )?,
                         }
                     }
-                },
+                };
+                Ok(DefinedName {
+                    name: dn.name.clone(),
+                    scope: dn.scope.clone(),
+                    scope_sheet: dn.scope_sheet.clone(),
+                    definition: def,
+                })
             })
-            .collect())
+            .collect::<Result<Vec<_>, IoError>>()?)
     }
 
     fn read_range(
@@ -355,7 +404,14 @@ impl SpreadsheetReader for JsonAdapter {
             let mut out = BTreeMap::new();
             for c in &js.cells {
                 if c.row >= start.0 && c.row <= end.0 && c.col >= start.1 && c.col <= end.1 {
-                    let lit = c.value.as_ref().map(json_to_literal);
+                    let lit = match c.value.as_ref() {
+                        Some(v) => Some(json_to_literal(
+                            v,
+                            &self.read_options,
+                            &format!("sheets.{sheet}.cells[row={},col={}].value", c.row, c.col),
+                        )?),
+                        None => None,
+                    };
                     out.insert(
                         (c.row, c.col),
                         CellData {
@@ -374,7 +430,7 @@ impl SpreadsheetReader for JsonAdapter {
 
     fn read_sheet(&mut self, sheet: &str) -> Result<SheetData, Self::Error> {
         if let Some(js) = self.data.sheets.get(sheet) {
-            Ok(Self::to_sheet_data(js))
+            Self::to_sheet_data(js, sheet, &self.read_options)
         } else {
             Ok(SheetData {
                 cells: BTreeMap::new(),
@@ -530,9 +586,13 @@ fn literal_to_json(v: &formualizer_common::LiteralValue) -> JsonValue {
     }
 }
 
-fn json_to_literal(v: &JsonValue) -> formualizer_common::LiteralValue {
+fn json_to_literal(
+    v: &JsonValue,
+    opts: &JsonReadOptions,
+    path: &str,
+) -> Result<formualizer_common::LiteralValue, IoError> {
     use formualizer_common::LiteralValue as L;
-    match v {
+    Ok(match v {
         JsonValue::Int(i) => L::Int(*i),
         JsonValue::Number(n) => L::Number(*n),
         JsonValue::Text(s) => L::Text(s.clone()),
@@ -540,36 +600,53 @@ fn json_to_literal(v: &JsonValue) -> formualizer_common::LiteralValue {
         JsonValue::Empty => L::Empty,
         JsonValue::Array(arr) => L::Array(
             arr.iter()
-                .map(|row| row.iter().map(json_to_literal).collect())
-                .collect(),
+                .map(|row| {
+                    row.iter()
+                        .map(|v| json_to_literal(v, opts, path))
+                        .collect::<Result<Vec<_>, IoError>>()
+                })
+                .collect::<Result<Vec<_>, IoError>>()?,
         ),
-        JsonValue::Date(s) => {
-            let d = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
-            L::Date(d)
-        }
-        JsonValue::DateTime(s) => {
-            let dt = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
-                .unwrap_or_else(|_| {
-                    chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
-                        .unwrap()
-                        .and_hms_opt(0, 0, 0)
-                        .unwrap()
+        JsonValue::Date(s) => match chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            Ok(d) => L::Date(d),
+            Err(_) if opts.strict_dates => {
+                return Err(IoError::Backend {
+                    backend: "json".to_string(),
+                    message: format!("Invalid date at {path}: '{s}'"),
                 });
-            L::DateTime(dt)
+            }
+            Err(_) => L::Text(s.clone()),
+        },
+        JsonValue::DateTime(s) => {
+            let parsed = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"));
+            match parsed {
+                Ok(dt) => L::DateTime(dt),
+                Err(_) if opts.strict_dates => {
+                    return Err(IoError::Backend {
+                        backend: "json".to_string(),
+                        message: format!("Invalid datetime at {path}: '{s}'"),
+                    });
+                }
+                Err(_) => L::Text(s.clone()),
+            }
         }
-        JsonValue::Time(s) => {
-            let t = chrono::NaiveTime::parse_from_str(s, "%H:%M:%S")
-                .unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-            L::Time(t)
-        }
+        JsonValue::Time(s) => match chrono::NaiveTime::parse_from_str(s, "%H:%M:%S") {
+            Ok(t) => L::Time(t),
+            Err(_) if opts.strict_dates => {
+                return Err(IoError::Backend {
+                    backend: "json".to_string(),
+                    message: format!("Invalid time at {path}: '{s}'"),
+                });
+            }
+            Err(_) => L::Text(s.clone()),
+        },
         JsonValue::Duration(secs) => L::Duration(chrono::Duration::seconds(*secs)),
         JsonValue::Error(code) => L::Error(
             formualizer_common::error::ExcelError::from_error_string(code),
         ),
         JsonValue::Pending => L::Pending,
-    }
+    })
 }
 
 // Stream JSON workbook contents into the evaluation engine (values + formulas),
@@ -650,7 +727,14 @@ where
                     if let Some(cell) = cell_map.get(&(r as u32, c as u32))
                         && let Some(v) = &cell.value
                     {
-                        row_vals[c - 1] = json_to_literal(v);
+                        row_vals[c - 1] = json_to_literal(
+                            v,
+                            &self.read_options,
+                            &format!(
+                                "sheets.{name}.cells[row={},col={}].value",
+                                r as u32, c as u32
+                            ),
+                        )?;
                     }
                 }
                 aib.append_row(&row_vals)
@@ -733,7 +817,8 @@ where
                 .defined_names()
                 .map_err(|e| IoError::from_backend("json", e))?;
 
-            let mut seen: FxHashSet<(DefinedNameScope, Option<String>, String)> = FxHashSet::default();
+            let mut seen: FxHashSet<(DefinedNameScope, Option<String>, String)> =
+                FxHashSet::default();
             for dn in defined {
                 let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
                 if !seen.insert(key) {
@@ -743,19 +828,20 @@ where
                 let scope = match dn.scope {
                     DefinedNameScope::Workbook => NameScope::Workbook,
                     DefinedNameScope::Sheet => {
-                        let sheet_name = dn.scope_sheet.as_deref().ok_or_else(|| {
-                            IoError::Backend {
+                        let sheet_name =
+                            dn.scope_sheet.as_deref().ok_or_else(|| IoError::Backend {
                                 backend: "json".to_string(),
                                 message: format!(
                                     "sheet-scoped defined name `{}` missing scope_sheet",
                                     dn.name
                                 ),
-                            }
-                        })?;
-                        let sid = engine.sheet_id(sheet_name).ok_or_else(|| IoError::Backend {
-                            backend: "json".to_string(),
-                            message: format!("scope sheet not found: {sheet_name}"),
-                        })?;
+                            })?;
+                        let sid = engine
+                            .sheet_id(sheet_name)
+                            .ok_or_else(|| IoError::Backend {
+                                backend: "json".to_string(),
+                                message: format!("scope sheet not found: {sheet_name}"),
+                            })?;
                         NameScope::Sheet(sid)
                     }
                 };
@@ -779,8 +865,7 @@ where
                         if sr0 == er0 && sc0 == ec0 {
                             NamedDefinition::Cell(start_ref)
                         } else {
-                            let end_ref =
-                                CellRef::new(sheet_id, Coord::new(er0, ec0, true, true));
+                            let end_ref = CellRef::new(sheet_id, Coord::new(er0, ec0, true, true));
                             let range_ref =
                                 formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
                             NamedDefinition::Range(range_ref)
