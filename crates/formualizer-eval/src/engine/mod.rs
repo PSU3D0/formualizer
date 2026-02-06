@@ -231,6 +231,13 @@ pub struct EvalConfig {
     /// This enables Arrow-only RangeView correctness without Hybrid fallback.
     pub write_formula_overlay_enabled: bool,
 
+    /// Optional memory budget (in bytes) for formula/spill computed Arrow overlays.
+    ///
+    /// When set, the engine may stop mirroring additional computed overlay entries once the
+    /// estimated usage exceeds this cap, and will fall back to materializing RangeViews from
+    /// dependency-graph values for correctness.
+    pub max_overlay_memory_bytes: Option<usize>,
+
     /// Workbook date system: Excel 1900 (default) or 1904.
     pub date_system: DateSystem,
 
@@ -284,6 +291,7 @@ impl Default for EvalConfig {
             arrow_storage_enabled: true,
             delta_overlay_enabled: true,
             write_formula_overlay_enabled: true,
+            max_overlay_memory_bytes: None,
             date_system: DateSystem::Excel1900,
             defer_graph_building: false,
         }
