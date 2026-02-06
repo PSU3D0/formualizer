@@ -1,6 +1,11 @@
 use super::*;
 use formualizer_common::parse_a1_1based;
 
+#[inline]
+fn normalize_ascii_key(name: &str) -> String {
+    name.to_ascii_lowercase()
+}
+
 /// Validate that a name conforms to Excel naming rules.
 fn is_valid_excel_name(name: &str) -> bool {
     // Excel name rules:
@@ -83,6 +88,26 @@ fn adjust_named_definition(
 }
 
 impl DependencyGraph {
+    #[inline]
+    fn name_lookup_key(&self, name: &str) -> String {
+        if self.config.case_sensitive_names {
+            name.to_string()
+        } else {
+            normalize_ascii_key(name)
+        }
+    }
+
+    fn canonical_name_in_scope(&self, scope: NameScope, name: &str) -> Option<String> {
+        let key = self.name_lookup_key(name);
+        match scope {
+            NameScope::Workbook => self.named_ranges_lookup.get(&key).cloned(),
+            NameScope::Sheet(sheet_id) => self
+                .sheet_named_ranges_lookup
+                .get(&(sheet_id, key))
+                .cloned(),
+        }
+    }
+
     fn next_name_coord(&mut self) -> AbsCoord {
         let seq = self.name_vertex_seq;
         self.name_vertex_seq = self.name_vertex_seq.wrapping_add(1);
@@ -121,21 +146,24 @@ impl DependencyGraph {
             );
         }
 
-        // Check for duplicates
+        // Check for duplicates / collisions (respect case-sensitivity config)
+        let lookup_key = self.name_lookup_key(name);
         match scope {
             NameScope::Workbook => {
-                if self.named_ranges.contains_key(name) {
-                    return Err(ExcelError::new(ExcelErrorKind::Name)
-                        .with_message(format!("Name already exists: {name}")));
+                if let Some(existing) = self.named_ranges_lookup.get(&lookup_key) {
+                    return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                        "Name collision under normalization: '{name}' conflicts with '{existing}'"
+                    )));
                 }
             }
             NameScope::Sheet(sheet_id) => {
-                if self
-                    .sheet_named_ranges
-                    .contains_key(&(sheet_id, name.to_string()))
+                if let Some(existing) = self
+                    .sheet_named_ranges_lookup
+                    .get(&(sheet_id, lookup_key.clone()))
                 {
-                    return Err(ExcelError::new(ExcelErrorKind::Name)
-                        .with_message(format!("Name already exists in sheet: {name}")));
+                    return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                        "Name collision under normalization in sheet: '{name}' conflicts with '{existing}'"
+                    )));
                 }
             }
         }
@@ -184,10 +212,14 @@ impl DependencyGraph {
         match scope {
             NameScope::Workbook => {
                 self.named_ranges.insert(key.clone(), named_range);
+                self.named_ranges_lookup
+                    .insert(self.name_lookup_key(&key), key.clone());
             }
             NameScope::Sheet(id) => {
                 self.sheet_named_ranges
                     .insert((id, key.clone()), named_range);
+                self.sheet_named_ranges_lookup
+                    .insert((id, self.name_lookup_key(&key)), key.clone());
             }
         }
 
@@ -210,9 +242,21 @@ impl DependencyGraph {
     }
 
     pub fn resolve_name_entry(&self, name: &str, current_sheet: SheetId) -> Option<&NamedRange> {
-        self.sheet_named_ranges
-            .get(&(current_sheet, name.to_string()))
-            .or_else(|| self.named_ranges.get(name))
+        if self.config.case_sensitive_names {
+            self.sheet_named_ranges
+                .get(&(current_sheet, name.to_string()))
+                .or_else(|| self.named_ranges.get(name))
+        } else {
+            let key = self.name_lookup_key(name);
+            self.sheet_named_ranges_lookup
+                .get(&(current_sheet, key.clone()))
+                .and_then(|canon| self.sheet_named_ranges.get(&(current_sheet, canon.clone())))
+                .or_else(|| {
+                    self.named_ranges_lookup
+                        .get(&key)
+                        .and_then(|canon| self.named_ranges.get(canon))
+                })
+        }
     }
 
     /// Resolve a named range to its definition
@@ -239,15 +283,20 @@ impl DependencyGraph {
         new_definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), ExcelError> {
+        let Some(canon_name) = self.canonical_name_in_scope(scope, name) else {
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message(format!("Name not found: {name}")));
+        };
+
         // First collect dependents to avoid borrow checker issues
         let dependents_to_dirty = match scope {
             NameScope::Workbook => self
                 .named_ranges
-                .get(name)
+                .get(&canon_name)
                 .map(|nr| nr.dependents.iter().copied().collect::<Vec<_>>()),
             NameScope::Sheet(id) => self
                 .sheet_named_ranges
-                .get(&(id, name.to_string()))
+                .get(&(id, canon_name.clone()))
                 .map(|nr| nr.dependents.iter().copied().collect::<Vec<_>>()),
         };
 
@@ -259,8 +308,8 @@ impl DependencyGraph {
 
             // Now update the definition
             let named_range = match scope {
-                NameScope::Workbook => self.named_ranges.get_mut(name),
-                NameScope::Sheet(id) => self.sheet_named_ranges.get_mut(&(id, name.to_string())),
+                NameScope::Workbook => self.named_ranges.get_mut(&canon_name),
+                NameScope::Sheet(id) => self.sheet_named_ranges.get_mut(&(id, canon_name.clone())),
             };
 
             let mut update_data: Option<(VertexId, NameScope, NamedDefinition, bool)> = None;
@@ -303,9 +352,24 @@ impl DependencyGraph {
 
     /// Delete a named range
     pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), ExcelError> {
+        let Some(canon_name) = self.canonical_name_in_scope(scope, name) else {
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message(format!("Name not found: {name}")));
+        };
+
         let named_range = match scope {
-            NameScope::Workbook => self.named_ranges.remove(name),
-            NameScope::Sheet(id) => self.sheet_named_ranges.remove(&(id, name.to_string())),
+            NameScope::Workbook => {
+                let removed = self.named_ranges.remove(&canon_name);
+                let key = self.name_lookup_key(&canon_name);
+                self.named_ranges_lookup.remove(&key);
+                removed
+            }
+            NameScope::Sheet(id) => {
+                let removed = self.sheet_named_ranges.remove(&(id, canon_name.clone()));
+                let key = self.name_lookup_key(&canon_name);
+                self.sheet_named_ranges_lookup.remove(&(id, key));
+                removed
+            }
         };
 
         if let Some(named_range) = named_range {
@@ -429,8 +493,9 @@ impl DependencyGraph {
         name: &str,
         formula_vertex: VertexId,
     ) {
+        let key = self.name_lookup_key(name);
         self.pending_name_links
-            .entry(name.to_string())
+            .entry(key)
             .or_default()
             .push((sheet_id, formula_vertex));
     }
@@ -441,7 +506,8 @@ impl DependencyGraph {
         name: &str,
         named_vertex: VertexId,
     ) {
-        if let Some(mut entries) = self.pending_name_links.remove(name) {
+        let key = self.name_lookup_key(name);
+        if let Some(mut entries) = self.pending_name_links.remove(&key) {
             let mut remaining: Vec<(SheetId, VertexId)> = Vec::new();
             for (sheet_id, formula_vertex) in entries.drain(..) {
                 let attach = match scope {
@@ -456,7 +522,7 @@ impl DependencyGraph {
                 }
             }
             if !remaining.is_empty() {
-                self.pending_name_links.insert(name.to_string(), remaining);
+                self.pending_name_links.insert(key, remaining);
             }
         }
     }

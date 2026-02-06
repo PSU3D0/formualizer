@@ -54,9 +54,9 @@ pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 
 // CalcObserver is defined below
 
+use crate::timezone::TimeZoneSpec;
 use crate::traits::EvaluationContext;
 use crate::traits::VolatileLevel;
-use crate::timezone::TimeZoneSpec;
 use chrono::{DateTime, Utc};
 use formualizer_common::error::{ExcelError, ExcelErrorKind};
 
@@ -162,6 +162,16 @@ pub struct EvalConfig {
     /// Default sheet name used when no sheet is provided.
     pub default_sheet_name: String,
 
+    /// When false, resolve defined names case-insensitively (ASCII only).
+    ///
+    /// This matches Excel behavior for defined names.
+    pub case_sensitive_names: bool,
+
+    /// When false, resolve table names case-insensitively (ASCII only).
+    ///
+    /// This matches Excel behavior for native table (ListObject) names.
+    pub case_sensitive_tables: bool,
+
     /// Stable workbook seed used for deterministic RNG composition
     pub workbook_seed: u64,
 
@@ -240,6 +250,10 @@ impl Default for EvalConfig {
 
             default_sheet_name: format!("Sheet{}", 1),
 
+            // Excel compatibility: identifiers are case-insensitive by default.
+            case_sensitive_names: false,
+            case_sensitive_tables: false,
+
             // Deterministic RNG seed (matches traits default)
             workbook_seed: 0xF0F0_D0D0_AAAA_5555,
 
@@ -292,6 +306,18 @@ impl EvalConfig {
     #[inline]
     pub fn with_block_stripes(mut self, enable: bool) -> Self {
         self.enable_block_stripes = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_case_sensitive_names(mut self, enable: bool) -> Self {
+        self.case_sensitive_names = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_case_sensitive_tables(mut self, enable: bool) -> Self {
+        self.case_sensitive_tables = enable;
         self
     }
 
