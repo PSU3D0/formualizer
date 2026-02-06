@@ -2,21 +2,25 @@
   "version": 1,
   "sheets": {
     "Sheet1": {
-      "dimensions": [3, 3],
+      "dimensions": [3, 4],
       "tables": [
         {
           "name": "Table1",
-          "range": [1, 1, 3, 2],
-          "headers": ["Col1", "Col2"],
+          "range": [1, 1, 3, 3],
+          "header_row": true,
+          "headers": ["Col1", "Col2", "Double"],
           "totals_row": false
         }
       ],
       "cells": [
         {"row": 1, "col": 1, "value": {"type": "Text", "value": "Col1"}},
         {"row": 1, "col": 2, "value": {"type": "Text", "value": "Col2"}},
+        {"row": 1, "col": 3, "value": {"type": "Text", "value": "Double"}},
         {"row": 2, "col": 1, "value": {"type": "Int", "value": 1}},
         {"row": 3, "col": 1, "value": {"type": "Int", "value": 2}},
-        {"row": 1, "col": 3, "formula": "=SUM(Table1[Col1])"}
+        {"row": 2, "col": 3, "formula": "=[@Col1]*2"},
+        {"row": 3, "col": 3, "formula": "=[@[Col1]]*2"},
+        {"row": 1, "col": 4, "formula": "=SUM(Table1[Col1])"}
       ]
     }
   }
