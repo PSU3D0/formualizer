@@ -603,6 +603,7 @@ impl UmyaAdapter {
                         *end.get_row_num(),
                         *end.get_col_num(),
                     ),
+                    header_row: true,
                     headers,
                     totals_row: *t.get_totals_row_shown(),
                 }
@@ -751,6 +752,7 @@ where
                     engine.define_table(
                         &table.name,
                         range_ref,
+                        table.header_row,
                         table.headers.clone(),
                         table.totals_row,
                     )?;

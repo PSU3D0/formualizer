@@ -175,8 +175,21 @@ pub struct DefinedName {
 pub struct TableDefinition {
     pub name: String,
     pub range: (u32, u32, u32, u32),
+    /// Whether the first row of `range` is a headers row.
+    ///
+    /// Deterministic resize rule:
+    /// - Tables are metadata-only; writing values just below/next to a table does NOT auto-expand
+    ///   the table. Callers must explicitly update table metadata (range/flags) if they want a
+    ///   resize.
+    #[cfg_attr(feature = "json", serde(default = "default_true"))]
+    pub header_row: bool,
     pub headers: Vec<String>,
     pub totals_row: bool,
+}
+
+#[cfg(feature = "json")]
+fn default_true() -> bool {
+    true
 }
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
