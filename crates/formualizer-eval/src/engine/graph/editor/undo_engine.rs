@@ -141,6 +141,17 @@ impl UndoEngine {
                         let mut editor = VertexEditor::new(graph);
                         let _ = editor.update_name(&name, new_definition, scope);
                     }
+                    ChangeEvent::SpillCommitted { anchor, new, .. } => {
+                        let _ = graph.commit_spill_region_atomic_with_fault(
+                            anchor,
+                            new.target_cells,
+                            new.values,
+                            None,
+                        );
+                    }
+                    ChangeEvent::SpillCleared { anchor, .. } => {
+                        graph.clear_spill_region(anchor);
+                    }
                     _ => {}
                 }
             }
@@ -217,6 +228,91 @@ mod tests {
             .filter(|e| matches!(e, ChangeEvent::VertexMoved { .. }))
             .count();
         assert_eq!(moved_count_before, moved_count_after);
+    }
+
+    #[test]
+    fn test_undo_redo_spill_clear_on_scalar_edit_restores_registry_and_cells() {
+        let mut graph = DependencyGraph::new();
+        let sheet_id = graph.sheet_id_mut("Sheet1");
+
+        let anchor_cell = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+        let anchor_vid = {
+            let mut editor = VertexEditor::new(&mut graph);
+            editor.set_cell_value(anchor_cell, LiteralValue::Number(0.0))
+        };
+
+        let target_cells = vec![
+            CellRef::new(sheet_id, Coord::new(0, 0, true, true)),
+            CellRef::new(sheet_id, Coord::new(0, 1, true, true)),
+            CellRef::new(sheet_id, Coord::new(1, 0, true, true)),
+            CellRef::new(sheet_id, Coord::new(1, 1, true, true)),
+        ];
+        let values = vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ];
+        graph
+            .commit_spill_region_atomic_with_fault(anchor_vid, target_cells.clone(), values, None)
+            .unwrap();
+
+        assert!(graph.spill_registry_has_anchor(anchor_vid));
+
+        let mut log = ChangeLog::new();
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            // Scalar edit of the anchor should clear spill children + ownership.
+            editor.set_cell_value(anchor_cell, LiteralValue::Number(9.0));
+        }
+
+        assert!(!graph.spill_registry_has_anchor(anchor_vid));
+        assert_eq!(graph.spill_registry_counts(), (0, 0));
+        let b1 = graph
+            .get_cell_value("Sheet1", 1, 2)
+            .unwrap_or(LiteralValue::Empty);
+        assert_eq!(b1, LiteralValue::Empty);
+
+        let mut undo = UndoEngine::new();
+        undo.undo(&mut graph, &mut log).unwrap();
+
+        assert!(graph.spill_registry_has_anchor(anchor_vid));
+        for cell in &target_cells {
+            assert_eq!(
+                graph.spill_registry_anchor_for_cell(*cell),
+                Some(anchor_vid)
+            );
+        }
+        let b1_restored = graph
+            .get_cell_value("Sheet1", 1, 2)
+            .unwrap_or(LiteralValue::Empty);
+        assert_eq!(b1_restored, LiteralValue::Number(2.0));
+
+        // Redo should clear the spill again.
+        undo.redo(&mut graph, &mut log).unwrap();
+        assert!(!graph.spill_registry_has_anchor(anchor_vid));
+        assert_eq!(graph.spill_registry_counts(), (0, 0));
+    }
+
+    #[test]
+    fn test_undo_depth_truncates_gracefully_under_changelog_cap() {
+        let mut graph = DependencyGraph::new();
+        let sheet_id = graph.sheet_id_mut("Sheet1");
+        let mut log = ChangeLog::with_max_changelog_events(3);
+
+        // Record 5 independent edits; cap keeps only the last 3.
+        for i in 0..5u32 {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            let cell = CellRef::new(sheet_id, Coord::new(i, 0, true, true));
+            editor.set_cell_value(cell, LiteralValue::Number(i as f64));
+        }
+        assert_eq!(log.len(), 3);
+
+        let mut undo = UndoEngine::new();
+        undo.undo(&mut graph, &mut log).unwrap();
+        undo.undo(&mut graph, &mut log).unwrap();
+        undo.undo(&mut graph, &mut log).unwrap();
+        // Beyond retained history: no-op, should not error.
+        undo.undo(&mut graph, &mut log).unwrap();
+        assert_eq!(log.len(), 0);
     }
 
     #[test]

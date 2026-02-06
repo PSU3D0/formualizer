@@ -13,6 +13,14 @@ use formualizer_common::Coord as AbsCoord;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::ASTNode;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpillSnapshot {
+    /// Declared target cells (row-major rectangle) owned by this spill anchor.
+    pub target_cells: Vec<CellRef>,
+    /// Row-major rectangular values corresponding to the target rectangle.
+    pub values: Vec<Vec<LiteralValue>>,
+}
+
 /// Per-event metadata attached by the caller.
 ///
 /// This is intentionally lightweight (Strings) to avoid leaking application types
@@ -118,6 +126,17 @@ pub enum ChangeEvent {
         scope: NameScope,
         old_definition: Option<NamedDefinition>,
     },
+
+    // Spill region changes (dynamic arrays)
+    SpillCommitted {
+        anchor: VertexId,
+        old: Option<SpillSnapshot>,
+        new: SpillSnapshot,
+    },
+    SpillCleared {
+        anchor: VertexId,
+        old: SpillSnapshot,
+    },
 }
 
 /// Audit trail for tracking all changes to the dependency graph
@@ -126,6 +145,8 @@ pub struct ChangeLog {
     events: Vec<ChangeEvent>,
     metas: Vec<ChangeEventMeta>,
     enabled: bool,
+    /// Optional cap on retained events; when exceeded, oldest events are evicted (FIFO).
+    max_changelog_events: Option<usize>,
     /// Track compound operations for atomic rollback
     compound_depth: usize,
     /// Monotonic sequence number per event
@@ -146,6 +167,7 @@ impl ChangeLog {
             events: Vec::new(),
             metas: Vec::new(),
             enabled: true,
+            max_changelog_events: None,
             compound_depth: 0,
             seqs: Vec::new(),
             groups: Vec::new(),
@@ -154,6 +176,35 @@ impl ChangeLog {
             next_group_id: 1,
             current_meta: ChangeEventMeta::default(),
         }
+    }
+
+    pub fn with_max_changelog_events(max: usize) -> Self {
+        let mut out = Self::new();
+        out.max_changelog_events = Some(max);
+        out
+    }
+
+    pub fn set_max_changelog_events(&mut self, max: Option<usize>) {
+        self.max_changelog_events = max;
+        self.enforce_cap();
+    }
+
+    fn enforce_cap(&mut self) {
+        let Some(max) = self.max_changelog_events else {
+            return;
+        };
+        if max == 0 {
+            self.clear();
+            return;
+        }
+        if self.events.len() <= max {
+            return;
+        }
+        let drop_n = self.events.len() - max;
+        self.events.drain(0..drop_n);
+        self.metas.drain(0..drop_n);
+        self.seqs.drain(0..drop_n);
+        self.groups.drain(0..drop_n);
     }
 
     pub fn record(&mut self, event: ChangeEvent) {
@@ -165,6 +216,7 @@ impl ChangeLog {
             self.metas.push(self.current_meta.clone());
             self.seqs.push(seq);
             self.groups.push(current_group);
+            self.enforce_cap();
         }
     }
 
@@ -178,6 +230,7 @@ impl ChangeLog {
             self.metas.push(meta);
             self.seqs.push(seq);
             self.groups.push(current_group);
+            self.enforce_cap();
         }
     }
 

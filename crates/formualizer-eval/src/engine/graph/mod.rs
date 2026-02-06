@@ -2026,6 +2026,18 @@ impl DependencyGraph {
             .map(|v| v.as_slice())
     }
 
+    pub(crate) fn spill_registry_has_anchor(&self, anchor: VertexId) -> bool {
+        self.spill_anchor_to_cells.contains_key(&anchor)
+    }
+
+    pub(crate) fn spill_registry_anchor_for_cell(&self, cell: CellRef) -> Option<VertexId> {
+        self.spill_cell_to_anchor.get(&cell).copied()
+    }
+
+    pub(crate) fn spill_registry_counts(&self) -> (usize, usize) {
+        (self.spill_anchor_to_cells.len(), self.spill_cell_to_anchor.len())
+    }
+
     /// Clear an existing spill region for an anchor (set cells to Empty and forget ownership)
     pub fn clear_spill_region(&mut self, anchor: VertexId) {
         let anchor_cell = self.get_cell_ref(anchor);
