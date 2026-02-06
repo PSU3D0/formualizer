@@ -26,3 +26,30 @@ fn workbook_read_range_sees_spilled_values() {
         ]
     );
 }
+
+#[test]
+fn workbook_read_range_sees_spilled_values_with_parallel_enabled() {
+    use formualizer_workbook::WorkbookConfig;
+
+    let mut cfg = WorkbookConfig::interactive();
+    cfg.eval.enable_parallel = true;
+
+    // Force the engine down the parallel layer path by having >1 independent formula vertex.
+    let mut wb = formualizer_workbook::Workbook::new_with_config(cfg);
+    wb.add_sheet("S").unwrap();
+
+    wb.set_formula("S", 1, 2, "=1").unwrap();
+    wb.set_formula("S", 1, 1, "{1,2;3,4}").unwrap();
+
+    wb.evaluate_all().unwrap();
+
+    let ra = RangeAddress::new("S", 1, 1, 2, 2).unwrap();
+    let vals = wb.read_range(&ra);
+    assert_eq!(
+        vals,
+        vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ]
+    );
+}

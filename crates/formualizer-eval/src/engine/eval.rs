@@ -3555,12 +3555,12 @@ where
                     .collect()
             });
 
-        // Update the graph with results sequentially (thread-safe)
+        // Update the graph with results sequentially (thread-safe).
+        // Important: parallel evaluation must preserve spill semantics for array results.
         match results {
             Ok(vertex_results) => {
                 for (vertex_id, result) in vertex_results {
-                    self.graph.update_vertex_value(vertex_id, result.clone());
-                    self.mirror_vertex_value_to_overlay(vertex_id, &result);
+                    self.apply_parallel_vertex_result(vertex_id, result, None)?;
                 }
                 Ok(layer.vertices.len())
             }
@@ -3594,7 +3594,7 @@ where
         match results {
             Ok(vertex_results) => {
                 for (vertex_id, result) in vertex_results {
-                    self.update_vertex_value_with_delta(vertex_id, result, delta);
+                    self.apply_parallel_vertex_result(vertex_id, result, Some(delta))?;
                 }
                 Ok(layer.vertices.len())
             }
@@ -3643,12 +3643,256 @@ where
         match results {
             Ok(vertex_results) => {
                 for (vertex_id, result) in vertex_results {
-                    self.graph.update_vertex_value(vertex_id, result.clone());
-                    self.mirror_vertex_value_to_overlay(vertex_id, &result);
+                    self.apply_parallel_vertex_result(vertex_id, result, None)?;
                 }
                 Ok(layer.vertices.len())
             }
             Err(e) => Err(e),
+        }
+    }
+
+    /// Apply a computed result produced by `evaluate_vertex_immutable()`.
+    ///
+    /// This is the parallel equivalent of the "apply" portion of `evaluate_vertex_impl`.
+    /// We keep apply sequential for correctness (spill commit is inherently stateful).
+    fn apply_parallel_vertex_result(
+        &mut self,
+        vertex_id: VertexId,
+        result: LiteralValue,
+        mut delta: Option<&mut DeltaCollector>,
+    ) -> Result<(), ExcelError> {
+        let kind = self.graph.get_vertex_kind(vertex_id);
+
+        // Only formula vertices spill dynamic arrays into the grid.
+        let is_formula = matches!(kind, VertexKind::FormulaScalar | VertexKind::FormulaArray);
+        if is_formula {
+            match result {
+                LiteralValue::Array(rows) => {
+                    self.apply_array_result_from_parallel(vertex_id, rows, delta.as_deref_mut())?;
+                }
+                other => {
+                    self.apply_non_array_result_from_parallel(vertex_id, other, delta.as_deref_mut());
+                }
+            }
+            return Ok(());
+        }
+
+        // Non-formula vertices: store value as-is (arrays remain arrays; no spill).
+        if let Some(d) = delta.as_deref_mut() {
+            self.update_vertex_value_with_delta(vertex_id, result, d);
+        } else {
+            self.graph.update_vertex_value(vertex_id, result.clone());
+            self.mirror_vertex_value_to_overlay(vertex_id, &result);
+        }
+        Ok(())
+    }
+
+    fn apply_non_array_result_from_parallel(
+        &mut self,
+        vertex_id: VertexId,
+        value: LiteralValue,
+        mut delta: Option<&mut DeltaCollector>,
+    ) {
+        // Scalar/error result: store value and ensure any previous spill is cleared.
+        // This mirrors the sequential behavior in `evaluate_vertex_impl`.
+        let spill_cells = self
+            .graph
+            .spill_cells_for_anchor(vertex_id)
+            .map(|cells| cells.to_vec())
+            .unwrap_or_default();
+
+        if let Some(d) = delta.as_deref_mut()
+            && d.mode != DeltaMode::Off
+            && let Some(anchor) = self.graph.get_cell_ref_for_vertex(vertex_id)
+        {
+            if spill_cells.is_empty() {
+                let old = self
+                    .graph
+                    .get_value(vertex_id)
+                    .unwrap_or(LiteralValue::Empty);
+                if old != value {
+                    d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
+                }
+            } else {
+                for cell in spill_cells.iter() {
+                    let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                    let old = self
+                        .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                        .unwrap_or(LiteralValue::Empty);
+                    let new = if cell.sheet_id == anchor.sheet_id
+                        && cell.coord.row() == anchor.coord.row()
+                        && cell.coord.col() == anchor.coord.col()
+                    {
+                        value.clone()
+                    } else {
+                        LiteralValue::Empty
+                    };
+                    Self::record_cell_if_changed(d, cell, &old, &new);
+                }
+            }
+        }
+
+        self.graph.clear_spill_region(vertex_id);
+
+        if self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
+            let empty = LiteralValue::Empty;
+            for cell in spill_cells.iter() {
+                let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+                self.mirror_value_to_overlay(
+                    &sheet_name,
+                    cell.coord.row() + 1,
+                    cell.coord.col() + 1,
+                    &empty,
+                );
+            }
+        }
+
+        self.graph.update_vertex_value(vertex_id, value.clone());
+        self.mirror_vertex_value_to_overlay(vertex_id, &value);
+    }
+
+    fn apply_array_result_from_parallel(
+        &mut self,
+        vertex_id: VertexId,
+        rows: Vec<Vec<LiteralValue>>,
+        mut delta: Option<&mut DeltaCollector>,
+    ) -> Result<(), ExcelError> {
+        // Keep behavior consistent with the sequential spill path in `evaluate_vertex_impl`.
+        self.graph
+            .set_kind(vertex_id, crate::engine::vertex::VertexKind::FormulaArray);
+
+        let anchor = self
+            .graph
+            .get_cell_ref(vertex_id)
+            .expect("cell ref for vertex");
+        let sheet_id = anchor.sheet_id;
+        let h = rows.len() as u32;
+        let w = rows.first().map(|r| r.len()).unwrap_or(0) as u32;
+
+        // Hard cap to avoid vertex explosion from huge dynamic arrays.
+        let spill_cells = (h as u64).saturating_mul(w as u64);
+        if spill_cells > self.config.spill.max_spill_cells as u64 {
+            self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
+            let spill_err = ExcelError::new(ExcelErrorKind::Spill)
+                .with_message("SpillTooLarge")
+                .with_extra(formualizer_common::ExcelErrorExtra::Spill {
+                    expected_rows: h,
+                    expected_cols: w,
+                });
+            let spill_val = LiteralValue::Error(spill_err.clone());
+            if let Some(d) = delta.as_deref_mut()
+                && d.mode != DeltaMode::Off
+            {
+                let old = self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty);
+                if old != spill_val {
+                    d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
+                }
+            }
+            self.graph.update_vertex_value(vertex_id, spill_val.clone());
+            self.mirror_vertex_value_to_overlay(vertex_id, &spill_val);
+            return Ok(());
+        }
+
+        // Bounds check to avoid out-of-range writes (align to AbsCoord capacity)
+        const PACKED_MAX_ROW: u32 = 1_048_575; // 20-bit max
+        const PACKED_MAX_COL: u32 = 16_383; // 14-bit max
+        let end_row = anchor.coord.row().saturating_add(h).saturating_sub(1);
+        let end_col = anchor.coord.col().saturating_add(w).saturating_sub(1);
+        if end_row > PACKED_MAX_ROW || end_col > PACKED_MAX_COL {
+            self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
+            let spill_err = ExcelError::new(ExcelErrorKind::Spill)
+                .with_message("Spill exceeds sheet bounds")
+                .with_extra(formualizer_common::ExcelErrorExtra::Spill {
+                    expected_rows: h,
+                    expected_cols: w,
+                });
+            let spill_val = LiteralValue::Error(spill_err.clone());
+            if let Some(d) = delta.as_deref_mut()
+                && d.mode != DeltaMode::Off
+            {
+                let old = self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty);
+                if old != spill_val {
+                    d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
+                }
+            }
+            self.graph.update_vertex_value(vertex_id, spill_val.clone());
+            self.mirror_vertex_value_to_overlay(vertex_id, &spill_val);
+            return Ok(());
+        }
+
+        let mut targets = Vec::new();
+        for r in 0..h {
+            for c in 0..w {
+                targets.push(self.graph.make_cell_ref_internal(
+                    sheet_id,
+                    anchor.coord.row() + r,
+                    anchor.coord.col() + c,
+                ));
+            }
+        }
+
+        match self.spill_mgr.reserve(
+            vertex_id,
+            anchor,
+            SpillShape { rows: h, cols: w },
+            SpillMeta {
+                epoch: self.recalc_epoch,
+                config: self.config.spill,
+            },
+        ) {
+            Ok(()) => {
+                if let Err(e) = self.commit_spill_and_mirror(
+                    vertex_id,
+                    &targets,
+                    rows.clone(),
+                    delta.as_deref_mut(),
+                ) {
+                    self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
+                    let err_val = LiteralValue::Error(e.clone());
+                    if let Some(d) = delta.as_deref_mut()
+                        && d.mode != DeltaMode::Off
+                    {
+                        let old = self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty);
+                        if old != err_val {
+                            d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
+                        }
+                    }
+                    self.graph.update_vertex_value(vertex_id, err_val.clone());
+                    self.mirror_vertex_value_to_overlay(vertex_id, &err_val);
+                    return Ok(());
+                }
+
+                // Anchor shows the top-left value, like Excel
+                let top_left = rows
+                    .first()
+                    .and_then(|r| r.first())
+                    .cloned()
+                    .unwrap_or(LiteralValue::Empty);
+                self.graph.update_vertex_value(vertex_id, top_left.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &top_left);
+                Ok(())
+            }
+            Err(e) => {
+                self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
+                let spill_err = ExcelError::new(ExcelErrorKind::Spill)
+                    .with_message(e.message.unwrap_or_else(|| "Spill blocked".to_string()))
+                    .with_extra(formualizer_common::ExcelErrorExtra::Spill {
+                        expected_rows: h,
+                        expected_cols: w,
+                    });
+                let spill_val = LiteralValue::Error(spill_err.clone());
+                if let Some(d) = delta.as_deref_mut()
+                    && d.mode != DeltaMode::Off
+                {
+                    let old = self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty);
+                    if old != spill_val {
+                        d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
+                    }
+                }
+                self.graph.update_vertex_value(vertex_id, spill_val.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &spill_val);
+                Ok(())
+            }
         }
     }
 
@@ -3665,7 +3909,7 @@ where
         let sheet_id = self.graph.get_vertex_sheet_id(vertex_id);
 
         let ast_id = match kind {
-            VertexKind::FormulaScalar => {
+            VertexKind::FormulaScalar | VertexKind::FormulaArray => {
                 if let Some(ast_id) = self.graph.get_formula_id(vertex_id) {
                     ast_id
                 } else {
@@ -3795,11 +4039,16 @@ where
                     }
                 };
             }
-            _ => {
-                return Ok(LiteralValue::Error(
-                    ExcelError::new(formualizer_common::ExcelErrorKind::Na)
-                        .with_message("Array formulas not yet supported".to_string()),
-                ));
+            VertexKind::InfiniteRange
+            | VertexKind::Range
+            | VertexKind::External
+            | VertexKind::Table => {
+                // Not directly evaluatable here; return stored or 0
+                if let Some(value) = self.graph.get_value(vertex_id) {
+                    return Ok(value.clone());
+                } else {
+                    return Ok(LiteralValue::Int(0));
+                }
             }
         };
 
