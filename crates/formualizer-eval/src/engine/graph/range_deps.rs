@@ -78,7 +78,9 @@ impl DependencyGraph {
                     #[cfg(test)]
                     {
                         if self.stripe_to_dependents.get(&key).map(|s| s.len()) == Some(1) {
-                            self.instr.stripe_inserts += 1;
+                            if let Ok(mut g) = self.instr.lock() {
+                                g.stripe_inserts += 1;
+                            }
                         }
                     }
                 }
@@ -101,7 +103,9 @@ impl DependencyGraph {
                     #[cfg(test)]
                     {
                         if self.stripe_to_dependents.get(&key).map(|s| s.len()) == Some(1) {
-                            self.instr.stripe_inserts += 1;
+                            if let Ok(mut g) = self.instr.lock() {
+                                g.stripe_inserts += 1;
+                            }
                         }
                     }
                 }
@@ -136,7 +140,9 @@ impl DependencyGraph {
                         #[cfg(test)]
                         {
                             if self.stripe_to_dependents.get(&key).map(|s| s.len()) == Some(1) {
-                                self.instr.stripe_inserts += 1;
+                                if let Ok(mut g) = self.instr.lock() {
+                                    g.stripe_inserts += 1;
+                                }
                             }
                         }
                     }
@@ -155,7 +161,9 @@ impl DependencyGraph {
                     #[cfg(test)]
                     {
                         if self.stripe_to_dependents.get(&key).map(|s| s.len()) == Some(1) {
-                            self.instr.stripe_inserts += 1;
+                            if let Ok(mut g) = self.instr.lock() {
+                                g.stripe_inserts += 1;
+                            }
                         }
                     }
                 }
@@ -173,7 +181,9 @@ impl DependencyGraph {
                     #[cfg(test)]
                     {
                         if self.stripe_to_dependents.get(&key).map(|s| s.len()) == Some(1) {
-                            self.instr.stripe_inserts += 1;
+                            if let Ok(mut g) = self.instr.lock() {
+                                g.stripe_inserts += 1;
+                            }
                         }
                     }
                 }

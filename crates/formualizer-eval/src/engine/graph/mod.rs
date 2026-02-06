@@ -11,6 +11,8 @@ pub struct GraphInstrumentation {
     pub edges_added: u64,
     pub stripe_inserts: u64,
     pub stripe_removes: u64,
+    pub dependents_scan_fallback_calls: u64,
+    pub dependents_scan_vertices_scanned: u64,
 }
 
 mod ast_utils;
@@ -194,7 +196,7 @@ pub struct DependencyGraph {
     ensure_touched_sheets: FxHashSet<SheetId>,
 
     #[cfg(test)]
-    instr: GraphInstrumentation,
+    instr: std::sync::Mutex<GraphInstrumentation>,
 }
 
 impl Default for DependencyGraph {
@@ -522,7 +524,7 @@ impl DependencyGraph {
             first_load_assume_new: false,
             ensure_touched_sheets: FxHashSet::default(),
             #[cfg(test)]
-            instr: GraphInstrumentation::default(),
+            instr: std::sync::Mutex::new(GraphInstrumentation::default()),
         };
 
         if config.use_dynamic_topo {
@@ -567,12 +569,17 @@ impl DependencyGraph {
 
     #[cfg(test)]
     pub fn reset_instr(&mut self) {
-        self.instr = GraphInstrumentation::default();
+        if let Ok(mut g) = self.instr.lock() {
+            *g = GraphInstrumentation::default();
+        }
     }
 
     #[cfg(test)]
     pub fn instr(&self) -> GraphInstrumentation {
-        self.instr.clone()
+        self.instr
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 
     /// Begin batch operations - defer CSR rebuilds until end_batch() is called
@@ -1460,7 +1467,9 @@ impl DependencyGraph {
             self.edges.add_edge(dependent, dep_id);
             #[cfg(test)]
             {
-                self.instr.edges_added += 1;
+                if let Ok(mut g) = self.instr.lock() {
+                    g.edges_added += 1;
+                }
             }
         }
 
@@ -1501,7 +1510,9 @@ impl DependencyGraph {
             self.edges.add_edge(dependent, dep_id);
             #[cfg(test)]
             {
-                self.instr.edges_added += 1;
+                if let Ok(mut g) = self.instr.lock() {
+                    g.edges_added += 1;
+                }
             }
         }
     }
@@ -1790,7 +1801,9 @@ impl DependencyGraph {
                             self.stripe_to_dependents.remove(&key);
                             #[cfg(test)]
                             {
-                                self.instr.stripe_removes += 1;
+                                if let Ok(mut g) = self.instr.lock() {
+                                    g.stripe_removes += 1;
+                                }
                             }
                         }
                     }
@@ -2078,23 +2091,211 @@ impl DependencyGraph {
 
     /// Clear an existing spill region for an anchor (set cells to Empty and forget ownership)
     pub fn clear_spill_region(&mut self, anchor: VertexId) {
+        let _ = self.clear_spill_region_bulk(anchor);
+    }
+
+    /// Bulk clear an existing spill region for an anchor.
+    ///
+    /// This avoids calling `set_cell_value()` per spill child (which can trigger O(N*V)
+    /// dependent scans when `edges.delta_size() > 0`). Instead, it clears values directly and
+    /// performs a single dirty propagation over the affected spill children.
+    ///
+    /// Returns the previously registered spill cells (including the anchor cell) for callers that
+    /// want to mirror/record deltas.
+    pub fn clear_spill_region_bulk(&mut self, anchor: VertexId) -> Vec<CellRef> {
         let anchor_cell = self.get_cell_ref(anchor);
-        if let Some(cells) = self.spill_anchor_to_cells.remove(&anchor) {
-            for cell in cells {
-                let sheet = self.sheet_name(cell.sheet_id).to_string();
-                // Do not clobber the anchor cell via set_cell_value(); that would strip its formula.
-                let is_anchor = anchor_cell.map(|a| a == cell).unwrap_or(false);
-                if !is_anchor {
-                    let _ = self.set_cell_value(
-                        &sheet,
-                        cell.coord.row() + 1,
-                        cell.coord.col() + 1,
-                        LiteralValue::Empty,
-                    );
+        let Some(cells) = self.spill_anchor_to_cells.remove(&anchor) else {
+            return Vec::new();
+        };
+
+        // Remove ownership for all cells first.
+        for cell in cells.iter() {
+            self.spill_cell_to_anchor.remove(cell);
+        }
+
+        // Prepare a single arena value ref for Empty.
+        let empty_ref = self.data_store.store_value(LiteralValue::Empty);
+
+        // Clear all spill children (excluding the anchor cell).
+        let mut changed_vertices: Vec<VertexId> = Vec::new();
+        for cell in cells.iter().copied() {
+            let is_anchor = anchor_cell.map(|a| a == cell).unwrap_or(false);
+            if is_anchor {
+                continue;
+            }
+            let Some(&vid) = self.cell_to_vertex.get(&cell) else {
+                continue;
+            };
+            // Ensure this vertex is a plain value cell.
+            if self.vertex_formulas.remove(&vid).is_some() {
+                // Be conservative: remove outgoing edges if this was a formula vertex.
+                // This should be rare for spill children under normal policies.
+                self.remove_dependent_edges(vid);
+            }
+            self.store.set_kind(vid, VertexKind::Cell);
+            self.vertex_values.insert(vid, empty_ref);
+            self.store.set_dirty(vid, false);
+            self.dirty_vertices.remove(&vid);
+            changed_vertices.push(vid);
+        }
+
+        // Single dirty propagation for all changed spill children.
+        if !changed_vertices.is_empty() {
+            self.mark_dirty_many_value_cells(&changed_vertices);
+        }
+
+        cells
+    }
+
+    fn mark_dirty_many_value_cells(&mut self, vertex_ids: &[VertexId]) -> Vec<VertexId> {
+        if vertex_ids.is_empty() {
+            return Vec::new();
+        }
+
+        // Ensure reverse edges are usable (delta.in_edges is intentionally not delta-aware).
+        if self.edges.delta_size() > 0 {
+            self.edges.rebuild();
+        }
+
+        let mut affected: FxHashSet<VertexId> = FxHashSet::default();
+        let mut to_visit: Vec<VertexId> = Vec::new();
+        let mut visited_for_propagation: FxHashSet<VertexId> = FxHashSet::default();
+
+        // Value sources are affected but not marked dirty themselves.
+        for &src in vertex_ids {
+            affected.insert(src);
+        }
+
+        // Collect initial direct dependents and name dependents.
+        for &src in vertex_ids {
+            to_visit.extend(self.edges.in_edges(src));
+            if let Some(name_set) = self.cell_to_name_dependents.get(&src) {
+                for &name_vertex in name_set {
+                    to_visit.push(name_vertex);
                 }
-                self.spill_cell_to_anchor.remove(&cell);
             }
         }
+
+        // Collect range dependents in bulk using spill rect bounds per sheet.
+        let mut bounds_by_sheet: FxHashMap<SheetId, (u32, u32, u32, u32)> = FxHashMap::default();
+        for &src in vertex_ids {
+            let view = self.store.view(src);
+            let sid = view.sheet_id();
+            let r = view.row();
+            let c = view.col();
+            bounds_by_sheet
+                .entry(sid)
+                .and_modify(|b| {
+                    b.0 = b.0.min(r);
+                    b.1 = b.1.max(r);
+                    b.2 = b.2.min(c);
+                    b.3 = b.3.max(c);
+                })
+                .or_insert((r, r, c, c));
+        }
+
+        for (sid, (sr, er, sc, ec)) in bounds_by_sheet {
+            to_visit.extend(self.collect_range_dependents_for_rect(sid, sr, sc, er, ec));
+        }
+
+        while let Some(id) = to_visit.pop() {
+            if !visited_for_propagation.insert(id) {
+                continue;
+            }
+            affected.insert(id);
+            self.store.set_dirty(id, true);
+            to_visit.extend(self.edges.in_edges(id));
+        }
+
+        self.dirty_vertices.extend(&affected);
+        affected.into_iter().collect()
+    }
+
+    fn collect_range_dependents_for_rect(
+        &self,
+        sheet_id: SheetId,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> Vec<VertexId> {
+        if self.stripe_to_dependents.is_empty() {
+            return Vec::new();
+        }
+        let mut candidates: FxHashSet<VertexId> = FxHashSet::default();
+
+        for col in start_col..=end_col {
+            let key = StripeKey {
+                sheet_id,
+                stripe_type: StripeType::Column,
+                index: col,
+            };
+            if let Some(deps) = self.stripe_to_dependents.get(&key) {
+                candidates.extend(deps);
+            }
+        }
+        for row in start_row..=end_row {
+            let key = StripeKey {
+                sheet_id,
+                stripe_type: StripeType::Row,
+                index: row,
+            };
+            if let Some(deps) = self.stripe_to_dependents.get(&key) {
+                candidates.extend(deps);
+            }
+        }
+        if self.config.enable_block_stripes {
+            let br0 = start_row / BLOCK_H;
+            let br1 = end_row / BLOCK_H;
+            let bc0 = start_col / BLOCK_W;
+            let bc1 = end_col / BLOCK_W;
+            for br in br0..=br1 {
+                for bc in bc0..=bc1 {
+                    let key = StripeKey {
+                        sheet_id,
+                        stripe_type: StripeType::Block,
+                        index: block_index(br * BLOCK_H, bc * BLOCK_W),
+                    };
+                    if let Some(deps) = self.stripe_to_dependents.get(&key) {
+                        candidates.extend(deps);
+                    }
+                }
+            }
+        }
+
+        // Precision check: the dirty rect must overlap at least one of the formula's registered ranges.
+        let mut out: Vec<VertexId> = Vec::new();
+        for dep_id in candidates {
+            let Some(ranges) = self.formula_to_range_deps.get(&dep_id) else {
+                continue;
+            };
+            let mut hit = false;
+            for range in ranges {
+                let range_sheet_id = match range.sheet {
+                    SharedSheetLocator::Id(id) => id,
+                    _ => sheet_id,
+                };
+                if range_sheet_id != sheet_id {
+                    continue;
+                }
+                let sr0 = range.start_row.map(|b| b.index).unwrap_or(0);
+                let er0 = range.end_row.map(|b| b.index).unwrap_or(u32::MAX);
+                let sc0 = range.start_col.map(|b| b.index).unwrap_or(0);
+                let ec0 = range.end_col.map(|b| b.index).unwrap_or(u32::MAX);
+                let overlap = sr0 <= end_row
+                    && er0 >= start_row
+                    && sc0 <= end_col
+                    && ec0 >= start_col;
+                if overlap {
+                    hit = true;
+                    break;
+                }
+            }
+            if hit {
+                out.push(dep_id);
+            }
+        }
+        out
     }
 
     /// Check if a vertex exists
@@ -2211,6 +2412,15 @@ impl DependencyGraph {
         // If there are pending changes in delta, we need to scan
         // Otherwise we can use the fast reverse edges
         if self.edges.delta_size() > 0 {
+            #[cfg(test)]
+            {
+                // This scan is intentionally tracked for perf regression tests.
+                // It is expected to be rare in normal operation.
+                if let Ok(mut g) = self.instr.lock() {
+                    g.dependents_scan_fallback_calls += 1;
+                    g.dependents_scan_vertices_scanned += self.cell_to_vertex.len() as u64;
+                }
+            }
             // Fall back to scanning when delta has changes
             let mut dependents = Vec::new();
             for (&_addr, &vid) in &self.cell_to_vertex {
