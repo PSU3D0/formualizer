@@ -214,7 +214,8 @@ mod tests {
 
     fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
         // Test helpers use Excel 1-based coords.
-        CellRef::new(sheet_id, Coord::from_excel(row, col, false, false))
+        // Graph/editor keys store absolute ("$A$1") coords.
+        CellRef::new(sheet_id, Coord::from_excel(row, col, true, true))
     }
 
     #[test]
@@ -268,12 +269,7 @@ mod tests {
             .is_none());
     }
 
-    // TODO: This test is currently disabled because the interaction between
-    // graph.set_cell_value and VertexEditor.set_cell_value doesn't properly
-    // capture old values when updating existing cells. This needs to be fixed
-    // in the graph layer to ensure consistent cell addressing.
     #[test]
-    #[ignore]
     fn test_transaction_context_rollback_value_update() {
         let mut graph = create_test_graph();
 
@@ -301,10 +297,7 @@ mod tests {
         );
     }
 
-    // TODO: This test fails because formulas aren't being properly created
-    // through VertexEditor.set_cell_formula. Needs investigation.
     #[test]
-    #[ignore]
     fn test_transaction_context_multiple_changes() {
         let mut graph = create_test_graph();
 
