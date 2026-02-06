@@ -46,6 +46,7 @@ mod spill_basic;
 mod spill_config_defaults;
 mod spill_edges;
 mod spill_semantics_101;
+mod spill_parallel_501;
 
 mod implicit_intersection_103;
 
