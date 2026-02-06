@@ -1367,6 +1367,9 @@ fn test_vertex_editor_change_log() {
     let mut graph = DependencyGraph::new();
     let mut log = crate::engine::graph::editor::change_log::ChangeLog::new();
 
+    let expected_deleted_def =
+        NamedDefinition::Cell(CellRef::new(0, Coord::from_excel(2, 2, true, true)));
+
     {
         let mut editor =
             crate::engine::graph::editor::VertexEditor::with_logger(&mut graph, &mut log);
@@ -1376,9 +1379,8 @@ fn test_vertex_editor_change_log() {
             .define_name_for_cell("Name1", "Sheet1", 1, 1, NameScope::Workbook)
             .expect("Should define name");
 
-        let new_def = NamedDefinition::Cell(CellRef::new(0, Coord::from_excel(2, 2, true, true)));
         editor
-            .update_name("Name1", new_def, NameScope::Workbook)
+            .update_name("Name1", expected_deleted_def.clone(), NameScope::Workbook)
             .expect("Should update name");
 
         editor
@@ -1394,5 +1396,18 @@ fn test_vertex_editor_change_log() {
     use crate::engine::graph::editor::change_log::ChangeEvent;
     assert!(matches!(&changes[0], ChangeEvent::DefineName { .. }));
     assert!(matches!(&changes[1], ChangeEvent::UpdateName { .. }));
-    assert!(matches!(&changes[2], ChangeEvent::DeleteName { .. }));
+
+    match &changes[2] {
+        ChangeEvent::DeleteName {
+            name,
+            scope,
+            old_definition,
+        } => {
+            assert_eq!(name, "Name1");
+            assert_eq!(*scope, NameScope::Workbook);
+            // Regression: old_definition must be captured *before* deletion.
+            assert_eq!(old_definition.as_ref(), Some(&expected_deleted_def));
+        }
+        _ => panic!("Expected DeleteName event"),
+    }
 }

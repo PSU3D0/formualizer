@@ -1655,8 +1655,7 @@ impl<'g> VertexEditor<'g> {
 
     /// Delete a named range
     pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), EditorError> {
-        self.graph.delete_name(name, scope)?;
-
+        // Capture old definition *before* deletion so undo can restore it.
         let old_def = if self.has_logger() {
             self.graph
                 .resolve_name(
@@ -1670,6 +1669,8 @@ impl<'g> VertexEditor<'g> {
         } else {
             None
         };
+
+        self.graph.delete_name(name, scope)?;
         self.log_change(ChangeEvent::DeleteName {
             name: name.to_string(),
             scope,
