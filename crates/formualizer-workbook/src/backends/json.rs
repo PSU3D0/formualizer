@@ -684,6 +684,7 @@ where
                     engine.define_table(
                         &table.name,
                         range_ref,
+                        table.header_row,
                         table.headers.clone(),
                         table.totals_row,
                     )?;

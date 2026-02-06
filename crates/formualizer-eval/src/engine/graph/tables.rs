@@ -1,7 +1,7 @@
-use crate::SheetId;
 use crate::engine::graph::DependencyGraph;
 use crate::engine::vertex::{VertexId, VertexKind};
 use crate::reference::RangeRef;
+use crate::SheetId;
 use formualizer_common::{ExcelError, ExcelErrorKind};
 
 /// Native workbook table (Excel ListObject) metadata.
@@ -9,6 +9,7 @@ use formualizer_common::{ExcelError, ExcelErrorKind};
 pub struct TableEntry {
     pub name: String,
     pub range: RangeRef,
+    pub header_row: bool,
     pub headers: Vec<String>,
     pub totals_row: bool,
     pub vertex: VertexId,
@@ -41,6 +42,7 @@ impl DependencyGraph {
         &mut self,
         name: &str,
         range: RangeRef,
+        header_row: bool,
         headers: Vec<String>,
         totals_row: bool,
     ) -> Result<(), ExcelError> {
@@ -70,6 +72,7 @@ impl DependencyGraph {
         let entry = TableEntry {
             name: name.to_string(),
             range,
+            header_row,
             headers,
             totals_row,
             vertex,
@@ -84,6 +87,7 @@ impl DependencyGraph {
         &mut self,
         name: &str,
         new_range: RangeRef,
+        header_row: bool,
         headers: Vec<String>,
         totals_row: bool,
     ) -> Result<(), ExcelError> {
@@ -97,6 +101,7 @@ impl DependencyGraph {
 
         if let Some(existing) = self.tables.get_mut(name) {
             existing.range = new_range;
+            existing.header_row = header_row;
             existing.headers = headers;
             existing.totals_row = totals_row;
         }

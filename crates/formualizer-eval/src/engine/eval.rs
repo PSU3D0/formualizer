@@ -711,10 +711,11 @@ where
         &mut self,
         name: &str,
         range: crate::reference::RangeRef,
+        header_row: bool,
         headers: Vec<String>,
         totals_row: bool,
     ) -> Result<(), ExcelError> {
-        self.graph.define_table(name, range, headers, totals_row)
+        self.graph.define_table(name, range, header_row, headers, totals_row)
     }
 
     pub fn define_source_scalar(
@@ -4573,7 +4574,12 @@ where
                     let ec0 = table.range.end.coord.col() as usize;
 
                     let has_totals = table.totals_row;
-                    let data_sr = sr0.saturating_add(1);
+                    let has_headers = table.header_row;
+                    let data_sr = if has_headers {
+                        sr0.saturating_add(1)
+                    } else {
+                        sr0
+                    };
                     let data_er = if has_totals {
                         er0.saturating_sub(1)
                     } else {
@@ -4636,7 +4642,13 @@ where
                         Some(formualizer_parse::parser::TableSpecifier::Headers)
                         | Some(formualizer_parse::parser::TableSpecifier::SpecialItem(
                             formualizer_parse::parser::SpecialItem::Headers,
-                        )) => select(sr0, sc0, sr0, ec0),
+                        )) => {
+                            if !has_headers {
+                                asheet.range_view(1, 1, 0, 0)
+                            } else {
+                                select(sr0, sc0, sr0, ec0)
+                            }
+                        }
                         Some(formualizer_parse::parser::TableSpecifier::Totals)
                         | Some(formualizer_parse::parser::TableSpecifier::SpecialItem(
                             formualizer_parse::parser::SpecialItem::Totals,
@@ -4663,8 +4675,7 @@ where
                         }
                     };
 
-                    let rv = asheet.range_view(sr0, sc0, er0, ec0);
-                    return Ok(rv);
+                    return Ok(av);
                 }
 
                 if let Some(source) = self.graph.resolve_source_table_entry(&tref.name) {

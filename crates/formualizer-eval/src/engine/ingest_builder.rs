@@ -130,7 +130,7 @@ impl<'g> BulkIngestBuilder<'g> {
         let mut edges_adj: Vec<(u32, Vec<u32>)> = Vec::new();
         let mut coord_accum: Vec<AbsCoord> = Vec::new();
         let mut id_accum: Vec<u32> = Vec::new();
-        for (_sid, stage) in self.sheets.drain() {
+        for (_sid, mut stage) in self.sheets.drain() {
             let t_sheet0 = Instant::now();
             let mut t_plan_ms = 0u128;
             let mut t_ensure_ms = 0u128;
@@ -146,6 +146,14 @@ impl<'g> BulkIngestBuilder<'g> {
             }
             // 1) Build plan for formulas on this sheet
             if !stage.formulas.is_empty() {
+                // Rewrite context-dependent structured references (e.g., this-row selectors)
+                // into concrete references using the current graph's table metadata.
+                for (r, c, ast, _vol) in stage.formulas.iter_mut() {
+                    let coord = crate::reference::Coord::from_excel(*r, *c, true, true);
+                    let cell = crate::reference::CellRef::new(stage.id, coord);
+                    self.g.rewrite_structured_references_for_cell(ast, cell)?;
+                }
+
                 let tp0 = Instant::now();
                 let refs = stage
                     .formulas

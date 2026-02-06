@@ -1,0 +1,16 @@
+{
+  "results": {
+    "Sheet1!C2": {
+      "type": "number",
+      "value": 2.0
+    },
+    "Sheet1!C3": {
+      "type": "number",
+      "value": 4.0
+    },
+    "Sheet1!D1": {
+      "type": "number",
+      "value": 3.0
+    }
+  }
+}

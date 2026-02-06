@@ -442,6 +442,7 @@ fn json_metadata_roundtrip() {
         vec![TableDefinition {
             name: "T1".into(),
             range: (1, 1, 10, 3),
+            header_row: true,
             headers: vec!["A".into(), "B".into(), "C".into()],
             totals_row: false,
         }],
@@ -463,5 +464,6 @@ fn json_metadata_roundtrip() {
     assert!(sheet.date_system_1904);
     assert_eq!(sheet.merged_cells.len(), 1);
     assert_eq!(sheet.tables.len(), 1);
+    assert!(sheet.tables[0].header_row);
     assert_eq!(sheet.named_ranges.len(), 1);
 }
