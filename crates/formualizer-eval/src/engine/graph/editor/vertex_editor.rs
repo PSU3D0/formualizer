@@ -247,6 +247,98 @@ impl<'g> VertexEditor<'g> {
         }
     }
 
+    fn snapshot_spill_for_anchor(
+        &self,
+        anchor: VertexId,
+    ) -> Option<crate::engine::graph::editor::change_log::SpillSnapshot> {
+        let cells = self.graph.spill_cells_for_anchor(anchor)?.to_vec();
+        if cells.is_empty() {
+            return None;
+        }
+
+        // Defensive bound for log payloads.
+        let max = self.graph.get_config().spill.max_spill_cells as usize;
+        let mut cells = cells;
+        if cells.len() > max {
+            cells.truncate(max);
+        }
+
+        let first = *cells.first().expect("non-empty spill cells");
+        let sheet_name = self.graph.sheet_name(first.sheet_id).to_string();
+        let row0 = first.coord.row();
+        let col0 = first.coord.col();
+
+        let mut max_row = row0;
+        let mut max_col = col0;
+        let mut by_coord: FxHashMap<(u32, u32), LiteralValue> = FxHashMap::default();
+        for cell in &cells {
+            max_row = max_row.max(cell.coord.row());
+            max_col = max_col.max(cell.coord.col());
+            let v = self
+                .graph
+                .get_cell_value(&sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                .unwrap_or(LiteralValue::Empty);
+            by_coord.insert((cell.coord.row(), cell.coord.col()), v);
+        }
+
+        let rows = (max_row - row0 + 1) as usize;
+        let cols = (max_col - col0 + 1) as usize;
+        let mut values: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
+        for r in 0..rows {
+            let mut row: Vec<LiteralValue> = Vec::with_capacity(cols);
+            for c in 0..cols {
+                row.push(
+                    by_coord
+                        .get(&(row0 + r as u32, col0 + c as u32))
+                        .cloned()
+                        .unwrap_or(LiteralValue::Empty),
+                );
+            }
+            values.push(row);
+        }
+
+        Some(crate::engine::graph::editor::change_log::SpillSnapshot {
+            target_cells: cells,
+            values,
+        })
+    }
+
+    /// Commit a spill region and log it for replay/undo.
+    pub fn commit_spill_region(
+        &mut self,
+        anchor: VertexId,
+        target_cells: Vec<CellRef>,
+        values: Vec<Vec<LiteralValue>>,
+    ) -> Result<(), EditorError> {
+        let old = self.snapshot_spill_for_anchor(anchor);
+        self.graph
+            .commit_spill_region_atomic_with_fault(
+                anchor,
+                target_cells.clone(),
+                values.clone(),
+                None,
+            )
+            .map_err(EditorError::Excel)?;
+        self.log_change(ChangeEvent::SpillCommitted {
+            anchor,
+            old,
+            new: crate::engine::graph::editor::change_log::SpillSnapshot {
+                target_cells,
+                values,
+            },
+        });
+        Ok(())
+    }
+
+    /// Clear a spill region (if any) and log it for replay/undo.
+    pub fn clear_spill_region(&mut self, anchor: VertexId) {
+        let Some(old) = self.snapshot_spill_for_anchor(anchor) else {
+            return;
+        };
+        self.graph.clear_spill_region(anchor);
+        self.log_change(ChangeEvent::SpillCleared { anchor, old });
+    }
+
     /// Check if change logging is enabled
     pub fn has_logger(&self) -> bool {
         self.change_logger.is_some()
@@ -376,6 +468,32 @@ impl<'g> VertexEditor<'g> {
                     });
                 }
             }
+            ChangeEvent::SpillCommitted { anchor, old, .. } => {
+                // Restore previous spill region.
+                if let Some(old) = old {
+                    self.graph
+                        .commit_spill_region_atomic_with_fault(
+                            anchor,
+                            old.target_cells,
+                            old.values,
+                            None,
+                        )
+                        .map_err(EditorError::Excel)?;
+                } else {
+                    self.graph.clear_spill_region(anchor);
+                }
+            }
+            ChangeEvent::SpillCleared { anchor, old } => {
+                // Re-commit the previous spill region.
+                self.graph
+                    .commit_spill_region_atomic_with_fault(
+                        anchor,
+                        old.target_cells,
+                        old.values,
+                        None,
+                    )
+                    .map_err(EditorError::Excel)?;
+            }
             // Granular events for compound operations
             ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => {
                 // These are markers, no inverse needed
@@ -491,6 +609,21 @@ impl<'g> VertexEditor<'g> {
             ));
         }
 
+        // If this vertex anchors a spill, clear ownership + spilled children first.
+        // This keeps the spill registry consistent even if the anchor is removed.
+        let spill_snapshot = self.snapshot_spill_for_anchor(id);
+        let did_spill_clear = spill_snapshot.is_some();
+        if let Some(old_spill) = spill_snapshot {
+            if let Some(logger) = &mut self.change_logger {
+                logger.begin_compound(format!("RemoveVertexWithSpillClear id={}", id.0));
+            }
+            self.graph.clear_spill_region(id);
+            self.log_change(ChangeEvent::SpillCleared {
+                anchor: id,
+                old: old_spill,
+            });
+        }
+
         // Get dependents before removing edges
         // Note: get_dependents may require CSR rebuild if delta has changes
         let dependents = self.graph.get_dependents(id);
@@ -553,6 +686,12 @@ impl<'g> VertexEditor<'g> {
             kind,
             flags,
         });
+
+        if did_spill_clear {
+            if let Some(logger) = &mut self.change_logger {
+                logger.end_compound();
+            }
+        }
 
         Ok(())
     }
@@ -1228,6 +1367,27 @@ impl<'g> VertexEditor<'g> {
         let old_value = old_id.and_then(|id| self.graph.get_value(id));
         let old_formula = old_id.and_then(|id| self.get_formula_ast(id));
 
+        // If this cell currently anchors a spill, clear the spill first and log it.
+        // This keeps spill ownership maps and children consistent under undo/redo.
+        let spill_snapshot =
+            old_id.and_then(|id| self.snapshot_spill_for_anchor(id).map(|s| (id, s)));
+        let did_spill_clear = spill_snapshot.is_some();
+        if let Some((anchor, old_spill)) = spill_snapshot {
+            if let Some(logger) = &mut self.change_logger {
+                logger.begin_compound(format!(
+                    "SetValueWithSpillClear sheet={} row={} col={}",
+                    cell_ref.sheet_id,
+                    cell_ref.coord.row(),
+                    cell_ref.coord.col()
+                ));
+            }
+            self.graph.clear_spill_region(anchor);
+            self.log_change(ChangeEvent::SpillCleared {
+                anchor,
+                old: old_spill,
+            });
+        }
+
         // Use the existing DependencyGraph API
         // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
         match self.graph.set_cell_value(
@@ -1245,6 +1405,12 @@ impl<'g> VertexEditor<'g> {
                     new: value,
                 };
                 self.log_change(change_event);
+
+                if did_spill_clear {
+                    if let Some(logger) = &mut self.change_logger {
+                        logger.end_compound();
+                    }
+                }
 
                 summary
                     .affected_vertices
@@ -1265,6 +1431,26 @@ impl<'g> VertexEditor<'g> {
         let old_value = old_id.and_then(|id| self.graph.get_value(id));
         let old_formula = old_id.and_then(|id| self.get_formula_ast(id));
 
+        // If this cell currently anchors a spill, clear it before updating the formula.
+        let spill_snapshot =
+            old_id.and_then(|id| self.snapshot_spill_for_anchor(id).map(|s| (id, s)));
+        let did_spill_clear = spill_snapshot.is_some();
+        if let Some((anchor, old_spill)) = spill_snapshot {
+            if let Some(logger) = &mut self.change_logger {
+                logger.begin_compound(format!(
+                    "SetFormulaWithSpillClear sheet={} row={} col={}",
+                    cell_ref.sheet_id,
+                    cell_ref.coord.row(),
+                    cell_ref.coord.col()
+                ));
+            }
+            self.graph.clear_spill_region(anchor);
+            self.log_change(ChangeEvent::SpillCleared {
+                anchor,
+                old: old_spill,
+            });
+        }
+
         // Use the existing DependencyGraph API
         // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
         match self.graph.set_cell_formula(
@@ -1282,6 +1468,12 @@ impl<'g> VertexEditor<'g> {
                     new: formula,
                 };
                 self.log_change(change_event);
+
+                if did_spill_clear {
+                    if let Some(logger) = &mut self.change_logger {
+                        logger.end_compound();
+                    }
+                }
 
                 summary
                     .affected_vertices
@@ -1768,6 +1960,50 @@ mod tests {
 
         // Now removal returns Result
         assert!(editor.remove_vertex(vertex_id).is_ok());
+    }
+
+    #[test]
+    fn test_remove_vertex_clears_spill_registry_for_anchor() {
+        let mut graph = create_test_graph();
+        let sheet_id = graph.sheet_id_mut("Sheet1");
+
+        // Create anchor vertex at A1 (0-based internal coord 0,0).
+        let anchor_cell = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+        let anchor_vid = {
+            let mut editor = VertexEditor::new(&mut graph);
+            editor.set_cell_value(anchor_cell, LiteralValue::Number(0.0))
+        };
+
+        let target_cells = vec![
+            CellRef::new(sheet_id, Coord::new(0, 0, true, true)),
+            CellRef::new(sheet_id, Coord::new(0, 1, true, true)),
+            CellRef::new(sheet_id, Coord::new(1, 0, true, true)),
+            CellRef::new(sheet_id, Coord::new(1, 1, true, true)),
+        ];
+        let values = vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ];
+
+        graph
+            .commit_spill_region_atomic_with_fault(anchor_vid, target_cells.clone(), values, None)
+            .unwrap();
+
+        assert!(graph.spill_registry_has_anchor(anchor_vid));
+        for cell in &target_cells {
+            assert_eq!(graph.spill_registry_anchor_for_cell(*cell), Some(anchor_vid));
+        }
+
+        {
+            let mut editor = VertexEditor::new(&mut graph);
+            editor.remove_vertex(anchor_vid).unwrap();
+        }
+
+        assert!(!graph.spill_registry_has_anchor(anchor_vid));
+        for cell in &target_cells {
+            assert_eq!(graph.spill_registry_anchor_for_cell(*cell), None);
+        }
+        assert_eq!(graph.spill_registry_counts(), (0, 0));
     }
 
     #[test]

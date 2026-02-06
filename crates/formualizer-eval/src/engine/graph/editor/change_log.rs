@@ -13,6 +13,14 @@ use formualizer_common::Coord as AbsCoord;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::ASTNode;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpillSnapshot {
+    /// Declared target cells (row-major rectangle) owned by this spill anchor.
+    pub target_cells: Vec<CellRef>,
+    /// Row-major rectangular values corresponding to the target rectangle.
+    pub values: Vec<Vec<LiteralValue>>,
+}
+
 /// Per-event metadata attached by the caller.
 ///
 /// This is intentionally lightweight (Strings) to avoid leaking application types
@@ -117,6 +125,17 @@ pub enum ChangeEvent {
         name: String,
         scope: NameScope,
         old_definition: Option<NamedDefinition>,
+    },
+
+    // Spill region changes (dynamic arrays)
+    SpillCommitted {
+        anchor: VertexId,
+        old: Option<SpillSnapshot>,
+        new: SpillSnapshot,
+    },
+    SpillCleared {
+        anchor: VertexId,
+        old: SpillSnapshot,
     },
 }
 

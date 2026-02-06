@@ -151,6 +151,18 @@ fn replay_events(graph: &mut DependencyGraph, events: &[ChangeEvent]) {
                 let _ = editor.update_name(&name, new_definition, scope);
             }
 
+            ChangeEvent::SpillCommitted { anchor, new, .. } => {
+                let _ = graph.commit_spill_region_atomic_with_fault(
+                    anchor,
+                    new.target_cells,
+                    new.values,
+                    None,
+                );
+            }
+            ChangeEvent::SpillCleared { anchor, .. } => {
+                graph.clear_spill_region(anchor);
+            }
+
             // Not currently emitted by public editor mutations.
             ChangeEvent::EdgeAdded { .. } | ChangeEvent::EdgeRemoved { .. } => {}
         }
@@ -170,7 +182,7 @@ fn changelog_replay_roundtrip_matches_end_state() {
         let b2 = CellRef::new(sheet_id, Coord::new(1, 1, true, true));
         let c4 = CellRef::new(sheet_id, Coord::new(3, 2, true, true));
 
-        editor.set_cell_value(a1, LiteralValue::Number(10.0));
+        let anchor_vid = editor.set_cell_value(a1, LiteralValue::Number(10.0));
         editor.set_cell_formula(b2, parse("=A1*2").unwrap());
         editor.set_cell_value(c4, LiteralValue::Number(99.0));
 
@@ -185,6 +197,22 @@ fn changelog_replay_roundtrip_matches_end_state() {
         // Structural edits.
         editor.insert_rows(sheet_id, 1, 2).unwrap();
         editor.delete_columns(sheet_id, 1, 1).unwrap();
+
+        // Exercise spill events in the replay harness. We commit a small 2x2 spill
+        // anchored at A1 in the current sheet.
+        let target_cells = vec![
+            CellRef::new(sheet_id, Coord::new(0, 0, true, true)),
+            CellRef::new(sheet_id, Coord::new(0, 1, true, true)),
+            CellRef::new(sheet_id, Coord::new(1, 0, true, true)),
+            CellRef::new(sheet_id, Coord::new(1, 1, true, true)),
+        ];
+        let values = vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ];
+        editor
+            .commit_spill_region(anchor_vid, target_cells, values)
+            .unwrap();
     }
 
     let events: Vec<ChangeEvent> = log.events().to_vec();
