@@ -238,6 +238,16 @@ pub struct EvalConfig {
     /// dependency-graph values for correctness.
     pub max_overlay_memory_bytes: Option<usize>,
 
+    /// When true, Arrow storage is the source of truth for cell values.
+    ///
+    /// `read_cell_value()` and `read_range_values()` will read exclusively from Arrow
+    /// (delta overlay -> computed overlay -> base lanes) instead of falling back to the
+    /// dependency-graph cached values. This flag is a migration gate for the Arrow-canonical
+    /// value path (ticket 601). **Not yet supported with budget caps** — enabling this flag
+    /// together with `max_overlay_memory_bytes` that triggers overlay clearing will panic
+    /// (see ticket 602 for compaction-based budget enforcement).
+    pub arrow_canonical_values: bool,
+
     /// Workbook date system: Excel 1900 (default) or 1904.
     pub date_system: DateSystem,
 
@@ -292,6 +302,7 @@ impl Default for EvalConfig {
             delta_overlay_enabled: true,
             write_formula_overlay_enabled: true,
             max_overlay_memory_bytes: None,
+            arrow_canonical_values: false,
             date_system: DateSystem::Excel1900,
             defer_graph_building: false,
         }
@@ -344,6 +355,12 @@ impl EvalConfig {
     #[inline]
     pub fn with_formula_overlay(mut self, enable: bool) -> Self {
         self.write_formula_overlay_enabled = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_arrow_canonical_values(mut self, enable: bool) -> Self {
+        self.arrow_canonical_values = enable;
         self
     }
 

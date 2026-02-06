@@ -50,6 +50,8 @@ mod spill_parallel_501;
 
 mod hardening_503;
 
+mod arrow_canonical_601;
+
 mod implicit_intersection_103;
 
 mod arrow_bulk_update;
