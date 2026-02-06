@@ -676,6 +676,16 @@ impl ReferenceType {
     }
 
     fn parse_excel_reference(reference: &str) -> Result<Self, ParsingError> {
+        // Excel structured reference shorthands that appear as a single bracketed token.
+        //
+        // We use these forms to avoid ambiguity with cell refs / named ranges:
+        // - `[TableName]` resolves to the table's data body (equivalent to `TableName[#Data]`).
+        // - `[@Column]` / `[@[Column Name]]` is a "This Row" selector; it requires table-aware
+        //   context during resolution and will be rewritten by the evaluator/graph builder.
+        if reference.starts_with('[') && reference.ends_with(']') && !reference.contains('!') {
+            return Self::parse_bracketed_structured_reference(reference);
+        }
+
         // Extract sheet name if present
         let (sheet, ref_part) = Self::extract_sheet_name(reference);
 
@@ -1024,6 +1034,42 @@ impl ReferenceType {
         } else {
             Err(ParsingError::InvalidReference(reference.to_string()))
         }
+    }
+
+    fn parse_bracketed_structured_reference(reference: &str) -> Result<Self, ParsingError> {
+        debug_assert!(reference.starts_with('[') && reference.ends_with(']'));
+        let inner = reference[1..reference.len().saturating_sub(1)].trim();
+        if inner.is_empty() {
+            return Err(ParsingError::InvalidReference(reference.to_string()));
+        }
+
+        // This-row column selector: [@Column] or [@[Column Name]]
+        if let Some(rest) = inner.strip_prefix('@') {
+            let mut col = rest.trim();
+            if col.starts_with('[') && col.ends_with(']') && col.len() >= 2 {
+                col = col[1..col.len() - 1].trim();
+            }
+            if col.is_empty() {
+                return Err(ParsingError::InvalidReference(format!(
+                    "This-row structured reference missing column: {reference}"
+                )));
+            }
+
+            let spec = TableSpecifier::Combination(vec![
+                Box::new(TableSpecifier::SpecialItem(SpecialItem::ThisRow)),
+                Box::new(TableSpecifier::Column(col.to_string())),
+            ]);
+            return Ok(ReferenceType::Table(TableReference {
+                name: String::new(),
+                specifier: Some(spec),
+            }));
+        }
+
+        // Table shorthand: [TableName] means data body.
+        Ok(ReferenceType::Table(TableReference {
+            name: inner.to_string(),
+            specifier: Some(TableSpecifier::SpecialItem(SpecialItem::Data)),
+        }))
     }
 
     /// Parse a table specifier like "[Column1]" or "[[#All],[Column1]:[Column2]]"

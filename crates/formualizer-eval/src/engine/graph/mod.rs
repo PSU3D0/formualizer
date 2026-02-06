@@ -2,7 +2,7 @@ use crate::SheetId;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_parse::parser::{ASTNode, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 #[cfg(test)]
@@ -847,6 +847,11 @@ impl DependencyGraph {
         let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
 
+        // Rewrite context-dependent structured references (e.g., this-row selectors) into
+        // concrete cell/range references for this formula cell.
+        let mut ast = ast;
+        self.rewrite_structured_references_for_cell(&mut ast, addr)?;
+
         // Extract dependencies from AST, creating placeholders if needed
         let t_dep0 = if dbg {
             Some(web_time::Instant::now())
@@ -949,6 +954,197 @@ impl DependencyGraph {
             affected_vertices: self.mark_dirty(addr_vertex_id),
             created_placeholders,
         })
+    }
+
+    pub(crate) fn rewrite_structured_references_for_cell(
+        &self,
+        ast: &mut ASTNode,
+        cell: CellRef,
+    ) -> Result<(), ExcelError> {
+        self.rewrite_structured_references_node(ast, cell)
+    }
+
+    fn rewrite_structured_references_node(
+        &self,
+        node: &mut ASTNode,
+        cell: CellRef,
+    ) -> Result<(), ExcelError> {
+        match &mut node.node_type {
+            ASTNodeType::Reference { reference, .. } => {
+                self.rewrite_structured_reference(reference, cell)
+            }
+            ASTNodeType::UnaryOp { expr, .. } => self.rewrite_structured_references_node(expr, cell),
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                self.rewrite_structured_references_node(left, cell)?;
+                self.rewrite_structured_references_node(right, cell)
+            }
+            ASTNodeType::Function { args, .. } => {
+                for a in args.iter_mut() {
+                    self.rewrite_structured_references_node(a, cell)?;
+                }
+                Ok(())
+            }
+            ASTNodeType::Array(rows) => {
+                for r in rows.iter_mut() {
+                    for item in r.iter_mut() {
+                        self.rewrite_structured_references_node(item, cell)?;
+                    }
+                }
+                Ok(())
+            }
+            ASTNodeType::Literal(_) => Ok(()),
+        }
+    }
+
+    fn rewrite_structured_reference(
+        &self,
+        reference: &mut ReferenceType,
+        cell: CellRef,
+    ) -> Result<(), ExcelError> {
+        use formualizer_parse::parser::{SpecialItem, TableSpecifier};
+
+        let ReferenceType::Table(tref) = reference else {
+            return Ok(());
+        };
+
+        // This-row shorthand: parsed as an unnamed table reference with a Combination specifier.
+        if !tref.name.is_empty() {
+            return Ok(());
+        }
+
+        let col_name = match &tref.specifier {
+            Some(TableSpecifier::Combination(parts)) => {
+                let mut saw_this_row = false;
+                let mut col: Option<&str> = None;
+                for p in parts {
+                    match p.as_ref() {
+                        TableSpecifier::SpecialItem(SpecialItem::ThisRow) => {
+                            saw_this_row = true;
+                        }
+                        TableSpecifier::Column(c) => {
+                            if col.is_some() {
+                                return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                    "This-row structured reference with multiple columns is not supported"
+                                        .to_string(),
+                                ));
+                            }
+                            col = Some(c.as_str());
+                        }
+                        other => {
+                            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                format!(
+                                    "Unsupported this-row structured reference component: {other}" 
+                                ),
+                            ));
+                        }
+                    }
+                }
+                if !saw_this_row {
+                    return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                        "Unnamed structured reference requires a this-row selector".to_string(),
+                    ));
+                }
+                col.ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                        "This-row structured reference missing column selector".to_string(),
+                    )
+                })?
+            }
+            _ => {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                    "Unnamed structured reference form is not supported".to_string(),
+                ));
+            }
+        };
+
+        let Some(table) = self.find_table_containing_cell(cell) else {
+            return Err(ExcelError::new(ExcelErrorKind::Name).with_message(
+                "This-row structured reference used outside a table".to_string(),
+            ));
+        };
+
+        let row0 = cell.coord.row();
+        let col0 = cell.coord.col();
+        let sr0 = table.range.start.coord.row();
+        let sc0 = table.range.start.coord.col();
+        let er0 = table.range.end.coord.row();
+        let ec0 = table.range.end.coord.col();
+
+        if row0 < sr0 || row0 > er0 || col0 < sc0 || col0 > ec0 {
+            return Err(ExcelError::new(ExcelErrorKind::Name).with_message(
+                "This-row structured reference used outside a table".to_string(),
+            ));
+        }
+
+        if table.header_row && row0 == sr0 {
+            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                "This-row structured references are not valid in the table header row".to_string(),
+            ));
+        }
+
+        let data_start = if table.header_row { sr0 + 1 } else { sr0 };
+        if row0 < data_start {
+            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                "This-row structured references require a data/totals row context".to_string(),
+            ));
+        }
+
+        let Some(idx) = table.col_index(col_name) else {
+            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                format!("Unknown table column in this-row reference: {col_name}"),
+            ));
+        };
+        let target_col0 = sc0 + (idx as u32);
+        let target_row = row0 + 1;
+        let target_col = target_col0 + 1;
+
+        *reference = ReferenceType::Cell {
+            sheet: None,
+            row: target_row,
+            col: target_col,
+            row_abs: true,
+            col_abs: true,
+        };
+
+        Ok(())
+    }
+
+    fn find_table_containing_cell(&self, cell: CellRef) -> Option<&tables::TableEntry> {
+        let row0 = cell.coord.row();
+        let col0 = cell.coord.col();
+
+        let mut best: Option<&tables::TableEntry> = None;
+        let mut best_area: u64 = u64::MAX;
+        let mut best_name: &str = "";
+
+        for t in self.tables.values() {
+            if t.sheet_id() != cell.sheet_id {
+                continue;
+            }
+            let sr0 = t.range.start.coord.row();
+            let sc0 = t.range.start.coord.col();
+            let er0 = t.range.end.coord.row();
+            let ec0 = t.range.end.coord.col();
+            if row0 < sr0 || row0 > er0 || col0 < sc0 || col0 > ec0 {
+                continue;
+            }
+
+            let h = (er0 - sr0 + 1) as u64;
+            let w = (ec0 - sc0 + 1) as u64;
+            let area = h.saturating_mul(w);
+            let name = t.name.as_str();
+            let better = match best {
+                None => true,
+                Some(_) => area < best_area || (area == best_area && name < best_name),
+            };
+            if better {
+                best = Some(t);
+                best_area = area;
+                best_name = name;
+            }
+        }
+
+        best
     }
 
     pub fn set_cell_value_ref(
