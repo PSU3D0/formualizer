@@ -174,14 +174,14 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                     ),
                                 ),
                             };
-                            ch.overlay.set(off, ov);
+                            let _ = ch.overlay.set(off, ov);
                         }
                     } else {
                         // rebuild chunk with updates applied
-                        use arrow_array::Array as _;
                         use arrow_array::builder::{
                             BooleanBuilder, Float64Builder, StringBuilder, UInt8Builder,
                         };
+                        use arrow_array::Array as _;
                         items.sort_by_key(|(o, _)| *o);
                         let mut tag_b = UInt8Builder::with_capacity(len);
                         let mut nb = Float64Builder::with_capacity(len);
@@ -411,7 +411,7 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                         ch.meta.non_null_bool = non_bool;
                         ch.meta.non_null_text = non_text;
                         ch.meta.non_null_err = non_err;
-                        ch.overlay.clear();
+                        let _ = ch.overlay.clear();
                     }
                 }
             }

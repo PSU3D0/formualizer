@@ -48,6 +48,8 @@ mod spill_edges;
 mod spill_semantics_101;
 mod spill_parallel_501;
 
+mod hardening_503;
+
 mod implicit_intersection_103;
 
 mod arrow_bulk_update;
