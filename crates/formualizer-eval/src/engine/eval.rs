@@ -39,7 +39,7 @@ pub struct Engine<R> {
     computed_overlay_mirroring_disabled: bool,
     /// When true, RangeView resolution materializes from graph/Arrow base per-cell.
     /// This preserves correctness if we stop mirroring formula/spill outputs into computed overlays.
-    force_materialize_range_views: bool,
+    pub(crate) force_materialize_range_views: bool,
     // Pass-scoped cache for Arrow used-row bounds per column
     row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
     source_cache: Arc<std::sync::RwLock<SourceCache>>,
@@ -1594,6 +1594,13 @@ where
     }
 
     fn disable_computed_overlay_mirroring_due_to_budget(&mut self, _cap: usize) {
+        // Ticket 601 guardrail: in arrow-canonical mode, clearing overlays would destroy
+        // the source of truth. Budget enforcement must use compaction (ticket 602) instead.
+        assert!(
+            !self.config.arrow_canonical_values,
+            "arrow_canonical_values=true requires correctness-preserving budget \
+             enforcement (see ticket 602)"
+        );
         // Deterministic behavior: stop adding computed overlay entries and clear what we've
         // accumulated so far. Switch RangeView reads to per-cell materialization so formulas
         // remain correct (they read from the dependency graph).
@@ -1828,6 +1835,94 @@ where
             return Some(v);
         }
         self.graph.get_cell_value(sheet, row, col)
+    }
+
+    /// Unified internal read API for a single cell value.
+    ///
+    /// When `arrow_canonical_values` is enabled, reads exclusively from Arrow storage
+    /// (delta overlay -> computed overlay -> base lanes). Otherwise delegates to the
+    /// existing `get_cell_value()` which prefers graph-cached values.
+    pub(crate) fn read_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
+        if self.config.arrow_canonical_values {
+            // Arrow-truth path: read from Arrow store only
+            let asheet = self.sheet_store().sheet(sheet)?;
+            let r0 = row.saturating_sub(1) as usize;
+            let c0 = col.saturating_sub(1) as usize;
+            let rv = asheet.range_view(r0, c0, r0, c0);
+            let v = rv.get_cell(0, 0);
+            if matches!(v, LiteralValue::Empty) {
+                // Arrow returns Empty for unset cells; match get_cell_value semantics
+                None
+            } else {
+                Some(v)
+            }
+        } else {
+            // Graph-truth path: existing behavior
+            self.get_cell_value(sheet, row, col)
+        }
+    }
+
+    /// Unified internal read API for a range of cell values.
+    ///
+    /// When `arrow_canonical_values` is enabled, returns an Arrow-backed RangeView
+    /// directly (no force-materialize override). Otherwise uses current behavior
+    /// including the `force_materialize_range_views` fallback.
+    pub(crate) fn read_range_values(
+        &self,
+        sheet: &str,
+        sr: u32,
+        sc: u32,
+        er: u32,
+        ec: u32,
+    ) -> RangeView<'_> {
+        if self.config.arrow_canonical_values {
+            // Arrow-truth path: always read from Arrow store
+            if let Some(asheet) = self.sheet_store().sheet(sheet) {
+                if er < sr || ec < sc {
+                    return asheet.range_view(1, 1, 0, 0);
+                }
+                let sr0 = sr.saturating_sub(1) as usize;
+                let sc0 = sc.saturating_sub(1) as usize;
+                let er0 = er.saturating_sub(1) as usize;
+                let ec0 = ec.saturating_sub(1) as usize;
+                asheet.range_view(sr0, sc0, er0, ec0)
+            } else {
+                RangeView::from_owned_rows(Vec::new(), self.config.date_system)
+            }
+        } else {
+            // Graph-truth path: respect force_materialize_range_views
+            if self.force_materialize_range_views {
+                if er < sr || ec < sc {
+                    return RangeView::from_owned_rows(Vec::new(), self.config.date_system);
+                }
+                let h = (er - sr + 1) as usize;
+                let w = (ec - sc + 1) as usize;
+                let mut rows: Vec<Vec<LiteralValue>> = Vec::with_capacity(h);
+                for r in sr..=er {
+                    let mut rowv: Vec<LiteralValue> = Vec::with_capacity(w);
+                    for c in sc..=ec {
+                        rowv.push(
+                            self.get_cell_value(sheet, r, c)
+                                .unwrap_or(LiteralValue::Empty),
+                        );
+                    }
+                    rows.push(rowv);
+                }
+                return RangeView::from_owned_rows(rows, self.config.date_system);
+            }
+            if let Some(asheet) = self.sheet_store().sheet(sheet) {
+                if er < sr || ec < sc {
+                    return asheet.range_view(1, 1, 0, 0);
+                }
+                let sr0 = sr.saturating_sub(1) as usize;
+                let sc0 = sc.saturating_sub(1) as usize;
+                let er0 = er.saturating_sub(1) as usize;
+                let ec0 = ec.saturating_sub(1) as usize;
+                asheet.range_view(sr0, sc0, er0, ec0)
+            } else {
+                RangeView::from_owned_rows(Vec::new(), self.config.date_system)
+            }
+        }
     }
 
     /// Get formula AST (if any) and current stored value for a cell
@@ -2824,6 +2919,66 @@ where
 
         // Re-dirty volatile vertices for the next evaluation cycle
         self.graph.redirty_volatiles();
+
+        // Post-evaluation cross-check (ticket 601): in non-canonical mode, sample a small
+        // number of evaluated vertices and verify that graph-cached and Arrow-stored values
+        // agree. This catches overlay mirroring drift early during development.
+        #[cfg(debug_assertions)]
+        if !self.config.arrow_canonical_values {
+            let sample_limit = 8usize;
+            let mut checked = 0usize;
+            for &vid in to_evaluate.iter() {
+                if checked >= sample_limit {
+                    break;
+                }
+                if let Some(cell_ref) = self.graph.get_cell_ref_for_vertex(vid) {
+                    let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
+                    let row = cell_ref.coord.row() + 1;
+                    let col = cell_ref.coord.col() + 1;
+                    let graph_val = self.graph.get_cell_value(sheet_name, row, col);
+                    if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
+                        let r0 = row.saturating_sub(1) as usize;
+                        let c0 = col.saturating_sub(1) as usize;
+                        let arrow_val = asheet.range_view(r0, c0, r0, c0).get_cell(0, 0);
+                        // Only compare when both have non-empty values and overlay
+                        // mirroring is active (not disabled by budget pressure).
+                        if !self.computed_overlay_mirroring_disabled {
+                            if let Some(ref gv) = graph_val {
+                                // Skip comparison when Arrow hasn't mirrored this error
+                                // (e.g., cycle/spill errors may not be written to overlay).
+                                let arrow_missing = matches!(gv, LiteralValue::Error(_))
+                                    && !matches!(arrow_val, LiteralValue::Error(_));
+                                if !arrow_missing {
+                                    let matches = match (gv, &arrow_val) {
+                                        (LiteralValue::Number(a), LiteralValue::Number(b)) => {
+                                            (a - b).abs() < 1e-10
+                                        }
+                                        // Arrow collapses Int→Number; treat as equivalent
+                                        (LiteralValue::Int(i), LiteralValue::Number(n))
+                                        | (LiteralValue::Number(n), LiteralValue::Int(i)) => {
+                                            ((*i as f64) - n).abs() < 1e-10
+                                        }
+                                        (LiteralValue::Int(a), LiteralValue::Int(b)) => a == b,
+                                        // Arrow may strip error messages; compare kind only
+                                        (LiteralValue::Error(a), LiteralValue::Error(b)) => {
+                                            a.kind == b.kind
+                                        }
+                                        (LiteralValue::Empty, LiteralValue::Empty) => true,
+                                        (a, b) => a == b,
+                                    };
+                                    debug_assert!(
+                                        matches,
+                                        "post-eval value drift at {sheet_name}!R{row}C{col}: \
+                                         graph={graph_val:?} arrow={arrow_val:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    checked += 1;
+                }
+            }
+        }
 
         // Advance recalc epoch after a full evaluation pass finishes
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
@@ -5081,6 +5236,18 @@ where
                         return Ok(RangeView::from_owned_rows(rows, self.config.date_system));
                     }
                 }
+
+                // Staleness guard (ticket 601): in non-canonical mode, if computed
+                // overlay mirroring was disabled due to budget pressure, the
+                // force_materialize_range_views flag MUST also be set so we never
+                // serve stale Arrow data to range functions.
+                debug_assert!(
+                    self.config.arrow_canonical_values
+                        || !self.computed_overlay_mirroring_disabled
+                        || self.force_materialize_range_views,
+                    "non-canonical mode with disabled overlay mirroring must have \
+                     force_materialize_range_views set"
+                );
 
                 let Some(asheet) = self.sheet_store().sheet(sheet_name) else {
                     return Ok(RangeView::from_owned_rows(
