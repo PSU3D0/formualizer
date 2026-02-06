@@ -293,6 +293,29 @@ mod tests {
     }
 
     #[test]
+    fn test_undo_depth_truncates_gracefully_under_changelog_cap() {
+        let mut graph = DependencyGraph::new();
+        let sheet_id = graph.sheet_id_mut("Sheet1");
+        let mut log = ChangeLog::with_max_changelog_events(3);
+
+        // Record 5 independent edits; cap keeps only the last 3.
+        for i in 0..5u32 {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            let cell = CellRef::new(sheet_id, Coord::new(i, 0, true, true));
+            editor.set_cell_value(cell, LiteralValue::Number(i as f64));
+        }
+        assert_eq!(log.len(), 3);
+
+        let mut undo = UndoEngine::new();
+        undo.undo(&mut graph, &mut log).unwrap();
+        undo.undo(&mut graph, &mut log).unwrap();
+        undo.undo(&mut graph, &mut log).unwrap();
+        // Beyond retained history: no-op, should not error.
+        undo.undo(&mut graph, &mut log).unwrap();
+        assert_eq!(log.len(), 0);
+    }
+
+    #[test]
     fn test_undo_redo_column_shift() {
         let mut graph = DependencyGraph::new();
         let mut log = ChangeLog::new();

@@ -145,6 +145,8 @@ pub struct ChangeLog {
     events: Vec<ChangeEvent>,
     metas: Vec<ChangeEventMeta>,
     enabled: bool,
+    /// Optional cap on retained events; when exceeded, oldest events are evicted (FIFO).
+    max_changelog_events: Option<usize>,
     /// Track compound operations for atomic rollback
     compound_depth: usize,
     /// Monotonic sequence number per event
@@ -165,6 +167,7 @@ impl ChangeLog {
             events: Vec::new(),
             metas: Vec::new(),
             enabled: true,
+            max_changelog_events: None,
             compound_depth: 0,
             seqs: Vec::new(),
             groups: Vec::new(),
@@ -173,6 +176,35 @@ impl ChangeLog {
             next_group_id: 1,
             current_meta: ChangeEventMeta::default(),
         }
+    }
+
+    pub fn with_max_changelog_events(max: usize) -> Self {
+        let mut out = Self::new();
+        out.max_changelog_events = Some(max);
+        out
+    }
+
+    pub fn set_max_changelog_events(&mut self, max: Option<usize>) {
+        self.max_changelog_events = max;
+        self.enforce_cap();
+    }
+
+    fn enforce_cap(&mut self) {
+        let Some(max) = self.max_changelog_events else {
+            return;
+        };
+        if max == 0 {
+            self.clear();
+            return;
+        }
+        if self.events.len() <= max {
+            return;
+        }
+        let drop_n = self.events.len() - max;
+        self.events.drain(0..drop_n);
+        self.metas.drain(0..drop_n);
+        self.seqs.drain(0..drop_n);
+        self.groups.drain(0..drop_n);
     }
 
     pub fn record(&mut self, event: ChangeEvent) {
@@ -184,6 +216,7 @@ impl ChangeLog {
             self.metas.push(self.current_meta.clone());
             self.seqs.push(seq);
             self.groups.push(current_group);
+            self.enforce_cap();
         }
     }
 
@@ -197,6 +230,7 @@ impl ChangeLog {
             self.metas.push(meta);
             self.seqs.push(seq);
             self.groups.push(current_group);
+            self.enforce_cap();
         }
     }
 

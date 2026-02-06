@@ -70,6 +70,29 @@ fn test_change_log_take_from() {
 }
 
 #[test]
+fn test_change_log_fifo_eviction_drops_oldest() {
+    let mut log = ChangeLog::with_max_changelog_events(3);
+
+    for i in 0..5 {
+        log.record(create_test_event_with_value(i as f64));
+    }
+
+    assert_eq!(log.len(), 3);
+    let values: Vec<f64> = log
+        .events()
+        .iter()
+        .filter_map(|e| match e {
+            ChangeEvent::SetValue { new, .. } => match new {
+                LiteralValue::Number(n) => Some(*n),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(values, vec![2.0, 3.0, 4.0]);
+}
+
+#[test]
 fn test_compound_operations() {
     let mut log = ChangeLog::new();
 
