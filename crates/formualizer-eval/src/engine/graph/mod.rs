@@ -5,6 +5,9 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+#[cfg(debug_assertions)]
+use std::sync::atomic::{AtomicU64, Ordering};
+
 #[cfg(test)]
 #[derive(Debug, Default, Clone)]
 pub struct GraphInstrumentation {
@@ -117,6 +120,17 @@ pub struct DependencyGraph {
     vertex_values: FxHashMap<VertexId, ValueRef>,
     vertex_formulas: FxHashMap<VertexId, AstNodeId>,
 
+    /// Gate for storing grid-backed (cell/formula) LiteralValue payloads inside the dependency graph.
+    ///
+    /// When `false` (Arrow-canonical mode), the graph does not store values for cell/formula
+    /// vertices. Arrow (base + overlays) is the sole value store for sheet cells.
+    value_cache_enabled: bool,
+
+    /// Debug-only instrumentation: count attempts to read *cell/formula* graph values while
+    /// caching is disabled (canonical mode guard).
+    #[cfg(debug_assertions)]
+    graph_value_read_attempts: AtomicU64,
+
     // Address mappings using fast hashing
     cell_to_vertex: FxHashMap<CellRef, VertexId>,
 
@@ -222,6 +236,26 @@ impl DependencyGraph {
 
     pub fn get_config(&self) -> &super::EvalConfig {
         &self.config
+    }
+
+    #[inline]
+    pub fn value_cache_enabled(&self) -> bool {
+        self.value_cache_enabled
+    }
+
+    /// Debug-only: how many times `get_value`/`get_cell_value` were called while caching is disabled.
+    ///
+    /// In Arrow-canonical mode this should remain 0 for engine/interpreter reads.
+    #[cfg(test)]
+    pub fn debug_graph_value_read_attempts(&self) -> u64 {
+        #[cfg(debug_assertions)]
+        {
+            self.graph_value_read_attempts.load(Ordering::Relaxed)
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            0
+        }
     }
 
     /// Build a dependency plan for a set of formulas on sheets
@@ -501,6 +535,9 @@ impl DependencyGraph {
             data_store: DataStore::new(),
             vertex_values: FxHashMap::default(),
             vertex_formulas: FxHashMap::default(),
+            value_cache_enabled: !config.arrow_canonical_values,
+            #[cfg(debug_assertions)]
+            graph_value_read_attempts: AtomicU64::new(0),
             cell_to_vertex: FxHashMap::default(),
             dirty_vertices: FxHashSet::default(),
             volatile_vertices: FxHashSet::default(),
@@ -696,8 +733,13 @@ impl DependencyGraph {
 
             // Update to value kind
             self.store.set_kind(existing_id, VertexKind::Cell);
-            let value_ref = self.data_store.store_value(value);
-            self.vertex_values.insert(existing_id, value_ref);
+            if self.value_cache_enabled {
+                let value_ref = self.data_store.store_value(value);
+                self.vertex_values.insert(existing_id, value_ref);
+            } else {
+                // Ensure no stale payload remains if cache is disabled.
+                self.vertex_values.remove(&existing_id);
+            }
             existing_id
         } else {
             // Create new vertex
@@ -713,8 +755,10 @@ impl DependencyGraph {
                 .add_vertex(packed_coord, vertex_id);
 
             self.store.set_kind(vertex_id, VertexKind::Cell);
-            let value_ref = self.data_store.store_value(value);
-            self.vertex_values.insert(vertex_id, value_ref);
+            if self.value_cache_enabled {
+                let value_ref = self.data_store.store_value(value);
+                self.vertex_values.insert(vertex_id, value_ref);
+            }
             self.cell_to_vertex.insert(addr, vertex_id);
             vertex_id
         };
@@ -728,7 +772,9 @@ impl DependencyGraph {
     /// Reserve capacity hints for upcoming bulk cell inserts (values only for now).
     pub fn reserve_cells(&mut self, additional: usize) {
         self.store.reserve(additional);
-        self.vertex_values.reserve(additional);
+        if self.value_cache_enabled {
+            self.vertex_values.reserve(additional);
+        }
         self.cell_to_vertex.reserve(additional);
         // sheet_indexes: cannot easily reserve per-sheet without distribution; skip.
     }
@@ -747,8 +793,12 @@ impl DependencyGraph {
         let addr = CellRef::new(sheet_id, coord);
         if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
             // Overwrite existing value vertex only (ignore formulas in bulk path)
-            let value_ref = self.data_store.store_value(value);
-            self.vertex_values.insert(existing_id, value_ref);
+            if self.value_cache_enabled {
+                let value_ref = self.data_store.store_value(value);
+                self.vertex_values.insert(existing_id, value_ref);
+            } else {
+                self.vertex_values.remove(&existing_id);
+            }
             self.store.set_kind(existing_id, VertexKind::Cell);
             return;
         }
@@ -758,8 +808,10 @@ impl DependencyGraph {
         self.sheet_index_mut(sheet_id)
             .add_vertex(packed_coord, vertex_id);
         self.store.set_kind(vertex_id, VertexKind::Cell);
-        let value_ref = self.data_store.store_value(value);
-        self.vertex_values.insert(vertex_id, value_ref);
+        if self.value_cache_enabled {
+            let value_ref = self.data_store.store_value(value);
+            self.vertex_values.insert(vertex_id, value_ref);
+        }
         self.cell_to_vertex.insert(addr, vertex_id);
     }
 
@@ -795,8 +847,12 @@ impl DependencyGraph {
             let coord = Coord::from_excel(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
             if !assume_new && let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
-                let value_ref = self.data_store.store_value(value);
-                self.vertex_values.insert(existing_id, value_ref);
+                if self.value_cache_enabled {
+                    let value_ref = self.data_store.store_value(value);
+                    self.vertex_values.insert(existing_id, value_ref);
+                } else {
+                    self.vertex_values.remove(&existing_id);
+                }
                 self.store.set_kind(existing_id, VertexKind::Cell);
                 continue;
             }
@@ -811,7 +867,7 @@ impl DependencyGraph {
             index_items.push((packed, vertex_id));
         }
         // Perform a single batch store for newly allocated values
-        if !new_value_literals.is_empty() {
+        if self.value_cache_enabled && !new_value_literals.is_empty() {
             let vrefs = self.data_store.store_values_batch(new_value_literals);
             debug_assert_eq!(vrefs.len(), new_value_coords.len());
             for (i, (_pc, vid)) in new_value_coords.iter().enumerate() {
@@ -1239,6 +1295,14 @@ impl DependencyGraph {
 
     /// Get current value from a cell
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
+        if !self.value_cache_enabled {
+            #[cfg(debug_assertions)]
+            {
+                self.graph_value_read_attempts
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            return None;
+        }
         let sheet_id = self.sheet_reg.get_id(sheet)?;
         let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
@@ -1830,6 +1894,21 @@ impl DependencyGraph {
 
     /// Updates the cached value of a formula vertex.
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
+        if !self.value_cache_enabled {
+            // Canonical mode: cell/formula vertices must not store values in the graph.
+            match self.store.kind(vertex_id) {
+                VertexKind::Cell
+                | VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::Empty => {
+                    self.vertex_values.remove(&vertex_id);
+                    return;
+                }
+                _ => {
+                    // Allow non-cell vertices to cache values (e.g. named-range formulas).
+                }
+            }
+        }
         let value_ref = self.data_store.store_value(normalize_stored_literal(value));
         self.vertex_values.insert(vertex_id, value_ref);
     }
@@ -2125,8 +2204,12 @@ impl DependencyGraph {
             self.spill_cell_to_anchor.remove(cell);
         }
 
-        // Prepare a single arena value ref for Empty.
-        let empty_ref = self.data_store.store_value(LiteralValue::Empty);
+        // Prepare a single arena value ref for Empty (only when caching is enabled).
+        let empty_ref = if self.value_cache_enabled {
+            Some(self.data_store.store_value(LiteralValue::Empty))
+        } else {
+            None
+        };
 
         // Clear all spill children (excluding the anchor cell).
         let mut changed_vertices: Vec<VertexId> = Vec::new();
@@ -2145,7 +2228,11 @@ impl DependencyGraph {
                 self.remove_dependent_edges(vid);
             }
             self.store.set_kind(vid, VertexKind::Cell);
-            self.vertex_values.insert(vid, empty_ref);
+            if let Some(er) = empty_ref {
+                self.vertex_values.insert(vid, er);
+            } else {
+                self.vertex_values.remove(&vid);
+            }
             self.store.set_dirty(vid, false);
             self.dirty_vertices.remove(&vid);
             changed_vertices.push(vid);
@@ -2362,6 +2449,26 @@ impl DependencyGraph {
 
     /// Get the value stored for a vertex
     pub fn get_value(&self, vertex_id: VertexId) -> Option<LiteralValue> {
+        if !self.value_cache_enabled {
+            // In canonical mode, cell/formula values must not be read from the graph.
+            // Non-cell vertices (e.g. named ranges, external sources) may still use graph storage.
+            match self.store.kind(vertex_id) {
+                VertexKind::Cell
+                | VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::Empty => {
+                    #[cfg(debug_assertions)]
+                    {
+                        self.graph_value_read_attempts
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                    return None;
+                }
+                _ => {
+                    // Allow non-cell vertices to use vertex_values.
+                }
+            }
+        }
         self.vertex_values
             .get(&vertex_id)
             .map(|&value_ref| self.data_store.retrieve_value(value_ref))
@@ -2524,6 +2631,19 @@ impl DependencyGraph {
     /// Internal: Mark vertex as having #REF! error
     #[doc(hidden)]
     pub fn mark_as_ref_error(&mut self, id: VertexId) {
+        if !self.value_cache_enabled {
+            match self.store.kind(id) {
+                VertexKind::Cell
+                | VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::Empty => {
+                    return;
+                }
+                _ => {
+                    // Allow non-cell vertices to use cached values.
+                }
+            }
+        }
         let error = LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref));
         let value_ref = self.data_store.store_value(error);
         self.vertex_values.insert(id, value_ref);
@@ -2533,6 +2653,19 @@ impl DependencyGraph {
 
     /// Check if a vertex has a #REF! error
     pub fn is_ref_error(&self, id: VertexId) -> bool {
+        if !self.value_cache_enabled {
+            match self.store.kind(id) {
+                VertexKind::Cell
+                | VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::Empty => {
+                    return false;
+                }
+                _ => {
+                    // Non-cell vertices may still have cached values.
+                }
+            }
+        }
         if let Some(value_ref) = self.vertex_values.get(&id) {
             let value = self.data_store.retrieve_value(*value_ref);
             if let LiteralValue::Error(err) = value {
