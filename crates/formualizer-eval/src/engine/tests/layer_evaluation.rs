@@ -156,7 +156,7 @@ fn test_evaluation_with_cycles() {
 
     assert_eq!(result.computed_vertices, 1); // C1
     assert_eq!(result.cycle_errors, 1); // The A1-B1 cycle
-    // A1 and B1 should have error values
+                                        // A1 and B1 should have error values
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
         Some(LiteralValue::Error(
@@ -174,7 +174,7 @@ fn test_evaluation_with_cycles() {
     // C1 should be evaluated
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
-        Some(LiteralValue::Int(5))
+        Some(LiteralValue::Number(5.0))
     );
 }
 

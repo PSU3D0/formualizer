@@ -38,6 +38,15 @@ use crate::reference::{CellRef, Coord, SharedRangeRef, SharedRef, SharedSheetLoc
 use formualizer_common::Coord as AbsCoord;
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
 
+#[inline]
+fn normalize_stored_literal(value: LiteralValue) -> LiteralValue {
+    match value {
+        // Public contract: store numerics as Number(f64).
+        LiteralValue::Int(i) => LiteralValue::Number(i as f64),
+        other => other,
+    }
+}
+
 pub use editor::change_log::{ChangeEvent, ChangeLog};
 
 // ChangeEvent is now imported from change_log module
@@ -666,6 +675,7 @@ impl DependencyGraph {
         col: u32,
         value: LiteralValue,
     ) -> Result<OperationSummary, ExcelError> {
+        let value = normalize_stored_literal(value);
         let sheet_id = self.sheet_id_mut(sheet);
         // External API is 1-based; store 0-based coords internally.
         let coord = Coord::from_excel(row, col, true, true);
@@ -731,6 +741,7 @@ impl DependencyGraph {
         col: u32,
         value: LiteralValue,
     ) {
+        let value = normalize_stored_literal(value);
         let sheet_id = self.sheet_id_mut(sheet);
         let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
@@ -780,6 +791,7 @@ impl DependencyGraph {
                 .unwrap_or(false);
 
         for (row, col, value) in collected {
+            let value = normalize_stored_literal(value);
             let coord = Coord::from_excel(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
             if !assume_new && let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
@@ -1818,7 +1830,7 @@ impl DependencyGraph {
 
     /// Updates the cached value of a formula vertex.
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
-        let value_ref = self.data_store.store_value(value);
+        let value_ref = self.data_store.store_value(normalize_stored_literal(value));
         self.vertex_values.insert(vertex_id, value_ref);
     }
 

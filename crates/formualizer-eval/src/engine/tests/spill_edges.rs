@@ -1,4 +1,4 @@
-use crate::engine::{EvalConfig, eval::Engine};
+use crate::engine::{eval::Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
@@ -113,18 +113,9 @@ fn scalar_after_array_clears_spill() {
         Some(LiteralValue::Number(42.0))
     );
     // Previously spilled cells cleared
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 2),
-        Some(LiteralValue::Empty)
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 1),
-        Some(LiteralValue::Empty)
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 2),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 2), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 1), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 2), None);
 }
 
 #[test]

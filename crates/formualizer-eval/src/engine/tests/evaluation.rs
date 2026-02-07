@@ -81,7 +81,7 @@ fn test_evaluation_of_empty_placeholders() {
     let result = engine.evaluate_vertex(a1_id).unwrap();
 
     // The result of A1 should be 0.
-    assert_eq!(result, LiteralValue::Int(0));
+    assert_eq!(result, LiteralValue::Number(0.0));
 }
 
 #[test]

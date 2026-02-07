@@ -52,6 +52,7 @@ mod hardening_503;
 
 mod arrow_canonical_601;
 mod arrow_canonical_604;
+mod arrow_canonical_606;
 mod effects_603;
 
 mod implicit_intersection_103;

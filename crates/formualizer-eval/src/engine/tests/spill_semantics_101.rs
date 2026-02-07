@@ -71,14 +71,8 @@ fn spill_conflict_clears_previous_projection() {
     }
 
     // Previous spill children are cleared; new spill is not projected.
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 2),
-        Some(LiteralValue::Empty)
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 3),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 2), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 3), None);
     assert_eq!(
         engine.get_cell_value("Sheet1", 2, 1),
         Some(LiteralValue::Text("X".into()))
@@ -151,12 +145,6 @@ fn spill_max_cells_cap_blocks_and_clears_children() {
         Some(LiteralValue::Error(e)) => assert_eq!(e, "#SPILL!"),
         v => panic!("expected #SPILL! at A1, got {v:?}"),
     }
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 2),
-        Some(LiteralValue::Empty)
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 3),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 2), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 3), None);
 }

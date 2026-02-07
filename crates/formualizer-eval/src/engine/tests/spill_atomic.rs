@@ -1,8 +1,8 @@
-use crate::engine::EvalConfig;
 use crate::engine::eval::Engine;
+use crate::engine::EvalConfig;
 use crate::test_workbook::TestWorkbook;
-use formualizer_parse::LiteralValue;
 use formualizer_parse::parser::parse;
+use formualizer_parse::LiteralValue;
 
 #[test]
 fn spill_commit_is_atomic_under_fault() {
@@ -99,18 +99,9 @@ fn spill_resize_shrink_is_atomic() {
         engine.get_cell_value("Sheet1", 1, 1),
         Some(LiteralValue::Number(9.0))
     );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 2),
-        Some(LiteralValue::Empty)
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 1),
-        Some(LiteralValue::Empty)
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 2),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 2), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 1), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 2), None);
 }
 
 #[test]

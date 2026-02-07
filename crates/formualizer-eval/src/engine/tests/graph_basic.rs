@@ -15,7 +15,7 @@ fn test_vertex_creation_and_lookup() {
 
     // Test that we can look up the value
     let value = graph.get_cell_value("Sheet1", 1, 1);
-    assert_eq!(value, Some(LiteralValue::Int(42)));
+    assert_eq!(value, Some(LiteralValue::Number(42.0)));
 
     // Test that non-existent cells return None
     let empty_value = graph.get_cell_value("Sheet1", 2, 2);
@@ -84,15 +84,15 @@ fn test_cell_address_mapping() {
     // Verify values are correct
     assert_eq!(
         graph.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Int(1))
+        Some(LiteralValue::Number(1.0))
     );
     assert_eq!(
         graph.get_cell_value("Sheet1", 2, 2),
-        Some(LiteralValue::Int(2))
+        Some(LiteralValue::Number(2.0))
     );
     assert_eq!(
         graph.get_cell_value("Sheet2", 1, 1),
-        Some(LiteralValue::Int(3))
+        Some(LiteralValue::Number(3.0))
     );
 }
 
@@ -106,7 +106,7 @@ fn test_vertex_kind_transitions() {
         .unwrap();
     assert_eq!(
         graph.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Int(42))
+        Some(LiteralValue::Number(42.0))
     );
 
     // Transition to a formula (we'll use a simple literal AST for now)
