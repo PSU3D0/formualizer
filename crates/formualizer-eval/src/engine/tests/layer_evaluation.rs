@@ -157,20 +157,14 @@ fn test_evaluation_with_cycles() {
     assert_eq!(result.computed_vertices, 1); // C1
     assert_eq!(result.cycle_errors, 1); // The A1-B1 cycle
                                         // A1 and B1 should have error values
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Error(
-            formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind::Circ)
-                .with_message("Circular dependency detected".to_string())
-        ))
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 2),
-        Some(LiteralValue::Error(
-            formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind::Circ)
-                .with_message("Circular dependency detected".to_string())
-        ))
-    );
+    for (r, c) in [(1u32, 1u32), (1u32, 2u32)] {
+        match engine.get_cell_value("Sheet1", r, c) {
+            Some(LiteralValue::Error(e)) => {
+                assert_eq!(e.kind, formualizer_common::ExcelErrorKind::Circ);
+            }
+            v => panic!("expected #CIRC! at R{r}C{c}, got {v:?}"),
+        }
+    }
     // C1 should be evaluated
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),

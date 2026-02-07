@@ -887,6 +887,16 @@ impl Overlay {
         }
         delta
     }
+
+    #[inline]
+    pub fn remove(&mut self, off: usize) -> isize {
+        let Some(old) = self.map.remove(&off) else {
+            return 0;
+        };
+        let old_est = Self::ENTRY_BASE_BYTES + old.estimated_payload_bytes();
+        self.estimated_bytes = self.estimated_bytes.saturating_sub(old_est);
+        -(old_est as isize)
+    }
     #[inline]
     pub fn clear(&mut self) -> usize {
         let freed = self.estimated_bytes;

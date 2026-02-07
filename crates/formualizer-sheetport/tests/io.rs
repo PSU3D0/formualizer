@@ -153,8 +153,8 @@ fn build_workbook() -> Result<Workbook, SheetPortError> {
     wb.add_sheet("Outputs").map_err(SheetPortError::from)?;
 
     set_value(&mut wb, "Inputs", 2, 2, LiteralValue::Text("WH-001".into()))?;
-    set_value(&mut wb, "Inputs", 1, 2, LiteralValue::Int(3))?;
-    set_value(&mut wb, "Inputs", 1, 3, LiteralValue::Int(2025))?;
+    set_value(&mut wb, "Inputs", 1, 2, LiteralValue::Number(3.0))?;
+    set_value(&mut wb, "Inputs", 1, 3, LiteralValue::Number(2025.0))?;
 
     // Headers
     set_value(&mut wb, "Inventory", 1, 1, LiteralValue::Text("sku".into()))?;
@@ -202,9 +202,9 @@ fn build_workbook() -> Result<Workbook, SheetPortError> {
         2,
         LiteralValue::Text("Widget".into()),
     )?;
-    set_value(&mut wb, "Inventory", 2, 3, LiteralValue::Int(30))?;
-    set_value(&mut wb, "Inventory", 2, 4, LiteralValue::Int(12))?;
-    set_value(&mut wb, "Inventory", 2, 5, LiteralValue::Int(5))?;
+    set_value(&mut wb, "Inventory", 2, 3, LiteralValue::Number(30.0))?;
+    set_value(&mut wb, "Inventory", 2, 4, LiteralValue::Number(12.0))?;
+    set_value(&mut wb, "Inventory", 2, 5, LiteralValue::Number(5.0))?;
 
     set_value(
         &mut wb,
@@ -220,9 +220,9 @@ fn build_workbook() -> Result<Workbook, SheetPortError> {
         2,
         LiteralValue::Text("Gadget".into()),
     )?;
-    set_value(&mut wb, "Inventory", 3, 3, LiteralValue::Int(45))?;
-    set_value(&mut wb, "Inventory", 3, 4, LiteralValue::Int(18))?;
-    set_value(&mut wb, "Inventory", 3, 5, LiteralValue::Int(7))?;
+    set_value(&mut wb, "Inventory", 3, 3, LiteralValue::Number(45.0))?;
+    set_value(&mut wb, "Inventory", 3, 4, LiteralValue::Number(18.0))?;
+    set_value(&mut wb, "Inventory", 3, 5, LiteralValue::Number(7.0))?;
 
     set_formula(&mut wb, "Outputs", 2, 2, "COUNTA(Inventory!A2:A100)")?;
     set_formula(&mut wb, "Outputs", 3, 2, "SUM(Inventory!C2:C100)")?;
@@ -282,9 +282,12 @@ fn singular_io_roundtrip() -> Result<(), SheetPortError> {
         |v| matches!(v, LiteralValue::Text(text) if text == "WH-001"),
     );
 
-    assert_record_field(&inputs, "planning_window", "month", |v| {
-        matches!(v, LiteralValue::Int(3))
-    });
+    assert_record_field(
+        &inputs,
+        "planning_window",
+        "month",
+        |v| matches!(v, LiteralValue::Number(n) if (*n - 3.0).abs() < 1e-9),
+    );
 
     let inventory = inputs
         .get("sku_inventory")
@@ -309,7 +312,7 @@ fn singular_io_roundtrip() -> Result<(), SheetPortError> {
     );
 
     let mut record_update = BTreeMap::new();
-    record_update.insert("month".into(), LiteralValue::Int(9));
+    record_update.insert("month".into(), LiteralValue::Number(9.0));
     update.insert("planning_window", PortValue::Record(record_update));
 
     let rows = vec![
@@ -323,14 +326,14 @@ fn singular_io_roundtrip() -> Result<(), SheetPortError> {
     match inputs_after.get("sku_inventory") {
         Some(PortValue::Table(table)) => {
             assert_eq!(table.rows.len(), 2);
-            assert_eq!(
+            assert!(matches!(
                 table.rows[0].values.get("on_hand"),
-                Some(&LiteralValue::Int(40))
-            );
-            assert_eq!(
+                Some(LiteralValue::Number(n)) if (*n - 40.0).abs() < 1e-9
+            ));
+            assert!(matches!(
                 table.rows[1].values.get("on_hand"),
-                Some(&LiteralValue::Int(60))
-            );
+                Some(LiteralValue::Number(n)) if (*n - 60.0).abs() < 1e-9
+            ));
         }
         other => panic!("expected table after write, got {other:?}"),
     }
@@ -388,12 +391,18 @@ fn record_defaults_fill_missing_fields() -> Result<(), SheetPortError> {
     let manifest = parse_manifest();
     let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
     let inputs = sheetport.read_inputs()?;
-    assert_record_field(&inputs, "planning_window", "month", |v| {
-        matches!(v, LiteralValue::Int(1))
-    });
-    assert_record_field(&inputs, "planning_window", "year", |v| {
-        matches!(v, LiteralValue::Int(2024))
-    });
+    assert_record_field(
+        &inputs,
+        "planning_window",
+        "month",
+        |v| matches!(v, LiteralValue::Number(n) if (*n - 1.0).abs() < 1e-9),
+    );
+    assert_record_field(
+        &inputs,
+        "planning_window",
+        "year",
+        |v| matches!(v, LiteralValue::Number(n) if (*n - 2024.0).abs() < 1e-9),
+    );
     Ok(())
 }
 
@@ -552,7 +561,7 @@ fn write_inputs_rejects_out_of_range_record_field() -> Result<(), SheetPortError
     let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
 
     let mut record = BTreeMap::new();
-    record.insert("month".into(), LiteralValue::Int(13));
+    record.insert("month".into(), LiteralValue::Number(13.0));
     let mut update = InputUpdate::new();
     update.insert("planning_window", PortValue::Record(record));
 
@@ -560,11 +569,9 @@ fn write_inputs_rejects_out_of_range_record_field() -> Result<(), SheetPortError
         .write_inputs(update)
         .expect_err("expected constraint violation");
     let violations = expect_constraint(err);
-    assert!(
-        violations
-            .iter()
-            .any(|v| v.path.ends_with("planning_window.month"))
-    );
+    assert!(violations
+        .iter()
+        .any(|v| v.path.ends_with("planning_window.month")));
     Ok(())
 }
 
@@ -594,8 +601,8 @@ fn table_updates_require_all_columns() -> Result<(), SheetPortError> {
     let mut row_values = BTreeMap::new();
     row_values.insert("sku".into(), LiteralValue::Text("SKU-MISSING".into()));
     row_values.insert("description".into(), LiteralValue::Text("Missing".into()));
-    row_values.insert("on_hand".into(), LiteralValue::Int(10));
-    row_values.insert("safety_stock".into(), LiteralValue::Int(5));
+    row_values.insert("on_hand".into(), LiteralValue::Number(10.0));
+    row_values.insert("safety_stock".into(), LiteralValue::Number(5.0));
     // deliberately omit lead_time_days
 
     let table = TableValue::new(vec![TableRow::new(row_values)]);
@@ -606,11 +613,9 @@ fn table_updates_require_all_columns() -> Result<(), SheetPortError> {
         .write_inputs(update)
         .expect_err("expected table violation");
     let violations = expect_constraint(err);
-    assert!(
-        violations
-            .iter()
-            .any(|v| v.path.contains("sku_inventory[0].lead_time_days"))
-    );
+    assert!(violations
+        .iter()
+        .any(|v| v.path.contains("sku_inventory[0].lead_time_days")));
     Ok(())
 }
 
@@ -669,9 +674,9 @@ fn layout_table_stops_at_first_blank_row() -> Result<(), SheetPortError> {
         2,
         LiteralValue::Text("Spare Parts".into()),
     )?;
-    set_value(&mut workbook, "Inventory", 5, 3, LiteralValue::Int(5))?;
-    set_value(&mut workbook, "Inventory", 5, 4, LiteralValue::Int(2))?;
-    set_value(&mut workbook, "Inventory", 5, 5, LiteralValue::Int(1))?;
+    set_value(&mut workbook, "Inventory", 5, 3, LiteralValue::Number(5.0))?;
+    set_value(&mut workbook, "Inventory", 5, 4, LiteralValue::Number(2.0))?;
+    set_value(&mut workbook, "Inventory", 5, 5, LiteralValue::Number(1.0))?;
 
     let manifest = parse_manifest();
     let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
@@ -777,9 +782,9 @@ fn layout_table_sheet_end_terminates_at_sheet_end_or_falls_back() -> Result<(), 
         2,
         LiteralValue::Text("Spare Parts".into()),
     )?;
-    set_value(&mut workbook, "Inventory", 5, 3, LiteralValue::Int(5))?;
-    set_value(&mut workbook, "Inventory", 5, 4, LiteralValue::Int(2))?;
-    set_value(&mut workbook, "Inventory", 5, 5, LiteralValue::Int(1))?;
+    set_value(&mut workbook, "Inventory", 5, 3, LiteralValue::Number(5.0))?;
+    set_value(&mut workbook, "Inventory", 5, 4, LiteralValue::Number(2.0))?;
+    set_value(&mut workbook, "Inventory", 5, 5, LiteralValue::Number(1.0))?;
 
     let has_dimensions = workbook.sheet_dimensions("Inventory").is_some();
 
@@ -914,10 +919,10 @@ fn table_update_rejects_unknown_columns() -> Result<(), SheetPortError> {
     let mut row_values = BTreeMap::new();
     row_values.insert("sku".into(), LiteralValue::Text("SKU-EXTRA".into()));
     row_values.insert("description".into(), LiteralValue::Text("Extra".into()));
-    row_values.insert("on_hand".into(), LiteralValue::Int(12));
-    row_values.insert("safety_stock".into(), LiteralValue::Int(6));
-    row_values.insert("lead_time_days".into(), LiteralValue::Int(3));
-    row_values.insert("unexpected".into(), LiteralValue::Int(1));
+    row_values.insert("on_hand".into(), LiteralValue::Number(12.0));
+    row_values.insert("safety_stock".into(), LiteralValue::Number(6.0));
+    row_values.insert("lead_time_days".into(), LiteralValue::Number(3.0));
+    row_values.insert("unexpected".into(), LiteralValue::Number(1.0));
 
     let table = TableValue::new(vec![TableRow::new(row_values)]);
     let mut update = InputUpdate::new();
@@ -927,11 +932,9 @@ fn table_update_rejects_unknown_columns() -> Result<(), SheetPortError> {
         .write_inputs(update)
         .expect_err("expected validation failure for unknown column");
     let violations = expect_constraint(err);
-    assert!(
-        violations
-            .iter()
-            .any(|v| v.path.contains("sku_inventory[0].unexpected"))
-    );
+    assert!(violations
+        .iter()
+        .any(|v| v.path.contains("sku_inventory[0].unexpected")));
     Ok(())
 }
 
@@ -949,14 +952,17 @@ fn partial_record_update_preserves_other_fields() -> Result<(), SheetPortError> 
 
     let mut update = InputUpdate::new();
     let mut record = BTreeMap::new();
-    record.insert("month".into(), LiteralValue::Int(11));
+    record.insert("month".into(), LiteralValue::Number(11.0));
     update.insert("planning_window", PortValue::Record(record));
     sheetport.write_inputs(update)?;
 
     let after = sheetport.read_inputs()?;
     match after.get("planning_window") {
         Some(PortValue::Record(map)) => {
-            assert_eq!(map.get("month"), Some(&LiteralValue::Int(11)));
+            assert!(matches!(
+                map.get("month"),
+                Some(LiteralValue::Number(n)) if (*n - 11.0).abs() < 1e-9
+            ));
             assert_eq!(map.get("year"), Some(&original_year));
         }
         other => panic!("expected record after update, got {other:?}"),
@@ -1045,16 +1051,19 @@ fn make_inventory_row(
     let mut values = BTreeMap::new();
     values.insert("sku".into(), LiteralValue::Text(sku.into()));
     values.insert("description".into(), LiteralValue::Text(description.into()));
-    values.insert("on_hand".into(), LiteralValue::Int(on_hand));
-    values.insert("safety_stock".into(), LiteralValue::Int(safety));
-    values.insert("lead_time_days".into(), LiteralValue::Int(lead_time));
+    values.insert("on_hand".into(), LiteralValue::Number(on_hand as f64));
+    values.insert("safety_stock".into(), LiteralValue::Number(safety as f64));
+    values.insert(
+        "lead_time_days".into(),
+        LiteralValue::Number(lead_time as f64),
+    );
     TableRow::new(values)
 }
 
 fn make_update(month: i64, rows: Vec<(&str, &str, i64, i64, i64)>) -> InputUpdate {
     let mut update = InputUpdate::new();
     let mut record = BTreeMap::new();
-    record.insert("month".into(), LiteralValue::Int(month));
+    record.insert("month".into(), LiteralValue::Number(month as f64));
     update.insert("planning_window", PortValue::Record(record));
 
     let table_rows = rows

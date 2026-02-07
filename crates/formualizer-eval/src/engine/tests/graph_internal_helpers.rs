@@ -18,7 +18,7 @@ fn simple_formula(row: u32, col: u32) -> ASTNode {
 
 #[test]
 fn test_snapshot_vertex() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create a cell with value
     let result = graph
@@ -40,7 +40,7 @@ fn test_snapshot_vertex() {
 
 #[test]
 fn test_snapshot_vertex_with_formula() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create dependencies
     graph
@@ -67,7 +67,7 @@ fn test_snapshot_vertex_with_formula() {
 
 #[test]
 fn test_mark_as_ref_error() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create a formula cell
     let formula = simple_formula(1, 1);
@@ -92,7 +92,7 @@ fn test_mark_as_ref_error() {
 
 #[test]
 fn test_remove_all_edges() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create a network of dependencies
     // A1 = 10
@@ -150,7 +150,7 @@ fn test_remove_all_edges() {
 
 #[test]
 fn test_mark_dependents_dirty() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create dependency chain: A1 -> B1 -> C1 -> D1
     let a1_result = graph
@@ -225,7 +225,7 @@ fn test_mark_dependents_dirty() {
 
 #[test]
 fn test_snapshot_preserves_all_state() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create a complex vertex with all properties
     let formula = ASTNode {

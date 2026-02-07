@@ -50,3 +50,18 @@ pub fn arrow_eval_config() -> EvalConfig {
 pub fn eval_config_with_range_limit(limit: usize) -> EvalConfig {
     EvalConfig::default().with_range_expansion_limit(limit)
 }
+
+/// EvalConfig suitable for unit tests that assert on dependency-graph cached values.
+///
+/// When Arrow-canonical values are forced as the default in tests, `DependencyGraph::new()`
+/// disables the graph value cache and `get_value/get_cell_value` will return `None`.
+/// These tests are intentionally graph-truth, so we explicitly opt-out.
+pub fn graph_truth_eval_config() -> EvalConfig {
+    let mut cfg = EvalConfig::default();
+    cfg.arrow_canonical_values = false;
+    cfg
+}
+
+pub fn graph_truth_graph() -> crate::engine::DependencyGraph {
+    crate::engine::DependencyGraph::new_with_config(graph_truth_eval_config())
+}

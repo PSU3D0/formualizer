@@ -38,7 +38,9 @@ fn workbook_read_range_sees_spilled_values_with_parallel_enabled() {
     let mut wb = formualizer_workbook::Workbook::new_with_config(cfg);
     wb.add_sheet("S").unwrap();
 
-    wb.set_formula("S", 1, 2, "=1").unwrap();
+    // Use an independent formula vertex OUTSIDE the spill region to force parallel evaluation
+    // without blocking the spill.
+    wb.set_formula("S", 1, 3, "=1").unwrap();
     wb.set_formula("S", 1, 1, "{1,2;3,4}").unwrap();
 
     wb.evaluate_all().unwrap();

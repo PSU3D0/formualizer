@@ -1,6 +1,18 @@
 use formualizer_common::{LiteralValue, RangeAddress};
 use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
 
+fn assert_numeric_eq(v: Option<LiteralValue>, expected: f64) {
+    match v {
+        Some(LiteralValue::Number(n)) => assert!((n - expected).abs() < 1e-9),
+        Some(LiteralValue::Int(i)) => assert!(((i as f64) - expected).abs() < 1e-9),
+        other => panic!("expected numeric {expected}, got {other:?}"),
+    }
+}
+
+fn assert_emptyish(v: Option<LiteralValue>) {
+    assert!(matches!(v, None | Some(LiteralValue::Empty)));
+}
+
 #[test]
 fn values_roundtrip_and_range() {
     let mut wb = Workbook::new();
@@ -8,7 +20,7 @@ fn values_roundtrip_and_range() {
     wb.set_value("S", 1, 1, LiteralValue::Int(10)).unwrap();
     wb.set_value("S", 2, 1, LiteralValue::Number(2.5)).unwrap();
 
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(10)));
+    assert_numeric_eq(wb.get_value("S", 1, 1), 10.0);
     assert_eq!(wb.get_value("S", 2, 1), Some(LiteralValue::Number(2.5)));
 
     let ra = RangeAddress::new("S", 1, 1, 2, 1).unwrap();
@@ -28,7 +40,7 @@ fn deferred_formula_evaluation() {
     wb.set_formula("S", 1, 2, "A1*3").unwrap();
 
     // Not evaluated yet; no value stored for a staged formula
-    assert_eq!(wb.get_value("S", 1, 2), Some(LiteralValue::Empty));
+    assert_emptyish(wb.get_value("S", 1, 2));
 
     // Demand-driven eval builds graph for sheet S and computes
     let v = wb.evaluate_cell("S", 1, 2).unwrap();
@@ -61,7 +73,7 @@ fn load_from_json_reader() {
     let cfg = WorkbookConfig::interactive();
     let mut wb = Workbook::from_reader(json, LoadStrategy::EagerAll, cfg).unwrap();
     // Deferred mode: formula not evaluated yet (no stored value)
-    assert_eq!(wb.get_value("S", 1, 2), Some(LiteralValue::Empty));
+    assert_emptyish(wb.get_value("S", 1, 2));
     // Evaluate
     let v = wb.evaluate_cell("S", 1, 2).unwrap();
     assert_eq!(v, LiteralValue::Number(20.0));
@@ -74,7 +86,7 @@ fn value_edit_triggers_recompute_in_deferred_mode() {
     wb.set_value("S", 1, 1, LiteralValue::Int(3)).unwrap();
     wb.set_formula("S", 1, 2, "A1*2").unwrap();
 
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(3)));
+    assert_numeric_eq(wb.get_value("S", 1, 1), 3.0);
     assert_eq!(wb.get_formula("S", 1, 2), Some("A1*2".to_string()));
 
     let v = wb.evaluate_cell("S", 1, 2).unwrap();
@@ -177,7 +189,7 @@ fn set_formulas_batch_deferred_then_eval() {
     let forms = vec![vec!["A1*2".to_string(), "B1+1".to_string()]];
     wb.set_formulas("S", 2, 1, &forms).unwrap();
     // No values yet for staged formulas
-    assert_eq!(wb.get_value("S", 2, 1), Some(LiteralValue::Empty));
+    assert_emptyish(wb.get_value("S", 2, 1));
     // Evaluate both
     let out = wb.evaluate_cells(&[("S", 2, 1), ("S", 2, 2)]).unwrap();
     assert_eq!(out[0], LiteralValue::Number(10.0));
@@ -192,17 +204,17 @@ fn changelog_undo_redo_values() {
     wb.add_sheet("S").unwrap();
     wb.set_value("S", 1, 1, LiteralValue::Int(1)).unwrap();
     wb.set_value("S", 1, 2, LiteralValue::Int(2)).unwrap();
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(1)));
+    assert_numeric_eq(wb.get_value("S", 1, 1), 1.0);
 
     wb.begin_action("edit A1");
     wb.set_value("S", 1, 1, LiteralValue::Int(5)).unwrap();
     wb.end_action();
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(5)));
+    assert_numeric_eq(wb.get_value("S", 1, 1), 5.0);
 
     wb.undo().unwrap();
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(1)));
+    assert_numeric_eq(wb.get_value("S", 1, 1), 1.0);
     wb.redo().unwrap();
-    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Int(5)));
+    assert_numeric_eq(wb.get_value("S", 1, 1), 5.0);
 }
 
 #[test]

@@ -1,7 +1,7 @@
-use crate::engine::graph::DependencyGraph;
 use crate::engine::graph::editor::{
     EditorError, VertexDataPatch, VertexEditor, VertexMeta, VertexMetaPatch,
 };
+use crate::engine::graph::DependencyGraph;
 use crate::engine::vertex::{VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
 use formualizer_common::Coord as AbsCoord;
@@ -9,7 +9,7 @@ use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parse;
 
 fn create_test_graph() -> DependencyGraph {
-    DependencyGraph::new()
+    super::common::graph_truth_graph()
 }
 
 fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
