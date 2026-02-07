@@ -905,6 +905,11 @@ impl Overlay {
     pub fn any_in_range(&self, range: core::ops::Range<usize>) -> bool {
         self.map.keys().any(|k| range.contains(k))
     }
+
+    /// Iterate over all `(offset, value)` pairs in the overlay.
+    pub fn iter(&self) -> impl Iterator<Item = (&usize, &OverlayValue)> {
+        self.map.iter()
+    }
 }
 
 impl ArrowSheet {
@@ -1422,6 +1427,228 @@ impl ArrowSheet {
         ch_mut.meta.non_null_text = non_text;
         ch_mut.meta.non_null_err = non_err;
         freed
+    }
+
+    /// Compact a dense chunk's computed overlay into its base arrays, freeing overlay memory
+    /// while preserving the data. Returns the number of bytes freed.
+    ///
+    /// This is the computed-overlay counterpart of `maybe_compact_chunk` (which compacts
+    /// user-edit overlays). The read cascade is `overlay → computed_overlay → base`, so
+    /// folding computed overlay entries into base arrays is transparent: the `overlay` layer
+    /// (user edits) is left untouched and still takes precedence on reads.
+    pub fn compact_computed_overlay_chunk(&mut self, col_idx: usize, ch_idx: usize) -> usize {
+        if col_idx >= self.columns.len() {
+            return 0;
+        }
+
+        let (len, tags, numbers, booleans, text, errors, non_num, non_bool, non_text, non_err) = {
+            let Some(ch_ref) = self.columns[col_idx].chunk(ch_idx) else {
+                return 0;
+            };
+            let len = ch_ref.type_tag.len();
+            if len == 0 || ch_ref.computed_overlay.is_empty() {
+                return 0;
+            }
+
+            let mut tag_b = UInt8Builder::with_capacity(len);
+            let mut nb = Float64Builder::with_capacity(len);
+            let mut bb = BooleanBuilder::with_capacity(len);
+            let mut sb = StringBuilder::with_capacity(len, len * 8);
+            let mut eb = UInt8Builder::with_capacity(len);
+            let mut non_num = 0usize;
+            let mut non_bool = 0usize;
+            let mut non_text = 0usize;
+            let mut non_err = 0usize;
+
+            for i in 0..len {
+                if let Some(ov) = ch_ref.computed_overlay.get(i) {
+                    match ov {
+                        OverlayValue::Empty => {
+                            tag_b.append_value(TypeTag::Empty as u8);
+                            nb.append_null();
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_null();
+                        }
+                        OverlayValue::Number(n) => {
+                            tag_b.append_value(TypeTag::Number as u8);
+                            nb.append_value(*n);
+                            non_num += 1;
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_null();
+                        }
+                        OverlayValue::Boolean(b) => {
+                            tag_b.append_value(TypeTag::Boolean as u8);
+                            nb.append_null();
+                            bb.append_value(*b);
+                            non_bool += 1;
+                            sb.append_null();
+                            eb.append_null();
+                        }
+                        OverlayValue::Text(s) => {
+                            tag_b.append_value(TypeTag::Text as u8);
+                            nb.append_null();
+                            bb.append_null();
+                            sb.append_value(s);
+                            non_text += 1;
+                            eb.append_null();
+                        }
+                        OverlayValue::Error(code) => {
+                            tag_b.append_value(TypeTag::Error as u8);
+                            nb.append_null();
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_value(*code);
+                            non_err += 1;
+                        }
+                        OverlayValue::Pending => {
+                            tag_b.append_value(TypeTag::Pending as u8);
+                            nb.append_null();
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_null();
+                        }
+                    }
+                } else {
+                    let tag = TypeTag::from_u8(ch_ref.type_tag.value(i));
+                    match tag {
+                        TypeTag::Empty => {
+                            tag_b.append_value(TypeTag::Empty as u8);
+                            nb.append_null();
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_null();
+                        }
+                        TypeTag::Number | TypeTag::DateTime | TypeTag::Duration => {
+                            tag_b.append_value(TypeTag::Number as u8);
+                            if let Some(a) = &ch_ref.numbers {
+                                let fa = a.as_any().downcast_ref::<Float64Array>().unwrap();
+                                if fa.is_null(i) {
+                                    nb.append_null();
+                                } else {
+                                    nb.append_value(fa.value(i));
+                                    non_num += 1;
+                                }
+                            } else {
+                                nb.append_null();
+                            }
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_null();
+                        }
+                        TypeTag::Boolean => {
+                            tag_b.append_value(TypeTag::Boolean as u8);
+                            nb.append_null();
+                            if let Some(a) = &ch_ref.booleans {
+                                let ba = a.as_any().downcast_ref::<BooleanArray>().unwrap();
+                                if ba.is_null(i) {
+                                    bb.append_null();
+                                } else {
+                                    bb.append_value(ba.value(i));
+                                    non_bool += 1;
+                                }
+                            } else {
+                                bb.append_null();
+                            }
+                            sb.append_null();
+                            eb.append_null();
+                        }
+                        TypeTag::Text => {
+                            tag_b.append_value(TypeTag::Text as u8);
+                            nb.append_null();
+                            bb.append_null();
+                            if let Some(a) = &ch_ref.text {
+                                let sa = a.as_any().downcast_ref::<StringArray>().unwrap();
+                                if sa.is_null(i) {
+                                    sb.append_null();
+                                } else {
+                                    sb.append_value(sa.value(i));
+                                    non_text += 1;
+                                }
+                            } else {
+                                sb.append_null();
+                            }
+                            eb.append_null();
+                        }
+                        TypeTag::Error => {
+                            tag_b.append_value(TypeTag::Error as u8);
+                            nb.append_null();
+                            bb.append_null();
+                            sb.append_null();
+                            if let Some(a) = &ch_ref.errors {
+                                let ea = a.as_any().downcast_ref::<UInt8Array>().unwrap();
+                                if ea.is_null(i) {
+                                    eb.append_null();
+                                } else {
+                                    eb.append_value(ea.value(i));
+                                    non_err += 1;
+                                }
+                            } else {
+                                eb.append_null();
+                            }
+                        }
+                        TypeTag::Pending => {
+                            tag_b.append_value(TypeTag::Pending as u8);
+                            nb.append_null();
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_null();
+                        }
+                    }
+                }
+            }
+
+            let tags = Arc::new(tag_b.finish());
+            let numbers = {
+                let a = nb.finish();
+                if non_num == 0 { None } else { Some(Arc::new(a)) }
+            };
+            let booleans = {
+                let a = bb.finish();
+                if non_bool == 0 { None } else { Some(Arc::new(a)) }
+            };
+            let text = {
+                let a = sb.finish();
+                if non_text == 0 { None } else { Some(Arc::new(a) as ArrayRef) }
+            };
+            let errors = {
+                let a = eb.finish();
+                if non_err == 0 { None } else { Some(Arc::new(a)) }
+            };
+
+            (len, tags, numbers, booleans, text, errors, non_num, non_bool, non_text, non_err)
+        };
+
+        let Some(ch_mut) = self.columns[col_idx].chunk_mut(ch_idx) else {
+            return 0;
+        };
+
+        ch_mut.type_tag = tags;
+        ch_mut.numbers = numbers;
+        ch_mut.booleans = booleans;
+        ch_mut.text = text;
+        ch_mut.errors = errors;
+        let freed = ch_mut.computed_overlay.clear();
+        ch_mut.lowered_text = OnceCell::new();
+        ch_mut.meta.len = len;
+        ch_mut.meta.non_null_num = non_num;
+        ch_mut.meta.non_null_bool = non_bool;
+        ch_mut.meta.non_null_text = non_text;
+        ch_mut.meta.non_null_err = non_err;
+        freed
+    }
+
+    /// Compact a sparse chunk's computed overlay into its base arrays.
+    /// Equivalent to `compact_computed_overlay_chunk` but for sparse chunks.
+    pub fn compact_computed_overlay_sparse_chunk(
+        &mut self,
+        col_idx: usize,
+        ch_idx: usize,
+    ) -> usize {
+        // Sparse chunks are accessed via the same chunk/chunk_mut API,
+        // so we delegate to the dense method which already handles both.
+        self.compact_computed_overlay_chunk(col_idx, ch_idx)
     }
 
     /// Insert `count` rows before absolute 0-based row `before`.

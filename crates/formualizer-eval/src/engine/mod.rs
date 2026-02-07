@@ -3,6 +3,7 @@
 //! Provides incremental formula evaluation with dependency tracking.
 
 pub mod arrow_ingest;
+pub mod effects;
 pub mod eval;
 pub mod eval_delta;
 pub mod graph;

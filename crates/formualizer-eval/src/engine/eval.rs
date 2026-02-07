@@ -372,6 +372,11 @@ where
             staged_formulas: std::collections::HashMap::new(),
             active_cancel_flag: None,
         };
+        if engine.config.arrow_canonical_values {
+            engine.config.arrow_storage_enabled = true;
+            engine.config.delta_overlay_enabled = true;
+            engine.config.write_formula_overlay_enabled = true;
+        }
         let default_sheet = engine.graph.default_sheet_name().to_string();
         engine.ensure_arrow_sheet(&default_sheet);
         engine
@@ -409,6 +414,11 @@ where
             staged_formulas: std::collections::HashMap::new(),
             active_cancel_flag: None,
         };
+        if engine.config.arrow_canonical_values {
+            engine.config.arrow_storage_enabled = true;
+            engine.config.delta_overlay_enabled = true;
+            engine.config.write_formula_overlay_enabled = true;
+        }
         let default_sheet = engine.graph.default_sheet_name().to_string();
         engine.ensure_arrow_sheet(&default_sheet);
         engine
@@ -1594,19 +1604,43 @@ where
     }
 
     fn disable_computed_overlay_mirroring_due_to_budget(&mut self, _cap: usize) {
-        // Ticket 601 guardrail: in arrow-canonical mode, clearing overlays would destroy
-        // the source of truth. Budget enforcement must use compaction (ticket 602) instead.
-        assert!(
-            !self.config.arrow_canonical_values,
-            "arrow_canonical_values=true requires correctness-preserving budget \
-             enforcement (see ticket 602)"
-        );
-        // Deterministic behavior: stop adding computed overlay entries and clear what we've
+        if self.config.arrow_canonical_values {
+            // Canonical mode: compact computed overlays into base lanes.
+            // Data is preserved; budget is freed; mirroring continues.
+            self.compact_all_computed_overlays();
+            return;
+        }
+        // Non-canonical mode: stop adding computed overlay entries and clear what we've
         // accumulated so far. Switch RangeView reads to per-cell materialization so formulas
         // remain correct (they read from the dependency graph).
         self.computed_overlay_mirroring_disabled = true;
         self.force_materialize_range_views = true;
         self.clear_all_computed_overlays();
+    }
+
+    /// Fold all computed overlay entries across all sheets into their base arrays.
+    /// This preserves data while freeing overlay memory, allowing mirroring to continue.
+    fn compact_all_computed_overlays(&mut self) {
+        let mut freed_total = 0usize;
+        for sheet in self.arrow_sheets.sheets.iter_mut() {
+            for col_idx in 0..sheet.columns.len() {
+                // Dense chunks
+                let num_dense = sheet.columns[col_idx].chunks.len();
+                for ch_idx in 0..num_dense {
+                    freed_total += sheet.compact_computed_overlay_chunk(col_idx, ch_idx);
+                }
+                // Sparse chunks
+                let sparse_keys: Vec<usize> =
+                    sheet.columns[col_idx].sparse_chunks.keys().copied().collect();
+                for ch_idx in sparse_keys {
+                    freed_total += sheet.compact_computed_overlay_sparse_chunk(col_idx, ch_idx);
+                }
+            }
+        }
+        self.computed_overlay_bytes_estimate = self
+            .computed_overlay_bytes_estimate
+            .saturating_sub(freed_total);
+        self.overlay_compactions = self.overlay_compactions.saturating_add(1);
     }
 
     fn mirror_vertex_value_to_overlay(&mut self, vertex_id: VertexId, value: &LiteralValue) {
@@ -1813,6 +1847,9 @@ where
 
     /// Get a cell value
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
+        if self.config.arrow_canonical_values {
+            return self.read_cell_value(sheet, row, col);
+        }
         // If a vertex exists in the graph (formula or value cell), use graph value to preserve types.
         // Only fall back to Arrow for cells not in the graph.
         if let Some(sheet_id) = self.graph.sheet_id(sheet) {
@@ -1998,11 +2035,21 @@ where
                 }
             }
             VertexKind::Empty | VertexKind::Cell => {
-                // Check if there's a value stored
+                if self.config.arrow_canonical_values {
+                    if let Some(cell_ref) = self.graph.get_cell_ref(vertex_id) {
+                        let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
+                        let row = cell_ref.coord.row() + 1;
+                        let col = cell_ref.coord.col() + 1;
+                        if let Some(v) = self.read_cell_value(sheet_name, row, col) {
+                            return Ok(v);
+                        }
+                    }
+                    return Ok(LiteralValue::Int(0));
+                }
                 if let Some(value) = self.graph.get_value(vertex_id) {
                     return Ok(value.clone());
                 } else {
-                    return Ok(LiteralValue::Int(0)); // Empty cells evaluate to 0
+                    return Ok(LiteralValue::Int(0));
                 }
             }
             VertexKind::NamedScalar => {
@@ -3815,10 +3862,7 @@ where
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
-        for &vertex_id in &layer.vertices {
-            self.evaluate_vertex(vertex_id)?;
-        }
-        Ok(layer.vertices.len())
+        self.evaluate_layer_sequential_effects(layer)
     }
 
     fn update_vertex_value_with_delta(
@@ -3847,10 +3891,7 @@ where
         layer: &super::scheduler::Layer,
         delta: &mut DeltaCollector,
     ) -> Result<usize, ExcelError> {
-        for &vertex_id in &layer.vertices {
-            self.evaluate_vertex_impl(vertex_id, Some(delta))?;
-        }
-        Ok(layer.vertices.len())
+        self.evaluate_layer_sequential_with_delta_effects(layer, delta)
     }
 
     /// Evaluate a layer sequentially with cancellation support
@@ -3859,16 +3900,7 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
-            // Check cancellation every 256 vertices to balance responsiveness with performance
-            if i % 256 == 0 && cancel_flag.load(Ordering::Relaxed) {
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message("Evaluation cancelled within layer".to_string()));
-            }
-
-            self.evaluate_vertex(vertex_id)?;
-        }
-        Ok(layer.vertices.len())
+        self.evaluate_layer_sequential_cancellable_effects(layer, cancel_flag)
     }
 
     /// Evaluate a layer sequentially with more frequent cancellation checks for demand-driven evaluation
@@ -3877,16 +3909,7 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
-            // Check cancellation more frequently for demand-driven evaluation (every 128 vertices)
-            if i % 128 == 0 && cancel_flag.load(Ordering::Relaxed) {
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message("Demand-driven evaluation cancelled within layer".to_string()));
-            }
-
-            self.evaluate_vertex(vertex_id)?;
-        }
-        Ok(layer.vertices.len())
+        self.evaluate_layer_sequential_cancellable_demand_driven_effects(layer, cancel_flag)
     }
 
     /// Evaluate a layer in parallel using the thread pool
@@ -3894,72 +3917,7 @@ where
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
-        use rayon::prelude::*;
-
-        let thread_pool = self.thread_pool.as_ref().unwrap().clone();
-
-        // Compressed range dependencies are tracked separately (range stripes) and do not create
-        // explicit cell edges for scheduling. To preserve correctness in a single pass under
-        // parallel evaluation, apply the layer in two phases:
-        // - Phase 1: vertices without compressed range deps (populate graph + Arrow overlays)
-        // - Phase 2: vertices with compressed range deps (range reads see Phase 1 updates)
-        let mut phase1: Vec<VertexId> = Vec::new();
-        let mut phase2: Vec<VertexId> = Vec::new();
-        for &vid in &layer.vertices {
-            if self.graph.get_range_dependencies(vid).is_some() {
-                phase2.push(vid);
-            } else {
-                phase1.push(vid);
-            }
-        }
-
-        let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
-        let mut applied = 0usize;
-
-        for group in [&phase1[..], &phase2[..]] {
-            if group.is_empty() {
-                continue;
-            }
-
-            // Collect all evaluation results first, then update the graph sequentially.
-            let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| {
-                    group
-                        .par_iter()
-                        .map(|&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
-                            Ok(v) => Ok((vertex_id, v)),
-                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                        })
-                        .collect()
-                });
-
-            match results {
-                Ok(vertex_results) => {
-                    // Apply array (spill) results first so that spill registry is established
-                    // before applying scalar formula results that might land inside a spilled region.
-                    let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
-                    let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
-                    for (vertex_id, result) in vertex_results {
-                        if matches!(result, LiteralValue::Array(_)) {
-                            arrays.push((vertex_id, result));
-                        } else {
-                            others.push((vertex_id, result));
-                        }
-                    }
-                    for (vertex_id, result) in arrays {
-                        self.apply_parallel_vertex_result(vertex_id, result, None, Some(&inflight))?;
-                        applied = applied.saturating_add(1);
-                    }
-                    for (vertex_id, result) in others {
-                        self.apply_parallel_vertex_result(vertex_id, result, None, Some(&inflight))?;
-                        applied = applied.saturating_add(1);
-                    }
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok(applied)
+        self.evaluate_layer_parallel_effects(layer)
     }
 
     fn evaluate_layer_parallel_with_delta(
@@ -3967,73 +3925,7 @@ where
         layer: &super::scheduler::Layer,
         delta: &mut DeltaCollector,
     ) -> Result<usize, ExcelError> {
-        use rayon::prelude::*;
-
-        let thread_pool = self.thread_pool.as_ref().unwrap().clone();
-
-        let mut phase1: Vec<VertexId> = Vec::new();
-        let mut phase2: Vec<VertexId> = Vec::new();
-        for &vid in &layer.vertices {
-            if self.graph.get_range_dependencies(vid).is_some() {
-                phase2.push(vid);
-            } else {
-                phase1.push(vid);
-            }
-        }
-
-        let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
-        let mut applied = 0usize;
-
-        for group in [&phase1[..], &phase2[..]] {
-            if group.is_empty() {
-                continue;
-            }
-            let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| {
-                    group
-                        .par_iter()
-                        .map(|&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
-                            Ok(v) => Ok((vertex_id, v)),
-                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                        })
-                        .collect()
-                });
-
-            match results {
-                Ok(vertex_results) => {
-                    let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
-                    let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
-                    for (vertex_id, result) in vertex_results {
-                        if matches!(result, LiteralValue::Array(_)) {
-                            arrays.push((vertex_id, result));
-                        } else {
-                            others.push((vertex_id, result));
-                        }
-                    }
-                    for (vertex_id, result) in arrays {
-                        self.apply_parallel_vertex_result(
-                            vertex_id,
-                            result,
-                            Some(delta),
-                            Some(&inflight),
-                        )?;
-                        applied = applied.saturating_add(1);
-                    }
-                    for (vertex_id, result) in others {
-                        self.apply_parallel_vertex_result(
-                            vertex_id,
-                            result,
-                            Some(delta),
-                            Some(&inflight),
-                        )?;
-                        applied = applied.saturating_add(1);
-                    }
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok(applied)
+        self.evaluate_layer_parallel_with_delta_effects(layer, delta)
     }
 
     /// Evaluate a layer in parallel with cancellation support
@@ -4042,79 +3934,7 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
-        use rayon::prelude::*;
-
-        let thread_pool = self.thread_pool.as_ref().unwrap().clone();
-
-        // Check cancellation before starting parallel work
-        if cancel_flag.load(Ordering::Relaxed) {
-            return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                .with_message("Parallel evaluation cancelled before starting".to_string()));
-        }
-
-        let mut phase1: Vec<VertexId> = Vec::new();
-        let mut phase2: Vec<VertexId> = Vec::new();
-        for &vid in &layer.vertices {
-            if self.graph.get_range_dependencies(vid).is_some() {
-                phase2.push(vid);
-            } else {
-                phase1.push(vid);
-            }
-        }
-
-        let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
-        let mut applied = 0usize;
-
-        for group in [&phase1[..], &phase2[..]] {
-            if group.is_empty() {
-                continue;
-            }
-
-            // Collect all evaluation results first, then update the graph sequentially.
-            let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
-                thread_pool.install(|| {
-                    group
-                        .par_iter()
-                        .map(|&vertex_id| {
-                            // Check cancellation periodically during parallel work
-                            if cancel_flag.load(Ordering::Relaxed) {
-                                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
-                                    "Parallel evaluation cancelled during execution".to_string(),
-                                ));
-                            }
-                            match self.evaluate_vertex_immutable(vertex_id) {
-                                Ok(v) => Ok((vertex_id, v)),
-                                Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                            }
-                        })
-                        .collect()
-                });
-
-            match results {
-                Ok(vertex_results) => {
-                    let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
-                    let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
-                    for (vertex_id, result) in vertex_results {
-                        if matches!(result, LiteralValue::Array(_)) {
-                            arrays.push((vertex_id, result));
-                        } else {
-                            others.push((vertex_id, result));
-                        }
-                    }
-                    for (vertex_id, result) in arrays {
-                        self.apply_parallel_vertex_result(vertex_id, result, None, Some(&inflight))?;
-                        applied = applied.saturating_add(1);
-                    }
-                    for (vertex_id, result) in others {
-                        self.apply_parallel_vertex_result(vertex_id, result, None, Some(&inflight))?;
-                        applied = applied.saturating_add(1);
-                    }
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok(applied)
+        self.evaluate_layer_parallel_cancellable_effects(layer, cancel_flag)
     }
 
     /// Apply a computed result produced by `evaluate_vertex_immutable()`.
@@ -4419,11 +4239,21 @@ where
                 }
             }
             VertexKind::Empty | VertexKind::Cell => {
-                // Check if there's a value stored
+                if self.config.arrow_canonical_values {
+                    if let Some(cell_ref) = self.graph.get_cell_ref(vertex_id) {
+                        let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
+                        let row = cell_ref.coord.row() + 1;
+                        let col = cell_ref.coord.col() + 1;
+                        if let Some(v) = self.read_cell_value(sheet_name, row, col) {
+                            return Ok(v);
+                        }
+                    }
+                    return Ok(LiteralValue::Int(0));
+                }
                 if let Some(value) = self.graph.get_value(vertex_id) {
                     return Ok(value.clone());
                 } else {
-                    return Ok(LiteralValue::Int(0)); // Empty cells evaluate to 0
+                    return Ok(LiteralValue::Int(0));
                 }
             }
             VertexKind::NamedScalar => {
@@ -5728,3 +5558,838 @@ where
         Ok(())
     }
 }
+
+// ── Effects pipeline (ticket 603) ──────────────────────────────────────────
+//
+// Compute → Plan → Apply separation for evaluation side-effects.
+
+use crate::engine::effects::Effect;
+use crate::engine::graph::editor::change_log::{ChangeEvent, ChangeLog, SpillSnapshot};
+
+impl<R> Engine<R>
+where
+    R: EvaluationContext,
+{
+    /// Plan effects for a single vertex after its value has been computed.
+    ///
+    /// This reads graph state but only performs lightweight mutations
+    /// (`set_kind`, `spill_mgr.reserve`) that are needed for correctness
+    /// during the planning phase.  Value-changing mutations are deferred to
+    /// `apply_effect`.
+    pub(crate) fn plan_vertex_effects(
+        &mut self,
+        vertex_id: VertexId,
+        computed_value: LiteralValue,
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
+    ) -> Result<Vec<Effect>, ExcelError> {
+        let kind = self.graph.get_vertex_kind(vertex_id);
+        let is_formula = matches!(kind, VertexKind::FormulaScalar | VertexKind::FormulaArray);
+
+        // If this vertex's cell is currently covered by a spill from a different
+        // anchor, ignore the computed result.  Formula vertices are exempt:
+        // they must still evaluate so that overlapping spills produce #SPILL!.
+        if !is_formula {
+            if let Some(cell) = self.graph.get_cell_ref(vertex_id)
+                && let Some(owner) = self.graph.spill_registry_anchor_for_cell(cell)
+                && owner != vertex_id
+            {
+                return Ok(Vec::new());
+            }
+            // Non-formula vertices: store value as-is (arrays remain arrays; no spill).
+            return Ok(vec![Effect::WriteCell {
+                vertex_id,
+                value: computed_value,
+            }]);
+        }
+
+        match computed_value {
+            LiteralValue::Array(rows) => {
+                self.plan_array_effects(vertex_id, rows, overwritable_formulas)
+            }
+            other => self.plan_scalar_effects(vertex_id, other),
+        }
+    }
+
+    /// Plan effects for a formula vertex that produced a scalar/error result.
+    fn plan_scalar_effects(
+        &self,
+        vertex_id: VertexId,
+        value: LiteralValue,
+    ) -> Result<Vec<Effect>, ExcelError> {
+        let has_spill = self
+            .graph
+            .spill_cells_for_anchor(vertex_id)
+            .is_some_and(|c| !c.is_empty());
+
+        let mut effects = Vec::new();
+        if has_spill {
+            effects.push(Effect::SpillClear {
+                anchor_vertex: vertex_id,
+            });
+        }
+        effects.push(Effect::WriteCell {
+            vertex_id,
+            value,
+        });
+        Ok(effects)
+    }
+
+    /// Plan effects for a formula vertex that produced an array result.
+    fn plan_array_effects(
+        &mut self,
+        vertex_id: VertexId,
+        rows: Vec<Vec<LiteralValue>>,
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
+    ) -> Result<Vec<Effect>, ExcelError> {
+        // Lightweight mutation needed for correct spill-blocking checks.
+        self.graph
+            .set_kind(vertex_id, VertexKind::FormulaArray);
+
+        let anchor = self
+            .graph
+            .get_cell_ref(vertex_id)
+            .expect("cell ref for vertex");
+        let sheet_id = anchor.sheet_id;
+        let h = rows.len() as u32;
+        let w = rows.first().map(|r| r.len()).unwrap_or(0) as u32;
+
+        // Hard cap to avoid vertex explosion from huge dynamic arrays.
+        let spill_cells = (h as u64).saturating_mul(w as u64);
+        if spill_cells > self.config.spill.max_spill_cells as u64 {
+            return self.plan_spill_error_effects(vertex_id, "SpillTooLarge", h, w);
+        }
+
+        // Bounds check to avoid out-of-range writes (align to AbsCoord capacity).
+        const PACKED_MAX_ROW: u32 = 1_048_575;
+        const PACKED_MAX_COL: u32 = 16_383;
+        let end_row = anchor.coord.row().saturating_add(h).saturating_sub(1);
+        let end_col = anchor.coord.col().saturating_add(w).saturating_sub(1);
+        if end_row > PACKED_MAX_ROW || end_col > PACKED_MAX_COL {
+            return self.plan_spill_error_effects(
+                vertex_id,
+                "Spill exceeds sheet bounds",
+                h,
+                w,
+            );
+        }
+
+        let mut targets = Vec::new();
+        for r in 0..h {
+            for c in 0..w {
+                targets.push(self.graph.make_cell_ref_internal(
+                    sheet_id,
+                    anchor.coord.row() + r,
+                    anchor.coord.col() + c,
+                ));
+            }
+        }
+
+        // Region lock via spill manager.
+        match self.spill_mgr.reserve(
+            vertex_id,
+            anchor,
+            SpillShape { rows: h, cols: w },
+            SpillMeta {
+                epoch: self.recalc_epoch,
+                config: self.config.spill,
+            },
+        ) {
+            Ok(()) => {
+                // Validate spill region is available.
+                if let Err(_e) = self.graph.plan_spill_region_allowing_formula_overwrite(
+                    vertex_id,
+                    &targets,
+                    overwritable_formulas,
+                ) {
+                    return self.plan_spill_error_effects(vertex_id, "Spill blocked", h, w);
+                }
+
+                let top_left = rows
+                    .first()
+                    .and_then(|r| r.first())
+                    .cloned()
+                    .unwrap_or(LiteralValue::Empty);
+
+                let mut effects = Vec::new();
+                // Clear previous spill if any.
+                let has_prev = self
+                    .graph
+                    .spill_cells_for_anchor(vertex_id)
+                    .is_some_and(|c| !c.is_empty());
+                if has_prev {
+                    effects.push(Effect::SpillClear {
+                        anchor_vertex: vertex_id,
+                    });
+                }
+                effects.push(Effect::SpillCommit {
+                    anchor_vertex: vertex_id,
+                    anchor_cell: anchor,
+                    target_cells: targets,
+                    values: rows,
+                });
+                effects.push(Effect::WriteCell {
+                    vertex_id,
+                    value: top_left,
+                });
+                Ok(effects)
+            }
+            Err(e) => {
+                let msg = e.message.unwrap_or_else(|| "Spill blocked".to_string());
+                self.plan_spill_error_effects(vertex_id, &msg, h, w)
+            }
+        }
+    }
+
+    /// Build the effect list for a spill that failed validation.
+    fn plan_spill_error_effects(
+        &self,
+        vertex_id: VertexId,
+        message: &str,
+        expected_rows: u32,
+        expected_cols: u32,
+    ) -> Result<Vec<Effect>, ExcelError> {
+        let spill_err = ExcelError::new(ExcelErrorKind::Spill)
+            .with_message(message)
+            .with_extra(formualizer_common::ExcelErrorExtra::Spill {
+                expected_rows,
+                expected_cols,
+            });
+        let spill_val = LiteralValue::Error(spill_err);
+
+        let mut effects = Vec::new();
+        effects.push(Effect::SpillClear {
+            anchor_vertex: vertex_id,
+        });
+        effects.push(Effect::WriteCell {
+            vertex_id,
+            value: spill_val,
+        });
+        Ok(effects)
+    }
+
+    /// Apply a single effect, performing the actual graph mutations.
+    pub(crate) fn apply_effect(
+        &mut self,
+        effect: &Effect,
+        delta: Option<&mut DeltaCollector>,
+        log: Option<&mut ChangeLog>,
+    ) -> Result<(), ExcelError> {
+        match effect {
+            Effect::WriteCell { vertex_id, value } => {
+                self.apply_write_cell(*vertex_id, value, delta);
+            }
+            Effect::SpillClear { anchor_vertex } => {
+                self.apply_spill_clear(*anchor_vertex, delta, log);
+            }
+            Effect::SpillCommit {
+                anchor_vertex,
+                anchor_cell: _,
+                target_cells,
+                values,
+            } => {
+                self.apply_spill_commit(
+                    *anchor_vertex,
+                    target_cells,
+                    values.clone(),
+                    delta,
+                    log,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply a WriteCell effect.
+    fn apply_write_cell(
+        &mut self,
+        vertex_id: VertexId,
+        value: &LiteralValue,
+        delta: Option<&mut DeltaCollector>,
+    ) {
+        if let Some(d) = delta {
+            if d.mode != DeltaMode::Off {
+                if let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id) {
+                    let old = self
+                        .graph
+                        .get_value(vertex_id)
+                        .unwrap_or(LiteralValue::Empty);
+                    if old != *value {
+                        d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                    }
+                }
+            }
+        }
+        self.graph.update_vertex_value(vertex_id, value.clone());
+        self.mirror_vertex_value_to_overlay(vertex_id, value);
+    }
+
+    /// Apply a SpillClear effect.
+    fn apply_spill_clear(
+        &mut self,
+        anchor_vertex: VertexId,
+        delta: Option<&mut DeltaCollector>,
+        log: Option<&mut ChangeLog>,
+    ) {
+        let spill_cells = self
+            .graph
+            .spill_cells_for_anchor(anchor_vertex)
+            .map(|cells| cells.to_vec())
+            .unwrap_or_default();
+        if spill_cells.is_empty() {
+            return;
+        }
+
+        // Snapshot for ChangeLog before clearing.
+        let snapshot = if log.is_some() {
+            self.snapshot_spill_for_anchor(anchor_vertex)
+        } else {
+            None
+        };
+
+        // Record delta for cleared cells.
+        if let Some(d) = delta {
+            if d.mode != DeltaMode::Off {
+                let empty = LiteralValue::Empty;
+                for cell in spill_cells.iter() {
+                    let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                    let old = self
+                        .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                        .unwrap_or(LiteralValue::Empty);
+                    if old != empty {
+                        d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                    }
+                }
+            }
+        }
+
+        self.graph.clear_spill_region(anchor_vertex);
+
+        // Mirror Empty to Arrow overlay for cleared cells.
+        if self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled
+        {
+            let empty = LiteralValue::Empty;
+            for cell in spill_cells.iter() {
+                let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+                self.mirror_value_to_computed_overlay(
+                    &sheet_name,
+                    cell.coord.row() + 1,
+                    cell.coord.col() + 1,
+                    &empty,
+                );
+            }
+        }
+
+        // ChangeLog.
+        if let Some(log) = log {
+            if let Some(old) = snapshot {
+                log.record(ChangeEvent::SpillCleared {
+                    anchor: anchor_vertex,
+                    old,
+                });
+            }
+        }
+    }
+
+    /// Apply a SpillCommit effect.
+    fn apply_spill_commit(
+        &mut self,
+        anchor_vertex: VertexId,
+        target_cells: &[CellRef],
+        values: Vec<Vec<LiteralValue>>,
+        delta: Option<&mut DeltaCollector>,
+        log: Option<&mut ChangeLog>,
+    ) -> Result<(), ExcelError> {
+        // Snapshot for ChangeLog before commit.
+        let old_snapshot = if log.is_some() {
+            self.snapshot_spill_for_anchor(anchor_vertex)
+        } else {
+            None
+        };
+
+        // Delegate to existing commit_spill_and_mirror for delta + overlay logic.
+        self.commit_spill_and_mirror(
+            anchor_vertex,
+            target_cells,
+            values.clone(),
+            delta,
+            None, // overwritable_formulas already validated in plan phase
+        )?;
+
+        // ChangeLog.
+        if let Some(log) = log {
+            log.record(ChangeEvent::SpillCommitted {
+                anchor: anchor_vertex,
+                old: old_snapshot,
+                new: SpillSnapshot {
+                    target_cells: target_cells.to_vec(),
+                    values,
+                },
+            });
+        }
+        Ok(())
+    }
+
+    /// Snapshot a spill region for ChangeLog recording.
+    ///
+    /// Extracted from `VertexEditor::snapshot_spill_for_anchor` to be usable
+    /// without creating a `VertexEditor`.
+    fn snapshot_spill_for_anchor(&self, anchor: VertexId) -> Option<SpillSnapshot> {
+        let cells = self.graph.spill_cells_for_anchor(anchor)?.to_vec();
+        if cells.is_empty() {
+            return None;
+        }
+
+        let max = self.config.spill.max_spill_cells as usize;
+        let mut cells = cells;
+        if cells.len() > max {
+            cells.truncate(max);
+        }
+
+        let first = *cells.first().expect("non-empty spill cells");
+        let sheet_name = self.graph.sheet_name(first.sheet_id).to_string();
+        let row0 = first.coord.row();
+        let col0 = first.coord.col();
+
+        let mut max_row = row0;
+        let mut max_col = col0;
+        let mut by_coord: FxHashMap<(u32, u32), LiteralValue> = FxHashMap::default();
+        for cell in &cells {
+            max_row = max_row.max(cell.coord.row());
+            max_col = max_col.max(cell.coord.col());
+            let v = self
+                .graph
+                .get_cell_value(&sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                .unwrap_or(LiteralValue::Empty);
+            by_coord.insert((cell.coord.row(), cell.coord.col()), v);
+        }
+
+        let rows = (max_row - row0 + 1) as usize;
+        let cols = (max_col - col0 + 1) as usize;
+        let mut values: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
+        for r in 0..rows {
+            let mut row: Vec<LiteralValue> = Vec::with_capacity(cols);
+            for c in 0..cols {
+                row.push(
+                    by_coord
+                        .get(&(row0 + r as u32, col0 + c as u32))
+                        .cloned()
+                        .unwrap_or(LiteralValue::Empty),
+                );
+            }
+            values.push(row);
+        }
+
+        Some(SpillSnapshot {
+            target_cells: cells,
+            values,
+        })
+    }
+
+    // ── Layer evaluation via effects pipeline ──────────────────────────────
+
+    /// Evaluate a layer sequentially using the effects pipeline.
+    fn evaluate_layer_sequential_effects(
+        &mut self,
+        layer: &super::scheduler::Layer,
+    ) -> Result<usize, ExcelError> {
+        for &vertex_id in &layer.vertices {
+            let value = match self.evaluate_vertex_immutable(vertex_id) {
+                Ok(v) => v,
+                Err(e) => LiteralValue::Error(e),
+            };
+            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            for effect in &effects {
+                self.apply_effect(effect, None, None)?;
+            }
+        }
+        Ok(layer.vertices.len())
+    }
+
+    /// Evaluate a layer sequentially with delta collection via effects pipeline.
+    fn evaluate_layer_sequential_with_delta_effects(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        delta: &mut DeltaCollector,
+    ) -> Result<usize, ExcelError> {
+        for &vertex_id in &layer.vertices {
+            let value = match self.evaluate_vertex_immutable(vertex_id) {
+                Ok(v) => v,
+                Err(e) => LiteralValue::Error(e),
+            };
+            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            for effect in &effects {
+                self.apply_effect(effect, Some(delta), None)?;
+            }
+        }
+        Ok(layer.vertices.len())
+    }
+
+    /// Evaluate a layer sequentially with cancellation support via effects pipeline.
+    fn evaluate_layer_sequential_cancellable_effects(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        cancel_flag: &AtomicBool,
+    ) -> Result<usize, ExcelError> {
+        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
+            if i % 256 == 0 && cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                    .with_message("Evaluation cancelled within layer".to_string()));
+            }
+            let value = match self.evaluate_vertex_immutable(vertex_id) {
+                Ok(v) => v,
+                Err(e) => LiteralValue::Error(e),
+            };
+            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            for effect in &effects {
+                self.apply_effect(effect, None, None)?;
+            }
+        }
+        Ok(layer.vertices.len())
+    }
+
+    /// Evaluate a layer sequentially with more frequent cancellation for demand-driven eval.
+    fn evaluate_layer_sequential_cancellable_demand_driven_effects(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        cancel_flag: &AtomicBool,
+    ) -> Result<usize, ExcelError> {
+        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
+            if i % 128 == 0 && cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                    .with_message(
+                        "Demand-driven evaluation cancelled within layer".to_string(),
+                    ));
+            }
+            let value = match self.evaluate_vertex_immutable(vertex_id) {
+                Ok(v) => v,
+                Err(e) => LiteralValue::Error(e),
+            };
+            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            for effect in &effects {
+                self.apply_effect(effect, None, None)?;
+            }
+        }
+        Ok(layer.vertices.len())
+    }
+
+    /// Evaluate a layer in parallel, applying via effects pipeline.
+    fn evaluate_layer_parallel_effects(
+        &mut self,
+        layer: &super::scheduler::Layer,
+    ) -> Result<usize, ExcelError> {
+        use rayon::prelude::*;
+
+        let thread_pool = self.thread_pool.as_ref().unwrap().clone();
+
+        let mut phase1: Vec<VertexId> = Vec::new();
+        let mut phase2: Vec<VertexId> = Vec::new();
+        for &vid in &layer.vertices {
+            if self.graph.get_range_dependencies(vid).is_some() {
+                phase2.push(vid);
+            } else {
+                phase1.push(vid);
+            }
+        }
+
+        let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
+        let mut applied = 0usize;
+
+        for group in [&phase1[..], &phase2[..]] {
+            if group.is_empty() {
+                continue;
+            }
+
+            let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
+                thread_pool.install(|| {
+                    group
+                        .par_iter()
+                        .map(|&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
+                            Ok(v) => Ok((vertex_id, v)),
+                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
+                        })
+                        .collect()
+                });
+
+            match results {
+                Ok(vertex_results) => {
+                    // Arrays first, then scalars — establishes spill regions before
+                    // scalar results that might land inside a spilled region.
+                    let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
+                    let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
+                    for (vertex_id, result) in vertex_results {
+                        if matches!(result, LiteralValue::Array(_)) {
+                            arrays.push((vertex_id, result));
+                        } else {
+                            others.push((vertex_id, result));
+                        }
+                    }
+                    for (vertex_id, result) in arrays {
+                        let effects =
+                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        for effect in &effects {
+                            self.apply_effect(effect, None, None)?;
+                        }
+                        applied = applied.saturating_add(1);
+                    }
+                    for (vertex_id, result) in others {
+                        let effects =
+                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        for effect in &effects {
+                            self.apply_effect(effect, None, None)?;
+                        }
+                        applied = applied.saturating_add(1);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(applied)
+    }
+
+    /// Evaluate a layer in parallel with delta collection via effects pipeline.
+    fn evaluate_layer_parallel_with_delta_effects(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        delta: &mut DeltaCollector,
+    ) -> Result<usize, ExcelError> {
+        use rayon::prelude::*;
+
+        let thread_pool = self.thread_pool.as_ref().unwrap().clone();
+
+        let mut phase1: Vec<VertexId> = Vec::new();
+        let mut phase2: Vec<VertexId> = Vec::new();
+        for &vid in &layer.vertices {
+            if self.graph.get_range_dependencies(vid).is_some() {
+                phase2.push(vid);
+            } else {
+                phase1.push(vid);
+            }
+        }
+
+        let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
+        let mut applied = 0usize;
+
+        for group in [&phase1[..], &phase2[..]] {
+            if group.is_empty() {
+                continue;
+            }
+            let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
+                thread_pool.install(|| {
+                    group
+                        .par_iter()
+                        .map(|&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
+                            Ok(v) => Ok((vertex_id, v)),
+                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
+                        })
+                        .collect()
+                });
+
+            match results {
+                Ok(vertex_results) => {
+                    let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
+                    let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
+                    for (vertex_id, result) in vertex_results {
+                        if matches!(result, LiteralValue::Array(_)) {
+                            arrays.push((vertex_id, result));
+                        } else {
+                            others.push((vertex_id, result));
+                        }
+                    }
+                    for (vertex_id, result) in arrays {
+                        let effects =
+                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        for effect in &effects {
+                            self.apply_effect(effect, Some(delta), None)?;
+                        }
+                        applied = applied.saturating_add(1);
+                    }
+                    for (vertex_id, result) in others {
+                        let effects =
+                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        for effect in &effects {
+                            self.apply_effect(effect, Some(delta), None)?;
+                        }
+                        applied = applied.saturating_add(1);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(applied)
+    }
+
+    /// Evaluate a layer in parallel with cancellation support via effects pipeline.
+    fn evaluate_layer_parallel_cancellable_effects(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        cancel_flag: &AtomicBool,
+    ) -> Result<usize, ExcelError> {
+        use rayon::prelude::*;
+
+        let thread_pool = self.thread_pool.as_ref().unwrap().clone();
+
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                .with_message("Parallel evaluation cancelled before starting".to_string()));
+        }
+
+        let mut phase1: Vec<VertexId> = Vec::new();
+        let mut phase2: Vec<VertexId> = Vec::new();
+        for &vid in &layer.vertices {
+            if self.graph.get_range_dependencies(vid).is_some() {
+                phase2.push(vid);
+            } else {
+                phase1.push(vid);
+            }
+        }
+
+        let inflight: rustc_hash::FxHashSet<VertexId> = layer.vertices.iter().copied().collect();
+        let mut applied = 0usize;
+
+        for group in [&phase1[..], &phase2[..]] {
+            if group.is_empty() {
+                continue;
+            }
+
+            let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
+                thread_pool.install(|| {
+                    group
+                        .par_iter()
+                        .map(|&vertex_id| {
+                            if cancel_flag.load(Ordering::Relaxed) {
+                                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                                    .with_message(
+                                        "Parallel evaluation cancelled during execution"
+                                            .to_string(),
+                                    ));
+                            }
+                            match self.evaluate_vertex_immutable(vertex_id) {
+                                Ok(v) => Ok((vertex_id, v)),
+                                Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
+                            }
+                        })
+                        .collect()
+                });
+
+            match results {
+                Ok(vertex_results) => {
+                    let mut arrays: Vec<(VertexId, LiteralValue)> = Vec::new();
+                    let mut others: Vec<(VertexId, LiteralValue)> = Vec::new();
+                    for (vertex_id, result) in vertex_results {
+                        if matches!(result, LiteralValue::Array(_)) {
+                            arrays.push((vertex_id, result));
+                        } else {
+                            others.push((vertex_id, result));
+                        }
+                    }
+                    for (vertex_id, result) in arrays {
+                        let effects =
+                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        for effect in &effects {
+                            self.apply_effect(effect, None, None)?;
+                        }
+                        applied = applied.saturating_add(1);
+                    }
+                    for (vertex_id, result) in others {
+                        let effects =
+                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        for effect in &effects {
+                            self.apply_effect(effect, None, None)?;
+                        }
+                        applied = applied.saturating_add(1);
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(applied)
+    }
+
+    // ── Top-level evaluate_all_logged ───────────────────────────────────────
+
+    /// Evaluate all dirty/volatile vertices, recording effects into a ChangeLog.
+    ///
+    /// This is the same flow as `evaluate_all` but threads a ChangeLog through
+    /// every effect application so that spill commits/clears are captured.
+    pub fn evaluate_all_logged(
+        &mut self,
+        log: &mut ChangeLog,
+    ) -> Result<EvalResult, ExcelError> {
+        let _source_cache = self.source_cache_session();
+        self.validate_deterministic_mode()?;
+        if self.config.defer_graph_building {
+            self.build_graph_all()?;
+        }
+        let start = web_time::Instant::now();
+        let mut computed_vertices = 0;
+        let mut cycle_errors = 0;
+
+        let to_evaluate = self.graph.get_evaluation_vertices();
+        if to_evaluate.is_empty() {
+            return Ok(EvalResult {
+                computed_vertices,
+                cycle_errors,
+                elapsed: start.elapsed(),
+            });
+        }
+
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = scheduler.create_schedule(&to_evaluate)?;
+
+        log.begin_compound(format!("evaluate_all(epoch={})", self.recalc_epoch));
+
+        // Handle cycles.
+        let circ_error = LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Circ)
+                .with_message("Circular dependency detected".to_string()),
+        );
+        for cycle in &schedule.cycles {
+            cycle_errors += 1;
+            for &vertex_id in cycle {
+                self.graph.update_vertex_value(vertex_id, circ_error.clone());
+            }
+        }
+
+        // Evaluate layers.
+        for layer in &schedule.layers {
+            computed_vertices += self.evaluate_layer_logged(layer, log)?;
+        }
+
+        log.end_compound();
+
+        self.graph.clear_dirty_flags(&to_evaluate);
+        self.graph.redirty_volatiles();
+        self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
+
+        Ok(EvalResult {
+            computed_vertices,
+            cycle_errors,
+            elapsed: start.elapsed(),
+        })
+    }
+
+    /// Evaluate a single layer with ChangeLog recording.
+    fn evaluate_layer_logged(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        log: &mut ChangeLog,
+    ) -> Result<usize, ExcelError> {
+        for &vertex_id in &layer.vertices {
+            let value = match self.evaluate_vertex_immutable(vertex_id) {
+                Ok(v) => v,
+                Err(e) => LiteralValue::Error(e),
+            };
+            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            for effect in &effects {
+                self.apply_effect(effect, None, Some(log))?;
+            }
+        }
+        Ok(layer.vertices.len())
+    }
+}
+
