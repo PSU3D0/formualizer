@@ -223,6 +223,44 @@ mod tests {
         assert!((time_to_fraction(&time) - 0.25).abs() < 1e-10);
     }
 
+    /// Verifies that the eval-crate serial round-trip (date_to_serial → serial_to_date)
+    /// is lossless.
+    #[test]
+    fn date_serial_roundtrip_eval_crate() {
+        let d = NaiveDate::from_ymd_opt(2023, 6, 15).unwrap();
+        let serial = date_to_serial(&d);
+        let back = serial_to_date(serial).unwrap();
+        assert_eq!(d, back, "eval round trip failed: {d} -> {serial} -> {back}");
+
+        let d2 = NaiveDate::from_ymd_opt(1900, 2, 15).unwrap();
+        let serial2 = date_to_serial(&d2);
+        let back2 = serial_to_date(serial2).unwrap();
+        assert_eq!(
+            d2, back2,
+            "eval round trip failed: {d2} -> {serial2} -> {back2}"
+        );
+    }
+
+    /// Cross-crate round-trip: eval's date_to_serial → common's serial_to_datetime.
+    /// Both crates now use the same epoch (1899-12-31).
+    #[test]
+    fn date_serial_roundtrip_cross_crate() {
+        use formualizer_common::LiteralValue;
+
+        let d = NaiveDate::from_ymd_opt(2023, 6, 15).unwrap();
+        let serial = date_to_serial(&d);
+        let back = LiteralValue::from_serial_number(serial);
+        match back {
+            LiteralValue::Date(back_date) => {
+                assert_eq!(
+                    d, back_date,
+                    "cross-crate round trip: {d} -> {serial} -> {back_date}"
+                );
+            }
+            other => panic!("expected Date, got {other:?}"),
+        }
+    }
+
     #[test]
     fn test_date_normalization() {
         // Month 13 becomes next January
