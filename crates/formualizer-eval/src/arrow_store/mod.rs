@@ -964,6 +964,127 @@ impl ArrowSheet {
         )
     }
 
+    /// Fast single-cell read (0-based row/col) with overlay precedence.
+    ///
+    /// This avoids constructing a 1x1 RangeView and is intended for tight read loops.
+    #[inline]
+    pub fn get_cell_value(&self, abs_row: usize, abs_col: usize) -> LiteralValue {
+        let sheet_rows = self.nrows as usize;
+        if abs_row >= sheet_rows {
+            return LiteralValue::Empty;
+        }
+        if abs_col >= self.columns.len() {
+            return LiteralValue::Empty;
+        }
+        let Some((ch_idx, in_off)) = self.chunk_of_row(abs_row) else {
+            return LiteralValue::Empty;
+        };
+        let col_ref = &self.columns[abs_col];
+        let Some(ch) = col_ref.chunk(ch_idx) else {
+            return LiteralValue::Empty;
+        };
+
+        // Overlay takes precedence: user edits over computed over base.
+        if let Some(ov) = ch
+            .overlay
+            .get(in_off)
+            .or_else(|| ch.computed_overlay.get(in_off))
+        {
+            return match ov {
+                OverlayValue::Empty => LiteralValue::Empty,
+                OverlayValue::Number(n) => LiteralValue::Number(*n),
+                OverlayValue::DateTime(serial) => LiteralValue::from_serial_number(*serial),
+                OverlayValue::Duration(serial) => {
+                    let nanos_f = *serial * 86_400.0 * 1_000_000_000.0;
+                    let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
+                    LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
+                }
+                OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
+                OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
+                OverlayValue::Error(code) => {
+                    let kind = unmap_error_code(*code);
+                    LiteralValue::Error(ExcelError::new(kind))
+                }
+                OverlayValue::Pending => LiteralValue::Pending,
+            };
+        }
+
+        // Read tag and route to lane.
+        let tag_u8 = ch.type_tag.value(in_off);
+        match TypeTag::from_u8(tag_u8) {
+            TypeTag::Empty => LiteralValue::Empty,
+            TypeTag::Number => {
+                if let Some(arr) = &ch.numbers {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    LiteralValue::Number(arr.value(in_off))
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            TypeTag::DateTime => {
+                if let Some(arr) = &ch.numbers {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    LiteralValue::from_serial_number(arr.value(in_off))
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            TypeTag::Duration => {
+                if let Some(arr) = &ch.numbers {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    let serial = arr.value(in_off);
+                    let nanos_f = serial * 86_400.0 * 1_000_000_000.0;
+                    let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
+                    LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            TypeTag::Boolean => {
+                if let Some(arr) = &ch.booleans {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    LiteralValue::Boolean(arr.value(in_off))
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            TypeTag::Text => {
+                if let Some(arr) = &ch.text {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    let sa = arr
+                        .as_any()
+                        .downcast_ref::<arrow_array::StringArray>()
+                        .unwrap();
+                    LiteralValue::Text(sa.value(in_off).to_string())
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            TypeTag::Error => {
+                if let Some(arr) = &ch.errors {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    let kind = unmap_error_code(arr.value(in_off));
+                    LiteralValue::Error(ExcelError::new(kind))
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            TypeTag::Pending => LiteralValue::Pending,
+        }
+    }
+
     /// Ensure capacity to address at least `target_rows` rows by extending the row chunk map.
     ///
     /// This updates `chunk_starts`/`nrows` but does **not** eagerly densify all columns with

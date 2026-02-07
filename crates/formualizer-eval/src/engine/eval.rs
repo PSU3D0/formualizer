@@ -1881,8 +1881,7 @@ where
         if let Some(asheet) = self.sheet_store().sheet(sheet) {
             let r0 = row.saturating_sub(1) as usize;
             let c0 = col.saturating_sub(1) as usize;
-            let av = asheet.range_view(r0, c0, r0, c0);
-            let v = av.get_cell(0, 0);
+            let v = asheet.get_cell_value(r0, c0);
             return Self::normalize_public_cell_read(v);
         }
         self.graph
@@ -1901,8 +1900,7 @@ where
             let asheet = self.sheet_store().sheet(sheet)?;
             let r0 = row.saturating_sub(1) as usize;
             let c0 = col.saturating_sub(1) as usize;
-            let rv = asheet.range_view(r0, c0, r0, c0);
-            let v = rv.get_cell(0, 0);
+            let v = asheet.get_cell_value(r0, c0);
             if matches!(v, LiteralValue::Empty) {
                 // Arrow returns Empty for unset cells; match get_cell_value semantics
                 None
@@ -2081,6 +2079,9 @@ where
             | VertexKind::External
             | VertexKind::Table => {
                 // Not directly evaluatable here; return stored or 0
+                if self.config.arrow_canonical_values {
+                    return Ok(LiteralValue::Number(0.0));
+                }
                 if let Some(value) = self.graph.get_value(vertex_id) {
                     return Ok(value.clone());
                 } else {
@@ -2130,10 +2131,18 @@ where
                                 });
                             let spill_val = LiteralValue::Error(spill_err.clone());
                             if let Some(d) = delta.as_deref_mut() {
-                                let old = self
-                                    .graph
-                                    .get_value(vertex_id)
-                                    .unwrap_or(LiteralValue::Empty);
+                                let old = if self.config.arrow_canonical_values {
+                                    self.read_cell_value(
+                                        self.graph.sheet_name(anchor.sheet_id),
+                                        anchor.coord.row() + 1,
+                                        anchor.coord.col() + 1,
+                                    )
+                                    .unwrap_or(LiteralValue::Empty)
+                                } else {
+                                    self.graph
+                                        .get_value(vertex_id)
+                                        .unwrap_or(LiteralValue::Empty)
+                                };
                                 if old != spill_val {
                                     d.record_cell(
                                         anchor.sheet_id,
@@ -2172,10 +2181,18 @@ where
                                 });
                             let spill_val = LiteralValue::Error(spill_err.clone());
                             if let Some(d) = delta.as_deref_mut() {
-                                let old = self
-                                    .graph
-                                    .get_value(vertex_id)
-                                    .unwrap_or(LiteralValue::Empty);
+                                let old = if self.config.arrow_canonical_values {
+                                    self.read_cell_value(
+                                        self.graph.sheet_name(anchor.sheet_id),
+                                        anchor.coord.row() + 1,
+                                        anchor.coord.col() + 1,
+                                    )
+                                    .unwrap_or(LiteralValue::Empty)
+                                } else {
+                                    self.graph
+                                        .get_value(vertex_id)
+                                        .unwrap_or(LiteralValue::Empty)
+                                };
                                 if old != spill_val {
                                     d.record_cell(
                                         anchor.sheet_id,
@@ -2237,10 +2254,18 @@ where
                                         delta.as_deref_mut(),
                                     );
                                     if let Some(d) = delta.as_deref_mut() {
-                                        let old = self
-                                            .graph
-                                            .get_value(vertex_id)
-                                            .unwrap_or(LiteralValue::Empty);
+                                        let old = if self.config.arrow_canonical_values {
+                                            self.read_cell_value(
+                                                self.graph.sheet_name(anchor.sheet_id),
+                                                anchor.coord.row() + 1,
+                                                anchor.coord.col() + 1,
+                                            )
+                                            .unwrap_or(LiteralValue::Empty)
+                                        } else {
+                                            self.graph
+                                                .get_value(vertex_id)
+                                                .unwrap_or(LiteralValue::Empty)
+                                        };
                                         let new = LiteralValue::Error(e.clone());
                                         if old != new {
                                             d.record_cell(
@@ -2291,10 +2316,18 @@ where
                                     });
                                 let spill_val = LiteralValue::Error(spill_err.clone());
                                 if let Some(d) = delta.as_deref_mut() {
-                                    let old = self
-                                        .graph
-                                        .get_value(vertex_id)
-                                        .unwrap_or(LiteralValue::Empty);
+                                    let old = if self.config.arrow_canonical_values {
+                                        self.read_cell_value(
+                                            self.graph.sheet_name(anchor.sheet_id),
+                                            anchor.coord.row() + 1,
+                                            anchor.coord.col() + 1,
+                                        )
+                                        .unwrap_or(LiteralValue::Empty)
+                                    } else {
+                                        self.graph
+                                            .get_value(vertex_id)
+                                            .unwrap_or(LiteralValue::Empty)
+                                    };
                                     if old != spill_val {
                                         d.record_cell(
                                             anchor.sheet_id,
@@ -2332,10 +2365,18 @@ where
                             && let Some(anchor) = self.graph.get_cell_ref_for_vertex(vertex_id)
                         {
                             if spill_cells.is_empty() {
-                                let old = self
-                                    .graph
-                                    .get_value(vertex_id)
-                                    .unwrap_or(LiteralValue::Empty);
+                                let old = if self.config.arrow_canonical_values {
+                                    self.read_cell_value(
+                                        self.graph.sheet_name(anchor.sheet_id),
+                                        anchor.coord.row() + 1,
+                                        anchor.coord.col() + 1,
+                                    )
+                                    .unwrap_or(LiteralValue::Empty)
+                                } else {
+                                    self.graph
+                                        .get_value(vertex_id)
+                                        .unwrap_or(LiteralValue::Empty)
+                                };
                                 if old != other {
                                     d.record_cell(
                                         anchor.sheet_id,
@@ -2416,10 +2457,18 @@ where
                     && let Some(anchor) = self.graph.get_cell_ref_for_vertex(vertex_id)
                 {
                     if spill_cells.is_empty() {
-                        let old = self
-                            .graph
-                            .get_value(vertex_id)
-                            .unwrap_or(LiteralValue::Empty);
+                        let old = if self.config.arrow_canonical_values {
+                            self.read_cell_value(
+                                self.graph.sheet_name(anchor.sheet_id),
+                                anchor.coord.row() + 1,
+                                anchor.coord.col() + 1,
+                            )
+                            .unwrap_or(LiteralValue::Empty)
+                        } else {
+                            self.graph
+                                .get_value(vertex_id)
+                                .unwrap_or(LiteralValue::Empty)
+                        };
                         if old != err_val {
                             d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
                         }
@@ -2505,7 +2554,10 @@ where
                         VertexKind::FormulaScalar | VertexKind::FormulaArray
                     )
                 {
-                    let value = if let Some(existing) = self.graph.get_value(dep_vertex) {
+                    let value = if self.config.arrow_canonical_values {
+                        // Canonical mode: graph does not store values; ensure the precedent is evaluated.
+                        self.evaluate_vertex(dep_vertex)?
+                    } else if let Some(existing) = self.graph.get_value(dep_vertex) {
                         existing.clone()
                     } else {
                         let computed = self.evaluate_vertex(dep_vertex)?;
@@ -2811,10 +2863,13 @@ where
                 if delta.mode != DeltaMode::Off
                     && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id)
                 {
-                    let old = self
-                        .graph
-                        .get_value(vertex_id)
-                        .unwrap_or(LiteralValue::Empty);
+                    let old = if self.config.arrow_canonical_values {
+                        let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                        self.read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                            .unwrap_or(LiteralValue::Empty)
+                    } else {
+                        self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty)
+                    };
                     if old != circ_error {
                         delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
                     }
@@ -3006,7 +3061,7 @@ where
                     if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
                         let r0 = row.saturating_sub(1) as usize;
                         let c0 = col.saturating_sub(1) as usize;
-                        let arrow_val = asheet.range_view(r0, c0, r0, c0).get_cell(0, 0);
+                        let arrow_val = asheet.get_cell_value(r0, c0);
                         // Only compare when both have non-empty values and overlay
                         // mirroring is active (not disabled by budget pressure).
                         if !self.computed_overlay_mirroring_disabled {
@@ -3099,10 +3154,13 @@ where
                 if delta.mode != DeltaMode::Off
                     && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id)
                 {
-                    let old = self
-                        .graph
-                        .get_value(vertex_id)
-                        .unwrap_or(LiteralValue::Empty);
+                    let old = if self.config.arrow_canonical_values {
+                        let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                        self.read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                            .unwrap_or(LiteralValue::Empty)
+                    } else {
+                        self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty)
+                    };
                     if old != circ_error {
                         delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
                     }
@@ -3897,10 +3955,13 @@ where
         if delta.mode != DeltaMode::Off
             && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id)
         {
-            let old = self
-                .graph
-                .get_value(vertex_id)
-                .unwrap_or(LiteralValue::Empty);
+            let old = if self.config.arrow_canonical_values {
+                let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                self.read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .unwrap_or(LiteralValue::Empty)
+            } else {
+                self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty)
+            };
             if old != new_value {
                 delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
             }
@@ -4034,10 +4095,16 @@ where
             && let Some(anchor) = self.graph.get_cell_ref_for_vertex(vertex_id)
         {
             if spill_cells.is_empty() {
-                let old = self
-                    .graph
-                    .get_value(vertex_id)
-                    .unwrap_or(LiteralValue::Empty);
+                let old = if self.config.arrow_canonical_values {
+                    self.read_cell_value(
+                        self.graph.sheet_name(anchor.sheet_id),
+                        anchor.coord.row() + 1,
+                        anchor.coord.col() + 1,
+                    )
+                    .unwrap_or(LiteralValue::Empty)
+                } else {
+                    self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty)
+                };
                 if old != value {
                     d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
                 }
@@ -4115,10 +4182,16 @@ where
             if let Some(d) = delta.as_deref_mut()
                 && d.mode != DeltaMode::Off
             {
-                let old = self
-                    .graph
-                    .get_value(vertex_id)
-                    .unwrap_or(LiteralValue::Empty);
+                let old = if self.config.arrow_canonical_values {
+                    self.read_cell_value(
+                        self.graph.sheet_name(anchor.sheet_id),
+                        anchor.coord.row() + 1,
+                        anchor.coord.col() + 1,
+                    )
+                    .unwrap_or(LiteralValue::Empty)
+                } else {
+                    self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty)
+                };
                 if old != spill_val {
                     d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
                 }
@@ -4145,10 +4218,16 @@ where
             if let Some(d) = delta.as_deref_mut()
                 && d.mode != DeltaMode::Off
             {
-                let old = self
-                    .graph
-                    .get_value(vertex_id)
-                    .unwrap_or(LiteralValue::Empty);
+                let old = if self.config.arrow_canonical_values {
+                    self.read_cell_value(
+                        self.graph.sheet_name(anchor.sheet_id),
+                        anchor.coord.row() + 1,
+                        anchor.coord.col() + 1,
+                    )
+                    .unwrap_or(LiteralValue::Empty)
+                } else {
+                    self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty)
+                };
                 if old != spill_val {
                     d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
                 }
@@ -4191,10 +4270,16 @@ where
                     if let Some(d) = delta.as_deref_mut()
                         && d.mode != DeltaMode::Off
                     {
-                        let old = self
-                            .graph
-                            .get_value(vertex_id)
-                            .unwrap_or(LiteralValue::Empty);
+                        let old = if self.config.arrow_canonical_values {
+                            self.read_cell_value(
+                                self.graph.sheet_name(anchor.sheet_id),
+                                anchor.coord.row() + 1,
+                                anchor.coord.col() + 1,
+                            )
+                            .unwrap_or(LiteralValue::Empty)
+                        } else {
+                            self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty)
+                        };
                         if old != err_val {
                             d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
                         }
@@ -4226,10 +4311,16 @@ where
                 if let Some(d) = delta.as_deref_mut()
                     && d.mode != DeltaMode::Off
                 {
-                    let old = self
-                        .graph
-                        .get_value(vertex_id)
-                        .unwrap_or(LiteralValue::Empty);
+                    let old = if self.config.arrow_canonical_values {
+                        self.read_cell_value(
+                            self.graph.sheet_name(anchor.sheet_id),
+                            anchor.coord.row() + 1,
+                            anchor.coord.col() + 1,
+                        )
+                        .unwrap_or(LiteralValue::Empty)
+                    } else {
+                        self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty)
+                    };
                     if old != spill_val {
                         d.record_cell(anchor.sheet_id, anchor.coord.row(), anchor.coord.col());
                     }
@@ -4287,15 +4378,13 @@ where
 
                 return match &named_range.definition {
                     NamedDefinition::Cell(cell_ref) => {
-                        if let Some(dep_vertex) = self.graph.get_vertex_for_cell(cell_ref)
-                            && let Some(existing) = self.graph.get_value(dep_vertex)
-                        {
-                            return Ok(existing.clone());
-                        }
                         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
                         Ok(self
-                            .graph
-                            .get_cell_value(sheet_name, cell_ref.coord.row(), cell_ref.coord.col())
+                            .get_cell_value(
+                                sheet_name,
+                                cell_ref.coord.row() + 1,
+                                cell_ref.coord.col() + 1,
+                            )
                             .unwrap_or(LiteralValue::Empty))
                     }
                     NamedDefinition::Literal(v) => Ok(v.clone()),
@@ -4399,6 +4488,9 @@ where
             | VertexKind::External
             | VertexKind::Table => {
                 // Not directly evaluatable here; return stored or 0
+                if self.config.arrow_canonical_values {
+                    return Ok(LiteralValue::Number(0.0));
+                }
                 if let Some(value) = self.graph.get_value(vertex_id) {
                     return Ok(value.clone());
                 } else {
@@ -5832,10 +5924,13 @@ where
         if let Some(d) = delta {
             if d.mode != DeltaMode::Off {
                 if let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id) {
-                    let old = self
-                        .graph
-                        .get_value(vertex_id)
-                        .unwrap_or(LiteralValue::Empty);
+                    let old = if self.config.arrow_canonical_values {
+                        let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                        self.read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                            .unwrap_or(LiteralValue::Empty)
+                    } else {
+                        self.graph.get_value(vertex_id).unwrap_or(LiteralValue::Empty)
+                    };
                     if old != *value {
                         d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
                     }
