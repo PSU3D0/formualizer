@@ -10,45 +10,50 @@ use crate::ExcelError;
 use serde::{Deserialize, Serialize};
 
 /* ───────────────────── Excel date-serial utilities ───────────────────
-Serial 0  = 1899-12-30  (Excel’s epoch; includes bogus 1900-02-29)
-Serial 60 = 1900-02-29  (non-existent – keep to preserve offsets)
-Serial 1  = 1899-12-31
-Serial 2  = 1900-01-01         …and so on.
+Excel's serial date system:
+  Serial 1  = 1900-01-01
+  Serial 59 = 1900-02-28
+  Serial 60 = 1900-02-29  (phantom – doesn't exist, but Excel thinks it does)
+  Serial 61 = 1900-03-01
+Base date = 1899-12-31 so that serial 1 = base + 1 day = 1900-01-01.
 Time is stored as fractional days (no timezone).
 ------------------------------------------------------------------- */
 
+/// Base date for the 1900 date system. Serial 1 = base + 1 day = 1900-01-01.
+const EXCEL_EPOCH: NaiveDate = NaiveDate::from_ymd_opt(1899, 12, 31).unwrap();
+
 pub fn datetime_to_serial(dt: &NaiveDateTime) -> f64 {
-    // Adjust for the fake 1900-02-29 gap
-    let mut days = (dt.date() - EXCEL_EPOCH).num_days();
-    if days >= 60 {
-        days += 1;
-    }
+    let days = (dt.date() - EXCEL_EPOCH).num_days();
+    // Dates on or after 1900-03-01 get +1 to account for phantom Feb 29
+    let serial_days = if dt.date() >= NaiveDate::from_ymd_opt(1900, 3, 1).unwrap() {
+        days + 1
+    } else {
+        days
+    };
 
     let secs_in_day = dt.time().num_seconds_from_midnight() as f64;
-    days as f64 + secs_in_day / 86_400.0
+    serial_days as f64 + secs_in_day / 86_400.0
 }
 
 pub fn serial_to_datetime(serial: f64) -> NaiveDateTime {
-    // split at day boundary
     let days = serial.trunc() as i64;
-    let frac_secs = (serial.fract() * 86_400.0).round() as i64; // 1 day = 86 400 s
+    let frac_secs = (serial.fract() * 86_400.0).round() as i64;
 
-    // Serial 60 is bogus 1900-02-29; map it to 1900-03-01 for chrono,
-    // but preserve the exact day count for round-trip.
-    let base_date = if days < 60 {
-        EXCEL_EPOCH
+    // Serial 60 is phantom 1900-02-29; map to 1900-02-28
+    let date = if days == 60 {
+        NaiveDate::from_ymd_opt(1900, 2, 28).unwrap()
     } else {
-        EXCEL_EPOCH + ChronoDur::days(1)
+        // serial < 60: offset = serial (no phantom day yet)
+        // serial > 60: offset = serial - 1 (skip phantom day)
+        let offset = if days < 60 { days } else { days - 1 };
+        EXCEL_EPOCH + ChronoDur::days(offset)
     };
 
-    let date = base_date + ChronoDur::days(days);
     let time =
         NaiveTime::from_num_seconds_from_midnight_opt((frac_secs.rem_euclid(86_400)) as u32, 0)
             .unwrap();
     date.and_time(time)
 }
-
-const EXCEL_EPOCH: NaiveDate = NaiveDate::from_ymd_opt(1899, 12, 30).unwrap();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DateSystem {
