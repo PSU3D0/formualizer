@@ -89,10 +89,7 @@ fn parallel_spill_conflict_produces_spill_error() {
         engine.get_cell_value("Sheet1", 2, 1),
         Some(LiteralValue::Text("X".into()))
     );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 3, 1),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 3, 1), None);
 
     let a1 = engine.graph.make_cell_ref("Sheet1", 1, 1);
     let anchor_vid = engine

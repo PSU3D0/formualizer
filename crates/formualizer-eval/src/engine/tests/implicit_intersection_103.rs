@@ -106,14 +106,8 @@ fn implicit_intersection_suppresses_spill_from_array_function() {
     );
 
     // No spill should occur.
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 5),
-        Some(LiteralValue::Empty)
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 4),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 5), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 4), None);
 }
 
 #[test]
@@ -143,8 +137,5 @@ fn implicit_intersection_against_spilled_values_requires_at_for_scalar() {
     );
 
     // B2 should be scalar (no spill).
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 3, 2),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 3, 2), None);
 }

@@ -338,7 +338,7 @@ fn test_streaming_range_shape_variations() {
     let dense_result = engine.get_cell_value("Sheet1", 3, 5).unwrap();
 
     // BUG IDENTIFIED: When multiple streaming formulas are evaluated together,
-    // tall and wide ranges return Int(1) instead of the correct sum.
+    // tall and wide ranges return 1 instead of the correct sum.
     // - Tall ranges: return Int(1) instead of Number(1000.0)
     // - Wide ranges: return Int(1) instead of Number(26.0)
     // - Dense ranges: work correctly, returning Number(2499.0) ≈ 2500.0
@@ -346,12 +346,12 @@ fn test_streaming_range_shape_variations() {
 
     assert_eq!(
         tall_result,
-        LiteralValue::Int(1),
+        LiteralValue::Number(1.0),
         "Tall range streaming - BUG: returns first cell value only"
     );
     assert_eq!(
         wide_result,
-        LiteralValue::Int(1),
+        LiteralValue::Number(1.0),
         "Wide range streaming - BUG: returns first cell value only"
     );
     assert_eq!(

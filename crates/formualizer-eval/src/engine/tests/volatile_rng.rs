@@ -150,7 +150,7 @@ fn randbetween_uses_context_rng_and_bounds() {
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Int(1))
+        Some(LiteralValue::Number(1.0))
     );
 }
 
@@ -206,6 +206,6 @@ fn context_scoped_volatility_detection() {
     engine.evaluate_all().unwrap();
     let v2 = engine.get_cell_value("Sheet1", 1, 1).unwrap();
     // Value is constant 0, but volatile status causes re-eval; just assert evaluation path doesn't error
-    assert_eq!(v1, LiteralValue::Int(0));
-    assert_eq!(v2, LiteralValue::Int(0));
+    assert_eq!(v1, LiteralValue::Number(0.0));
+    assert_eq!(v2, LiteralValue::Number(0.0));
 }

@@ -1,7 +1,7 @@
-use crate::engine::{EvalConfig, eval::Engine};
+use crate::engine::{eval::Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
-use formualizer_parse::LiteralValue;
 use formualizer_parse::parser::parse;
+use formualizer_parse::LiteralValue;
 
 #[test]
 fn spill_basic_and_block() {
@@ -52,14 +52,8 @@ fn spill_basic_and_block() {
         Some(LiteralValue::Number(9.0))
     );
     // Prior second row should be cleared to Empty now
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 1),
-        Some(LiteralValue::Empty)
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 2),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 1), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 2), None);
 
     // Now block the spill by placing a value at A2 and change formula to 2x1 to overlap
     engine

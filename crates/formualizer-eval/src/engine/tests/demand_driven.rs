@@ -105,7 +105,7 @@ fn test_evaluate_until_dependency_chain() {
     // All values should be updated
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Int(30))
+        Some(LiteralValue::Number(30.0))
     );
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 2),
@@ -285,7 +285,7 @@ fn test_evaluate_until_precedents_include_a_cycle() {
     let a1_ast = create_cell_ref_ast(None, 1, 2); // A1 = B1
     engine.set_cell_formula("Sheet1", 1, 1, a1_ast).unwrap();
 
-    let b1_ast = create_cell_ref_ast(None, 1, 1); // B1 = A1  
+    let b1_ast = create_cell_ref_ast(None, 1, 1); // B1 = A1
     engine.set_cell_formula("Sheet1", 1, 2, b1_ast).unwrap();
 
     let c1_ast = create_binary_op_ast(

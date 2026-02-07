@@ -1,4 +1,4 @@
-use crate::engine::{EvalConfig, eval::Engine};
+use crate::engine::{eval::Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
@@ -36,10 +36,7 @@ fn take_whole_column_returns_single_cell_without_materializing() {
         .unwrap();
 
     engine.evaluate_all().unwrap();
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), None);
 }
 
 #[test]
@@ -53,8 +50,5 @@ fn drop_whole_column_can_return_last_cell_without_materializing() {
         .unwrap();
 
     engine.evaluate_all().unwrap();
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), None);
 }
