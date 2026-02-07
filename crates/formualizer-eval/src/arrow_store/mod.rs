@@ -820,6 +820,10 @@ pub enum CellIngest<'a> {
 pub enum OverlayValue {
     Empty,
     Number(f64),
+    /// Date/Time/DateTime stored as an Excel serial in the numeric lane.
+    DateTime(f64),
+    /// Duration stored as an Excel-style day-fraction in the numeric lane.
+    Duration(f64),
     Boolean(bool),
     Text(Arc<str>),
     Error(u8),
@@ -831,7 +835,9 @@ impl OverlayValue {
     fn estimated_payload_bytes(&self) -> usize {
         match self {
             OverlayValue::Empty | OverlayValue::Pending => 0,
-            OverlayValue::Number(_) => core::mem::size_of::<f64>(),
+            OverlayValue::Number(_) | OverlayValue::DateTime(_) | OverlayValue::Duration(_) => {
+                core::mem::size_of::<f64>()
+            }
             OverlayValue::Boolean(_) => core::mem::size_of::<bool>(),
             OverlayValue::Error(_) => core::mem::size_of::<u8>(),
             // Deterministic estimate: count string bytes only.
@@ -1250,6 +1256,22 @@ impl ArrowSheet {
                             sb.append_null();
                             eb.append_null();
                         }
+                        OverlayValue::DateTime(serial) => {
+                            tag_b.append_value(TypeTag::DateTime as u8);
+                            nb.append_value(*serial);
+                            non_num += 1;
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_null();
+                        }
+                        OverlayValue::Duration(serial) => {
+                            tag_b.append_value(TypeTag::Duration as u8);
+                            nb.append_value(*serial);
+                            non_num += 1;
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_null();
+                        }
                         OverlayValue::Boolean(b) => {
                             tag_b.append_value(TypeTag::Boolean as u8);
                             nb.append_null();
@@ -1293,7 +1315,7 @@ impl ArrowSheet {
                             eb.append_null();
                         }
                         TypeTag::Number | TypeTag::DateTime | TypeTag::Duration => {
-                            tag_b.append_value(TypeTag::Number as u8);
+                            tag_b.append_value(tag as u8);
                             if let Some(a) = &ch_ref.numbers {
                                 let fa = a.as_any().downcast_ref::<Float64Array>().unwrap();
                                 if fa.is_null(i) {
@@ -1478,6 +1500,22 @@ impl ArrowSheet {
                             sb.append_null();
                             eb.append_null();
                         }
+                        OverlayValue::DateTime(serial) => {
+                            tag_b.append_value(TypeTag::DateTime as u8);
+                            nb.append_value(*serial);
+                            non_num += 1;
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_null();
+                        }
+                        OverlayValue::Duration(serial) => {
+                            tag_b.append_value(TypeTag::Duration as u8);
+                            nb.append_value(*serial);
+                            non_num += 1;
+                            bb.append_null();
+                            sb.append_null();
+                            eb.append_null();
+                        }
                         OverlayValue::Boolean(b) => {
                             tag_b.append_value(TypeTag::Boolean as u8);
                             nb.append_null();
@@ -1521,7 +1559,7 @@ impl ArrowSheet {
                             eb.append_null();
                         }
                         TypeTag::Number | TypeTag::DateTime | TypeTag::Duration => {
-                            tag_b.append_value(TypeTag::Number as u8);
+                            tag_b.append_value(tag as u8);
                             if let Some(a) = &ch_ref.numbers {
                                 let fa = a.as_any().downcast_ref::<Float64Array>().unwrap();
                                 if fa.is_null(i) {
@@ -1602,22 +1640,40 @@ impl ArrowSheet {
             let tags = Arc::new(tag_b.finish());
             let numbers = {
                 let a = nb.finish();
-                if non_num == 0 { None } else { Some(Arc::new(a)) }
+                if non_num == 0 {
+                    None
+                } else {
+                    Some(Arc::new(a))
+                }
             };
             let booleans = {
                 let a = bb.finish();
-                if non_bool == 0 { None } else { Some(Arc::new(a)) }
+                if non_bool == 0 {
+                    None
+                } else {
+                    Some(Arc::new(a))
+                }
             };
             let text = {
                 let a = sb.finish();
-                if non_text == 0 { None } else { Some(Arc::new(a) as ArrayRef) }
+                if non_text == 0 {
+                    None
+                } else {
+                    Some(Arc::new(a) as ArrayRef)
+                }
             };
             let errors = {
                 let a = eb.finish();
-                if non_err == 0 { None } else { Some(Arc::new(a)) }
+                if non_err == 0 {
+                    None
+                } else {
+                    Some(Arc::new(a))
+                }
             };
 
-            (len, tags, numbers, booleans, text, errors, non_num, non_bool, non_text, non_err)
+            (
+                len, tags, numbers, booleans, text, errors, non_num, non_bool, non_text, non_err,
+            )
         };
 
         let Some(ch_mut) = self.columns[col_idx].chunk_mut(ch_idx) else {

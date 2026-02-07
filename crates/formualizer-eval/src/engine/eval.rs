@@ -1427,22 +1427,22 @@ where
                         self.config.date_system,
                         &dt,
                     );
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::DateTime(dt) => {
                     let serial = crate::builtins::datetime::datetime_to_serial_for(
                         self.config.date_system,
                         dt,
                     );
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::Time(t) => {
                     let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::Duration(d) => {
                     let serial = d.num_seconds() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
+                    OverlayValue::Duration(serial)
                 }
                 LiteralValue::Pending => OverlayValue::Pending,
                 LiteralValue::Array(_) => OverlayValue::Error(crate::arrow_store::map_error_code(
@@ -1535,22 +1535,22 @@ where
                         self.config.date_system,
                         &dt,
                     );
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::DateTime(dt) => {
                     let serial = crate::builtins::datetime::datetime_to_serial_for(
                         self.config.date_system,
                         dt,
                     );
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::Time(t) => {
                     let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::Duration(d) => {
                     let serial = d.num_seconds() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
+                    OverlayValue::Duration(serial)
                 }
                 LiteralValue::Pending => OverlayValue::Pending,
                 LiteralValue::Array(_) => OverlayValue::Error(crate::arrow_store::map_error_code(
@@ -1845,10 +1845,21 @@ where
         Ok(n)
     }
 
+    #[inline]
+    fn normalize_public_cell_read(v: LiteralValue) -> Option<LiteralValue> {
+        match v {
+            LiteralValue::Empty => None,
+            LiteralValue::Int(i) => Some(LiteralValue::Number(i as f64)),
+            other => Some(other),
+        }
+    }
+
     /// Get a cell value
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
         if self.config.arrow_canonical_values {
-            return self.read_cell_value(sheet, row, col);
+            return self
+                .read_cell_value(sheet, row, col)
+                .and_then(Self::normalize_public_cell_read);
         }
         // If a vertex exists in the graph (formula or value cell), use graph value to preserve types.
         // Only fall back to Arrow for cells not in the graph.
@@ -1858,7 +1869,10 @@ where
             if let Some(vid) = self.graph.get_vertex_id_for_address(&addr) {
                 match self.graph.get_vertex_kind(*vid) {
                     VertexKind::FormulaScalar | VertexKind::FormulaArray | VertexKind::Cell => {
-                        return self.graph.get_cell_value(sheet, row, col);
+                        return self
+                            .graph
+                            .get_cell_value(sheet, row, col)
+                            .and_then(Self::normalize_public_cell_read);
                     }
                     _ => {}
                 }
@@ -1869,9 +1883,11 @@ where
             let c0 = col.saturating_sub(1) as usize;
             let av = asheet.range_view(r0, c0, r0, c0);
             let v = av.get_cell(0, 0);
-            return Some(v);
+            return Self::normalize_public_cell_read(v);
         }
-        self.graph.get_cell_value(sheet, row, col)
+        self.graph
+            .get_cell_value(sheet, row, col)
+            .and_then(Self::normalize_public_cell_read)
     }
 
     /// Unified internal read API for a single cell value.
@@ -2031,7 +2047,7 @@ where
                 if let Some(ast_id) = self.graph.get_formula_id(vertex_id) {
                     ast_id
                 } else {
-                    return Ok(LiteralValue::Int(0));
+                    return Ok(LiteralValue::Number(0.0));
                 }
             }
             VertexKind::Empty | VertexKind::Cell => {
@@ -2044,12 +2060,12 @@ where
                             return Ok(v);
                         }
                     }
-                    return Ok(LiteralValue::Int(0));
+                    return Ok(LiteralValue::Number(0.0));
                 }
                 if let Some(value) = self.graph.get_value(vertex_id) {
                     return Ok(value.clone());
                 } else {
-                    return Ok(LiteralValue::Int(0));
+                    return Ok(LiteralValue::Number(0.0));
                 }
             }
             VertexKind::NamedScalar => {
@@ -2068,7 +2084,7 @@ where
                 if let Some(value) = self.graph.get_value(vertex_id) {
                     return Ok(value.clone());
                 } else {
-                    return Ok(LiteralValue::Int(0));
+                    return Ok(LiteralValue::Number(0.0));
                 }
             }
         };
@@ -2709,6 +2725,7 @@ where
             for &vertex_id in cycle {
                 self.graph
                     .update_vertex_value(vertex_id, circ_error.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
             }
         }
 
@@ -2804,6 +2821,7 @@ where
                 }
                 self.graph
                     .update_vertex_value(vertex_id, circ_error.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
             }
         }
 
@@ -2880,6 +2898,7 @@ where
                     if dirty_set.contains(&vertex_id) {
                         self.graph
                             .update_vertex_value(vertex_id, circ_error.clone());
+                        self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
                     }
                 }
             }
@@ -2949,6 +2968,7 @@ where
             for &vertex_id in cycle {
                 self.graph
                     .update_vertex_value(vertex_id, circ_error.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
             }
         }
 
@@ -3089,6 +3109,7 @@ where
                 }
                 self.graph
                     .update_vertex_value(vertex_id, circ_error.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
             }
         }
 
@@ -3618,6 +3639,7 @@ where
             for &vertex_id in cycle {
                 self.graph
                     .update_vertex_value(vertex_id, circ_error.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
             }
         }
 
@@ -3729,6 +3751,7 @@ where
             for &vertex_id in cycle {
                 self.graph
                     .update_vertex_value(vertex_id, circ_error.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
             }
         }
 
@@ -4235,7 +4258,7 @@ where
                 if let Some(ast_id) = self.graph.get_formula_id(vertex_id) {
                     ast_id
                 } else {
-                    return Ok(LiteralValue::Int(0));
+                    return Ok(LiteralValue::Number(0.0));
                 }
             }
             VertexKind::Empty | VertexKind::Cell => {
@@ -4244,16 +4267,16 @@ where
                         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id);
                         let row = cell_ref.coord.row() + 1;
                         let col = cell_ref.coord.col() + 1;
-                        if let Some(v) = self.read_cell_value(sheet_name, row, col) {
-                            return Ok(v);
-                        }
+                    if let Some(v) = self.read_cell_value(sheet_name, row, col) {
+                        return Ok(v);
                     }
-                    return Ok(LiteralValue::Int(0));
+                }
+                    return Ok(LiteralValue::Number(0.0));
                 }
                 if let Some(value) = self.graph.get_value(vertex_id) {
                     return Ok(value.clone());
                 } else {
-                    return Ok(LiteralValue::Int(0));
+                    return Ok(LiteralValue::Number(0.0));
                 }
             }
             VertexKind::NamedScalar => {
@@ -4379,7 +4402,7 @@ where
                 if let Some(value) = self.graph.get_value(vertex_id) {
                     return Ok(value.clone());
                 } else {
-                    return Ok(LiteralValue::Int(0));
+                    return Ok(LiteralValue::Number(0.0));
                 }
             }
         };
@@ -4731,7 +4754,7 @@ where
             Ok(v)
         } else {
             // Excel semantics: empty cell coerces to 0 in numeric contexts
-            Ok(LiteralValue::Int(0))
+            Ok(LiteralValue::Number(0.0))
         }
     }
 }
@@ -6352,6 +6375,7 @@ where
             cycle_errors += 1;
             for &vertex_id in cycle {
                 self.graph.update_vertex_value(vertex_id, circ_error.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
             }
         }
 
@@ -6392,4 +6416,3 @@ where
         Ok(layer.vertices.len())
     }
 }
-
