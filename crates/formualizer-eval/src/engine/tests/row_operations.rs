@@ -1,4 +1,4 @@
-use crate::engine::{DependencyGraph, VertexEditor};
+use crate::engine::VertexEditor;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parse;
 
@@ -8,7 +8,7 @@ fn lit_num(value: f64) -> LiteralValue {
 
 #[test]
 fn test_insert_rows() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup: A1=10, A2=20, A3=30, A4=SUM(A1:A3)
     // Excel uses 1-based indexing
@@ -48,7 +48,7 @@ fn test_insert_rows() {
 
 #[test]
 fn test_delete_rows() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup: A1 through A5 with values
     for i in 1..=5 {
@@ -79,7 +79,7 @@ fn test_delete_rows() {
 
 #[test]
 fn test_insert_rows_adjusts_formulas() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create cells with formulas
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
@@ -110,7 +110,7 @@ fn test_insert_rows_adjusts_formulas() {
 
 #[test]
 fn test_delete_row_creates_ref_error() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // A1 = 10
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
@@ -138,7 +138,7 @@ fn test_delete_row_creates_ref_error() {
 
 #[test]
 fn test_insert_rows_with_absolute_references() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup cells
     graph
@@ -169,7 +169,7 @@ fn test_insert_rows_with_absolute_references() {
 
 #[test]
 fn test_multiple_row_operations() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup initial data
     for i in 1..=10 {

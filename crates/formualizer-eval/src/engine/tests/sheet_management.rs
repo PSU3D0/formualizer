@@ -4,9 +4,13 @@ mod tests {
     use formualizer_common::LiteralValue;
     use formualizer_parse::parse;
 
+    fn create_test_graph() -> DependencyGraph {
+        super::super::common::graph_truth_graph()
+    }
+
     #[test]
     fn test_add_sheet() {
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
 
         // Add a new sheet
         let sheet2_id = graph.add_sheet("Sheet2").unwrap();
@@ -26,7 +30,7 @@ mod tests {
 
     #[test]
     fn test_remove_sheet() {
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
 
         // Add sheets
         let sheet2_id = graph.add_sheet("Sheet2").unwrap();
@@ -62,7 +66,7 @@ mod tests {
 
     #[test]
     fn test_rename_sheet() {
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
 
         // Add a sheet and some data
         let sheet2_id = graph.add_sheet("Sheet2").unwrap();
@@ -92,7 +96,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_sheet() {
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
 
         // Set up source sheet with data and formulas
         graph.add_sheet("Source").unwrap();
@@ -142,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_sheet_management_edge_cases() {
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
 
         // Test empty sheet name
         let result = graph.add_sheet("");

@@ -1,10 +1,10 @@
 use super::common::{abs_cell_ref, get_vertex_ids_in_order};
-use crate::engine::{DependencyGraph, VertexKind};
+use crate::engine::VertexKind;
 use formualizer_common::LiteralValue;
 
 #[test]
 fn test_vertex_creation_and_lookup() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Test creating a vertex with set_cell_value
     let summary = graph
@@ -48,7 +48,7 @@ fn test_vertex_creation_and_lookup() {
 
 #[test]
 fn test_cell_address_mapping() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create vertices in different sheets and positions
     let addr1 = abs_cell_ref(0, 1, 1);
@@ -98,7 +98,7 @@ fn test_cell_address_mapping() {
 
 #[test]
 fn test_vertex_kind_transitions() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Start with a value
     graph
@@ -147,7 +147,7 @@ fn test_vertex_kind_transitions() {
 
 #[test]
 fn test_placeholder_creation() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
     let ast = create_cell_ref_ast(None, 1, 2, "B1"); // A1 = B1
     let summary = graph.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
 
@@ -177,7 +177,7 @@ fn test_placeholder_creation() {
 
 #[test]
 fn test_default_sheet_handling() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
     assert_eq!(graph.default_sheet_name(), "Sheet1");
 
     graph.set_default_sheet_by_name("MyCustomSheet");

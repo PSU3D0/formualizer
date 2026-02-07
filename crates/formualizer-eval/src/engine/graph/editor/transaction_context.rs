@@ -204,12 +204,15 @@ impl<'g> TransactionContext<'g> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::EvalConfig;
     use crate::{reference::Coord, CellRef};
     use formualizer_common::LiteralValue;
     use formualizer_parse::parse;
 
     fn create_test_graph() -> DependencyGraph {
-        DependencyGraph::new()
+        let mut cfg = EvalConfig::default();
+        cfg.arrow_canonical_values = false;
+        DependencyGraph::new_with_config(cfg)
     }
 
     fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {

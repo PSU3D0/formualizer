@@ -165,12 +165,19 @@ impl UndoEngine {
 mod tests {
     use super::*;
     use crate::engine::graph::editor::change_log::ChangeLog;
+    use crate::engine::EvalConfig;
     use crate::reference::{CellRef, Coord};
     use formualizer_common::LiteralValue;
 
+    fn create_test_graph() -> DependencyGraph {
+        let mut cfg = EvalConfig::default();
+        cfg.arrow_canonical_values = false;
+        DependencyGraph::new_with_config(cfg)
+    }
+
     #[test]
     fn test_undo_redo_single_value() {
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
         let mut log = ChangeLog::new();
         {
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
@@ -191,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_undo_redo_row_shift() {
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
         let mut log = ChangeLog::new();
         {
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
@@ -232,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_undo_redo_spill_clear_on_scalar_edit_restores_registry_and_cells() {
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
         let sheet_id = graph.sheet_id_mut("Sheet1");
 
         let anchor_cell = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
@@ -294,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_undo_depth_truncates_gracefully_under_changelog_cap() {
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
         let sheet_id = graph.sheet_id_mut("Sheet1");
         let mut log = ChangeLog::with_max_changelog_events(3);
 
@@ -317,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_undo_redo_column_shift() {
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
         let mut log = ChangeLog::new();
         {
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
@@ -346,7 +353,7 @@ mod tests {
     #[test]
     fn test_remove_vertex_dependency_roundtrip() {
         use formualizer_parse::parser::parse;
-        let mut graph = DependencyGraph::new();
+        let mut graph = create_test_graph();
         let mut log = ChangeLog::new();
         let (a1_cell, a2_cell) = (
             CellRef {

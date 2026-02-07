@@ -1,4 +1,4 @@
-use crate::engine::{DependencyGraph, VertexEditor};
+use crate::engine::VertexEditor;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parse;
 
@@ -8,7 +8,7 @@ fn lit_num(value: f64) -> LiteralValue {
 
 #[test]
 fn test_set_range_values() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Excel uses 1-based indexing
     let values = vec![
@@ -33,7 +33,7 @@ fn test_set_range_values() {
 
 #[test]
 fn test_clear_range() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Populate a 3x3 range
     for row in 1..=3 {
@@ -61,7 +61,7 @@ fn test_clear_range() {
 
 #[test]
 fn test_copy_range() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Source: A1:B2 with values and formulas
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
@@ -96,7 +96,7 @@ fn test_copy_range() {
 
 #[test]
 fn test_set_range_values_partial_overlap() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Set initial values
     graph
@@ -125,7 +125,7 @@ fn test_set_range_values_partial_overlap() {
 
 #[test]
 fn test_copy_range_with_absolute_references() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup source with absolute and relative references
     graph
@@ -157,7 +157,7 @@ fn test_copy_range_with_absolute_references() {
 
 #[test]
 fn test_clear_range_with_formulas() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup cells with formulas that reference each other
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
@@ -189,7 +189,7 @@ fn test_clear_range_with_formulas() {
 
 #[test]
 fn test_move_range() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup source range A1:B2
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
@@ -233,7 +233,7 @@ fn test_move_range() {
 
 #[test]
 fn test_set_range_values_large() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create a 100x100 range
     let mut values = Vec::new();

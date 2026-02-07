@@ -1451,6 +1451,11 @@ where
             };
             if let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) {
                 let _ = ch.overlay.set(in_off, ov);
+                // A user edit must invalidate any computed (formula/spill) overlay entry at
+                // this cell. Otherwise, if the delta overlay later compacts into the base lanes
+                // (clearing `overlay`), a stale `computed_overlay=Empty` could incorrectly mask
+                // the edited base value under the read cascade.
+                let _ = ch.computed_overlay.remove(in_off);
             } else {
                 return;
             }
@@ -1461,6 +1466,33 @@ where
             if freed > 0 {
                 self.overlay_compactions = self.overlay_compactions.saturating_add(1);
             }
+        }
+    }
+
+    /// Remove a delta-overlay entry for a single cell (if present).
+    ///
+    /// This is used when transitioning a cell to a formula so that any previous user-edit overlay
+    /// does not continue to mask computed overlay outputs.
+    fn clear_delta_overlay_cell(&mut self, sheet: &str, row: u32, col: u32) {
+        if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
+            return;
+        }
+        let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
+            return;
+        };
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        if row0 >= asheet.nrows as usize {
+            return;
+        }
+        if col0 >= asheet.columns.len() {
+            return;
+        }
+        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+            return;
+        };
+        if let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) {
+            let _ = ch.overlay.remove(in_off);
         }
     }
 
@@ -1816,6 +1848,13 @@ where
         let volatile = self.is_ast_volatile_with_provider(&ast);
         self.graph
             .set_cell_formula_with_volatility(sheet, row, col, ast, volatile)?;
+
+        // If the cell previously held a user value in the delta overlay, it must not continue
+        // to mask the formula result under Arrow-canonical reads (overlay precedence is
+        // delta -> computed -> base). Remove the overlay entry instead of writing `Empty`,
+        // because an explicit `Empty` overlay would still take precedence over computed values.
+        self.clear_delta_overlay_cell(sheet, row, col);
+
         // Advance snapshot to reflect external mutation
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -4600,15 +4639,23 @@ impl ShimSpillManager {
         }
     }
 
-    pub(crate) fn commit_array(
+    pub(crate) fn commit_array_with_value_probe<F>(
         &mut self,
         graph: &mut DependencyGraph,
         anchor_vertex: VertexId,
         targets: &[CellRef],
         rows: Vec<Vec<LiteralValue>>,
         overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
-    ) -> Result<(), ExcelError> {
+        mut value_probe: F,
+    ) -> Result<(), ExcelError>
+    where
+        F: FnMut(&DependencyGraph, &CellRef) -> Option<LiteralValue>,
+    {
+        use formualizer_common::{ExcelErrorExtra, ExcelErrorKind};
+
         // Re-run plan on concrete targets before committing to respect blockers.
+        // This plan checks formula/spill ownership in the graph, but when the graph value cache
+        // is disabled (Arrow-canonical mode), it cannot see non-empty value blockers.
         let plan_res = graph.plan_spill_region_allowing_formula_overwrite(
             anchor_vertex,
             targets,
@@ -4619,6 +4666,72 @@ impl ShimSpillManager {
                 self.region_locks.release(id);
             }
             return Err(e);
+        }
+
+        if !graph.value_cache_enabled() {
+            // Compute expected spill shape from the target rectangle for diagnostics.
+            let (expected_rows, expected_cols) = if targets.is_empty() {
+                (0u32, 0u32)
+            } else {
+                let mut min_r = u32::MAX;
+                let mut max_r = 0u32;
+                let mut min_c = u32::MAX;
+                let mut max_c = 0u32;
+                for cell in targets {
+                    let r = cell.coord.row();
+                    let c = cell.coord.col();
+                    min_r = min_r.min(r);
+                    max_r = max_r.max(r);
+                    min_c = min_c.min(c);
+                    max_c = max_c.max(c);
+                }
+                (
+                    max_r.saturating_sub(min_r).saturating_add(1),
+                    max_c.saturating_sub(min_c).saturating_add(1),
+                )
+            };
+
+            let anchor_cell = graph
+                .get_cell_ref(anchor_vertex)
+                .expect("anchor cell ref for spill commit");
+
+            for cell in targets {
+                // Never treat the anchor as a blocker.
+                if *cell == anchor_cell {
+                    continue;
+                }
+                // Skip cells already known to be owned by a spill; plan() handled spill conflicts.
+                if graph.spill_registry_anchor_for_cell(*cell).is_some() {
+                    continue;
+                }
+                // Skip formula vertices in the target region; plan() handled them (or allowed).
+                if let Some(&vid) = graph.get_vertex_id_for_address(cell)
+                    && vid != anchor_vertex
+                {
+                    match graph.get_vertex_kind(vid) {
+                        crate::engine::vertex::VertexKind::FormulaScalar
+                        | crate::engine::vertex::VertexKind::FormulaArray => {
+                            // plan() already approved allowed overwrites.
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+
+                if let Some(v) = value_probe(graph, cell)
+                    && !matches!(v, LiteralValue::Empty)
+                {
+                    if let Some(id) = self.active_locks.remove(&anchor_vertex) {
+                        self.region_locks.release(id);
+                    }
+                    return Err(ExcelError::new(ExcelErrorKind::Spill)
+                        .with_message("BlockedByValue")
+                        .with_extra(ExcelErrorExtra::Spill {
+                            expected_rows,
+                            expected_cols,
+                        }));
+                }
+            }
         }
 
         let commit_res = graph.commit_spill_region_atomic_with_fault(
@@ -5624,13 +5737,27 @@ where
             }
         }
 
-        // Commit via shim (releases locks)
-        self.spill_mgr.commit_array(
+        // Commit via shim (releases locks). When the graph value cache is disabled (Arrow-canonical
+        // values), plan/commit must consult Arrow storage to detect non-empty value blockers.
+        let arrow_sheets = &self.arrow_sheets;
+        self.spill_mgr.commit_array_with_value_probe(
             &mut self.graph,
             anchor_vertex,
             targets,
             rows.clone(),
             overwritable_formulas,
+            |g, cell| {
+                let sheet_name = g.sheet_name(cell.sheet_id);
+                let asheet = arrow_sheets.sheet(sheet_name)?;
+                let r0 = cell.coord.row() as usize;
+                let c0 = cell.coord.col() as usize;
+                let v = asheet.get_cell_value(r0, c0);
+                if matches!(v, LiteralValue::Empty) {
+                    None
+                } else {
+                    Some(v)
+                }
+            },
         )?;
 
         if self.config.arrow_storage_enabled
@@ -5817,6 +5944,49 @@ where
                     overwritable_formulas,
                 ) {
                     return self.plan_spill_error_effects(vertex_id, "Spill blocked", h, w);
+                }
+
+                // Arrow-canonical mode: graph planning cannot see non-empty value blockers because
+                // cell values are not cached in the dependency graph. Consult Arrow storage to
+                // detect occupied cells in the target region.
+                if !self.graph.value_cache_enabled() {
+                    let sheet_name = self.graph.sheet_name(sheet_id);
+                    if let Some(asheet) = self.sheet_store().sheet(sheet_name) {
+                        for cell in targets.iter() {
+                            // Allow overwriting the anchor itself.
+                            if *cell == anchor {
+                                continue;
+                            }
+                            // Allow cells already owned by a spill (plan() validated spill ownership).
+                            if self.graph.spill_registry_anchor_for_cell(*cell).is_some() {
+                                continue;
+                            }
+                            // Skip formula blockers; plan() handled them (or allowed).
+                            if let Some(&vid) = self.graph.get_vertex_id_for_address(cell)
+                                && vid != vertex_id
+                            {
+                                match self.graph.get_vertex_kind(vid) {
+                                    VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                                        continue;
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            let v = asheet.get_cell_value(
+                                cell.coord.row() as usize,
+                                cell.coord.col() as usize,
+                            );
+                            if !matches!(v, LiteralValue::Empty) {
+                                return self.plan_spill_error_effects(
+                                    vertex_id,
+                                    "BlockedByValue",
+                                    h,
+                                    w,
+                                );
+                            }
+                        }
+                    }
                 }
 
                 let top_left = rows

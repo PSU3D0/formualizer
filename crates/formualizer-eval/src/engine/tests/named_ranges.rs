@@ -98,13 +98,11 @@ fn named_range_dirty_propagation_reaches_formula() {
 
     let ast = parse("=Input + 1").unwrap();
     let formula_summary = graph.set_cell_formula("Sheet1", 2, 1, ast).unwrap();
-    assert!(
-        formula_summary.affected_vertices.contains(
-            &graph
-                .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
-                .unwrap()
-        )
-    );
+    assert!(formula_summary.affected_vertices.contains(
+        &graph
+            .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
+            .unwrap()
+    ));
 
     let name_vertex = graph
         .named_ranges_iter()
@@ -199,11 +197,17 @@ fn engine_get_cell_value_handles_named_range_formula() {
         .expect("engine should surface formula result");
     assert!(matches!(via_engine, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9));
 
-    let via_graph = engine
-        .graph
-        .get_cell_value("Sheet1", 1, 2)
-        .expect("graph should have formula value");
-    assert!(matches!(via_graph, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9));
+    // In Arrow-canonical mode, the dependency graph is not allowed to cache cell/formula values.
+    // The engine must surface the value via Arrow storage instead.
+    if engine.config.arrow_canonical_values {
+        assert!(engine.graph.get_cell_value("Sheet1", 1, 2).is_none());
+    } else {
+        let via_graph = engine
+            .graph
+            .get_cell_value("Sheet1", 1, 2)
+            .expect("graph should have formula value");
+        assert!(matches!(via_graph, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9));
+    }
 
     engine
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(25.0))
@@ -215,11 +219,15 @@ fn engine_get_cell_value_handles_named_range_formula() {
         .expect("engine should reflect updated named range");
     assert!(matches!(updated_engine, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9));
 
-    let updated_graph = engine
-        .graph
-        .get_cell_value("Sheet1", 1, 2)
-        .expect("graph should reflect updated named range");
-    assert!(matches!(updated_graph, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9));
+    if engine.config.arrow_canonical_values {
+        assert!(engine.graph.get_cell_value("Sheet1", 1, 2).is_none());
+    } else {
+        let updated_graph = engine
+            .graph
+            .get_cell_value("Sheet1", 1, 2)
+            .expect("graph should reflect updated named range");
+        assert!(matches!(updated_graph, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9));
+    }
 }
 
 #[test]
@@ -510,21 +518,15 @@ fn test_invalid_name_rejected() {
     assert!(result.is_err());
 
     // Valid names should work
-    assert!(
-        graph
-            .define_name("MyName", def.clone(), NameScope::Workbook)
-            .is_ok()
-    );
-    assert!(
-        graph
-            .define_name("_Name", def.clone(), NameScope::Sheet(0))
-            .is_ok()
-    );
-    assert!(
-        graph
-            .define_name("Name.Value", def, NameScope::Sheet(0))
-            .is_ok()
-    );
+    assert!(graph
+        .define_name("MyName", def.clone(), NameScope::Workbook)
+        .is_ok());
+    assert!(graph
+        .define_name("_Name", def.clone(), NameScope::Sheet(0))
+        .is_ok());
+    assert!(graph
+        .define_name("Name.Value", def, NameScope::Sheet(0))
+        .is_ok());
 }
 
 #[test]
@@ -543,11 +545,9 @@ fn test_duplicate_name_error() {
     assert!(result.is_err());
 
     // Same name in different scope should succeed
-    assert!(
-        graph
-            .define_name("MyName", def, NameScope::Sheet(0))
-            .is_ok()
-    );
+    assert!(graph
+        .define_name("MyName", def, NameScope::Sheet(0))
+        .is_ok());
 }
 
 #[test]

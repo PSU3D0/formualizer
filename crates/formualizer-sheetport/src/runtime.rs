@@ -908,10 +908,50 @@ impl<'a> SheetPort<'a> {
 
 fn apply_defaults(binding: &PortBinding, value: PortValue) -> PortValue {
     if let Some(default) = &binding.resolved_default {
-        merge_with_default(value, default)
+        normalize_port_value(merge_with_default(value, default))
     } else {
-        value
+        normalize_port_value(value)
     }
+}
+
+fn normalize_literal(lit: LiteralValue) -> LiteralValue {
+    match lit {
+        // Canonical numeric contract: represent numeric values as f64.
+        LiteralValue::Int(i) => LiteralValue::Number(i as f64),
+        other => other,
+    }
+}
+
+fn normalize_port_value(mut value: PortValue) -> PortValue {
+    match &mut value {
+        PortValue::Scalar(lit) => {
+            let old = std::mem::replace(lit, LiteralValue::Empty);
+            *lit = normalize_literal(old);
+        }
+        PortValue::Record(map) => {
+            for v in map.values_mut() {
+                let old = std::mem::replace(v, LiteralValue::Empty);
+                *v = normalize_literal(old);
+            }
+        }
+        PortValue::Range(rows) => {
+            for row in rows.iter_mut() {
+                for cell in row.iter_mut() {
+                    let old = std::mem::replace(cell, LiteralValue::Empty);
+                    *cell = normalize_literal(old);
+                }
+            }
+        }
+        PortValue::Table(table) => {
+            for row in table.rows.iter_mut() {
+                for v in row.values.values_mut() {
+                    let old = std::mem::replace(v, LiteralValue::Empty);
+                    *v = normalize_literal(old);
+                }
+            }
+        }
+    }
+    value
 }
 
 fn merge_with_default(mut current: PortValue, default: &PortValue) -> PortValue {

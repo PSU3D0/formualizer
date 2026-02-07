@@ -259,6 +259,22 @@ pub struct EvalConfig {
 
 impl Default for EvalConfig {
     fn default() -> Self {
+        let arrow_canonical_values = {
+            #[cfg(test)]
+            {
+                // Test-only gate to force Arrow-canonical reads as the default.
+                // This allows us to harden the canonical path without permanently flipping
+                // the production default.
+                let v = std::env::var("FZ_TEST_FORCE_ARROW_CANONICAL").unwrap_or_default();
+                matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES")
+            }
+
+            #[cfg(not(test))]
+            {
+                false
+            }
+        };
+
         Self {
             enable_parallel: true,
             max_threads: None,
@@ -303,7 +319,7 @@ impl Default for EvalConfig {
             delta_overlay_enabled: true,
             write_formula_overlay_enabled: true,
             max_overlay_memory_bytes: None,
-            arrow_canonical_values: false,
+            arrow_canonical_values,
             date_system: DateSystem::Excel1900,
             defer_graph_building: false,
         }
