@@ -1123,9 +1123,10 @@ where
             },
         )?;
         let mut editor = VertexEditor::new(&mut self.graph);
-        let summary = editor.insert_rows(sheet_id, before, count)?;
+        let before0 = before.saturating_sub(1);
+        let summary = editor.insert_rows(sheet_id, before0, count)?;
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
-            let before0 = before.saturating_sub(1) as usize;
+            let before0 = before0 as usize;
             asheet.insert_rows(before0, count as usize);
         }
         self.snapshot_id
@@ -1150,9 +1151,10 @@ where
             },
         )?;
         let mut editor = VertexEditor::new(&mut self.graph);
-        let summary = editor.delete_rows(sheet_id, start, count)?;
+        let start0 = start.saturating_sub(1);
+        let summary = editor.delete_rows(sheet_id, start0, count)?;
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
-            let start0 = start.saturating_sub(1) as usize;
+            let start0 = start0 as usize;
             asheet.delete_rows(start0, count as usize);
         }
         self.snapshot_id
@@ -1177,9 +1179,10 @@ where
             },
         )?;
         let mut editor = VertexEditor::new(&mut self.graph);
-        let summary = editor.insert_columns(sheet_id, before, count)?;
+        let before0 = before.saturating_sub(1);
+        let summary = editor.insert_columns(sheet_id, before0, count)?;
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
-            let before0 = before.saturating_sub(1) as usize;
+            let before0 = before0 as usize;
             asheet.insert_columns(before0, count as usize);
         }
         self.snapshot_id
@@ -1204,9 +1207,10 @@ where
             },
         )?;
         let mut editor = VertexEditor::new(&mut self.graph);
-        let summary = editor.delete_columns(sheet_id, start, count)?;
+        let start0 = start.saturating_sub(1);
+        let summary = editor.delete_columns(sheet_id, start0, count)?;
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
-            let start0 = start.saturating_sub(1) as usize;
+            let start0 = start0 as usize;
             asheet.delete_columns(start0, count as usize);
         }
         self.snapshot_id

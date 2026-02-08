@@ -56,6 +56,7 @@ mod arrow_canonical_601;
 mod arrow_canonical_604;
 mod arrow_canonical_606;
 mod arrow_canonical_607;
+mod arrow_canonical_611;
 mod effects_603;
 
 mod implicit_intersection_103;

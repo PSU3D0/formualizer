@@ -1007,6 +1007,9 @@ impl DependencyGraph {
         // Check for self-reference (immediate cycle detection)
         let addr_vertex_id = self.get_or_create_vertex(&addr, &mut created_placeholders);
 
+        // Editing a formula clears any prior structural #REF! marking for this vertex.
+        self.ref_error_vertices.remove(&addr_vertex_id);
+
         if new_dependencies.contains(&addr_vertex_id) {
             return Err(ExcelError::new(ExcelErrorKind::Circ)
                 .with_message("Self-reference detected".to_string()));
@@ -2653,8 +2656,10 @@ impl DependencyGraph {
                 | VertexKind::FormulaArray
                 | VertexKind::Empty => {
                     self.ref_error_vertices.insert(id);
-                    self.store.set_dirty(id, true);
-                    self.dirty_vertices.insert(id);
+                    // Canonical-only: graph does not cache cell/formula values.
+                    // Ensure the dependent subgraph is dirtied so evaluation updates Arrow truth.
+                    self.vertex_values.remove(&id);
+                    let _ = self.mark_dirty(id);
                     return;
                 }
                 _ => {
@@ -2665,8 +2670,7 @@ impl DependencyGraph {
         let error = LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref));
         let value_ref = self.data_store.store_value(error);
         self.vertex_values.insert(id, value_ref);
-        self.store.set_dirty(id, true);
-        self.dirty_vertices.insert(id);
+        let _ = self.mark_dirty(id);
     }
 
     /// Check if a vertex has a #REF! error
