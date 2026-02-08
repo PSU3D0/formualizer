@@ -203,7 +203,10 @@ impl Workbook {
             self.engine
                 .undo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            self.resync_all_overlays();
+            // Legacy graph-truth mode: rebuild overlays from graph values.
+            if !self.engine.config.arrow_canonical_values {
+                self.resync_all_overlays();
+            }
         }
         Ok(())
     }
@@ -212,7 +215,9 @@ impl Workbook {
             self.engine
                 .redo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            self.resync_all_overlays();
+            if !self.engine.config.arrow_canonical_values {
+                self.resync_all_overlays();
+            }
         }
         Ok(())
     }
@@ -310,22 +315,22 @@ impl Workbook {
                         date_system,
                         &dt,
                     );
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::DateTime(dt) => {
                     let serial = formualizer_eval::builtins::datetime::datetime_to_serial_for(
                         date_system,
                         dt,
                     );
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::Time(t) => {
                     let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::Duration(d) => {
                     let serial = d.num_seconds() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
+                    OverlayValue::Duration(serial)
                 }
                 LiteralValue::Pending => OverlayValue::Pending,
                 LiteralValue::Array(_) => {
@@ -405,9 +410,23 @@ impl Workbook {
                 sheet_id,
                 formualizer_eval::reference::Coord::from_excel(row, col, true, true),
             );
+
+            // In Arrow-canonical mode, the graph value cache is disabled, so we must capture
+            // the old state from Arrow truth for undo/redo.
+            let old_value = self.engine.get_cell_value(sheet, row, col);
+            let old_formula = self
+                .engine
+                .get_cell(sheet, row, col)
+                .and_then(|(ast, _)| ast);
+
             self.engine.edit_with_logger(&mut self.log, |editor| {
                 editor.set_cell_value(cell, value.clone());
             });
+
+            if self.engine.config.arrow_canonical_values {
+                self.log
+                    .patch_last_cell_event_old_state(cell, old_value, old_formula);
+            }
             self.mirror_value_to_overlay(sheet, row, col, &value);
             self.engine.mark_data_edited();
             Ok(())
@@ -444,9 +463,21 @@ impl Workbook {
                         sheet_id,
                         formualizer_eval::reference::Coord::from_excel(row, col, true, true),
                     );
+
+                    let old_value = self.engine.get_cell_value(sheet, row, col);
+                    let old_formula = self
+                        .engine
+                        .get_cell(sheet, row, col)
+                        .and_then(|(a, _)| a);
+
                     self.engine.edit_with_logger(&mut self.log, |editor| {
                         editor.set_cell_formula(cell, ast);
                     });
+
+                    if self.engine.config.arrow_canonical_values {
+                        self.log
+                            .patch_last_cell_event_old_state(cell, old_value, old_formula);
+                    }
                     self.engine.mark_data_edited();
                     Ok(())
                 } else {

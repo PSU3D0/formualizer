@@ -273,6 +273,42 @@ impl ChangeLog {
         &self.events
     }
 
+    pub fn patch_last_cell_event_old_state(
+        &mut self,
+        addr: CellRef,
+        old_value: Option<LiteralValue>,
+        old_formula: Option<ASTNode>,
+    ) {
+        // Walk backwards to find the most recent SetValue/SetFormula for this cell.
+        // This is used by Arrow-canonical callers that must capture old_value/old_formula
+        // from Arrow truth (graph value cache may be disabled).
+        for ev in self.events.iter_mut().rev() {
+            match ev {
+                ChangeEvent::SetValue {
+                    addr: a,
+                    old_value: ov,
+                    old_formula: of,
+                    ..
+                }
+                | ChangeEvent::SetFormula {
+                    addr: a,
+                    old_value: ov,
+                    old_formula: of,
+                    ..
+                } if *a == addr => {
+                    if ov.is_none() {
+                        *ov = old_value;
+                    }
+                    if of.is_none() {
+                        *of = old_formula;
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub fn event_meta(&self, index: usize) -> Option<&ChangeEventMeta> {
         self.metas.get(index)
     }

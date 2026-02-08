@@ -1,8 +1,8 @@
 use crate::error::IoError;
-use formualizer_eval::engine::graph::DependencyGraph;
 use formualizer_eval::engine::graph::editor::change_log::ChangeLog;
 use formualizer_eval::engine::graph::editor::undo_engine::UndoEngine;
 use formualizer_eval::engine::graph::editor::vertex_editor::{EditorError, VertexEditor};
+use formualizer_eval::engine::graph::DependencyGraph;
 
 /// IO-level configuration toggles.
 #[derive(Clone, Debug)]
@@ -87,7 +87,8 @@ impl EditorSession {
     /// Undo last compound group if enabled. No-op otherwise.
     pub fn undo(&mut self) -> Result<(), EditorError> {
         if self.enable_changelog {
-            self.undo.undo(&mut self.graph, &mut self.log)
+            let _ = self.undo.undo(&mut self.graph, &mut self.log)?;
+            Ok(())
         } else {
             Ok(())
         }
@@ -96,7 +97,8 @@ impl EditorSession {
     /// Redo last undone group if enabled. No-op otherwise.
     pub fn redo(&mut self) -> Result<(), EditorError> {
         if self.enable_changelog {
-            self.undo.redo(&mut self.graph, &mut self.log)
+            let _ = self.undo.redo(&mut self.graph, &mut self.log)?;
+            Ok(())
         } else {
             Ok(())
         }

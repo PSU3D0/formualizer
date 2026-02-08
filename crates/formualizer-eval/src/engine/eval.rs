@@ -814,7 +814,11 @@ where
         undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
         log: &mut crate::engine::ChangeLog,
     ) -> Result<(), crate::engine::EditorError> {
-        undo.undo(&mut self.graph, log)
+        let batch = undo.undo(&mut self.graph, log)?;
+        if self.config.arrow_canonical_values {
+            self.mirror_undo_batch_to_arrow(&batch);
+        }
+        Ok(())
     }
 
     pub fn redo_logged(
@@ -822,7 +826,138 @@ where
         undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
         log: &mut crate::engine::ChangeLog,
     ) -> Result<(), crate::engine::EditorError> {
-        undo.redo(&mut self.graph, log)
+        let batch = undo.redo(&mut self.graph, log)?;
+        if self.config.arrow_canonical_values {
+            self.mirror_redo_batch_to_arrow(&batch);
+        }
+        Ok(())
+    }
+
+    fn cellref_to_sheet_row_col(&self, addr: &crate::reference::CellRef) -> (String, u32, u32) {
+        let sheet = self.graph.sheet_name(addr.sheet_id).to_string();
+        // Coord stores 0-based indices.
+        let row = addr.coord.row() + 1;
+        let col = addr.coord.col() + 1;
+        (sheet, row, col)
+    }
+
+    fn mirror_undo_batch_to_arrow(
+        &mut self,
+        batch: &[crate::engine::graph::editor::undo_engine::UndoBatchItem],
+    ) {
+        // Undo applies inverses in reverse order.
+        for item in batch.iter().rev() {
+            self.mirror_inverse_change_to_arrow(&item.event);
+        }
+    }
+
+    fn mirror_redo_batch_to_arrow(
+        &mut self,
+        batch: &[crate::engine::graph::editor::undo_engine::UndoBatchItem],
+    ) {
+        // Redo applies events in forward order.
+        for item in batch.iter() {
+            self.mirror_forward_change_to_arrow(&item.event);
+        }
+    }
+
+    fn mirror_inverse_change_to_arrow(&mut self, ev: &crate::engine::ChangeEvent) {
+        use crate::engine::ChangeEvent;
+        use formualizer_common::LiteralValue;
+
+        match ev {
+            ChangeEvent::SetValue {
+                addr,
+                old_value,
+                old_formula,
+                ..
+            } => {
+                let (sheet, row, col) = self.cellref_to_sheet_row_col(addr);
+                if old_formula.is_some() {
+                    self.clear_delta_overlay_cell(&sheet, row, col);
+                } else {
+                    let v = old_value.clone().unwrap_or(LiteralValue::Empty);
+                    self.mirror_value_to_overlay(&sheet, row, col, &v);
+                }
+            }
+            ChangeEvent::SetFormula {
+                addr,
+                old_value,
+                old_formula,
+                ..
+            } => {
+                let (sheet, row, col) = self.cellref_to_sheet_row_col(addr);
+                if old_formula.is_some() {
+                    self.clear_delta_overlay_cell(&sheet, row, col);
+                } else {
+                    let v = old_value.clone().unwrap_or(LiteralValue::Empty);
+                    self.mirror_value_to_overlay(&sheet, row, col, &v);
+                }
+            }
+            ChangeEvent::SpillCommitted { old, new, .. } => {
+                // Inverse: restore `old` (or clear if none).
+                self.mirror_spill_snapshot(new, /*clear_only=*/ true);
+                if let Some(snap) = old {
+                    self.mirror_spill_snapshot(snap, /*clear_only=*/ false);
+                }
+            }
+            ChangeEvent::SpillCleared { old, .. } => {
+                // Inverse: restore prior spill.
+                self.mirror_spill_snapshot(old, /*clear_only=*/ false);
+            }
+            _ => {}
+        }
+    }
+
+    fn mirror_forward_change_to_arrow(&mut self, ev: &crate::engine::ChangeEvent) {
+        use crate::engine::ChangeEvent;
+
+        match ev {
+            ChangeEvent::SetValue { addr, new, .. } => {
+                let (sheet, row, col) = self.cellref_to_sheet_row_col(addr);
+                self.mirror_value_to_overlay(&sheet, row, col, new);
+            }
+            ChangeEvent::SetFormula { addr, .. } => {
+                let (sheet, row, col) = self.cellref_to_sheet_row_col(addr);
+                self.clear_delta_overlay_cell(&sheet, row, col);
+                // Keep any computed overlay for this cell as-is; it will be recomputed on demand.
+            }
+            ChangeEvent::SpillCommitted { old, new, .. } => {
+                if let Some(snap) = old {
+                    self.mirror_spill_snapshot(snap, /*clear_only=*/ true);
+                }
+                self.mirror_spill_snapshot(new, /*clear_only=*/ false);
+            }
+            ChangeEvent::SpillCleared { old, .. } => {
+                self.mirror_spill_snapshot(old, /*clear_only=*/ true);
+            }
+            _ => {
+                // Other graph structural operations do not have direct value effects in Arrow.
+            }
+        }
+    }
+
+    fn mirror_spill_snapshot(&mut self, snap: &crate::engine::graph::editor::change_log::SpillSnapshot, clear_only: bool) {
+        use formualizer_common::LiteralValue;
+
+        let mut i = 0usize;
+        for row in &snap.values {
+            for v in row {
+                if let Some(cell) = snap.target_cells.get(i) {
+                    let (sheet, r, c) = self.cellref_to_sheet_row_col(cell);
+                    let out = if clear_only { LiteralValue::Empty } else { v.clone() };
+                    self.mirror_value_to_computed_overlay(&sheet, r, c, &out);
+                }
+                i += 1;
+            }
+        }
+        // If target_cells is longer than values (should not happen), clear remaining cells.
+        if clear_only {
+            for cell in snap.target_cells.iter().skip(i) {
+                let (sheet, r, c) = self.cellref_to_sheet_row_col(cell);
+                self.mirror_value_to_computed_overlay(&sheet, r, c, &LiteralValue::Empty);
+            }
+        }
     }
 
     pub fn set_default_sheet_by_name(&mut self, name: &str) {
@@ -3123,6 +3258,14 @@ where
                                         // Arrow may strip error messages; compare kind only
                                         (LiteralValue::Error(a), LiteralValue::Error(b)) => {
                                             a.kind == b.kind
+                                        }
+                                        // Arrow canonicalizes midnight DateTime to Date.
+                                        (LiteralValue::DateTime(dt), LiteralValue::Date(d))
+                                        | (LiteralValue::Date(d), LiteralValue::DateTime(dt)) => {
+                                            dt.date() == *d
+                                                && dt.time()
+                                                    == chrono::NaiveTime::from_hms_opt(0, 0, 0)
+                                                        .unwrap()
                                         }
                                         (LiteralValue::Empty, LiteralValue::Empty) => true,
                                         (a, b) => a == b,

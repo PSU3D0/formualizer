@@ -271,7 +271,7 @@ impl Default for EvalConfig {
 
             #[cfg(not(test))]
             {
-                false
+                true
             }
         };
 

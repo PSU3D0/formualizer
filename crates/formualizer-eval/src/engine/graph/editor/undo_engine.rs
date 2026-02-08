@@ -5,15 +5,15 @@ use crate::engine::graph::editor::vertex_editor::EditorError;
 use crate::engine::graph::DependencyGraph;
 
 #[derive(Debug, Clone)]
-struct LoggedChange {
-    event: ChangeEvent,
-    meta: ChangeEventMeta,
+pub struct UndoBatchItem {
+    pub event: ChangeEvent,
+    pub meta: ChangeEventMeta,
 }
 
 #[derive(Debug, Default)]
 pub struct UndoEngine {
     /// Stack of applied groups (their last event index snapshot) for redo separation
-    undone: Vec<Vec<LoggedChange>>, // redo stack stores full event batches
+    undone: Vec<Vec<UndoBatchItem>>, // redo stack stores full event batches
 }
 
 impl UndoEngine {
@@ -26,14 +26,14 @@ impl UndoEngine {
         &mut self,
         graph: &mut DependencyGraph,
         log: &mut ChangeLog,
-    ) -> Result<(), EditorError> {
+    ) -> Result<Vec<UndoBatchItem>, EditorError> {
         let idxs = log.last_group_indices();
         if idxs.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
-        let batch: Vec<LoggedChange> = idxs
+        let batch: Vec<UndoBatchItem> = idxs
             .iter()
-            .map(|i| LoggedChange {
+            .map(|i| UndoBatchItem {
                 event: log.events()[*i].clone(),
                 meta: log.event_meta(*i).cloned().unwrap_or_default(),
             })
@@ -51,17 +51,23 @@ impl UndoEngine {
         for item in batch.iter().rev() {
             editor.apply_inverse(item.event.clone())?;
         }
-        self.undone.push(batch);
-        Ok(())
+
+        // Keep a copy for redo, but also return the batch so callers can mirror side effects.
+        self.undone.push(batch.clone());
+        Ok(batch)
     }
 
     pub fn redo(
         &mut self,
         graph: &mut DependencyGraph,
         log: &mut ChangeLog,
-    ) -> Result<(), EditorError> {
+    ) -> Result<Vec<UndoBatchItem>, EditorError> {
         if let Some(batch) = self.undone.pop() {
             log.begin_compound("redo".to_string());
+            // Return value for callers (e.g. Arrow mirroring) must remain available even though
+            // we apply events by value below.
+            let ret = batch.clone();
+
             for item in batch {
                 // Re-log original event for audit consistency
                 log.record_with_meta(item.event.clone(), item.meta.clone());
@@ -156,8 +162,10 @@ impl UndoEngine {
                 }
             }
             log.end_compound();
+            Ok(ret)
+        } else {
+            Ok(Vec::new())
         }
-        Ok(())
     }
 }
 
