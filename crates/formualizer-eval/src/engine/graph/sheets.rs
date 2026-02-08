@@ -48,6 +48,62 @@ impl DependencyGraph {
             self.mark_as_ref_error(formula_id);
         }
 
+        // Invalidate defined names that reference the removed sheet.
+        //
+        // In canonical (Arrow-truth) mode, cell/formula vertices do not cache values in the graph,
+        // so we cannot rely on graph-stored ref errors. We must explicitly dirty name vertices and
+        // their dependents so that subsequent evaluation updates Arrow overlays.
+        let ref_err = LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref));
+        let mut name_vertices_to_update: Vec<VertexId> = Vec::new();
+        let mut dirty_vertices: Vec<VertexId> = Vec::new();
+
+        for nr in self.named_ranges.values_mut() {
+            match &nr.definition {
+                NamedDefinition::Cell(c) if c.sheet_id == sheet_id => {
+                    nr.definition = NamedDefinition::Literal(ref_err.clone());
+                    name_vertices_to_update.push(nr.vertex);
+                    dirty_vertices.push(nr.vertex);
+                    dirty_vertices.extend(nr.dependents.iter().copied());
+                }
+                NamedDefinition::Range(r)
+                    if r.start.sheet_id == sheet_id || r.end.sheet_id == sheet_id =>
+                {
+                    nr.definition = NamedDefinition::Literal(ref_err.clone());
+                    name_vertices_to_update.push(nr.vertex);
+                    dirty_vertices.push(nr.vertex);
+                    dirty_vertices.extend(nr.dependents.iter().copied());
+                }
+                _ => {}
+            }
+        }
+        for nr in self.sheet_named_ranges.values_mut() {
+            match &nr.definition {
+                NamedDefinition::Cell(c) if c.sheet_id == sheet_id => {
+                    nr.definition = NamedDefinition::Literal(ref_err.clone());
+                    name_vertices_to_update.push(nr.vertex);
+                    dirty_vertices.push(nr.vertex);
+                    dirty_vertices.extend(nr.dependents.iter().copied());
+                }
+                NamedDefinition::Range(r)
+                    if r.start.sheet_id == sheet_id || r.end.sheet_id == sheet_id =>
+                {
+                    nr.definition = NamedDefinition::Literal(ref_err.clone());
+                    name_vertices_to_update.push(nr.vertex);
+                    dirty_vertices.push(nr.vertex);
+                    dirty_vertices.extend(nr.dependents.iter().copied());
+                }
+                _ => {}
+            }
+        }
+
+        // Update cached values for name vertices after the map borrows end.
+        for vid in name_vertices_to_update {
+            self.update_vertex_value(vid, ref_err.clone());
+        }
+        for vid in dirty_vertices {
+            self.mark_vertex_dirty(vid);
+        }
+
         for vertex_id in vertices_to_delete {
             if let Some(cell_ref) = self.get_cell_ref_for_vertex(vertex_id) {
                 self.cell_to_vertex.remove(&cell_ref);

@@ -1,6 +1,7 @@
 //! Ticket 607: in Arrow-canonical mode, dependency-graph value caching must be disabled.
 
 use crate::engine::eval::Engine;
+use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::EvalConfig;
 use crate::test_workbook::TestWorkbook;
 use formualizer_parse::parser::parse;
@@ -46,4 +47,39 @@ fn canonical_mode_disables_graph_value_cache_for_cells_and_formulas() {
     assert_eq!(engine.graph.get_value(b1_vid), None);
     assert_eq!(engine.graph.get_cell_value("Sheet1", 1, 1), None);
     assert_eq!(engine.graph.get_cell_value("Sheet1", 1, 2), None);
+}
+
+#[test]
+fn canonical_eval_does_not_read_graph_cell_values_with_named_formula() {
+    let mut cfg: EvalConfig = arrow_eval_config();
+    cfg.arrow_canonical_values = true;
+
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+
+    engine
+        .define_name(
+            "N",
+            NamedDefinition::Formula {
+                ast: parse("=A1*3").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=N+1").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(engine.graph.debug_graph_value_read_attempts(), 0);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(31.0))
+    );
 }

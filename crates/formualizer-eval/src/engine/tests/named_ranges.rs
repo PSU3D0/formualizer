@@ -13,6 +13,276 @@ fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)
 }
 
+fn canonical_cfg() -> EvalConfig {
+    let mut cfg = EvalConfig::default();
+    cfg.arrow_canonical_values = true;
+    cfg
+}
+
+#[test]
+fn workbook_named_literal_invalidation_updates_dependents() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .define_name(
+            "X",
+            NamedDefinition::Literal(LiteralValue::Number(1.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=X+1").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+
+    engine
+        .update_name(
+            "X",
+            NamedDefinition::Literal(LiteralValue::Number(2.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(3.0))
+    );
+
+    // Arrow overlay should reflect the updated result (sheet-grid truth).
+    let asheet = engine.sheet_store().sheet("Sheet1").expect("arrow sheet");
+    let av = asheet.range_view(0, 0, 0, 0);
+    match av.get_cell(0, 0) {
+        LiteralValue::Number(n) => assert!((n - 3.0).abs() < 1e-9),
+        other => panic!("expected Number(3.0) from Arrow overlay, got {other:?}"),
+    }
+}
+
+#[test]
+fn sheet_scoped_name_shadows_workbook_name_and_invalidates_locally() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let sheet1 = engine.sheet_id_mut("Sheet1");
+    engine.add_sheet("Sheet2").unwrap();
+
+    engine
+        .define_name(
+            "X",
+            NamedDefinition::Literal(LiteralValue::Number(1.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "X",
+            NamedDefinition::Literal(LiteralValue::Number(10.0)),
+            NameScope::Sheet(sheet1),
+        )
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=X").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet2", 1, 1, parse("=X").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(10.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet2", 1, 1),
+        Some(LiteralValue::Number(1.0))
+    );
+
+    engine
+        .update_name(
+            "X",
+            NamedDefinition::Literal(LiteralValue::Number(20.0)),
+            NameScope::Sheet(sheet1),
+        )
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(20.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet2", 1, 1),
+        Some(LiteralValue::Number(1.0))
+    );
+}
+
+#[test]
+fn named_formula_reacts_to_cell_precedent_edits() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
+        .unwrap();
+    engine
+        .define_name(
+            "N",
+            NamedDefinition::Formula {
+                ast: parse("=A1*2").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=N+1").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(11.0))
+    );
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(7.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(15.0))
+    );
+}
+
+#[test]
+fn named_formula_definition_change_invalidates_dependents() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
+        .unwrap();
+    engine
+        .define_name(
+            "N",
+            NamedDefinition::Formula {
+                ast: parse("=A1*2").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=N").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(10.0))
+    );
+
+    engine
+        .update_name(
+            "N",
+            NamedDefinition::Formula {
+                ast: parse("=A1*3").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(15.0))
+    );
+}
+
+#[test]
+fn named_range_descriptor_uses_arrow_cells_and_updates_on_cell_edits() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 3, 1, LiteralValue::Number(3.0))
+        .unwrap();
+
+    let sid = engine.sheet_id("Sheet1").unwrap();
+    let start = CellRef::new(sid, Coord::from_excel(1, 1, true, true));
+    let end = CellRef::new(sid, Coord::from_excel(3, 1, true, true));
+    engine
+        .define_name(
+            "R",
+            NamedDefinition::Range(RangeRef::new(start, end)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=SUM(R)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(6.0))
+    );
+
+    // In canonical mode, graph is not the value source.
+    assert!(engine.graph.get_cell_value("Sheet1", 1, 2).is_none());
+
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(20.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(24.0))
+    );
+}
+
+#[test]
+fn removing_referenced_sheet_yields_ref_for_name_and_dependents() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    let data_id = engine.add_sheet("Data").unwrap();
+    engine
+        .set_cell_value("Data", 1, 1, LiteralValue::Number(42.0))
+        .unwrap();
+
+    let target = CellRef::new(data_id, Coord::from_excel(1, 1, true, true));
+    engine
+        .define_name("X", NamedDefinition::Cell(target), NameScope::Workbook)
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=X").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(42.0))
+    );
+
+    engine.remove_sheet(data_id).unwrap();
+    engine.evaluate_all().unwrap();
+
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Ref),
+        other => panic!("expected #REF! after removing referenced sheet, got {other:?}"),
+    }
+}
+
 #[test]
 fn test_named_range_basic() {
     let mut graph = DependencyGraph::new();
