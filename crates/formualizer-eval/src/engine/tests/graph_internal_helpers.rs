@@ -77,14 +77,9 @@ fn test_mark_as_ref_error() {
     // Mark as REF error
     graph.mark_as_ref_error(vertex_id);
 
-    // Verify error value (using internal method)
-    let value = graph.get_value(vertex_id).unwrap();
-    match value {
-        LiteralValue::Error(err) => {
-            assert_eq!(err.kind, ExcelErrorKind::Ref);
-        }
-        _ => panic!("Expected REF error, got {value:?}"),
-    }
+    // In Arrow-truth mode the graph does not cache cell/formula payloads;
+    // mark_as_ref_error records structural invalidation via is_ref_error.
+    assert!(graph.is_ref_error(vertex_id));
 
     // Verify vertex is marked dirty (using internal method)
     assert!(graph.is_dirty(vertex_id));

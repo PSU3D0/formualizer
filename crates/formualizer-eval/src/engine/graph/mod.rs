@@ -138,6 +138,13 @@ pub struct DependencyGraph {
     dirty_vertices: FxHashSet<VertexId>,
     volatile_vertices: FxHashSet<VertexId>,
 
+    /// Vertices explicitly marked as #REF! by structural operations.
+    ///
+    /// In Arrow-truth mode, the dependency graph does not cache cell/formula values.
+    /// We still need a place to record deterministic #REF! invalidations for editor
+    /// operations and structural transforms.
+    ref_error_vertices: FxHashSet<VertexId>,
+
     // NEW: Specialized managers for range dependencies (Hybrid Model)
     /// Maps a formula vertex to the ranges it depends on.
     formula_to_range_deps: FxHashMap<VertexId, Vec<SharedRangeRef<'static>>>,
@@ -239,7 +246,7 @@ impl DependencyGraph {
     }
 
     #[inline]
-    pub fn value_cache_enabled(&self) -> bool {
+    pub(crate) fn value_cache_enabled(&self) -> bool {
         self.value_cache_enabled
     }
 
@@ -535,12 +542,15 @@ impl DependencyGraph {
             data_store: DataStore::new(),
             vertex_values: FxHashMap::default(),
             vertex_formulas: FxHashMap::default(),
-            value_cache_enabled: !config.arrow_canonical_values,
+            // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
+            // The dependency graph does not cache cell/formula literal payloads.
+            value_cache_enabled: false,
             #[cfg(debug_assertions)]
             graph_value_read_attempts: AtomicU64::new(0),
             cell_to_vertex: FxHashMap::default(),
             dirty_vertices: FxHashSet::default(),
             volatile_vertices: FxHashSet::default(),
+            ref_error_vertices: FxHashSet::default(),
             formula_to_range_deps: FxHashMap::default(),
             stripe_to_dependents: FxHashMap::default(),
             sheet_indexes: FxHashMap::default(),
@@ -763,6 +773,9 @@ impl DependencyGraph {
             vertex_id
         };
 
+        // Cell edits clear any structural #REF! marking for this vertex.
+        self.ref_error_vertices.remove(&vertex_id);
+
         Ok(OperationSummary {
             affected_vertices: self.mark_dirty(vertex_id),
             created_placeholders,
@@ -800,6 +813,7 @@ impl DependencyGraph {
                 self.vertex_values.remove(&existing_id);
             }
             self.store.set_kind(existing_id, VertexKind::Cell);
+            self.ref_error_vertices.remove(&existing_id);
             return;
         }
         let packed_coord = AbsCoord::from_excel(row, col);
@@ -808,6 +822,7 @@ impl DependencyGraph {
         self.sheet_index_mut(sheet_id)
             .add_vertex(packed_coord, vertex_id);
         self.store.set_kind(vertex_id, VertexKind::Cell);
+        self.ref_error_vertices.remove(&vertex_id);
         if self.value_cache_enabled {
             let value_ref = self.data_store.store_value(value);
             self.vertex_values.insert(vertex_id, value_ref);
@@ -2637,6 +2652,9 @@ impl DependencyGraph {
                 | VertexKind::FormulaScalar
                 | VertexKind::FormulaArray
                 | VertexKind::Empty => {
+                    self.ref_error_vertices.insert(id);
+                    self.store.set_dirty(id, true);
+                    self.dirty_vertices.insert(id);
                     return;
                 }
                 _ => {
@@ -2659,7 +2677,7 @@ impl DependencyGraph {
                 | VertexKind::FormulaScalar
                 | VertexKind::FormulaArray
                 | VertexKind::Empty => {
-                    return false;
+                    return self.ref_error_vertices.contains(&id);
                 }
                 _ => {
                     // Non-cell vertices may still have cached values.

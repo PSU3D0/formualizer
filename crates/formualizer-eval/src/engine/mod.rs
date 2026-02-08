@@ -234,20 +234,9 @@ pub struct EvalConfig {
 
     /// Optional memory budget (in bytes) for formula/spill computed Arrow overlays.
     ///
-    /// When set, the engine may stop mirroring additional computed overlay entries once the
-    /// estimated usage exceeds this cap, and will fall back to materializing RangeViews from
-    /// dependency-graph values for correctness.
+    /// When set, the engine will compact computed overlays into base lanes when the
+    /// estimated usage exceeds this cap.
     pub max_overlay_memory_bytes: Option<usize>,
-
-    /// When true, Arrow storage is the source of truth for cell values.
-    ///
-    /// `read_cell_value()` and `read_range_values()` will read exclusively from Arrow
-    /// (delta overlay -> computed overlay -> base lanes) instead of falling back to the
-    /// dependency-graph cached values. This flag is a migration gate for the Arrow-canonical
-    /// value path (ticket 601). **Not yet supported with budget caps** — enabling this flag
-    /// together with `max_overlay_memory_bytes` that triggers overlay clearing will panic
-    /// (see ticket 602 for compaction-based budget enforcement).
-    pub arrow_canonical_values: bool,
 
     /// Workbook date system: Excel 1900 (default) or 1904.
     pub date_system: DateSystem,
@@ -259,22 +248,6 @@ pub struct EvalConfig {
 
 impl Default for EvalConfig {
     fn default() -> Self {
-        let arrow_canonical_values = {
-            #[cfg(test)]
-            {
-                // Test-only gate to force Arrow-canonical reads as the default.
-                // This allows us to harden the canonical path without permanently flipping
-                // the production default.
-                let v = std::env::var("FZ_TEST_FORCE_ARROW_CANONICAL").unwrap_or_default();
-                matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES")
-            }
-
-            #[cfg(not(test))]
-            {
-                true
-            }
-        };
-
         Self {
             enable_parallel: true,
             max_threads: None,
@@ -319,7 +292,6 @@ impl Default for EvalConfig {
             delta_overlay_enabled: true,
             write_formula_overlay_enabled: true,
             max_overlay_memory_bytes: None,
-            arrow_canonical_values,
             date_system: DateSystem::Excel1900,
             defer_graph_building: false,
         }
@@ -372,12 +344,6 @@ impl EvalConfig {
     #[inline]
     pub fn with_formula_overlay(mut self, enable: bool) -> Self {
         self.write_formula_overlay_enabled = enable;
-        self
-    }
-
-    #[inline]
-    pub fn with_arrow_canonical_values(mut self, enable: bool) -> Self {
-        self.arrow_canonical_values = enable;
         self
     }
 

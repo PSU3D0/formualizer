@@ -210,9 +210,7 @@ mod tests {
     use formualizer_parse::parse;
 
     fn create_test_graph() -> DependencyGraph {
-        let mut cfg = EvalConfig::default();
-        cfg.arrow_canonical_values = false;
-        DependencyGraph::new_with_config(cfg)
+        DependencyGraph::new_with_config(EvalConfig::default())
     }
 
     fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
@@ -276,28 +274,30 @@ mod tests {
     fn test_transaction_context_rollback_value_update() {
         let mut graph = create_test_graph();
 
-        // Set initial value outside transaction
-        let _ = graph.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0));
+        // Set initial formula outside transaction (formulas are graph-owned and should rollback).
+        let original = parse("=1").unwrap();
+        let _ = graph.set_cell_formula("Sheet1", 1, 1, original.clone());
+        let vid = *graph
+            .get_vertex_id_for_address(&cell_ref(0, 1, 1))
+            .expect("vertex for A1");
 
         {
             let mut ctx = TransactionContext::new(&mut graph);
             ctx.begin().unwrap();
 
-            // Update value
+            // Update formula
             {
                 let mut editor = ctx.editor();
-                editor.set_cell_value(cell_ref(0, 1, 1), LiteralValue::Number(20.0));
+                editor.set_cell_formula(cell_ref(0, 1, 1), parse("=2").unwrap());
             }
 
             // Rollback
             ctx.rollback().unwrap();
         }
 
-        // Verify original value restored after context is dropped
-        assert_eq!(
-            graph.get_cell_value("Sheet1", 1, 1),
-            Some(LiteralValue::Number(10.0))
-        );
+        // Verify original formula restored after context is dropped
+        let f = graph.get_formula(vid).expect("formula restored");
+        assert_eq!(f.node_type, original.node_type);
     }
 
     #[test]
@@ -312,8 +312,8 @@ mod tests {
             // Make multiple changes
             {
                 let mut editor = ctx.editor();
-                editor.set_cell_value(cell_ref(0, 1, 1), LiteralValue::Number(10.0));
-                editor.set_cell_value(cell_ref(0, 2, 1), LiteralValue::Number(20.0));
+                editor.set_cell_formula(cell_ref(0, 1, 1), parse("=1").unwrap());
+                editor.set_cell_formula(cell_ref(0, 2, 1), parse("=2").unwrap());
                 editor.set_cell_formula(cell_ref(0, 3, 1), parse("=A1+A2").unwrap());
             }
 
@@ -324,14 +324,12 @@ mod tests {
         }
 
         // Changes should persist after context is dropped
-        assert_eq!(
-            graph.get_cell_value("Sheet1", 1, 1),
-            Some(LiteralValue::Number(10.0))
-        );
-        assert_eq!(
-            graph.get_cell_value("Sheet1", 2, 1),
-            Some(LiteralValue::Number(20.0))
-        );
+        assert!(graph
+            .get_vertex_id_for_address(&cell_ref(0, 1, 1))
+            .is_some());
+        assert!(graph
+            .get_vertex_id_for_address(&cell_ref(0, 2, 1))
+            .is_some());
         assert!(graph
             .get_vertex_id_for_address(&cell_ref(0, 3, 1))
             .is_some());
@@ -349,7 +347,7 @@ mod tests {
             // First change
             {
                 let mut editor = ctx.editor();
-                editor.set_cell_value(cell_ref(0, 1, 1), LiteralValue::Number(10.0));
+                editor.set_cell_formula(cell_ref(0, 1, 1), parse("=1").unwrap());
             }
 
             // Create savepoint
@@ -358,8 +356,8 @@ mod tests {
             // More changes
             {
                 let mut editor = ctx.editor();
-                editor.set_cell_value(cell_ref(0, 2, 1), LiteralValue::Number(20.0));
-                editor.set_cell_value(cell_ref(0, 3, 1), LiteralValue::Number(30.0));
+                editor.set_cell_formula(cell_ref(0, 2, 1), parse("=2").unwrap());
+                editor.set_cell_formula(cell_ref(0, 3, 1), parse("=3").unwrap());
             }
 
             assert_eq!(ctx.change_count(), 3);
@@ -375,10 +373,9 @@ mod tests {
         }
 
         // Verify state after context is dropped
-        assert_eq!(
-            graph.get_cell_value("Sheet1", 1, 1),
-            Some(LiteralValue::Number(10.0))
-        );
+        assert!(graph
+            .get_vertex_id_for_address(&cell_ref(0, 1, 1))
+            .is_some());
         assert!(graph
             .get_vertex_id_for_address(&cell_ref(0, 2, 1))
             .is_none());

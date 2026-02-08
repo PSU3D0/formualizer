@@ -178,9 +178,7 @@ mod tests {
     use formualizer_common::LiteralValue;
 
     fn create_test_graph() -> DependencyGraph {
-        let mut cfg = EvalConfig::default();
-        cfg.arrow_canonical_values = false;
-        DependencyGraph::new_with_config(cfg)
+        DependencyGraph::new_with_config(EvalConfig::default())
     }
 
     #[test]
@@ -281,10 +279,6 @@ mod tests {
 
         assert!(!graph.spill_registry_has_anchor(anchor_vid));
         assert_eq!(graph.spill_registry_counts(), (0, 0));
-        let b1 = graph
-            .get_cell_value("Sheet1", 1, 2)
-            .unwrap_or(LiteralValue::Empty);
-        assert_eq!(b1, LiteralValue::Empty);
 
         let mut undo = UndoEngine::new();
         undo.undo(&mut graph, &mut log).unwrap();
@@ -296,10 +290,8 @@ mod tests {
                 Some(anchor_vid)
             );
         }
-        let b1_restored = graph
-            .get_cell_value("Sheet1", 1, 2)
-            .unwrap_or(LiteralValue::Empty);
-        assert_eq!(b1_restored, LiteralValue::Number(2.0));
+        // Graph does not cache spill child values in Arrow-truth mode; the contract here is
+        // that the spill registry ownership is restored by undo.
 
         // Redo should clear the spill again.
         undo.redo(&mut graph, &mut log).unwrap();

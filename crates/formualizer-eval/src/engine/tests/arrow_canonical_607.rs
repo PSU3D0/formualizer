@@ -11,8 +11,7 @@ use super::common::{abs_cell_ref, arrow_eval_config};
 
 #[test]
 fn canonical_mode_disables_graph_value_cache_for_cells_and_formulas() {
-    let mut cfg: EvalConfig = arrow_eval_config();
-    cfg.arrow_canonical_values = true;
+    let cfg: EvalConfig = arrow_eval_config();
 
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
     engine
@@ -51,8 +50,7 @@ fn canonical_mode_disables_graph_value_cache_for_cells_and_formulas() {
 
 #[test]
 fn canonical_eval_does_not_read_graph_cell_values_with_named_formula() {
-    let mut cfg: EvalConfig = arrow_eval_config();
-    cfg.arrow_canonical_values = true;
+    let cfg: EvalConfig = arrow_eval_config();
 
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
     engine

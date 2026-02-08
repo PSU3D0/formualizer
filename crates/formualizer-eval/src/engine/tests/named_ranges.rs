@@ -14,9 +14,7 @@ fn lit_num(value: f64) -> LiteralValue {
 }
 
 fn canonical_cfg() -> EvalConfig {
-    let mut cfg = EvalConfig::default();
-    cfg.arrow_canonical_values = true;
-    cfg
+    EvalConfig::default()
 }
 
 #[test]
@@ -469,15 +467,7 @@ fn engine_get_cell_value_handles_named_range_formula() {
 
     // In Arrow-canonical mode, the dependency graph is not allowed to cache cell/formula values.
     // The engine must surface the value via Arrow storage instead.
-    if engine.config.arrow_canonical_values {
-        assert!(engine.graph.get_cell_value("Sheet1", 1, 2).is_none());
-    } else {
-        let via_graph = engine
-            .graph
-            .get_cell_value("Sheet1", 1, 2)
-            .expect("graph should have formula value");
-        assert!(matches!(via_graph, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9));
-    }
+    assert!(engine.graph.get_cell_value("Sheet1", 1, 2).is_none());
 
     engine
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(25.0))
@@ -489,15 +479,7 @@ fn engine_get_cell_value_handles_named_range_formula() {
         .expect("engine should reflect updated named range");
     assert!(matches!(updated_engine, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9));
 
-    if engine.config.arrow_canonical_values {
-        assert!(engine.graph.get_cell_value("Sheet1", 1, 2).is_none());
-    } else {
-        let updated_graph = engine
-            .graph
-            .get_cell_value("Sheet1", 1, 2)
-            .expect("graph should reflect updated named range");
-        assert!(matches!(updated_graph, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9));
-    }
+    assert!(engine.graph.get_cell_value("Sheet1", 1, 2).is_none());
 }
 
 #[test]

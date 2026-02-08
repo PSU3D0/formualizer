@@ -29,7 +29,6 @@ fn numeric_normalization_int_to_number_on_storage_and_read() {
 
     // Canonical mode
     let mut cfg = arrow_eval_config();
-    cfg.arrow_canonical_values = true;
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
     engine
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(2))
@@ -43,7 +42,6 @@ fn numeric_normalization_int_to_number_on_storage_and_read() {
 #[test]
 fn temporal_tags_preserved_across_computed_overlay_compaction() {
     let mut cfg = arrow_eval_config();
-    cfg.arrow_canonical_values = true;
     // Force compaction on the first mirrored computed-overlay entry.
     cfg.max_overlay_memory_bytes = Some(0);
 
@@ -120,7 +118,6 @@ fn temporal_tags_preserved_across_computed_overlay_compaction() {
 #[test]
 fn temporal_tags_preserved_across_delta_overlay_compaction() {
     let mut cfg = arrow_eval_config();
-    cfg.arrow_canonical_values = true;
     let mut engine = Engine::new(TestWorkbook::default(), cfg.clone());
 
     // Build Arrow sheet with 1 column, 64 rows (single chunk of 64).
@@ -179,7 +176,6 @@ fn temporal_tags_preserved_across_delta_overlay_compaction() {
 #[test]
 fn error_mirroring_cycle_is_visible_under_canonical_reads() {
     let mut cfg = arrow_eval_config();
-    cfg.arrow_canonical_values = true;
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
 
     engine
@@ -203,7 +199,6 @@ fn error_mirroring_cycle_is_visible_under_canonical_reads() {
 #[test]
 fn empty_semantics_spill_children_are_none_after_retraction_canonical_mode() {
     let mut cfg = arrow_eval_config();
-    cfg.arrow_canonical_values = true;
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
 
     engine

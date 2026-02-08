@@ -203,10 +203,6 @@ impl Workbook {
             self.engine
                 .undo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            // Legacy graph-truth mode: rebuild overlays from graph values.
-            if !self.engine.config.arrow_canonical_values {
-                self.resync_all_overlays();
-            }
         }
         Ok(())
     }
@@ -215,43 +211,8 @@ impl Workbook {
             self.engine
                 .redo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            if !self.engine.config.arrow_canonical_values {
-                self.resync_all_overlays();
-            }
         }
         Ok(())
-    }
-
-    fn resync_all_overlays(&mut self) {
-        // Heavy but simple: walk all sheets and rebuild overlay values from graph
-        let sheet_names: Vec<String> = self
-            .engine
-            .sheet_store()
-            .sheets
-            .iter()
-            .map(|s| s.name.as_ref().to_string())
-            .collect();
-        for s in sheet_names {
-            self.resync_overlay_for_sheet(&s);
-        }
-    }
-    fn resync_overlay_for_sheet(&mut self, sheet: &str) {
-        if let Some(asheet) = self.engine.sheet_store().sheet(sheet) {
-            let rows = asheet.nrows as usize;
-            let cols = asheet.columns.len();
-            for r0 in 0..rows {
-                let r = (r0 as u32) + 1;
-                for c0 in 0..cols {
-                    let c = (c0 as u32) + 1;
-                    let v = self
-                        .engine
-                        .graph_cell_value(sheet, r, c)
-                        .unwrap_or(LiteralValue::Empty);
-                    self.mirror_value_to_overlay(sheet, r, c, &v);
-                }
-            }
-        }
-        // No Arrow sheet: nothing to sync
     }
 
     fn ensure_arrow_sheet_capacity(&mut self, sheet: &str, min_rows: usize, min_cols: usize) {
@@ -423,10 +384,8 @@ impl Workbook {
                 editor.set_cell_value(cell, value.clone());
             });
 
-            if self.engine.config.arrow_canonical_values {
-                self.log
-                    .patch_last_cell_event_old_state(cell, old_value, old_formula);
-            }
+            self.log
+                .patch_last_cell_event_old_state(cell, old_value, old_formula);
             self.mirror_value_to_overlay(sheet, row, col, &value);
             self.engine.mark_data_edited();
             Ok(())
@@ -474,10 +433,8 @@ impl Workbook {
                         editor.set_cell_formula(cell, ast);
                     });
 
-                    if self.engine.config.arrow_canonical_values {
-                        self.log
-                            .patch_last_cell_event_old_state(cell, old_value, old_formula);
-                    }
+                    self.log
+                        .patch_last_cell_event_old_state(cell, old_value, old_formula);
                     self.engine.mark_data_edited();
                     Ok(())
                 } else {

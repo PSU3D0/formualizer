@@ -1,9 +1,16 @@
+use crate::engine::graph::DependencyGraph;
 use crate::engine::VertexEditor;
+use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
 fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)
+}
+
+fn sheet1_cell(graph: &DependencyGraph, row: u32, col: u32) -> CellRef {
+    let sid = graph.sheet_id("Sheet1").unwrap();
+    CellRef::new(sid, Coord::from_excel(row, col, true, true))
 }
 
 #[test]
@@ -20,6 +27,16 @@ fn test_insert_columns() {
         .unwrap();
     let sum_id = sum_result.affected_vertices[0];
 
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
+    let b1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
+        .unwrap();
+    let c1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 3))
+        .unwrap();
+
     // Use editor to insert columns
     let mut editor = VertexEditor::new(&mut graph);
 
@@ -30,13 +47,23 @@ fn test_insert_columns() {
     // Drop editor to release borrow
     drop(editor);
 
-    // Verify shifts
-    // A1 unchanged (before insert point)
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 1), Some(lit_num(10.0)));
-    // B1 -> D1 (shifted right by 2)
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 4), Some(lit_num(20.0)));
-    // C1 -> E1 (shifted right by 2)
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 5), Some(lit_num(30.0)));
+    // Verify shifts via vertex id mapping (graph does not cache cell values).
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
+        Some(&a1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 4)),
+        Some(&b1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 5)),
+        Some(&c1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 6)),
+        Some(&sum_id)
+    );
 
     // Formula should be updated: SUM(A1:C1) -> SUM(A1:E1)
     let formula = graph.get_formula(sum_id);
@@ -57,6 +84,15 @@ fn test_delete_columns() {
             .set_cell_value("Sheet1", 1, i, lit_num(i as f64 * 10.0))
             .unwrap();
     }
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
+    let d1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 4))
+        .unwrap();
+    let e1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 5))
+        .unwrap();
     let formula_result = graph
         .set_cell_formula("Sheet1", 1, 7, parse("=SUM(A1:E1)").unwrap())
         .unwrap();
@@ -68,11 +104,22 @@ fn test_delete_columns() {
 
     drop(editor);
 
-    // Verify remaining values
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 1), Some(lit_num(10.0))); // A1
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 2), Some(lit_num(40.0))); // D1 -> B1
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 3), Some(lit_num(50.0))); // E1 -> C1
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 4), None); // D1 deleted
+    // Verify remaining vertices
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
+        Some(&a1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2)),
+        Some(&d1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 3)),
+        Some(&e1_id)
+    );
+    assert!(graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 4))
+        .is_none());
 
     assert_eq!(summary.vertices_deleted.len(), 2);
     assert_eq!(summary.vertices_moved.len(), 3); // D1, E1, and G1 moved left
@@ -133,8 +180,10 @@ fn test_delete_column_creates_ref_error() {
     // B2 should be deleted
     assert!(graph.is_deleted(b2_id));
 
-    // B1 value should be gone
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 2), None);
+    // B1 vertex should be gone
+    assert!(graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
+        .is_none());
 }
 
 #[test]
@@ -178,6 +227,9 @@ fn test_multiple_column_operations() {
             .set_cell_value("Sheet1", 1, i, lit_num(i as f64))
             .unwrap();
     }
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
 
     let mut editor = VertexEditor::new(&mut graph);
 
@@ -197,9 +249,11 @@ fn test_multiple_column_operations() {
 
     drop(editor);
 
-    // Verify final state
-    // Original A1 should now be at B1
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 2), Some(lit_num(1.0)));
+    // Verify final state: original A1 should now be at B1
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2)),
+        Some(&a1_id)
+    );
 }
 
 #[test]
@@ -214,6 +268,19 @@ fn test_mixed_row_column_operations() {
                 .unwrap();
         }
     }
+
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
+    let b1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
+        .unwrap();
+    let a2_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
+        .unwrap();
+    let b2_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 2))
+        .unwrap();
 
     // Add formula: D4 = SUM(A1:C3)
     let formula_result = graph
@@ -235,15 +302,23 @@ fn test_mixed_row_column_operations() {
 
     drop(editor);
 
-    // Verify grid shifted correctly
-    // A1 stays at A1 (11)
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 1), Some(lit_num(11.0)));
-    // B1 -> C1 (12)
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 3), Some(lit_num(12.0)));
-    // A2 -> A3 (21)
-    assert_eq!(graph.get_cell_value("Sheet1", 3, 1), Some(lit_num(21.0)));
-    // B2 -> C3 (22) - shifted both right and down
-    assert_eq!(graph.get_cell_value("Sheet1", 3, 3), Some(lit_num(22.0)));
+    // Verify grid shifted correctly via vertex mapping
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
+        Some(&a1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 3)),
+        Some(&b1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 3, 1)),
+        Some(&a2_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 3, 3)),
+        Some(&b2_id)
+    );
 
     // Formula should be updated for both shifts
     let updated_formula = graph.get_formula(formula_id);

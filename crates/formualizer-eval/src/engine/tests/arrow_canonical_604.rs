@@ -1,8 +1,7 @@
 //! Tests for ticket 604 — Arrow canonical values: unified read/write.
 //!
-//! Validates that when `arrow_canonical_values=true`, all value-read paths
-//! (get_cell_value, evaluate_vertex, range aggregates, spills, named ranges)
-//! route through Arrow storage and produce the same results as graph-truth mode.
+//! Validates that value-read paths (get_cell_value, evaluation, range aggregates,
+//! spills, named ranges) route through Arrow storage.
 
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::{eval::Engine, EvalConfig};
@@ -22,28 +21,19 @@ fn canonical_get_cell_value_routes_through_arrow() {
             .unwrap();
     };
 
-    for canonical in [false, true] {
-        let wb = TestWorkbook::new();
-        let cfg = EvalConfig {
-            arrow_canonical_values: canonical,
-            ..EvalConfig::default()
-        };
-        let mut engine = Engine::new(wb, cfg);
-        setup(&mut engine);
-        engine.evaluate_all().unwrap();
-        let _ = engine.evaluate_all().unwrap();
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, EvalConfig::default());
+    setup(&mut engine);
+    engine.evaluate_all().unwrap();
 
-        assert_eq!(
-            engine.get_cell_value("Sheet1", 1, 1),
-            Some(LiteralValue::Number(42.0)),
-            "A1 mismatch (canonical={canonical})"
-        );
-        assert_eq!(
-            engine.get_cell_value("Sheet1", 1, 2),
-            Some(LiteralValue::Number(126.0)),
-            "B1 mismatch (canonical={canonical})"
-        );
-    }
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(42.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(126.0))
+    );
 }
 
 #[test]
@@ -62,28 +52,19 @@ fn canonical_range_aggregate_parity() {
             .unwrap();
     };
 
-    for canonical in [false, true] {
-        let wb = TestWorkbook::new();
-        let cfg = EvalConfig {
-            arrow_canonical_values: canonical,
-            ..EvalConfig::default()
-        };
-        let mut engine = Engine::new(wb, cfg);
-        setup(&mut engine);
-        engine.evaluate_all().unwrap();
-        let _ = engine.evaluate_all().unwrap();
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, EvalConfig::default());
+    setup(&mut engine);
+    engine.evaluate_all().unwrap();
 
-        assert_eq!(
-            engine.get_cell_value("Sheet1", 1, 2),
-            Some(LiteralValue::Number(55.0)),
-            "SUM mismatch (canonical={canonical})"
-        );
-        assert_eq!(
-            engine.get_cell_value("Sheet1", 2, 2),
-            Some(LiteralValue::Number(5.5)),
-            "AVERAGE mismatch (canonical={canonical})"
-        );
-    }
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(55.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(5.5))
+    );
 }
 
 #[test]
@@ -97,41 +78,31 @@ fn canonical_spill_parity() {
             .unwrap();
     };
 
-    for canonical in [false, true] {
-        let wb = TestWorkbook::new();
-        let cfg = EvalConfig {
-            arrow_canonical_values: canonical,
-            ..EvalConfig::default()
-        };
-        let mut engine = Engine::new(wb, cfg);
-        setup(&mut engine);
-        engine.evaluate_all().unwrap();
-        let _ = engine.evaluate_all().unwrap();
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, EvalConfig::default());
+    setup(&mut engine);
+    engine.evaluate_all().unwrap();
 
-        for r in 1..=5u32 {
-            for c in 1..=2u32 {
-                let expected = ((r - 1) * 2 + c) as f64;
-                assert_eq!(
-                    engine.get_cell_value("Sheet1", r, c),
-                    Some(LiteralValue::Number(expected)),
-                    "R{r}C{c} mismatch (canonical={canonical})"
-                );
-            }
+    for r in 1..=5u32 {
+        for c in 1..=2u32 {
+            let expected = ((r - 1) * 2 + c) as f64;
+            assert_eq!(
+                engine.get_cell_value("Sheet1", r, c),
+                Some(LiteralValue::Number(expected))
+            );
         }
-        // SUM(1..10) = 55
-        assert_eq!(
-            engine.get_cell_value("Sheet1", 7, 1),
-            Some(LiteralValue::Number(55.0)),
-            "SUM mismatch (canonical={canonical})"
-        );
     }
+    // SUM(1..10) = 55
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 7, 1),
+        Some(LiteralValue::Number(55.0))
+    );
 }
 
 #[test]
 fn canonical_constructor_forces_overlay_flags() {
     let wb = TestWorkbook::new();
     let cfg = EvalConfig {
-        arrow_canonical_values: true,
         arrow_storage_enabled: false,
         delta_overlay_enabled: false,
         write_formula_overlay_enabled: false,
@@ -172,22 +143,14 @@ fn canonical_named_range_parity() {
             .unwrap();
     };
 
-    for canonical in [false, true] {
-        let wb = TestWorkbook::new();
-        let cfg = EvalConfig {
-            arrow_canonical_values: canonical,
-            ..EvalConfig::default()
-        };
-        let mut engine = Engine::new(wb, cfg);
-        setup(&mut engine);
-        engine.evaluate_all().unwrap();
-        let _ = engine.evaluate_all().unwrap();
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, EvalConfig::default());
+    setup(&mut engine);
+    engine.evaluate_all().unwrap();
 
-        // SUM(10+20+30+40+50) = 150
-        assert_eq!(
-            engine.get_cell_value("Sheet1", 1, 2),
-            Some(LiteralValue::Number(150.0)),
-            "SUM(prices) mismatch (canonical={canonical})"
-        );
-    }
+    // SUM(10+20+30+40+50) = 150
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(150.0))
+    );
 }
