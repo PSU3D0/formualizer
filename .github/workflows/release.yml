@@ -4,8 +4,7 @@ on:
   push:
     tags:
       - "v*"
-      - "parse-v*"
-      - "sheetport-spec-v*"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -66,292 +65,58 @@ jobs:
           print(f"OK: v{tag_version} matches product manifests")
           PY
 
-  verify-parse:
-    if: startsWith(github.ref_name, 'parse-v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Verify parse/common tag versions match manifests
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#parse-v}"
-
-          python - "${VERSION}" <<'PY'
-          import sys
-          import tomllib
-          from pathlib import Path
-
-          repo = Path(".")
-          tag_version = sys.argv[1]
-
-          def toml_version(path: Path, keys: list[str]) -> str:
-            data = tomllib.loads(path.read_text(encoding="utf-8"))
-            cur = data
-            for k in keys:
-              cur = cur[k]
-            return str(cur)
-
-          checks = [
-            ("crates/formualizer-common/Cargo.toml", lambda p: toml_version(p, ["package", "version"])),
-            ("crates/formualizer-parse/Cargo.toml", lambda p: toml_version(p, ["package", "version"])),
-          ]
-
-          failures: list[str] = []
-          for rel, reader in checks:
-            path = repo / rel
-            actual = reader(path)
-            if actual != tag_version:
-              failures.append(f"{rel}: {actual} != {tag_version}")
-
-          if failures:
-            print("Tag/version mismatch:\n" + "\n".join(failures))
-            raise SystemExit(1)
-
-          print(f"OK: parse-v{tag_version} matches parser/common manifests")
-          PY
-
-  verify-spec:
-    if: startsWith(github.ref_name, 'sheetport-spec-v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Verify spec tag version matches manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#sheetport-spec-v}"
-
-          python - "${VERSION}" <<'PY'
-          import sys
-          import tomllib
-          from pathlib import Path
-
-          repo = Path(".")
-          tag_version = sys.argv[1]
-
-          data = tomllib.loads((repo / "crates/sheetport-spec/Cargo.toml").read_text(encoding="utf-8"))
-          actual = str(data["package"]["version"])
-          if actual != tag_version:
-            raise SystemExit(f"crates/sheetport-spec/Cargo.toml: {actual} != {tag_version}")
-
-          print(f"OK: sheetport-spec-v{tag_version} matches manifest")
-          PY
-
-  publish-parse-crates:
-    if: startsWith(github.ref_name, 'parse-v')
-    needs: verify-parse
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-
-      - name: Publish parser/common crates
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          publish_with_retry() {
-            local pkg="$1"
-            local attempts="${2:-30}"
-            local sleep_secs="${3:-15}"
-
-            for ((i=1; i<=attempts; i++)); do
-              echo "Publishing ${pkg} (attempt ${i}/${attempts})"
-
-              set +e
-              out="$(cargo publish -p "${pkg}" --locked 2>&1)"
-              status=$?
-              set -e
-
-              if [[ "${status}" -eq 0 ]]; then
-                return 0
-              fi
-
-              if echo "${out}" | grep -q "is already uploaded"; then
-                echo "${pkg} already uploaded; skipping"
-                return 0
-              fi
-
-              echo "${out}"
-
-              if [[ "${i}" -lt "${attempts}" ]]; then
-                echo "Publish failed; sleeping ${sleep_secs}s before retry"
-                sleep "${sleep_secs}"
-              fi
-            done
-
-            echo "Failed to publish ${pkg} after ${attempts} attempts"
-            return 1
-          }
-
-          publish_with_retry formualizer-common
-          publish_with_retry formualizer-parse
-
-  publish-sheetport-spec:
-    if: startsWith(github.ref_name, 'sheetport-spec-v')
-    needs: verify-spec
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-
-      - name: Publish sheetport-spec
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p sheetport-spec --locked
-
-  publish-product-crates:
-    if: startsWith(github.ref_name, 'v')
+  build-wheels:
     needs: verify-product
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: auto
+          - os: macos-14
+            target: aarch64-apple-darwin
+            manylinux: 'off'
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
-          toolchain: stable
+          python-version: '3.11'
 
-      - name: Publish product crates
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          publish_with_retry() {
-            local pkg="$1"
-            local attempts="${2:-30}"
-            local sleep_secs="${3:-15}"
-
-            for ((i=1; i<=attempts; i++)); do
-              echo "Publishing ${pkg} (attempt ${i}/${attempts})"
-
-              set +e
-              out="$(cargo publish -p "${pkg}" --locked 2>&1)"
-              status=$?
-              set -e
-
-              if [[ "${status}" -eq 0 ]]; then
-                return 0
-              fi
-
-              if echo "${out}" | grep -q "is already uploaded"; then
-                echo "${pkg} already uploaded; skipping"
-                return 0
-              fi
-
-              echo "${out}"
-
-              if [[ "${i}" -lt "${attempts}" ]]; then
-                echo "Publish failed; sleeping ${sleep_secs}s before retry"
-                sleep "${sleep_secs}"
-              fi
-            done
-
-            echo "Failed to publish ${pkg} after ${attempts} attempts"
-            return 1
-          }
-
-          publish_with_retry formualizer-macros
-          publish_with_retry formualizer-eval
-          publish_with_retry formualizer-workbook
-          publish_with_retry formualizer-sheetport
-          publish_with_retry formualizer
-
-  publish-pypi:
-    if: startsWith(github.ref_name, 'v')
-    needs: publish-product-crates
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Publish to PyPI (maturin)
+      - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           working-directory: bindings/python
-          command: publish
-          args: --release -u __token__ -p ${{ secrets.PYPI_API_TOKEN }}
+          target: ${{ matrix.target }}
+          args: --release --out dist -i python3.11
           sccache: "true"
+          manylinux: ${{ matrix.manylinux }}
 
-  publish-npm:
-    if: startsWith(github.ref_name, 'v')
-    needs: publish-product-crates
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
         with:
-          toolchain: stable
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Build WASM package (bundler)
-        working-directory: bindings/wasm
-        run: wasm-pack build --target bundler --out-dir pkg --release
-
-      - name: Publish to npm
-        working-directory: bindings/wasm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+          name: wheels-${{ matrix.target }}
+          path: bindings/python/dist/*.whl
 
   github-release:
-    if: startsWith(github.ref_name, 'v')
-    needs:
-      - publish-product-crates
-      - publish-pypi
-      - publish-npm
+    needs: build-wheels
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Create GitHub Release
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheels-*
+          merge-multiple: true
+
+      - name: Create GitHub Release with wheels
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          files: dist/*.whl
