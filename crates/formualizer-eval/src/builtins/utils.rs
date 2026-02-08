@@ -330,6 +330,14 @@ fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
         (LiteralValue::Text(x), LiteralValue::Empty) if x.is_empty() => true,
         (LiteralValue::Empty, LiteralValue::Text(y)) if y.is_empty() => true,
         (LiteralValue::Empty, LiteralValue::Empty) => true,
+        // Date/time/duration equality: compare by serial value.
+        // This matches criteria semantics (COUNTIF(S), SUMIF(S), database criteria, etc.) where
+        // date-like values participate in numeric comparisons.
+        (x, y) if x.as_serial_number().is_some() && y.as_serial_number().is_some() => x
+            .as_serial_number()
+            .zip(y.as_serial_number())
+            .map(|(sx, sy)| (sx - sy).abs() < 1e-12)
+            .unwrap_or(false),
         (LiteralValue::Number(x), _) => value_to_number(b)
             .map(|y| (x - y).abs() < 1e-12)
             .unwrap_or(false),

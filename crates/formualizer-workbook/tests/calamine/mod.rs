@@ -9,6 +9,10 @@ mod engine;
 #[cfg(feature = "calamine")]
 mod formulas;
 #[cfg(feature = "calamine")]
+mod dates;
+#[cfg(feature = "calamine")]
+mod date_arithmetic;
+#[cfg(feature = "calamine")]
 mod it;
 #[cfg(feature = "calamine")]
 mod large;

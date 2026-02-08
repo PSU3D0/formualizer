@@ -16,7 +16,7 @@ fn sumif_whole_column_includes_post_edit_rows_when_arrow_reads_disabled() {
     {
         let mut ab = engine.begin_bulk_ingest_arrow();
         ab.add_sheet("Sheet1", 20, 8); // at least 20 columns so we can use S (19) and P (16)
-        // Fill first 10 rows with non-matching values
+                                       // Fill first 10 rows with non-matching values
         for _ in 0..10 {
             // columns are 0-based: col 19 (S=19) and col 16 (P=16) in 1-based Excel
             let mut row = vec![LiteralValue::Empty; 20];

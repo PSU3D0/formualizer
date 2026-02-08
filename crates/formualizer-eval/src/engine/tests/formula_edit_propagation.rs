@@ -2,7 +2,7 @@ use crate::engine::{Engine, EvalConfig};
 use crate::reference::{CellRef, Coord};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
+use formualizer_parse::parser::{parse, ASTNode, ASTNodeType, ReferenceType};
 
 fn make_engine() -> Engine<TestWorkbook> {
     let wb = TestWorkbook::new();

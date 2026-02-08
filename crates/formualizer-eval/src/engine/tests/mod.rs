@@ -45,8 +45,10 @@ mod spill_atomic;
 mod spill_basic;
 mod spill_config_defaults;
 mod spill_edges;
-mod spill_semantics_101;
 mod spill_parallel_501;
+mod spill_semantics_101;
+
+mod date_arithmetic_ops;
 
 mod hardening_503;
 
@@ -69,6 +71,7 @@ mod compressed_range_scheduler;
 mod config_defaults;
 mod context_default_noops;
 mod countifs_arrow_overlay;
+mod countifs_date_criteria;
 mod criteria_mask_oob_column;
 mod criteria_mask_text_chunked;
 mod criteria_overlay_parity;

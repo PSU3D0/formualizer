@@ -1,6 +1,6 @@
 //! Tests for stripe key hashing and evaluation configuration
 
-use crate::engine::{EvalConfig, StripeKey, StripeType, block_index};
+use crate::engine::{block_index, EvalConfig, StripeKey, StripeType};
 use rustc_hash::FxHashSet;
 
 #[test]

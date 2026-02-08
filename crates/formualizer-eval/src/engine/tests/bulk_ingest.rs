@@ -2,8 +2,8 @@ use crate::engine::ingest_builder::BulkIngestSummary;
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_parse::ASTNode;
 use formualizer_parse::parser::parse as parse_formula;
+use formualizer_parse::ASTNode;
 
 fn parse(formula: &str) -> ASTNode {
     parse_formula(formula).unwrap()

@@ -1,6 +1,6 @@
 use super::common::{abs_cell_ref, get_vertex_ids_in_order};
 use crate::engine::{DependencyGraph, Scheduler, VertexId};
-use formualizer_common::{LiteralValue, parse_a1_1based};
+use formualizer_common::{parse_a1_1based, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 /// Helper to create a cell reference AST node
@@ -49,8 +49,8 @@ fn parse_cell_ref(cell_ref: &str) -> (u32, u32) {
 }
 
 /// Create a test graph with realistic formulas and return vertex IDs by cell reference
-fn create_test_graph_with_formulas()
--> (DependencyGraph, std::collections::HashMap<String, VertexId>) {
+fn create_test_graph_with_formulas(
+) -> (DependencyGraph, std::collections::HashMap<String, VertexId>) {
     let mut graph = DependencyGraph::new();
 
     // Create some base values

@@ -1,6 +1,6 @@
 use super::common::arrow_eval_config;
-use crate::engine::Engine;
 use crate::engine::arrow_ingest::ArrowBulkUpdateBuilder;
+use crate::engine::Engine;
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 
@@ -46,7 +46,7 @@ fn bulk_update_sparse_and_dense_across_chunks() {
     let av = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 0);
     assert_eq!(av.get_cell(0, 0), LiteralValue::Number(1.0)); // row1 (0-based) updated to 1.0
     assert_eq!(av.get_cell(2, 0), LiteralValue::Number(3.0)); // row3 → 3.0
-    // Dense region in chunk 1
+                                                              // Dense region in chunk 1
     for (i, r) in (210..220).enumerate() {
         assert_eq!(
             av.get_cell((r - 1) as usize, 0),

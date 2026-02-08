@@ -5,7 +5,12 @@ use formualizer_parse::LiteralValue;
 
 /// Helper: evaluate under both arrow_canonical_values modes and return (false_result, true_result)
 /// for a given cell.
-fn eval_both_modes<F>(setup: F, sheet: &str, row: u32, col: u32) -> (Option<LiteralValue>, Option<LiteralValue>)
+fn eval_both_modes<F>(
+    setup: F,
+    sheet: &str,
+    row: u32,
+    col: u32,
+) -> (Option<LiteralValue>, Option<LiteralValue>)
 where
     F: Fn(&mut Engine<TestWorkbook>),
 {
@@ -39,9 +44,15 @@ where
 #[test]
 fn mode_matrix_scalar_formulas() {
     let setup = |engine: &mut Engine<TestWorkbook>| {
-        engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0)).unwrap();
-        engine.set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap()).unwrap();
-        engine.set_cell_formula("Sheet1", 1, 3, parse("=SUM(A1:B1)").unwrap()).unwrap();
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap())
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 1, 3, parse("=SUM(A1:B1)").unwrap())
+            .unwrap();
     };
 
     // A1 = 10
@@ -74,16 +85,8 @@ fn mode_matrix_spill() {
     // Spill values: A1=1, A2=2, ..., A5=5
     for r in 1..=5u32 {
         let (vf, vt) = eval_both_modes(setup, "Sheet1", r, 1);
-        assert_eq!(
-            vf,
-            Some(LiteralValue::Number(r as f64)),
-            "A{r} graph-truth"
-        );
-        assert_eq!(
-            vt,
-            Some(LiteralValue::Number(r as f64)),
-            "A{r} arrow-truth"
-        );
+        assert_eq!(vf, Some(LiteralValue::Number(r as f64)), "A{r} graph-truth");
+        assert_eq!(vt, Some(LiteralValue::Number(r as f64)), "A{r} arrow-truth");
     }
 
     // B1 = SUM(A1:A5) = 15

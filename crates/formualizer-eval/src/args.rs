@@ -1,7 +1,7 @@
 use crate::traits::ArgumentHandle;
 // Note: Validator no longer depends on EvaluationContext; keep it engine-agnostic.
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::borrow::Cow;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -156,7 +156,9 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
         }
         LiteralValue::Empty => Ok(CriteriaPredicate::IsBlank),
         LiteralValue::Number(n) => Ok(CriteriaPredicate::Eq(LiteralValue::Number(*n))),
-        LiteralValue::Int(i) => Ok(CriteriaPredicate::Eq(LiteralValue::Int(*i))),
+        // Normalize integer criteria to Number for Excel-style numeric coercions
+        // (e.g. blank == 0, numeric text == number, etc.)
+        LiteralValue::Int(i) => Ok(CriteriaPredicate::Eq(LiteralValue::Number(*i as f64))),
         LiteralValue::Boolean(b) => Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(*b))),
         LiteralValue::Error(e) => Err(e.clone()),
         LiteralValue::Array(arr) => {

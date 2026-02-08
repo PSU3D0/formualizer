@@ -77,6 +77,13 @@ pub fn to_text_invariant(value: &LiteralValue) -> String {
         LiteralValue::Boolean(b) => if *b { "TRUE" } else { "FALSE" }.into(),
         LiteralValue::Error(e) => e.to_string(),
         LiteralValue::Empty => "".into(),
+        // Dates/times/durations are stored as serial numbers in spreadsheet engines.
+        // Use invariant numeric serialization so downstream consumers (e.g., criteria strings
+        // like ">="&A1) parse consistently.
+        LiteralValue::Date(_)
+        | LiteralValue::DateTime(_)
+        | LiteralValue::Time(_)
+        | LiteralValue::Duration(_) => value.as_serial_number().unwrap_or(0.0).to_string(),
         other => format!("{other:?}"),
     }
 }

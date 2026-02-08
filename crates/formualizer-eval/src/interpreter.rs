@@ -247,10 +247,10 @@ impl<'a> Interpreter<'a> {
 
                 match op {
                     "+" => self
-                        .numeric_binary(left, right, |a, b| a + b)
+                        .add_sub_date_aware('+', left, right)
                         .map(crate::traits::CalcValue::Scalar),
                     "-" => self
-                        .numeric_binary(left, right, |a, b| a - b)
+                        .add_sub_date_aware('-', left, right)
                         .map(crate::traits::CalcValue::Scalar),
                     "*" => self
                         .numeric_binary(left, right, |a, b| a * b)
@@ -754,8 +754,8 @@ impl<'a> Interpreter<'a> {
         let r_val = self.evaluate_ast(right)?.into_literal();
 
         match op {
-            "+" => self.numeric_binary(l_val, r_val, |a, b| a + b),
-            "-" => self.numeric_binary(l_val, r_val, |a, b| a - b),
+            "+" => self.add_sub_date_aware('+', l_val, r_val),
+            "-" => self.add_sub_date_aware('-', l_val, r_val),
             "*" => self.numeric_binary(l_val, r_val, |a, b| a * b),
             "/" => self.divide(l_val, r_val),
             "^" => self.power(l_val, r_val),
@@ -780,6 +780,88 @@ impl<'a> Interpreter<'a> {
                     .with_message(format!("Binary op '{op}'")))
             }
         }
+    }
+
+    fn add_sub_date_aware(
+        &self,
+        op: char,
+        left: LiteralValue,
+        right: LiteralValue,
+    ) -> Result<LiteralValue, ExcelError> {
+        debug_assert!(op == '+' || op == '-');
+
+        self.broadcast_apply(left, right, |l, r| {
+            use LiteralValue::*;
+
+            let date_system = self.context.date_system();
+
+            let date_like_serial = |v: &LiteralValue| -> Option<f64> {
+                match v {
+                    Date(d) => Some(crate::builtins::datetime::date_to_serial_for(
+                        date_system,
+                        d,
+                    )),
+                    DateTime(dt) => Some(crate::builtins::datetime::datetime_to_serial_for(
+                        date_system,
+                        dt,
+                    )),
+                    _ => None,
+                }
+            };
+
+            let to_num = |v: &LiteralValue| -> Result<f64, ExcelError> {
+                crate::coercion::to_number_lenient_with_locale(v, &self.context.locale())
+            };
+
+            let serial_to_literal = |serial: f64| -> LiteralValue {
+                match crate::coercion::sanitize_numeric(serial) {
+                    Ok(serial) => {
+                        match crate::builtins::datetime::serial_to_datetime_for(date_system, serial)
+                        {
+                            Ok(dt) => {
+                                if dt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+                                    Date(dt.date())
+                                } else {
+                                    DateTime(dt)
+                                }
+                            }
+                            Err(e) => Error(e),
+                        }
+                    }
+                    Err(e) => Error(e),
+                }
+            };
+
+            // Date +/- number => date (propagate temporal tag)
+            if let Some(ls) = date_like_serial(&l) {
+                match op {
+                    '+' => {
+                        let rn = to_num(&r)?;
+                        return Ok(serial_to_literal(ls + rn));
+                    }
+                    '-' => {
+                        // Date - Date => numeric day delta (Excel-compatible)
+                        if let Some(rs) = date_like_serial(&r) {
+                            return Ok(Number(ls - rs));
+                        }
+                        let rn = to_num(&r)?;
+                        return Ok(serial_to_literal(ls - rn));
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            // Number + Date => date (commutative)
+            if op == '+' {
+                if let Some(rs) = date_like_serial(&r) {
+                    let ln = to_num(&l)?;
+                    return Ok(serial_to_literal(ln + rs));
+                }
+            }
+
+            // Fallback: regular numeric operation
+            self.numeric_binary(l, r, |a, b| if op == '+' { a + b } else { a - b })
+        })
     }
 
     /* ===================  function calls  =================== */

@@ -31,7 +31,7 @@ fn demand_driven_enters_compressed_ranges() {
     engine
         .set_cell_value("Sheet1", 3, 4, LiteralValue::Text("X".into()))
         .unwrap(); // D3="X"
-    // Helper value feeding P2 via a formula
+                   // Helper value feeding P2 via a formula
     engine
         .set_cell_value("Sheet1", 2, 2, LiteralValue::Number(5.0))
         .unwrap(); // B2=5

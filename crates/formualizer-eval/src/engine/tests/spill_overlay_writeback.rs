@@ -29,7 +29,7 @@ fn spill_overlay_writeback_visible_via_arrow() {
     // Read via Arrow directly to confirm values are mirrored into overlay
     let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
     let av = asheet.range_view(0, 0, 3, 1); // rows 0..=3, cols 0..=1
-    // Expect row 1 col 0 = 1, row 2 col 0 = 2
+                                            // Expect row 1 col 0 = 1, row 2 col 0 = 2
     match av.get_cell(1, 0) {
         LiteralValue::Number(n) => assert!((n - 1.0).abs() < 1e-9),
         other => panic!("expected 1.0 at (2,1) from overlay, got {other:?}"),
