@@ -1,0 +1,174 @@
+{
+  "name": "info_functions",
+  "generated": "2026-02-06T00:00:00",
+  "generator": "ported from formulas/test/test_cell.py",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=TYPE(\"1/1/1900\")",
+      "result": 2,
+      "result_type": "int",
+      "description": "TYPE of text string = 2"
+    },
+    {
+      "formula": "=TYPE(1)",
+      "result": 1,
+      "result_type": "int",
+      "description": "TYPE of number = 1"
+    },
+    {
+      "formula": "=TYPE(TRUE)",
+      "result": 4,
+      "result_type": "int",
+      "description": "TYPE of boolean = 4"
+    },
+    {
+      "formula": "=TYPE(\"hello\")",
+      "result": 2,
+      "result_type": "int",
+      "description": "TYPE of text = 2"
+    },
+    {
+      "formula": "=N(\"1/1/1900\")",
+      "result": 0,
+      "result_type": "int",
+      "description": "N of text string = 0"
+    },
+    {
+      "formula": "=N(42)",
+      "result": 42,
+      "result_type": "int",
+      "description": "N of number returns the number"
+    },
+    {
+      "formula": "=N(TRUE)",
+      "result": 1,
+      "result_type": "int",
+      "description": "N of TRUE = 1"
+    },
+    {
+      "formula": "=N(FALSE)",
+      "result": 0,
+      "result_type": "int",
+      "description": "N of FALSE = 0"
+    },
+    {
+      "formula": "=ERROR.TYPE(1/0)",
+      "result": 2,
+      "result_type": "int",
+      "description": "ERROR.TYPE of #DIV/0! = 2"
+    },
+    {
+      "formula": "=ISNUMBER(1)",
+      "result": true,
+      "result_type": "bool",
+      "description": "ISNUMBER of number is TRUE"
+    },
+    {
+      "formula": "=ISNUMBER(\"hello\")",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISNUMBER of text is FALSE"
+    },
+    {
+      "formula": "=ISNUMBER(TRUE)",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISNUMBER of boolean is FALSE"
+    },
+    {
+      "formula": "=ISTEXT(\"hello\")",
+      "result": true,
+      "result_type": "bool",
+      "description": "ISTEXT of text is TRUE"
+    },
+    {
+      "formula": "=ISTEXT(1)",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISTEXT of number is FALSE"
+    },
+    {
+      "formula": "=ISLOGICAL(TRUE)",
+      "result": true,
+      "result_type": "bool",
+      "description": "ISLOGICAL of TRUE is TRUE"
+    },
+    {
+      "formula": "=ISLOGICAL(FALSE)",
+      "result": true,
+      "result_type": "bool",
+      "description": "ISLOGICAL of FALSE is TRUE"
+    },
+    {
+      "formula": "=ISLOGICAL(1)",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISLOGICAL of number is FALSE"
+    },
+    {
+      "formula": "=ISERROR(1/0)",
+      "result": true,
+      "result_type": "bool",
+      "description": "ISERROR of division by zero is TRUE"
+    },
+    {
+      "formula": "=ISERROR(1)",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISERROR of number is FALSE"
+    },
+    {
+      "formula": "=ISERROR(\"hello\")",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISERROR of text is FALSE"
+    },
+    {
+      "formula": "=ISBLANK(A1)",
+      "result": true,
+      "result_type": "bool",
+      "description": "ISBLANK of empty cell is TRUE",
+      "skip": "test runner does not populate empty cells for ISBLANK to detect"
+    },
+    {
+      "formula": "=ISBLANK(A1)",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISBLANK of non-empty cell is FALSE",
+      "context": {
+        "A1": 1
+      }
+    },
+    {
+      "formula": "=ISBLANK(1)",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISBLANK of literal is FALSE"
+    },
+    {
+      "formula": "=ISEVEN(2)",
+      "result": true,
+      "result_type": "bool",
+      "description": "ISEVEN of 2 is TRUE"
+    },
+    {
+      "formula": "=ISEVEN(3)",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISEVEN of 3 is FALSE"
+    },
+    {
+      "formula": "=ISODD(3)",
+      "result": true,
+      "result_type": "bool",
+      "description": "ISODD of 3 is TRUE"
+    },
+    {
+      "formula": "=ISODD(2)",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISODD of 2 is FALSE"
+    }
+  ]
+}
