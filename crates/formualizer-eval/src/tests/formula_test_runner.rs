@@ -29,6 +29,9 @@ struct TestCase {
     description: Option<String>,
     #[serde(default)]
     context: Option<serde_json::Value>,
+    /// When set, the test is skipped and the value describes why.
+    #[serde(default)]
+    skip: Option<String>,
 }
 
 /// Represents a test file containing multiple test cases.
@@ -284,10 +287,11 @@ fn format_literal(lit: &LiteralValue) -> String {
 }
 
 /// Run all formula tests from JSON files.
-/// Returns (passed_count, failures).
+/// Returns (passed_count, skipped_count, failures).
 #[cfg(test)]
-fn run_formula_tests(test_dir: &Path) -> (usize, Vec<TestFailure>) {
+fn run_formula_tests(test_dir: &Path) -> (usize, usize, Vec<TestFailure>) {
     let mut passed = 0;
+    let mut skipped = 0;
     let mut failures = Vec::new();
 
     // Initialize function registry
@@ -344,6 +348,10 @@ fn run_formula_tests(test_dir: &Path) -> (usize, Vec<TestFailure>) {
         };
 
         for test_case in &test_file.tests {
+            if test_case.skip.is_some() {
+                skipped += 1;
+                continue;
+            }
             let mut wb = create_test_workbook();
             if let Some(context) = test_file.context_data.as_ref() {
                 wb = apply_context(wb, context);
@@ -407,7 +415,7 @@ fn run_formula_tests(test_dir: &Path) -> (usize, Vec<TestFailure>) {
         }
     }
 
-    (passed, failures)
+    (passed, skipped, failures)
 }
 
 #[cfg(test)]
@@ -435,7 +443,7 @@ mod tests {
             return;
         }
 
-        let (passed, failures) = run_formula_tests(&test_dir);
+        let (passed, skipped, failures) = run_formula_tests(&test_dir);
 
         // Report all failures at the end
         if !failures.is_empty() {
@@ -457,17 +465,26 @@ mod tests {
                 );
             }
             eprintln!(
-                "\n=== SUMMARY: {} passed, {} failed ===\n",
+                "\n=== SUMMARY: {} passed, {} skipped, {} failed ===\n",
                 passed,
+                skipped,
                 failures.len()
             );
             panic!(
-                "Formula test suite: {} passed, {} failed",
+                "Formula test suite: {} passed, {} skipped, {} failed",
                 passed,
+                skipped,
                 failures.len()
             );
         }
 
-        println!("\nFormula test suite: {} tests passed", passed);
+        if skipped > 0 {
+            println!(
+                "\nFormula test suite: {} tests passed, {} skipped",
+                passed, skipped
+            );
+        } else {
+            println!("\nFormula test suite: {} tests passed", passed);
+        }
     }
 }

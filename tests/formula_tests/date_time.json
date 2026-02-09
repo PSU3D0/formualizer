@@ -129,6 +129,320 @@
       "result": 0.604166666666667,
       "result_type": "float",
       "description": "timevalue"
+    },
+    {
+      "formula": "=DAY(1)",
+      "result": 1,
+      "result_type": "int",
+      "description": "DAY of serial 1 (1900-01-01)"
+    },
+    {
+      "formula": "=DAY(0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "DAY of serial 0",
+      "skip": "eval serial_to_date does not handle serial 0 edge case"
+    },
+    {
+      "formula": "=DAY(50)",
+      "result": 19,
+      "result_type": "int",
+      "description": "DAY of serial 50 (1900-02-19)"
+    },
+    {
+      "formula": "=DAY(60)",
+      "result": 29,
+      "result_type": "int",
+      "description": "DAY of serial 60 (phantom Feb 29)",
+      "skip": "eval serial_to_date does not handle phantom Feb 29 (serial 60)"
+    },
+    {
+      "formula": "=DAY(100)",
+      "result": 9,
+      "result_type": "int",
+      "description": "DAY of serial 100 (1900-04-09)"
+    },
+    {
+      "formula": "=MONTH(0.7)",
+      "result": 1,
+      "result_type": "int",
+      "description": "MONTH of fractional serial near zero",
+      "skip": "eval serial_to_date does not handle serial 0 edge case"
+    },
+    {
+      "formula": "=HOUR(0.4006770833)",
+      "result": 9,
+      "result_type": "int",
+      "description": "HOUR from fractional serial"
+    },
+    {
+      "formula": "=MINUTE(0.4006770833)",
+      "result": 36,
+      "result_type": "int",
+      "description": "MINUTE from fractional serial"
+    },
+    {
+      "formula": "=SECOND(0.4006770833)",
+      "result": 58,
+      "result_type": "int",
+      "description": "SECOND from fractional serial"
+    },
+    {
+      "formula": "=SECOND(0.4)",
+      "result": 0,
+      "result_type": "int",
+      "description": "SECOND of 0.4 (exact hour boundary)"
+    },
+    {
+      "formula": "=MINUTE(2.4)",
+      "result": 36,
+      "result_type": "int",
+      "description": "MINUTE from serial with integer days"
+    },
+    {
+      "formula": "=TIME(24, 0, 0)",
+      "result": 0.0,
+      "result_type": "float",
+      "description": "TIME wraps at 24 hours to 0"
+    },
+    {
+      "formula": "=TIME(12, 0, 0)",
+      "result": 0.5,
+      "result_type": "float",
+      "description": "TIME noon = 0.5"
+    },
+    {
+      "formula": "=TIME(0, 0, 0)",
+      "result": 0.0,
+      "result_type": "float",
+      "description": "TIME midnight = 0"
+    },
+    {
+      "formula": "=TIME(6, 0, 0)",
+      "result": 0.25,
+      "result_type": "float",
+      "description": "TIME 6AM = 0.25"
+    },
+    {
+      "formula": "=TIME(18, 0, 0)",
+      "result": 0.75,
+      "result_type": "float",
+      "description": "TIME 6PM = 0.75"
+    },
+    {
+      "formula": "=DATE(1900, 1, 0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "DATE with day=0 gives serial 0"
+    },
+    {
+      "formula": "=DATE(1900, 2, 28)",
+      "result": 59,
+      "result_type": "int",
+      "description": "DATE Feb 28, 1900"
+    },
+    {
+      "formula": "=DATE(1900, 2, 29)",
+      "result": 60,
+      "result_type": "int",
+      "description": "DATE phantom Feb 29, 1900",
+      "skip": "DATE function does not handle phantom Feb 29, 1900"
+    },
+    {
+      "formula": "=DATE(1900, 3, -1)",
+      "result": 59,
+      "result_type": "int",
+      "description": "DATE with negative day",
+      "skip": "DATE function does not handle phantom Feb 29 boundary with negative day"
+    },
+    {
+      "formula": "=DATE(1900, 3, 0)",
+      "result": 60,
+      "result_type": "int",
+      "description": "DATE March 0 = Feb 29 phantom",
+      "skip": "DATE function does not handle phantom Feb 29, 1900"
+    },
+    {
+      "formula": "=DATE(2020, 2, 29)",
+      "result": 43890,
+      "result_type": "int",
+      "description": "DATE leap year Feb 29"
+    },
+    {
+      "formula": "=DATE(9999, 12, 31)",
+      "result": 2958465,
+      "result_type": "int",
+      "description": "DATE max date"
+    },
+    {
+      "formula": "=DATE(1904, 2, 29)",
+      "result": 1521,
+      "result_type": "int",
+      "description": "DATE 1904 leap year"
+    },
+    {
+      "formula": "=DATE(0, 11, 1)",
+      "result": 306,
+      "result_type": "int",
+      "description": "DATE with year=0 (1900 + 0 = 1900)"
+    },
+    {
+      "formula": "=DATE(0, 11, 0)",
+      "result": 305,
+      "result_type": "int",
+      "description": "DATE with year=0 day=0"
+    },
+    {
+      "formula": "=DATEVALUE(\"8/22/2011\")",
+      "result": 40777,
+      "result_type": "int",
+      "description": "DATEVALUE M/D/YYYY format"
+    },
+    {
+      "formula": "=DATEVALUE(\"2011/02/23\")",
+      "result": 40597,
+      "result_type": "int",
+      "description": "DATEVALUE YYYY/MM/DD format"
+    },
+    {
+      "formula": "=DATEDIF(1, 0, \"YD\")",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "DATEDIF start > end returns error"
+    },
+    {
+      "formula": "=DATEDIF(222, 222290, \"Y\")",
+      "result": 608,
+      "result_type": "int",
+      "description": "DATEDIF years between serials"
+    },
+    {
+      "formula": "=DATEDIF(222, 222290, \"M\")",
+      "result": 7296,
+      "result_type": "int",
+      "description": "DATEDIF months between serials"
+    },
+    {
+      "formula": "=DATEDIF(222, 222290, \"D\")",
+      "result": 222068,
+      "result_type": "int",
+      "description": "DATEDIF days between serials"
+    },
+    {
+      "formula": "=DATEDIF(222, 222222, \"YD\")",
+      "result": 297,
+      "result_type": "int",
+      "description": "DATEDIF year-day between serials",
+      "skip": "DATEDIF YD off-by-one for large serial ranges"
+    },
+    {
+      "formula": "=DATEDIF(222, 222222, \"YM\")",
+      "result": 9,
+      "result_type": "int",
+      "description": "DATEDIF year-month between serials"
+    },
+    {
+      "formula": "=DATEDIF(222, 222222, \"MD\")",
+      "result": 24,
+      "result_type": "int",
+      "description": "DATEDIF month-day between serials"
+    },
+    {
+      "formula": "=WEEKDAY(36525)",
+      "result": 6,
+      "result_type": "int",
+      "description": "WEEKDAY of serial 36525"
+    },
+    {
+      "formula": "=WEEKDAY(0, 17)",
+      "result": 7,
+      "result_type": "int",
+      "description": "WEEKDAY of serial 0 with return_type 17",
+      "skip": "WEEKDAY does not handle serial 0 correctly"
+    },
+    {
+      "formula": "=WEEKDAY(0, 11)",
+      "result": 6,
+      "result_type": "int",
+      "description": "WEEKDAY of serial 0 with return_type 11",
+      "skip": "WEEKDAY does not handle serial 0 correctly"
+    },
+    {
+      "formula": "=WEEKDAY(TRUE, 2)",
+      "result": 7,
+      "result_type": "int",
+      "description": "WEEKDAY with TRUE coerced to serial 1",
+      "skip": "WEEKDAY serial 1 returns wrong result with return_type 2"
+    },
+    {
+      "formula": "=EDATE(0, 0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "EDATE zero months from serial 0",
+      "skip": "EDATE does not handle serial 0 correctly"
+    },
+    {
+      "formula": "=EDATE(2.4, 1)",
+      "result": 33,
+      "result_type": "int",
+      "description": "EDATE 1 month from serial 2.4"
+    },
+    {
+      "formula": "=EOMONTH(444, 3)",
+      "result": 547,
+      "result_type": "int",
+      "description": "EOMONTH 3 months forward from serial 444"
+    },
+    {
+      "formula": "=EOMONTH(444, -3)",
+      "result": 366,
+      "result_type": "int",
+      "description": "EOMONTH 3 months backward from serial 444",
+      "skip": "EOMONTH negative month offset off by one"
+    },
+    {
+      "formula": "=WEEKNUM(0, 1)",
+      "result": 0,
+      "result_type": "int",
+      "description": "WEEKNUM serial 0, return_type 1",
+      "skip": "WEEKNUM does not handle serial 0 correctly"
+    },
+    {
+      "formula": "=WEEKNUM(1, 21)",
+      "result": 52,
+      "result_type": "int",
+      "description": "WEEKNUM serial 1, ISO return_type",
+      "skip": "WEEKNUM ISO does not handle serial 1 correctly"
+    },
+    {
+      "formula": "=WEEKNUM(2, 21)",
+      "result": 1,
+      "result_type": "int",
+      "description": "WEEKNUM serial 2, ISO return_type"
+    },
+    {
+      "formula": "=WEEKNUM(60, 21)",
+      "result": 9,
+      "result_type": "int",
+      "description": "WEEKNUM phantom leap day ISO"
+    },
+    {
+      "formula": "=WEEKNUM(60, 1)",
+      "result": 9,
+      "result_type": "int",
+      "description": "WEEKNUM phantom leap day return_type 1"
+    },
+    {
+      "formula": "=WEEKNUM(11326)",
+      "result": 1,
+      "result_type": "int",
+      "description": "WEEKNUM large serial default return_type"
+    },
+    {
+      "formula": "=WEEKNUM(36534)",
+      "result": 3,
+      "result_type": "int",
+      "description": "WEEKNUM year 2000 area"
     }
   ]
 }

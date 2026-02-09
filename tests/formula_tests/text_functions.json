@@ -1,0 +1,238 @@
+{
+  "name": "text_functions",
+  "generated": "2026-02-06T00:00:00",
+  "generator": "ported from formulas/test/test_cell.py",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=CODE(CHAR(1))",
+      "result": 1,
+      "result_type": "int",
+      "description": "CODE(CHAR(1)) roundtrip"
+    },
+    {
+      "formula": "=CHAR(65)",
+      "result": "A",
+      "result_type": "text",
+      "description": "CHAR 65 = A"
+    },
+    {
+      "formula": "=CHAR(90)",
+      "result": "Z",
+      "result_type": "text",
+      "description": "CHAR 90 = Z"
+    },
+    {
+      "formula": "=CODE(\"Z\")",
+      "result": 90,
+      "result_type": "int",
+      "description": "CODE of Z"
+    },
+    {
+      "formula": "=T(\"A\")",
+      "result": "A",
+      "result_type": "text",
+      "description": "T of text returns text"
+    },
+    {
+      "formula": "=T(TRUE)",
+      "result": "",
+      "result_type": "text",
+      "description": "T of boolean returns empty string"
+    },
+    {
+      "formula": "=SEARCH(5, 45)",
+      "result": 2,
+      "result_type": "int",
+      "description": "SEARCH number in number (coerced to text)"
+    },
+    {
+      "formula": "=SEARCH(\"n\", \"printer\")",
+      "result": 4,
+      "result_type": "int",
+      "description": "SEARCH character in word"
+    },
+    {
+      "formula": "=SEARCH(\"BASE\", \"database\", 5)",
+      "result": 5,
+      "result_type": "int",
+      "description": "SEARCH with start position"
+    },
+    {
+      "formula": "=SEARCH(\"BASE\", \"database\", TRUE)",
+      "result": 5,
+      "result_type": "int",
+      "description": "SEARCH with TRUE as start position (coerced to 1)"
+    },
+    {
+      "formula": "=VALUE(0)",
+      "result": 0.0,
+      "result_type": "float",
+      "description": "VALUE of numeric 0"
+    },
+    {
+      "formula": "=VALUE(\"123.45\")",
+      "result": 123.45,
+      "result_type": "float",
+      "description": "VALUE of numeric string"
+    },
+    {
+      "formula": "=CONCAT(1, TRUE, 3)",
+      "result": "1TRUE3",
+      "result_type": "text",
+      "description": "CONCAT with mixed types"
+    },
+    {
+      "formula": "=CONCAT(\"con\", \"cat\", \"enate\")",
+      "result": "concatenate",
+      "result_type": "text",
+      "description": "CONCAT three strings"
+    },
+    {
+      "formula": "=FIXED(6, 5)",
+      "result": "6.00000",
+      "result_type": "text",
+      "description": "FIXED with 5 decimal places"
+    },
+    {
+      "formula": "=REPT(\"ab\", 3)",
+      "result": "ababab",
+      "result_type": "text",
+      "description": "REPT string 3 times"
+    },
+    {
+      "formula": "=REPT(\"x\", 0)",
+      "result": "",
+      "result_type": "text",
+      "description": "REPT with 0 repeats"
+    },
+    {
+      "formula": "=REPT(\"hello\", 1)",
+      "result": "hello",
+      "result_type": "text",
+      "description": "REPT with 1 repeat"
+    },
+    {
+      "formula": "=LEN(\"\")",
+      "result": 0,
+      "result_type": "int",
+      "description": "LEN of empty string"
+    },
+    {
+      "formula": "=LEN(\"test\")",
+      "result": 4,
+      "result_type": "int",
+      "description": "LEN of 4-char string"
+    },
+    {
+      "formula": "=LEFT(\"hello\", 0)",
+      "result": "",
+      "result_type": "text",
+      "description": "LEFT with 0 chars"
+    },
+    {
+      "formula": "=RIGHT(\"hello\", 0)",
+      "result": "",
+      "result_type": "text",
+      "description": "RIGHT with 0 chars"
+    },
+    {
+      "formula": "=MID(\"hello\", 1, 5)",
+      "result": "hello",
+      "result_type": "text",
+      "description": "MID entire string"
+    },
+    {
+      "formula": "=MID(\"hello\", 3, 1)",
+      "result": "l",
+      "result_type": "text",
+      "description": "MID single character"
+    },
+    {
+      "formula": "=SUBSTITUTE(\"aabbcc\", \"bb\", \"XX\")",
+      "result": "aaXXcc",
+      "result_type": "text",
+      "description": "SUBSTITUTE in middle of string"
+    },
+    {
+      "formula": "=SUBSTITUTE(\"aaa\", \"a\", \"b\", 2)",
+      "result": "aba",
+      "result_type": "text",
+      "description": "SUBSTITUTE with instance_num"
+    },
+    {
+      "formula": "=FIND(\"x\", \"hello\")",
+      "result": "#VALUE!",
+      "result_type": "error",
+      "description": "FIND returns error when not found"
+    },
+    {
+      "formula": "=FIND(\"l\", \"hello\", 4)",
+      "result": 4,
+      "result_type": "int",
+      "description": "FIND with start position"
+    },
+    {
+      "formula": "=EXACT(\"abc\", \"ABC\")",
+      "result": false,
+      "result_type": "bool",
+      "description": "EXACT is case sensitive"
+    },
+    {
+      "formula": "=EXACT(\"abc\", \"abc\")",
+      "result": true,
+      "result_type": "bool",
+      "description": "EXACT matching strings"
+    },
+    {
+      "formula": "=UPPER(\"hello world\")",
+      "result": "HELLO WORLD",
+      "result_type": "text",
+      "description": "UPPER with spaces"
+    },
+    {
+      "formula": "=LOWER(\"Hello World\")",
+      "result": "hello world",
+      "result_type": "text",
+      "description": "LOWER with mixed case"
+    },
+    {
+      "formula": "=PROPER(\"hello world test\")",
+      "result": "Hello World Test",
+      "result_type": "text",
+      "description": "PROPER capitalizes each word"
+    },
+    {
+      "formula": "=TRIM(\"  hello   world  \")",
+      "result": "hello world",
+      "result_type": "text",
+      "description": "TRIM removes leading/trailing/extra spaces"
+    },
+    {
+      "formula": "=CONCATENATE(\"hello\", \" \", \"world\")",
+      "result": "hello world",
+      "result_type": "text",
+      "description": "CONCATENATE with space separator"
+    },
+    {
+      "formula": "=REPLACE(\"abcdef\", 3, 2, \"XY\")",
+      "result": "abXYef",
+      "result_type": "text",
+      "description": "REPLACE in middle"
+    },
+    {
+      "formula": "=TEXT(0.285, \"0.0%\")",
+      "result": "28.5%",
+      "result_type": "text",
+      "description": "TEXT percentage format",
+      "skip": "TEXT percentage format pattern not fully implemented"
+    },
+    {
+      "formula": "=TEXT(1234.567, \"$#,##0.00\")",
+      "result": "$1,234.57",
+      "result_type": "text",
+      "description": "TEXT currency format",
+      "skip": "TEXT currency prefix not implemented"
+    }
+  ]
+}

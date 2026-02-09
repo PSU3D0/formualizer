@@ -1,0 +1,270 @@
+{
+  "name": "logical_functions",
+  "generated": "2026-02-06T00:00:00",
+  "generator": "ported from formulas/test/test_cell.py",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=IF(TRUE, \"1a\", \"2b\")",
+      "result": "1a",
+      "result_type": "text",
+      "description": "IF true returns value_if_true string"
+    },
+    {
+      "formula": "=IF(FALSE, \"VALUE\", \"PASS\")",
+      "result": "PASS",
+      "result_type": "text",
+      "description": "IF false returns value_if_false string"
+    },
+    {
+      "formula": "=IF(1, 10, 20)",
+      "result": 10,
+      "result_type": "int",
+      "description": "IF with truthy number 1"
+    },
+    {
+      "formula": "=IF(0, 10, 20)",
+      "result": 20,
+      "result_type": "int",
+      "description": "IF with falsy number 0"
+    },
+    {
+      "formula": "=IF(TRUE, 100, 200)",
+      "result": 100,
+      "result_type": "int",
+      "description": "IF with TRUE boolean"
+    },
+    {
+      "formula": "=IF(FALSE, 100, 200)",
+      "result": 200,
+      "result_type": "int",
+      "description": "IF with FALSE boolean"
+    },
+    {
+      "formula": "=IF(,FALSE,\"PASS\")",
+      "result": "PASS",
+      "result_type": "text",
+      "description": "IF with omitted condition (treated as FALSE)",
+      "skip": "parser does not support omitted arguments"
+    },
+    {
+      "formula": "=IF(,4,)",
+      "result": 0,
+      "result_type": "int",
+      "description": "IF with omitted condition and omitted false value",
+      "skip": "parser does not support omitted arguments"
+    },
+    {
+      "formula": "=IF(,,)",
+      "result": 0,
+      "result_type": "int",
+      "description": "IF with all args omitted",
+      "skip": "parser does not support omitted arguments"
+    },
+    {
+      "formula": "=IF(,,A2)",
+      "result": 5,
+      "result_type": "int",
+      "description": "IF with omitted condition returns value_if_false from cell",
+      "context": {
+        "A2": 5
+      },
+      "skip": "parser does not support omitted arguments"
+    },
+    {
+      "formula": "=IF(A1>3, A1*2, 0)",
+      "result": 10,
+      "result_type": "int",
+      "description": "IF with comparison and arithmetic in true branch",
+      "context": {
+        "A1": 5
+      }
+    },
+    {
+      "formula": "=IF(A1>3, A1*2, 0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "IF with comparison falling to false branch",
+      "context": {
+        "A1": 2
+      }
+    },
+    {
+      "formula": "=AND(TRUE, TRUE)",
+      "result": true,
+      "result_type": "bool",
+      "description": "AND with two TRUE values"
+    },
+    {
+      "formula": "=AND(TRUE, FALSE)",
+      "result": false,
+      "result_type": "bool",
+      "description": "AND with one FALSE value"
+    },
+    {
+      "formula": "=AND(1, 1)",
+      "result": true,
+      "result_type": "bool",
+      "description": "AND with truthy numbers"
+    },
+    {
+      "formula": "=AND(1, 0)",
+      "result": false,
+      "result_type": "bool",
+      "description": "AND with one falsy number"
+    },
+    {
+      "formula": "=OR(TRUE, FALSE)",
+      "result": true,
+      "result_type": "bool",
+      "description": "OR with one TRUE value"
+    },
+    {
+      "formula": "=OR(FALSE, FALSE)",
+      "result": false,
+      "result_type": "bool",
+      "description": "OR with all FALSE values"
+    },
+    {
+      "formula": "=OR(0, 0)",
+      "result": false,
+      "result_type": "bool",
+      "description": "OR with all zero values"
+    },
+    {
+      "formula": "=OR(0, 1)",
+      "result": true,
+      "result_type": "bool",
+      "description": "OR with one truthy number"
+    },
+    {
+      "formula": "=NOT(TRUE)",
+      "result": false,
+      "result_type": "bool",
+      "description": "NOT TRUE returns FALSE"
+    },
+    {
+      "formula": "=NOT(FALSE)",
+      "result": true,
+      "result_type": "bool",
+      "description": "NOT FALSE returns TRUE"
+    },
+    {
+      "formula": "=NOT(1)",
+      "result": false,
+      "result_type": "bool",
+      "description": "NOT with truthy number"
+    },
+    {
+      "formula": "=NOT(0)",
+      "result": true,
+      "result_type": "bool",
+      "description": "NOT with zero"
+    },
+    {
+      "formula": "=XOR(TRUE, TRUE)",
+      "result": false,
+      "result_type": "bool",
+      "description": "XOR with two TRUE (even count = FALSE)"
+    },
+    {
+      "formula": "=XOR(TRUE, FALSE)",
+      "result": true,
+      "result_type": "bool",
+      "description": "XOR with one TRUE (odd count = TRUE)"
+    },
+    {
+      "formula": "=XOR(FALSE, FALSE)",
+      "result": false,
+      "result_type": "bool",
+      "description": "XOR with zero TRUE values"
+    },
+    {
+      "formula": "=XOR(TRUE(),TRUE())",
+      "result": false,
+      "result_type": "bool",
+      "description": "XOR with TRUE() function calls"
+    },
+    {
+      "formula": "=IFERROR(1/0, \"error\")",
+      "result": "error",
+      "result_type": "text",
+      "description": "IFERROR catches division by zero"
+    },
+    {
+      "formula": "=IFERROR(42, \"error\")",
+      "result": 42,
+      "result_type": "int",
+      "description": "IFERROR passes through non-error"
+    },
+    {
+      "formula": "=IFERROR(\"hello\", \"error\")",
+      "result": "hello",
+      "result_type": "text",
+      "description": "IFERROR passes through text"
+    },
+    {
+      "formula": "=IFNA(A1, \"not available\")",
+      "result": 42,
+      "result_type": "int",
+      "description": "IFNA passes through non-NA value",
+      "context": {
+        "A1": 42
+      }
+    },
+    {
+      "formula": "=IFS(TRUE, \"FIRST\")",
+      "result": "FIRST",
+      "result_type": "text",
+      "description": "IFS with single TRUE condition"
+    },
+    {
+      "formula": "=IFS(FALSE, \"FIRST\", TRUE, \"SECOND\")",
+      "result": "SECOND",
+      "result_type": "text",
+      "description": "IFS skips false, returns second match"
+    },
+    {
+      "formula": "=IFS(FALSE, \"FIRST\", FALSE, \"SECOND\", TRUE, \"THIRD\")",
+      "result": "THIRD",
+      "result_type": "text",
+      "description": "IFS skips two false, returns third match"
+    },
+    {
+      "formula": "=IF(IF(TRUE, TRUE, FALSE), \"yes\", \"no\")",
+      "result": "yes",
+      "result_type": "text",
+      "description": "Nested IF expressions"
+    },
+    {
+      "formula": "=AND(OR(TRUE, FALSE), NOT(FALSE))",
+      "result": true,
+      "result_type": "bool",
+      "description": "Nested logical functions"
+    },
+    {
+      "formula": "=IF(AND(A1>0, A1<10), \"in range\", \"out\")",
+      "result": "in range",
+      "result_type": "text",
+      "description": "IF with AND condition using cell reference",
+      "context": {
+        "A1": 5
+      }
+    },
+    {
+      "formula": "=IF(AND(A1>0, A1<10), \"in range\", \"out\")",
+      "result": "out",
+      "result_type": "text",
+      "description": "IF with AND condition failing",
+      "context": {
+        "A1": 15
+      }
+    },
+    {
+      "formula": "=IFERROR(IFERROR(1/0, 1/0), \"both failed\")",
+      "result": "both failed",
+      "result_type": "text",
+      "description": "Nested IFERROR where inner also errors"
+    }
+  ]
+}
