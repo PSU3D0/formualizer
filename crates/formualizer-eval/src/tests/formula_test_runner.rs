@@ -82,6 +82,31 @@ fn json_to_literal(value: &serde_json::Value) -> Option<LiteralValue> {
             }
         }
         serde_json::Value::Null => Some(LiteralValue::Empty),
+        serde_json::Value::Object(map) => json_typed_value(map),
+        _ => None,
+    }
+}
+
+/// Handle typed context values like {"type": "date", "value": "2023-06-15"}.
+/// This allows JSON test files to place native Date/DateTime/Time values into
+/// cells, matching what xlsx file loaders produce.
+#[cfg(test)]
+fn json_typed_value(map: &serde_json::Map<String, serde_json::Value>) -> Option<LiteralValue> {
+    let type_str = map.get("type")?.as_str()?;
+    let value_str = map.get("value")?.as_str()?;
+    match type_str {
+        "date" => {
+            let date = chrono::NaiveDate::parse_from_str(value_str, "%Y-%m-%d").ok()?;
+            Some(LiteralValue::Date(date))
+        }
+        "datetime" => {
+            let dt = chrono::NaiveDateTime::parse_from_str(value_str, "%Y-%m-%dT%H:%M:%S").ok()?;
+            Some(LiteralValue::DateTime(dt))
+        }
+        "time" => {
+            let t = chrono::NaiveTime::parse_from_str(value_str, "%H:%M:%S").ok()?;
+            Some(LiteralValue::Time(t))
+        }
         _ => None,
     }
 }

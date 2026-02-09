@@ -1,0 +1,179 @@
+{
+  "name": "date_parts_native",
+  "generated": "2026-02-06T00:00:00.000000",
+  "generator": "manual",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=YEAR(A1)",
+      "result": 2023,
+      "result_type": "int",
+      "description": "YEAR from native Date cell",
+      "context": {
+        "A1": {"type": "date", "value": "2023-06-15"}
+      }
+    },
+    {
+      "formula": "=MONTH(A1)",
+      "result": 6,
+      "result_type": "int",
+      "description": "MONTH from native Date cell",
+      "context": {
+        "A1": {"type": "date", "value": "2023-06-15"}
+      }
+    },
+    {
+      "formula": "=DAY(A1)",
+      "result": 15,
+      "result_type": "int",
+      "description": "DAY from native Date cell",
+      "context": {
+        "A1": {"type": "date", "value": "2023-06-15"}
+      }
+    },
+    {
+      "formula": "=YEAR(A1)",
+      "result": 2024,
+      "result_type": "int",
+      "description": "YEAR from native DateTime cell",
+      "context": {
+        "A1": {"type": "datetime", "value": "2024-12-25T14:30:45"}
+      }
+    },
+    {
+      "formula": "=MONTH(A1)",
+      "result": 12,
+      "result_type": "int",
+      "description": "MONTH from native DateTime cell",
+      "context": {
+        "A1": {"type": "datetime", "value": "2024-12-25T14:30:45"}
+      }
+    },
+    {
+      "formula": "=DAY(A1)",
+      "result": 25,
+      "result_type": "int",
+      "description": "DAY from native DateTime cell",
+      "context": {
+        "A1": {"type": "datetime", "value": "2024-12-25T14:30:45"}
+      }
+    },
+    {
+      "formula": "=HOUR(A1)",
+      "result": 14,
+      "result_type": "int",
+      "description": "HOUR from native DateTime cell",
+      "context": {
+        "A1": {"type": "datetime", "value": "2024-12-25T14:30:45"}
+      }
+    },
+    {
+      "formula": "=MINUTE(A1)",
+      "result": 30,
+      "result_type": "int",
+      "description": "MINUTE from native DateTime cell",
+      "context": {
+        "A1": {"type": "datetime", "value": "2024-12-25T14:30:45"}
+      }
+    },
+    {
+      "formula": "=SECOND(A1)",
+      "result": 45,
+      "result_type": "int",
+      "description": "SECOND from native DateTime cell",
+      "context": {
+        "A1": {"type": "datetime", "value": "2024-12-25T14:30:45"}
+      }
+    },
+    {
+      "formula": "=HOUR(A1)",
+      "result": 0,
+      "result_type": "int",
+      "description": "HOUR from native Date cell (no time component = 0)",
+      "context": {
+        "A1": {"type": "date", "value": "2023-07-04"}
+      }
+    },
+    {
+      "formula": "=MINUTE(A1)",
+      "result": 0,
+      "result_type": "int",
+      "description": "MINUTE from native Date cell (no time component = 0)",
+      "context": {
+        "A1": {"type": "date", "value": "2023-07-04"}
+      }
+    },
+    {
+      "formula": "=SECOND(A1)",
+      "result": 0,
+      "result_type": "int",
+      "description": "SECOND from native Date cell (no time component = 0)",
+      "context": {
+        "A1": {"type": "date", "value": "2023-07-04"}
+      }
+    },
+    {
+      "formula": "=YEAR(A1)",
+      "result": 1900,
+      "result_type": "int",
+      "description": "YEAR from native Date before 1900 phantom leap day boundary",
+      "context": {
+        "A1": {"type": "date", "value": "1900-02-15"}
+      }
+    },
+    {
+      "formula": "=MONTH(A1)",
+      "result": 2,
+      "result_type": "int",
+      "description": "MONTH from native Date before 1900 phantom leap day boundary",
+      "context": {
+        "A1": {"type": "date", "value": "1900-02-15"}
+      }
+    },
+    {
+      "formula": "=DAY(A1)",
+      "result": 15,
+      "result_type": "int",
+      "description": "DAY from native Date before 1900 phantom leap day boundary",
+      "context": {
+        "A1": {"type": "date", "value": "1900-02-15"}
+      }
+    },
+    {
+      "formula": "=YEAR(A1)",
+      "result": 2000,
+      "result_type": "int",
+      "description": "YEAR from native DateTime at midnight",
+      "context": {
+        "A1": {"type": "datetime", "value": "2000-01-01T00:00:00"}
+      }
+    },
+    {
+      "formula": "=HOUR(A1)",
+      "result": 23,
+      "result_type": "int",
+      "description": "HOUR from native DateTime near end of day",
+      "context": {
+        "A1": {"type": "datetime", "value": "2023-06-15T23:59:59"}
+      }
+    },
+    {
+      "formula": "=MINUTE(A1)",
+      "result": 59,
+      "result_type": "int",
+      "description": "MINUTE from native DateTime near end of day",
+      "context": {
+        "A1": {"type": "datetime", "value": "2023-06-15T23:59:59"}
+      }
+    },
+    {
+      "formula": "=SECOND(A1)",
+      "result": 59,
+      "result_type": "int",
+      "description": "SECOND from native DateTime near end of day",
+      "context": {
+        "A1": {"type": "datetime", "value": "2023-06-15T23:59:59"}
+      }
+    }
+  ]
+}
