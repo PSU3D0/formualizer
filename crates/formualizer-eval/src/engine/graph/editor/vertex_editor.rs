@@ -196,9 +196,18 @@ impl std::error::Error for EditorError {}
 /// editor.commit_batch();
 ///
 /// ```
+/// Optional hook for reading Arrow-truth spill values for ChangeLog snapshots.
+///
+/// VertexEditor is structure-only; in canonical mode, callers should provide this
+/// reader so spill undo/redo uses Arrow overlays rather than graph value caches.
+pub trait SpillValueReader {
+    fn read_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue>;
+}
+
 pub struct VertexEditor<'g> {
     graph: &'g mut DependencyGraph,
     change_logger: Option<&'g mut dyn ChangeLogger>,
+    spill_value_reader: Option<&'g dyn SpillValueReader>,
     batch_mode: bool,
 }
 
@@ -208,6 +217,7 @@ impl<'g> VertexEditor<'g> {
         Self {
             graph,
             change_logger: None,
+            spill_value_reader: None,
             batch_mode: false,
         }
     }
@@ -220,6 +230,21 @@ impl<'g> VertexEditor<'g> {
         Self {
             graph,
             change_logger: Some(logger as &'g mut dyn ChangeLogger),
+            spill_value_reader: None,
+            batch_mode: false,
+        }
+    }
+
+    /// Create a new vertex editor with change logging and an Arrow-truth spill reader
+    pub fn with_logger_and_spill_reader<L: ChangeLogger + 'g>(
+        graph: &'g mut DependencyGraph,
+        logger: &'g mut L,
+        spill_value_reader: &'g dyn SpillValueReader,
+    ) -> Self {
+        Self {
+            graph,
+            change_logger: Some(logger as &'g mut dyn ChangeLogger),
+            spill_value_reader: Some(spill_value_reader),
             batch_mode: false,
         }
     }
@@ -274,10 +299,15 @@ impl<'g> VertexEditor<'g> {
         for cell in &cells {
             max_row = max_row.max(cell.coord.row());
             max_col = max_col.max(cell.coord.col());
-            let v = self
-                .graph
-                .get_cell_value(&sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
-                .unwrap_or(LiteralValue::Empty);
+            let v = if let Some(reader) = self.spill_value_reader {
+                reader
+                    .read_cell_value(&sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .unwrap_or(LiteralValue::Empty)
+            } else {
+                self.graph
+                    .get_cell_value(&sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .unwrap_or(LiteralValue::Empty)
+            };
             by_coord.insert((cell.coord.row(), cell.coord.col()), v);
         }
 

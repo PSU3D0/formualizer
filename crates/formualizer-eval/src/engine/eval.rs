@@ -803,8 +803,44 @@ where
         log: &mut crate::engine::ChangeLog,
         f: impl FnOnce(&mut crate::engine::VertexEditor) -> T,
     ) -> T {
-        let mut editor = crate::engine::VertexEditor::with_logger(&mut self.graph, log);
-        f(&mut editor)
+        // Record starting log length so we can mirror only newly-recorded events.
+        let start_len = log.len();
+
+        // Provide a spill snapshot reader so VertexEditor can snapshot Arrow-truth spill values
+        // (graph value cache is intentionally empty in canonical mode).
+        struct ArrowSpillReader<'a> {
+            sheets: &'a crate::arrow_store::SheetStore,
+        }
+        impl crate::engine::graph::editor::vertex_editor::SpillValueReader for ArrowSpillReader<'_> {
+            fn read_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<formualizer_common::LiteralValue> {
+                use formualizer_common::LiteralValue;
+                let asheet = self.sheets.sheet(sheet)?;
+                let r0 = row.saturating_sub(1) as usize;
+                let c0 = col.saturating_sub(1) as usize;
+                let v = asheet.get_cell_value(r0, c0);
+                if matches!(v, LiteralValue::Empty) { None } else { Some(v) }
+            }
+        }
+
+        let ret = {
+            let spill_reader = ArrowSpillReader {
+                sheets: &self.arrow_sheets,
+            };
+            let mut editor = crate::engine::VertexEditor::with_logger_and_spill_reader(
+                &mut self.graph,
+                log,
+                &spill_reader,
+            );
+            f(&mut editor)
+        };
+
+        // Mirror value-impacting graph events to Arrow for forward edits.
+        // This keeps Arrow overlays (delta + computed) consistent when edits clear/commit spills.
+        for ev in &log.events()[start_len..] {
+            self.mirror_forward_change_to_arrow(ev);
+        }
+
+        ret
     }
 
     pub fn undo_logged(
@@ -6125,7 +6161,6 @@ where
             max_row = max_row.max(cell.coord.row());
             max_col = max_col.max(cell.coord.col());
             let v = self
-                .graph
                 .get_cell_value(&sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
                 .unwrap_or(LiteralValue::Empty);
             by_coord.insert((cell.coord.row(), cell.coord.col()), v);

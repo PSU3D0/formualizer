@@ -535,23 +535,44 @@ impl Workbook {
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
             let defer_graph_building = self.engine.config.defer_graph_building;
 
+            // Capture per-cell old state from Arrow truth BEFORE applying the bulk edit.
+            // In canonical mode the graph value cache is empty, so ChangeLog old_value must be patched.
+            let mut items: Vec<(
+                u32,
+                u32,
+                crate::traits::CellData,
+                formualizer_eval::reference::CellRef,
+                Option<LiteralValue>,
+                Option<formualizer_parse::ASTNode>,
+            )> = Vec::with_capacity(cells.len());
+            for ((r, c), d) in cells.into_iter() {
+                let cell = formualizer_eval::reference::CellRef::new(
+                    sheet_id,
+                    formualizer_eval::reference::Coord::from_excel(r, c, true, true),
+                );
+                let old_value = self.engine.get_cell_value(sheet, r, c);
+                let old_formula = self.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
+                items.push((r, c, d, cell, old_value, old_formula));
+            }
+
             let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
             let mut staged_forms: Vec<(u32, u32, String)> = Vec::new();
 
             self.engine
                 .edit_with_logger(&mut self.log, |editor| -> Result<(), IoError> {
-                    for ((r, c), d) in cells.into_iter() {
-                        let cell = formualizer_eval::reference::CellRef::new(
-                            sheet_id,
-                            formualizer_eval::reference::Coord::from_excel(r, c, true, true),
-                        );
+                    for (r, c, d, cell, _old_value, _old_formula) in items.iter() {
                         if let Some(v) = d.value.clone() {
-                            editor.set_cell_value(cell, v.clone());
-                            overlay_ops.push((r, c, v));
+                            editor.set_cell_value(*cell, v.clone());
+                            // If a formula is also being set for this cell, do not mirror the
+                            // provided value into the delta overlay. In Arrow-truth mode that
+                            // would mask the computed formula result.
+                            if d.formula.is_none() {
+                                overlay_ops.push((*r, *c, v));
+                            }
                         }
                         if let Some(f) = d.formula.as_ref() {
                             if defer_graph_building {
-                                staged_forms.push((r, c, f.clone()));
+                                staged_forms.push((*r, *c, f.clone()));
                             } else {
                                 let with_eq = if f.starts_with('=') {
                                     f.clone()
@@ -560,12 +581,18 @@ impl Workbook {
                                 };
                                 let ast = formualizer_parse::parser::parse(&with_eq)
                                     .map_err(|e| IoError::from_backend("parser", e))?;
-                                editor.set_cell_formula(cell, ast);
+                                editor.set_cell_formula(*cell, ast);
                             }
                         }
                     }
                     Ok(())
                 })?;
+
+            // Patch old_value/old_formula for each cell's last SetValue/SetFormula event.
+            for (_r, _c, _d, cell, old_value, old_formula) in items.iter().rev() {
+                self.log
+                    .patch_last_cell_event_old_state(*cell, old_value.clone(), old_formula.clone());
+            }
 
             for (r, c, v) in overlay_ops {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
@@ -616,24 +643,42 @@ impl Workbook {
                 .engine
                 .sheet_id(sheet)
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
-            let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
+
+            // Capture old state from Arrow truth BEFORE applying the batch.
+            let mut items: Vec<(
+                u32,
+                u32,
+                LiteralValue,
+                formualizer_eval::reference::CellRef,
+                Option<LiteralValue>,
+                Option<formualizer_parse::ASTNode>,
+            )> = Vec::new();
+            for (ri, rvals) in rows.iter().enumerate() {
+                let r = start_row + ri as u32;
+                for (ci, v) in rvals.iter().enumerate() {
+                    let c = start_col + ci as u32;
+                    let cell = formualizer_eval::reference::CellRef::new(
+                        sheet_id,
+                        formualizer_eval::reference::Coord::from_excel(r, c, true, true),
+                    );
+                    let old_value = self.engine.get_cell_value(sheet, r, c);
+                    let old_formula = self.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
+                    items.push((r, c, v.clone(), cell, old_value, old_formula));
+                }
+            }
 
             self.engine.edit_with_logger(&mut self.log, |editor| {
-                for (ri, rvals) in rows.iter().enumerate() {
-                    let r = start_row + ri as u32;
-                    for (ci, v) in rvals.iter().enumerate() {
-                        let c = start_col + ci as u32;
-                        let cell = formualizer_eval::reference::CellRef::new(
-                            sheet_id,
-                            formualizer_eval::reference::Coord::from_excel(r, c, true, true),
-                        );
-                        editor.set_cell_value(cell, v.clone());
-                        overlay_ops.push((r, c, v.clone()));
-                    }
+                for (_r, _c, v, cell, _old_value, _old_formula) in items.iter() {
+                    editor.set_cell_value(*cell, v.clone());
                 }
             });
 
-            for (r, c, v) in overlay_ops {
+            for (_r, _c, _v, cell, old_value, old_formula) in items.iter().rev() {
+                self.log
+                    .patch_last_cell_event_old_state(*cell, old_value.clone(), old_formula.clone());
+            }
+
+            for (r, c, v, _cell, _old_value, _old_formula) in items {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
             }
             self.engine.mark_data_edited();

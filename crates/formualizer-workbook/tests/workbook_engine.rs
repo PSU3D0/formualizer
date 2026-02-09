@@ -251,3 +251,190 @@ fn changelog_with_formulas_non_deferred() {
         LiteralValue::Number(12.0)
     );
 }
+
+#[test]
+fn set_values_batch_overwrite_then_undo_restores_previous_values() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("S").unwrap();
+    wb.set_changelog_enabled(true);
+
+    // Seed initial values in a compound action
+    let seed = vec![
+        vec![LiteralValue::Int(1), LiteralValue::Int(2)],
+        vec![LiteralValue::Int(3), LiteralValue::Int(4)],
+    ];
+    wb.begin_action("seed");
+    wb.set_values("S", 1, 1, &seed).unwrap();
+    wb.end_action();
+
+    let ra = RangeAddress::new("S", 1, 1, 2, 2).unwrap();
+    assert_eq!(
+        wb.read_range(&ra),
+        vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ]
+    );
+
+    // Bulk overwrite in a new action
+    let overwrite = vec![
+        vec![LiteralValue::Int(10), LiteralValue::Int(20)],
+        vec![LiteralValue::Int(30), LiteralValue::Int(40)],
+    ];
+    wb.begin_action("overwrite");
+    wb.set_values("S", 1, 1, &overwrite).unwrap();
+    wb.end_action();
+
+    assert_eq!(
+        wb.read_range(&ra),
+        vec![
+            vec![LiteralValue::Number(10.0), LiteralValue::Number(20.0)],
+            vec![LiteralValue::Number(30.0), LiteralValue::Number(40.0)],
+        ]
+    );
+
+    // Undo must restore the prior values (not Empty)
+    wb.undo().unwrap();
+    assert_eq!(
+        wb.read_range(&ra),
+        vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ]
+    );
+}
+
+#[test]
+fn write_range_overwrite_then_undo_restores_previous_values() {
+    use formualizer_workbook::traits::CellData;
+    use std::collections::BTreeMap;
+
+    let mut wb = Workbook::new();
+    wb.add_sheet("S").unwrap();
+    wb.set_changelog_enabled(true);
+
+    // Seed initial values
+    let mut seed: BTreeMap<(u32, u32), CellData> = BTreeMap::new();
+    seed.insert((1, 1), CellData::from_value(LiteralValue::Int(1)));
+    seed.insert((1, 2), CellData::from_value(LiteralValue::Int(2)));
+    seed.insert((2, 1), CellData::from_value(LiteralValue::Int(3)));
+    seed.insert((2, 2), CellData::from_value(LiteralValue::Int(4)));
+    wb.begin_action("seed");
+    wb.write_range("S", (1, 1), seed).unwrap();
+    wb.end_action();
+
+    let ra = RangeAddress::new("S", 1, 1, 2, 2).unwrap();
+    assert_eq!(
+        wb.read_range(&ra),
+        vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ]
+    );
+
+    // Overwrite via write_range
+    let mut overwrite: BTreeMap<(u32, u32), CellData> = BTreeMap::new();
+    overwrite.insert((1, 1), CellData::from_value(LiteralValue::Int(10)));
+    overwrite.insert((1, 2), CellData::from_value(LiteralValue::Int(20)));
+    overwrite.insert((2, 1), CellData::from_value(LiteralValue::Int(30)));
+    overwrite.insert((2, 2), CellData::from_value(LiteralValue::Int(40)));
+    wb.begin_action("overwrite");
+    wb.write_range("S", (1, 1), overwrite).unwrap();
+    wb.end_action();
+
+    assert_eq!(
+        wb.read_range(&ra),
+        vec![
+            vec![LiteralValue::Number(10.0), LiteralValue::Number(20.0)],
+            vec![LiteralValue::Number(30.0), LiteralValue::Number(40.0)],
+        ]
+    );
+
+    wb.undo().unwrap();
+    assert_eq!(
+        wb.read_range(&ra),
+        vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ]
+    );
+}
+
+#[test]
+fn undo_spill_clear_restores_spilled_cells_values() {
+    // Spill canary: overwrite the spill anchor, then undo should restore the spilled rectangle
+    let mut wb = Workbook::new();
+    wb.set_changelog_enabled(true);
+    wb.add_sheet("S").unwrap();
+
+    // Create a 2x2 spill at A1
+    wb.set_formula("S", 1, 1, "{1,2;3,4}").unwrap();
+    let _ = wb.evaluate_cell("S", 1, 1).unwrap();
+
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(1.0)));
+    assert_eq!(wb.get_value("S", 1, 2), Some(LiteralValue::Number(2.0)));
+    assert_eq!(wb.get_value("S", 2, 1), Some(LiteralValue::Number(3.0)));
+    assert_eq!(wb.get_value("S", 2, 2), Some(LiteralValue::Number(4.0)));
+
+    // Overwrite anchor with a scalar value (clears spill region + logs SpillCleared)
+    wb.begin_action("overwrite anchor");
+    wb.set_value("S", 1, 1, LiteralValue::Int(99)).unwrap();
+    wb.end_action();
+
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(99.0)));
+    // Spill region should be cleared (computed overlay emptied)
+    assert_emptyish(wb.get_value("S", 1, 2));
+    assert_emptyish(wb.get_value("S", 2, 1));
+    assert_emptyish(wb.get_value("S", 2, 2));
+
+    // Undo must restore spilled computed overlay values from Arrow truth
+    wb.undo().unwrap();
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(1.0)));
+    assert_eq!(wb.get_value("S", 1, 2), Some(LiteralValue::Number(2.0)));
+    assert_eq!(wb.get_value("S", 2, 1), Some(LiteralValue::Number(3.0)));
+    assert_eq!(wb.get_value("S", 2, 2), Some(LiteralValue::Number(4.0)));
+}
+
+#[test]
+fn write_range_formula_with_cached_value_overwrites_literal_then_undo_restores_literal_and_clears_formula(
+) {
+    use formualizer_workbook::traits::CellData;
+    use std::collections::BTreeMap;
+
+    let mut wb = Workbook::new();
+    wb.set_changelog_enabled(true);
+    wb.add_sheet("S").unwrap();
+
+    // Start with a plain literal value.
+    wb.set_value("S", 1, 1, LiteralValue::Int(7)).unwrap();
+    assert_eq!(wb.get_formula("S", 1, 1), None);
+    assert_numeric_eq(wb.get_value("S", 1, 1), 7.0);
+
+    // Overwrite with a CellData that contains both a cached value and a formula.
+    // This should behave like "set formula" (i.e. the cached value does not become the truth;
+    // evaluation produces the value), but undo must restore the original literal.
+    let mut d = CellData::from_value(LiteralValue::Int(999));
+    d.formula = Some("1+1".to_string());
+    let mut cells: BTreeMap<(u32, u32), CellData> = BTreeMap::new();
+    cells.insert((1, 1), d);
+
+    wb.begin_action("overwrite A1 with formula+cached");
+    wb.write_range("S", (1, 1), cells).unwrap();
+    wb.end_action();
+
+    assert_eq!(wb.get_formula("S", 1, 1), Some("1+1".to_string()));
+    // Before evaluation, it is acceptable for the workbook to expose the cached value.
+    assert_numeric_eq(wb.get_value("S", 1, 1), 999.0);
+
+    // After evaluation, the formula result must win (cached value must not mask computed overlay).
+    assert_eq!(
+        wb.evaluate_cell("S", 1, 1).unwrap(),
+        LiteralValue::Number(2.0)
+    );
+    assert_numeric_eq(wb.get_value("S", 1, 1), 2.0);
+
+    // Undo restores the original literal value and clears the formula.
+    wb.undo().unwrap();
+    assert_eq!(wb.get_formula("S", 1, 1), None);
+    assert_numeric_eq(wb.get_value("S", 1, 1), 7.0);
+}
