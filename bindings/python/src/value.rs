@@ -558,7 +558,8 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
         let microseconds: i64 = py_delta.getattr("microseconds")?.extract()?;
 
         let secs = days * 86_400 + seconds;
-        let duration = chrono::Duration::seconds(secs) + chrono::Duration::microseconds(microseconds);
+        let duration =
+            chrono::Duration::seconds(secs) + chrono::Duration::microseconds(microseconds);
         return Ok(LiteralValue::Duration(duration));
     }
     if let Ok(dict) = value.cast::<PyDict>()
