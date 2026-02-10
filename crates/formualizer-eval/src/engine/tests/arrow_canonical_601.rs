@@ -7,8 +7,10 @@ use formualizer_parse::parser::parse;
 #[test]
 fn canonical_mode_compacts_on_budget_cap() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.max_overlay_memory_bytes = Some(512); // tiny cap
+    let cfg = EvalConfig {
+        max_overlay_memory_bytes: Some(512), // tiny cap
+        ..EvalConfig::default()
+    };
     let mut engine = Engine::new(wb, cfg);
 
     for r in 1..=500 {
@@ -41,8 +43,10 @@ fn canonical_mode_compacts_on_budget_cap() {
 #[test]
 fn canonical_mode_overlay_usage_bounded() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.max_overlay_memory_bytes = Some(2048);
+    let cfg = EvalConfig {
+        max_overlay_memory_bytes: Some(2048),
+        ..EvalConfig::default()
+    };
     let mut engine = Engine::new(wb, cfg);
 
     for r in 1..=2000 {

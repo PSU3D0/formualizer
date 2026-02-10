@@ -1,6 +1,6 @@
 use crate::engine::*;
 use formualizer_common::Coord as AbsCoord;
-use formualizer_common::{ExcelErrorKind, LiteralValue};
+use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
 // Helper to create a simple formula AST

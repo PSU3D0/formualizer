@@ -224,12 +224,11 @@ fn table_definition_rejects_case_insensitive_collisions() {
     let range = RangeRef::new(start, end);
 
     engine
-        .define_table("Sales", range.clone(), true, vec!["A".into()], false)
+        .define_table("Sales", range, true, vec!["A".into()], false)
         .unwrap();
 
     let err = engine
         .define_table("sales", range, true, vec!["A".into()], false)
-        .err()
-        .expect("expected collision error");
+        .expect_err("expected collision error");
     assert_eq!(err.kind, ExcelErrorKind::Name);
 }

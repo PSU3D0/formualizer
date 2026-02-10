@@ -26,34 +26,32 @@ fn rewrite_header_row_count(path: &std::path::Path, table_name: &str, header_row
         f.read_to_end(&mut data).expect("read entry");
 
         // Only rewrite table xml matching the given table name.
-        if name.starts_with("xl/tables/") && name.ends_with(".xml") {
-            if let Ok(mut xml) = String::from_utf8(std::mem::take(&mut data)) {
-                if let Some(start) = xml.find("<table") {
-                    if let Some(end) = xml[start..].find('>') {
-                        let end = start + end;
-                        let tag = &xml[start..end];
-                        if tag.contains(&format!("name=\"{table_name}\""))
-                            || tag.contains(&format!("displayName=\"{table_name}\""))
-                        {
-                            let mut new_tag = tag.to_string();
-                            if let Some(pos) = new_tag.find("headerRowCount=\"") {
-                                let after = pos + "headerRowCount=\"".len();
-                                if let Some(qend) = new_tag[after..].find('"') {
-                                    new_tag.replace_range(
-                                        after..after + qend,
-                                        &header_row_count.to_string(),
-                                    );
-                                }
-                            } else {
-                                new_tag
-                                    .push_str(&format!(" headerRowCount=\"{header_row_count}\""));
-                            }
-                            xml.replace_range(start..end, &new_tag);
+        if name.starts_with("xl/tables/")
+            && name.ends_with(".xml")
+            && let Ok(mut xml) = String::from_utf8(std::mem::take(&mut data))
+        {
+            if let Some(start) = xml.find("<table")
+                && let Some(end) = xml[start..].find('>')
+            {
+                let end = start + end;
+                let tag = &xml[start..end];
+                if tag.contains(&format!("name=\"{table_name}\""))
+                    || tag.contains(&format!("displayName=\"{table_name}\""))
+                {
+                    let mut new_tag = tag.to_string();
+                    if let Some(pos) = new_tag.find("headerRowCount=\"") {
+                        let after = pos + "headerRowCount=\"".len();
+                        if let Some(qend) = new_tag[after..].find('"') {
+                            new_tag
+                                .replace_range(after..after + qend, &header_row_count.to_string());
                         }
+                    } else {
+                        new_tag.push_str(&format!(" headerRowCount=\"{header_row_count}\""));
                     }
+                    xml.replace_range(start..end, &new_tag);
                 }
-                data = xml.into_bytes();
             }
+            data = xml.into_bytes();
         }
 
         zout.start_file(name, options).expect("zip write start");

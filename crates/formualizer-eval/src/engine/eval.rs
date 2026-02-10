@@ -234,8 +234,7 @@ where
                 let mut out: Result<crate::engine::ShiftSummary, crate::engine::EditorError> =
                     Ok(crate::engine::ShiftSummary::default());
                 self.engine.edit_with_logger(log, |editor| {
-                    out = editor
-                        .insert_rows(sheet_id, before0, count);
+                    out = editor.insert_rows(sheet_id, before0, count);
                 });
                 out?
             };
@@ -293,8 +292,7 @@ where
                 let mut out: Result<crate::engine::ShiftSummary, crate::engine::EditorError> =
                     Ok(crate::engine::ShiftSummary::default());
                 self.engine.edit_with_logger(log, |editor| {
-                    out = editor
-                        .insert_columns(sheet_id, before0, count);
+                    out = editor.insert_columns(sheet_id, before0, count);
                 });
                 out?
             };
@@ -2329,20 +2327,14 @@ where
         if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
             return None;
         }
-        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
-            return None;
-        };
+        let asheet = self.arrow_sheets.sheet(sheet)?;
         let row0 = row.saturating_sub(1) as usize;
         let col0 = col.saturating_sub(1) as usize;
         if row0 >= asheet.nrows as usize || col0 >= asheet.columns.len() {
             return None;
         }
-        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
-            return None;
-        };
-        let Some(ch) = asheet.columns[col0].chunk(ch_idx) else {
-            return None;
-        };
+        let (ch_idx, in_off) = asheet.chunk_of_row(row0)?;
+        let ch = asheet.columns[col0].chunk(ch_idx)?;
         ch.overlay
             .get(in_off)
             .map(|ov| self.overlay_value_to_literal(ov))
@@ -2357,20 +2349,14 @@ where
         {
             return None;
         }
-        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
-            return None;
-        };
+        let asheet = self.arrow_sheets.sheet(sheet)?;
         let row0 = row.saturating_sub(1) as usize;
         let col0 = col.saturating_sub(1) as usize;
         if row0 >= asheet.nrows as usize || col0 >= asheet.columns.len() {
             return None;
         }
-        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
-            return None;
-        };
-        let Some(ch) = asheet.columns[col0].chunk(ch_idx) else {
-            return None;
-        };
+        let (ch_idx, in_off) = asheet.chunk_of_row(row0)?;
+        let ch = asheet.columns[col0].chunk(ch_idx)?;
         ch.computed_overlay
             .get(in_off)
             .map(|ov| self.overlay_value_to_literal(ov))
@@ -2574,6 +2560,7 @@ where
         use crate::engine::ChangeEvent;
         use formualizer_common::LiteralValue;
 
+        #[allow(clippy::type_complexity)]
         let rect_from_snapshot =
             |snap: &crate::engine::graph::editor::change_log::SpillSnapshot|
              -> Option<(SheetId, u32, u32, u32, u32, Vec<Vec<LiteralValue>>)> {
@@ -5043,7 +5030,7 @@ where
         &mut self,
         vertex_id: VertexId,
         value: LiteralValue,
-        mut delta: Option<&mut DeltaCollector>,
+        delta: Option<&mut DeltaCollector>,
     ) {
         // Scalar/error result: store value and ensure any previous spill is cleared.
         // This mirrors the sequential behavior in `evaluate_vertex_impl`.
@@ -6918,14 +6905,15 @@ where
             });
         let spill_val = LiteralValue::Error(spill_err);
 
-        let mut effects = Vec::new();
-        effects.push(Effect::SpillClear {
-            anchor_vertex: vertex_id,
-        });
-        effects.push(Effect::WriteCell {
-            vertex_id,
-            value: spill_val,
-        });
+        let effects = vec![
+            Effect::SpillClear {
+                anchor_vertex: vertex_id,
+            },
+            Effect::WriteCell {
+                vertex_id,
+                value: spill_val,
+            },
+        ];
         Ok(effects)
     }
 
@@ -6964,15 +6952,16 @@ where
     ) {
         if let Some(d) = delta
             && d.mode != DeltaMode::Off
-                && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id) {
-                    let sheet_name = self.graph.sheet_name(cell.sheet_id);
-                    let old = self
-                        .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
-                        .unwrap_or(LiteralValue::Empty);
-                    if old != *value {
-                        d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
-                    }
-                }
+            && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id)
+        {
+            let sheet_name = self.graph.sheet_name(cell.sheet_id);
+            let old = self
+                .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                .unwrap_or(LiteralValue::Empty);
+            if old != *value {
+                d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+            }
+        }
         self.graph.update_vertex_value(vertex_id, value.clone());
         self.mirror_vertex_value_to_overlay(vertex_id, value);
     }
@@ -7002,18 +6991,19 @@ where
 
         // Record delta for cleared cells.
         if let Some(d) = delta
-            && d.mode != DeltaMode::Off {
-                let empty = LiteralValue::Empty;
-                for cell in spill_cells.iter() {
-                    let sheet_name = self.graph.sheet_name(cell.sheet_id);
-                    let old = self
-                        .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
-                        .unwrap_or(LiteralValue::Empty);
-                    if old != empty {
-                        d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
-                    }
+            && d.mode != DeltaMode::Off
+        {
+            let empty = LiteralValue::Empty;
+            for cell in spill_cells.iter() {
+                let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                let old = self
+                    .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .unwrap_or(LiteralValue::Empty);
+                if old != empty {
+                    d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
                 }
             }
+        }
 
         self.graph.clear_spill_region(anchor_vertex);
 
@@ -7036,12 +7026,13 @@ where
 
         // ChangeLog.
         if let Some(log) = log
-            && let Some(old) = snapshot {
-                log.record(ChangeEvent::SpillCleared {
-                    anchor: anchor_vertex,
-                    old,
-                });
-            }
+            && let Some(old) = snapshot
+        {
+            log.record(ChangeEvent::SpillCleared {
+                anchor: anchor_vertex,
+                old,
+            });
+        }
     }
 
     /// Apply a SpillCommit effect.

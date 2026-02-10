@@ -571,16 +571,17 @@ fn named_range_definition_rejects_case_insensitive_collisions() {
             NamedDefinition::Literal(LiteralValue::Number(2.0)),
             NameScope::Workbook,
         )
-        .err()
-        .expect("expected collision error");
+        .expect_err("expected collision error");
 
     assert_eq!(err.kind, ExcelErrorKind::Name);
 }
 
 #[test]
 fn named_range_definition_allows_distinct_cases_when_case_sensitive_enabled() {
-    let mut cfg = EvalConfig::default();
-    cfg.case_sensitive_names = true;
+    let cfg = EvalConfig {
+        case_sensitive_names: true,
+        ..EvalConfig::default()
+    };
     let mut graph = DependencyGraph::new_with_config(cfg);
 
     graph

@@ -82,10 +82,10 @@ fn test_change_log_fifo_eviction_drops_oldest() {
         .events()
         .iter()
         .filter_map(|e| match e {
-            ChangeEvent::SetValue { new, .. } => match new {
-                LiteralValue::Number(n) => Some(*n),
-                _ => None,
-            },
+            ChangeEvent::SetValue {
+                new: LiteralValue::Number(n),
+                ..
+            } => Some(*n),
             _ => None,
         })
         .collect();

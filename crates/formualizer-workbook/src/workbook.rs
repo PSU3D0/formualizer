@@ -853,6 +853,7 @@ impl Workbook {
 
             // Capture per-cell old state from Arrow truth BEFORE applying the bulk edit.
             // In canonical mode the graph value cache is empty, so ChangeLog old_value must be patched.
+            #[allow(clippy::type_complexity)]
             let mut items: Vec<(
                 u32,
                 u32,
@@ -964,6 +965,7 @@ impl Workbook {
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
 
             // Capture old state from Arrow truth BEFORE applying the batch.
+            #[allow(clippy::type_complexity)]
             let mut items: Vec<(
                 u32,
                 u32,

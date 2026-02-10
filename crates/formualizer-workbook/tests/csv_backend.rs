@@ -184,8 +184,7 @@ fn csv_array_export_policy_error_is_default_safe_behavior() {
 
     let err = adapter
         .write_sheet_to("Sheet1", SaveDestination::Bytes, CsvWriteOptions::default())
-        .err()
-        .expect("expected array export error");
+        .expect_err("expected array export error");
 
     match err {
         formualizer_workbook::IoError::Backend { backend, .. } => assert_eq!(backend, "csv"),

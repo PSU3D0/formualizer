@@ -9,26 +9,21 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CsvEncoding {
     /// CSV v1 supports UTF-8 only.
     #[default]
     Utf8,
 }
 
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CsvTrim {
     #[default]
     None,
     All,
 }
 
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CsvTypeInference {
     /// Do not infer: treat all non-empty fields as text.
     Off,
@@ -38,7 +33,6 @@ pub enum CsvTypeInference {
     /// Like `Basic`, plus conservative date/date-time parsing.
     BasicWithDates,
 }
-
 
 #[derive(Clone, Debug)]
 pub struct CsvReadOptions {
@@ -66,17 +60,14 @@ impl Default for CsvReadOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CsvNewline {
     #[default]
     Lf,
     Crlf,
 }
 
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CsvQuoteStyle {
     #[default]
     Necessary,
@@ -85,9 +76,7 @@ pub enum CsvQuoteStyle {
     NonNumeric,
 }
 
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CsvArrayPolicy {
     /// Reject exporting arrays to CSV.
     #[default]
@@ -97,7 +86,6 @@ pub enum CsvArrayPolicy {
     /// Export an empty string.
     Blank,
 }
-
 
 #[derive(Clone, Debug)]
 pub struct CsvWriteOptions {
@@ -656,10 +644,10 @@ where
         for r0 in 0..rows {
             let r = (r0 as u32) + 1;
             let mut row_vals: Vec<LiteralValue> = vec![LiteralValue::Empty; cols];
-            for c0 in 0..cols {
+            for (c0, val) in row_vals.iter_mut().enumerate().take(cols) {
                 let c = (c0 as u32) + 1;
                 if let Some(v) = self.sheet.cells.get(&(r, c)) {
-                    row_vals[c0] = v.clone();
+                    *val = v.clone();
                 }
             }
             aib.append_row(&row_vals)
@@ -935,9 +923,10 @@ fn literal_to_csv_field_inner(
             CsvArrayPolicy::Blank => String::new(),
             CsvArrayPolicy::TopLeft => {
                 if let Some(row0) = a.first()
-                    && let Some(v0) = row0.first() {
-                        return literal_to_csv_field_inner(v0, opts, depth + 1);
-                    }
+                    && let Some(v0) = row0.first()
+                {
+                    return literal_to_csv_field_inner(v0, opts, depth + 1);
+                }
                 String::new()
             }
         },

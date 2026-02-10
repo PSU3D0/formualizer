@@ -302,7 +302,7 @@ fn scalar_source_invalidate_marks_multiple_dependents_dirty() {
     let ctx = SourceCtx::default();
     ctx.set_scalar("Foo", LiteralValue::Int(1));
 
-    let mut cfg = EvalConfig::default();
+    let cfg = EvalConfig::default();
     let mut engine: Engine<_> = Engine::new(ctx.clone(), cfg);
     engine.add_sheet("Sheet1").unwrap();
 
@@ -361,7 +361,7 @@ fn table_source_invalidate_marks_multiple_dependents_dirty() {
     };
     ctx.set_table("Sales", Arc::new(t1));
 
-    let mut cfg = EvalConfig::default();
+    let cfg = EvalConfig::default();
     let mut engine: Engine<_> = Engine::new(ctx.clone(), cfg);
     engine.add_sheet("Sheet1").unwrap();
     engine.define_source_table("Sales", Some(1)).unwrap();

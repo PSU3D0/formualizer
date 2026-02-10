@@ -364,8 +364,7 @@ impl SpreadsheetReader for JsonAdapter {
 
     fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
         self.migrate_legacy_named_ranges();
-        self
-            .data
+        self.data
             .defined_names
             .iter()
             .enumerate()

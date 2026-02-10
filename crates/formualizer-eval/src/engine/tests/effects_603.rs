@@ -52,9 +52,11 @@ fn effects_determinism() {
 #[test]
 fn parallel_spill_correctness() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.enable_parallel = true;
-    cfg.max_threads = Some(4);
+    let cfg = EvalConfig {
+        enable_parallel: true,
+        max_threads: Some(4),
+        ..EvalConfig::default()
+    };
     let mut engine = Engine::new(wb, cfg);
 
     // Two independent spills in the same layer (no dependencies on each other)

@@ -6,8 +6,10 @@ use formualizer_parse::parser::parse;
 #[test]
 fn overlay_budget_keeps_computed_overlay_bounded_across_recalcs() {
     let wb = TestWorkbook::new();
-    let mut cfg = EvalConfig::default();
-    cfg.max_overlay_memory_bytes = Some(2048);
+    let cfg = EvalConfig {
+        max_overlay_memory_bytes: Some(2048),
+        ..EvalConfig::default()
+    };
     let mut engine = Engine::new(wb, cfg);
 
     // Many formula cells that would normally be mirrored into computed overlays.

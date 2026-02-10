@@ -238,8 +238,7 @@ fn json_strict_dates_reject_invalid_date_strings() {
     let mut adapter = JsonAdapter::open_bytes(bytes).unwrap();
     let err = adapter
         .read_sheet("S")
-        .err()
-        .expect("expected strict parse error");
+        .expect_err("expected strict parse error");
     match err {
         formualizer_workbook::IoError::Backend { backend, message } => {
             assert_eq!(backend, "json");

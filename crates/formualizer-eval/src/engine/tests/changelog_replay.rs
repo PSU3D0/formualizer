@@ -112,11 +112,11 @@ fn replay_events(graph: &mut DependencyGraph, events: &[ChangeEvent]) {
                 }
             }
             ChangeEvent::FormulaAdjusted { addr, new_ast, .. } => {
-                if let Some(addr) = addr {
-                    if let Some(id) = graph.get_vertex_for_cell(&addr) {
-                        let _ = graph.update_vertex_formula(id, new_ast);
-                        graph.mark_vertex_dirty(id);
-                    }
+                if let Some(addr) = addr
+                    && let Some(id) = graph.get_vertex_for_cell(&addr)
+                {
+                    let _ = graph.update_vertex_formula(id, new_ast);
+                    graph.mark_vertex_dirty(id);
                 }
             }
 
