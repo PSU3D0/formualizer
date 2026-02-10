@@ -1,12 +1,12 @@
-import textwrap
 import datetime
+import textwrap
 
 import pytest
 
 from formualizer import (
     ExcelEvaluationError,
-    SheetPortError,
     SheetPortConstraintError,
+    SheetPortError,
     SheetPortSession,
     Workbook,
 )
