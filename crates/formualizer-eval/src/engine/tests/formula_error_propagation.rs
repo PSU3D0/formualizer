@@ -68,3 +68,33 @@ fn rri_basic_cagr_calculation() {
         other => panic!("B1 expected Number({expected}), got {other:?}"),
     }
 }
+
+#[test]
+fn iferror_catches_name_error_from_unknown_function() {
+    // IFERROR must catch ALL error types, including #NAME? from unknown functions.
+    // In Excel, =IFERROR(NONEXISTENT_FUNC(), "fallback") returns "fallback".
+    // Bug: the Rust `?` operator in IfErrorFn::eval propagates Err(ExcelError)
+    // before the match can catch it, so #NAME? errors bypass IFERROR.
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, EvalConfig::default());
+
+    // A1 = IFERROR(NONEXISTENT_FUNC(), "fallback")
+    engine.stage_formula_text("Sheet1", 1, 1, "=IFERROR(NONEXISTENT_FUNC(), \"fallback\")".to_string());
+    // B1 = IFERROR(1/0, "div_caught") — sanity check that IFERROR catches #DIV/0!
+    engine.stage_formula_text("Sheet1", 1, 2, "=IFERROR(1/0, \"div_caught\")".to_string());
+
+    engine.build_graph_all().expect("staged formulas build");
+    engine.evaluate_all().expect("evaluation succeeds");
+
+    // A1: IFERROR should catch #NAME? and return fallback
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Text(s)) => assert_eq!(s, "fallback"),
+        other => panic!("A1 expected \"fallback\", got {other:?}"),
+    }
+
+    // B1: IFERROR should catch #DIV/0! and return fallback
+    match engine.get_cell_value("Sheet1", 1, 2) {
+        Some(LiteralValue::Text(s)) => assert_eq!(s, "div_caught"),
+        other => panic!("B1 expected \"div_caught\", got {other:?}"),
+    }
+}
