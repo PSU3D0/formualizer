@@ -182,6 +182,21 @@ impl<'a> Interpreter<'a> {
                 let expr = self.evaluate_arena_ast(*expr_id, data_store, sheet_registry)?;
 
                 let op = data_store.resolve_ast_string(*op_id);
+                if op == "@" {
+                    // Prefer reference-aware implicit intersection so we don't depend on
+                    // RangeView absolute coordinates (important for lightweight test contexts).
+                    if let Some(AstNodeData::Reference { ref_type, .. }) =
+                        data_store.get_node(*expr_id)
+                    {
+                        let reference = data_store
+                            .reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                        let v = self.implicit_intersection_from_reference(&reference);
+                        return Ok(crate::traits::CalcValue::Scalar(v));
+                    }
+
+                    let v = self.eval_implicit_intersection_calc(expr);
+                    return Ok(crate::traits::CalcValue::Scalar(v));
+                }
                 // For now, materialize for operators. Future: virtual range ops.
                 let v = expr.into_literal();
                 match v {
@@ -232,10 +247,10 @@ impl<'a> Interpreter<'a> {
 
                 match op {
                     "+" => self
-                        .numeric_binary(left, right, |a, b| a + b)
+                        .add_sub_date_aware('+', left, right)
                         .map(crate::traits::CalcValue::Scalar),
                     "-" => self
-                        .numeric_binary(left, right, |a, b| a - b)
+                        .add_sub_date_aware('-', left, right)
                         .map(crate::traits::CalcValue::Scalar),
                     "*" => self
                         .numeric_binary(left, right, |a, b| a * b)
@@ -516,6 +531,15 @@ impl<'a> Interpreter<'a> {
 
     /* ===================  unary ops  =================== */
     fn eval_unary(&self, op: &str, expr: &ASTNode) -> Result<LiteralValue, ExcelError> {
+        if op == "@" {
+            if let ASTNodeType::Reference { reference, .. } = &expr.node_type {
+                return Ok(self.implicit_intersection_from_reference(reference));
+            }
+
+            let cv = self.evaluate_ast(expr)?;
+            return Ok(self.eval_implicit_intersection_calc(cv));
+        }
+
         let v = self.evaluate_ast(expr)?.into_literal();
         match v {
             LiteralValue::Array(arr) => {
@@ -532,6 +556,169 @@ impl<'a> Interpreter<'a> {
             "%" => self.apply_number_unary(v, |n| n / 100.0),
             _ => {
                 Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!("Unary op '{op}'")))
+            }
+        }
+    }
+
+    fn eval_implicit_intersection_calc(&self, cv: crate::traits::CalcValue<'a>) -> LiteralValue {
+        let (cur_r0, cur_c0) = match self.current_cell {
+            Some(cell) => (cell.coord.row() as usize, cell.coord.col() as usize),
+            None => (0usize, 0usize),
+        };
+
+        match cv {
+            crate::traits::CalcValue::Scalar(v) => match v {
+                LiteralValue::Array(arr) => {
+                    if arr.is_empty() || arr.first().map(|r| r.is_empty()).unwrap_or(true) {
+                        return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                    }
+                    arr[0][0].clone()
+                }
+                other => other,
+            },
+            crate::traits::CalcValue::Range(rv) => {
+                if rv.is_empty() {
+                    return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                }
+
+                // Array results (array literals and many dynamic-array functions) are materialized
+                // into an owned RangeView with a temporary backing sheet ("__tmp").
+                // For explicit @, interpret these as anchored at the formula cell and select the
+                // top-left element.
+                if rv.sheet_name() == "__tmp" {
+                    return rv.get_cell(0, 0);
+                }
+
+                if let Some(v) = rv.as_1x1() {
+                    return v;
+                }
+
+                let (rows, cols) = rv.dims();
+                let sr = rv.start_row();
+                let sc = rv.start_col();
+                let er = rv.end_row();
+                let ec = rv.end_col();
+
+                // Excel-compatible implicit intersection (simplified):
+                // - Nx1: pick by row
+                // - 1xM: pick by column
+                // - NxM: pick by (row,col)
+                if cols == 1 {
+                    if cur_r0 < sr || cur_r0 > er {
+                        return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                    }
+                    let rel_r = cur_r0 - sr;
+                    return rv.get_cell(rel_r, 0);
+                }
+
+                if rows == 1 {
+                    if cur_c0 < sc || cur_c0 > ec {
+                        return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                    }
+                    let rel_c = cur_c0 - sc;
+                    return rv.get_cell(0, rel_c);
+                }
+
+                if cur_r0 < sr || cur_r0 > er || cur_c0 < sc || cur_c0 > ec {
+                    return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                }
+                let rel_r = cur_r0 - sr;
+                let rel_c = cur_c0 - sc;
+                rv.get_cell(rel_r, rel_c)
+            }
+        }
+    }
+
+    fn implicit_intersection_from_reference(&self, reference: &ReferenceType) -> LiteralValue {
+        let (cur_r1, cur_c1) = match self.current_cell {
+            Some(cell) => (
+                cell.coord.row().saturating_add(1),
+                cell.coord.col().saturating_add(1),
+            ),
+            None => (1u32, 1u32),
+        };
+
+        match reference {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => {
+                let sheet_name = sheet.as_deref().unwrap_or(self.current_sheet);
+                match self
+                    .context
+                    .resolve_cell_reference(Some(sheet_name), *row, *col)
+                {
+                    Ok(v) => v,
+                    Err(e) => LiteralValue::Error(e),
+                }
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                ..
+            } => {
+                let sheet_name = sheet.as_deref().unwrap_or(self.current_sheet);
+
+                let (sr, sc, er, ec) = match (start_row, start_col, end_row, end_col) {
+                    (Some(sr), Some(sc), Some(er), Some(ec)) => (*sr, *sc, *er, *ec),
+                    _ => {
+                        // For open-ended/infinite ranges, fall back to the RangeView-based path.
+                        // This path may be less precise in minimal test contexts.
+                        let cv = match self.eval_reference_to_calc(reference) {
+                            Ok(cv) => cv,
+                            Err(e) => return LiteralValue::Error(e),
+                        };
+                        return self.eval_implicit_intersection_calc(cv);
+                    }
+                };
+
+                // Normalize bounds (A10:A1 is legal syntax; treat as swapped).
+                let (mut sr, mut er) = (sr, er);
+                let (mut sc, mut ec) = (sc, ec);
+                if sr > er {
+                    std::mem::swap(&mut sr, &mut er);
+                }
+                if sc > ec {
+                    std::mem::swap(&mut sc, &mut ec);
+                }
+
+                let pick = if sc == ec {
+                    // Column vector: intersect by row
+                    if cur_r1 < sr || cur_r1 > er {
+                        return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                    }
+                    (cur_r1, sc)
+                } else if sr == er {
+                    // Row vector: intersect by column
+                    if cur_c1 < sc || cur_c1 > ec {
+                        return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                    }
+                    (sr, cur_c1)
+                } else {
+                    // 2D: require both axes
+                    if cur_r1 < sr || cur_r1 > er || cur_c1 < sc || cur_c1 > ec {
+                        return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
+                    }
+                    (cur_r1, cur_c1)
+                };
+
+                match self
+                    .context
+                    .resolve_cell_reference(Some(sheet_name), pick.0, pick.1)
+                {
+                    Ok(v) => v,
+                    Err(e) => LiteralValue::Error(e),
+                }
+            }
+            // Named ranges / tables / external: fall back to materializing and intersecting.
+            other => {
+                let cv = match self.eval_reference_to_calc(other) {
+                    Ok(cv) => cv,
+                    Err(e) => return LiteralValue::Error(e),
+                };
+                self.eval_implicit_intersection_calc(cv)
             }
         }
     }
@@ -567,8 +754,8 @@ impl<'a> Interpreter<'a> {
         let r_val = self.evaluate_ast(right)?.into_literal();
 
         match op {
-            "+" => self.numeric_binary(l_val, r_val, |a, b| a + b),
-            "-" => self.numeric_binary(l_val, r_val, |a, b| a - b),
+            "+" => self.add_sub_date_aware('+', l_val, r_val),
+            "-" => self.add_sub_date_aware('-', l_val, r_val),
             "*" => self.numeric_binary(l_val, r_val, |a, b| a * b),
             "/" => self.divide(l_val, r_val),
             "^" => self.power(l_val, r_val),
@@ -593,6 +780,88 @@ impl<'a> Interpreter<'a> {
                     .with_message(format!("Binary op '{op}'")))
             }
         }
+    }
+
+    fn add_sub_date_aware(
+        &self,
+        op: char,
+        left: LiteralValue,
+        right: LiteralValue,
+    ) -> Result<LiteralValue, ExcelError> {
+        debug_assert!(op == '+' || op == '-');
+
+        self.broadcast_apply(left, right, |l, r| {
+            use LiteralValue::*;
+
+            let date_system = self.context.date_system();
+
+            let date_like_serial = |v: &LiteralValue| -> Option<f64> {
+                match v {
+                    Date(d) => Some(crate::builtins::datetime::date_to_serial_for(
+                        date_system,
+                        d,
+                    )),
+                    DateTime(dt) => Some(crate::builtins::datetime::datetime_to_serial_for(
+                        date_system,
+                        dt,
+                    )),
+                    _ => None,
+                }
+            };
+
+            let to_num = |v: &LiteralValue| -> Result<f64, ExcelError> {
+                crate::coercion::to_number_lenient_with_locale(v, &self.context.locale())
+            };
+
+            let serial_to_literal = |serial: f64| -> LiteralValue {
+                match crate::coercion::sanitize_numeric(serial) {
+                    Ok(serial) => {
+                        match crate::builtins::datetime::serial_to_datetime_for(date_system, serial)
+                        {
+                            Ok(dt) => {
+                                if dt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+                                    Date(dt.date())
+                                } else {
+                                    DateTime(dt)
+                                }
+                            }
+                            Err(e) => Error(e),
+                        }
+                    }
+                    Err(e) => Error(e),
+                }
+            };
+
+            // Date +/- number => date (propagate temporal tag)
+            if let Some(ls) = date_like_serial(&l) {
+                match op {
+                    '+' => {
+                        let rn = to_num(&r)?;
+                        return Ok(serial_to_literal(ls + rn));
+                    }
+                    '-' => {
+                        // Date - Date => numeric day delta (Excel-compatible)
+                        if let Some(rs) = date_like_serial(&r) {
+                            return Ok(Number(ls - rs));
+                        }
+                        let rn = to_num(&r)?;
+                        return Ok(serial_to_literal(ls - rn));
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            // Number + Date => date (commutative)
+            if op == '+'
+                && let Some(rs) = date_like_serial(&r)
+            {
+                let ln = to_num(&l)?;
+                return Ok(serial_to_literal(ln + rs));
+            }
+
+            // Fallback: regular numeric operation
+            self.numeric_binary(l, r, |a, b| if op == '+' { a + b } else { a - b })
+        })
     }
 
     /* ===================  function calls  =================== */

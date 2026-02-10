@@ -1,6 +1,6 @@
 use crate::engine::*;
 use formualizer_common::Coord as AbsCoord;
-use formualizer_common::{ExcelErrorKind, LiteralValue};
+use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
 // Helper to create a simple formula AST
@@ -18,7 +18,7 @@ fn simple_formula(row: u32, col: u32) -> ASTNode {
 
 #[test]
 fn test_snapshot_vertex() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create a cell with value
     let result = graph
@@ -40,7 +40,7 @@ fn test_snapshot_vertex() {
 
 #[test]
 fn test_snapshot_vertex_with_formula() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create dependencies
     graph
@@ -67,7 +67,7 @@ fn test_snapshot_vertex_with_formula() {
 
 #[test]
 fn test_mark_as_ref_error() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create a formula cell
     let formula = simple_formula(1, 1);
@@ -77,14 +77,9 @@ fn test_mark_as_ref_error() {
     // Mark as REF error
     graph.mark_as_ref_error(vertex_id);
 
-    // Verify error value (using internal method)
-    let value = graph.get_value(vertex_id).unwrap();
-    match value {
-        LiteralValue::Error(err) => {
-            assert_eq!(err.kind, ExcelErrorKind::Ref);
-        }
-        _ => panic!("Expected REF error, got {value:?}"),
-    }
+    // In Arrow-truth mode the graph does not cache cell/formula payloads;
+    // mark_as_ref_error records structural invalidation via is_ref_error.
+    assert!(graph.is_ref_error(vertex_id));
 
     // Verify vertex is marked dirty (using internal method)
     assert!(graph.is_dirty(vertex_id));
@@ -92,7 +87,7 @@ fn test_mark_as_ref_error() {
 
 #[test]
 fn test_remove_all_edges() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create a network of dependencies
     // A1 = 10
@@ -150,7 +145,7 @@ fn test_remove_all_edges() {
 
 #[test]
 fn test_mark_dependents_dirty() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create dependency chain: A1 -> B1 -> C1 -> D1
     let a1_result = graph
@@ -225,7 +220,7 @@ fn test_mark_dependents_dirty() {
 
 #[test]
 fn test_snapshot_preserves_all_state() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create a complex vertex with all properties
     let formula = ASTNode {

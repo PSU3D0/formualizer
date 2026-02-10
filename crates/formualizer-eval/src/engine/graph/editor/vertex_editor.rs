@@ -9,6 +9,7 @@ use crate::reference::{CellRef, Coord};
 use formualizer_common::Coord as AbsCoord;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::ASTNode;
+use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Metadata for creating a new vertex
@@ -121,6 +122,7 @@ pub enum EditorError {
     OutOfBounds { row: u32, col: u32 },
     InvalidName { name: String, reason: String },
     TransactionFailed { reason: String },
+    TransactionUnsupported { reason: String },
     NoActiveTransaction,
     VertexNotFound { id: VertexId },
     Excel(ExcelError),
@@ -151,6 +153,9 @@ impl std::fmt::Display for EditorError {
             }
             EditorError::TransactionFailed { reason } => {
                 write!(f, "Transaction failed: {reason}")
+            }
+            EditorError::TransactionUnsupported { reason } => {
+                write!(f, "Transaction unsupported: {reason}")
             }
             EditorError::NoActiveTransaction => {
                 write!(f, "No active transaction")
@@ -195,9 +200,18 @@ impl std::error::Error for EditorError {}
 /// editor.commit_batch();
 ///
 /// ```
+/// Optional hook for reading Arrow-truth spill values for ChangeLog snapshots.
+///
+/// VertexEditor is structure-only; in canonical mode, callers should provide this
+/// reader so spill undo/redo uses Arrow overlays rather than graph value caches.
+pub trait SpillValueReader {
+    fn read_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue>;
+}
+
 pub struct VertexEditor<'g> {
     graph: &'g mut DependencyGraph,
     change_logger: Option<&'g mut dyn ChangeLogger>,
+    spill_value_reader: Option<&'g dyn SpillValueReader>,
     batch_mode: bool,
 }
 
@@ -207,6 +221,7 @@ impl<'g> VertexEditor<'g> {
         Self {
             graph,
             change_logger: None,
+            spill_value_reader: None,
             batch_mode: false,
         }
     }
@@ -219,6 +234,21 @@ impl<'g> VertexEditor<'g> {
         Self {
             graph,
             change_logger: Some(logger as &'g mut dyn ChangeLogger),
+            spill_value_reader: None,
+            batch_mode: false,
+        }
+    }
+
+    /// Create a new vertex editor with change logging and an Arrow-truth spill reader
+    pub fn with_logger_and_spill_reader<L: ChangeLogger + 'g>(
+        graph: &'g mut DependencyGraph,
+        logger: &'g mut L,
+        spill_value_reader: &'g dyn SpillValueReader,
+    ) -> Self {
+        Self {
+            graph,
+            change_logger: Some(logger as &'g mut dyn ChangeLogger),
+            spill_value_reader: Some(spill_value_reader),
             batch_mode: false,
         }
     }
@@ -246,6 +276,103 @@ impl<'g> VertexEditor<'g> {
         }
     }
 
+    fn snapshot_spill_for_anchor(
+        &self,
+        anchor: VertexId,
+    ) -> Option<crate::engine::graph::editor::change_log::SpillSnapshot> {
+        let cells = self.graph.spill_cells_for_anchor(anchor)?.to_vec();
+        if cells.is_empty() {
+            return None;
+        }
+
+        // Defensive bound for log payloads.
+        let max = self.graph.get_config().spill.max_spill_cells as usize;
+        let mut cells = cells;
+        if cells.len() > max {
+            cells.truncate(max);
+        }
+
+        let first = *cells.first().expect("non-empty spill cells");
+        let sheet_name = self.graph.sheet_name(first.sheet_id).to_string();
+        let row0 = first.coord.row();
+        let col0 = first.coord.col();
+
+        let mut max_row = row0;
+        let mut max_col = col0;
+        let mut by_coord: FxHashMap<(u32, u32), LiteralValue> = FxHashMap::default();
+        for cell in &cells {
+            max_row = max_row.max(cell.coord.row());
+            max_col = max_col.max(cell.coord.col());
+            let v = if let Some(reader) = self.spill_value_reader {
+                reader
+                    .read_cell_value(&sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .unwrap_or(LiteralValue::Empty)
+            } else {
+                self.graph
+                    .get_cell_value(&sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .unwrap_or(LiteralValue::Empty)
+            };
+            by_coord.insert((cell.coord.row(), cell.coord.col()), v);
+        }
+
+        let rows = (max_row - row0 + 1) as usize;
+        let cols = (max_col - col0 + 1) as usize;
+        let mut values: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
+        for r in 0..rows {
+            let mut row: Vec<LiteralValue> = Vec::with_capacity(cols);
+            for c in 0..cols {
+                row.push(
+                    by_coord
+                        .get(&(row0 + r as u32, col0 + c as u32))
+                        .cloned()
+                        .unwrap_or(LiteralValue::Empty),
+                );
+            }
+            values.push(row);
+        }
+
+        Some(crate::engine::graph::editor::change_log::SpillSnapshot {
+            target_cells: cells,
+            values,
+        })
+    }
+
+    /// Commit a spill region and log it for replay/undo.
+    pub fn commit_spill_region(
+        &mut self,
+        anchor: VertexId,
+        target_cells: Vec<CellRef>,
+        values: Vec<Vec<LiteralValue>>,
+    ) -> Result<(), EditorError> {
+        let old = self.snapshot_spill_for_anchor(anchor);
+        self.graph
+            .commit_spill_region_atomic_with_fault(
+                anchor,
+                target_cells.clone(),
+                values.clone(),
+                None,
+            )
+            .map_err(EditorError::Excel)?;
+        self.log_change(ChangeEvent::SpillCommitted {
+            anchor,
+            old,
+            new: crate::engine::graph::editor::change_log::SpillSnapshot {
+                target_cells,
+                values,
+            },
+        });
+        Ok(())
+    }
+
+    /// Clear a spill region (if any) and log it for replay/undo.
+    pub fn clear_spill_region(&mut self, anchor: VertexId) {
+        let Some(old) = self.snapshot_spill_for_anchor(anchor) else {
+            return;
+        };
+        self.graph.clear_spill_region(anchor);
+        self.log_change(ChangeEvent::SpillCleared { anchor, old });
+    }
+
     /// Check if change logging is enabled
     pub fn has_logger(&self) -> bool {
         self.change_logger.is_some()
@@ -259,6 +386,20 @@ impl<'g> VertexEditor<'g> {
         })
     }
 
+    fn snapshot_named_definitions(&self) -> FxHashMap<(NameScope, String), NamedDefinition> {
+        let mut out: FxHashMap<(NameScope, String), NamedDefinition> = FxHashMap::default();
+        for (name, nr) in self.graph.named_ranges_iter() {
+            out.insert((NameScope::Workbook, name.clone()), nr.definition.clone());
+        }
+        for ((sheet_id, name), nr) in self.graph.sheet_named_ranges_iter() {
+            out.insert(
+                (NameScope::Sheet(*sheet_id), name.clone()),
+                nr.definition.clone(),
+            );
+        }
+        out
+    }
+
     // Transaction support
 
     // Transaction support has been moved to TransactionContext
@@ -267,26 +408,34 @@ impl<'g> VertexEditor<'g> {
     /// Apply the inverse of a change event (used by TransactionContext for rollback)
     pub fn apply_inverse(&mut self, change: ChangeEvent) -> Result<(), EditorError> {
         match change {
-            ChangeEvent::SetValue { addr, old, new: _ } => {
-                // Restore old value
-                if let Some(old_value) = old {
+            ChangeEvent::SetValue {
+                addr,
+                old_value,
+                old_formula,
+                new: _,
+            } => {
+                // Restore previous state. Setting a value can overwrite a formula.
+                if let Some(old_formula) = old_formula {
+                    self.set_cell_formula(addr, old_formula);
+                } else if let Some(old_value) = old_value {
                     self.set_cell_value(addr, old_value);
-                } else {
-                    // Cell didn't exist before, remove it
-                    if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
-                        self.remove_vertex(id)?;
-                    }
+                } else if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
+                    self.remove_vertex(id)?;
                 }
             }
-            ChangeEvent::SetFormula { addr, old, new: _ } => {
-                // Restore old formula
-                if let Some(old_formula) = old {
+            ChangeEvent::SetFormula {
+                addr,
+                old_value,
+                old_formula,
+                new: _,
+            } => {
+                // Restore previous state. Setting a formula can overwrite a value.
+                if let Some(old_formula) = old_formula {
                     self.set_cell_formula(addr, old_formula);
-                } else {
-                    // Cell didn't have formula before, remove it or set to value
-                    if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
-                        self.remove_vertex(id)?;
-                    }
+                } else if let Some(old_value) = old_value {
+                    self.set_cell_value(addr, old_value);
+                } else if let Some(&id) = self.graph.get_vertex_id_for_address(&addr) {
+                    self.remove_vertex(id)?;
                 }
             }
             ChangeEvent::AddVertex { id, .. } => {
@@ -350,20 +499,51 @@ impl<'g> VertexEditor<'g> {
                     });
                 }
             }
+            ChangeEvent::SpillCommitted { anchor, old, .. } => {
+                // Restore previous spill region.
+                if let Some(old) = old {
+                    self.graph
+                        .commit_spill_region_atomic_with_fault(
+                            anchor,
+                            old.target_cells,
+                            old.values,
+                            None,
+                        )
+                        .map_err(EditorError::Excel)?;
+                } else {
+                    self.graph.clear_spill_region(anchor);
+                }
+            }
+            ChangeEvent::SpillCleared { anchor, old } => {
+                // Re-commit the previous spill region.
+                self.graph
+                    .commit_spill_region_atomic_with_fault(
+                        anchor,
+                        old.target_cells,
+                        old.values,
+                        None,
+                    )
+                    .map_err(EditorError::Excel)?;
+            }
             // Granular events for compound operations
             ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => {
                 // These are markers, no inverse needed
             }
-            ChangeEvent::VertexMoved { id, old_coord, .. } => {
+            ChangeEvent::VertexMoved {
+                id,
+                sheet_id: _,
+                old_coord,
+                ..
+            } => {
                 // Move back to old position
                 self.move_vertex(id, old_coord)?;
             }
             ChangeEvent::FormulaAdjusted { id, old_ast, .. } => {
-                // Restore old formula
-                // TODO: Need a method to update formula by vertex ID
-                return Err(EditorError::TransactionFailed {
-                    reason: "Cannot rollback formula adjustment yet".to_string(),
-                });
+                // Restore old formula directly by vertex id.
+                self.graph
+                    .update_vertex_formula(id, old_ast)
+                    .map_err(EditorError::Excel)?;
+                self.graph.mark_vertex_dirty(id);
             }
             ChangeEvent::NamedRangeAdjusted {
                 name,
@@ -460,6 +640,21 @@ impl<'g> VertexEditor<'g> {
             ));
         }
 
+        // If this vertex anchors a spill, clear ownership + spilled children first.
+        // This keeps the spill registry consistent even if the anchor is removed.
+        let spill_snapshot = self.snapshot_spill_for_anchor(id);
+        let did_spill_clear = spill_snapshot.is_some();
+        if let Some(old_spill) = spill_snapshot {
+            if let Some(logger) = &mut self.change_logger {
+                logger.begin_compound(format!("RemoveVertexWithSpillClear id={}", id.0));
+            }
+            self.graph.clear_spill_region(id);
+            self.log_change(ChangeEvent::SpillCleared {
+                anchor: id,
+                old: old_spill,
+            });
+        }
+
         // Get dependents before removing edges
         // Note: get_dependents may require CSR rebuild if delta has changes
         let dependents = self.graph.get_dependents(id);
@@ -522,6 +717,10 @@ impl<'g> VertexEditor<'g> {
             kind,
             flags,
         });
+
+        if did_spill_clear && let Some(logger) = &mut self.change_logger {
+            logger.end_compound();
+        }
 
         Ok(())
     }
@@ -707,6 +906,7 @@ impl<'g> VertexEditor<'g> {
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
+                    sheet_id,
                     old_coord,
                     new_coord,
                 });
@@ -731,6 +931,14 @@ impl<'g> VertexEditor<'g> {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 // Only update if the formula actually changed
                 if format!("{ast:?}") != format!("{adjusted:?}") {
+                    if self.has_logger() {
+                        self.log_change(ChangeEvent::FormulaAdjusted {
+                            id,
+                            addr: self.graph.get_cell_ref_for_vertex(id),
+                            old_ast: ast.clone(),
+                            new_ast: adjusted.clone(),
+                        });
+                    }
                     self.graph.update_vertex_formula(id, adjusted)?;
                     self.graph.mark_vertex_dirty(id);
                     summary.formulas_updated += 1;
@@ -739,7 +947,27 @@ impl<'g> VertexEditor<'g> {
         }
 
         // 4. Adjust named ranges
+        let old_names = if self.has_logger() {
+            Some(self.snapshot_named_definitions())
+        } else {
+            None
+        };
         self.graph.adjust_named_ranges(&op)?;
+        if let Some(old_names) = old_names {
+            let new_names = self.snapshot_named_definitions();
+            for ((scope, name), old_definition) in old_names {
+                if let Some(new_definition) = new_names.get(&(scope, name.clone()))
+                    && *new_definition != old_definition
+                {
+                    self.log_change(ChangeEvent::NamedRangeAdjusted {
+                        name,
+                        scope,
+                        old_definition,
+                        new_definition: new_definition.clone(),
+                    });
+                }
+            }
+        }
 
         // 5. Log change event
         if let Some(logger) = &mut self.change_logger {
@@ -766,6 +994,12 @@ impl<'g> VertexEditor<'g> {
 
         self.begin_batch();
 
+        if let Some(logger) = &mut self.change_logger {
+            logger.begin_compound(format!(
+                "DeleteRows sheet={sheet_id} start={start} count={count}"
+            ));
+        }
+
         // 1. Delete vertices in the range
         let vertices_to_delete: Vec<VertexId> = self
             .graph
@@ -779,12 +1013,6 @@ impl<'g> VertexEditor<'g> {
         for id in vertices_to_delete {
             self.remove_vertex(id)?;
             summary.vertices_deleted.push(id);
-        }
-
-        if let Some(logger) = &mut self.change_logger {
-            logger.begin_compound(format!(
-                "DeleteRows sheet={sheet_id} start={start} count={count}"
-            ));
         }
         // 2. Shift remaining vertices up (emit VertexMoved)
         let vertices_to_shift: Vec<(VertexId, AbsCoord)> = self
@@ -805,6 +1033,7 @@ impl<'g> VertexEditor<'g> {
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
+                    sheet_id,
                     old_coord,
                     new_coord,
                 });
@@ -827,6 +1056,14 @@ impl<'g> VertexEditor<'g> {
             if let Some(ast) = self.get_formula_ast(id) {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 if format!("{ast:?}") != format!("{adjusted:?}") {
+                    if self.has_logger() {
+                        self.log_change(ChangeEvent::FormulaAdjusted {
+                            id,
+                            addr: self.graph.get_cell_ref_for_vertex(id),
+                            old_ast: ast.clone(),
+                            new_ast: adjusted.clone(),
+                        });
+                    }
                     self.graph.update_vertex_formula(id, adjusted)?;
                     self.graph.mark_vertex_dirty(id);
                     summary.formulas_updated += 1;
@@ -835,7 +1072,27 @@ impl<'g> VertexEditor<'g> {
         }
 
         // 4. Adjust named ranges
+        let old_names = if self.has_logger() {
+            Some(self.snapshot_named_definitions())
+        } else {
+            None
+        };
         self.graph.adjust_named_ranges(&op)?;
+        if let Some(old_names) = old_names {
+            let new_names = self.snapshot_named_definitions();
+            for ((scope, name), old_definition) in old_names {
+                if let Some(new_definition) = new_names.get(&(scope, name.clone()))
+                    && *new_definition != old_definition
+                {
+                    self.log_change(ChangeEvent::NamedRangeAdjusted {
+                        name,
+                        scope,
+                        old_definition,
+                        new_definition: new_definition.clone(),
+                    });
+                }
+            }
+        }
 
         // 5. Log change event
         if let Some(logger) = &mut self.change_logger {
@@ -888,6 +1145,7 @@ impl<'g> VertexEditor<'g> {
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
+                    sheet_id,
                     old_coord,
                     new_coord,
                 });
@@ -912,6 +1170,14 @@ impl<'g> VertexEditor<'g> {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 // Only update if the formula actually changed
                 if format!("{ast:?}") != format!("{adjusted:?}") {
+                    if self.has_logger() {
+                        self.log_change(ChangeEvent::FormulaAdjusted {
+                            id,
+                            addr: self.graph.get_cell_ref_for_vertex(id),
+                            old_ast: ast.clone(),
+                            new_ast: adjusted.clone(),
+                        });
+                    }
                     self.graph.update_vertex_formula(id, adjusted)?;
                     self.graph.mark_vertex_dirty(id);
                     summary.formulas_updated += 1;
@@ -920,7 +1186,27 @@ impl<'g> VertexEditor<'g> {
         }
 
         // 4. Adjust named ranges
+        let old_names = if self.has_logger() {
+            Some(self.snapshot_named_definitions())
+        } else {
+            None
+        };
         self.graph.adjust_named_ranges(&op)?;
+        if let Some(old_names) = old_names {
+            let new_names = self.snapshot_named_definitions();
+            for ((scope, name), old_definition) in old_names {
+                if let Some(new_definition) = new_names.get(&(scope, name.clone()))
+                    && *new_definition != old_definition
+                {
+                    self.log_change(ChangeEvent::NamedRangeAdjusted {
+                        name,
+                        scope,
+                        old_definition,
+                        new_definition: new_definition.clone(),
+                    });
+                }
+            }
+        }
 
         // 5. Log change event
         if let Some(logger) = &mut self.change_logger {
@@ -947,6 +1233,12 @@ impl<'g> VertexEditor<'g> {
 
         self.begin_batch();
 
+        if let Some(logger) = &mut self.change_logger {
+            logger.begin_compound(format!(
+                "DeleteColumns sheet={sheet_id} start={start} count={count}"
+            ));
+        }
+
         // 1. Delete vertices in the range
         let vertices_to_delete: Vec<VertexId> = self
             .graph
@@ -960,12 +1252,6 @@ impl<'g> VertexEditor<'g> {
         for id in vertices_to_delete {
             self.remove_vertex(id)?;
             summary.vertices_deleted.push(id);
-        }
-
-        if let Some(logger) = &mut self.change_logger {
-            logger.begin_compound(format!(
-                "DeleteColumns sheet={sheet_id} start={start} count={count}"
-            ));
         }
         // 2. Shift remaining vertices left (emit VertexMoved)
         let vertices_to_shift: Vec<(VertexId, AbsCoord)> = self
@@ -986,6 +1272,7 @@ impl<'g> VertexEditor<'g> {
             if self.has_logger() {
                 self.log_change(ChangeEvent::VertexMoved {
                     id,
+                    sheet_id,
                     old_coord,
                     new_coord,
                 });
@@ -1008,6 +1295,14 @@ impl<'g> VertexEditor<'g> {
             if let Some(ast) = self.get_formula_ast(id) {
                 let adjusted = adjuster.adjust_ast(&ast, &op);
                 if format!("{ast:?}") != format!("{adjusted:?}") {
+                    if self.has_logger() {
+                        self.log_change(ChangeEvent::FormulaAdjusted {
+                            id,
+                            addr: self.graph.get_cell_ref_for_vertex(id),
+                            old_ast: ast.clone(),
+                            new_ast: adjusted.clone(),
+                        });
+                    }
                     self.graph.update_vertex_formula(id, adjusted)?;
                     self.graph.mark_vertex_dirty(id);
                     summary.formulas_updated += 1;
@@ -1016,7 +1311,27 @@ impl<'g> VertexEditor<'g> {
         }
 
         // 4. Adjust named ranges
+        let old_names = if self.has_logger() {
+            Some(self.snapshot_named_definitions())
+        } else {
+            None
+        };
         self.graph.adjust_named_ranges(&op)?;
+        if let Some(old_names) = old_names {
+            let new_names = self.snapshot_named_definitions();
+            for ((scope, name), old_definition) in old_names {
+                if let Some(new_definition) = new_names.get(&(scope, name.clone()))
+                    && *new_definition != old_definition
+                {
+                    self.log_change(ChangeEvent::NamedRangeAdjusted {
+                        name,
+                        scope,
+                        old_definition,
+                        new_definition: new_definition.clone(),
+                    });
+                }
+            }
+        }
 
         // 5. Log change event
         if let Some(logger) = &mut self.change_logger {
@@ -1040,7 +1355,8 @@ impl<'g> VertexEditor<'g> {
                 sheet_id,
                 coord: Coord::new(start_row, 0, true, true),
             },
-            old: None,
+            old_value: None,
+            old_formula: None,
             new: LiteralValue::Text(format!("Row shift: start={start_row}, delta={delta}")),
         };
         self.log_change(change_event);
@@ -1061,7 +1377,8 @@ impl<'g> VertexEditor<'g> {
                 sheet_id,
                 coord: Coord::new(0, start_col, true, true),
             },
-            old: None,
+            old_value: None,
+            old_formula: None,
             new: LiteralValue::Text(format!("Column shift: start={start_col}, delta={delta}")),
         };
         self.log_change(change_event);
@@ -1074,11 +1391,31 @@ impl<'g> VertexEditor<'g> {
     pub fn set_cell_value(&mut self, cell_ref: CellRef, value: LiteralValue) -> VertexId {
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
 
-        // Capture old value before modification
-        let old_value = self
-            .graph
-            .get_vertex_id_for_address(&cell_ref)
-            .and_then(|&id| self.graph.get_value(id));
+        // Capture old state before modification (value + formula).
+        let old_id = self.graph.get_vertex_id_for_address(&cell_ref).copied();
+        let old_value = old_id.and_then(|id| self.graph.get_value(id));
+        let old_formula = old_id.and_then(|id| self.get_formula_ast(id));
+
+        // If this cell currently anchors a spill, clear the spill first and log it.
+        // This keeps spill ownership maps and children consistent under undo/redo.
+        let spill_snapshot =
+            old_id.and_then(|id| self.snapshot_spill_for_anchor(id).map(|s| (id, s)));
+        let did_spill_clear = spill_snapshot.is_some();
+        if let Some((anchor, old_spill)) = spill_snapshot {
+            if let Some(logger) = &mut self.change_logger {
+                logger.begin_compound(format!(
+                    "SetValueWithSpillClear sheet={} row={} col={}",
+                    cell_ref.sheet_id,
+                    cell_ref.coord.row(),
+                    cell_ref.coord.col()
+                ));
+            }
+            self.graph.clear_spill_region(anchor);
+            self.log_change(ChangeEvent::SpillCleared {
+                anchor,
+                old: old_spill,
+            });
+        }
 
         // Use the existing DependencyGraph API
         // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
@@ -1092,10 +1429,15 @@ impl<'g> VertexEditor<'g> {
                 // Log change event
                 let change_event = ChangeEvent::SetValue {
                     addr: cell_ref,
-                    old: old_value,
+                    old_value,
+                    old_formula,
                     new: value,
                 };
                 self.log_change(change_event);
+
+                if did_spill_clear && let Some(logger) = &mut self.change_logger {
+                    logger.end_compound();
+                }
 
                 summary
                     .affected_vertices
@@ -1111,11 +1453,30 @@ impl<'g> VertexEditor<'g> {
     pub fn set_cell_formula(&mut self, cell_ref: CellRef, formula: ASTNode) -> VertexId {
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
 
-        // Capture old formula before modification
-        let old_formula = self
-            .graph
-            .get_vertex_id_for_address(&cell_ref)
-            .and_then(|&id| self.get_formula_ast(id));
+        // Capture old state before modification (value + formula).
+        let old_id = self.graph.get_vertex_id_for_address(&cell_ref).copied();
+        let old_value = old_id.and_then(|id| self.graph.get_value(id));
+        let old_formula = old_id.and_then(|id| self.get_formula_ast(id));
+
+        // If this cell currently anchors a spill, clear it before updating the formula.
+        let spill_snapshot =
+            old_id.and_then(|id| self.snapshot_spill_for_anchor(id).map(|s| (id, s)));
+        let did_spill_clear = spill_snapshot.is_some();
+        if let Some((anchor, old_spill)) = spill_snapshot {
+            if let Some(logger) = &mut self.change_logger {
+                logger.begin_compound(format!(
+                    "SetFormulaWithSpillClear sheet={} row={} col={}",
+                    cell_ref.sheet_id,
+                    cell_ref.coord.row(),
+                    cell_ref.coord.col()
+                ));
+            }
+            self.graph.clear_spill_region(anchor);
+            self.log_change(ChangeEvent::SpillCleared {
+                anchor,
+                old: old_spill,
+            });
+        }
 
         // Use the existing DependencyGraph API
         // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
@@ -1129,10 +1490,15 @@ impl<'g> VertexEditor<'g> {
                 // Log change event
                 let change_event = ChangeEvent::SetFormula {
                     addr: cell_ref,
-                    old: old_formula,
+                    old_value,
+                    old_formula,
                     new: formula,
                 };
                 self.log_change(change_event);
+
+                if did_spill_clear && let Some(logger) = &mut self.change_logger {
+                    logger.end_compound();
+                }
 
                 summary
                     .affected_vertices
@@ -1506,8 +1872,7 @@ impl<'g> VertexEditor<'g> {
 
     /// Delete a named range
     pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), EditorError> {
-        self.graph.delete_name(name, scope)?;
-
+        // Capture old definition *before* deletion so undo can restore it.
         let old_def = if self.has_logger() {
             self.graph
                 .resolve_name(
@@ -1521,6 +1886,8 @@ impl<'g> VertexEditor<'g> {
         } else {
             None
         };
+
+        self.graph.delete_name(name, scope)?;
         self.log_change(ChangeEvent::DeleteName {
             name: name.to_string(),
             scope,
@@ -1618,6 +1985,53 @@ mod tests {
 
         // Now removal returns Result
         assert!(editor.remove_vertex(vertex_id).is_ok());
+    }
+
+    #[test]
+    fn test_remove_vertex_clears_spill_registry_for_anchor() {
+        let mut graph = create_test_graph();
+        let sheet_id = graph.sheet_id_mut("Sheet1");
+
+        // Create anchor vertex at A1 (0-based internal coord 0,0).
+        let anchor_cell = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+        let anchor_vid = {
+            let mut editor = VertexEditor::new(&mut graph);
+            editor.set_cell_value(anchor_cell, LiteralValue::Number(0.0))
+        };
+
+        let target_cells = vec![
+            CellRef::new(sheet_id, Coord::new(0, 0, true, true)),
+            CellRef::new(sheet_id, Coord::new(0, 1, true, true)),
+            CellRef::new(sheet_id, Coord::new(1, 0, true, true)),
+            CellRef::new(sheet_id, Coord::new(1, 1, true, true)),
+        ];
+        let values = vec![
+            vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+        ];
+
+        graph
+            .commit_spill_region_atomic_with_fault(anchor_vid, target_cells.clone(), values, None)
+            .unwrap();
+
+        assert!(graph.spill_registry_has_anchor(anchor_vid));
+        for cell in &target_cells {
+            assert_eq!(
+                graph.spill_registry_anchor_for_cell(*cell),
+                Some(anchor_vid)
+            );
+        }
+
+        {
+            let mut editor = VertexEditor::new(&mut graph);
+            editor.remove_vertex(anchor_vid).unwrap();
+        }
+
+        assert!(!graph.spill_registry_has_anchor(anchor_vid));
+        for cell in &target_cells {
+            assert_eq!(graph.spill_registry_anchor_for_cell(*cell), None);
+        }
+        assert_eq!(graph.spill_registry_counts(), (0, 0));
     }
 
     #[test]

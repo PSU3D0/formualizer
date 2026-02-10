@@ -6,19 +6,27 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, RangeAddress}
 use formualizer_parse::parser::ReferenceType;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
 use umya_spreadsheet::{
     CellRawValue, CellValue, Spreadsheet,
     reader::xlsx,
-    structs::{DefinedName, Worksheet},
+    structs::{DefinedName as UmyaDefinedName, Worksheet},
 };
+
+use crate::traits::{DefinedName as WorkbookDefinedName, DefinedNameDefinition, DefinedNameScope};
 
 pub struct UmyaAdapter {
     workbook: RwLock<Spreadsheet>,
     lazy: bool,
     original_path: Option<std::path::PathBuf>,
+
+    // Best-effort: parse `headerRowCount` from xl/tables/*.xml.
+    // Key: table name (as stored in XLSX); Value: header_row bool.
+    table_header_rows: HashMap<String, bool>,
+    table_header_rows_available: bool,
 }
 
 impl UmyaAdapter {
@@ -67,6 +75,99 @@ impl UmyaAdapter {
             CellRawValue::Empty => None,
         }
     }
+
+    fn table_header_row_for(&self, table_name: &str) -> bool {
+        if let Some(v) = self.table_header_rows.get(table_name) {
+            return *v;
+        }
+
+        // Keep the availability flag live even when `tracing` is disabled.
+        let available = self.table_header_rows_available;
+        if !available {
+            // no-op
+        }
+
+        #[cfg(feature = "tracing")]
+        {
+            if available {
+                tracing::warn!(
+                    table = table_name,
+                    "umya: table headerRowCount not found; assuming header_row=true"
+                );
+            } else {
+                tracing::warn!(
+                    table = table_name,
+                    "umya: table headerRowCount unavailable; assuming header_row=true"
+                );
+            }
+        }
+
+        true
+    }
+
+    fn read_table_header_rows_from_xlsx(
+        path: &Path,
+    ) -> Result<HashMap<String, bool>, std::io::Error> {
+        use std::fs::File;
+
+        fn extract_attr(tag: &str, key: &str) -> Option<String> {
+            let needle_dq = format!("{key}=\"");
+            if let Some(pos) = tag.find(&needle_dq) {
+                let start = pos + needle_dq.len();
+                let rest = &tag[start..];
+                if let Some(end) = rest.find('"') {
+                    return Some(rest[..end].to_string());
+                }
+            }
+            let needle_sq = format!("{key}='");
+            if let Some(pos) = tag.find(&needle_sq) {
+                let start = pos + needle_sq.len();
+                let rest = &tag[start..];
+                if let Some(end) = rest.find('\'') {
+                    return Some(rest[..end].to_string());
+                }
+            }
+            None
+        }
+
+        fn parse_table_tag(xml: &str) -> Option<(String, bool)> {
+            let start = xml.find("<table")?;
+            let after = &xml[start..];
+            let end = after.find('>')?;
+            let tag = &after[..end];
+
+            let name = extract_attr(tag, "name").or_else(|| extract_attr(tag, "displayName"))?;
+
+            let header_row = match extract_attr(tag, "headerRowCount") {
+                None => true,
+                Some(v) => v.parse::<u32>().ok().map(|n| n != 0).unwrap_or(true),
+            };
+            Some((name, header_row))
+        }
+
+        let file = File::open(path)?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        let mut out: HashMap<String, bool> = HashMap::new();
+        for i in 0..archive.len() {
+            let mut entry = archive
+                .by_index(i)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            let name = entry.name().to_string();
+            if !name.starts_with("xl/tables/") || !name.ends_with(".xml") {
+                continue;
+            }
+
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml)?;
+            if let Some((tname, header_row)) = parse_table_tag(&xml) {
+                out.insert(tname, header_row);
+            }
+        }
+
+        Ok(out)
+    }
 }
 
 impl SpreadsheetReader for UmyaAdapter {
@@ -102,6 +203,62 @@ impl SpreadsheetReader for UmyaAdapter {
         Ok(names)
     }
 
+    fn defined_names(&mut self) -> Result<Vec<WorkbookDefinedName>, Self::Error> {
+        let mut wb = self.workbook.write();
+        let count = wb.get_sheet_count();
+        for i in 0..count {
+            wb.read_sheet(i);
+        }
+
+        let mut sheet_names: Vec<String> = Vec::with_capacity(count);
+        for i in 0..count {
+            if let Some(s) = wb.get_sheet(&i) {
+                sheet_names.push(s.get_name().to_string());
+            }
+        }
+
+        let mut out: Vec<WorkbookDefinedName> = Vec::new();
+        let mut seen: HashSet<(DefinedNameScope, Option<String>, String)> = HashSet::new();
+
+        // Sheet-level names (if present)
+        for i in 0..count {
+            let Some(ws) = wb.get_sheet(&i) else {
+                continue;
+            };
+            let declared_on = ws.get_name();
+            for dn in ws.get_defined_names() {
+                if let Some(converted) =
+                    Self::convert_defined_name_stable(dn, Some(declared_on), &sheet_names)
+                {
+                    let key = (
+                        converted.scope.clone(),
+                        converted.scope_sheet.clone(),
+                        converted.name.clone(),
+                    );
+                    if seen.insert(key) {
+                        out.push(converted);
+                    }
+                }
+            }
+        }
+
+        // Workbook-level names
+        for dn in wb.get_defined_names() {
+            if let Some(converted) = Self::convert_defined_name_stable(dn, None, &sheet_names) {
+                let key = (
+                    converted.scope.clone(),
+                    converted.scope_sheet.clone(),
+                    converted.name.clone(),
+                );
+                if seen.insert(key) {
+                    out.push(converted);
+                }
+            }
+        }
+
+        Ok(out)
+    }
+
     fn open_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error>
     where
         Self: Sized,
@@ -109,10 +266,20 @@ impl SpreadsheetReader for UmyaAdapter {
         // Prefer lazy read for large files; expose both later
         // Use full read (not lazy) so that save operations don't hit deserialization assertions
         let sheet = xlsx::read(path.as_ref())?;
+
+        // Umya doesn't currently expose header-row metadata, so we parse it from the XLSX zip.
+        // If we fail, we keep the previous (Excel default) behavior by assuming `header_row=true`.
+        let (table_header_rows, table_header_rows_available) =
+            match Self::read_table_header_rows_from_xlsx(path.as_ref()) {
+                Ok(m) => (m, true),
+                Err(_) => (HashMap::new(), false),
+            };
         Ok(Self {
             workbook: RwLock::new(sheet),
             lazy: false,
             original_path: Some(path.as_ref().to_path_buf()),
+            table_header_rows,
+            table_header_rows_available,
         })
     }
 
@@ -205,7 +372,7 @@ impl SpreadsheetReader for UmyaAdapter {
         Ok(SheetData {
             cells: cells_map,
             dimensions: Some(dims),
-            tables: Self::collect_tables(ws),
+            tables: self.collect_tables(ws),
             named_ranges: Self::collect_named_ranges(sheet, &wb, ws),
             date_system_1904: false,
             merged_cells: vec![],
@@ -429,6 +596,72 @@ impl SpreadsheetWriter for UmyaAdapter {
 }
 
 impl UmyaAdapter {
+    fn convert_defined_name_stable(
+        defined: &UmyaDefinedName,
+        declared_on_sheet: Option<&str>,
+        sheet_names: &[String],
+    ) -> Option<WorkbookDefinedName> {
+        let raw = defined.get_address();
+        let mut trimmed = raw.trim();
+        if let Some(rest) = trimmed.strip_prefix('=') {
+            trimmed = rest.trim();
+        }
+        if trimmed.is_empty() || trimmed.contains(',') {
+            return None;
+        }
+
+        // Only support cell/range references for Stage 1.
+        let reference = ReferenceType::from_string(trimmed).ok()?;
+
+        let scope_sheet = if defined.has_local_sheet_id() {
+            let idx = *defined.get_local_sheet_id() as usize;
+            sheet_names.get(idx).cloned()
+        } else {
+            declared_on_sheet.map(|s| s.to_string())
+        };
+
+        let scope = if scope_sheet.is_some() {
+            DefinedNameScope::Sheet
+        } else {
+            DefinedNameScope::Workbook
+        };
+
+        let base_sheet = scope_sheet.as_deref();
+        let (sheet_name, start_row, start_col, end_row, end_col) = match reference {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => {
+                let sheet = sheet.or_else(|| base_sheet.map(|s| s.to_string()))?;
+                (sheet, row, col, row, col)
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                ..
+            } => {
+                let sr = start_row?;
+                let sc = start_col?;
+                let er = end_row.unwrap_or(sr);
+                let ec = end_col.unwrap_or(sc);
+                let sheet = sheet.or_else(|| base_sheet.map(|s| s.to_string()))?;
+                (sheet, sr, sc, er, ec)
+            }
+            _ => return None,
+        };
+
+        let address = RangeAddress::new(sheet_name, start_row, start_col, end_row, end_col).ok()?;
+
+        Some(WorkbookDefinedName {
+            name: defined.get_name().to_string(),
+            scope,
+            scope_sheet,
+            definition: DefinedNameDefinition::Range { address },
+        })
+    }
+
     fn collect_named_ranges(
         sheet_name: &str,
         workbook: &Spreadsheet,
@@ -458,7 +691,7 @@ impl UmyaAdapter {
         ranges
     }
 
-    fn collect_tables(worksheet: &Worksheet) -> Vec<crate::traits::TableDefinition> {
+    fn collect_tables(&self, worksheet: &Worksheet) -> Vec<crate::traits::TableDefinition> {
         worksheet
             .get_tables()
             .iter()
@@ -469,14 +702,19 @@ impl UmyaAdapter {
                     .iter()
                     .map(|c| c.get_name().to_string())
                     .collect();
+
+                let name = t.get_name().to_string();
+                let header_row = self.table_header_row_for(&name);
+
                 crate::traits::TableDefinition {
-                    name: t.get_name().to_string(),
+                    name,
                     range: (
                         *beg.get_row_num(),
                         *beg.get_col_num(),
                         *end.get_row_num(),
                         *end.get_col_num(),
                     ),
+                    header_row,
                     headers,
                     totals_row: *t.get_totals_row_shown(),
                 }
@@ -484,7 +722,7 @@ impl UmyaAdapter {
             .collect()
     }
 
-    fn convert_defined_name(defined: &DefinedName, current_sheet: &str) -> Option<NamedRange> {
+    fn convert_defined_name(defined: &UmyaDefinedName, current_sheet: &str) -> Option<NamedRange> {
         let raw = defined.get_address();
         let trimmed = raw.trim();
         if trimmed.is_empty() || trimmed.contains(',') {
@@ -625,6 +863,7 @@ where
                     engine.define_table(
                         &table.name,
                         range_ref,
+                        table.header_row,
                         table.headers.clone(),
                         table.totals_row,
                     )?;
@@ -660,38 +899,73 @@ where
                 }
                 let _ = builder.finish();
             }
+        }
 
-            let Some(sheet_id) = engine.sheet_id(n) else {
-                continue;
-            };
-            for named in &sheet_data.named_ranges {
-                if named.address.sheet != *n {
+        // Register defined names into the dependency graph.
+        {
+            use rustc_hash::FxHashSet;
+
+            let defined = self
+                .defined_names()
+                .map_err(|e| IoError::from_backend("umya", e))?;
+            let mut seen: FxHashSet<(DefinedNameScope, Option<String>, String)> =
+                FxHashSet::default();
+
+            for dn in defined {
+                let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
+                if !seen.insert(key) {
                     continue;
                 }
-                let addr = &named.address;
-                let sr0 = addr.start_row.saturating_sub(1);
-                let sc0 = addr.start_col.saturating_sub(1);
-                let er0 = addr.end_row.saturating_sub(1);
-                let ec0 = addr.end_col.saturating_sub(1);
 
-                let start_coord = Coord::new(sr0, sc0, true, true);
-                let end_coord = Coord::new(er0, ec0, true, true);
-                let start_ref = CellRef::new(sheet_id, start_coord);
-                let end_ref = CellRef::new(sheet_id, end_coord);
-
-                let definition = if sr0 == er0 && sc0 == ec0 {
-                    NamedDefinition::Cell(start_ref)
-                } else {
-                    let range_ref = formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
-                    NamedDefinition::Range(range_ref)
+                let scope = match dn.scope {
+                    DefinedNameScope::Workbook => NameScope::Workbook,
+                    DefinedNameScope::Sheet => {
+                        let sheet_name =
+                            dn.scope_sheet.as_deref().ok_or_else(|| IoError::Backend {
+                                backend: "umya".to_string(),
+                                message: format!(
+                                    "sheet-scoped defined name `{}` missing scope_sheet",
+                                    dn.name
+                                ),
+                            })?;
+                        let sid = engine
+                            .sheet_id(sheet_name)
+                            .ok_or_else(|| IoError::Backend {
+                                backend: "umya".to_string(),
+                                message: format!("scope sheet not found: {sheet_name}"),
+                            })?;
+                        NameScope::Sheet(sid)
+                    }
                 };
 
-                let scope = match named.scope {
-                    crate::traits::NamedRangeScope::Workbook => NameScope::Workbook,
-                    crate::traits::NamedRangeScope::Sheet => NameScope::Sheet(sheet_id),
+                let definition = match dn.definition {
+                    DefinedNameDefinition::Range { address } => {
+                        let sheet_id = engine
+                            .sheet_id(&address.sheet)
+                            .or_else(|| engine.add_sheet(&address.sheet).ok())
+                            .ok_or_else(|| IoError::Backend {
+                                backend: "umya".to_string(),
+                                message: format!("sheet not found: {}", address.sheet),
+                            })?;
+
+                        let sr0 = address.start_row.saturating_sub(1);
+                        let sc0 = address.start_col.saturating_sub(1);
+                        let er0 = address.end_row.saturating_sub(1);
+                        let ec0 = address.end_col.saturating_sub(1);
+                        let start_ref = CellRef::new(sheet_id, Coord::new(sr0, sc0, true, true));
+                        if sr0 == er0 && sc0 == ec0 {
+                            NamedDefinition::Cell(start_ref)
+                        } else {
+                            let end_ref = CellRef::new(sheet_id, Coord::new(er0, ec0, true, true));
+                            let range_ref =
+                                formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                            NamedDefinition::Range(range_ref)
+                        }
+                    }
+                    DefinedNameDefinition::Literal { value } => NamedDefinition::Literal(value),
                 };
 
-                engine.define_name(&named.name, definition, scope)?;
+                engine.define_name(&dn.name, definition, scope)?;
             }
         }
 

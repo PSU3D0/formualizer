@@ -298,6 +298,124 @@ fn scalar_source_invalidates_dependents() {
 }
 
 #[test]
+fn scalar_source_invalidate_marks_multiple_dependents_dirty() {
+    let ctx = SourceCtx::default();
+    ctx.set_scalar("Foo", LiteralValue::Int(1));
+
+    let cfg = EvalConfig::default();
+    let mut engine: Engine<_> = Engine::new(ctx.clone(), cfg);
+    engine.add_sheet("Sheet1").unwrap();
+
+    engine.define_source_scalar("Foo", Some(1)).unwrap();
+
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            formualizer_parse::parser::parse("=Foo").unwrap(),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            formualizer_parse::parser::parse("=Foo+1").unwrap(),
+        )
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(1.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+
+    ctx.set_scalar("Foo", LiteralValue::Int(5));
+    engine.invalidate_source("Foo").unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(5.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(6.0))
+    );
+}
+
+#[test]
+fn table_source_invalidate_marks_multiple_dependents_dirty() {
+    let ctx = SourceCtx::default();
+    let t1 = MemTable {
+        headers: vec!["Amount".into()],
+        data: vec![
+            vec![LiteralValue::Number(10.0)],
+            vec![LiteralValue::Number(20.0)],
+        ],
+    };
+    ctx.set_table("Sales", Arc::new(t1));
+
+    let cfg = EvalConfig::default();
+    let mut engine: Engine<_> = Engine::new(ctx.clone(), cfg);
+    engine.add_sheet("Sheet1").unwrap();
+    engine.define_source_table("Sales", Some(1)).unwrap();
+
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            formualizer_parse::parser::parse("=SUM(Sales[Amount])").unwrap(),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            formualizer_parse::parser::parse("=SUM(Sales[Amount])+1").unwrap(),
+        )
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(30.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(31.0))
+    );
+
+    let t2 = MemTable {
+        headers: vec!["Amount".into()],
+        data: vec![
+            vec![LiteralValue::Number(1.0)],
+            vec![LiteralValue::Number(2.0)],
+            vec![LiteralValue::Number(3.0)],
+        ],
+    };
+    ctx.set_table("Sales", Arc::new(t2));
+    engine.invalidate_source("Sales").unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(6.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(7.0))
+    );
+}
+
+#[test]
 fn table_source_cached_within_evaluate_until() {
     let ctx = SourceCtx::default();
     let table = MemTable {
@@ -386,6 +504,7 @@ fn workbook_table_beats_source_table() {
         .define_table(
             "Sales",
             range,
+            true,
             vec!["Region".into(), "Amount".into()],
             false,
         )

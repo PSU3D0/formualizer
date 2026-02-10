@@ -50,3 +50,15 @@ pub fn arrow_eval_config() -> EvalConfig {
 pub fn eval_config_with_range_limit(limit: usize) -> EvalConfig {
     EvalConfig::default().with_range_expansion_limit(limit)
 }
+
+/// EvalConfig suitable for dependency-graph unit tests.
+///
+/// Phase 1 (ticket 610): the dependency graph no longer caches cell/formula values.
+/// Tests should assert on structure (vertex kinds, mappings, formulas, edges), not literal payloads.
+pub fn graph_truth_eval_config() -> EvalConfig {
+    EvalConfig::default()
+}
+
+pub fn graph_truth_graph() -> crate::engine::DependencyGraph {
+    crate::engine::DependencyGraph::new_with_config(graph_truth_eval_config())
+}

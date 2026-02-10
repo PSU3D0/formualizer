@@ -13,4 +13,5 @@ fn spill_config_defaults() {
     assert_eq!(cfg.spill.memory_budget_bytes, None);
     assert_eq!(cfg.spill.cancellation, SpillCancellationPolicy::Cooperative);
     assert_eq!(cfg.spill.visibility, SpillVisibility::OnCommit);
+    assert_eq!(cfg.spill.max_spill_cells, 10_000);
 }

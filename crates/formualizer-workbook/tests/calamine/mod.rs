@@ -3,6 +3,10 @@
 mod common;
 
 #[cfg(feature = "calamine")]
+mod date_arithmetic;
+#[cfg(feature = "calamine")]
+mod dates;
+#[cfg(feature = "calamine")]
 mod deltas;
 #[cfg(feature = "calamine")]
 mod engine;

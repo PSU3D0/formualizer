@@ -340,17 +340,88 @@ fn eval_if_family<'a, 'b>(
                                 LiteralValue::Number(x) => {
                                     let nx = *x;
                                     if let Some(nc) = nc {
-                                        cmp::eq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
+                                        let m0 =
+                                            cmp::eq(nc.as_ref(), &Float64Array::new_scalar(nx))
+                                                .unwrap();
+                                        if m0.null_count() == 0 {
+                                            m0
+                                        } else {
+                                            // Fill nulls using per-cell matching so blanks can still match numeric
+                                            // criteria (e.g. blank == 0 in Excel criteria semantics).
+                                            let view = crit_specs[j].0.as_ref().unwrap();
+                                            let mut bb =
+                                                arrow_array::builder::BooleanBuilder::with_capacity(
+                                                    row_len,
+                                                );
+                                            for i in 0..row_len {
+                                                if m0.is_valid(i) {
+                                                    bb.append_value(m0.value(i));
+                                                } else {
+                                                    bb.append_value(criteria_match(
+                                                        pred,
+                                                        &view.get_cell(row_start + i, c),
+                                                    ));
+                                                }
+                                            }
+                                            bb.finish()
+                                        }
                                     } else {
-                                        BooleanArray::new_null(row_len)
+                                        // If the criteria range has no numeric fast-path column (e.g. text column
+                                        // or mixed types), fall back to per-cell matching so numeric criteria can
+                                        // still match blanks / numeric text values (Excel semantics).
+                                        let mut bb =
+                                            arrow_array::builder::BooleanBuilder::with_capacity(
+                                                row_len,
+                                            );
+                                        let view = crit_specs[j].0.as_ref().unwrap();
+                                        for i in 0..row_len {
+                                            bb.append_value(criteria_match(
+                                                pred,
+                                                &view.get_cell(row_start + i, c),
+                                            ));
+                                        }
+                                        bb.finish()
                                     }
                                 }
                                 LiteralValue::Int(x) => {
                                     let nx = *x as f64;
                                     if let Some(nc) = nc {
-                                        cmp::eq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
+                                        let m0 =
+                                            cmp::eq(nc.as_ref(), &Float64Array::new_scalar(nx))
+                                                .unwrap();
+                                        if m0.null_count() == 0 {
+                                            m0
+                                        } else {
+                                            let view = crit_specs[j].0.as_ref().unwrap();
+                                            let mut bb =
+                                                arrow_array::builder::BooleanBuilder::with_capacity(
+                                                    row_len,
+                                                );
+                                            for i in 0..row_len {
+                                                if m0.is_valid(i) {
+                                                    bb.append_value(m0.value(i));
+                                                } else {
+                                                    bb.append_value(criteria_match(
+                                                        pred,
+                                                        &view.get_cell(row_start + i, c),
+                                                    ));
+                                                }
+                                            }
+                                            bb.finish()
+                                        }
                                     } else {
-                                        BooleanArray::new_null(row_len)
+                                        let mut bb =
+                                            arrow_array::builder::BooleanBuilder::with_capacity(
+                                                row_len,
+                                            );
+                                        let view = crit_specs[j].0.as_ref().unwrap();
+                                        for i in 0..row_len {
+                                            bb.append_value(criteria_match(
+                                                pred,
+                                                &view.get_cell(row_start + i, c),
+                                            ));
+                                        }
+                                        bb.finish()
                                     }
                                 }
                                 _ => {
@@ -374,17 +445,81 @@ fn eval_if_family<'a, 'b>(
                             LiteralValue::Number(x) => {
                                 let nx = *x;
                                 if let Some(nc) = nc {
-                                    cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
+                                    let m0 = cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx))
+                                        .unwrap();
+                                    if m0.null_count() == 0 {
+                                        m0
+                                    } else {
+                                        let view = crit_specs[j].0.as_ref().unwrap();
+                                        let mut bb =
+                                            arrow_array::builder::BooleanBuilder::with_capacity(
+                                                row_len,
+                                            );
+                                        for i in 0..row_len {
+                                            if m0.is_valid(i) {
+                                                bb.append_value(m0.value(i));
+                                            } else {
+                                                bb.append_value(criteria_match(
+                                                    pred,
+                                                    &view.get_cell(row_start + i, c),
+                                                ));
+                                            }
+                                        }
+                                        bb.finish()
+                                    }
                                 } else {
-                                    BooleanArray::from(vec![true; row_len])
+                                    let mut bb =
+                                        arrow_array::builder::BooleanBuilder::with_capacity(
+                                            row_len,
+                                        );
+                                    let view = crit_specs[j].0.as_ref().unwrap();
+                                    for i in 0..row_len {
+                                        bb.append_value(criteria_match(
+                                            pred,
+                                            &view.get_cell(row_start + i, c),
+                                        ));
+                                    }
+                                    bb.finish()
                                 }
                             }
                             LiteralValue::Int(x) => {
                                 let nx = *x as f64;
                                 if let Some(nc) = nc {
-                                    cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx)).unwrap()
+                                    let m0 = cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx))
+                                        .unwrap();
+                                    if m0.null_count() == 0 {
+                                        m0
+                                    } else {
+                                        let view = crit_specs[j].0.as_ref().unwrap();
+                                        let mut bb =
+                                            arrow_array::builder::BooleanBuilder::with_capacity(
+                                                row_len,
+                                            );
+                                        for i in 0..row_len {
+                                            if m0.is_valid(i) {
+                                                bb.append_value(m0.value(i));
+                                            } else {
+                                                bb.append_value(criteria_match(
+                                                    pred,
+                                                    &view.get_cell(row_start + i, c),
+                                                ));
+                                            }
+                                        }
+                                        bb.finish()
+                                    }
                                 } else {
-                                    BooleanArray::from(vec![true; row_len])
+                                    let mut bb =
+                                        arrow_array::builder::BooleanBuilder::with_capacity(
+                                            row_len,
+                                        );
+                                    let view = crit_specs[j].0.as_ref().unwrap();
+                                    for i in 0..row_len {
+                                        bb.append_value(criteria_match(
+                                            pred,
+                                            &view.get_cell(row_start + i, c),
+                                        ));
+                                    }
+                                    bb.finish()
                                 }
                             }
                             _ => {
@@ -924,6 +1059,38 @@ mod tests {
                 .unwrap()
                 .into_literal(),
             LiteralValue::Number(40.0)
+        );
+    }
+
+    #[test]
+    fn sumif_numeric_zero_matches_blank_in_text_column() {
+        // Regression test: if the criteria range is text-typed (no numeric fast-path column),
+        // numeric criteria should still match blanks (Excel semantics: blank coerces to 0).
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumIfFn));
+        let ctx = interp(&wb);
+
+        // Criteria range is a 1x2 row with (blank, "x") so the column is non-numeric.
+        let range = lit(LiteralValue::Array(vec![vec![
+            LiteralValue::Empty,
+            LiteralValue::Text("x".into()),
+        ]]));
+        let sum_range = lit(LiteralValue::Array(vec![vec![
+            LiteralValue::Int(5),
+            LiteralValue::Int(7),
+        ]]));
+        let crit = lit(LiteralValue::Int(0));
+
+        let args = vec![
+            ArgumentHandle::new(&range, &ctx),
+            ArgumentHandle::new(&crit, &ctx),
+            ArgumentHandle::new(&sum_range, &ctx),
+        ];
+        let f = ctx.context.get_function("", "SUMIF").unwrap();
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(5.0)
         );
     }
 

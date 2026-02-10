@@ -62,6 +62,10 @@ mod region_lock_tests {
         let anchor_cell = engine.graph.make_cell_ref("Sheet1", 1, 1);
         let mut shim = ShimSpillManager::default();
 
+        // Borrow-splitting helper: we need to hand &mut graph to the shim while also
+        // consulting the engine's Arrow store for value blockers.
+        let store_ptr: *const crate::arrow_store::SheetStore = engine.sheet_store();
+
         // Acquire in-flight lock
         shim.reserve(
             anchor_vertex,
@@ -81,7 +85,23 @@ mod region_lock_tests {
             engine.graph.make_cell_ref("Sheet1", 1, 2),
         ];
         let values = vec![vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)]];
-        let res = shim.commit_array(&mut engine.graph, anchor_vertex, &targets, values);
+        let res = shim.commit_array_with_value_probe(
+            &mut engine.graph,
+            anchor_vertex,
+            &targets,
+            values,
+            None,
+            |g, cell| unsafe {
+                let sheet_name = g.sheet_name(cell.sheet_id);
+                let asheet = (*store_ptr).sheet(sheet_name)?;
+                let v = asheet.get_cell_value(cell.coord.row() as usize, cell.coord.col() as usize);
+                if matches!(v, LiteralValue::Empty) {
+                    None
+                } else {
+                    Some(v)
+                }
+            },
+        );
         assert!(res.is_err());
         assert!(shim.active_locks.is_empty());
     }

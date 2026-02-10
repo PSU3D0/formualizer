@@ -15,3 +15,9 @@ pub mod umya;
 
 #[cfg(feature = "umya")]
 pub use umya::UmyaAdapter;
+
+#[cfg(feature = "csv")]
+pub mod csv;
+
+#[cfg(feature = "csv")]
+pub use csv::CsvAdapter;

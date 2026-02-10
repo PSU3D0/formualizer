@@ -531,6 +531,66 @@ mod tests {
     }
 
     #[test]
+    fn test_implicit_intersection_operator_parses() {
+        use crate::parser::{TableReference, TableSpecifier};
+
+        // Range
+        let ast = parse_formula("=@A1:A3").unwrap();
+        match ast.node_type {
+            ASTNodeType::UnaryOp { op, expr } => {
+                assert_eq!(op, "@");
+                match expr.node_type {
+                    ASTNodeType::Reference { reference, .. } => {
+                        assert_eq!(
+                            reference,
+                            ReferenceType::range(None, Some(1), Some(1), Some(3), Some(1))
+                        );
+                    }
+                    other => panic!("Expected Reference operand for @, got {other:?}"),
+                }
+            }
+            other => panic!("Expected UnaryOp for implicit intersection, got {other:?}"),
+        }
+
+        // Table reference (table evaluation may be unsupported, but parsing should succeed)
+        let ast = parse_formula("=@Table1[Col]").unwrap();
+        match ast.node_type {
+            ASTNodeType::UnaryOp { op, expr } => {
+                assert_eq!(op, "@");
+                match expr.node_type {
+                    ASTNodeType::Reference { reference, .. } => {
+                        assert_eq!(
+                            reference,
+                            ReferenceType::Table(TableReference {
+                                name: "Table1".to_string(),
+                                specifier: Some(TableSpecifier::Column("Col".to_string())),
+                            })
+                        );
+                    }
+                    other => panic!("Expected Reference operand for @, got {other:?}"),
+                }
+            }
+            other => panic!("Expected UnaryOp for implicit intersection, got {other:?}"),
+        }
+
+        // Function call
+        let ast = parse_formula("=@SEQUENCE(3,1)").unwrap();
+        match ast.node_type {
+            ASTNodeType::UnaryOp { op, expr } => {
+                assert_eq!(op, "@");
+                match expr.node_type {
+                    ASTNodeType::Function { name, args } => {
+                        assert_eq!(name, "SEQUENCE");
+                        assert_eq!(args.len(), 2);
+                    }
+                    other => panic!("Expected Function operand for @, got {other:?}"),
+                }
+            }
+            other => panic!("Expected UnaryOp for implicit intersection, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_infinite_range_formulas() {
         // Column-wise infinite range (A:A)
         let formula = "=SUM(A:A)";

@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import Any
+
+class Workbook:
+    def set_actor_id(self, actor_id: str | None = ...) -> None: ...
+    def set_correlation_id(self, correlation_id: str | None = ...) -> None: ...
+    def set_reason(self, reason: str | None = ...) -> None: ...
+
+class SheetPortSession:
+    def evaluate_once(
+        self,
+        *,
+        freeze_volatile: bool = ...,
+        rng_seed: int | None = ...,
+        deterministic_timestamp_utc: datetime.datetime | None = ...,
+        deterministic_timezone: str | int | None = ...,
+    ) -> Mapping[str, Any]: ...
+
+class EvaluationConfig:
+    def set_case_sensitive_names(self, value: bool) -> None: ...
+    def get_case_sensitive_names(self) -> bool: ...
+    def set_case_sensitive_tables(self, value: bool) -> None: ...
+    def get_case_sensitive_tables(self) -> bool: ...

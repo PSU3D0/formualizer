@@ -13,7 +13,8 @@ fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
 fn create_test_event() -> ChangeEvent {
     ChangeEvent::SetValue {
         addr: cell_ref(0, 1, 1),
-        old: None,
+        old_value: None,
+        old_formula: None,
         new: LiteralValue::Number(42.0),
     }
 }
@@ -21,7 +22,8 @@ fn create_test_event() -> ChangeEvent {
 fn create_test_event_with_value(value: f64) -> ChangeEvent {
     ChangeEvent::SetValue {
         addr: cell_ref(0, 1, 1),
-        old: None,
+        old_value: None,
+        old_formula: None,
         new: LiteralValue::Number(value),
     }
 }
@@ -65,6 +67,29 @@ fn test_change_log_take_from() {
     let taken = log.take_from(3);
     assert_eq!(taken.len(), 2); // Took events at index 3 and 4
     assert_eq!(log.len(), 3); // Events 0, 1, 2 remain
+}
+
+#[test]
+fn test_change_log_fifo_eviction_drops_oldest() {
+    let mut log = ChangeLog::with_max_changelog_events(3);
+
+    for i in 0..5 {
+        log.record(create_test_event_with_value(i as f64));
+    }
+
+    assert_eq!(log.len(), 3);
+    let values: Vec<f64> = log
+        .events()
+        .iter()
+        .filter_map(|e| match e {
+            ChangeEvent::SetValue {
+                new: LiteralValue::Number(n),
+                ..
+            } => Some(*n),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(values, vec![2.0, 3.0, 4.0]);
 }
 
 #[test]
@@ -146,7 +171,8 @@ fn test_change_log_with_formula_events() {
 
     let event = ChangeEvent::SetFormula {
         addr: cell_ref(0, 1, 1),
-        old: Some(old_formula.clone()),
+        old_value: None,
+        old_formula: Some(old_formula.clone()),
         new: new_formula.clone(),
     };
 
@@ -154,7 +180,11 @@ fn test_change_log_with_formula_events() {
     assert_eq!(log.len(), 1);
 
     match &log.events()[0] {
-        ChangeEvent::SetFormula { old, new, .. } => {
+        ChangeEvent::SetFormula {
+            old_formula: old,
+            new,
+            ..
+        } => {
             assert_eq!(old.as_ref(), Some(&old_formula));
             assert_eq!(new, &new_formula);
         }
@@ -173,6 +203,7 @@ fn test_granular_change_events() {
     // Test VertexMoved event
     let move_event = ChangeEvent::VertexMoved {
         id: VertexId(1),
+        sheet_id: 0,
         old_coord: AbsCoord::new(5, 1),
         new_coord: AbsCoord::new(7, 1),
     };
@@ -181,6 +212,7 @@ fn test_granular_change_events() {
     // Test FormulaAdjusted event
     let adjust_event = ChangeEvent::FormulaAdjusted {
         id: VertexId(2),
+        addr: None,
         old_ast: parse("=A5").unwrap(),
         new_ast: parse("=A7").unwrap(),
     };

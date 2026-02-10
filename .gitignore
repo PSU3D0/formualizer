@@ -5,6 +5,7 @@ repomix-output.xml
 !README.md
 !SPEC.md
 !CHANGELOG.md
+!WORK_ROADMAP.md
 !docs/**
 opencode.json
 
@@ -12,3 +13,7 @@ opencode.json
 !tests/formula_tests/extended_coverage.json
 *.xlsx
 test-wb/
+tickets/
+
+# Local git worktrees (repo-local)
+.worktrees/

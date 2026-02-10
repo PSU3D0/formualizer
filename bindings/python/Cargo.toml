@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-python"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -18,7 +18,7 @@ tracing = ["formualizer/tracing"]
 tracing_chrome = ["tracing", "formualizer/tracing_chrome"]
 
 [dependencies]
-pyo3 = { workspace = true, features = ["extension-module", "chrono"] }
+pyo3 = { workspace = true, features = ["extension-module", "chrono", "abi3-py38"] }
 formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine"] }
 chrono = { workspace = true }
 serde_json = { workspace = true }

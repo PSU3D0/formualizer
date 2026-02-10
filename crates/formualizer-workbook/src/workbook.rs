@@ -45,7 +45,8 @@ impl formualizer_eval::traits::NamedRangeResolver for WBResolver {
         &self,
         _name: &str,
     ) -> Result<Vec<Vec<LiteralValue>>, formualizer_common::error::ExcelError> {
-        Err(ExcelError::new(ExcelErrorKind::Name))
+        Err(ExcelError::new(ExcelErrorKind::Name)
+            .with_message(format!("Undefined name: {}", _name)))
     }
 }
 impl formualizer_eval::traits::TableResolver for WBResolver {
@@ -80,6 +81,92 @@ pub struct Workbook {
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
 }
 
+trait WorkbookActionOps {
+    fn set_value(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: LiteralValue,
+    ) -> Result<(), IoError>;
+
+    fn set_formula(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        formula: &str,
+    ) -> Result<(), IoError>;
+
+    fn set_values(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        rows: &[Vec<LiteralValue>],
+    ) -> Result<(), IoError>;
+
+    fn write_range(
+        &mut self,
+        sheet: &str,
+        start: (u32, u32),
+        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+    ) -> Result<(), IoError>;
+}
+
+/// Transactional edit surface for `Workbook::action`.
+///
+/// This wrapper exists to avoid aliasing `&mut Workbook` while an Engine transaction is active.
+/// It intentionally exposes only valueful edit operations that can participate in rollback.
+pub struct WorkbookAction<'a> {
+    ops: &'a mut dyn WorkbookActionOps,
+}
+
+impl WorkbookAction<'_> {
+    #[inline]
+    pub fn set_value(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: LiteralValue,
+    ) -> Result<(), IoError> {
+        self.ops.set_value(sheet, row, col, value)
+    }
+
+    #[inline]
+    pub fn set_formula(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        formula: &str,
+    ) -> Result<(), IoError> {
+        self.ops.set_formula(sheet, row, col, formula)
+    }
+
+    #[inline]
+    pub fn set_values(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        rows: &[Vec<LiteralValue>],
+    ) -> Result<(), IoError> {
+        self.ops.set_values(sheet, start_row, start_col, rows)
+    }
+
+    #[inline]
+    pub fn write_range(
+        &mut self,
+        sheet: &str,
+        start: (u32, u32),
+        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+    ) -> Result<(), IoError> {
+        self.ops.write_range(sheet, start, cells)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkbookMode {
     /// Fastpath parity with direct Engine usage.
@@ -103,8 +190,10 @@ impl WorkbookConfig {
     }
 
     pub fn interactive() -> Self {
-        let mut eval = formualizer_eval::engine::EvalConfig::default();
-        eval.defer_graph_building = true;
+        let eval = formualizer_eval::engine::EvalConfig {
+            defer_graph_building: true,
+            ..Default::default()
+        };
         Self {
             eval,
             enable_changelog: true,
@@ -154,10 +243,36 @@ impl Workbook {
         &self.engine.config
     }
 
+    pub fn deterministic_mode(&self) -> &formualizer_eval::engine::DeterministicMode {
+        &self.engine.config.deterministic_mode
+    }
+
+    pub fn set_deterministic_mode(
+        &mut self,
+        mode: formualizer_eval::engine::DeterministicMode,
+    ) -> Result<(), IoError> {
+        self.engine
+            .set_deterministic_mode(mode)
+            .map_err(IoError::Engine)
+    }
+
     // Changelog controls
     pub fn set_changelog_enabled(&mut self, enabled: bool) {
         self.enable_changelog = enabled;
         self.log.set_enabled(enabled);
+    }
+
+    // Changelog metadata
+    pub fn set_actor_id(&mut self, actor_id: Option<String>) {
+        self.log.set_actor_id(actor_id);
+    }
+
+    pub fn set_correlation_id(&mut self, correlation_id: Option<String>) {
+        self.log.set_correlation_id(correlation_id);
+    }
+
+    pub fn set_reason(&mut self, reason: Option<String>) {
+        self.log.set_reason(reason);
     }
     pub fn begin_action(&mut self, description: impl Into<String>) {
         if self.enable_changelog {
@@ -169,12 +284,240 @@ impl Workbook {
             self.log.end_compound();
         }
     }
+
+    /// Execute an atomic workbook action.
+    ///
+    /// When changelog is enabled, this delegates to `Engine::action_with_logger` and therefore:
+    /// - logs changes into the changelog as a compound
+    /// - rolls back graph + Arrow-truth value changes on error
+    /// - truncates the changelog on rollback
+    ///
+    /// The closure receives a `WorkbookAction` rather than `&mut Workbook` to avoid aliasing
+    /// `&mut Workbook` while the Engine transaction is active.
+    pub fn action<T>(
+        &mut self,
+        name: &str,
+        f: impl FnOnce(&mut WorkbookAction<'_>) -> Result<T, IoError>,
+    ) -> Result<T, IoError> {
+        let mut user_err: Option<IoError> = None;
+
+        if self.enable_changelog {
+            let res = self.engine.action_with_logger(&mut self.log, name, |tx| {
+                struct TxOps<'a, 'e> {
+                    tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
+                }
+                impl WorkbookActionOps for TxOps<'_, '_> {
+                    fn set_value(
+                        &mut self,
+                        sheet: &str,
+                        row: u32,
+                        col: u32,
+                        value: LiteralValue,
+                    ) -> Result<(), IoError> {
+                        self.tx
+                            .set_cell_value(sheet, row, col, value)
+                            .map_err(|e| match e {
+                                formualizer_eval::engine::EditorError::Excel(excel) => {
+                                    IoError::Engine(excel)
+                                }
+                                other => IoError::from_backend("editor", other),
+                            })
+                    }
+
+                    fn set_formula(
+                        &mut self,
+                        sheet: &str,
+                        row: u32,
+                        col: u32,
+                        formula: &str,
+                    ) -> Result<(), IoError> {
+                        let with_eq = if formula.starts_with('=') {
+                            formula.to_string()
+                        } else {
+                            format!("={formula}")
+                        };
+                        let ast = formualizer_parse::parser::parse(&with_eq)
+                            .map_err(|e| IoError::from_backend("parser", e))?;
+                        self.tx
+                            .set_cell_formula(sheet, row, col, ast)
+                            .map_err(|e| match e {
+                                formualizer_eval::engine::EditorError::Excel(excel) => {
+                                    IoError::Engine(excel)
+                                }
+                                other => IoError::from_backend("editor", other),
+                            })
+                    }
+
+                    fn set_values(
+                        &mut self,
+                        sheet: &str,
+                        start_row: u32,
+                        start_col: u32,
+                        rows: &[Vec<LiteralValue>],
+                    ) -> Result<(), IoError> {
+                        for (ri, rvals) in rows.iter().enumerate() {
+                            let r = start_row + ri as u32;
+                            for (ci, v) in rvals.iter().enumerate() {
+                                let c = start_col + ci as u32;
+                                self.set_value(sheet, r, c, v.clone())?;
+                            }
+                        }
+                        Ok(())
+                    }
+
+                    fn write_range(
+                        &mut self,
+                        sheet: &str,
+                        _start: (u32, u32),
+                        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+                    ) -> Result<(), IoError> {
+                        for ((r, c), d) in cells.into_iter() {
+                            if let Some(v) = d.value {
+                                self.set_value(sheet, r, c, v)?;
+                            }
+                            if let Some(f) = d.formula.as_ref() {
+                                self.set_formula(sheet, r, c, f)?;
+                            }
+                        }
+                        Ok(())
+                    }
+                }
+
+                let mut ops = TxOps { tx };
+                let mut wtx = WorkbookAction { ops: &mut ops };
+                match f(&mut wtx) {
+                    Ok(v) => Ok(v),
+                    Err(e) => {
+                        user_err = Some(e);
+                        Err(formualizer_eval::engine::EditorError::TransactionFailed {
+                            reason: "Workbook::action aborted".to_string(),
+                        })
+                    }
+                }
+            });
+
+            if let Some(e) = user_err {
+                return Err(e);
+            }
+            return res.map_err(|e| match e {
+                formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
+                other => IoError::from_backend("editor", other),
+            });
+        }
+
+        let res = self.engine.action_atomic_journal(name.to_string(), |tx| {
+            struct TxOps<'a, 'e> {
+                tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
+            }
+            impl WorkbookActionOps for TxOps<'_, '_> {
+                fn set_value(
+                    &mut self,
+                    sheet: &str,
+                    row: u32,
+                    col: u32,
+                    value: LiteralValue,
+                ) -> Result<(), IoError> {
+                    self.tx
+                        .set_cell_value(sheet, row, col, value)
+                        .map_err(|e| match e {
+                            formualizer_eval::engine::EditorError::Excel(excel) => {
+                                IoError::Engine(excel)
+                            }
+                            other => IoError::from_backend("editor", other),
+                        })
+                }
+
+                fn set_formula(
+                    &mut self,
+                    sheet: &str,
+                    row: u32,
+                    col: u32,
+                    formula: &str,
+                ) -> Result<(), IoError> {
+                    let with_eq = if formula.starts_with('=') {
+                        formula.to_string()
+                    } else {
+                        format!("={formula}")
+                    };
+                    let ast = formualizer_parse::parser::parse(&with_eq)
+                        .map_err(|e| IoError::from_backend("parser", e))?;
+                    self.tx
+                        .set_cell_formula(sheet, row, col, ast)
+                        .map_err(|e| match e {
+                            formualizer_eval::engine::EditorError::Excel(excel) => {
+                                IoError::Engine(excel)
+                            }
+                            other => IoError::from_backend("editor", other),
+                        })
+                }
+
+                fn set_values(
+                    &mut self,
+                    sheet: &str,
+                    start_row: u32,
+                    start_col: u32,
+                    rows: &[Vec<LiteralValue>],
+                ) -> Result<(), IoError> {
+                    for (ri, rvals) in rows.iter().enumerate() {
+                        let r = start_row + ri as u32;
+                        for (ci, v) in rvals.iter().enumerate() {
+                            let c = start_col + ci as u32;
+                            self.set_value(sheet, r, c, v.clone())?;
+                        }
+                    }
+                    Ok(())
+                }
+
+                fn write_range(
+                    &mut self,
+                    sheet: &str,
+                    _start: (u32, u32),
+                    cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+                ) -> Result<(), IoError> {
+                    for ((r, c), d) in cells.into_iter() {
+                        if let Some(v) = d.value {
+                            self.set_value(sheet, r, c, v)?;
+                        }
+                        if let Some(f) = d.formula.as_ref() {
+                            self.set_formula(sheet, r, c, f)?;
+                        }
+                    }
+                    Ok(())
+                }
+            }
+
+            let mut ops = TxOps { tx };
+            let mut wtx = WorkbookAction { ops: &mut ops };
+            match f(&mut wtx) {
+                Ok(v) => Ok(v),
+                Err(e) => {
+                    user_err = Some(e);
+                    Err(formualizer_eval::engine::EditorError::TransactionFailed {
+                        reason: "Workbook::action aborted".to_string(),
+                    })
+                }
+            }
+        });
+
+        if let Some(e) = user_err {
+            return Err(e);
+        }
+        let (v, journal) = res.map_err(|e| match e {
+            formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
+            other => IoError::from_backend("editor", other),
+        })?;
+        self.undo.push_action(journal);
+        Ok(v)
+    }
     pub fn undo(&mut self) -> Result<(), IoError> {
         if self.enable_changelog {
             self.engine
                 .undo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            self.resync_all_overlays();
+        } else {
+            self.engine
+                .undo_action(&mut self.undo)
+                .map_err(|e| IoError::from_backend("editor", e))?;
         }
         Ok(())
     }
@@ -183,41 +526,12 @@ impl Workbook {
             self.engine
                 .redo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            self.resync_all_overlays();
+        } else {
+            self.engine
+                .redo_action(&mut self.undo)
+                .map_err(|e| IoError::from_backend("editor", e))?;
         }
         Ok(())
-    }
-
-    fn resync_all_overlays(&mut self) {
-        // Heavy but simple: walk all sheets and rebuild overlay values from graph
-        let sheet_names: Vec<String> = self
-            .engine
-            .sheet_store()
-            .sheets
-            .iter()
-            .map(|s| s.name.as_ref().to_string())
-            .collect();
-        for s in sheet_names {
-            self.resync_overlay_for_sheet(&s);
-        }
-    }
-    fn resync_overlay_for_sheet(&mut self, sheet: &str) {
-        if let Some(asheet) = self.engine.sheet_store().sheet(sheet) {
-            let rows = asheet.nrows as usize;
-            let cols = asheet.columns.len();
-            for r0 in 0..rows {
-                let r = (r0 as u32) + 1;
-                for c0 in 0..cols {
-                    let c = (c0 as u32) + 1;
-                    let v = self
-                        .engine
-                        .graph_cell_value(sheet, r, c)
-                        .unwrap_or(LiteralValue::Empty);
-                    self.mirror_value_to_overlay(sheet, r, c, &v);
-                }
-            }
-        }
-        // No Arrow sheet: nothing to sync
     }
 
     fn ensure_arrow_sheet_capacity(&mut self, sheet: &str, min_rows: usize, min_cols: usize) {
@@ -281,22 +595,22 @@ impl Workbook {
                         date_system,
                         &dt,
                     );
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::DateTime(dt) => {
                     let serial = formualizer_eval::builtins::datetime::datetime_to_serial_for(
                         date_system,
                         dt,
                     );
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::Time(t) => {
                     let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
+                    OverlayValue::DateTime(serial)
                 }
                 LiteralValue::Duration(d) => {
                     let serial = d.num_seconds() as f64 / 86_400.0;
-                    OverlayValue::Number(serial)
+                    OverlayValue::Duration(serial)
                 }
                 LiteralValue::Pending => OverlayValue::Pending,
                 LiteralValue::Array(_) => {
@@ -376,9 +690,21 @@ impl Workbook {
                 sheet_id,
                 formualizer_eval::reference::Coord::from_excel(row, col, true, true),
             );
+
+            // In Arrow-canonical mode, the graph value cache is disabled, so we must capture
+            // the old state from Arrow truth for undo/redo.
+            let old_value = self.engine.get_cell_value(sheet, row, col);
+            let old_formula = self
+                .engine
+                .get_cell(sheet, row, col)
+                .and_then(|(ast, _)| ast);
+
             self.engine.edit_with_logger(&mut self.log, |editor| {
                 editor.set_cell_value(cell, value.clone());
             });
+
+            self.log
+                .patch_last_cell_event_old_state(cell, old_value, old_formula);
             self.mirror_value_to_overlay(sheet, row, col, &value);
             self.engine.mark_data_edited();
             Ok(())
@@ -415,9 +741,16 @@ impl Workbook {
                         sheet_id,
                         formualizer_eval::reference::Coord::from_excel(row, col, true, true),
                     );
+
+                    let old_value = self.engine.get_cell_value(sheet, row, col);
+                    let old_formula = self.engine.get_cell(sheet, row, col).and_then(|(a, _)| a);
+
                     self.engine.edit_with_logger(&mut self.log, |editor| {
                         editor.set_cell_formula(cell, ast);
                     });
+
+                    self.log
+                        .patch_last_cell_event_old_state(cell, old_value, old_formula);
                     self.engine.mark_data_edited();
                     Ok(())
                 } else {
@@ -518,23 +851,45 @@ impl Workbook {
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
             let defer_graph_building = self.engine.config.defer_graph_building;
 
+            // Capture per-cell old state from Arrow truth BEFORE applying the bulk edit.
+            // In canonical mode the graph value cache is empty, so ChangeLog old_value must be patched.
+            #[allow(clippy::type_complexity)]
+            let mut items: Vec<(
+                u32,
+                u32,
+                crate::traits::CellData,
+                formualizer_eval::reference::CellRef,
+                Option<LiteralValue>,
+                Option<formualizer_parse::ASTNode>,
+            )> = Vec::with_capacity(cells.len());
+            for ((r, c), d) in cells.into_iter() {
+                let cell = formualizer_eval::reference::CellRef::new(
+                    sheet_id,
+                    formualizer_eval::reference::Coord::from_excel(r, c, true, true),
+                );
+                let old_value = self.engine.get_cell_value(sheet, r, c);
+                let old_formula = self.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
+                items.push((r, c, d, cell, old_value, old_formula));
+            }
+
             let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
             let mut staged_forms: Vec<(u32, u32, String)> = Vec::new();
 
             self.engine
                 .edit_with_logger(&mut self.log, |editor| -> Result<(), IoError> {
-                    for ((r, c), d) in cells.into_iter() {
-                        let cell = formualizer_eval::reference::CellRef::new(
-                            sheet_id,
-                            formualizer_eval::reference::Coord::from_excel(r, c, true, true),
-                        );
+                    for (r, c, d, cell, _old_value, _old_formula) in items.iter() {
                         if let Some(v) = d.value.clone() {
-                            editor.set_cell_value(cell, v.clone());
-                            overlay_ops.push((r, c, v));
+                            editor.set_cell_value(*cell, v.clone());
+                            // If a formula is also being set for this cell, do not mirror the
+                            // provided value into the delta overlay. In Arrow-truth mode that
+                            // would mask the computed formula result.
+                            if d.formula.is_none() {
+                                overlay_ops.push((*r, *c, v));
+                            }
                         }
                         if let Some(f) = d.formula.as_ref() {
                             if defer_graph_building {
-                                staged_forms.push((r, c, f.clone()));
+                                staged_forms.push((*r, *c, f.clone()));
                             } else {
                                 let with_eq = if f.starts_with('=') {
                                     f.clone()
@@ -543,12 +898,21 @@ impl Workbook {
                                 };
                                 let ast = formualizer_parse::parser::parse(&with_eq)
                                     .map_err(|e| IoError::from_backend("parser", e))?;
-                                editor.set_cell_formula(cell, ast);
+                                editor.set_cell_formula(*cell, ast);
                             }
                         }
                     }
                     Ok(())
                 })?;
+
+            // Patch old_value/old_formula for each cell's last SetValue/SetFormula event.
+            for (_r, _c, _d, cell, old_value, old_formula) in items.iter().rev() {
+                self.log.patch_last_cell_event_old_state(
+                    *cell,
+                    old_value.clone(),
+                    old_formula.clone(),
+                );
+            }
 
             for (r, c, v) in overlay_ops {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
@@ -599,24 +963,46 @@ impl Workbook {
                 .engine
                 .sheet_id(sheet)
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
-            let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
+
+            // Capture old state from Arrow truth BEFORE applying the batch.
+            #[allow(clippy::type_complexity)]
+            let mut items: Vec<(
+                u32,
+                u32,
+                LiteralValue,
+                formualizer_eval::reference::CellRef,
+                Option<LiteralValue>,
+                Option<formualizer_parse::ASTNode>,
+            )> = Vec::new();
+            for (ri, rvals) in rows.iter().enumerate() {
+                let r = start_row + ri as u32;
+                for (ci, v) in rvals.iter().enumerate() {
+                    let c = start_col + ci as u32;
+                    let cell = formualizer_eval::reference::CellRef::new(
+                        sheet_id,
+                        formualizer_eval::reference::Coord::from_excel(r, c, true, true),
+                    );
+                    let old_value = self.engine.get_cell_value(sheet, r, c);
+                    let old_formula = self.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
+                    items.push((r, c, v.clone(), cell, old_value, old_formula));
+                }
+            }
 
             self.engine.edit_with_logger(&mut self.log, |editor| {
-                for (ri, rvals) in rows.iter().enumerate() {
-                    let r = start_row + ri as u32;
-                    for (ci, v) in rvals.iter().enumerate() {
-                        let c = start_col + ci as u32;
-                        let cell = formualizer_eval::reference::CellRef::new(
-                            sheet_id,
-                            formualizer_eval::reference::Coord::from_excel(r, c, true, true),
-                        );
-                        editor.set_cell_value(cell, v.clone());
-                        overlay_ops.push((r, c, v.clone()));
-                    }
+                for (_r, _c, v, cell, _old_value, _old_formula) in items.iter() {
+                    editor.set_cell_value(*cell, v.clone());
                 }
             });
 
-            for (r, c, v) in overlay_ops {
+            for (_r, _c, _v, cell, old_value, old_formula) in items.iter().rev() {
+                self.log.patch_last_cell_event_old_state(
+                    *cell,
+                    old_value.clone(),
+                    old_formula.clone(),
+                );
+            }
+
+            for (r, c, v, _cell, _old_value, _old_formula) in items {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
             }
             self.engine.mark_data_edited();
@@ -969,6 +1355,7 @@ impl Workbook {
                 let end_col = range.end.coord.col() + 1;
                 RangeAddress::new(sheet, start_row, start_col, end_row, end_col).ok()
             }
+            NamedDefinition::Literal(_) => None,
             NamedDefinition::Formula { .. } => {
                 #[cfg(feature = "tracing")]
                 tracing::debug!("formula-backed named ranges are not yet supported");

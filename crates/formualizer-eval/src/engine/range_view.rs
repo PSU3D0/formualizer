@@ -401,6 +401,14 @@ impl<'a> RangeView<'a> {
             return match ov {
                 arrow_store::OverlayValue::Empty => LiteralValue::Empty,
                 arrow_store::OverlayValue::Number(n) => LiteralValue::Number(*n),
+                arrow_store::OverlayValue::DateTime(serial) => {
+                    LiteralValue::from_serial_number(*serial)
+                }
+                arrow_store::OverlayValue::Duration(serial) => {
+                    let nanos_f = *serial * 86_400.0 * 1_000_000_000.0;
+                    let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
+                    LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
+                }
                 arrow_store::OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
                 arrow_store::OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
                 arrow_store::OverlayValue::Error(code) => {
@@ -424,12 +432,25 @@ impl<'a> RangeView<'a> {
                     LiteralValue::Empty
                 }
             }
-            arrow_store::TypeTag::DateTime | arrow_store::TypeTag::Duration => {
+            arrow_store::TypeTag::DateTime => {
                 if let Some(arr) = &ch.numbers {
                     if arr.is_null(in_off) {
                         return LiteralValue::Empty;
                     }
                     LiteralValue::from_serial_number(arr.value(in_off))
+                } else {
+                    LiteralValue::Empty
+                }
+            }
+            arrow_store::TypeTag::Duration => {
+                if let Some(arr) = &ch.numbers {
+                    if arr.is_null(in_off) {
+                        return LiteralValue::Empty;
+                    }
+                    let serial = arr.value(in_off);
+                    let nanos_f = serial * 86_400.0 * 1_000_000_000.0;
+                    let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
+                    LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
                 } else {
                     LiteralValue::Empty
                 }
@@ -684,7 +705,9 @@ impl<'a> RangeView<'a> {
                         {
                             mask_b.append_value(true);
                             match ov {
-                                arrow_store::OverlayValue::Number(n) => ob.append_value(*n),
+                                arrow_store::OverlayValue::Number(n)
+                                | arrow_store::OverlayValue::DateTime(n)
+                                | arrow_store::OverlayValue::Duration(n) => ob.append_value(*n),
                                 _ => ob.append_null(),
                             }
                         } else {
@@ -944,7 +967,9 @@ impl<'a> RangeView<'a> {
                                 arrow_store::OverlayValue::Empty => {
                                     sb.append_null();
                                 }
-                                arrow_store::OverlayValue::Number(n) => {
+                                arrow_store::OverlayValue::Number(n)
+                                | arrow_store::OverlayValue::DateTime(n)
+                                | arrow_store::OverlayValue::Duration(n) => {
                                     sb.append_value(n.to_string());
                                 }
                                 arrow_store::OverlayValue::Boolean(b) => {
@@ -1123,6 +1148,12 @@ impl<'a> RangeView<'a> {
                                 arrow_store::OverlayValue::Number(_) => {
                                     arrow_store::TypeTag::Number
                                 }
+                                arrow_store::OverlayValue::DateTime(_) => {
+                                    arrow_store::TypeTag::DateTime
+                                }
+                                arrow_store::OverlayValue::Duration(_) => {
+                                    arrow_store::TypeTag::Duration
+                                }
                                 arrow_store::OverlayValue::Boolean(_) => {
                                     arrow_store::TypeTag::Boolean
                                 }
@@ -1230,7 +1261,9 @@ impl<'a> RangeView<'a> {
                                         arrow_store::OverlayValue::Empty => {
                                             sb.append_null();
                                         }
-                                        arrow_store::OverlayValue::Number(n) => {
+                                        arrow_store::OverlayValue::Number(n)
+                                        | arrow_store::OverlayValue::DateTime(n)
+                                        | arrow_store::OverlayValue::Duration(n) => {
                                             sb.append_value(n.to_string());
                                         }
                                         arrow_store::OverlayValue::Boolean(b) => {
@@ -1357,7 +1390,11 @@ impl<'a> RangeView<'a> {
                                 {
                                     mask_b.append_value(true);
                                     match ov {
-                                        arrow_store::OverlayValue::Number(n) => nb.append_value(*n),
+                                        arrow_store::OverlayValue::Number(n)
+                                        | arrow_store::OverlayValue::DateTime(n)
+                                        | arrow_store::OverlayValue::Duration(n) => {
+                                            nb.append_value(*n)
+                                        }
                                         _ => nb.append_null(),
                                     }
                                 } else {
@@ -1501,7 +1538,9 @@ impl<'a> RangeView<'a> {
                                         arrow_store::OverlayValue::Text(s) => {
                                             sb.append_value(s.to_ascii_lowercase())
                                         }
-                                        arrow_store::OverlayValue::Number(n) => {
+                                        arrow_store::OverlayValue::Number(n)
+                                        | arrow_store::OverlayValue::DateTime(n)
+                                        | arrow_store::OverlayValue::Duration(n) => {
                                             sb.append_value(n.to_string())
                                         }
                                         arrow_store::OverlayValue::Boolean(b) => {

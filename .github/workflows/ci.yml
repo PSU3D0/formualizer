@@ -109,8 +109,8 @@ jobs:
     - name: Check Rust formatting
       run: cargo fmt --all -- --check
 
-    # - name: Run Rust clippy
-    #   run: cargo clippy --all-targets --all-features -- -D warnings
+    - name: Run Rust clippy
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
     - name: Run Rust tests
       run: cargo test --all-features
@@ -145,10 +145,14 @@ jobs:
       uses: PyO3/maturin-action@v1
       with:
         working-directory: bindings/python
-        args: --release --out dist --find-interpreter
+        # Build a single abi3 wheel (not one per Python interpreter)
+        # In `act` (local CI), avoid nested manylinux Docker to keep things working.
+        args: --release --out dist --interpreter ${{ env.ACT && 'python3' || '/opt/python/cp39-cp39/bin/python' }}
+        manylinux: ${{ env.ACT && 'off' || 'manylinux2014' }}
         sccache: 'true'
 
     - name: Upload wheels
+      if: ${{ !env.ACT }}
       uses: actions/upload-artifact@v4
       with:
         name: wheels-${{ matrix.os }}

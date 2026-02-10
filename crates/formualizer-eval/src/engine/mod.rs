@@ -3,11 +3,13 @@
 //! Provides incremental formula evaluation with dependency tracking.
 
 pub mod arrow_ingest;
+pub mod effects;
 pub mod eval;
 pub mod eval_delta;
 pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
+pub mod journal;
 pub mod plan;
 pub mod range_view;
 pub mod scheduler;
@@ -34,8 +36,9 @@ pub mod tuning;
 #[cfg(test)]
 mod tests;
 
-pub use eval::{Engine, EvalResult, RecalcPlan};
+pub use eval::{Engine, EngineAction, EvalResult, RecalcPlan};
 pub use eval_delta::{DeltaMode, EvalDelta};
+pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{
@@ -54,8 +57,11 @@ pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 
 // CalcObserver is defined below
 
+use crate::timezone::TimeZoneSpec;
 use crate::traits::EvaluationContext;
 use crate::traits::VolatileLevel;
+use chrono::{DateTime, Utc};
+use formualizer_common::error::{ExcelError, ExcelErrorKind};
 
 impl<R: EvaluationContext> Engine<R> {
     pub fn begin_bulk_ingest(&mut self) -> ingest_builder::BulkIngestBuilder<'_> {
@@ -79,6 +85,73 @@ impl CalcObserver for () {
     fn on_dirty_propagation(&self, _vertex_id: VertexId, _affected_count: usize) {}
 }
 
+/// Deterministic evaluation configuration.
+///
+/// When enabled, volatile sources (clock/timezone) are derived solely from this config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeterministicMode {
+    /// Non-deterministic: uses the system clock.
+    Disabled {
+        /// Timezone used by volatile date/time builtins.
+        timezone: TimeZoneSpec,
+    },
+    /// Deterministic: uses a fixed timestamp in the provided timezone.
+    Enabled {
+        /// Fixed timestamp expressed in UTC.
+        timestamp_utc: DateTime<Utc>,
+        /// Timezone used to interpret `timestamp_utc` for NOW()/TODAY().
+        timezone: TimeZoneSpec,
+    },
+}
+
+impl Default for DeterministicMode {
+    fn default() -> Self {
+        Self::Disabled {
+            timezone: TimeZoneSpec::default(),
+        }
+    }
+}
+
+impl DeterministicMode {
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, DeterministicMode::Enabled { .. })
+    }
+
+    pub fn timezone(&self) -> &TimeZoneSpec {
+        match self {
+            DeterministicMode::Disabled { timezone } => timezone,
+            DeterministicMode::Enabled { timezone, .. } => timezone,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ExcelError> {
+        if let DeterministicMode::Enabled { timezone, .. } = self {
+            timezone
+                .validate_for_determinism()
+                .map_err(|msg| ExcelError::new(ExcelErrorKind::Value).with_message(msg))?;
+        }
+        Ok(())
+    }
+
+    pub fn build_clock(
+        &self,
+    ) -> Result<std::sync::Arc<dyn crate::timezone::ClockProvider>, ExcelError> {
+        self.validate()?;
+        Ok(match self {
+            DeterministicMode::Disabled { timezone } => {
+                std::sync::Arc::new(crate::timezone::SystemClock::new(timezone.clone()))
+            }
+            DeterministicMode::Enabled {
+                timestamp_utc,
+                timezone,
+            } => std::sync::Arc::new(crate::timezone::FixedClock::new(
+                *timestamp_utc,
+                timezone.clone(),
+            )),
+        })
+    }
+}
+
 /// Configuration for the evaluation engine
 #[derive(Debug, Clone)]
 pub struct EvalConfig {
@@ -92,11 +165,24 @@ pub struct EvalConfig {
     /// Default sheet name used when no sheet is provided.
     pub default_sheet_name: String,
 
+    /// When false, resolve defined names case-insensitively (ASCII only).
+    ///
+    /// This matches Excel behavior for defined names.
+    pub case_sensitive_names: bool,
+
+    /// When false, resolve table names case-insensitively (ASCII only).
+    ///
+    /// This matches Excel behavior for native table (ListObject) names.
+    pub case_sensitive_tables: bool,
+
     /// Stable workbook seed used for deterministic RNG composition
     pub workbook_seed: u64,
 
     /// Volatile granularity for RNG seeding and re-evaluation policy
     pub volatile_level: VolatileLevel,
+
+    /// Deterministic evaluation configuration (clock/timezone injection).
+    pub deterministic_mode: DeterministicMode,
 
     // Range handling configuration (Phase 5)
     /// Ranges with size <= this limit are expanded into individual Cell dependencies
@@ -148,6 +234,12 @@ pub struct EvalConfig {
     /// This enables Arrow-only RangeView correctness without Hybrid fallback.
     pub write_formula_overlay_enabled: bool,
 
+    /// Optional memory budget (in bytes) for formula/spill computed Arrow overlays.
+    ///
+    /// When set, the engine will compact computed overlays into base lanes when the
+    /// estimated usage exceeds this cap.
+    pub max_overlay_memory_bytes: Option<usize>,
+
     /// Workbook date system: Excel 1900 (default) or 1904.
     pub date_system: DateSystem,
 
@@ -167,11 +259,17 @@ impl Default for EvalConfig {
 
             default_sheet_name: format!("Sheet{}", 1),
 
+            // Excel compatibility: identifiers are case-insensitive by default.
+            case_sensitive_names: false,
+            case_sensitive_tables: false,
+
             // Deterministic RNG seed (matches traits default)
             workbook_seed: 0xF0F0_D0D0_AAAA_5555,
 
             // Volatile model default
             volatile_level: VolatileLevel::Always,
+
+            deterministic_mode: DeterministicMode::default(),
 
             // Range handling defaults (Phase 5)
             range_expansion_limit: 64,
@@ -195,6 +293,7 @@ impl Default for EvalConfig {
             arrow_storage_enabled: true,
             delta_overlay_enabled: true,
             write_formula_overlay_enabled: true,
+            max_overlay_memory_bytes: None,
             date_system: DateSystem::Excel1900,
             defer_graph_building: false,
         }
@@ -217,6 +316,18 @@ impl EvalConfig {
     #[inline]
     pub fn with_block_stripes(mut self, enable: bool) -> Self {
         self.enable_block_stripes = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_case_sensitive_names(mut self, enable: bool) -> Self {
+        self.case_sensitive_names = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_case_sensitive_tables(mut self, enable: bool) -> Self {
+        self.case_sensitive_tables = enable;
         self
     }
 
@@ -282,6 +393,11 @@ pub struct SpillConfig {
     pub cancellation: SpillCancellationPolicy,
     /// Visibility policy for staged writes.
     pub visibility: SpillVisibility,
+
+    /// Hard cap on the number of cells a single spill may project.
+    ///
+    /// This prevents pathological vertex explosions from very large dynamic arrays.
+    pub max_spill_cells: u32,
 }
 
 impl Default for SpillConfig {
@@ -294,6 +410,8 @@ impl Default for SpillConfig {
             memory_budget_bytes: None,
             cancellation: SpillCancellationPolicy::Cooperative,
             visibility: SpillVisibility::OnCommit,
+            // Conservative: enough for common UI patterns, small enough to avoid graph blowups.
+            max_spill_cells: 10_000,
         }
     }
 }

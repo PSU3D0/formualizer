@@ -1,4 +1,5 @@
 use formualizer::LiteralValue;
+use formualizer::ReferenceType;
 use formualizer::parse::{ASTNode as CoreASTNode, ASTNodeType};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -40,6 +41,7 @@ pub enum ASTNodeData {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReferenceData {
     pub sheet: Option<String>,
     pub row_start: usize,
@@ -124,17 +126,13 @@ impl ASTNodeData {
                     value: "#PENDING!".to_string(),
                 },
             },
-            ASTNodeType::Reference { .. } => ASTNodeData::Reference {
-                reference: ReferenceData {
-                    sheet: None, // TODO: Extract from reference
-                    row_start: 1,
-                    col_start: 1,
-                    row_end: 1,
-                    col_end: 1,
-                    row_abs_start: false,
-                    col_abs_start: false,
-                    row_abs_end: false,
-                    col_abs_end: false,
+            ASTNodeType::Reference {
+                original,
+                reference,
+            } => match Self::reference_data_from_core(reference) {
+                Ok(reference) => ASTNodeData::Reference { reference },
+                Err(reason) => ASTNodeData::Error {
+                    message: format!("Unsupported reference '{original}' in WASM AST: {reason}"),
                 },
             },
             ASTNodeType::Function { name, args } => ASTNodeData::Function {
@@ -156,6 +154,63 @@ impl ASTNodeData {
                     .map(|row| row.iter().map(Self::from_core).collect())
                     .collect(),
             },
+        }
+    }
+
+    fn reference_data_from_core(reference: &ReferenceType) -> Result<ReferenceData, String> {
+        match reference {
+            ReferenceType::Cell {
+                sheet,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => Ok(ReferenceData {
+                sheet: sheet.clone(),
+                row_start: *row as usize,
+                col_start: *col as usize,
+                row_end: *row as usize,
+                col_end: *col as usize,
+                row_abs_start: *row_abs,
+                col_abs_start: *col_abs,
+                row_abs_end: *row_abs,
+                col_abs_end: *col_abs,
+            }),
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
+            } => {
+                let (Some(sr), Some(sc), Some(er), Some(ec)) =
+                    (start_row, start_col, end_row, end_col)
+                else {
+                    return Err(
+                        "range references with open row/col bounds are not yet represented"
+                            .to_string(),
+                    );
+                };
+
+                Ok(ReferenceData {
+                    sheet: sheet.clone(),
+                    row_start: *sr as usize,
+                    col_start: *sc as usize,
+                    row_end: *er as usize,
+                    col_end: *ec as usize,
+                    row_abs_start: *start_row_abs,
+                    col_abs_start: *start_col_abs,
+                    row_abs_end: *end_row_abs,
+                    col_abs_end: *end_col_abs,
+                })
+            }
+            ReferenceType::External(_) => Err("external references are not supported".to_string()),
+            ReferenceType::Table(_) => Err("table references are not supported".to_string()),
+            ReferenceType::NamedRange(_) => Err("named ranges are not supported".to_string()),
         }
     }
 }

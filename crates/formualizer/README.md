@@ -1,33 +1,53 @@
-# Formualizer (Meta Crate)
+# Formualizer
 
-The `formualizer` crate is the curated entry point for the Formualizer spreadsheet
-ecosystem. It re-exports the components required to treat spreadsheets as typed,
-deterministic programs while letting advanced users opt into individual crates as
-needed.
+**Embeddable spreadsheet engine — parse, evaluate, and mutate Excel workbooks from Rust.**
 
-## Intent
+`formualizer` is the batteries-included entry point for the Formualizer ecosystem. It re-exports the workbook, engine, parser, and SheetPort crates behind feature flags, so you can depend on a single crate and get everything you need.
 
-- Provide a single dependency that mirrors the “batteries-included” surface exposed
-  by the CLI and forthcoming Python/Wasm bindings.
-- Keep the implementation modular. Internal crates such as
-  `formualizer-eval`, `formualizer-workbook`, `sheetport-spec`, and
-  `formualizer-sheetport` continue to evolve independently with focused
-  responsibilities.
-- Offer feature flags so downstream consumers can slim the dependency graph when
-  they only need a subset of the stack.
+## When to use this crate
 
-## Philosophy
+This is the **recommended default** for most Rust integrations. It gives you:
+- Workbook API with sheets, values, formulas, undo/redo, and I/O backends
+- 320+ Excel-compatible built-in functions
+- Formula parsing, tokenization, and pretty-printing
+- SheetPort runtime for typed spreadsheet I/O
 
-1. **Contracts first.** Spreadsheets plus manifests behave like pure functions. The
-   meta crate ensures those contracts are ergonomic to load, validate, and execute.
-2. **Deterministic by default.** Every exported API favors predictable evaluation,
-   idempotent changes, and auditable data flow.
-3. **Interoperable layers.** The roll-up crate aims to be the stable façade for
-   higher-level runtimes (agent orchestration, automation servers) without hiding
-   the underlying building blocks.
+If you only need a subset, depend on the individual crates directly:
+- [`formualizer-parse`](https://crates.io/crates/formualizer-parse) — parsing only
+- [`formualizer-eval`](https://crates.io/crates/formualizer-eval) — calculation engine with custom resolvers
+- [`formualizer-workbook`](https://crates.io/crates/formualizer-workbook) — workbook API without SheetPort
 
-## Status
+## Quick start
 
-Phase 0/1 (SheetPort spec) is complete. Phase 2 work is in progress to bind
-manifests to real workbooks and surface runtime utilities. Expect the re-export
-surface to grow as the runtime stabilizes.
+```rust
+use formualizer_workbook::Workbook;
+use formualizer_common::LiteralValue;
+
+let mut wb = Workbook::new();
+wb.add_sheet("Sheet1")?;
+
+wb.set_value("Sheet1", 1, 1, LiteralValue::Number(1000.0))?;
+wb.set_value("Sheet1", 2, 1, LiteralValue::Number(0.05))?;
+wb.set_value("Sheet1", 3, 1, LiteralValue::Number(12.0))?;
+wb.set_formula("Sheet1", 1, 2, "=PMT(A2/12, A3, -A1)")?;
+
+let payment = wb.evaluate_cell("Sheet1", 1, 2)?;
+```
+
+## Feature flags
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `eval` | Yes | Calculation engine and built-in functions |
+| `workbook` | Yes | Workbook API with sheets, undo/redo |
+| `sheetport` | Yes | SheetPort runtime (spreadsheets as typed APIs) |
+| `parse` | Yes | Tokenizer, parser, pretty-printer |
+| `common` | Yes | Shared types (values, errors, references) |
+| `calamine` | No | XLSX/ODS reading via calamine |
+| `umya` | No | XLSX reading/writing via umya-spreadsheet |
+| `json` | No | JSON workbook serialization |
+| `tracing` | No | Performance tracing hooks |
+
+## License
+
+Dual-licensed under MIT or Apache-2.0, at your option.

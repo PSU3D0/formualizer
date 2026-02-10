@@ -52,19 +52,17 @@ fn spill_basic_and_block() {
         Some(LiteralValue::Number(9.0))
     );
     // Prior second row should be cleared to Empty now
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 1),
-        Some(LiteralValue::Empty)
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 2),
-        Some(LiteralValue::Empty)
-    );
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 1), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 2), None);
 
     // Now block the spill by placing a value at A2 and change formula to 2x1 to overlap
     engine
         .set_cell_value("Sheet1", 2, 1, LiteralValue::Text("X".into()))
         .unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Text("X".into()))
+    );
     engine
         .set_cell_formula("Sheet1", 1, 1, parse("={10;20}").unwrap())
         .unwrap();

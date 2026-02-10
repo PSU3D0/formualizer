@@ -10,11 +10,7 @@ use crate::engine::graph::editor::transaction_manager::{
     TransactionError, TransactionId, TransactionManager,
 };
 use crate::engine::graph::editor::{EditorError, VertexEditor};
-use crate::engine::named_range::{NameScope, NamedDefinition};
-use crate::engine::vertex::VertexId;
 use crate::engine::{ChangeEvent, ChangeLog};
-use formualizer_common::LiteralValue;
-use formualizer_parse::parser::ASTNode;
 
 /// Orchestrates transactions across graph mutations, change logging, and rollback
 pub struct TransactionContext<'g> {
@@ -200,210 +196,27 @@ impl<'g> TransactionContext<'g> {
 
     /// Apply the inverse of a single change event
     fn apply_inverse(&mut self, change: ChangeEvent) -> Result<(), EditorError> {
-        match change {
-            ChangeEvent::AddVertex { id, .. } => {
-                let mut editor = VertexEditor::new(self.graph);
-                let _ = editor.remove_vertex(id); // ignore failures
-                Ok(())
-            }
-            ChangeEvent::SetValue { addr, old, .. } => {
-                if let Some(old_value) = old {
-                    let mut editor = VertexEditor::new(self.graph);
-                    editor.set_cell_value(addr, old_value);
-                } else {
-                    // Cell didn't exist before, remove it
-                    let vertex_id = self.graph.get_vertex_id_for_address(&addr).copied();
-                    if let Some(id) = vertex_id {
-                        let mut editor = VertexEditor::new(self.graph);
-                        editor.remove_vertex(id)?;
-                    }
-                }
-                Ok(())
-            }
-
-            ChangeEvent::SetFormula { addr, old, .. } => {
-                if let Some(old_formula) = old {
-                    let mut editor = VertexEditor::new(self.graph);
-                    editor.set_cell_formula(addr, old_formula);
-                } else {
-                    // Formula didn't exist before, remove the vertex
-                    let vertex_id = self.graph.get_vertex_id_for_address(&addr).copied();
-                    if let Some(id) = vertex_id {
-                        let mut editor = VertexEditor::new(self.graph);
-                        editor.remove_vertex(id)?;
-                    }
-                }
-                Ok(())
-            }
-
-            ChangeEvent::RemoveVertex {
-                id,
-                old_value,
-                old_formula,
-                old_dependencies,
-                coord,
-                sheet_id,
-                kind,
-                ..
-            } => {
-                // Basic recreation: allocate new vertex at coord+sheet if missing
-                if let (Some(coord), Some(sheet_id)) = (coord, sheet_id) {
-                    // If vertex id reused internally is not possible, we ignore id mismatch
-                    let cell_ref = crate::reference::CellRef::new(
-                        sheet_id,
-                        crate::reference::Coord::new(coord.row(), coord.col(), true, true),
-                    );
-                    let mut editor = VertexEditor::new(self.graph);
-                    if let Some(val) = old_value.clone() {
-                        editor.set_cell_value(cell_ref, val);
-                    }
-                    if let Some(formula) = old_formula {
-                        editor.set_cell_formula(cell_ref, formula);
-                    }
-                    // Dependencies restoration (skip for now – will be rebuilt on next formula set)
-                }
-                Ok(())
-            }
-
-            // Granular operations (these do the actual work for compound operations)
-            ChangeEvent::VertexMoved { id, old_coord, .. } => {
-                let mut editor = VertexEditor::new(self.graph);
-                editor.move_vertex(id, old_coord)
-            }
-
-            ChangeEvent::FormulaAdjusted { id, old_ast, .. } => {
-                // Update the formula back to its old version
-                self.update_vertex_formula(id, old_ast)
-            }
-
-            ChangeEvent::NamedRangeAdjusted {
-                name,
-                scope,
-                old_definition,
-                ..
-            } => {
-                // Restore the old name definition
-                self.update_name(&name, scope, old_definition)
-            }
-
-            ChangeEvent::EdgeAdded { from, to } => {
-                // Remove the edge that was added
-                self.remove_edge(from, to)
-            }
-
-            ChangeEvent::EdgeRemoved { from, to } => {
-                // Re-add the edge that was removed
-                self.add_edge(from, to)
-            }
-
-            // Named range operations
-            ChangeEvent::DefineName { name, scope, .. } => {
-                // Remove the name that was defined
-                self.delete_name(&name, scope)
-            }
-
-            ChangeEvent::UpdateName {
-                name,
-                scope,
-                old_definition,
-                ..
-            } => {
-                // Restore the old definition
-                self.update_name(&name, scope, old_definition)
-            }
-
-            ChangeEvent::DeleteName {
-                name,
-                scope,
-                old_definition,
-            } => {
-                if let Some(def) = old_definition {
-                    self.update_name(&name, scope, def)
-                } else {
-                    Ok(())
-                }
-            }
-
-            // Compound markers - already handled in apply_rollback
-            ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => Ok(()),
-        }
-    }
-
-    /// Restore a vertex that was removed
-    fn restore_vertex(
-        &mut self,
-        _id: VertexId,
-        _old_value: Option<LiteralValue>,
-        _old_formula: Option<ASTNode>,
-        _old_dependencies: Vec<VertexId>,
-    ) -> Result<(), EditorError> {
-        // This is complex and requires direct graph manipulation
-        // For now, we'll return an error indicating this isn't supported
-        Err(EditorError::TransactionFailed {
-            reason: "Vertex restoration not yet implemented".to_string(),
-        })
-    }
-
-    /// Update a vertex's formula directly
-    fn update_vertex_formula(&mut self, _id: VertexId, _ast: ASTNode) -> Result<(), EditorError> {
-        // This requires direct graph manipulation
-        // For now, we'll return an error
-        Err(EditorError::TransactionFailed {
-            reason: "Direct formula update not yet implemented".to_string(),
-        })
-    }
-
-    /// Update a named range definition
-    fn update_name(
-        &mut self,
-        _name: &str,
-        _scope: NameScope,
-        _definition: NamedDefinition,
-    ) -> Result<(), EditorError> {
-        // This requires named range support in the graph
-        // For now, we'll return success as it's not critical
-        Ok(())
-    }
-
-    /// Delete a named range
-    fn delete_name(&mut self, _name: &str, _scope: NameScope) -> Result<(), EditorError> {
-        // This requires named range support in the graph
-        // For now, we'll return success as it's not critical
-        Ok(())
-    }
-
-    /// Remove an edge between vertices
-    fn remove_edge(&mut self, _from: VertexId, _to: VertexId) -> Result<(), EditorError> {
-        // Edge operations not exposed in current API
-        // Return error for now
-        Err(EditorError::TransactionFailed {
-            reason: "Edge removal not supported in rollback".to_string(),
-        })
-    }
-
-    /// Add an edge between vertices
-    fn add_edge(&mut self, _from: VertexId, _to: VertexId) -> Result<(), EditorError> {
-        // Edge operations not exposed in current API
-        // Return error for now
-        Err(EditorError::TransactionFailed {
-            reason: "Edge addition not supported in rollback".to_string(),
-        })
+        let mut editor = VertexEditor::new(self.graph);
+        editor.apply_inverse(change)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::EvalConfig;
     use crate::{CellRef, reference::Coord};
+    use formualizer_common::LiteralValue;
     use formualizer_parse::parse;
 
     fn create_test_graph() -> DependencyGraph {
-        DependencyGraph::new()
+        DependencyGraph::new_with_config(EvalConfig::default())
     }
 
     fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
         // Test helpers use Excel 1-based coords.
-        CellRef::new(sheet_id, Coord::from_excel(row, col, false, false))
+        // Graph/editor keys store absolute ("$A$1") coords.
+        CellRef::new(sheet_id, Coord::from_excel(row, col, true, true))
     }
 
     #[test]
@@ -459,43 +272,37 @@ mod tests {
         );
     }
 
-    // TODO: This test is currently disabled because the interaction between
-    // graph.set_cell_value and VertexEditor.set_cell_value doesn't properly
-    // capture old values when updating existing cells. This needs to be fixed
-    // in the graph layer to ensure consistent cell addressing.
     #[test]
-    #[ignore]
     fn test_transaction_context_rollback_value_update() {
         let mut graph = create_test_graph();
 
-        // Set initial value outside transaction
-        let _ = graph.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0));
+        // Set initial formula outside transaction (formulas are graph-owned and should rollback).
+        let original = parse("=1").unwrap();
+        let _ = graph.set_cell_formula("Sheet1", 1, 1, original.clone());
+        let vid = *graph
+            .get_vertex_id_for_address(&cell_ref(0, 1, 1))
+            .expect("vertex for A1");
 
         {
             let mut ctx = TransactionContext::new(&mut graph);
             ctx.begin().unwrap();
 
-            // Update value
+            // Update formula
             {
                 let mut editor = ctx.editor();
-                editor.set_cell_value(cell_ref(0, 1, 1), LiteralValue::Number(20.0));
+                editor.set_cell_formula(cell_ref(0, 1, 1), parse("=2").unwrap());
             }
 
             // Rollback
             ctx.rollback().unwrap();
         }
 
-        // Verify original value restored after context is dropped
-        assert_eq!(
-            graph.get_cell_value("Sheet1", 1, 1),
-            Some(LiteralValue::Number(10.0))
-        );
+        // Verify original formula restored after context is dropped
+        let f = graph.get_formula(vid).expect("formula restored");
+        assert_eq!(f.node_type, original.node_type);
     }
 
-    // TODO: This test fails because formulas aren't being properly created
-    // through VertexEditor.set_cell_formula. Needs investigation.
     #[test]
-    #[ignore]
     fn test_transaction_context_multiple_changes() {
         let mut graph = create_test_graph();
 
@@ -507,8 +314,8 @@ mod tests {
             // Make multiple changes
             {
                 let mut editor = ctx.editor();
-                editor.set_cell_value(cell_ref(0, 1, 1), LiteralValue::Number(10.0));
-                editor.set_cell_value(cell_ref(0, 2, 1), LiteralValue::Number(20.0));
+                editor.set_cell_formula(cell_ref(0, 1, 1), parse("=1").unwrap());
+                editor.set_cell_formula(cell_ref(0, 2, 1), parse("=2").unwrap());
                 editor.set_cell_formula(cell_ref(0, 3, 1), parse("=A1+A2").unwrap());
             }
 
@@ -519,13 +326,15 @@ mod tests {
         }
 
         // Changes should persist after context is dropped
-        assert_eq!(
-            graph.get_cell_value("Sheet1", 1, 1),
-            Some(LiteralValue::Number(10.0))
+        assert!(
+            graph
+                .get_vertex_id_for_address(&cell_ref(0, 1, 1))
+                .is_some()
         );
-        assert_eq!(
-            graph.get_cell_value("Sheet1", 2, 1),
-            Some(LiteralValue::Number(20.0))
+        assert!(
+            graph
+                .get_vertex_id_for_address(&cell_ref(0, 2, 1))
+                .is_some()
         );
         assert!(
             graph
@@ -546,7 +355,7 @@ mod tests {
             // First change
             {
                 let mut editor = ctx.editor();
-                editor.set_cell_value(cell_ref(0, 1, 1), LiteralValue::Number(10.0));
+                editor.set_cell_formula(cell_ref(0, 1, 1), parse("=1").unwrap());
             }
 
             // Create savepoint
@@ -555,8 +364,8 @@ mod tests {
             // More changes
             {
                 let mut editor = ctx.editor();
-                editor.set_cell_value(cell_ref(0, 2, 1), LiteralValue::Number(20.0));
-                editor.set_cell_value(cell_ref(0, 3, 1), LiteralValue::Number(30.0));
+                editor.set_cell_formula(cell_ref(0, 2, 1), parse("=2").unwrap());
+                editor.set_cell_formula(cell_ref(0, 3, 1), parse("=3").unwrap());
             }
 
             assert_eq!(ctx.change_count(), 3);
@@ -572,9 +381,10 @@ mod tests {
         }
 
         // Verify state after context is dropped
-        assert_eq!(
-            graph.get_cell_value("Sheet1", 1, 1),
-            Some(LiteralValue::Number(10.0))
+        assert!(
+            graph
+                .get_vertex_id_for_address(&cell_ref(0, 1, 1))
+                .is_some()
         );
         assert!(
             graph

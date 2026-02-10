@@ -1,0 +1,5 @@
+{
+  "id": "tables/structured_refs_pending",
+  "category": "tables",
+  "targets": ["Sheet1!D1", "Sheet1!C2", "Sheet1!C3"]
+}

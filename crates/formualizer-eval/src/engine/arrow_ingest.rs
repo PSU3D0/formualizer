@@ -150,22 +150,22 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                         date_system,
                                         &dt,
                                     );
-                                    crate::arrow_store::OverlayValue::Number(serial)
+                                    crate::arrow_store::OverlayValue::DateTime(serial)
                                 }
                                 LiteralValue::DateTime(dt) => {
                                     let serial = crate::builtins::datetime::datetime_to_serial_for(
                                         date_system,
                                         &dt,
                                     );
-                                    crate::arrow_store::OverlayValue::Number(serial)
+                                    crate::arrow_store::OverlayValue::DateTime(serial)
                                 }
                                 LiteralValue::Time(t) => {
                                     let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                                    crate::arrow_store::OverlayValue::Number(serial)
+                                    crate::arrow_store::OverlayValue::DateTime(serial)
                                 }
                                 LiteralValue::Duration(d) => {
                                     let serial = d.num_seconds() as f64 / 86_400.0;
-                                    crate::arrow_store::OverlayValue::Number(serial)
+                                    crate::arrow_store::OverlayValue::Duration(serial)
                                 }
                                 LiteralValue::Pending => crate::arrow_store::OverlayValue::Pending,
                                 LiteralValue::Array(_) => crate::arrow_store::OverlayValue::Error(
@@ -174,7 +174,7 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                     ),
                                 ),
                             };
-                            ch.overlay.set(off, ov);
+                            let _ = ch.overlay.set(off, ov);
                         }
                     } else {
                         // rebuild chunk with updates applied
@@ -206,9 +206,7 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                 let t = crate::arrow_store::TypeTag::from_u8(ch.type_tag.value(i));
                                 match t {
                                     crate::arrow_store::TypeTag::Empty => LiteralValue::Empty,
-                                    crate::arrow_store::TypeTag::Number
-                                    | crate::arrow_store::TypeTag::DateTime
-                                    | crate::arrow_store::TypeTag::Duration => {
+                                    crate::arrow_store::TypeTag::Number => {
                                         if let Some(a) = &ch.numbers {
                                             let fa = a
                                                 .as_any()
@@ -218,6 +216,44 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                                 LiteralValue::Empty
                                             } else {
                                                 LiteralValue::Number(fa.value(i))
+                                            }
+                                        } else {
+                                            LiteralValue::Empty
+                                        }
+                                    }
+                                    crate::arrow_store::TypeTag::DateTime => {
+                                        if let Some(a) = &ch.numbers {
+                                            let fa = a
+                                                .as_any()
+                                                .downcast_ref::<arrow_array::Float64Array>()
+                                                .unwrap();
+                                            if fa.is_null(i) {
+                                                LiteralValue::Empty
+                                            } else {
+                                                LiteralValue::from_serial_number(fa.value(i))
+                                            }
+                                        } else {
+                                            LiteralValue::Empty
+                                        }
+                                    }
+                                    crate::arrow_store::TypeTag::Duration => {
+                                        if let Some(a) = &ch.numbers {
+                                            let fa = a
+                                                .as_any()
+                                                .downcast_ref::<arrow_array::Float64Array>()
+                                                .unwrap();
+                                            if fa.is_null(i) {
+                                                LiteralValue::Empty
+                                            } else {
+                                                let serial = fa.value(i);
+                                                let nanos_f = serial * 86_400.0 * 1_000_000_000.0;
+                                                let nanos = nanos_f
+                                                    .round()
+                                                    .clamp(i64::MIN as f64, i64::MAX as f64)
+                                                    as i64;
+                                                LiteralValue::Duration(
+                                                    chrono::Duration::nanoseconds(nanos),
+                                                )
                                             }
                                         } else {
                                             LiteralValue::Empty
@@ -411,7 +447,7 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                         ch.meta.non_null_bool = non_bool;
                         ch.meta.non_null_text = non_text;
                         ch.meta.non_null_err = non_err;
-                        ch.overlay.clear();
+                        let _ = ch.overlay.clear();
                     }
                 }
             }

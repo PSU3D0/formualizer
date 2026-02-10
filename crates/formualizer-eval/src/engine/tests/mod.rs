@@ -1,10 +1,12 @@
 mod arena_debug;
 mod cancellation;
 mod change_log;
+mod changelog_replay;
 mod common;
 mod cycle_detection;
 mod demand_driven;
 mod dependency;
+mod deterministic_clock;
 mod dirty_propagation;
 mod dirty_propagation_precision;
 mod evaluation;
@@ -38,11 +40,33 @@ mod transactions;
 mod vertex_lifecycle;
 mod volatile_rng;
 
+mod engine_action_api_614;
+mod engine_action_rollback_615;
+mod engine_transactions_617;
+
+mod engine_action_log_sink_618;
+mod engine_atomic_actions_618;
+
 mod infinite_ranges;
 mod spill_atomic;
 mod spill_basic;
 mod spill_config_defaults;
 mod spill_edges;
+mod spill_parallel_501;
+mod spill_semantics_101;
+
+mod date_arithmetic_ops;
+
+mod hardening_503;
+
+mod arrow_canonical_601;
+mod arrow_canonical_604;
+mod arrow_canonical_606;
+mod arrow_canonical_607;
+mod arrow_canonical_611;
+mod effects_603;
+
+mod implicit_intersection_103;
 
 mod arrow_bulk_update;
 mod arrow_chunk_growth;
@@ -54,6 +78,7 @@ mod compressed_range_scheduler;
 mod config_defaults;
 mod context_default_noops;
 mod countifs_arrow_overlay;
+mod countifs_date_criteria;
 mod criteria_mask_oob_column;
 mod criteria_mask_text_chunked;
 mod criteria_overlay_parity;

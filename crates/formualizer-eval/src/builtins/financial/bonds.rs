@@ -517,8 +517,7 @@ fn calculate_price(
     if n == 1 {
         // Short first period (single coupon remaining)
         // Price = (redemption + coupon) / (1 + dsn * yld_per_period) - (1 - dsn) * coupon
-        let price = (redemption + coupon) / (1.0 + dsn * yld_per_period) - (1.0 - dsn) * coupon;
-        price
+        (redemption + coupon) / (1.0 + dsn * yld_per_period) - (1.0 - dsn) * coupon
     } else {
         // Multiple coupons remaining
         // Price = sum of discounted coupons + discounted redemption - accrued interest

@@ -225,7 +225,7 @@ fn parse_error_kind_prefix(value: &str) -> Option<ExcelErrorKind> {
     }
 
     let end = trimmed
-        .find(|c: char| c == ':' || c == ' ' || c == '(' || c == '[')
+        .find(|c: char| [':', ' ', '(', '['].contains(&c))
         .unwrap_or(trimmed.len());
     ExcelErrorKind::try_parse(&trimmed[..end])
 }

@@ -376,7 +376,7 @@ impl Function for Dec2BinFn {
         };
 
         // Excel limits: -512 to 511
-        if n < -512 || n > 511 {
+        if !(-512..=511).contains(&n) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -495,7 +495,7 @@ impl Function for Dec2HexFn {
         };
 
         // Excel limits
-        if n < -(1i64 << 39) || n > (1i64 << 39) - 1 {
+        if !(-(1i64 << 39)..=(1i64 << 39) - 1).contains(&n) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -564,7 +564,7 @@ impl Function for Oct2DecFn {
         };
 
         // Excel accepts 10-character octal (30 bits)
-        if text.len() > 10 || !text.chars().all(|c| c >= '0' && c <= '7') {
+        if text.len() > 10 || !text.chars().all(|c| ('0'..='7').contains(&c)) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -614,7 +614,7 @@ impl Function for Dec2OctFn {
         };
 
         // Excel limits: -536870912 to 536870911
-        if n < -(1i64 << 29) || n > (1i64 << 29) - 1 {
+        if !(-(1i64 << 29)..=(1i64 << 29) - 1).contains(&n) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -780,7 +780,7 @@ impl Function for Hex2BinFn {
         };
 
         // Check range for binary output (-512 to 511)
-        if dec < -512 || dec > 511 {
+        if !(-512..=511).contains(&dec) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -927,7 +927,7 @@ impl Function for Oct2BinFn {
             },
         };
 
-        if text.len() > 10 || !text.chars().all(|c| c >= '0' && c <= '7') {
+        if text.len() > 10 || !text.chars().all(|c| ('0'..='7').contains(&c)) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -941,7 +941,7 @@ impl Function for Oct2BinFn {
         };
 
         // Check range for binary output (-512 to 511)
-        if dec < -512 || dec > 511 {
+        if !(-512..=511).contains(&dec) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -1025,7 +1025,7 @@ impl Function for Hex2OctFn {
         };
 
         // Check range for octal output
-        if dec < -(1i64 << 29) || dec > (1i64 << 29) - 1 {
+        if !(-(1i64 << 29)..=(1i64 << 29) - 1).contains(&dec) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -1095,7 +1095,7 @@ impl Function for Oct2HexFn {
             },
         };
 
-        if text.len() > 10 || !text.chars().all(|c| c >= '0' && c <= '7') {
+        if text.len() > 10 || !text.chars().all(|c| ('0'..='7').contains(&c)) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_num(),
             )));
@@ -1240,6 +1240,7 @@ impl Function for GestepFn {
 /// Uses the approximation: erf(x) = 1 - (a1*t + a2*t^2 + a3*t^3 + a4*t^4 + a5*t^5) * exp(-x^2)
 /// High-precision error function using Cody's rational approximation
 /// Achieves precision of about 1e-15 (double precision)
+#[allow(clippy::excessive_precision)]
 fn erf_approx(x: f64) -> f64 {
     let ax = x.abs();
 
@@ -1297,6 +1298,7 @@ fn erf_approx(x: f64) -> f64 {
 }
 
 /// erfc for x in [0.5, 4]
+#[allow(clippy::excessive_precision)]
 fn erfc_mid(x: f64) -> f64 {
     const P: [f64; 9] = [
         1.23033935479799725e+03,
@@ -1345,6 +1347,7 @@ fn erfc_mid(x: f64) -> f64 {
 }
 
 /// erfc for x >= 4
+#[allow(clippy::excessive_precision)]
 fn erfc_large(x: f64) -> f64 {
     const P: [f64; 6] = [
         6.58749161529837803e-04,

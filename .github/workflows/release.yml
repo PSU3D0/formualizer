@@ -18,6 +18,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Verify product tag versions match manifests
         shell: bash
         run: |
@@ -73,6 +78,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Verify parse/common tag versions match manifests
         shell: bash
         run: |
@@ -121,6 +131,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Verify spec tag version matches manifest
         shell: bash
@@ -334,28 +349,47 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64
+            interpreter: /opt/python/cp39-cp39/bin/python
+            manylinux: manylinux2014
           - os: ubuntu-latest
             target: aarch64
+            interpreter: /opt/python/cp39-cp39/bin/python
+            manylinux: manylinux2014
           - os: macos-latest
-            target: x86_64
-          - os: macos-latest
-            target: aarch64
+            # Build a single universal2 wheel (x86_64 + arm64)
+            target: universal2-apple-darwin
+            interpreter: python
+            manylinux: auto
           - os: windows-latest
             target: x64
+            interpreter: python
+            manylinux: auto
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           working-directory: bindings/python
-          args: --release --out dist --find-interpreter
+          # In `act` (local CI), avoid nested manylinux Docker.
+          args: --release --out dist --interpreter ${{ env.ACT && 'python3' || matrix.interpreter }}
           sccache: 'true'
-          manylinux: auto
+          manylinux: ${{ env.ACT && 'off' || matrix.manylinux }}
 
       - name: Upload wheels
+        if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.target }}
@@ -369,6 +403,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
@@ -377,6 +416,7 @@ jobs:
           args: --out dist
 
       - name: Upload sdist
+        if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
           name: wheels-sdist
@@ -431,6 +471,16 @@ jobs:
       - name: Build WASM package (bundler)
         working-directory: bindings/wasm
         run: wasm-pack build --target bundler --out-dir pkg --release
+
+      - name: Install JS dependencies
+        working-directory: bindings/wasm
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Build TS wrapper
+        working-directory: bindings/wasm
+        run: pnpm run build:ts
 
       - name: Publish to npm
         working-directory: bindings/wasm

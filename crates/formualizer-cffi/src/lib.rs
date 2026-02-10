@@ -1,4 +1,7 @@
+#![allow(clippy::missing_safety_doc)]
+
 use std::ffi::{c_char, c_int};
+
 use std::ptr;
 use std::slice;
 
@@ -68,7 +71,7 @@ impl fz_status {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_buffer_free(buffer: fz_buffer) {
+pub unsafe extern "C" fn fz_buffer_free(buffer: fz_buffer) {
     if !buffer.data.is_null() {
         unsafe {
             let _ = Vec::from_raw_parts(buffer.data, buffer.len, buffer.cap);
@@ -126,7 +129,7 @@ impl From<fz_formula_dialect> for formualizer_parse::FormulaDialect {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_parse_tokenize(
+pub unsafe extern "C" fn fz_parse_tokenize(
     formula: *const c_char,
     options: fz_parse_options,
     format: fz_encoding_format,
@@ -192,7 +195,7 @@ pub extern "C" fn fz_parse_tokenize(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_parse_ast(
+pub unsafe extern "C" fn fz_parse_ast(
     formula: *const c_char,
     options: fz_parse_options,
     format: fz_encoding_format,
@@ -258,7 +261,7 @@ pub extern "C" fn fz_parse_ast(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_parse_canonical_formula(
+pub unsafe extern "C" fn fz_parse_canonical_formula(
     formula: *const c_char,
     dialect: fz_formula_dialect,
     status: *mut fz_status,
@@ -277,10 +280,8 @@ pub extern "C" fn fz_parse_canonical_formula(
 
     let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
 
-    let result: Result<String, String> = (|| {
-        let _ = FormulaDialect::from(dialect);
-        pretty_parse_render(&input).map_err(|e| e.to_string())
-    })();
+    let _ = FormulaDialect::from(dialect);
+    let result: Result<String, String> = pretty_parse_render(&input).map_err(|e| e.to_string());
 
     match result {
         Ok(v) => {
@@ -303,7 +304,7 @@ pub extern "C" fn fz_parse_canonical_formula(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_common_parse_range_a1(
+pub unsafe extern "C" fn fz_common_parse_range_a1(
     range_a1: *const c_char,
     format: fz_encoding_format,
     status: *mut fz_status,
@@ -374,7 +375,7 @@ pub extern "C" fn fz_common_parse_range_a1(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_common_format_range_a1(
+pub unsafe extern "C" fn fz_common_format_range_a1(
     range_payload: *const u8,
     len: usize,
     format: fz_encoding_format,
@@ -443,7 +444,7 @@ pub extern "C" fn fz_common_format_range_a1(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn fz_common_normalize_literal_value(
+pub unsafe extern "C" fn fz_common_normalize_literal_value(
     value_payload: *const u8,
     len: usize,
     format: fz_encoding_format,

@@ -422,9 +422,15 @@ impl Function for VLookupFn {
             match row_idx_opt {
                 Some(i) => {
                     let target_col_idx = (col_index - 1) as usize;
-                    Ok(crate::traits::CalcValue::Scalar(
-                        rv.get_cell(i, target_col_idx),
-                    ))
+                    let v = rv.get_cell(i, target_col_idx);
+                    // Excel treats a direct reference to an empty cell as 0.
+                    // VLOOKUP/HLOOKUP return the referenced cell value, so match Excel by
+                    // materializing Empty as numeric 0. (Empty text "" remains Text(""))
+                    let v = match v {
+                        LiteralValue::Empty => LiteralValue::Number(0.0),
+                        other => other,
+                    };
+                    Ok(crate::traits::CalcValue::Scalar(v))
                 }
                 None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Na),
@@ -467,6 +473,10 @@ impl Function for VLookupFn {
                         .and_then(|r| r.get(target_col_idx))
                         .cloned()
                         .unwrap_or(LiteralValue::Empty);
+                    let val = match val {
+                        LiteralValue::Empty => LiteralValue::Number(0.0),
+                        other => other,
+                    };
                     Ok(crate::traits::CalcValue::Scalar(val))
                 }
                 None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -625,9 +635,12 @@ impl Function for HLookupFn {
             match col_idx_opt {
                 Some(i) => {
                     let target_row_idx = (row_index - 1) as usize;
-                    Ok(crate::traits::CalcValue::Scalar(
-                        rv.get_cell(target_row_idx, i),
-                    ))
+                    let v = rv.get_cell(target_row_idx, i);
+                    let v = match v {
+                        LiteralValue::Empty => LiteralValue::Number(0.0),
+                        other => other,
+                    };
+                    Ok(crate::traits::CalcValue::Scalar(v))
                 }
                 None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Na),
@@ -669,6 +682,10 @@ impl Function for HLookupFn {
                         .and_then(|r| r.get(i))
                         .cloned()
                         .unwrap_or(LiteralValue::Empty);
+                    let val = match val {
+                        LiteralValue::Empty => LiteralValue::Number(0.0),
+                        other => other,
+                    };
                     Ok(crate::traits::CalcValue::Scalar(val))
                 }
                 None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -924,6 +941,39 @@ mod tests {
     }
 
     #[test]
+    fn vlookup_blank_target_cell_returns_zero() {
+        // Excel treats a direct reference to an empty cell as 0.
+        // VLOOKUP should therefore return 0 (not Empty) when the found cell is empty.
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(VLookupFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(1));
+
+        let ctx = wb.interpreter();
+        let table = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:B1".into(),
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(1), Some(2)),
+            },
+            None,
+        );
+        let f = ctx.context.get_function("", "VLOOKUP").unwrap();
+        let key1 = lit(LiteralValue::Int(1));
+        let two = lit(LiteralValue::Int(2));
+        let false_lit = lit(LiteralValue::Boolean(false));
+        let args = vec![
+            ArgumentHandle::new(&key1, &ctx),
+            ArgumentHandle::new(&table, &ctx),
+            ArgumentHandle::new(&two, &ctx),
+            ArgumentHandle::new(&false_lit, &ctx),
+        ];
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(v, LiteralValue::Number(0.0));
+    }
+
+    #[test]
     fn hlookup_basic() {
         let wb = TestWorkbook::new()
             .with_function(Arc::new(HLookupFn))
@@ -954,5 +1004,36 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(v, LiteralValue::Number(100.0));
+    }
+
+    #[test]
+    fn hlookup_blank_target_cell_returns_zero() {
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(HLookupFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(1));
+
+        let ctx = wb.interpreter();
+        let table = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:B2".into(),
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(2), Some(2)),
+            },
+            None,
+        );
+        let f = ctx.context.get_function("", "HLOOKUP").unwrap();
+        let key1 = lit(LiteralValue::Int(1));
+        let two = lit(LiteralValue::Int(2));
+        let false_lit = lit(LiteralValue::Boolean(false));
+        let args = vec![
+            ArgumentHandle::new(&key1, &ctx),
+            ArgumentHandle::new(&table, &ctx),
+            ArgumentHandle::new(&two, &ctx),
+            ArgumentHandle::new(&false_lit, &ctx),
+        ];
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(v, LiteralValue::Number(0.0));
     }
 }

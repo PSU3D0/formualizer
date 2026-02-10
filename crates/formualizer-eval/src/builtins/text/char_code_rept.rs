@@ -43,7 +43,7 @@ impl Function for CharFn {
         let code = n.trunc() as i32;
 
         // Excel CHAR accepts 1-255
-        if code < 1 || code > 255 {
+        if !(1..=255).contains(&code) {
             return Ok(CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));

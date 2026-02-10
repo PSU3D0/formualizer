@@ -167,6 +167,7 @@ impl Reference {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ReferenceData {
     sheet: Option<String>,
     row_start: usize,

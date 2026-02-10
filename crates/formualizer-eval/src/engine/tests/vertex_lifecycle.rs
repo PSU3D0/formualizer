@@ -9,7 +9,7 @@ use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parse;
 
 fn create_test_graph() -> DependencyGraph {
-    DependencyGraph::new()
+    super::common::graph_truth_graph()
 }
 
 fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
@@ -48,9 +48,8 @@ fn test_vertex_removal_cleanup() {
     // Drop editor to release borrow
     drop(editor);
 
-    // Verify C1 now has #REF! error
-    let c1_value = graph.get_value(c1);
-    assert!(matches!(c1_value, Some(LiteralValue::Error(ref e)) if e.kind == ExcelErrorKind::Ref));
+    // Verify C1 now has #REF! error (structural invalidation)
+    assert!(graph.is_ref_error(c1));
 }
 
 #[test]
@@ -98,8 +97,12 @@ fn test_vertex_move_updates_mappings() {
     // Verify coordinate was updated
     assert_eq!(graph.get_coord(id), AbsCoord::new(5, 10));
 
-    // Value should be preserved
-    assert_eq!(graph.get_value(id), Some(lit_num(42.0)));
+    // Address mapping should point to the moved vertex.
+    let moved_addr = CellRef {
+        sheet_id: 0,
+        coord: Coord::new(5, 10, true, true),
+    };
+    assert_eq!(graph.get_vertex_id_for_address(&moved_addr), Some(&id));
 }
 
 #[test]
@@ -134,9 +137,6 @@ fn test_patch_vertex_data() {
 
     // Drop editor to release borrow
     drop(editor);
-
-    // Verify new value
-    assert_eq!(graph.get_value(a1), Some(lit_num(20.0)));
 
     // Verify dependent is dirty
     assert!(graph.is_dirty(b1));
@@ -321,13 +321,10 @@ fn test_complex_removal_scenario() {
     drop(editor);
 
     // C1 should have #REF!
-    assert!(matches!(
-        graph.get_value(c1),
-        Some(LiteralValue::Error(ref e)) if e.kind == ExcelErrorKind::Ref
-    ));
+    assert!(graph.is_ref_error(c1));
 
-    // A1 should still have its value
-    assert_eq!(graph.get_value(a1), Some(lit_num(5.0)));
+    // A1 should still exist
+    assert!(!graph.is_deleted(a1));
 }
 
 #[test]
@@ -363,7 +360,7 @@ fn test_batch_operations_with_lifecycle() {
     // Verify results
     assert_eq!(graph.get_coord(v1), AbsCoord::new(10, 10));
     assert!(graph.is_deleted(v2));
-    assert_eq!(graph.get_value(v3), Some(lit_num(30.0)));
+    assert!(!graph.is_deleted(v3));
 }
 
 #[test]

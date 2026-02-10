@@ -92,7 +92,7 @@ impl Function for GcdFn {
 
             // Excel truncates and requires non-negative
             let n = n.trunc();
-            if n < 0.0 || n > 9.99999999e9 {
+            if !(0.0..=9.99999999e9).contains(&n) {
                 return Ok(CalcValue::Scalar(
                     LiteralValue::Error(ExcelError::new_num()),
                 ));
@@ -154,7 +154,7 @@ impl Function for LcmFn {
             };
 
             let n = n.trunc();
-            if n < 0.0 || n > 9.99999999e9 {
+            if !(0.0..=9.99999999e9).contains(&n) {
                 return Ok(CalcValue::Scalar(
                     LiteralValue::Error(ExcelError::new_num()),
                 ));

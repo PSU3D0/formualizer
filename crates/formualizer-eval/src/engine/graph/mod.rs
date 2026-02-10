@@ -2,8 +2,11 @@ use crate::SheetId;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
-use formualizer_parse::parser::{ASTNode, ReferenceType};
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
+
+#[cfg(debug_assertions)]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(test)]
 #[derive(Debug, Default, Clone)]
@@ -11,6 +14,8 @@ pub struct GraphInstrumentation {
     pub edges_added: u64,
     pub stripe_inserts: u64,
     pub stripe_removes: u64,
+    pub dependents_scan_fallback_calls: u64,
+    pub dependents_scan_vertices_scanned: u64,
 }
 
 mod ast_utils;
@@ -35,6 +40,15 @@ use crate::engine::topo::{
 use crate::reference::{CellRef, Coord, SharedRangeRef, SharedRef, SharedSheetLocator};
 use formualizer_common::Coord as AbsCoord;
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
+
+#[inline]
+fn normalize_stored_literal(value: LiteralValue) -> LiteralValue {
+    match value {
+        // Public contract: store numerics as Number(f64).
+        LiteralValue::Int(i) => LiteralValue::Number(i as f64),
+        other => other,
+    }
+}
 
 pub use editor::change_log::{ChangeEvent, ChangeLog};
 
@@ -106,12 +120,30 @@ pub struct DependencyGraph {
     vertex_values: FxHashMap<VertexId, ValueRef>,
     vertex_formulas: FxHashMap<VertexId, AstNodeId>,
 
+    /// Gate for storing grid-backed (cell/formula) LiteralValue payloads inside the dependency graph.
+    ///
+    /// When `false` (Arrow-canonical mode), the graph does not store values for cell/formula
+    /// vertices. Arrow (base + overlays) is the sole value store for sheet cells.
+    value_cache_enabled: bool,
+
+    /// Debug-only instrumentation: count attempts to read *cell/formula* graph values while
+    /// caching is disabled (canonical mode guard).
+    #[cfg(debug_assertions)]
+    graph_value_read_attempts: AtomicU64,
+
     // Address mappings using fast hashing
     cell_to_vertex: FxHashMap<CellRef, VertexId>,
 
     // Scheduling state - using HashSet for O(1) operations
     dirty_vertices: FxHashSet<VertexId>,
     volatile_vertices: FxHashSet<VertexId>,
+
+    /// Vertices explicitly marked as #REF! by structural operations.
+    ///
+    /// In Arrow-truth mode, the dependency graph does not cache cell/formula values.
+    /// We still need a place to record deterministic #REF! invalidations for editor
+    /// operations and structural transforms.
+    ref_error_vertices: FxHashSet<VertexId>,
 
     // NEW: Specialized managers for range dependencies (Hybrid Model)
     /// Maps a formula vertex to the ranges it depends on.
@@ -133,8 +165,20 @@ pub struct DependencyGraph {
     /// Workbook-scoped named ranges
     named_ranges: FxHashMap<String, NamedRange>,
 
+    /// Normalized-key lookup for workbook-scoped names.
+    ///
+    /// When `config.case_sensitive_names == false`, keys are ASCII-lowercased.
+    /// Values are the canonical (original-cased) name stored in `named_ranges`.
+    named_ranges_lookup: FxHashMap<String, String>,
+
     /// Sheet-scoped named ranges  
     sheet_named_ranges: FxHashMap<(SheetId, String), NamedRange>,
+
+    /// Normalized-key lookup for sheet-scoped names.
+    ///
+    /// Key is (SheetId, normalized_name_key). Value is the canonical (original-cased)
+    /// name stored in `sheet_named_ranges`.
+    sheet_named_ranges_lookup: FxHashMap<(SheetId, String), String>,
 
     /// Reverse mapping: vertex -> names it uses (by vertex id)
     vertex_to_names: FxHashMap<VertexId, Vec<VertexId>>,
@@ -147,6 +191,8 @@ pub struct DependencyGraph {
 
     // Native workbook tables (ListObjects)
     tables: FxHashMap<String, tables::TableEntry>,
+    /// Normalized-key lookup for tables.
+    tables_lookup: FxHashMap<String, String>,
     table_vertex_lookup: FxHashMap<VertexId, String>,
 
     // External sources (SourceVertex)
@@ -180,7 +226,7 @@ pub struct DependencyGraph {
     ensure_touched_sheets: FxHashSet<SheetId>,
 
     #[cfg(test)]
-    instr: GraphInstrumentation,
+    instr: std::sync::Mutex<GraphInstrumentation>,
 }
 
 impl Default for DependencyGraph {
@@ -197,6 +243,26 @@ impl DependencyGraph {
 
     pub fn get_config(&self) -> &super::EvalConfig {
         &self.config
+    }
+
+    #[inline]
+    pub(crate) fn value_cache_enabled(&self) -> bool {
+        self.value_cache_enabled
+    }
+
+    /// Debug-only: how many times `get_value`/`get_cell_value` were called while caching is disabled.
+    ///
+    /// In Arrow-canonical mode this should remain 0 for engine/interpreter reads.
+    #[cfg(test)]
+    pub fn debug_graph_value_read_attempts(&self) -> u64 {
+        #[cfg(debug_assertions)]
+        {
+            self.graph_value_read_attempts.load(Ordering::Relaxed)
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            0
+        }
     }
 
     /// Build a dependency plan for a set of formulas on sheets
@@ -476,20 +542,29 @@ impl DependencyGraph {
             data_store: DataStore::new(),
             vertex_values: FxHashMap::default(),
             vertex_formulas: FxHashMap::default(),
+            // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
+            // The dependency graph does not cache cell/formula literal payloads.
+            value_cache_enabled: false,
+            #[cfg(debug_assertions)]
+            graph_value_read_attempts: AtomicU64::new(0),
             cell_to_vertex: FxHashMap::default(),
             dirty_vertices: FxHashSet::default(),
             volatile_vertices: FxHashSet::default(),
+            ref_error_vertices: FxHashSet::default(),
             formula_to_range_deps: FxHashMap::default(),
             stripe_to_dependents: FxHashMap::default(),
             sheet_indexes: FxHashMap::default(),
             sheet_reg,
             default_sheet_id,
             named_ranges: FxHashMap::default(),
+            named_ranges_lookup: FxHashMap::default(),
             sheet_named_ranges: FxHashMap::default(),
+            sheet_named_ranges_lookup: FxHashMap::default(),
             vertex_to_names: FxHashMap::default(),
             name_vertex_lookup: FxHashMap::default(),
             pending_name_links: FxHashMap::default(),
             tables: FxHashMap::default(),
+            tables_lookup: FxHashMap::default(),
             table_vertex_lookup: FxHashMap::default(),
             source_scalars: FxHashMap::default(),
             source_tables: FxHashMap::default(),
@@ -505,7 +580,7 @@ impl DependencyGraph {
             first_load_assume_new: false,
             ensure_touched_sheets: FxHashSet::default(),
             #[cfg(test)]
-            instr: GraphInstrumentation::default(),
+            instr: std::sync::Mutex::new(GraphInstrumentation::default()),
         };
 
         if config.use_dynamic_topo {
@@ -550,12 +625,14 @@ impl DependencyGraph {
 
     #[cfg(test)]
     pub fn reset_instr(&mut self) {
-        self.instr = GraphInstrumentation::default();
+        if let Ok(mut g) = self.instr.lock() {
+            *g = GraphInstrumentation::default();
+        }
     }
 
     #[cfg(test)]
     pub fn instr(&self) -> GraphInstrumentation {
-        self.instr.clone()
+        self.instr.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     /// Begin batch operations - defer CSR rebuilds until end_batch() is called
@@ -642,6 +719,7 @@ impl DependencyGraph {
         col: u32,
         value: LiteralValue,
     ) -> Result<OperationSummary, ExcelError> {
+        let value = normalize_stored_literal(value);
         let sheet_id = self.sheet_id_mut(sheet);
         // External API is 1-based; store 0-based coords internally.
         let coord = Coord::from_excel(row, col, true, true);
@@ -662,8 +740,13 @@ impl DependencyGraph {
 
             // Update to value kind
             self.store.set_kind(existing_id, VertexKind::Cell);
-            let value_ref = self.data_store.store_value(value);
-            self.vertex_values.insert(existing_id, value_ref);
+            if self.value_cache_enabled {
+                let value_ref = self.data_store.store_value(value);
+                self.vertex_values.insert(existing_id, value_ref);
+            } else {
+                // Ensure no stale payload remains if cache is disabled.
+                self.vertex_values.remove(&existing_id);
+            }
             existing_id
         } else {
             // Create new vertex
@@ -679,11 +762,16 @@ impl DependencyGraph {
                 .add_vertex(packed_coord, vertex_id);
 
             self.store.set_kind(vertex_id, VertexKind::Cell);
-            let value_ref = self.data_store.store_value(value);
-            self.vertex_values.insert(vertex_id, value_ref);
+            if self.value_cache_enabled {
+                let value_ref = self.data_store.store_value(value);
+                self.vertex_values.insert(vertex_id, value_ref);
+            }
             self.cell_to_vertex.insert(addr, vertex_id);
             vertex_id
         };
+
+        // Cell edits clear any structural #REF! marking for this vertex.
+        self.ref_error_vertices.remove(&vertex_id);
 
         Ok(OperationSummary {
             affected_vertices: self.mark_dirty(vertex_id),
@@ -694,7 +782,9 @@ impl DependencyGraph {
     /// Reserve capacity hints for upcoming bulk cell inserts (values only for now).
     pub fn reserve_cells(&mut self, additional: usize) {
         self.store.reserve(additional);
-        self.vertex_values.reserve(additional);
+        if self.value_cache_enabled {
+            self.vertex_values.reserve(additional);
+        }
         self.cell_to_vertex.reserve(additional);
         // sheet_indexes: cannot easily reserve per-sheet without distribution; skip.
     }
@@ -707,14 +797,20 @@ impl DependencyGraph {
         col: u32,
         value: LiteralValue,
     ) {
+        let value = normalize_stored_literal(value);
         let sheet_id = self.sheet_id_mut(sheet);
         let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
         if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
             // Overwrite existing value vertex only (ignore formulas in bulk path)
-            let value_ref = self.data_store.store_value(value);
-            self.vertex_values.insert(existing_id, value_ref);
+            if self.value_cache_enabled {
+                let value_ref = self.data_store.store_value(value);
+                self.vertex_values.insert(existing_id, value_ref);
+            } else {
+                self.vertex_values.remove(&existing_id);
+            }
             self.store.set_kind(existing_id, VertexKind::Cell);
+            self.ref_error_vertices.remove(&existing_id);
             return;
         }
         let packed_coord = AbsCoord::from_excel(row, col);
@@ -723,8 +819,11 @@ impl DependencyGraph {
         self.sheet_index_mut(sheet_id)
             .add_vertex(packed_coord, vertex_id);
         self.store.set_kind(vertex_id, VertexKind::Cell);
-        let value_ref = self.data_store.store_value(value);
-        self.vertex_values.insert(vertex_id, value_ref);
+        self.ref_error_vertices.remove(&vertex_id);
+        if self.value_cache_enabled {
+            let value_ref = self.data_store.store_value(value);
+            self.vertex_values.insert(vertex_id, value_ref);
+        }
         self.cell_to_vertex.insert(addr, vertex_id);
     }
 
@@ -756,11 +855,16 @@ impl DependencyGraph {
                 .unwrap_or(false);
 
         for (row, col, value) in collected {
+            let value = normalize_stored_literal(value);
             let coord = Coord::from_excel(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
             if !assume_new && let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
-                let value_ref = self.data_store.store_value(value);
-                self.vertex_values.insert(existing_id, value_ref);
+                if self.value_cache_enabled {
+                    let value_ref = self.data_store.store_value(value);
+                    self.vertex_values.insert(existing_id, value_ref);
+                } else {
+                    self.vertex_values.remove(&existing_id);
+                }
                 self.store.set_kind(existing_id, VertexKind::Cell);
                 continue;
             }
@@ -775,7 +879,7 @@ impl DependencyGraph {
             index_items.push((packed, vertex_id));
         }
         // Perform a single batch store for newly allocated values
-        if !new_value_literals.is_empty() {
+        if self.value_cache_enabled && !new_value_literals.is_empty() {
             let vrefs = self.data_store.store_values_batch(new_value_literals);
             debug_assert_eq!(vrefs.len(), new_value_coords.len());
             for (i, (_pc, vid)) in new_value_coords.iter().enumerate() {
@@ -847,6 +951,11 @@ impl DependencyGraph {
         let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
 
+        // Rewrite context-dependent structured references (e.g., this-row selectors) into
+        // concrete cell/range references for this formula cell.
+        let mut ast = ast;
+        self.rewrite_structured_references_for_cell(&mut ast, addr)?;
+
         // Extract dependencies from AST, creating placeholders if needed
         let t_dep0 = if dbg {
             Some(web_time::Instant::now())
@@ -894,6 +1003,9 @@ impl DependencyGraph {
 
         // Check for self-reference (immediate cycle detection)
         let addr_vertex_id = self.get_or_create_vertex(&addr, &mut created_placeholders);
+
+        // Editing a formula clears any prior structural #REF! marking for this vertex.
+        self.ref_error_vertices.remove(&addr_vertex_id);
 
         if new_dependencies.contains(&addr_vertex_id) {
             return Err(ExcelError::new(ExcelErrorKind::Circ)
@@ -949,6 +1061,197 @@ impl DependencyGraph {
             affected_vertices: self.mark_dirty(addr_vertex_id),
             created_placeholders,
         })
+    }
+
+    pub(crate) fn rewrite_structured_references_for_cell(
+        &self,
+        ast: &mut ASTNode,
+        cell: CellRef,
+    ) -> Result<(), ExcelError> {
+        self.rewrite_structured_references_node(ast, cell)
+    }
+
+    fn rewrite_structured_references_node(
+        &self,
+        node: &mut ASTNode,
+        cell: CellRef,
+    ) -> Result<(), ExcelError> {
+        match &mut node.node_type {
+            ASTNodeType::Reference { reference, .. } => {
+                self.rewrite_structured_reference(reference, cell)
+            }
+            ASTNodeType::UnaryOp { expr, .. } => {
+                self.rewrite_structured_references_node(expr, cell)
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                self.rewrite_structured_references_node(left, cell)?;
+                self.rewrite_structured_references_node(right, cell)
+            }
+            ASTNodeType::Function { args, .. } => {
+                for a in args.iter_mut() {
+                    self.rewrite_structured_references_node(a, cell)?;
+                }
+                Ok(())
+            }
+            ASTNodeType::Array(rows) => {
+                for r in rows.iter_mut() {
+                    for item in r.iter_mut() {
+                        self.rewrite_structured_references_node(item, cell)?;
+                    }
+                }
+                Ok(())
+            }
+            ASTNodeType::Literal(_) => Ok(()),
+        }
+    }
+
+    fn rewrite_structured_reference(
+        &self,
+        reference: &mut ReferenceType,
+        cell: CellRef,
+    ) -> Result<(), ExcelError> {
+        use formualizer_parse::parser::{SpecialItem, TableSpecifier};
+
+        let ReferenceType::Table(tref) = reference else {
+            return Ok(());
+        };
+
+        // This-row shorthand: parsed as an unnamed table reference with a Combination specifier.
+        if !tref.name.is_empty() {
+            return Ok(());
+        }
+
+        let col_name = match &tref.specifier {
+            Some(TableSpecifier::Combination(parts)) => {
+                let mut saw_this_row = false;
+                let mut col: Option<&str> = None;
+                for p in parts {
+                    match p.as_ref() {
+                        TableSpecifier::SpecialItem(SpecialItem::ThisRow) => {
+                            saw_this_row = true;
+                        }
+                        TableSpecifier::Column(c) => {
+                            if col.is_some() {
+                                return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                    "This-row structured reference with multiple columns is not supported"
+                                        .to_string(),
+                                ));
+                            }
+                            col = Some(c.as_str());
+                        }
+                        other => {
+                            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                format!(
+                                    "Unsupported this-row structured reference component: {other}"
+                                ),
+                            ));
+                        }
+                    }
+                }
+                if !saw_this_row {
+                    return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                        "Unnamed structured reference requires a this-row selector".to_string(),
+                    ));
+                }
+                col.ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                        "This-row structured reference missing column selector".to_string(),
+                    )
+                })?
+            }
+            _ => {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                    "Unnamed structured reference form is not supported".to_string(),
+                ));
+            }
+        };
+
+        let Some(table) = self.find_table_containing_cell(cell) else {
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message("This-row structured reference used outside a table".to_string()));
+        };
+
+        let row0 = cell.coord.row();
+        let col0 = cell.coord.col();
+        let sr0 = table.range.start.coord.row();
+        let sc0 = table.range.start.coord.col();
+        let er0 = table.range.end.coord.row();
+        let ec0 = table.range.end.coord.col();
+
+        if row0 < sr0 || row0 > er0 || col0 < sc0 || col0 > ec0 {
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message("This-row structured reference used outside a table".to_string()));
+        }
+
+        if table.header_row && row0 == sr0 {
+            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                "This-row structured references are not valid in the table header row".to_string(),
+            ));
+        }
+
+        let data_start = if table.header_row { sr0 + 1 } else { sr0 };
+        if row0 < data_start {
+            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                "This-row structured references require a data/totals row context".to_string(),
+            ));
+        }
+
+        let Some(idx) = table.col_index(col_name) else {
+            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                "Unknown table column in this-row reference: {col_name}"
+            )));
+        };
+        let target_col0 = sc0 + (idx as u32);
+        let target_row = row0 + 1;
+        let target_col = target_col0 + 1;
+
+        *reference = ReferenceType::Cell {
+            sheet: None,
+            row: target_row,
+            col: target_col,
+            row_abs: true,
+            col_abs: true,
+        };
+
+        Ok(())
+    }
+
+    fn find_table_containing_cell(&self, cell: CellRef) -> Option<&tables::TableEntry> {
+        let row0 = cell.coord.row();
+        let col0 = cell.coord.col();
+
+        let mut best: Option<&tables::TableEntry> = None;
+        let mut best_area: u64 = u64::MAX;
+        let mut best_name: &str = "";
+
+        for t in self.tables.values() {
+            if t.sheet_id() != cell.sheet_id {
+                continue;
+            }
+            let sr0 = t.range.start.coord.row();
+            let sc0 = t.range.start.coord.col();
+            let er0 = t.range.end.coord.row();
+            let ec0 = t.range.end.coord.col();
+            if row0 < sr0 || row0 > er0 || col0 < sc0 || col0 > ec0 {
+                continue;
+            }
+
+            let h = (er0 - sr0 + 1) as u64;
+            let w = (ec0 - sc0 + 1) as u64;
+            let area = h.saturating_mul(w);
+            let name = t.name.as_str();
+            let better = match best {
+                None => true,
+                Some(_) => area < best_area || (area == best_area && name < best_name),
+            };
+            if better {
+                best = Some(t);
+                best_area = area;
+                best_name = name;
+            }
+        }
+
+        best
     }
 
     pub fn set_cell_value_ref(
@@ -1007,6 +1310,14 @@ impl DependencyGraph {
 
     /// Get current value from a cell
     pub fn get_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
+        if !self.value_cache_enabled {
+            #[cfg(debug_assertions)]
+            {
+                self.graph_value_read_attempts
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            return None;
+        }
         let sheet_id = self.sheet_reg.get_id(sheet)?;
         let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
@@ -1247,7 +1558,9 @@ impl DependencyGraph {
             self.edges.add_edge(dependent, dep_id);
             #[cfg(test)]
             {
-                self.instr.edges_added += 1;
+                if let Ok(mut g) = self.instr.lock() {
+                    g.edges_added += 1;
+                }
             }
         }
 
@@ -1288,7 +1601,9 @@ impl DependencyGraph {
             self.edges.add_edge(dependent, dep_id);
             #[cfg(test)]
             {
-                self.instr.edges_added += 1;
+                if let Ok(mut g) = self.instr.lock() {
+                    g.edges_added += 1;
+                }
             }
         }
     }
@@ -1577,7 +1892,9 @@ impl DependencyGraph {
                             self.stripe_to_dependents.remove(&key);
                             #[cfg(test)]
                             {
-                                self.instr.stripe_removes += 1;
+                                if let Ok(mut g) = self.instr.lock() {
+                                    g.stripe_removes += 1;
+                                }
                             }
                         }
                     }
@@ -1592,7 +1909,22 @@ impl DependencyGraph {
 
     /// Updates the cached value of a formula vertex.
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
-        let value_ref = self.data_store.store_value(value);
+        if !self.value_cache_enabled {
+            // Canonical mode: cell/formula vertices must not store values in the graph.
+            match self.store.kind(vertex_id) {
+                VertexKind::Cell
+                | VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::Empty => {
+                    self.vertex_values.remove(&vertex_id);
+                    return;
+                }
+                _ => {
+                    // Allow non-cell vertices to cache values (e.g. named-range formulas).
+                }
+            }
+        }
+        let value_ref = self.data_store.store_value(normalize_stored_literal(value));
         self.vertex_values.insert(vertex_id, value_ref);
     }
 
@@ -1601,6 +1933,19 @@ impl DependencyGraph {
         &self,
         anchor: VertexId,
         target_cells: &[CellRef],
+    ) -> Result<(), ExcelError> {
+        self.plan_spill_region_allowing_formula_overwrite(anchor, target_cells, None)
+    }
+
+    /// Plan a spill region, optionally allowing specific formula vertices to be overwritten.
+    ///
+    /// This is used by parallel evaluation to allow spill anchors to take precedence over
+    /// other formula vertices that are being evaluated in the same layer.
+    pub(crate) fn plan_spill_region_allowing_formula_overwrite(
+        &self,
+        anchor: VertexId,
+        target_cells: &[CellRef],
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<(), ExcelError> {
         use formualizer_common::{ExcelErrorExtra, ExcelErrorKind};
         // Compute expected spill shape from the target rectangle for better diagnostics
@@ -1652,13 +1997,18 @@ impl DependencyGraph {
                 continue;
             }
 
-            // If cell is occupied by another formula anchor, block regardless of value visibility
+            // If cell is occupied by another formula anchor, block unless explicitly allowed.
             if let Some(&vid) = self.cell_to_vertex.get(cell)
                 && vid != anchor
             {
                 // Prevent clobbering formulas (array or scalar) in the target area
                 match self.store.kind(vid) {
                     VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                        if let Some(allow) = overwritable_formulas
+                            && allow.contains(&vid)
+                        {
+                            continue;
+                        }
                         return Err(ExcelError::new(ExcelErrorKind::Spill)
                             .with_message("BlockedByFormula")
                             .with_extra(ExcelErrorExtra::Spill {
@@ -1700,6 +2050,16 @@ impl DependencyGraph {
         fault_after_ops: Option<usize>,
     ) -> Result<(), ExcelError> {
         use rustc_hash::FxHashSet;
+
+        // Anchor cell coordinates (0-based) for special-casing writes.
+        // We must never overwrite the anchor via set_cell_value(), because that would
+        // strip the formula and break incremental recalculation.
+        let anchor_cell = self
+            .get_cell_ref(anchor)
+            .expect("anchor cell ref for spill commit");
+        let anchor_sheet_name = self.sheet_name(anchor_cell.sheet_id).to_string();
+        let anchor_row = anchor_cell.coord.row();
+        let anchor_col = anchor_cell.coord.col();
 
         // Capture previous owned cells for this anchor
         let prev_cells = self
@@ -1782,12 +2142,21 @@ impl DependencyGraph {
             {
                 for idx in (0..applied).rev() {
                     let ((ref sheet, row, col), ref old) = old_values[idx];
-                    let _ = self.set_cell_value(sheet, row + 1, col + 1, old.value.clone());
+                    if sheet == &anchor_sheet_name && row == anchor_row && col == anchor_col {
+                        self.update_vertex_value(anchor, old.value.clone());
+                    } else {
+                        let _ = self.set_cell_value(sheet, row + 1, col + 1, old.value.clone());
+                    }
                 }
                 return Err(ExcelError::new(ExcelErrorKind::Error)
                     .with_message("Injected persistence fault during spill commit"));
             }
-            let _ = self.set_cell_value(&op.sheet, op.row + 1, op.col + 1, op.new_value.clone());
+            if op.sheet == anchor_sheet_name && op.row == anchor_row && op.col == anchor_col {
+                self.update_vertex_value(anchor, op.new_value.clone());
+            } else {
+                let _ =
+                    self.set_cell_value(&op.sheet, op.row + 1, op.col + 1, op.new_value.clone());
+            }
         }
 
         // Update spill ownership maps only on success
@@ -1811,20 +2180,234 @@ impl DependencyGraph {
             .map(|v| v.as_slice())
     }
 
+    pub(crate) fn spill_registry_has_anchor(&self, anchor: VertexId) -> bool {
+        self.spill_anchor_to_cells.contains_key(&anchor)
+    }
+
+    pub(crate) fn spill_registry_anchor_for_cell(&self, cell: CellRef) -> Option<VertexId> {
+        self.spill_cell_to_anchor.get(&cell).copied()
+    }
+
+    pub(crate) fn spill_registry_counts(&self) -> (usize, usize) {
+        (
+            self.spill_anchor_to_cells.len(),
+            self.spill_cell_to_anchor.len(),
+        )
+    }
+
     /// Clear an existing spill region for an anchor (set cells to Empty and forget ownership)
     pub fn clear_spill_region(&mut self, anchor: VertexId) {
-        if let Some(cells) = self.spill_anchor_to_cells.remove(&anchor) {
-            for cell in cells {
-                let sheet = self.sheet_name(cell.sheet_id).to_string();
-                let _ = self.set_cell_value(
-                    &sheet,
-                    cell.coord.row() + 1,
-                    cell.coord.col() + 1,
-                    LiteralValue::Empty,
-                );
-                self.spill_cell_to_anchor.remove(&cell);
+        let _ = self.clear_spill_region_bulk(anchor);
+    }
+
+    /// Bulk clear an existing spill region for an anchor.
+    ///
+    /// This avoids calling `set_cell_value()` per spill child (which can trigger O(N*V)
+    /// dependent scans when `edges.delta_size() > 0`). Instead, it clears values directly and
+    /// performs a single dirty propagation over the affected spill children.
+    ///
+    /// Returns the previously registered spill cells (including the anchor cell) for callers that
+    /// want to mirror/record deltas.
+    pub fn clear_spill_region_bulk(&mut self, anchor: VertexId) -> Vec<CellRef> {
+        let anchor_cell = self.get_cell_ref(anchor);
+        let Some(cells) = self.spill_anchor_to_cells.remove(&anchor) else {
+            return Vec::new();
+        };
+
+        // Remove ownership for all cells first.
+        for cell in cells.iter() {
+            self.spill_cell_to_anchor.remove(cell);
+        }
+
+        // Prepare a single arena value ref for Empty (only when caching is enabled).
+        let empty_ref = if self.value_cache_enabled {
+            Some(self.data_store.store_value(LiteralValue::Empty))
+        } else {
+            None
+        };
+
+        // Clear all spill children (excluding the anchor cell).
+        let mut changed_vertices: Vec<VertexId> = Vec::new();
+        for cell in cells.iter().copied() {
+            let is_anchor = anchor_cell.map(|a| a == cell).unwrap_or(false);
+            if is_anchor {
+                continue;
+            }
+            let Some(&vid) = self.cell_to_vertex.get(&cell) else {
+                continue;
+            };
+            // Ensure this vertex is a plain value cell.
+            if self.vertex_formulas.remove(&vid).is_some() {
+                // Be conservative: remove outgoing edges if this was a formula vertex.
+                // This should be rare for spill children under normal policies.
+                self.remove_dependent_edges(vid);
+            }
+            self.store.set_kind(vid, VertexKind::Cell);
+            if let Some(er) = empty_ref {
+                self.vertex_values.insert(vid, er);
+            } else {
+                self.vertex_values.remove(&vid);
+            }
+            self.store.set_dirty(vid, false);
+            self.dirty_vertices.remove(&vid);
+            changed_vertices.push(vid);
+        }
+
+        // Single dirty propagation for all changed spill children.
+        if !changed_vertices.is_empty() {
+            self.mark_dirty_many_value_cells(&changed_vertices);
+        }
+
+        cells
+    }
+
+    fn mark_dirty_many_value_cells(&mut self, vertex_ids: &[VertexId]) -> Vec<VertexId> {
+        if vertex_ids.is_empty() {
+            return Vec::new();
+        }
+
+        // Ensure reverse edges are usable (delta.in_edges is intentionally not delta-aware).
+        if self.edges.delta_size() > 0 {
+            self.edges.rebuild();
+        }
+
+        let mut affected: FxHashSet<VertexId> = FxHashSet::default();
+        let mut to_visit: Vec<VertexId> = Vec::new();
+        let mut visited_for_propagation: FxHashSet<VertexId> = FxHashSet::default();
+
+        // Value sources are affected but not marked dirty themselves.
+        for &src in vertex_ids {
+            affected.insert(src);
+        }
+
+        // Collect initial direct dependents and name dependents.
+        for &src in vertex_ids {
+            to_visit.extend(self.edges.in_edges(src));
+            if let Some(name_set) = self.cell_to_name_dependents.get(&src) {
+                for &name_vertex in name_set {
+                    to_visit.push(name_vertex);
+                }
             }
         }
+
+        // Collect range dependents in bulk using spill rect bounds per sheet.
+        let mut bounds_by_sheet: FxHashMap<SheetId, (u32, u32, u32, u32)> = FxHashMap::default();
+        for &src in vertex_ids {
+            let view = self.store.view(src);
+            let sid = view.sheet_id();
+            let r = view.row();
+            let c = view.col();
+            bounds_by_sheet
+                .entry(sid)
+                .and_modify(|b| {
+                    b.0 = b.0.min(r);
+                    b.1 = b.1.max(r);
+                    b.2 = b.2.min(c);
+                    b.3 = b.3.max(c);
+                })
+                .or_insert((r, r, c, c));
+        }
+
+        for (sid, (sr, er, sc, ec)) in bounds_by_sheet {
+            to_visit.extend(self.collect_range_dependents_for_rect(sid, sr, sc, er, ec));
+        }
+
+        while let Some(id) = to_visit.pop() {
+            if !visited_for_propagation.insert(id) {
+                continue;
+            }
+            affected.insert(id);
+            self.store.set_dirty(id, true);
+            to_visit.extend(self.edges.in_edges(id));
+        }
+
+        self.dirty_vertices.extend(&affected);
+        affected.into_iter().collect()
+    }
+
+    fn collect_range_dependents_for_rect(
+        &self,
+        sheet_id: SheetId,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> Vec<VertexId> {
+        if self.stripe_to_dependents.is_empty() {
+            return Vec::new();
+        }
+        let mut candidates: FxHashSet<VertexId> = FxHashSet::default();
+
+        for col in start_col..=end_col {
+            let key = StripeKey {
+                sheet_id,
+                stripe_type: StripeType::Column,
+                index: col,
+            };
+            if let Some(deps) = self.stripe_to_dependents.get(&key) {
+                candidates.extend(deps);
+            }
+        }
+        for row in start_row..=end_row {
+            let key = StripeKey {
+                sheet_id,
+                stripe_type: StripeType::Row,
+                index: row,
+            };
+            if let Some(deps) = self.stripe_to_dependents.get(&key) {
+                candidates.extend(deps);
+            }
+        }
+        if self.config.enable_block_stripes {
+            let br0 = start_row / BLOCK_H;
+            let br1 = end_row / BLOCK_H;
+            let bc0 = start_col / BLOCK_W;
+            let bc1 = end_col / BLOCK_W;
+            for br in br0..=br1 {
+                for bc in bc0..=bc1 {
+                    let key = StripeKey {
+                        sheet_id,
+                        stripe_type: StripeType::Block,
+                        index: block_index(br * BLOCK_H, bc * BLOCK_W),
+                    };
+                    if let Some(deps) = self.stripe_to_dependents.get(&key) {
+                        candidates.extend(deps);
+                    }
+                }
+            }
+        }
+
+        // Precision check: the dirty rect must overlap at least one of the formula's registered ranges.
+        let mut out: Vec<VertexId> = Vec::new();
+        for dep_id in candidates {
+            let Some(ranges) = self.formula_to_range_deps.get(&dep_id) else {
+                continue;
+            };
+            let mut hit = false;
+            for range in ranges {
+                let range_sheet_id = match range.sheet {
+                    SharedSheetLocator::Id(id) => id,
+                    _ => sheet_id,
+                };
+                if range_sheet_id != sheet_id {
+                    continue;
+                }
+                let sr0 = range.start_row.map(|b| b.index).unwrap_or(0);
+                let er0 = range.end_row.map(|b| b.index).unwrap_or(u32::MAX);
+                let sc0 = range.start_col.map(|b| b.index).unwrap_or(0);
+                let ec0 = range.end_col.map(|b| b.index).unwrap_or(u32::MAX);
+                let overlap =
+                    sr0 <= end_row && er0 >= start_row && sc0 <= end_col && ec0 >= start_col;
+                if overlap {
+                    hit = true;
+                    break;
+                }
+            }
+            if hit {
+                out.push(dep_id);
+            }
+        }
+        out
     }
 
     /// Check if a vertex exists
@@ -1879,6 +2462,26 @@ impl DependencyGraph {
 
     /// Get the value stored for a vertex
     pub fn get_value(&self, vertex_id: VertexId) -> Option<LiteralValue> {
+        if !self.value_cache_enabled {
+            // In canonical mode, cell/formula values must not be read from the graph.
+            // Non-cell vertices (e.g. named ranges, external sources) may still use graph storage.
+            match self.store.kind(vertex_id) {
+                VertexKind::Cell
+                | VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::Empty => {
+                    #[cfg(debug_assertions)]
+                    {
+                        self.graph_value_read_attempts
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                    return None;
+                }
+                _ => {
+                    // Allow non-cell vertices to use vertex_values.
+                }
+            }
+        }
         self.vertex_values
             .get(&vertex_id)
             .map(|&value_ref| self.data_store.retrieve_value(value_ref))
@@ -1941,6 +2544,15 @@ impl DependencyGraph {
         // If there are pending changes in delta, we need to scan
         // Otherwise we can use the fast reverse edges
         if self.edges.delta_size() > 0 {
+            #[cfg(test)]
+            {
+                // This scan is intentionally tracked for perf regression tests.
+                // It is expected to be rare in normal operation.
+                if let Ok(mut g) = self.instr.lock() {
+                    g.dependents_scan_fallback_calls += 1;
+                    g.dependents_scan_vertices_scanned += self.cell_to_vertex.len() as u64;
+                }
+            }
             // Fall back to scanning when delta has changes
             let mut dependents = Vec::new();
             for (&_addr, &vid) in &self.cell_to_vertex {
@@ -2032,15 +2644,45 @@ impl DependencyGraph {
     /// Internal: Mark vertex as having #REF! error
     #[doc(hidden)]
     pub fn mark_as_ref_error(&mut self, id: VertexId) {
+        if !self.value_cache_enabled {
+            match self.store.kind(id) {
+                VertexKind::Cell
+                | VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::Empty => {
+                    self.ref_error_vertices.insert(id);
+                    // Canonical-only: graph does not cache cell/formula values.
+                    // Ensure the dependent subgraph is dirtied so evaluation updates Arrow truth.
+                    self.vertex_values.remove(&id);
+                    let _ = self.mark_dirty(id);
+                    return;
+                }
+                _ => {
+                    // Allow non-cell vertices to use cached values.
+                }
+            }
+        }
         let error = LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref));
         let value_ref = self.data_store.store_value(error);
         self.vertex_values.insert(id, value_ref);
-        self.store.set_dirty(id, true);
-        self.dirty_vertices.insert(id);
+        let _ = self.mark_dirty(id);
     }
 
     /// Check if a vertex has a #REF! error
     pub fn is_ref_error(&self, id: VertexId) -> bool {
+        if !self.value_cache_enabled {
+            match self.store.kind(id) {
+                VertexKind::Cell
+                | VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::Empty => {
+                    return self.ref_error_vertices.contains(&id);
+                }
+                _ => {
+                    // Non-cell vertices may still have cached values.
+                }
+            }
+        }
         if let Some(value_ref) = self.vertex_values.get(&id) {
             let value = self.data_store.retrieve_value(*value_ref);
             if let LiteralValue::Error(err) = value {

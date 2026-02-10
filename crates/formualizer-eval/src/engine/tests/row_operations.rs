@@ -1,4 +1,6 @@
-use crate::engine::{DependencyGraph, VertexEditor};
+use crate::engine::VertexEditor;
+use crate::engine::graph::DependencyGraph;
+use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parse;
 
@@ -6,9 +8,14 @@ fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)
 }
 
+fn sheet1_cell(graph: &DependencyGraph, row: u32, col: u32) -> CellRef {
+    let sid = graph.sheet_id("Sheet1").unwrap();
+    CellRef::new(sid, Coord::from_excel(row, col, true, true))
+}
+
 #[test]
 fn test_insert_rows() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup: A1=10, A2=20, A3=30, A4=SUM(A1:A3)
     // Excel uses 1-based indexing
@@ -20,6 +27,16 @@ fn test_insert_rows() {
         .unwrap();
     let sum_id = sum_result.affected_vertices[0];
 
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
+    let a2_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
+        .unwrap();
+    let a3_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 3, 1))
+        .unwrap();
+
     // Use editor to insert rows
     let mut editor = VertexEditor::new(&mut graph);
 
@@ -29,13 +46,23 @@ fn test_insert_rows() {
     // Drop editor to release borrow
     drop(editor);
 
-    // Verify shifts
-    // A1 unchanged (before insert point)
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 1), Some(lit_num(10.0)));
-    // A2 -> A4 (shifted down by 2)
-    assert_eq!(graph.get_cell_value("Sheet1", 4, 1), Some(lit_num(20.0)));
-    // A3 -> A5 (shifted down by 2)
-    assert_eq!(graph.get_cell_value("Sheet1", 5, 1), Some(lit_num(30.0)));
+    // Verify shifts via vertex mapping
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
+        Some(&a1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 4, 1)),
+        Some(&a2_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 5, 1)),
+        Some(&a3_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 6, 1)),
+        Some(&sum_id)
+    );
 
     // Formula should be updated: SUM(A1:A3) -> SUM(A1:A5)
     let formula = graph.get_formula(sum_id);
@@ -48,7 +75,7 @@ fn test_insert_rows() {
 
 #[test]
 fn test_delete_rows() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup: A1 through A5 with values
     for i in 1..=5 {
@@ -56,6 +83,15 @@ fn test_delete_rows() {
             .set_cell_value("Sheet1", i, 1, lit_num(i as f64 * 10.0))
             .unwrap();
     }
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
+    let a4_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 4, 1))
+        .unwrap();
+    let a5_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 1))
+        .unwrap();
     let formula_result = graph
         .set_cell_formula("Sheet1", 7, 1, parse("=SUM(A1:A5)").unwrap())
         .unwrap();
@@ -67,11 +103,24 @@ fn test_delete_rows() {
 
     drop(editor);
 
-    // Verify remaining values
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 1), Some(lit_num(10.0))); // A1
-    assert_eq!(graph.get_cell_value("Sheet1", 2, 1), Some(lit_num(40.0))); // A4 -> A2
-    assert_eq!(graph.get_cell_value("Sheet1", 3, 1), Some(lit_num(50.0))); // A5 -> A3
-    assert_eq!(graph.get_cell_value("Sheet1", 4, 1), None); // A4 deleted
+    // Verify remaining vertices
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1)),
+        Some(&a1_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1)),
+        Some(&a4_id)
+    );
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 3, 1)),
+        Some(&a5_id)
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 4, 1))
+            .is_none()
+    );
 
     assert_eq!(summary.vertices_deleted.len(), 2);
     assert_eq!(summary.vertices_moved.len(), 3); // A4, A5, and A7 moved up
@@ -79,7 +128,7 @@ fn test_delete_rows() {
 
 #[test]
 fn test_insert_rows_adjusts_formulas() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create cells with formulas
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
@@ -110,7 +159,7 @@ fn test_insert_rows_adjusts_formulas() {
 
 #[test]
 fn test_delete_row_creates_ref_error() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // A1 = 10
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
@@ -132,13 +181,17 @@ fn test_delete_row_creates_ref_error() {
     // B2 should be deleted
     assert!(graph.is_deleted(b2_id));
 
-    // A2 value should be gone
-    assert_eq!(graph.get_cell_value("Sheet1", 2, 1), None);
+    // A2 vertex should be gone
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
+            .is_none()
+    );
 }
 
 #[test]
 fn test_insert_rows_with_absolute_references() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup cells
     graph
@@ -169,7 +222,7 @@ fn test_insert_rows_with_absolute_references() {
 
 #[test]
 fn test_multiple_row_operations() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup initial data
     for i in 1..=10 {
@@ -177,6 +230,9 @@ fn test_multiple_row_operations() {
             .set_cell_value("Sheet1", i, 1, lit_num(i as f64))
             .unwrap();
     }
+    let a1_id = *graph
+        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+        .unwrap();
 
     let mut editor = VertexEditor::new(&mut graph);
 
@@ -196,7 +252,9 @@ fn test_multiple_row_operations() {
 
     drop(editor);
 
-    // Verify final state
-    // Original A1 should now be at A2
-    assert_eq!(graph.get_cell_value("Sheet1", 2, 1), Some(lit_num(1.0)));
+    // Verify final state: original A1 should now be at A2
+    assert_eq!(
+        graph.get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1)),
+        Some(&a1_id)
+    );
 }

@@ -48,15 +48,15 @@ impl Function for ValueFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let s = to_text(&args[0])?;
-        match s.trim().parse::<f64>() {
-            Ok(n) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(n))),
-            Err(_) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+        let Some(n) = ctx.locale().parse_number_invariant(&s) else {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
-            ))),
-        }
+            )));
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(n)))
     }
 }
 
@@ -77,7 +77,7 @@ impl Function for TextFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 2 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -92,7 +92,14 @@ impl Function for TextFn {
         let num = match val {
             LiteralValue::Number(f) => f,
             LiteralValue::Int(i) => i as f64,
-            LiteralValue::Text(t) => t.parse::<f64>().unwrap_or(0.0),
+            LiteralValue::Text(t) => {
+                let Some(n) = ctx.locale().parse_number_invariant(&t) else {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new_value(),
+                    )));
+                };
+                n
+            }
             LiteralValue::Boolean(b) => {
                 if b {
                     1.0

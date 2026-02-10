@@ -1,4 +1,6 @@
-use crate::engine::{DependencyGraph, VertexEditor};
+use crate::engine::VertexEditor;
+use crate::engine::graph::DependencyGraph;
+use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parse;
 
@@ -6,9 +8,14 @@ fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)
 }
 
+fn sheet1_cell(graph: &DependencyGraph, row: u32, col: u32) -> CellRef {
+    let sid = graph.sheet_id("Sheet1").unwrap();
+    CellRef::new(sid, Coord::from_excel(row, col, true, true))
+}
+
 #[test]
 fn test_set_range_values() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Excel uses 1-based indexing
     let values = vec![
@@ -25,15 +32,31 @@ fn test_set_range_values() {
     drop(editor);
 
     assert_eq!(summary.cells_affected, 9);
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 1), Some(lit_num(1.0)));
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 2), Some(lit_num(2.0)));
-    assert_eq!(graph.get_cell_value("Sheet1", 2, 1), Some(lit_num(4.0)));
-    assert_eq!(graph.get_cell_value("Sheet1", 3, 3), Some(lit_num(9.0)));
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 3, 3))
+            .is_some()
+    );
 }
 
 #[test]
 fn test_clear_range() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Populate a 3x3 range
     for row in 1..=3 {
@@ -54,14 +77,18 @@ fn test_clear_range() {
     assert_eq!(summary.cells_affected, 9);
     for row in 1..=3 {
         for col in 1..=3 {
-            assert_eq!(graph.get_cell_value("Sheet1", row, col), None);
+            assert!(
+                graph
+                    .get_vertex_id_for_address(&sheet1_cell(&graph, row, col))
+                    .is_none()
+            );
         }
     }
 }
 
 #[test]
 fn test_copy_range() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Source: A1:B2 with values and formulas
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
@@ -80,9 +107,18 @@ fn test_copy_range() {
 
     drop(editor);
 
-    // Values copied
-    assert_eq!(graph.get_cell_value("Sheet1", 4, 4), Some(lit_num(10.0)));
-    assert_eq!(graph.get_cell_value("Sheet1", 4, 5), Some(lit_num(20.0)));
+    // In Arrow-truth mode, VertexEditor does not have access to grid values.
+    // copy_range therefore only copies formulas/structure.
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 4))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 5))
+            .is_some()
+    );
 
     // Check if formulas exist at new location (they should be adjusted)
     let d5_value = graph.get_vertex_id_for_address(&graph.make_cell_ref("Sheet1", 5, 4));
@@ -91,12 +127,12 @@ fn test_copy_range() {
     let e5_value = graph.get_vertex_id_for_address(&graph.make_cell_ref("Sheet1", 5, 5));
     assert!(e5_value.is_some());
 
-    assert_eq!(summary.cells_affected, 4);
+    assert_eq!(summary.cells_affected, 2);
 }
 
 #[test]
 fn test_set_range_values_partial_overlap() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Set initial values
     graph
@@ -119,13 +155,21 @@ fn test_set_range_values_partial_overlap() {
     drop(editor);
 
     assert_eq!(summary.cells_affected, 4);
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 1), Some(lit_num(1.0)));
-    assert_eq!(graph.get_cell_value("Sheet1", 2, 2), Some(lit_num(4.0)));
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 2))
+            .is_some()
+    );
 }
 
 #[test]
 fn test_copy_range_with_absolute_references() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup source with absolute and relative references
     graph
@@ -157,7 +201,7 @@ fn test_copy_range_with_absolute_references() {
 
 #[test]
 fn test_clear_range_with_formulas() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup cells with formulas that reference each other
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
@@ -189,7 +233,7 @@ fn test_clear_range_with_formulas() {
 
 #[test]
 fn test_move_range() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Setup source range A1:B2
     graph.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
@@ -214,26 +258,32 @@ fn test_move_range() {
 
     drop(editor);
 
-    // Original location should be empty
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 1), None);
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 2), None);
-
-    // Values moved to new location
-    assert_eq!(graph.get_cell_value("Sheet1", 4, 4), Some(lit_num(10.0)));
-    assert_eq!(graph.get_cell_value("Sheet1", 4, 5), Some(lit_num(20.0)));
+    // In Arrow-truth mode, VertexEditor does not move grid values; it only moves formulas.
+    // Formulas from row 2 should now exist at row 5.
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 4))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 5))
+            .is_some()
+    );
 
     // C3 formula should be updated to reference D4 instead of A1
     let c3_formula = graph.get_formula(c3_id);
     assert!(c3_formula.is_some());
     // The formula should now reference D4
 
-    assert_eq!(summary.cells_affected, 4);
+    assert_eq!(summary.cells_affected, 2);
+    // move_range still clears the source addresses, so this counts all moved/cleared cells.
     assert_eq!(summary.cells_moved, 4);
 }
 
 #[test]
 fn test_set_range_values_large() {
-    let mut graph = DependencyGraph::new();
+    let mut graph = super::common::graph_truth_graph();
 
     // Create a 100x100 range
     let mut values = Vec::new();
@@ -253,14 +303,20 @@ fn test_set_range_values_large() {
 
     assert_eq!(summary.cells_affected, 10000);
 
-    // Spot check some values
-    assert_eq!(graph.get_cell_value("Sheet1", 1, 1), Some(lit_num(0.0)));
-    assert_eq!(
-        graph.get_cell_value("Sheet1", 50, 50),
-        Some(lit_num(4949.0))
+    // Spot check some vertices exist
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+            .is_some()
     );
-    assert_eq!(
-        graph.get_cell_value("Sheet1", 100, 100),
-        Some(lit_num(9999.0))
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 50, 50))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 100, 100))
+            .is_some()
     );
 }

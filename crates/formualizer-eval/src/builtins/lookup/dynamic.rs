@@ -1370,7 +1370,7 @@ impl GroupAggregation {
                 let mut sorted = values.to_vec();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 let mid = sorted.len() / 2;
-                if sorted.len() % 2 == 0 {
+                if sorted.len().is_multiple_of(2) {
                     (sorted[mid - 1] + sorted[mid]) / 2.0
                 } else {
                     sorted[mid]
@@ -1977,9 +1977,7 @@ impl Function for PivotByFn {
             }
 
             // Add to pivot data
-            let entry = pivot_data
-                .entry((row_key, col_key))
-                .or_insert_with(Vec::new);
+            let entry = pivot_data.entry((row_key, col_key)).or_default();
             if let Some(v) = val {
                 entry.push(v);
             }
@@ -3694,7 +3692,7 @@ mod tests {
                             LiteralValue::Number(n) => *n,
                             other => panic!("expected Int or Number got {other:?}"),
                         };
-                        assert!(n >= 1.0 && n <= 10.0, "Value {n} not in [1, 10]");
+                        assert!((1.0..=10.0).contains(&n), "Value {n} not in [1, 10]");
                         // Verify it's actually a whole number
                         assert!(n.fract() == 0.0, "Value {n} is not a whole number");
                     }

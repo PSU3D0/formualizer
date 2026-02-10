@@ -130,13 +130,66 @@ pub struct NamedRange {
     pub address: RangeAddress,
 }
 
+/// Stable representation of workbook/sheet scoped defined names.
+///
+/// Stage 1 supports only range-backed and literal-backed names.
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "json", serde(rename_all = "lowercase"))]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub enum DefinedNameScope {
+    #[default]
+    Workbook,
+    Sheet,
+}
+
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "json", serde(tag = "type", rename_all = "lowercase"))]
+#[derive(Clone, Debug, PartialEq)]
+pub enum DefinedNameDefinition {
+    Range { address: RangeAddress },
+    Literal { value: LiteralValue },
+}
+
+#[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DefinedName {
+    pub name: String,
+
+    #[cfg_attr(feature = "json", serde(default))]
+    pub scope: DefinedNameScope,
+
+    /// Sheet name for sheet-scoped names.
+    ///
+    /// For workbook-scoped names, this must be None.
+    #[cfg_attr(
+        feature = "json",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub scope_sheet: Option<String>,
+
+    pub definition: DefinedNameDefinition,
+}
+
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug)]
 pub struct TableDefinition {
     pub name: String,
     pub range: (u32, u32, u32, u32),
+    /// Whether the first row of `range` is a headers row.
+    ///
+    /// Deterministic resize rule:
+    /// - Tables are metadata-only; writing values just below/next to a table does NOT auto-expand
+    ///   the table. Callers must explicitly update table metadata (range/flags) if they want a
+    ///   resize.
+    #[cfg_attr(feature = "json", serde(default = "default_true"))]
+    pub header_row: bool,
     pub headers: Vec<String>,
     pub totals_row: bool,
+}
+
+#[cfg(feature = "json")]
+fn default_true() -> bool {
+    true
 }
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]
@@ -186,6 +239,13 @@ pub trait SpreadsheetReader: Send + Sync {
     fn access_granularity(&self) -> AccessGranularity;
     fn capabilities(&self) -> BackendCaps;
     fn sheet_names(&self) -> Result<Vec<String>, Self::Error>;
+
+    /// Workbook-level defined names (workbook scoped or sheet scoped).
+    ///
+    /// Default: no defined names.
+    fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
+        Ok(Vec::new())
+    }
 
     /// Constructor variants for different environments
     fn open_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error>
