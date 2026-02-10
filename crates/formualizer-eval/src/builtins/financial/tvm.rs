@@ -1475,6 +1475,55 @@ impl Function for DollarfrFn {
     }
 }
 
+/// RRI(nper, pv, fv) — equivalent interest rate for growth of an investment.
+/// Returns (fv/pv)^(1/nper) - 1  (i.e. CAGR).
+#[derive(Debug)]
+pub struct RriFn;
+impl Function for RriFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "RRI"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // nper
+                ArgSchema::number_lenient_scalar(), // pv
+                ArgSchema::number_lenient_scalar(), // fv
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let nper = coerce_num(&args[0])?;
+        let pv = coerce_num(&args[1])?;
+        let fv = coerce_num(&args[2])?;
+
+        // nper must be > 0, pv must be non-zero
+        if nper <= 0.0 || pv == 0.0 {
+            return Ok(CalcValue::Scalar(LiteralValue::Error(ExcelError::new_num())));
+        }
+
+        // If pv and fv have different signs, the ratio is negative and
+        // fractional exponent would produce NaN → Excel returns #NUM!
+        let ratio = fv / pv;
+        if ratio < 0.0 {
+            return Ok(CalcValue::Scalar(LiteralValue::Error(ExcelError::new_num())));
+        }
+
+        let result = ratio.powf(1.0 / nper) - 1.0;
+        Ok(CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(PmtFn));
@@ -1495,4 +1544,5 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(XirrFn));
     crate::function_registry::register_function(Arc::new(DollardeFn));
     crate::function_registry::register_function(Arc::new(DollarfrFn));
+    crate::function_registry::register_function(Arc::new(RriFn));
 }

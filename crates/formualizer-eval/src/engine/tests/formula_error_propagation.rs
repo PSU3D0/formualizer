@@ -36,3 +36,35 @@ fn formula_ref_propagates_error_after_bulk_ingest() {
         other => panic!("E8 expected #DIV/0!, got {other:?}"),
     }
 }
+
+#[test]
+fn rri_basic_cagr_calculation() {
+    // RRI(nper, pv, fv) = (fv/pv)^(1/nper) - 1
+    // Excel: =RRI(10, 1000, 2000) ≈ 0.07177 (CAGR for doubling in 10 periods)
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, EvalConfig::default());
+
+    // A1 = RRI(10, 1000, 2000)
+    engine.stage_formula_text("Sheet1", 1, 1, "=RRI(10, 1000, 2000)".to_string());
+    // B1 = _XLFN.RRI(10, 1000, 2000) — verify prefix stripping works
+    engine.stage_formula_text("Sheet1", 1, 2, "=_XLFN.RRI(10, 1000, 2000)".to_string());
+
+    engine.build_graph_all().expect("staged formulas build");
+    engine.evaluate_all().expect("evaluation succeeds");
+
+    let expected = (2000.0_f64 / 1000.0).powf(1.0 / 10.0) - 1.0;
+
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Number(n)) => {
+            assert!((n - expected).abs() < 1e-10, "A1 expected {expected}, got {n}");
+        }
+        other => panic!("A1 expected Number({expected}), got {other:?}"),
+    }
+
+    match engine.get_cell_value("Sheet1", 1, 2) {
+        Some(LiteralValue::Number(n)) => {
+            assert!((n - expected).abs() < 1e-10, "B1 expected {expected}, got {n}");
+        }
+        other => panic!("B1 expected Number({expected}), got {other:?}"),
+    }
+}
