@@ -68,6 +68,11 @@ where
     // Optional external ChangeLog pointer used by `Engine::action_with_logger`.
     // Stored as a raw pointer to avoid creating aliasing `&mut` borrows alongside `&mut Engine`.
     log: Option<*mut crate::engine::ChangeLog>,
+    // Optional Arrow undo journal used by `Engine::action_atomic`.
+    // Stored as a raw pointer to avoid aliasing issues with `&mut Engine`.
+    arrow_undo: Option<*mut crate::engine::ArrowUndoBatch>,
+    // True when this EngineAction must enforce conservative atomic transaction policy.
+    atomic_policy: bool,
 }
 
 impl<'a, R> EngineAction<'a, R>
@@ -104,12 +109,45 @@ where
                 });
             };
 
+            // For atomic journal mode, record computed overlay effects for this cell.
+            // Delta-overlay undo is recorded semantically based on old_value/old_formula.
+            let old_comp = if self.arrow_undo.is_some() {
+                self.engine.read_computed_overlay_cell(sheet, row, col)
+            } else {
+                None
+            };
+
+            let delta_old_sem = if old_formula.is_some() {
+                None
+            } else {
+                Some(old_value.clone().unwrap_or(LiteralValue::Empty))
+            };
+
+            let start_len = unsafe { (&*log_ptr).len() };
+
             // Safety: `log_ptr` comes from a unique `&mut ChangeLog` in `Engine::action_with_logger`.
             let log = unsafe { &mut *log_ptr };
             self.engine.edit_with_logger(log, |editor| {
                 editor.set_cell_value(addr, value.clone());
             });
-            log.patch_last_cell_event_old_state(addr, old_value, old_formula);
+            log.patch_last_cell_event_old_state(addr, old_value.clone(), old_formula.clone());
+
+            if let Some(undo_ptr) = self.arrow_undo {
+                // 1) Spill snapshot operations (computed overlay rect restore).
+                let new_events = &unsafe { (&*log_ptr).events() }[start_len..];
+                let undo = unsafe { &mut *undo_ptr };
+                self.engine
+                    .record_spill_ops_into_arrow_undo(undo, new_events);
+
+                // 2) Delta/computed overlay single-cell deltas.
+                let new_comp = self.engine.read_computed_overlay_cell(sheet, row, col);
+                let sheet_id = self.engine.graph.sheet_id_mut(sheet);
+                let row0 = row.saturating_sub(1);
+                let col0 = col.saturating_sub(1);
+                let delta_new_sem = Some(value.clone());
+                undo.record_delta_cell(sheet_id, row0, col0, delta_old_sem, delta_new_sem);
+                undo.record_computed_cell(sheet_id, row0, col0, old_comp, new_comp);
+            }
             Ok(())
         } else {
             self.engine
@@ -136,12 +174,35 @@ where
                 });
             };
 
+            let delta_old = if self.arrow_undo.is_some() {
+                if old_formula.is_some() {
+                    None
+                } else {
+                    Some(old_value.clone().unwrap_or(LiteralValue::Empty))
+                }
+            } else {
+                None
+            };
+            let start_len = unsafe { (&*log_ptr).len() };
+
             // Safety: `log_ptr` comes from a unique `&mut ChangeLog` in `Engine::action_with_logger`.
             let log = unsafe { &mut *log_ptr };
             self.engine.edit_with_logger(log, |editor| {
                 editor.set_cell_formula(addr, ast.clone());
             });
             log.patch_last_cell_event_old_state(addr, old_value, old_formula);
+
+            if let Some(undo_ptr) = self.arrow_undo {
+                let new_events = &unsafe { (&*log_ptr).events() }[start_len..];
+                let undo = unsafe { &mut *undo_ptr };
+                self.engine
+                    .record_spill_ops_into_arrow_undo(undo, new_events);
+                let delta_new: Option<LiteralValue> = None;
+                let sheet_id = self.engine.graph.sheet_id_mut(sheet);
+                let row0 = row.saturating_sub(1);
+                let col0 = col.saturating_sub(1);
+                undo.record_delta_cell(sheet_id, row0, col0, delta_old, delta_new);
+            }
             Ok(())
         } else {
             self.engine
@@ -158,12 +219,38 @@ where
         count: u32,
     ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
         if self.log.is_some() {
-            return Err(crate::engine::EditorError::TransactionFailed {
-                reason: "Engine::action_with_logger does not support row/column structural edits yet (ticket 615 scope)"
-                    .to_string(),
-            });
+            let Some(log_ptr) = self.log else {
+                return Err(crate::engine::EditorError::TransactionFailed {
+                    reason: "action_atomic: missing ChangeLog".to_string(),
+                });
+            };
+
+            let sheet_id = self.engine.graph.sheet_id_mut(sheet);
+            let before0 = before.saturating_sub(1);
+
+            // Graph structural insert (logged) - no snapshot bump.
+            let summary = {
+                let log = unsafe { &mut *log_ptr };
+                let mut out: Result<crate::engine::ShiftSummary, crate::engine::EditorError> =
+                    Ok(crate::engine::ShiftSummary::default());
+                self.engine.edit_with_logger(log, |editor| {
+                    out = editor.insert_rows(sheet_id, before0, count).map_err(Into::into);
+                });
+                out?
+            };
+
+            // Arrow insert (truth) + undo op.
+            self.engine.ensure_arrow_sheet(sheet);
+            if let Some(asheet) = self.engine.arrow_sheets.sheet_mut(sheet) {
+                asheet.insert_rows(before0 as usize, count as usize);
+            }
+            if let Some(undo_ptr) = self.arrow_undo {
+                unsafe { &mut *undo_ptr }.record_insert_rows(sheet_id, before0, count);
+            }
+            Ok(summary)
+        } else {
+            self.engine.insert_rows(sheet, before, count)
         }
-        self.engine.insert_rows(sheet, before, count)
     }
 
     #[inline]
@@ -173,10 +260,11 @@ where
         start: u32,
         count: u32,
     ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
-        if self.log.is_some() {
-            return Err(crate::engine::EditorError::TransactionFailed {
-                reason: "Engine::action_with_logger does not support row/column structural edits yet (ticket 615 scope)"
-                    .to_string(),
+        if self.atomic_policy {
+            return Err(crate::engine::EditorError::TransactionUnsupported {
+                reason:
+                    "delete_rows is not supported inside atomic actions (conservative rollback policy)"
+                        .to_string(),
             });
         }
         self.engine.delete_rows(sheet, start, count)
@@ -190,12 +278,38 @@ where
         count: u32,
     ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
         if self.log.is_some() {
-            return Err(crate::engine::EditorError::TransactionFailed {
-                reason: "Engine::action_with_logger does not support row/column structural edits yet (ticket 615 scope)"
-                    .to_string(),
-            });
+            let Some(log_ptr) = self.log else {
+                return Err(crate::engine::EditorError::TransactionFailed {
+                    reason: "action_atomic: missing ChangeLog".to_string(),
+                });
+            };
+
+            let sheet_id = self.engine.graph.sheet_id_mut(sheet);
+            let before0 = before.saturating_sub(1);
+
+            let summary = {
+                let log = unsafe { &mut *log_ptr };
+                let mut out: Result<crate::engine::ShiftSummary, crate::engine::EditorError> =
+                    Ok(crate::engine::ShiftSummary::default());
+                self.engine.edit_with_logger(log, |editor| {
+                    out = editor
+                        .insert_columns(sheet_id, before0, count)
+                        .map_err(Into::into);
+                });
+                out?
+            };
+
+            self.engine.ensure_arrow_sheet(sheet);
+            if let Some(asheet) = self.engine.arrow_sheets.sheet_mut(sheet) {
+                asheet.insert_columns(before0 as usize, count as usize);
+            }
+            if let Some(undo_ptr) = self.arrow_undo {
+                unsafe { &mut *undo_ptr }.record_insert_cols(sheet_id, before0, count);
+            }
+            Ok(summary)
+        } else {
+            self.engine.insert_columns(sheet, before, count)
         }
-        self.engine.insert_columns(sheet, before, count)
     }
 
     #[inline]
@@ -205,10 +319,11 @@ where
         start: u32,
         count: u32,
     ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
-        if self.log.is_some() {
-            return Err(crate::engine::EditorError::TransactionFailed {
-                reason: "Engine::action_with_logger does not support row/column structural edits yet (ticket 615 scope)"
-                    .to_string(),
+        if self.atomic_policy {
+            return Err(crate::engine::EditorError::TransactionUnsupported {
+                reason:
+                    "delete_columns is not supported inside atomic actions (conservative rollback policy)"
+                        .to_string(),
             });
         }
         self.engine.delete_columns(sheet, start, count)
@@ -1026,8 +1141,101 @@ where
             engine: self,
             name: name.as_ref().to_string(),
             log: None,
+            arrow_undo: None,
+            atomic_policy: false,
         };
         f(&mut tx)
+    }
+
+    /// Execute a named Engine action with atomic commit/rollback semantics.
+    ///
+    /// This variant does not require a `ChangeLog` and uses an internal journal for rollback.
+    pub fn action_atomic<T>(
+        &mut self,
+        name: impl Into<String>,
+        f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
+    ) -> Result<T, crate::engine::EditorError> {
+        let (v, _j) = self.action_atomic_journal(name, f)?;
+        Ok(v)
+    }
+
+    /// Like `action_atomic`, but returns the committed journal entry for undo/redo storage.
+    pub fn action_atomic_journal<T>(
+        &mut self,
+        name: impl Into<String>,
+        f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
+    ) -> Result<(T, crate::engine::ActionJournal), crate::engine::EditorError> {
+        if self.action_depth != 0 {
+            return Err(crate::engine::EditorError::TransactionFailed {
+                reason: "Nested Engine::action calls are not supported (deterministic rule)"
+                    .to_string(),
+            });
+        }
+
+        self.action_depth = 1;
+        let engine_ptr: *mut Engine<R> = self;
+        let _guard = ActionDepthGuard {
+            engine: engine_ptr,
+            _marker: std::marker::PhantomData,
+        };
+
+        let name_str = name.into();
+        let mut log = crate::engine::ChangeLog::new();
+        let start_len = log.len();
+        self.action_atomic_impl(&mut log, start_len, name_str, f)
+    }
+
+    fn action_atomic_impl<T>(
+        &mut self,
+        log: &mut crate::engine::ChangeLog,
+        start_len: usize,
+        name: String,
+        f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
+    ) -> Result<(T, crate::engine::ActionJournal), crate::engine::EditorError> {
+        let mut arrow_undo = crate::engine::ArrowUndoBatch::default();
+        let arrow_ptr: *mut crate::engine::ArrowUndoBatch = &mut arrow_undo;
+
+        let log_ptr: *mut crate::engine::ChangeLog = log;
+        let mut tx = EngineAction {
+            engine: self,
+            name: name.clone(),
+            log: Some(log_ptr),
+            arrow_undo: Some(arrow_ptr),
+            atomic_policy: true,
+        };
+
+        let res = f(&mut tx);
+
+        // Capture graph structural delta for this action.
+        let graph_events: Vec<crate::engine::ChangeEvent> = unsafe { (&*log_ptr).events() }[start_len..]
+            .to_vec();
+        let graph_batch = crate::engine::GraphUndoBatch { events: graph_events };
+        let affected_cells = arrow_undo.ops.len();
+        let journal = crate::engine::ActionJournal {
+            name,
+            graph: graph_batch,
+            arrow: arrow_undo,
+            affected_cells,
+        };
+
+        match res {
+            Ok(v) => {
+                if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+                    self.mark_data_edited();
+                }
+                Ok((v, journal))
+            }
+            Err(e) => {
+                if let Err(rb) = self.rollback_from_action_journal(&journal) {
+                    return Err(crate::engine::EditorError::TransactionFailed {
+                        reason: format!(
+                            "Engine::action_atomic rollback failed after error '{e}': {rb}"
+                        ),
+                    });
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Execute a named Engine action, logging graph changes into the provided ChangeLog.
@@ -1044,7 +1252,7 @@ where
     ) -> Result<T, crate::engine::EditorError> {
         if self.action_depth != 0 {
             return Err(crate::engine::EditorError::TransactionFailed {
-                reason: "Nested Engine::action calls are not supported (ticket 614: commit-only surface)"
+                reason: "Nested Engine::action calls are not supported (deterministic rule)"
                     .to_string(),
             });
         }
@@ -1058,48 +1266,35 @@ where
 
         let start_len = log.len();
         let name_str = name.as_ref().to_string();
-
-        // Establish a compound boundary for the action.
-        // Note: ChangeLog compound bookkeeping must also be rolled back, so we always end the
-        // compound before truncating events on rollback.
         log.begin_compound(name_str.clone());
-        let log_ptr: *mut crate::engine::ChangeLog = log;
 
-        let mut tx = EngineAction {
-            engine: self,
-            name: name_str,
-            log: Some(log_ptr),
-        };
-
-        let res = f(&mut tx);
+        // Use the provided ChangeLog as an observability sink.
+        // Correctness is provided by the internal `ActionJournal` returned from the atomic impl.
+        let res = self.action_atomic_impl(log, start_len, name_str, f);
 
         match res {
-            Ok(v) => {
-                unsafe { (&mut *log_ptr).end_compound() };
-                // Mirror Workbook's behavior: a logged edit session must bump the snapshot.
-                if unsafe { (&*log_ptr).len() } > start_len {
-                    self.mark_data_edited();
-                }
+            Ok((v, _journal)) => {
+                log.end_compound();
                 Ok(v)
             }
             Err(e) => {
-                // Close the compound before truncating so the compound stack is not leaked.
-                unsafe { (&mut *log_ptr).end_compound() };
-                // Extract and truncate log first (ChangeLog rollback requirement).
-                let events = unsafe { (&mut *log_ptr).take_from(start_len) };
-
-                // Rollback graph + Arrow overlays.
-                if let Err(rb) = self.rollback_from_change_events(&events) {
-                    return Err(crate::engine::EditorError::TransactionFailed {
-                        reason: format!(
-                            "Engine::action_with_logger rollback failed after error '{e}': {rb}"
-                        ),
-                    });
-                }
-
+                // Close compound and truncate log as cleanup only.
+                log.end_compound();
+                log.truncate(start_len);
                 Err(e)
             }
         }
+    }
+
+    fn rollback_from_action_journal(
+        &mut self,
+        journal: &crate::engine::ActionJournal,
+    ) -> Result<(), crate::engine::EditorError> {
+        // 1) Roll back the dependency graph structure.
+        journal.graph.undo(&mut self.graph)?;
+        // 2) Roll back Arrow-truth overlays.
+        self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
+        Ok(())
     }
 
     fn rollback_from_change_events(
@@ -1208,6 +1403,42 @@ where
     ) -> Result<(), crate::engine::EditorError> {
         let batch = undo.redo(&mut self.graph, log)?;
         self.mirror_redo_batch_to_arrow(&batch);
+        Ok(())
+    }
+
+    /// Undo the last committed atomic action using the journal stack.
+    ///
+    /// This path does not require a `ChangeLog`.
+    pub fn undo_action(
+        &mut self,
+        undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
+    ) -> Result<(), crate::engine::EditorError> {
+        let Some(journal) = undo.pop_undo_action() else {
+            return Ok(());
+        };
+
+        journal.graph.undo(&mut self.graph)?;
+        self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
+
+        undo.push_redo_action(journal);
+        Ok(())
+    }
+
+    /// Redo the last undone atomic action using the journal stack.
+    ///
+    /// This path does not require a `ChangeLog`.
+    pub fn redo_action(
+        &mut self,
+        undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
+    ) -> Result<(), crate::engine::EditorError> {
+        let Some(journal) = undo.pop_redo_action() else {
+            return Ok(());
+        };
+
+        journal.graph.redo(&mut self.graph)?;
+        self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ false);
+
+        undo.push_done_action(journal);
         Ok(())
     }
 
@@ -2010,6 +2241,357 @@ where
         };
         if let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) {
             let _ = ch.overlay.remove(in_off);
+        }
+    }
+
+    #[inline]
+    fn overlay_value_to_literal(&self, ov: &crate::arrow_store::OverlayValue) -> LiteralValue {
+        use crate::arrow_store::OverlayValue;
+        match ov {
+            OverlayValue::Empty => LiteralValue::Empty,
+            OverlayValue::Number(n) => LiteralValue::Number(*n),
+            OverlayValue::DateTime(serial) => LiteralValue::from_serial_number(*serial),
+            OverlayValue::Duration(serial) => {
+                let nanos_f = *serial * 86_400.0 * 1_000_000_000.0;
+                let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
+                LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
+            }
+            OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
+            OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
+            OverlayValue::Error(code) => {
+                let kind = crate::arrow_store::unmap_error_code(*code);
+                LiteralValue::Error(formualizer_common::ExcelError::new(kind))
+            }
+            OverlayValue::Pending => LiteralValue::Pending,
+        }
+    }
+
+    #[inline]
+    fn literal_to_overlay_value(&self, value: &LiteralValue) -> crate::arrow_store::OverlayValue {
+        use crate::arrow_store::OverlayValue;
+        match value {
+            LiteralValue::Empty => OverlayValue::Empty,
+            LiteralValue::Int(i) => OverlayValue::Number(*i as f64),
+            LiteralValue::Number(n) => OverlayValue::Number(*n),
+            LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
+            LiteralValue::Text(s) => OverlayValue::Text(std::sync::Arc::from(s.clone())),
+            LiteralValue::Error(e) => OverlayValue::Error(crate::arrow_store::map_error_code(e.kind)),
+            LiteralValue::Date(d) => {
+                let dt = d.and_hms_opt(0, 0, 0).unwrap();
+                let serial = crate::builtins::datetime::datetime_to_serial_for(self.config.date_system, &dt);
+                OverlayValue::DateTime(serial)
+            }
+            LiteralValue::DateTime(dt) => {
+                let serial = crate::builtins::datetime::datetime_to_serial_for(self.config.date_system, dt);
+                OverlayValue::DateTime(serial)
+            }
+            LiteralValue::Time(t) => {
+                let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
+                OverlayValue::DateTime(serial)
+            }
+            LiteralValue::Duration(d) => {
+                let serial = d.num_seconds() as f64 / 86_400.0;
+                OverlayValue::Duration(serial)
+            }
+            LiteralValue::Pending => OverlayValue::Pending,
+            LiteralValue::Array(_) => OverlayValue::Error(crate::arrow_store::map_error_code(
+                formualizer_common::ExcelErrorKind::Value,
+            )),
+        }
+    }
+
+    /// Read a single cell's delta overlay entry (if present), preserving the distinction between
+    /// absent and explicit `Empty`.
+    fn read_delta_overlay_cell(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
+        if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
+            return None;
+        }
+        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
+            return None;
+        };
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        if row0 >= asheet.nrows as usize || col0 >= asheet.columns.len() {
+            return None;
+        }
+        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+            return None;
+        };
+        let Some(ch) = asheet.columns[col0].chunk(ch_idx) else {
+            return None;
+        };
+        ch.overlay.get(in_off).map(|ov| self.overlay_value_to_literal(ov))
+    }
+
+    /// Read a single cell's computed overlay entry (if present), preserving the distinction
+    /// between absent and explicit `Empty`.
+    fn read_computed_overlay_cell(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+        {
+            return None;
+        }
+        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
+            return None;
+        };
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        if row0 >= asheet.nrows as usize || col0 >= asheet.columns.len() {
+            return None;
+        }
+        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+            return None;
+        };
+        let Some(ch) = asheet.columns[col0].chunk(ch_idx) else {
+            return None;
+        };
+        ch.computed_overlay
+            .get(in_off)
+            .map(|ov| self.overlay_value_to_literal(ov))
+    }
+
+    fn set_delta_overlay_cell_raw(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: Option<LiteralValue>,
+    ) {
+        if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
+            return;
+        }
+
+        self.ensure_arrow_sheet(sheet);
+        let ov_opt = value.as_ref().map(|v| self.literal_to_overlay_value(v));
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        let asheet = self
+            .arrow_sheets
+            .sheet_mut(sheet)
+            .expect("ArrowSheet must exist");
+
+        let cur_cols = asheet.columns.len();
+        if col0 >= cur_cols {
+            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
+        }
+        if row0 >= asheet.nrows as usize {
+            if asheet.columns.is_empty() {
+                asheet.insert_columns(0, 1);
+            }
+            asheet.ensure_row_capacity(row0 + 1);
+        }
+
+        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+            return;
+        };
+        let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) else {
+            return;
+        };
+
+        if let Some(ov) = ov_opt {
+            let _ = ch.overlay.set(in_off, ov);
+        } else {
+            let _ = ch.overlay.remove(in_off);
+        }
+    }
+
+    fn set_computed_overlay_cell_raw(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: Option<LiteralValue>,
+    ) {
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+        {
+            return;
+        }
+
+        self.ensure_arrow_sheet(sheet);
+        let ov_opt = value.as_ref().map(|v| self.literal_to_overlay_value(v));
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        let asheet = self
+            .arrow_sheets
+            .sheet_mut(sheet)
+            .expect("ArrowSheet must exist");
+
+        let cur_cols = asheet.columns.len();
+        if col0 >= cur_cols {
+            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
+        }
+        if row0 >= asheet.nrows as usize {
+            if asheet.columns.is_empty() {
+                asheet.insert_columns(0, 1);
+            }
+            asheet.ensure_row_capacity(row0 + 1);
+        }
+
+        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+            return;
+        };
+        let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) else {
+            return;
+        };
+
+        let delta = if let Some(ov) = ov_opt {
+            ch.computed_overlay.set(in_off, ov)
+        } else {
+            ch.computed_overlay.remove(in_off)
+        };
+        self.adjust_computed_overlay_bytes(delta);
+    }
+
+    fn apply_arrow_undo_batch(&mut self, batch: &crate::engine::ArrowUndoBatch, undo: bool) {
+        use crate::engine::ArrowOp;
+
+        let iter: Box<dyn Iterator<Item = &ArrowOp>> = if undo {
+            Box::new(batch.ops.iter().rev())
+        } else {
+            Box::new(batch.ops.iter())
+        };
+
+        for op in iter {
+            match op {
+                ArrowOp::SetDeltaCell {
+                    sheet_id,
+                    row0,
+                    col0,
+                    old,
+                    new,
+                } => {
+                    let sheet = self.graph.sheet_name(*sheet_id).to_string();
+                    let v = if undo { old.clone() } else { new.clone() };
+                    self.set_delta_overlay_cell_raw(&sheet, row0 + 1, col0 + 1, v);
+                }
+                ArrowOp::SetComputedCell {
+                    sheet_id,
+                    row0,
+                    col0,
+                    old,
+                    new,
+                } => {
+                    let sheet = self.graph.sheet_name(*sheet_id).to_string();
+                    let v = if undo { old.clone() } else { new.clone() };
+                    self.set_computed_overlay_cell_raw(&sheet, row0 + 1, col0 + 1, v);
+                }
+                ArrowOp::RestoreComputedRect {
+                    sheet_id,
+                    sr0,
+                    sc0,
+                    er0,
+                    ec0,
+                    old,
+                    new,
+                } => {
+                    let sheet = self.graph.sheet_name(*sheet_id).to_string();
+                    let vals = if undo { old } else { new };
+                    let height = (*er0).saturating_sub(*sr0) as usize + 1;
+                    let width = (*ec0).saturating_sub(*sc0) as usize + 1;
+                    for r in 0..height {
+                        for c in 0..width {
+                            let v = vals
+                                .get(r)
+                                .and_then(|row| row.get(c))
+                                .cloned()
+                                .unwrap_or(LiteralValue::Empty);
+                            self.set_computed_overlay_cell_raw(
+                                &sheet,
+                                *sr0 + 1 + r as u32,
+                                *sc0 + 1 + c as u32,
+                                Some(v),
+                            );
+                        }
+                    }
+                }
+                ArrowOp::InsertRows {
+                    sheet_id,
+                    before0,
+                    count,
+                } => {
+                    let sheet = self.graph.sheet_name(*sheet_id).to_string();
+                    self.ensure_arrow_sheet(&sheet);
+                    if let Some(asheet) = self.arrow_sheets.sheet_mut(&sheet) {
+                        if undo {
+                            asheet.delete_rows(*before0 as usize, *count as usize);
+                        } else {
+                            asheet.insert_rows(*before0 as usize, *count as usize);
+                        }
+                    }
+                }
+                ArrowOp::InsertCols {
+                    sheet_id,
+                    before0,
+                    count,
+                } => {
+                    let sheet = self.graph.sheet_name(*sheet_id).to_string();
+                    self.ensure_arrow_sheet(&sheet);
+                    if let Some(asheet) = self.arrow_sheets.sheet_mut(&sheet) {
+                        if undo {
+                            asheet.delete_columns(*before0 as usize, *count as usize);
+                        } else {
+                            asheet.insert_columns(*before0 as usize, *count as usize);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn record_spill_ops_into_arrow_undo(
+        &mut self,
+        undo: &mut crate::engine::ArrowUndoBatch,
+        events: &[crate::engine::ChangeEvent],
+    ) {
+        use crate::engine::ChangeEvent;
+        use formualizer_common::LiteralValue;
+
+        let rect_from_snapshot =
+            |snap: &crate::engine::graph::editor::change_log::SpillSnapshot|
+             -> Option<(SheetId, u32, u32, u32, u32, Vec<Vec<LiteralValue>>)> {
+                if snap.target_cells.is_empty() {
+                    return None;
+                }
+                let sheet_id = snap.target_cells[0].sheet_id;
+                let sr0 = snap.target_cells[0].coord.row();
+                let sc0 = snap.target_cells[0].coord.col();
+                if snap.values.is_empty() || snap.values[0].is_empty() {
+                    return None;
+                }
+                let h = snap.values.len() as u32;
+                let w = snap.values[0].len() as u32;
+                let er0 = sr0.saturating_add(h.saturating_sub(1));
+                let ec0 = sc0.saturating_add(w.saturating_sub(1));
+                Some((sheet_id, sr0, sc0, er0, ec0, snap.values.clone()))
+            };
+
+        for ev in events {
+            match ev {
+                ChangeEvent::SpillCommitted { old, new, .. } => {
+                    if let Some((sid, sr0, sc0, er0, ec0, new_vals)) = rect_from_snapshot(new) {
+                        let old_vals = if let Some(old_snap) = old {
+                            rect_from_snapshot(old_snap)
+                                .map(|(_, _, _, _, _, v)| v)
+                                .unwrap_or_else(|| {
+                                    vec![vec![LiteralValue::Empty; new_vals[0].len()]; new_vals.len()]
+                                })
+                        } else {
+                            vec![vec![LiteralValue::Empty; new_vals[0].len()]; new_vals.len()]
+                        };
+                        undo.record_restore_computed_rect(sid, sr0, sc0, er0, ec0, old_vals, new_vals);
+                    }
+                }
+                ChangeEvent::SpillCleared { old, .. } => {
+                    if let Some((sid, sr0, sc0, er0, ec0, old_vals)) = rect_from_snapshot(old) {
+                        let new_vals = vec![vec![LiteralValue::Empty; old_vals[0].len()]; old_vals.len()];
+                        undo.record_restore_computed_rect(sid, sr0, sc0, er0, ec0, old_vals, new_vals);
+                    }
+                }
+                _ => {}
+            }
         }
     }
 

@@ -393,7 +393,7 @@ impl Workbook {
             });
         }
 
-        let res = self.engine.action(name, |tx| {
+        let res = self.engine.action_atomic_journal(name.to_string(), |tx| {
             struct TxOps<'a, 'e> {
                 tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
             }
@@ -486,15 +486,22 @@ impl Workbook {
         if let Some(e) = user_err {
             return Err(e);
         }
-        res.map_err(|e| match e {
-            formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
-            other => IoError::from_backend("editor", other),
-        })
+        let (v, journal) = res
+            .map_err(|e| match e {
+                formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
+                other => IoError::from_backend("editor", other),
+            })?;
+        self.undo.push_action(journal);
+        Ok(v)
     }
     pub fn undo(&mut self) -> Result<(), IoError> {
         if self.enable_changelog {
             self.engine
                 .undo_logged(&mut self.undo, &mut self.log)
+                .map_err(|e| IoError::from_backend("editor", e))?;
+        } else {
+            self.engine
+                .undo_action(&mut self.undo)
                 .map_err(|e| IoError::from_backend("editor", e))?;
         }
         Ok(())
@@ -503,6 +510,10 @@ impl Workbook {
         if self.enable_changelog {
             self.engine
                 .redo_logged(&mut self.undo, &mut self.log)
+                .map_err(|e| IoError::from_backend("editor", e))?;
+        } else {
+            self.engine
+                .redo_action(&mut self.undo)
                 .map_err(|e| IoError::from_backend("editor", e))?;
         }
         Ok(())

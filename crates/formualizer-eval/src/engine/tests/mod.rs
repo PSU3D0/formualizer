@@ -44,6 +44,9 @@ mod engine_action_api_614;
 mod engine_action_rollback_615;
 mod engine_transactions_617;
 
+mod engine_action_log_sink_618;
+mod engine_atomic_actions_618;
+
 mod infinite_ranges;
 mod spill_atomic;
 mod spill_basic;

@@ -122,6 +122,7 @@ pub enum EditorError {
     OutOfBounds { row: u32, col: u32 },
     InvalidName { name: String, reason: String },
     TransactionFailed { reason: String },
+    TransactionUnsupported { reason: String },
     NoActiveTransaction,
     VertexNotFound { id: VertexId },
     Excel(ExcelError),
@@ -152,6 +153,9 @@ impl std::fmt::Display for EditorError {
             }
             EditorError::TransactionFailed { reason } => {
                 write!(f, "Transaction failed: {reason}")
+            }
+            EditorError::TransactionUnsupported { reason } => {
+                write!(f, "Transaction unsupported: {reason}")
             }
             EditorError::NoActiveTransaction => {
                 write!(f, "No active transaction")

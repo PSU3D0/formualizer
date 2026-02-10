@@ -9,6 +9,7 @@ pub mod eval_delta;
 pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
+pub mod journal;
 pub mod plan;
 pub mod range_view;
 pub mod scheduler;
@@ -36,6 +37,7 @@ pub mod tuning;
 mod tests;
 
 pub use eval::{Engine, EngineAction, EvalResult, RecalcPlan};
+pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 pub use eval_delta::{DeltaMode, EvalDelta};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;

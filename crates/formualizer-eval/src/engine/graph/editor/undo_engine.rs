@@ -14,11 +14,41 @@ pub struct UndoBatchItem {
 pub struct UndoEngine {
     /// Stack of applied groups (their last event index snapshot) for redo separation
     undone: Vec<Vec<UndoBatchItem>>, // redo stack stores full event batches
+
+    /// Journal-based undo/redo stack for atomic actions.
+    actions_done: Vec<crate::engine::ActionJournal>,
+    actions_undone: Vec<crate::engine::ActionJournal>,
 }
 
 impl UndoEngine {
     pub fn new() -> Self {
-        Self { undone: Vec::new() }
+        Self {
+            undone: Vec::new(),
+            actions_done: Vec::new(),
+            actions_undone: Vec::new(),
+        }
+    }
+
+    /// Record a committed atomic action journal for future undo/redo.
+    pub fn push_action(&mut self, journal: crate::engine::ActionJournal) {
+        self.actions_done.push(journal);
+        self.actions_undone.clear();
+    }
+
+    pub fn pop_undo_action(&mut self) -> Option<crate::engine::ActionJournal> {
+        self.actions_done.pop()
+    }
+
+    pub fn push_redo_action(&mut self, journal: crate::engine::ActionJournal) {
+        self.actions_undone.push(journal);
+    }
+
+    pub fn pop_redo_action(&mut self) -> Option<crate::engine::ActionJournal> {
+        self.actions_undone.pop()
+    }
+
+    pub fn push_done_action(&mut self, journal: crate::engine::ActionJournal) {
+        self.actions_done.push(journal);
     }
 
     /// Undo last group in the provided change log, applying inverses through a VertexEditor.
