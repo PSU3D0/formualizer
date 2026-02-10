@@ -10,44 +10,35 @@ use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum CsvEncoding {
     /// CSV v1 supports UTF-8 only.
+    #[default]
     Utf8,
 }
 
-impl Default for CsvEncoding {
-    fn default() -> Self {
-        Self::Utf8
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum CsvTrim {
+    #[default]
     None,
     All,
 }
 
-impl Default for CsvTrim {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum CsvTypeInference {
     /// Do not infer: treat all non-empty fields as text.
     Off,
     /// Infer booleans + numbers when unambiguous.
+    #[default]
     Basic,
     /// Like `Basic`, plus conservative date/date-time parsing.
     BasicWithDates,
 }
 
-impl Default for CsvTypeInference {
-    fn default() -> Self {
-        Self::Basic
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct CsvReadOptions {
@@ -76,34 +67,30 @@ impl Default for CsvReadOptions {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum CsvNewline {
+    #[default]
     Lf,
     Crlf,
 }
 
-impl Default for CsvNewline {
-    fn default() -> Self {
-        Self::Lf
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum CsvQuoteStyle {
+    #[default]
     Necessary,
     Always,
     Never,
     NonNumeric,
 }
 
-impl Default for CsvQuoteStyle {
-    fn default() -> Self {
-        Self::Necessary
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum CsvArrayPolicy {
     /// Reject exporting arrays to CSV.
+    #[default]
     Error,
     /// Export only the top-left element (`[0][0]`).
     TopLeft,
@@ -111,11 +98,6 @@ pub enum CsvArrayPolicy {
     Blank,
 }
 
-impl Default for CsvArrayPolicy {
-    fn default() -> Self {
-        Self::Error
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct CsvWriteOptions {
@@ -952,11 +934,10 @@ fn literal_to_csv_field_inner(
             }
             CsvArrayPolicy::Blank => String::new(),
             CsvArrayPolicy::TopLeft => {
-                if let Some(row0) = a.first() {
-                    if let Some(v0) = row0.first() {
+                if let Some(row0) = a.first()
+                    && let Some(v0) = row0.first() {
                         return literal_to_csv_field_inner(v0, opts, depth + 1);
                     }
-                }
                 String::new()
             }
         },

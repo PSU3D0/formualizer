@@ -718,11 +718,10 @@ impl<'g> VertexEditor<'g> {
             flags,
         });
 
-        if did_spill_clear {
-            if let Some(logger) = &mut self.change_logger {
+        if did_spill_clear
+            && let Some(logger) = &mut self.change_logger {
                 logger.end_compound();
             }
-        }
 
         Ok(())
     }
@@ -1437,11 +1436,10 @@ impl<'g> VertexEditor<'g> {
                 };
                 self.log_change(change_event);
 
-                if did_spill_clear {
-                    if let Some(logger) = &mut self.change_logger {
+                if did_spill_clear
+                    && let Some(logger) = &mut self.change_logger {
                         logger.end_compound();
                     }
-                }
 
                 summary
                     .affected_vertices
@@ -1500,11 +1498,10 @@ impl<'g> VertexEditor<'g> {
                 };
                 self.log_change(change_event);
 
-                if did_spill_clear {
-                    if let Some(logger) = &mut self.change_logger {
+                if did_spill_clear
+                    && let Some(logger) = &mut self.change_logger {
                         logger.end_compound();
                     }
-                }
 
                 summary
                     .affected_vertices

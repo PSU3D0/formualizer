@@ -852,12 +852,11 @@ impl<'a> Interpreter<'a> {
             }
 
             // Number + Date => date (commutative)
-            if op == '+' {
-                if let Some(rs) = date_like_serial(&r) {
+            if op == '+'
+                && let Some(rs) = date_like_serial(&r) {
                     let ln = to_num(&l)?;
                     return Ok(serial_to_literal(ln + rs));
                 }
-            }
 
             // Fallback: regular numeric operation
             self.numeric_binary(l, r, |a, b| if op == '+' { a + b } else { a - b })

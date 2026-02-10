@@ -1026,15 +1026,14 @@ impl<'a> SheetPort<'a> {
             volatile_overridden = true;
         }
 
-        if let Some(mode) = options.deterministic_mode.clone() {
-            if mode != deterministic_mode {
+        if let Some(mode) = options.deterministic_mode.clone()
+            && mode != deterministic_mode {
                 self.workbook
                     .engine_mut()
                     .set_deterministic_mode(mode)
                     .map_err(SheetPortError::from)?;
                 deterministic_overridden = true;
             }
-        }
 
         Ok(EvalConfigRestore {
             seed,

@@ -145,7 +145,7 @@ impl DeterministicMode {
                 timestamp_utc,
                 timezone,
             } => std::sync::Arc::new(crate::timezone::FixedClock::new(
-                timestamp_utc.clone(),
+                *timestamp_utc,
                 timezone.clone(),
             )),
         })

@@ -235,8 +235,7 @@ where
                     Ok(crate::engine::ShiftSummary::default());
                 self.engine.edit_with_logger(log, |editor| {
                     out = editor
-                        .insert_rows(sheet_id, before0, count)
-                        .map_err(Into::into);
+                        .insert_rows(sheet_id, before0, count);
                 });
                 out?
             };
@@ -295,8 +294,7 @@ where
                     Ok(crate::engine::ShiftSummary::default());
                 self.engine.edit_with_logger(log, |editor| {
                     out = editor
-                        .insert_columns(sheet_id, before0, count)
-                        .map_err(Into::into);
+                        .insert_columns(sheet_id, before0, count);
                 });
                 out?
             };
@@ -5032,7 +5030,7 @@ where
         }
 
         // Non-formula vertices: store value as-is (arrays remain arrays; no spill).
-        if let Some(d) = delta.as_deref_mut() {
+        if let Some(d) = delta {
             self.update_vertex_value_with_delta(vertex_id, result, d);
         } else {
             self.graph.update_vertex_value(vertex_id, result.clone());
@@ -5055,7 +5053,7 @@ where
             .map(|cells| cells.to_vec())
             .unwrap_or_default();
 
-        if let Some(d) = delta.as_deref_mut()
+        if let Some(d) = delta
             && d.mode != DeltaMode::Off
             && let Some(anchor) = self.graph.get_cell_ref_for_vertex(vertex_id)
         {
@@ -5261,7 +5259,7 @@ where
                         expected_cols: w,
                     });
                 let spill_val = LiteralValue::Error(spill_err.clone());
-                if let Some(d) = delta.as_deref_mut()
+                if let Some(d) = delta
                     && d.mode != DeltaMode::Off
                 {
                     let old = self
@@ -6964,9 +6962,9 @@ where
         value: &LiteralValue,
         delta: Option<&mut DeltaCollector>,
     ) {
-        if let Some(d) = delta {
-            if d.mode != DeltaMode::Off {
-                if let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id) {
+        if let Some(d) = delta
+            && d.mode != DeltaMode::Off
+                && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id) {
                     let sheet_name = self.graph.sheet_name(cell.sheet_id);
                     let old = self
                         .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
@@ -6975,8 +6973,6 @@ where
                         d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
                     }
                 }
-            }
-        }
         self.graph.update_vertex_value(vertex_id, value.clone());
         self.mirror_vertex_value_to_overlay(vertex_id, value);
     }
@@ -7005,8 +7001,8 @@ where
         };
 
         // Record delta for cleared cells.
-        if let Some(d) = delta {
-            if d.mode != DeltaMode::Off {
+        if let Some(d) = delta
+            && d.mode != DeltaMode::Off {
                 let empty = LiteralValue::Empty;
                 for cell in spill_cells.iter() {
                     let sheet_name = self.graph.sheet_name(cell.sheet_id);
@@ -7018,7 +7014,6 @@ where
                     }
                 }
             }
-        }
 
         self.graph.clear_spill_region(anchor_vertex);
 
@@ -7040,14 +7035,13 @@ where
         }
 
         // ChangeLog.
-        if let Some(log) = log {
-            if let Some(old) = snapshot {
+        if let Some(log) = log
+            && let Some(old) = snapshot {
                 log.record(ChangeEvent::SpillCleared {
                     anchor: anchor_vertex,
                     old,
                 });
             }
-        }
     }
 
     /// Apply a SpillCommit effect.
