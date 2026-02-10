@@ -6,16 +6,35 @@ use pyo3::prelude::*;
 use pyo3::types::{
     PyAny, PyBool, PyDate, PyDateTime, PyDelta, PyDict, PyFloat, PyInt, PyList, PyString, PyTime,
 };
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
-/// Python representation of a LiteralValue from the formula engine
-#[pyclass(name = "LiteralValue")]
+/// A typed scalar or array value understood by the formula engine.
+///
+/// You can construct `LiteralValue` instances explicitly (e.g. `LiteralValue.number(1.23)`),
+/// but most APIs also accept Python primitives and will convert them automatically.
+///
+/// Example:
+///     ```python
+///     import formualizer as fz
+///
+///     v1 = fz.LiteralValue.number(1.5)
+///     v2 = fz.LiteralValue.text("hello")
+///
+///     wb = fz.Workbook()
+///     s = wb.sheet("Data")
+///     s.set_value(1, 1, v1)
+///     s.set_value(1, 2, v2)
+///     ```
+#[gen_stub_pyclass]
+#[pyclass(name = "LiteralValue", module = "formualizer")]
 #[derive(Clone, Debug)]
 pub struct PyLiteralValue {
     pub(crate) inner: LiteralValue,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyLiteralValue {
     /// Extract as Python int; errors if not an Int

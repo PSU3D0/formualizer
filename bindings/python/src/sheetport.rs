@@ -17,6 +17,7 @@ use pyo3::conversion::IntoPyObjectExt;
 use pyo3::exceptions::{PyException, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde_json::Value as JsonValue;
 
 pyo3::create_exception!(formualizer, SheetPortError, PyException);
@@ -28,12 +29,62 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 
 type RuntimeResult<T> = Result<T, RuntimeSheetPortError>;
 
+/// Bind a SheetPort manifest to a workbook and evaluate it like a typed function.
+///
+/// A SheetPort manifest describes "ports" (typed inputs and outputs) and how they
+/// map to cell ranges in a spreadsheet.
+///
+/// This makes a spreadsheet behave like an API:
+/// - validate inputs against schema/constraints
+/// - write inputs into the workbook
+/// - evaluate once (optionally deterministically)
+/// - read outputs back into Python
+///
+/// Example:
+///     ```python
+///     from formualizer import SheetPortSession, Workbook
+///
+///     manifest_yaml = (
+///         "spec: fio\n"
+///         "spec_version: \"0.3.0\"\n"
+///         "manifest:\n"
+///         "  id: pricing-model\n"
+///         "  name: Pricing Model\n"
+///         "  workbook:\n"
+///         "    uri: memory://pricing.xlsx\n"
+///         "    locale: en-US\n"
+///         "    date_system: 1900\n"
+///         "ports:\n"
+///         "  - id: base_price\n"
+///         "    dir: in\n"
+///         "    shape: scalar\n"
+///         "    location: { a1: Inputs!A1 }\n"
+///         "    schema: { type: number }\n"
+///         "  - id: final_price\n"
+///         "    dir: out\n"
+///         "    shape: scalar\n"
+///         "    location: { a1: Outputs!A1 }\n"
+///         "    schema: { type: number }\n"
+///     )
+///
+///     wb = Workbook()
+///     wb.add_sheet("Inputs")
+///     wb.add_sheet("Outputs")
+///     wb.set_formula("Outputs", 1, 1, "=Inputs!A1*1.2")
+///
+///     session = SheetPortSession.from_manifest_yaml(manifest_yaml, wb)
+///     session.write_inputs({"base_price": 100.0})
+///     out = session.evaluate_once(freeze_volatile=True)
+///     print(out["final_price"])
+///     ```
+#[gen_stub_pyclass]
 #[pyclass(name = "SheetPortSession", module = "formualizer")]
 pub struct PySheetPortSession {
     workbook: PyWorkbook,
     bindings: ManifestBindings,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PySheetPortSession {
     #[classmethod]
@@ -151,6 +202,17 @@ impl PySheetPortSession {
             .and_then(|snapshot| snapshot_to_py(py, snapshot.inner()))
     }
 
+    /// Write input values into the bound workbook.
+    ///
+    /// Args:
+    ///     update: A Python `dict` mapping port IDs to values.
+    ///
+    /// Values are validated and converted based on the manifest schema.
+    ///
+    /// Example:
+    ///     ```python
+    ///     session.write_inputs({"base_price": 100.0, "qty": 2})
+    ///     ```
     pub fn write_inputs(&mut self, py: Python<'_>, update: &Bound<'_, PyAny>) -> PyResult<()> {
         let dict = update.cast::<PyDict>().map_err(|_| {
             PyErr::new::<PyTypeError, _>("input updates must be provided as a dict")
@@ -160,6 +222,31 @@ impl PySheetPortSession {
             .map(|_| ())
     }
 
+    /// Evaluate the workbook once and return the output snapshot.
+    ///
+    /// This performs a single end-to-end SheetPort evaluation:
+    /// - applies deterministic options (optional)
+    /// - evaluates the workbook
+    /// - reads port outputs and returns them as a Python dict
+    ///
+    /// Determinism:
+    /// - `freeze_volatile=True` freezes volatile functions (e.g. `NOW()`, `RAND()`) within the evaluation.
+    /// - `rng_seed` sets a seed used by random functions.
+    /// - `deterministic_timestamp_utc` + `deterministic_timezone` control time and timezone.
+    ///
+    /// Example:
+    ///     ```python
+    ///     import datetime
+    ///     from formualizer import SheetPortSession
+    ///
+    ///     out = session.evaluate_once(
+    ///         freeze_volatile=True,
+    ///         rng_seed=123,
+    ///         deterministic_timestamp_utc=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+    ///         deterministic_timezone="utc",
+    ///     )
+    ///     print(out)
+    ///     ```
     #[pyo3(signature = (*, freeze_volatile=false, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None))]
     pub fn evaluate_once<'py>(
         &mut self,

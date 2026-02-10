@@ -1,6 +1,8 @@
 use formualizer::parse::parser::ReferenceType;
 use pyo3::conversion::IntoPyObject;
 use pyo3::{prelude::*, types::PyType};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use pyo3_stub_gen::impl_stub_type;
 
 use crate::errors::ParserError;
 
@@ -10,6 +12,9 @@ enum NumericOrStringColumn {
     String(String),
 }
 
+impl_stub_type!(NumericOrStringColumn = u32 | String);
+
+#[gen_stub_pyclass]
 #[pyclass(frozen, eq, hash, module = "formualizer")]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CellRef {
@@ -25,6 +30,7 @@ pub struct CellRef {
     pub abs_col: bool,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl CellRef {
     #[new]
@@ -131,6 +137,7 @@ impl CellRef {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(frozen, eq, hash, module = "formualizer")]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RangeRef {
@@ -142,6 +149,7 @@ pub struct RangeRef {
     pub end: Option<CellRef>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl RangeRef {
     #[new]
@@ -173,6 +181,7 @@ impl RangeRef {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(frozen, eq, hash, module = "formualizer")]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct TableRef {
@@ -182,6 +191,7 @@ pub struct TableRef {
     pub spec: Option<String>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl TableRef {
     #[new]
@@ -207,6 +217,7 @@ impl TableRef {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(frozen, eq, hash, module = "formualizer")]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct NamedRangeRef {
@@ -214,6 +225,7 @@ pub struct NamedRangeRef {
     pub name: String,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl NamedRangeRef {
     #[new]
@@ -231,6 +243,7 @@ impl NamedRangeRef {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(frozen, eq, hash, module = "formualizer")]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct UnknownRef {
@@ -238,6 +251,7 @@ pub struct UnknownRef {
     pub raw: String,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl UnknownRef {
     #[new]
@@ -265,6 +279,8 @@ pub enum ReferenceLike {
     #[allow(dead_code)]
     Unknown(UnknownRef),
 }
+
+impl_stub_type!(ReferenceLike = CellRef | RangeRef | TableRef | NamedRangeRef | UnknownRef);
 
 impl<'py> IntoPyObject<'py> for ReferenceLike {
     type Target = PyAny;

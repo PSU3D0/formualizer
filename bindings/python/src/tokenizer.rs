@@ -2,8 +2,23 @@ use crate::{enums::PyFormulaDialect, errors::TokenizerError, token::PyToken};
 use formualizer::parse::tokenizer::Tokenizer;
 use formualizer::parse::types::FormulaDialect;
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
-#[pyclass(module = "formualizer")]
+/// Tokenize a formula string into a sequence of [`Token`] objects.
+///
+/// The tokenizer is iterable and supports indexing.
+///
+/// Example:
+///     ```python
+///     import formualizer as fz
+///
+///     t = fz.Tokenizer("=SUM(A1:A3)")
+///     print(len(t))
+///     print(t.render())
+///     print([tok.value for tok in t.tokens()])
+///     ```
+#[gen_stub_pyclass]
+#[pyclass(name = "Tokenizer", module = "formualizer")]
 pub struct PyTokenizer {
     inner: Tokenizer,
 }
@@ -14,6 +29,7 @@ impl PyTokenizer {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyTokenizer {
     #[new]
@@ -72,12 +88,17 @@ impl PyTokenizer {
     }
 }
 
-#[pyclass(module = "formualizer")]
+/// Iterator returned from `iter(Tokenizer)`.
+///
+/// Most users won't instantiate this directly.
+#[gen_stub_pyclass]
+#[pyclass(name = "TokenizerIter", module = "formualizer")]
 pub struct PyTokenizerIter {
     tokens: Vec<PyToken>,
     index: usize,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyTokenizerIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

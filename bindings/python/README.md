@@ -13,7 +13,7 @@ A Rust-powered spreadsheet engine with 320+ Excel-compatible functions, exposed 
 pip install formualizer
 ```
 
-Prebuilt wheels are available for Python 3.8-3.13 on Linux, macOS, and Windows. No Rust toolchain required.
+Prebuilt wheels are available for Python 3.10-3.13 on Linux, macOS, and Windows. No Rust toolchain required.
 
 ## Quick start
 

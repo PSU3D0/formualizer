@@ -1,8 +1,22 @@
 use formualizer::eval::engine::{DateSystem, EvalConfig};
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 /// Configuration for workbook-backed evaluation.
-#[pyclass(name = "EvaluationConfig")]
+///
+/// You typically pass this via `WorkbookConfig(eval_config=...)`.
+///
+/// Example:
+///     ```python
+///     import formualizer as fz
+///
+///     eval_cfg = fz.EvaluationConfig()
+///     eval_cfg.enable_parallel = True
+///
+///     wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=eval_cfg))
+///     ```
+#[gen_stub_pyclass]
+#[pyclass(name = "EvaluationConfig", module = "formualizer")]
 #[derive(Clone)]
 pub struct PyEvaluationConfig {
     pub(crate) inner: EvalConfig,
@@ -14,6 +28,7 @@ impl Default for PyEvaluationConfig {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyEvaluationConfig {
     /// Create a new evaluation configuration
@@ -190,7 +205,8 @@ impl PyEvaluationConfig {
 }
 
 /// Information about a single evaluation layer
-#[pyclass(name = "LayerInfo")]
+#[gen_stub_pyclass]
+#[pyclass(name = "LayerInfo", module = "formualizer")]
 #[derive(Clone)]
 pub struct PyLayerInfo {
     #[pyo3(get)]
@@ -201,6 +217,7 @@ pub struct PyLayerInfo {
     pub sample_cells: Vec<String>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyLayerInfo {
     fn __repr__(&self) -> String {
@@ -212,7 +229,8 @@ impl PyLayerInfo {
 }
 
 /// Evaluation plan showing how cells would be evaluated
-#[pyclass(name = "EvaluationPlan")]
+#[gen_stub_pyclass]
+#[pyclass(name = "EvaluationPlan", module = "formualizer")]
 pub struct PyEvaluationPlan {
     #[pyo3(get)]
     pub total_vertices_to_evaluate: usize,
@@ -232,6 +250,7 @@ pub struct PyEvaluationPlan {
     pub target_cells: Vec<String>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyEvaluationPlan {
     fn __repr__(&self) -> String {

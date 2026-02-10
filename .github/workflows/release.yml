@@ -349,11 +349,11 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64
-            interpreter: /opt/python/cp39-cp39/bin/python
+            interpreter: /opt/python/cp310-cp310/bin/python
             manylinux: manylinux2014
           - os: ubuntu-latest
             target: aarch64
-            interpreter: /opt/python/cp39-cp39/bin/python
+            interpreter: /opt/python/cp310-cp310/bin/python
             manylinux: manylinux2014
           - os: macos-latest
             # Build a single universal2 wheel (x86_64 + arm64)
@@ -376,7 +376,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1

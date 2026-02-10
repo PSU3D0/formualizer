@@ -4,6 +4,7 @@ use formualizer::common::error::{
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 // Create custom exception types
 pyo3::create_exception!(formualizer, TokenizerError, PyException);
@@ -38,12 +39,14 @@ impl ParserError {
 }
 
 /// Python representation of Excel domain errors
-#[pyclass(name = "ExcelError")]
+#[gen_stub_pyclass]
+#[pyclass(name = "ExcelError", module = "formualizer")]
 #[derive(Clone, Debug)]
 pub struct PyExcelError {
     pub(crate) inner: RustExcelError,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyExcelError {
     /// Create a new Excel error

@@ -4,7 +4,8 @@ Visitor utility for traversing AST nodes.
 This module provides a simple DFS traversal utility with early-exit capability.
 """
 
-from typing import TYPE_CHECKING, Any, Callable, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .formualizer_py import ASTNode
@@ -20,7 +21,7 @@ class VisitControl:
     STOP = "stop"
 
 
-def walk_ast(node: "ASTNode", visitor: Callable[["ASTNode"], Union[str, None]]) -> None:
+def walk_ast(node: "ASTNode", visitor: Callable[["ASTNode"], str | None]) -> None:
     """
     DFS traversal of AST with early-exit capability.
 

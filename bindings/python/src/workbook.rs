@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use formualizer::common::LiteralValue;
 
@@ -12,6 +13,22 @@ type SheetCache = HashMap<String, SheetCellMap>;
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
+/// Configuration for creating a [`Workbook`].
+///
+/// You typically pass this into `Workbook(config=...)`.
+///
+/// Example:
+///     ```python
+///     import formualizer as fz
+///
+///     cfg = fz.WorkbookConfig(
+///         mode=fz.WorkbookMode.Interactive,
+///         enable_changelog=True,
+///         eval_config=fz.EvaluationConfig(),
+///     )
+///     wb = fz.Workbook(config=cfg)
+///     ```
+#[gen_stub_pyclass]
 #[pyclass(name = "WorkbookConfig", module = "formualizer")]
 #[derive(Clone)]
 pub struct PyWorkbookConfig {
@@ -20,6 +37,7 @@ pub struct PyWorkbookConfig {
     enable_changelog: Option<bool>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyWorkbookConfig {
     #[new]
@@ -48,6 +66,28 @@ impl PyWorkbookConfig {
     }
 }
 
+/// An in-memory Excel-like workbook which can store values and formulas and evaluate them.
+///
+/// Rows and columns are **1-based** (as in Excel).
+///
+/// The workbook supports setting values and formulas, evaluating individual cells,
+/// and (optionally) tracking a changelog for undo/redo.
+///
+/// Quick start:
+///     ```python
+///     import formualizer as fz
+///
+///     wb = fz.Workbook()
+///     s = wb.sheet("Sheet1")
+///
+///     s.set_value(1, 1, fz.LiteralValue.number(1000.0))  # A1
+///     s.set_value(2, 1, fz.LiteralValue.number(0.05))    # A2
+///     s.set_value(3, 1, fz.LiteralValue.number(12.0))    # A3
+///
+///     s.set_formula(1, 2, "=PMT(A2/12, A3, -A1)")
+///     print(wb.evaluate_cell("Sheet1", 1, 2))
+///     ```
+#[gen_stub_pyclass]
 #[pyclass(name = "Workbook", module = "formualizer")]
 #[derive(Clone)]
 pub struct PyWorkbook {
@@ -57,6 +97,7 @@ pub struct PyWorkbook {
     cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyWorkbook {
     #[new]
@@ -72,7 +113,22 @@ impl PyWorkbook {
         })
     }
 
-    /// Class method: load a workbook from a file path
+    /// Class method: load an XLSX workbook from a file path.
+    ///
+    /// This is equivalent to the top-level `formualizer.load_workbook(...)`.
+    ///
+    /// Args:
+    ///     path: Path to the `.xlsx` file.
+    ///     backend: Backend name (currently defaults to `calamine`).
+    ///     mode/config: Optional workbook configuration.
+    ///
+    /// Example:
+    ///     ```python
+    ///     import formualizer as fz
+    ///
+    ///     wb = fz.Workbook.load_path("model.xlsx")
+    ///     print(wb.sheet_names)
+    ///     ```
     #[classmethod]
     #[pyo3(signature = (path, strategy=None, backend=None, *, mode=None, config=None))]
     pub fn load_path(
@@ -87,7 +143,22 @@ impl PyWorkbook {
         Self::from_path(_cls, path, backend, mode, config)
     }
 
-    /// Get or create a sheet by name
+    /// Get or create a sheet by name.
+    ///
+    /// This returns a lightweight handle which forwards operations to the parent workbook.
+    ///
+    /// Notes:
+    /// - Sheet names are case-sensitive.
+    /// - The sheet is created if it doesn't exist.
+    ///
+    /// Example:
+    ///     ```python
+    ///     import formualizer as fz
+    ///
+    ///     wb = fz.Workbook()
+    ///     s = wb.sheet("Data")
+    ///     s.set_value(1, 1, 123)
+    ///     ```
     pub fn sheet(&self, name: &str) -> PyResult<crate::sheet::PySheet> {
         // Ensure sheet exists
         {
@@ -147,6 +218,18 @@ impl PyWorkbook {
         }
     }
 
+    /// Add a sheet to the workbook.
+    ///
+    /// This is idempotent: adding an existing sheet name is a no-op.
+    ///
+    /// Example:
+    ///     ```python
+    ///     import formualizer as fz
+    ///
+    ///     wb = fz.Workbook()
+    ///     wb.add_sheet("Inputs")
+    ///     wb.add_sheet("Outputs")
+    ///     ```
     pub fn add_sheet(&self, name: &str) -> PyResult<()> {
         let mut wb = self
             .inner
@@ -168,6 +251,26 @@ impl PyWorkbook {
         Ok(wb.sheet_names())
     }
 
+    /// Set a single cell value.
+    ///
+    /// Rows and columns are **1-based**.
+    ///
+    /// The `value` may be a Python primitive (int/float/bool/str/None), a
+    /// `datetime/date/time/timedelta`, or a [`LiteralValue`].
+    ///
+    /// Example:
+    ///     ```python
+    ///     import datetime
+    ///     import formualizer as fz
+    ///
+    ///     wb = fz.Workbook()
+    ///     wb.add_sheet("Sheet1")
+    ///
+    ///     wb.set_value("Sheet1", 1, 1, 123)
+    ///     wb.set_value("Sheet1", 2, 1, 3.14)
+    ///     wb.set_value("Sheet1", 3, 1, datetime.date(2024, 1, 1))
+    ///     wb.set_value("Sheet1", 4, 1, fz.LiteralValue.text("hello"))
+    ///     ```
     pub fn set_value(
         &self,
         _py: Python<'_>,
@@ -196,6 +299,22 @@ impl PyWorkbook {
         Ok(())
     }
 
+    /// Set a single cell formula.
+    ///
+    /// Rows and columns are **1-based**. Formulas should be Excel-style and typically
+    /// begin with `=`.
+    ///
+    /// Example:
+    ///     ```python
+    ///     import formualizer as fz
+    ///
+    ///     wb = fz.Workbook()
+    ///     s = wb.sheet("Sheet1")
+    ///     s.set_value(1, 1, 10)
+    ///     s.set_value(2, 1, 20)
+    ///     s.set_formula(3, 1, "=SUM(A1:A2)")
+    ///     print(wb.evaluate_cell("Sheet1", 3, 1))
+    ///     ```
     pub fn set_formula(&self, sheet: &str, row: u32, col: u32, formula: &str) -> PyResult<()> {
         let mut wb = self
             .inner
@@ -216,6 +335,26 @@ impl PyWorkbook {
         Ok(())
     }
 
+    /// Evaluate a single cell and return the computed value.
+    ///
+    /// Rows and columns are **1-based**.
+    ///
+    /// Returns:
+    ///     A Python value converted from the engine's internal [`LiteralValue`].
+    ///     For example: `float`, `int`, `str`, `bool`, `datetime.*`, `None`, or
+    ///     nested lists for arrays.
+    ///
+    /// Example:
+    ///     ```python
+    ///     import formualizer as fz
+    ///
+    ///     wb = fz.Workbook()
+    ///     s = wb.sheet("Data")
+    ///     s.set_value(1, 1, 100)
+    ///     s.set_value(2, 1, 200)
+    ///     s.set_formula(3, 1, "=SUM(A1:A2)")
+    ///     print(wb.evaluate_cell("Data", 3, 1))
+    ///     ```
     pub fn evaluate_cell(
         &self,
         py: Python<'_>,
@@ -403,6 +542,26 @@ impl PyWorkbook {
         wb.set_reason(reason);
         Ok(())
     }
+
+    /// Begin grouping multiple edits into a single undo/redo action.
+    ///
+    /// This is only relevant when the changelog is enabled.
+    ///
+    /// Example:
+    ///     ```python
+    ///     import formualizer as fz
+    ///
+    ///     wb = fz.Workbook()
+    ///     wb.set_changelog_enabled(True)
+    ///     s = wb.sheet("Data")
+    ///
+    ///     wb.begin_action("update prices")
+    ///     s.set_value(1, 1, 100)
+    ///     s.set_value(2, 1, 200)
+    ///     wb.end_action()
+    ///
+    ///     wb.undo()  # reverts both values at once
+    ///     ```
     pub fn begin_action(&self, description: &str) -> PyResult<()> {
         let mut wb = self
             .inner
@@ -411,6 +570,8 @@ impl PyWorkbook {
         wb.begin_action(description.to_string());
         Ok(())
     }
+
+    /// End the current grouped undo/redo action.
     pub fn end_action(&self) -> PyResult<()> {
         let mut wb = self
             .inner
@@ -419,6 +580,8 @@ impl PyWorkbook {
         wb.end_action();
         Ok(())
     }
+
+    /// Undo the most recent workbook edit.
     pub fn undo(&self) -> PyResult<()> {
         let mut wb = self
             .inner
@@ -427,6 +590,8 @@ impl PyWorkbook {
         wb.undo()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
+
+    /// Redo the most recently undone edit.
     pub fn redo(&self) -> PyResult<()> {
         let mut wb = self
             .inner
@@ -567,6 +732,7 @@ pub struct CellData {
     pub formula: Option<String>,
 }
 
+#[gen_stub_pyclass]
 #[pyclass(name = "Cell", module = "formualizer")]
 pub struct PyCell {
     value: LiteralValue,
@@ -579,6 +745,7 @@ impl PyCell {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyCell {
     #[getter]
@@ -592,6 +759,7 @@ impl PyCell {
     }
 }
 
+#[gen_stub_pyclass]
 #[pyclass(name = "RangeAddress", module = "formualizer")]
 #[derive(Clone, Debug)]
 pub struct PyRangeAddress {
@@ -607,6 +775,7 @@ pub struct PyRangeAddress {
     pub end_col: u32,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyRangeAddress {
     #[new]

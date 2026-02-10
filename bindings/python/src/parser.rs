@@ -5,8 +5,23 @@ use crate::tokenizer::PyTokenizer;
 use formualizer::parse::parser::{Parser, parse_with_dialect};
 use formualizer::parse::types::FormulaDialect;
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
 
-#[pyclass(module = "formualizer")]
+/// Stateful formula parser.
+///
+/// Most users can use the top-level [`parse`] function, but `Parser` is useful
+/// if you want to parse multiple formulas with the same instance.
+///
+/// Example:
+///     ```python
+///     import formualizer as fz
+///
+///     p = fz.Parser()
+///     ast = p.parse_string("=1+2")
+///     print(ast.pretty())
+///     ```
+#[gen_stub_pyclass]
+#[pyclass(name = "Parser", module = "formualizer")]
 pub struct PyParser {
     _phantom: std::marker::PhantomData<()>,
 }
@@ -17,6 +32,7 @@ impl Default for PyParser {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyParser {
     #[new]
@@ -71,6 +87,7 @@ impl PyParser {
 }
 
 /// Convenience function to parse a formula string directly
+#[gen_stub_pyfunction(module = "formualizer")]
 #[pyfunction]
 #[pyo3(signature = (formula, dialect = None))]
 pub fn parse_formula(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode> {

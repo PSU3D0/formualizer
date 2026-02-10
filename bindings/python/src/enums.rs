@@ -3,9 +3,11 @@ use std::fmt::Display;
 use formualizer::parse::tokenizer::{TokenSubType as CoreTokenSubType, TokenType as CoreTokenType};
 use formualizer::parse::types::FormulaDialect as CoreFormulaDialect;
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass_enum, gen_stub_pymethods};
 
 /// Python-exposed token type enum
-#[pyclass(module = "formualizer")]
+#[gen_stub_pyclass_enum]
+#[pyclass(name = "TokenType", module = "formualizer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyTokenType {
     Literal,
@@ -26,6 +28,7 @@ impl Display for PyTokenType {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyTokenType {
     fn __str__(&self) -> &'static str {
@@ -83,9 +86,11 @@ impl From<PyTokenType> for CoreTokenType {
 }
 
 /// Python-exposed token subtype enum
-#[pyclass(module = "formualizer")]
+#[gen_stub_pyclass_enum]
+#[pyclass(name = "TokenSubType", module = "formualizer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyTokenSubType {
+    #[pyo3(name = "None_")]
     None,
     Text,
     Number,
@@ -104,6 +109,7 @@ impl Display for PyTokenSubType {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyTokenSubType {
     fn __str__(&self) -> &'static str {
@@ -161,13 +167,15 @@ impl From<PyTokenSubType> for CoreTokenSubType {
 }
 
 /// Formula dialect enum exposed to Python
-#[pyclass(module = "formualizer")]
+#[gen_stub_pyclass_enum]
+#[pyclass(name = "FormulaDialect", module = "formualizer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyFormulaDialect {
     Excel,
     OpenFormula,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyFormulaDialect {
     fn __str__(&self) -> &'static str {
@@ -201,6 +209,7 @@ impl From<CoreFormulaDialect> for PyFormulaDialect {
 }
 
 /// Workbook mode enum exposed to Python.
+#[gen_stub_pyclass_enum]
 #[pyclass(name = "WorkbookMode", module = "formualizer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PyWorkbookMode {
@@ -208,6 +217,7 @@ pub enum PyWorkbookMode {
     Interactive,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyWorkbookMode {
     fn __str__(&self) -> &'static str {

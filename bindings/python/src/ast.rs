@@ -5,9 +5,25 @@ use formualizer::parse::parser::{ASTNode, ASTNodeType};
 use pyo3::conversion::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
+/// An abstract syntax tree (AST) node representing a parsed formula.
+///
+/// Use the top-level [`parse`] function to create an AST from a formula string.
+///
+/// Example:
+///     ```python
+///     from formualizer import parse
+///
+///     ast = parse("=SUM(A1:A3)")
+///     print(ast.pretty())
+///     print(ast.fingerprint())
+///     for ref in ast.walk_refs():
+///         print(ref)
+///     ```
+#[gen_stub_pyclass]
 #[pyclass(module = "formualizer", name = "ASTNode")]
 #[derive(Clone)]
 pub struct PyASTNode {
@@ -20,6 +36,7 @@ impl PyASTNode {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyASTNode {
     /// Get the pretty-printed representation of this AST
@@ -354,12 +371,26 @@ impl PyASTNode {
     }
 }
 
-#[pyclass(module = "formualizer")]
+/// Iterator over reference-like objects found in an AST.
+///
+/// Constructed via `ASTNode.walk_refs()`.
+///
+/// Example:
+///     ```python
+///     from formualizer import parse
+///
+///     ast = parse("=SUM(A1, Sheet2!B3)")
+///     for r in ast.walk_refs():
+///         print(r)
+///     ```
+#[gen_stub_pyclass]
+#[pyclass(name = "RefWalker", module = "formualizer")]
 pub struct PyRefWalker {
     refs: Vec<ReferenceLike>,
     index: usize,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyRefWalker {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

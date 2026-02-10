@@ -50,6 +50,12 @@ jobs:
         uv venv
         uv pip install maturin -e ".[dev]"
 
+    - name: Generate Python stubs (pyo3-stub-gen)
+      working-directory: bindings/python
+      run: |
+        cargo run --bin stub_gen
+        git diff --exit-code -- formualizer/__init__.pyi
+
     - name: Build Python extension
       working-directory: bindings/python
       run: |
@@ -147,7 +153,7 @@ jobs:
         working-directory: bindings/python
         # Build a single abi3 wheel (not one per Python interpreter)
         # In `act` (local CI), avoid nested manylinux Docker to keep things working.
-        args: --release --out dist --interpreter ${{ env.ACT && 'python3' || '/opt/python/cp39-cp39/bin/python' }}
+        args: --release --out dist --interpreter ${{ env.ACT && 'python3' || '/opt/python/cp310-cp310/bin/python' }}
         manylinux: ${{ env.ACT && 'off' || 'manylinux2014' }}
         sccache: 'true'
 

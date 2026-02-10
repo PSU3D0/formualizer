@@ -2,10 +2,26 @@ use crate::enums::{PyTokenSubType, PyTokenType};
 use formualizer::parse::tokenizer::Token;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
-#[pyclass(module = "formualizer")]
+/// A single token produced by [`Tokenizer`].
+///
+/// Tokens include the raw `value` string, a `token_type` and `subtype`, and
+/// byte offsets (`start`, `end`) pointing into the original formula string.
+///
+/// Example:
+///     ```python
+///     import formualizer as fz
+///
+///     tok = fz.tokenize("=A1+1")[0]
+///     print(tok.value)
+///     print(tok.token_type, tok.subtype)
+///     print(tok.start, tok.end)
+///     ```
+#[gen_stub_pyclass]
+#[pyclass(name = "Token", module = "formualizer")]
 #[derive(Clone)]
 pub struct PyToken {
     inner: Token,
@@ -17,6 +33,7 @@ impl PyToken {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyToken {
     #[getter]

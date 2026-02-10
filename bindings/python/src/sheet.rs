@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
@@ -7,7 +8,24 @@ use crate::value::literal_to_py;
 use crate::workbook::{PyCell, PyWorkbook};
 use formualizer::workbook::WorksheetHandle;
 
-/// Sheet class - represents a view into workbook data
+/// A per-sheet facade for interacting with a [`Workbook`].
+///
+/// Rows and columns are **1-based**.
+///
+/// In most cases you obtain a `Sheet` by calling `Workbook.sheet(name)`.
+///
+/// Example:
+///     ```python
+///     import formualizer as fz
+///
+///     wb = fz.Workbook()
+///     s = wb.sheet("Data")
+///     s.set_value(1, 1, 10)
+///     s.set_value(2, 1, 20)
+///     s.set_formula(3, 1, "=SUM(A1:A2)")
+///     print(wb.evaluate_cell("Data", 3, 1))
+///     ```
+#[gen_stub_pyclass]
 #[pyclass(name = "Sheet", module = "formualizer")]
 #[derive(Clone)]
 pub struct PySheet {
@@ -17,9 +35,13 @@ pub struct PySheet {
     pub(crate) handle: WorksheetHandle,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PySheet {
-    /// Set a single value (stores in workbook, doesn't evaluate)
+    /// Set a single value (stores in workbook, doesn't evaluate).
+    ///
+    /// The `value` may be a Python primitive (int/float/bool/str/None) or a
+    /// [`LiteralValue`].
     pub fn set_value(
         &self,
         py: Python<'_>,
@@ -37,7 +59,9 @@ impl PySheet {
         self.workbook.set_value(py, &self.name, row, col, value)
     }
 
-    /// Set a single formula (stores in workbook, doesn't evaluate)
+    /// Set a single formula (stores in workbook, doesn't evaluate).
+    ///
+    /// Formulas should be Excel-style and typically start with `=`.
     pub fn set_formula(&self, row: u32, col: u32, formula: &str) -> PyResult<()> {
         if row == 0 || col == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(

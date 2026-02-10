@@ -1,15 +1,28 @@
+"""Formualizer for Python.
+
+This package exposes high-performance Excel-formula parsing and evaluation via Rust (PyO3).
+
+Most of the public API lives in the native extension module ``formualizer.formualizer_py``
+and is re-exported here for convenience.
+
+See ``bindings/python/README.md`` in the repository for longer, runnable examples.
+"""
+
 from . import formualizer_py as _py
 from . import visitor
 from ._types import ReferenceLike
-from .formualizer_py import *
+from .formualizer_py import *  # noqa: F403
 
-# Public, non-Py-prefixed aliases.
-Token = _py.PyToken
-Tokenizer = _py.PyTokenizer
-TokenizerIter = _py.PyTokenizerIter
-RefWalker = _py.PyRefWalker
-TokenType = _py.PyTokenType
-TokenSubType = _py.PyTokenSubType
-
-# Keep FormulaDialect stable (it is also provided from Rust).
-FormulaDialect = getattr(_py, "FormulaDialect", _py.PyFormulaDialect)
+# ---------------------------------------------------------------------------
+# Backwards compatible aliases
+# ---------------------------------------------------------------------------
+#
+# Earlier versions exposed most symbols with a `Py...` prefix.
+# Keep these aliases so older code keeps working.
+PyToken = _py.Token
+PyTokenizer = _py.Tokenizer
+PyTokenizerIter = _py.TokenizerIter
+PyRefWalker = _py.RefWalker
+PyTokenType = _py.TokenType
+PyTokenSubType = _py.TokenSubType
+PyFormulaDialect = _py.FormulaDialect
