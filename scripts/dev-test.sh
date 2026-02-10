@@ -16,7 +16,10 @@ if ! command -v maturin >/dev/null 2>&1; then
 fi
 
 # Create an isolated venv named .venv (local to repo)
-uv venv --python 3.10 --seed .venv
+# If it already exists, reuse it.
+if [ ! -d .venv ]; then
+  uv venv --python 3.10 --seed .venv
+fi
 source .venv/bin/activate
 
 # Install maturin in venv if missing
