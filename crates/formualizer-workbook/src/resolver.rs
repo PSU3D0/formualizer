@@ -1,8 +1,8 @@
 use crate::traits::SpreadsheetReader;
 use crate::traits::{DefinedNameDefinition, DefinedNameScope};
 use formualizer_common::{
-    error::{ExcelError, ExcelErrorKind},
     LiteralValue,
+    error::{ExcelError, ExcelErrorKind},
 };
 use formualizer_eval::function::Function;
 use formualizer_eval::traits::{
@@ -288,9 +288,9 @@ impl Table for BackendTable {
         if !self.totals_row || self.full.is_empty() {
             return None;
         }
-        Some(Box::new(InMemoryRange::new(vec![self.full
-            [self.full.len() - 1]
-            .clone()])))
+        Some(Box::new(InMemoryRange::new(vec![
+            self.full[self.full.len() - 1].clone(),
+        ])))
     }
 
     fn data_body(&self) -> Option<Box<dyn Range>> {

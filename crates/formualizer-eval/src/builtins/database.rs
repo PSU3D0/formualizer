@@ -54,7 +54,9 @@ fn resolve_field_index(
         LiteralValue::Text(name) => {
             let name_lower = name.to_ascii_lowercase();
             for (i, h) in headers.iter().enumerate() {
-                if let LiteralValue::Text(hdr) = h && hdr.to_ascii_lowercase() == name_lower {
+                if let LiteralValue::Text(hdr) = h
+                    && hdr.to_ascii_lowercase() == name_lower
+                {
                     return Ok(i);
                 }
             }
@@ -103,18 +105,20 @@ fn parse_criteria_range(
     for c in 0..crit_cols {
         let crit_header = criteria_view.get_cell(0, c);
         if let LiteralValue::Text(name) = &crit_header {
-                let name_lower = name.to_ascii_lowercase();
-                let mut found = None;
-                for (i, h) in db_headers.iter().enumerate() {
-                    if let LiteralValue::Text(hdr) = h && hdr.to_ascii_lowercase() == name_lower {
-                        found = Some(i);
-                        break;
-                    }
+            let name_lower = name.to_ascii_lowercase();
+            let mut found = None;
+            for (i, h) in db_headers.iter().enumerate() {
+                if let LiteralValue::Text(hdr) = h
+                    && hdr.to_ascii_lowercase() == name_lower
+                {
+                    found = Some(i);
+                    break;
                 }
-                crit_col_map.push(found);
-            } else if matches!(crit_header, LiteralValue::Empty) {
-                crit_col_map.push(None);
-            } else {
+            }
+            crit_col_map.push(found);
+        } else if matches!(crit_header, LiteralValue::Empty) {
+            crit_col_map.push(None);
+        } else {
             // Non-text, non-empty header - try to match as-is
             crit_col_map.push(None);
         }

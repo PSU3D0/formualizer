@@ -37,8 +37,8 @@ pub mod tuning;
 mod tests;
 
 pub use eval::{Engine, EngineAction, EvalResult, RecalcPlan};
-pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 pub use eval_delta::{DeltaMode, EvalDelta};
+pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{

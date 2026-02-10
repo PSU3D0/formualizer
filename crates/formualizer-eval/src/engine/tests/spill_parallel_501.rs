@@ -1,4 +1,4 @@
-use crate::engine::{eval::Engine, EvalConfig};
+use crate::engine::{EvalConfig, eval::Engine};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;

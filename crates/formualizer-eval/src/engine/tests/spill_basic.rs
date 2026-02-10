@@ -1,7 +1,7 @@
-use crate::engine::{eval::Engine, EvalConfig};
+use crate::engine::{EvalConfig, eval::Engine};
 use crate::test_workbook::TestWorkbook;
-use formualizer_parse::parser::parse;
 use formualizer_parse::LiteralValue;
+use formualizer_parse::parser::parse;
 
 #[test]
 fn spill_basic_and_block() {

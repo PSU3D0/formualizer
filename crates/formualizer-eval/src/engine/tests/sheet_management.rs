@@ -24,9 +24,11 @@ mod tests {
         graph
             .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(42.0))
             .unwrap();
-        assert!(graph
-            .get_vertex_id_for_address(&graph.make_cell_ref("Sheet2", 1, 1))
-            .is_some());
+        assert!(
+            graph
+                .get_vertex_id_for_address(&graph.make_cell_ref("Sheet2", 1, 1))
+                .is_some()
+        );
     }
 
     #[test]
@@ -87,9 +89,11 @@ mod tests {
         assert!(graph.sheet_id("DataSheet").is_some());
 
         // The data should still be accessible with the new name
-        assert!(graph
-            .get_vertex_id_for_address(&graph.make_cell_ref("DataSheet", 1, 1))
-            .is_some());
+        assert!(
+            graph
+                .get_vertex_id_for_address(&graph.make_cell_ref("DataSheet", 1, 1))
+                .is_some()
+        );
 
         // Cannot rename to an existing name
         let result = graph.rename_sheet(sheet2_id, "Sheet1");
@@ -128,12 +132,16 @@ mod tests {
         assert!(copy_id != source_id);
 
         // Verify all data was copied
-        assert!(graph
-            .get_vertex_id_for_address(&graph.make_cell_ref("SourceCopy", 1, 1))
-            .is_some());
-        assert!(graph
-            .get_vertex_id_for_address(&graph.make_cell_ref("SourceCopy", 2, 1))
-            .is_some());
+        assert!(
+            graph
+                .get_vertex_id_for_address(&graph.make_cell_ref("SourceCopy", 1, 1))
+                .is_some()
+        );
+        assert!(
+            graph
+                .get_vertex_id_for_address(&graph.make_cell_ref("SourceCopy", 2, 1))
+                .is_some()
+        );
 
         // Internal references should point to the new sheet
         // Cross-sheet references should remain unchanged

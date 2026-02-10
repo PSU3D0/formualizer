@@ -4,11 +4,11 @@
 //! spills, named ranges) route through Arrow storage.
 
 use crate::engine::named_range::{NameScope, NamedDefinition};
-use crate::engine::{eval::Engine, EvalConfig};
+use crate::engine::{EvalConfig, eval::Engine};
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::test_workbook::TestWorkbook;
-use formualizer_parse::parser::parse;
 use formualizer_parse::LiteralValue;
+use formualizer_parse::parser::parse;
 
 #[test]
 fn canonical_get_cell_value_routes_through_arrow() {

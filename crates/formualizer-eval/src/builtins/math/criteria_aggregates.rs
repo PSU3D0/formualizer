@@ -369,7 +369,10 @@ fn eval_if_family<'a, 'b>(
                                         // If the criteria range has no numeric fast-path column (e.g. text column
                                         // or mixed types), fall back to per-cell matching so numeric criteria can
                                         // still match blanks / numeric text values (Excel semantics).
-                                        let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                                        let mut bb =
+                                            arrow_array::builder::BooleanBuilder::with_capacity(
+                                                row_len,
+                                            );
                                         let view = crit_specs[j].0.as_ref().unwrap();
                                         for i in 0..row_len {
                                             bb.append_value(criteria_match(
@@ -407,7 +410,10 @@ fn eval_if_family<'a, 'b>(
                                             bb.finish()
                                         }
                                     } else {
-                                        let mut bb = arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                                        let mut bb =
+                                            arrow_array::builder::BooleanBuilder::with_capacity(
+                                                row_len,
+                                            );
                                         let view = crit_specs[j].0.as_ref().unwrap();
                                         for i in 0..row_len {
                                             bb.append_value(criteria_match(
@@ -439,9 +445,8 @@ fn eval_if_family<'a, 'b>(
                             LiteralValue::Number(x) => {
                                 let nx = *x;
                                 if let Some(nc) = nc {
-                                    let m0 =
-                                        cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx))
-                                            .unwrap();
+                                    let m0 = cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx))
+                                        .unwrap();
                                     if m0.null_count() == 0 {
                                         m0
                                     } else {
@@ -464,7 +469,9 @@ fn eval_if_family<'a, 'b>(
                                     }
                                 } else {
                                     let mut bb =
-                                        arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                                        arrow_array::builder::BooleanBuilder::with_capacity(
+                                            row_len,
+                                        );
                                     let view = crit_specs[j].0.as_ref().unwrap();
                                     for i in 0..row_len {
                                         bb.append_value(criteria_match(
@@ -478,9 +485,8 @@ fn eval_if_family<'a, 'b>(
                             LiteralValue::Int(x) => {
                                 let nx = *x as f64;
                                 if let Some(nc) = nc {
-                                    let m0 =
-                                        cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx))
-                                            .unwrap();
+                                    let m0 = cmp::neq(nc.as_ref(), &Float64Array::new_scalar(nx))
+                                        .unwrap();
                                     if m0.null_count() == 0 {
                                         m0
                                     } else {
@@ -503,7 +509,9 @@ fn eval_if_family<'a, 'b>(
                                     }
                                 } else {
                                     let mut bb =
-                                        arrow_array::builder::BooleanBuilder::with_capacity(row_len);
+                                        arrow_array::builder::BooleanBuilder::with_capacity(
+                                            row_len,
+                                        );
                                     let view = crit_specs[j].0.as_ref().unwrap();
                                     for i in 0..row_len {
                                         bb.append_value(criteria_match(

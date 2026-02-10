@@ -131,11 +131,7 @@ fn annual_basis(basis: DayCountBasis, start: &NaiveDate, end: &NaiveDate) -> f64
             let sy = start.year();
             let ey = end.year();
             if sy == ey {
-                if is_leap_year(sy) {
-                    366.0
-                } else {
-                    365.0
-                }
+                if is_leap_year(sy) { 366.0 } else { 365.0 }
             } else {
                 // Average across years
                 let mut total_days = 0.0;

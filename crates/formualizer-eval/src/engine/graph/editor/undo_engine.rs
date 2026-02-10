@@ -1,8 +1,8 @@
 //! Basic Undo/Redo engine scaffold using ChangeLog groups.
 use super::change_log::{ChangeEvent, ChangeEventMeta, ChangeLog};
 use super::vertex_editor::VertexEditor;
-use crate::engine::graph::editor::vertex_editor::EditorError;
 use crate::engine::graph::DependencyGraph;
+use crate::engine::graph::editor::vertex_editor::EditorError;
 
 #[derive(Debug, Clone)]
 pub struct UndoBatchItem {
@@ -202,8 +202,8 @@ impl UndoEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::graph::editor::change_log::ChangeLog;
     use crate::engine::EvalConfig;
+    use crate::engine::graph::editor::change_log::ChangeLog;
     use crate::reference::{CellRef, Coord};
     use formualizer_common::LiteralValue;
 
@@ -227,7 +227,7 @@ mod tests {
         let mut undo = UndoEngine::new();
         undo.undo(&mut graph, &mut log).unwrap();
         assert_eq!(log.len(), 0); // event removed (simplified policy)
-                                  // Redo
+        // Redo
         undo.redo(&mut graph, &mut log).unwrap();
         assert!(!log.is_empty());
     }
@@ -252,10 +252,11 @@ mod tests {
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
             editor.insert_rows(0, 6, 2).unwrap(); // shift rows >=6 down by 2
         }
-        assert!(log
-            .events()
-            .iter()
-            .any(|e| matches!(e, ChangeEvent::VertexMoved { .. })));
+        assert!(
+            log.events()
+                .iter()
+                .any(|e| matches!(e, ChangeEvent::VertexMoved { .. }))
+        );
         let moved_count_before = log
             .events()
             .iter()
@@ -371,10 +372,11 @@ mod tests {
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
             editor.insert_columns(0, 5, 2).unwrap();
         }
-        assert!(log
-            .events()
-            .iter()
-            .any(|e| matches!(e, ChangeEvent::VertexMoved { .. })));
+        assert!(
+            log.events()
+                .iter()
+                .any(|e| matches!(e, ChangeEvent::VertexMoved { .. }))
+        );
         let mut undo = UndoEngine::new();
         undo.undo(&mut graph, &mut log).unwrap();
         assert_eq!(log.events().len(), 0);
@@ -412,10 +414,11 @@ mod tests {
             let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
             editor.remove_vertex(a1_vid).unwrap();
         }
-        assert!(log
-            .events()
-            .iter()
-            .any(|e| matches!(e, ChangeEvent::RemoveVertex { .. })));
+        assert!(
+            log.events()
+                .iter()
+                .any(|e| matches!(e, ChangeEvent::RemoveVertex { .. }))
+        );
         // After removal dependency list should be empty
         let deps_after_remove = graph.get_dependencies(a2_id);
         assert!(deps_after_remove.is_empty());

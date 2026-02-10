@@ -1,11 +1,11 @@
+use crate::SheetId;
+use crate::engine::graph::DependencyGraph;
 use crate::engine::graph::editor::reference_adjuster::{
     MoveReferenceAdjuster, ReferenceAdjuster, RelativeReferenceAdjuster, ShiftOperation,
 };
-use crate::engine::graph::DependencyGraph;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::{ChangeEvent, ChangeLogger, VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
-use crate::SheetId;
 use formualizer_common::Coord as AbsCoord;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::ASTNode;
@@ -389,10 +389,7 @@ impl<'g> VertexEditor<'g> {
     fn snapshot_named_definitions(&self) -> FxHashMap<(NameScope, String), NamedDefinition> {
         let mut out: FxHashMap<(NameScope, String), NamedDefinition> = FxHashMap::default();
         for (name, nr) in self.graph.named_ranges_iter() {
-            out.insert(
-                (NameScope::Workbook, name.clone()),
-                nr.definition.clone(),
-            );
+            out.insert((NameScope::Workbook, name.clone()), nr.definition.clone());
         }
         for ((sheet_id, name), nr) in self.graph.sheet_named_ranges_iter() {
             out.insert(
@@ -2025,7 +2022,10 @@ mod tests {
 
         assert!(graph.spill_registry_has_anchor(anchor_vid));
         for cell in &target_cells {
-            assert_eq!(graph.spill_registry_anchor_for_cell(*cell), Some(anchor_vid));
+            assert_eq!(
+                graph.spill_registry_anchor_for_cell(*cell),
+                Some(anchor_vid)
+            );
         }
 
         {

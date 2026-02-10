@@ -9,7 +9,7 @@ use formualizer_workbook::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::ffi::{c_char, c_int, c_uint, CStr};
+use std::ffi::{CStr, c_char, c_int, c_uint};
 use std::ptr;
 use std::sync::{Arc, RwLock};
 
@@ -597,11 +597,7 @@ pub unsafe extern "C" fn fz_workbook_has_sheet(
             *status = fz_status::ok();
         }
     }
-    if has {
-        1
-    } else {
-        0
-    }
+    if has { 1 } else { 0 }
 }
 
 #[unsafe(no_mangle)]

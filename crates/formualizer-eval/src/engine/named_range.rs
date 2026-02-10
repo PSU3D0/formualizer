@@ -3,7 +3,7 @@ use rustc_hash::FxHashSet;
 
 use formualizer_common::LiteralValue;
 
-use crate::{engine::VertexId, reference::SharedRangeRef, CellRef, RangeRef, SheetId};
+use crate::{CellRef, RangeRef, SheetId, engine::VertexId, reference::SharedRangeRef};
 
 /// Scope of a named range
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

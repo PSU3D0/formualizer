@@ -396,8 +396,8 @@ fn undo_spill_clear_restores_spilled_cells_values() {
 }
 
 #[test]
-fn write_range_formula_with_cached_value_overwrites_literal_then_undo_restores_literal_and_clears_formula(
-) {
+fn write_range_formula_with_cached_value_overwrites_literal_then_undo_restores_literal_and_clears_formula()
+ {
     use formualizer_workbook::traits::CellData;
     use std::collections::BTreeMap;
 

@@ -5,8 +5,8 @@ use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::parse;
 use formualizer_parse::parser::ReferenceType;
+use formualizer_parse::parser::parse;
 
 fn range_limit_config(limit: usize) -> EvalConfig {
     EvalConfig {

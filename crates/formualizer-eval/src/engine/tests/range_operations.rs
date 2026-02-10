@@ -1,5 +1,5 @@
-use crate::engine::graph::DependencyGraph;
 use crate::engine::VertexEditor;
+use crate::engine::graph::DependencyGraph;
 use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parse;
@@ -32,18 +32,26 @@ fn test_set_range_values() {
     drop(editor);
 
     assert_eq!(summary.cells_affected, 9);
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
-        .is_some());
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
-        .is_some());
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
-        .is_some());
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 3, 3))
-        .is_some());
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 3, 3))
+            .is_some()
+    );
 }
 
 #[test]
@@ -69,9 +77,11 @@ fn test_clear_range() {
     assert_eq!(summary.cells_affected, 9);
     for row in 1..=3 {
         for col in 1..=3 {
-            assert!(graph
-                .get_vertex_id_for_address(&sheet1_cell(&graph, row, col))
-                .is_none());
+            assert!(
+                graph
+                    .get_vertex_id_for_address(&sheet1_cell(&graph, row, col))
+                    .is_none()
+            );
         }
     }
 }
@@ -99,12 +109,16 @@ fn test_copy_range() {
 
     // In Arrow-truth mode, VertexEditor does not have access to grid values.
     // copy_range therefore only copies formulas/structure.
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 4))
-        .is_some());
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 5))
-        .is_some());
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 4))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 5))
+            .is_some()
+    );
 
     // Check if formulas exist at new location (they should be adjusted)
     let d5_value = graph.get_vertex_id_for_address(&graph.make_cell_ref("Sheet1", 5, 4));
@@ -141,12 +155,16 @@ fn test_set_range_values_partial_overlap() {
     drop(editor);
 
     assert_eq!(summary.cells_affected, 4);
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
-        .is_some());
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 2))
-        .is_some());
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 2))
+            .is_some()
+    );
 }
 
 #[test]
@@ -242,12 +260,16 @@ fn test_move_range() {
 
     // In Arrow-truth mode, VertexEditor does not move grid values; it only moves formulas.
     // Formulas from row 2 should now exist at row 5.
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 4))
-        .is_some());
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 5))
-        .is_some());
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 4))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 5, 5))
+            .is_some()
+    );
 
     // C3 formula should be updated to reference D4 instead of A1
     let c3_formula = graph.get_formula(c3_id);
@@ -282,13 +304,19 @@ fn test_set_range_values_large() {
     assert_eq!(summary.cells_affected, 10000);
 
     // Spot check some vertices exist
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
-        .is_some());
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 50, 50))
-        .is_some());
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 100, 100))
-        .is_some());
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 1))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 50, 50))
+            .is_some()
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 100, 100))
+            .is_some()
+    );
 }

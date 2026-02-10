@@ -1,8 +1,8 @@
 use crate::error::IoError;
+use formualizer_eval::engine::graph::DependencyGraph;
 use formualizer_eval::engine::graph::editor::change_log::ChangeLog;
 use formualizer_eval::engine::graph::editor::undo_engine::UndoEngine;
 use formualizer_eval::engine::graph::editor::vertex_editor::{EditorError, VertexEditor};
-use formualizer_eval::engine::graph::DependencyGraph;
 
 /// IO-level configuration toggles.
 #[derive(Clone, Debug)]

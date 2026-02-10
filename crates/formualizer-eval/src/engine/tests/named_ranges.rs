@@ -366,11 +366,13 @@ fn named_range_dirty_propagation_reaches_formula() {
 
     let ast = parse("=Input + 1").unwrap();
     let formula_summary = graph.set_cell_formula("Sheet1", 2, 1, ast).unwrap();
-    assert!(formula_summary.affected_vertices.contains(
-        &graph
-            .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
-            .unwrap()
-    ));
+    assert!(
+        formula_summary.affected_vertices.contains(
+            &graph
+                .get_vertex_for_cell(&CellRef::new(0, Coord::new(1, 0, true, true)))
+                .unwrap()
+        )
+    );
 
     let name_vertex = graph
         .named_ranges_iter()
@@ -770,15 +772,21 @@ fn test_invalid_name_rejected() {
     assert!(result.is_err());
 
     // Valid names should work
-    assert!(graph
-        .define_name("MyName", def.clone(), NameScope::Workbook)
-        .is_ok());
-    assert!(graph
-        .define_name("_Name", def.clone(), NameScope::Sheet(0))
-        .is_ok());
-    assert!(graph
-        .define_name("Name.Value", def, NameScope::Sheet(0))
-        .is_ok());
+    assert!(
+        graph
+            .define_name("MyName", def.clone(), NameScope::Workbook)
+            .is_ok()
+    );
+    assert!(
+        graph
+            .define_name("_Name", def.clone(), NameScope::Sheet(0))
+            .is_ok()
+    );
+    assert!(
+        graph
+            .define_name("Name.Value", def, NameScope::Sheet(0))
+            .is_ok()
+    );
 }
 
 #[test]
@@ -797,9 +805,11 @@ fn test_duplicate_name_error() {
     assert!(result.is_err());
 
     // Same name in different scope should succeed
-    assert!(graph
-        .define_name("MyName", def, NameScope::Sheet(0))
-        .is_ok());
+    assert!(
+        graph
+            .define_name("MyName", def, NameScope::Sheet(0))
+            .is_ok()
+    );
 }
 
 #[test]

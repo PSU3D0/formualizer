@@ -90,7 +90,13 @@ trait WorkbookActionOps {
         value: LiteralValue,
     ) -> Result<(), IoError>;
 
-    fn set_formula(&mut self, sheet: &str, row: u32, col: u32, formula: &str) -> Result<(), IoError>;
+    fn set_formula(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        formula: &str,
+    ) -> Result<(), IoError>;
 
     fn set_values(
         &mut self,
@@ -129,7 +135,13 @@ impl WorkbookAction<'_> {
     }
 
     #[inline]
-    pub fn set_formula(&mut self, sheet: &str, row: u32, col: u32, formula: &str) -> Result<(), IoError> {
+    pub fn set_formula(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        formula: &str,
+    ) -> Result<(), IoError> {
         self.ops.set_formula(sheet, row, col, formula)
     }
 
@@ -408,7 +420,9 @@ impl Workbook {
                     self.tx
                         .set_cell_value(sheet, row, col, value)
                         .map_err(|e| match e {
-                            formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
+                            formualizer_eval::engine::EditorError::Excel(excel) => {
+                                IoError::Engine(excel)
+                            }
                             other => IoError::from_backend("editor", other),
                         })
                 }
@@ -430,7 +444,9 @@ impl Workbook {
                     self.tx
                         .set_cell_formula(sheet, row, col, ast)
                         .map_err(|e| match e {
-                            formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
+                            formualizer_eval::engine::EditorError::Excel(excel) => {
+                                IoError::Engine(excel)
+                            }
                             other => IoError::from_backend("editor", other),
                         })
                 }
@@ -486,11 +502,10 @@ impl Workbook {
         if let Some(e) = user_err {
             return Err(e);
         }
-        let (v, journal) = res
-            .map_err(|e| match e {
-                formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
-                other => IoError::from_backend("editor", other),
-            })?;
+        let (v, journal) = res.map_err(|e| match e {
+            formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
+            other => IoError::from_backend("editor", other),
+        })?;
         self.undo.push_action(journal);
         Ok(v)
     }
@@ -728,10 +743,7 @@ impl Workbook {
                     );
 
                     let old_value = self.engine.get_cell_value(sheet, row, col);
-                    let old_formula = self
-                        .engine
-                        .get_cell(sheet, row, col)
-                        .and_then(|(a, _)| a);
+                    let old_formula = self.engine.get_cell(sheet, row, col).and_then(|(a, _)| a);
 
                     self.engine.edit_with_logger(&mut self.log, |editor| {
                         editor.set_cell_formula(cell, ast);
@@ -894,8 +906,11 @@ impl Workbook {
 
             // Patch old_value/old_formula for each cell's last SetValue/SetFormula event.
             for (_r, _c, _d, cell, old_value, old_formula) in items.iter().rev() {
-                self.log
-                    .patch_last_cell_event_old_state(*cell, old_value.clone(), old_formula.clone());
+                self.log.patch_last_cell_event_old_state(
+                    *cell,
+                    old_value.clone(),
+                    old_formula.clone(),
+                );
             }
 
             for (r, c, v) in overlay_ops {
@@ -978,8 +993,11 @@ impl Workbook {
             });
 
             for (_r, _c, _v, cell, old_value, old_formula) in items.iter().rev() {
-                self.log
-                    .patch_last_cell_event_old_state(*cell, old_value.clone(), old_formula.clone());
+                self.log.patch_last_cell_event_old_state(
+                    *cell,
+                    old_value.clone(),
+                    old_formula.clone(),
+                );
             }
 
             for (r, c, v, _cell, _old_value, _old_formula) in items {

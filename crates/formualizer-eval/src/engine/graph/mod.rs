@@ -632,10 +632,7 @@ impl DependencyGraph {
 
     #[cfg(test)]
     pub fn instr(&self) -> GraphInstrumentation {
-        self.instr
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.instr.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     /// Begin batch operations - defer CSR rebuilds until end_batch() is called
@@ -2399,10 +2396,8 @@ impl DependencyGraph {
                 let er0 = range.end_row.map(|b| b.index).unwrap_or(u32::MAX);
                 let sc0 = range.start_col.map(|b| b.index).unwrap_or(0);
                 let ec0 = range.end_col.map(|b| b.index).unwrap_or(u32::MAX);
-                let overlap = sr0 <= end_row
-                    && er0 >= start_row
-                    && sc0 <= end_col
-                    && ec0 >= start_col;
+                let overlap =
+                    sr0 <= end_row && er0 >= start_row && sc0 <= end_col && ec0 >= start_col;
                 if overlap {
                     hit = true;
                     break;

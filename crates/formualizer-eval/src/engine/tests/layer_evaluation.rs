@@ -156,7 +156,7 @@ fn test_evaluation_with_cycles() {
 
     assert_eq!(result.computed_vertices, 1); // C1
     assert_eq!(result.cycle_errors, 1); // The A1-B1 cycle
-                                        // A1 and B1 should have error values
+    // A1 and B1 should have error values
     for (r, c) in [(1u32, 1u32), (1u32, 2u32)] {
         match engine.get_cell_value("Sheet1", r, c) {
             Some(LiteralValue::Error(e)) => {

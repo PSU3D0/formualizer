@@ -4,10 +4,10 @@
 //! and sequential-vs-parallel equivalence.
 
 use crate::engine::graph::editor::change_log::{ChangeEvent, ChangeLog};
-use crate::engine::{eval::Engine, EvalConfig};
+use crate::engine::{EvalConfig, eval::Engine};
 use crate::test_workbook::TestWorkbook;
-use formualizer_parse::parser::parse;
 use formualizer_parse::LiteralValue;
+use formualizer_parse::parser::parse;
 
 /// Same inputs and config produce identical cell values across two independent
 /// evaluation runs.

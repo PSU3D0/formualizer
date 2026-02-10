@@ -234,7 +234,9 @@ where
                 let mut out: Result<crate::engine::ShiftSummary, crate::engine::EditorError> =
                     Ok(crate::engine::ShiftSummary::default());
                 self.engine.edit_with_logger(log, |editor| {
-                    out = editor.insert_rows(sheet_id, before0, count).map_err(Into::into);
+                    out = editor
+                        .insert_rows(sheet_id, before0, count)
+                        .map_err(Into::into);
                 });
                 out?
             };
@@ -1207,9 +1209,11 @@ where
         let res = f(&mut tx);
 
         // Capture graph structural delta for this action.
-        let graph_events: Vec<crate::engine::ChangeEvent> = unsafe { (&*log_ptr).events() }[start_len..]
-            .to_vec();
-        let graph_batch = crate::engine::GraphUndoBatch { events: graph_events };
+        let graph_events: Vec<crate::engine::ChangeEvent> =
+            unsafe { (&*log_ptr).events() }[start_len..].to_vec();
+        let graph_batch = crate::engine::GraphUndoBatch {
+            events: graph_events,
+        };
         let affected_cells = arrow_undo.ops.len();
         let journal = crate::engine::ActionJournal {
             name,
@@ -1355,13 +1359,22 @@ where
             sheets: &'a crate::arrow_store::SheetStore,
         }
         impl crate::engine::graph::editor::vertex_editor::SpillValueReader for ArrowSpillReader<'_> {
-            fn read_cell_value(&self, sheet: &str, row: u32, col: u32) -> Option<formualizer_common::LiteralValue> {
+            fn read_cell_value(
+                &self,
+                sheet: &str,
+                row: u32,
+                col: u32,
+            ) -> Option<formualizer_common::LiteralValue> {
                 use formualizer_common::LiteralValue;
                 let asheet = self.sheets.sheet(sheet)?;
                 let r0 = row.saturating_sub(1) as usize;
                 let c0 = col.saturating_sub(1) as usize;
                 let v = asheet.get_cell_value(r0, c0);
-                if matches!(v, LiteralValue::Empty) { None } else { Some(v) }
+                if matches!(v, LiteralValue::Empty) {
+                    None
+                } else {
+                    Some(v)
+                }
             }
         }
 
@@ -1546,7 +1559,11 @@ where
         }
     }
 
-    fn mirror_spill_snapshot(&mut self, snap: &crate::engine::graph::editor::change_log::SpillSnapshot, clear_only: bool) {
+    fn mirror_spill_snapshot(
+        &mut self,
+        snap: &crate::engine::graph::editor::change_log::SpillSnapshot,
+        clear_only: bool,
+    ) {
         use formualizer_common::LiteralValue;
 
         let mut i = 0usize;
@@ -1554,7 +1571,11 @@ where
             for v in row {
                 if let Some(cell) = snap.target_cells.get(i) {
                     let (sheet, r, c) = self.cellref_to_sheet_row_col(cell);
-                    let out = if clear_only { LiteralValue::Empty } else { v.clone() };
+                    let out = if clear_only {
+                        LiteralValue::Empty
+                    } else {
+                        v.clone()
+                    };
                     self.mirror_value_to_computed_overlay(&sheet, r, c, &out);
                 }
                 i += 1;
@@ -2275,14 +2296,18 @@ where
             LiteralValue::Number(n) => OverlayValue::Number(*n),
             LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
             LiteralValue::Text(s) => OverlayValue::Text(std::sync::Arc::from(s.clone())),
-            LiteralValue::Error(e) => OverlayValue::Error(crate::arrow_store::map_error_code(e.kind)),
+            LiteralValue::Error(e) => {
+                OverlayValue::Error(crate::arrow_store::map_error_code(e.kind))
+            }
             LiteralValue::Date(d) => {
                 let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                let serial = crate::builtins::datetime::datetime_to_serial_for(self.config.date_system, &dt);
+                let serial =
+                    crate::builtins::datetime::datetime_to_serial_for(self.config.date_system, &dt);
                 OverlayValue::DateTime(serial)
             }
             LiteralValue::DateTime(dt) => {
-                let serial = crate::builtins::datetime::datetime_to_serial_for(self.config.date_system, dt);
+                let serial =
+                    crate::builtins::datetime::datetime_to_serial_for(self.config.date_system, dt);
                 OverlayValue::DateTime(serial)
             }
             LiteralValue::Time(t) => {
@@ -2320,7 +2345,9 @@ where
         let Some(ch) = asheet.columns[col0].chunk(ch_idx) else {
             return None;
         };
-        ch.overlay.get(in_off).map(|ov| self.overlay_value_to_literal(ov))
+        ch.overlay
+            .get(in_off)
+            .map(|ov| self.overlay_value_to_literal(ov))
     }
 
     /// Read a single cell's computed overlay entry (if present), preserving the distinction
@@ -2576,18 +2603,26 @@ where
                             rect_from_snapshot(old_snap)
                                 .map(|(_, _, _, _, _, v)| v)
                                 .unwrap_or_else(|| {
-                                    vec![vec![LiteralValue::Empty; new_vals[0].len()]; new_vals.len()]
+                                    vec![
+                                        vec![LiteralValue::Empty; new_vals[0].len()];
+                                        new_vals.len()
+                                    ]
                                 })
                         } else {
                             vec![vec![LiteralValue::Empty; new_vals[0].len()]; new_vals.len()]
                         };
-                        undo.record_restore_computed_rect(sid, sr0, sc0, er0, ec0, old_vals, new_vals);
+                        undo.record_restore_computed_rect(
+                            sid, sr0, sc0, er0, ec0, old_vals, new_vals,
+                        );
                     }
                 }
                 ChangeEvent::SpillCleared { old, .. } => {
                     if let Some((sid, sr0, sc0, er0, ec0, old_vals)) = rect_from_snapshot(old) {
-                        let new_vals = vec![vec![LiteralValue::Empty; old_vals[0].len()]; old_vals.len()];
-                        undo.record_restore_computed_rect(sid, sr0, sc0, er0, ec0, old_vals, new_vals);
+                        let new_vals =
+                            vec![vec![LiteralValue::Empty; old_vals[0].len()]; old_vals.len()];
+                        undo.record_restore_computed_rect(
+                            sid, sr0, sc0, er0, ec0, old_vals, new_vals,
+                        );
                     }
                 }
                 _ => {}
@@ -2752,8 +2787,11 @@ where
                     freed_total += sheet.compact_computed_overlay_chunk(col_idx, ch_idx);
                 }
                 // Sparse chunks
-                let sparse_keys: Vec<usize> =
-                    sheet.columns[col_idx].sparse_chunks.keys().copied().collect();
+                let sparse_keys: Vec<usize> = sheet.columns[col_idx]
+                    .sparse_chunks
+                    .keys()
+                    .copied()
+                    .collect();
                 for ch_idx in sparse_keys {
                     freed_total += sheet.compact_computed_overlay_sparse_chunk(col_idx, ch_idx);
                 }
@@ -6133,7 +6171,10 @@ where
 
                 if self.force_materialize_range_views {
                     if er < sr || ec < sc {
-                        return Ok(RangeView::from_owned_rows(Vec::new(), self.config.date_system));
+                        return Ok(RangeView::from_owned_rows(
+                            Vec::new(),
+                            self.config.date_system,
+                        ));
                     }
                     let h = (er - sr + 1) as u64;
                     let w = (ec - sc + 1) as u64;
@@ -6716,10 +6757,7 @@ where
                 anchor_vertex: vertex_id,
             });
         }
-        effects.push(Effect::WriteCell {
-            vertex_id,
-            value,
-        });
+        effects.push(Effect::WriteCell { vertex_id, value });
         Ok(effects)
     }
 
@@ -6731,8 +6769,7 @@ where
         overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
     ) -> Result<Vec<Effect>, ExcelError> {
         // Lightweight mutation needed for correct spill-blocking checks.
-        self.graph
-            .set_kind(vertex_id, VertexKind::FormulaArray);
+        self.graph.set_kind(vertex_id, VertexKind::FormulaArray);
 
         let anchor = self
             .graph
@@ -6754,12 +6791,7 @@ where
         let end_row = anchor.coord.row().saturating_add(h).saturating_sub(1);
         let end_col = anchor.coord.col().saturating_add(w).saturating_sub(1);
         if end_row > PACKED_MAX_ROW || end_col > PACKED_MAX_COL {
-            return self.plan_spill_error_effects(
-                vertex_id,
-                "Spill exceeds sheet bounds",
-                h,
-                w,
-            );
+            return self.plan_spill_error_effects(vertex_id, "Spill exceeds sheet bounds", h, w);
         }
 
         let mut targets = Vec::new();
@@ -6919,13 +6951,7 @@ where
                 target_cells,
                 values,
             } => {
-                self.apply_spill_commit(
-                    *anchor_vertex,
-                    target_cells,
-                    values.clone(),
-                    delta,
-                    log,
-                )?;
+                self.apply_spill_commit(*anchor_vertex, target_cells, values.clone(), delta, log)?;
             }
         }
         Ok(())
@@ -7189,9 +7215,7 @@ where
         for (i, &vertex_id) in layer.vertices.iter().enumerate() {
             if i % 128 == 0 && cancel_flag.load(Ordering::Relaxed) {
                 return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message(
-                        "Demand-driven evaluation cancelled within layer".to_string(),
-                    ));
+                    .with_message("Demand-driven evaluation cancelled within layer".to_string()));
             }
             let value = match self.evaluate_vertex_immutable(vertex_id) {
                 Ok(v) => v,
@@ -7236,10 +7260,12 @@ where
                 thread_pool.install(|| {
                     group
                         .par_iter()
-                        .map(|&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
-                            Ok(v) => Ok((vertex_id, v)),
-                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                        })
+                        .map(
+                            |&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
+                                Ok(v) => Ok((vertex_id, v)),
+                                Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
+                            },
+                        )
                         .collect()
                 });
 
@@ -7311,10 +7337,12 @@ where
                 thread_pool.install(|| {
                     group
                         .par_iter()
-                        .map(|&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
-                            Ok(v) => Ok((vertex_id, v)),
-                            Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
-                        })
+                        .map(
+                            |&vertex_id| match self.evaluate_vertex_immutable(vertex_id) {
+                                Ok(v) => Ok((vertex_id, v)),
+                                Err(e) => Ok((vertex_id, LiteralValue::Error(e))),
+                            },
+                        )
                         .collect()
                 });
 
@@ -7447,10 +7475,7 @@ where
     ///
     /// This is the same flow as `evaluate_all` but threads a ChangeLog through
     /// every effect application so that spill commits/clears are captured.
-    pub fn evaluate_all_logged(
-        &mut self,
-        log: &mut ChangeLog,
-    ) -> Result<EvalResult, ExcelError> {
+    pub fn evaluate_all_logged(&mut self, log: &mut ChangeLog) -> Result<EvalResult, ExcelError> {
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
@@ -7482,7 +7507,8 @@ where
         for cycle in &schedule.cycles {
             cycle_errors += 1;
             for &vertex_id in cycle {
-                self.graph.update_vertex_value(vertex_id, circ_error.clone());
+                self.graph
+                    .update_vertex_value(vertex_id, circ_error.clone());
                 self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
             }
         }

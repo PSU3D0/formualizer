@@ -136,8 +136,8 @@ pub unsafe extern "C" fn fz_parse_tokenize(
     status: *mut fz_status,
 ) -> fz_buffer {
     use crate::parse::CffiToken;
-    use formualizer_parse::tokenizer::Tokenizer;
     use formualizer_parse::FormulaDialect;
+    use formualizer_parse::tokenizer::Tokenizer;
     use std::ffi::CStr;
 
     if formula.is_null() {
@@ -202,9 +202,9 @@ pub unsafe extern "C" fn fz_parse_ast(
     status: *mut fz_status,
 ) -> fz_buffer {
     use crate::parse::CffiASTNode;
+    use formualizer_parse::FormulaDialect;
     use formualizer_parse::parser::Parser;
     use formualizer_parse::tokenizer::Tokenizer;
-    use formualizer_parse::FormulaDialect;
     use std::ffi::CStr;
 
     if formula.is_null() {
@@ -266,7 +266,7 @@ pub unsafe extern "C" fn fz_parse_canonical_formula(
     dialect: fz_formula_dialect,
     status: *mut fz_status,
 ) -> fz_buffer {
-    use formualizer_parse::{pretty_parse_render, FormulaDialect};
+    use formualizer_parse::{FormulaDialect, pretty_parse_render};
     use std::ffi::CStr;
 
     if formula.is_null() {
@@ -309,7 +309,7 @@ pub unsafe extern "C" fn fz_common_parse_range_a1(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) -> fz_buffer {
-    use formualizer_common::{coord, RangeAddress};
+    use formualizer_common::{RangeAddress, coord};
     use std::ffi::CStr;
 
     if range_a1.is_null() {
@@ -381,7 +381,7 @@ pub unsafe extern "C" fn fz_common_format_range_a1(
     format: fz_encoding_format,
     status: *mut fz_status,
 ) -> fz_buffer {
-    use formualizer_common::{coord, RangeAddress};
+    use formualizer_common::{RangeAddress, coord};
 
     if range_payload.is_null() {
         if !status.is_null() {

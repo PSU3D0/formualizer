@@ -1,7 +1,7 @@
 use crate::traits::ArgumentHandle;
 // Note: Validator no longer depends on EvaluationContext; keep it engine-agnostic.
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

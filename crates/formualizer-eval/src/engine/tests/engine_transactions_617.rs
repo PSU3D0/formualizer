@@ -3,8 +3,8 @@
 use crate::engine::graph::editor::undo_engine::UndoEngine;
 use crate::engine::{ChangeLog, EditorError, Engine};
 use crate::test_workbook::TestWorkbook;
-use formualizer_parse::parser::parse;
 use formualizer_parse::LiteralValue;
+use formualizer_parse::parser::parse;
 
 use super::common::arrow_eval_config;
 
@@ -133,10 +133,10 @@ fn transaction_context_is_structure_only() {
     // The graph no longer caches cell/formula values in canonical mode.
     // TransactionContext rollback guarantees structural restoration (formulas/vertex mapping),
     // but callers must not treat it as a value rollback mechanism.
-    use crate::engine::graph::editor::transaction_context::TransactionContext;
-    use crate::engine::DependencyGraph;
-    use crate::reference::Coord;
     use crate::CellRef;
+    use crate::engine::DependencyGraph;
+    use crate::engine::graph::editor::transaction_context::TransactionContext;
+    use crate::reference::Coord;
 
     fn cell_ref(sheet_id: u16, row: u32, col: u32) -> CellRef {
         CellRef::new(sheet_id, Coord::from_excel(row, col, true, true))

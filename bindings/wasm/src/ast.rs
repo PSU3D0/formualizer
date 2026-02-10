@@ -1,6 +1,6 @@
-use formualizer::parse::{ASTNode as CoreASTNode, ASTNodeType};
 use formualizer::LiteralValue;
 use formualizer::ReferenceType;
+use formualizer::parse::{ASTNode as CoreASTNode, ASTNodeType};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 

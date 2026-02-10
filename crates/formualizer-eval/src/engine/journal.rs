@@ -4,10 +4,10 @@
 //! mechanism. It uses graph `ChangeEvent` as a structural delta representation and records
 //! explicit Arrow overlay mutations for value truth rollback.
 
+use crate::SheetId;
+use crate::engine::DependencyGraph;
 use crate::engine::graph::editor::change_log::ChangeEvent;
 use crate::engine::graph::editor::vertex_editor::{EditorError, VertexEditor};
-use crate::engine::DependencyGraph;
-use crate::SheetId;
 use formualizer_common::LiteralValue;
 
 #[derive(Debug, Clone, PartialEq)]

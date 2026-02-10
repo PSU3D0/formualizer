@@ -1,8 +1,8 @@
-use crate::engine::graph::editor::change_log::{ChangeEvent, ChangeLog};
-use crate::engine::graph::editor::VertexEditor;
-use crate::engine::graph::DependencyGraph;
-use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::VertexKind;
+use crate::engine::graph::DependencyGraph;
+use crate::engine::graph::editor::VertexEditor;
+use crate::engine::graph::editor::change_log::{ChangeEvent, ChangeLog};
+use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;

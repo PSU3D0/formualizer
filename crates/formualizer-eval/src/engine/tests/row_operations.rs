@@ -1,5 +1,5 @@
-use crate::engine::graph::DependencyGraph;
 use crate::engine::VertexEditor;
+use crate::engine::graph::DependencyGraph;
 use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parse;
@@ -116,9 +116,11 @@ fn test_delete_rows() {
         graph.get_vertex_id_for_address(&sheet1_cell(&graph, 3, 1)),
         Some(&a5_id)
     );
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 4, 1))
-        .is_none());
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 4, 1))
+            .is_none()
+    );
 
     assert_eq!(summary.vertices_deleted.len(), 2);
     assert_eq!(summary.vertices_moved.len(), 3); // A4, A5, and A7 moved up
@@ -180,9 +182,11 @@ fn test_delete_row_creates_ref_error() {
     assert!(graph.is_deleted(b2_id));
 
     // A2 vertex should be gone
-    assert!(graph
-        .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
-        .is_none());
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 2, 1))
+            .is_none()
+    );
 }
 
 #[test]

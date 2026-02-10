@@ -300,11 +300,7 @@ impl Function for XLookupFn {
         let lookup_len = {
             let raw = if vertical { lookup_rows } else { lookup_cols };
             if raw == 0 {
-                if vertical {
-                    ret_rows
-                } else {
-                    ret_cols
-                }
+                if vertical { ret_rows } else { ret_cols }
             } else {
                 raw
             }
@@ -875,11 +871,7 @@ impl Function for SortFn {
                 let val_a = &a.1[sort_row_idx];
                 let val_b = &b.1[sort_row_idx];
                 let cmp = cmp_for_lookup(val_a, val_b).unwrap_or(0);
-                if ascending {
-                    cmp.cmp(&0)
-                } else {
-                    0.cmp(&cmp)
-                }
+                if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
             });
 
             // Reconstruct the array with sorted columns
@@ -915,11 +907,7 @@ impl Function for SortFn {
                 let val_a = &a[sort_col_idx];
                 let val_b = &b[sort_col_idx];
                 let cmp = cmp_for_lookup(val_a, val_b).unwrap_or(0);
-                if ascending {
-                    cmp.cmp(&0)
-                } else {
-                    0.cmp(&cmp)
-                }
+                if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
             });
 
             Ok(collapse_if_scalar(row_data, _ctx.date_system()))

@@ -178,10 +178,10 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                         }
                     } else {
                         // rebuild chunk with updates applied
+                        use arrow_array::Array as _;
                         use arrow_array::builder::{
                             BooleanBuilder, Float64Builder, StringBuilder, UInt8Builder,
                         };
-                        use arrow_array::Array as _;
                         items.sort_by_key(|(o, _)| *o);
                         let mut tag_b = UInt8Builder::with_capacity(len);
                         let mut nb = Float64Builder::with_capacity(len);

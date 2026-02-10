@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::tokenizer::Tokenizer;
     use crate::FormulaDialect;
+    use crate::tokenizer::Tokenizer;
     use formualizer_common::{ExcelError, LiteralValue};
 
     use crate::parser::{ASTNode, ASTNodeType, Parser, ParserError, ReferenceType};
@@ -1816,12 +1816,16 @@ mod reference_tests {
                 specifier: Some(TableSpecifier::Combination(parts)),
             }) => {
                 assert_eq!(name, "Table1");
-                assert!(parts
-                    .iter()
-                    .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Headers))));
-                assert!(parts
-                    .iter()
-                    .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Data))));
+                assert!(
+                    parts
+                        .iter()
+                        .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Headers)))
+                );
+                assert!(
+                    parts
+                        .iter()
+                        .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Data)))
+                );
             }
             _ => panic!("expected table combination"),
         }

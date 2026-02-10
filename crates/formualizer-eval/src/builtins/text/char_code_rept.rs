@@ -1,6 +1,6 @@
 //! CHAR, CODE, REPT text functions
 
-use super::super::utils::{coerce_num, ARG_ANY_ONE, ARG_ANY_TWO};
+use super::super::utils::{ARG_ANY_ONE, ARG_ANY_TWO, coerce_num};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};

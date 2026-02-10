@@ -5,11 +5,11 @@
 //! - Rollback logic for undoing changes
 //! - Savepoint support for partial rollback
 
+use crate::engine::graph::DependencyGraph;
 use crate::engine::graph::editor::transaction_manager::{
     TransactionError, TransactionId, TransactionManager,
 };
 use crate::engine::graph::editor::{EditorError, VertexEditor};
-use crate::engine::graph::DependencyGraph;
 use crate::engine::{ChangeEvent, ChangeLog};
 
 /// Orchestrates transactions across graph mutations, change logging, and rollback
@@ -205,7 +205,7 @@ impl<'g> TransactionContext<'g> {
 mod tests {
     use super::*;
     use crate::engine::EvalConfig;
-    use crate::{reference::Coord, CellRef};
+    use crate::{CellRef, reference::Coord};
     use formualizer_common::LiteralValue;
     use formualizer_parse::parse;
 
@@ -265,9 +265,11 @@ mod tests {
         }
 
         // Verify value was removed after context is dropped
-        assert!(graph
-            .get_vertex_id_for_address(&cell_ref(0, 1, 1))
-            .is_none());
+        assert!(
+            graph
+                .get_vertex_id_for_address(&cell_ref(0, 1, 1))
+                .is_none()
+        );
     }
 
     #[test]
@@ -324,15 +326,21 @@ mod tests {
         }
 
         // Changes should persist after context is dropped
-        assert!(graph
-            .get_vertex_id_for_address(&cell_ref(0, 1, 1))
-            .is_some());
-        assert!(graph
-            .get_vertex_id_for_address(&cell_ref(0, 2, 1))
-            .is_some());
-        assert!(graph
-            .get_vertex_id_for_address(&cell_ref(0, 3, 1))
-            .is_some());
+        assert!(
+            graph
+                .get_vertex_id_for_address(&cell_ref(0, 1, 1))
+                .is_some()
+        );
+        assert!(
+            graph
+                .get_vertex_id_for_address(&cell_ref(0, 2, 1))
+                .is_some()
+        );
+        assert!(
+            graph
+                .get_vertex_id_for_address(&cell_ref(0, 3, 1))
+                .is_some()
+        );
     }
 
     #[test]
@@ -373,15 +381,21 @@ mod tests {
         }
 
         // Verify state after context is dropped
-        assert!(graph
-            .get_vertex_id_for_address(&cell_ref(0, 1, 1))
-            .is_some());
-        assert!(graph
-            .get_vertex_id_for_address(&cell_ref(0, 2, 1))
-            .is_none());
-        assert!(graph
-            .get_vertex_id_for_address(&cell_ref(0, 3, 1))
-            .is_none());
+        assert!(
+            graph
+                .get_vertex_id_for_address(&cell_ref(0, 1, 1))
+                .is_some()
+        );
+        assert!(
+            graph
+                .get_vertex_id_for_address(&cell_ref(0, 2, 1))
+                .is_none()
+        );
+        assert!(
+            graph
+                .get_vertex_id_for_address(&cell_ref(0, 3, 1))
+                .is_none()
+        );
     }
 
     #[test]

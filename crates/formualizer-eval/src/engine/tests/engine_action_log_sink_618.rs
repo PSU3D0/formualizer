@@ -2,8 +2,8 @@
 
 use crate::engine::{ChangeLog, EditorError, Engine};
 use crate::test_workbook::TestWorkbook;
-use formualizer_parse::parser::parse;
 use formualizer_parse::LiteralValue;
+use formualizer_parse::parser::parse;
 
 use super::common::arrow_eval_config;
 

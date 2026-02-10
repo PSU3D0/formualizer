@@ -3,8 +3,8 @@ pub use crate::function::Function;
 use crate::interpreter::Interpreter;
 use crate::reference::CellRef;
 use formualizer_common::{
-    error::{ExcelError, ExcelErrorKind},
     LiteralValue,
+    error::{ExcelError, ExcelErrorKind},
 };
 use std::any::Any;
 use std::borrow::Cow;

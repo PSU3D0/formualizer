@@ -5,11 +5,11 @@
 //! before reporting, rather than failing on the first mismatch.
 
 #[cfg(test)]
-use formualizer_common::{parse_a1_1based, ExcelError, ExcelErrorKind, LiteralValue};
-#[cfg(test)]
-use formualizer_parse::parser::Parser;
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, parse_a1_1based};
 #[cfg(test)]
 use formualizer_parse::Tokenizer;
+#[cfg(test)]
+use formualizer_parse::parser::Parser;
 #[cfg(test)]
 use serde::Deserialize;
 #[cfg(test)]

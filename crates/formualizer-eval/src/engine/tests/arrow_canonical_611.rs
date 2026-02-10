@@ -8,9 +8,9 @@
 use crate::engine::eval::Engine;
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::ExcelErrorKind;
+use formualizer_parse::LiteralValue;
 use formualizer_parse::parser::parse;
 use formualizer_parse::pretty::canonical_formula;
-use formualizer_parse::LiteralValue;
 
 use super::common::{abs_cell_ref, arrow_eval_config};
 

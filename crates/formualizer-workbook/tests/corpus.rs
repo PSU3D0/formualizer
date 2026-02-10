@@ -8,7 +8,7 @@
 //! Bless mode:
 //! - set `FZ_CORPUS_BLESS=1` to rewrite `expected.json` from current outputs.
 
-use formualizer_common::{error::ExcelErrorKind, parse_a1_1based, LiteralValue};
+use formualizer_common::{LiteralValue, error::ExcelErrorKind, parse_a1_1based};
 use formualizer_workbook::{LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

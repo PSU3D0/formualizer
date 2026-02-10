@@ -29,9 +29,7 @@ pub enum Effect {
         values: Vec<Vec<LiteralValue>>,
     },
     /// Clear a previous spill region (before resize or scalar downgrade).
-    SpillClear {
-        anchor_vertex: VertexId,
-    },
+    SpillClear { anchor_vertex: VertexId },
 }
 
 /// A batch of effects from evaluating a single layer.

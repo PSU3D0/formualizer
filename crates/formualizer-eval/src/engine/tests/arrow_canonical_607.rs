@@ -1,11 +1,11 @@
 //! Ticket 607: in Arrow-canonical mode, dependency-graph value caching must be disabled.
 
+use crate::engine::EvalConfig;
 use crate::engine::eval::Engine;
 use crate::engine::named_range::{NameScope, NamedDefinition};
-use crate::engine::EvalConfig;
 use crate::test_workbook::TestWorkbook;
-use formualizer_parse::parser::parse;
 use formualizer_parse::LiteralValue;
+use formualizer_parse::parser::parse;
 
 use super::common::{abs_cell_ref, arrow_eval_config};
 

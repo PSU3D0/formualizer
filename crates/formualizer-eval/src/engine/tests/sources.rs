@@ -5,8 +5,8 @@ use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
     ReferenceResolver, Resolver, SourceResolver, Table, TableResolver,
 };
-use formualizer_common::error::{ExcelError, ExcelErrorKind};
 use formualizer_common::LiteralValue;
+use formualizer_common::error::{ExcelError, ExcelErrorKind};
 use formualizer_parse::parser::TableReference;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -62,12 +62,13 @@ impl Table for MemTable {
     }
 
     fn headers_row(&self) -> Option<Box<dyn Range>> {
-        Some(Box::new(crate::traits::InMemoryRange::new(vec![self
-            .headers
-            .iter()
-            .cloned()
-            .map(LiteralValue::Text)
-            .collect()])))
+        Some(Box::new(crate::traits::InMemoryRange::new(vec![
+            self.headers
+                .iter()
+                .cloned()
+                .map(LiteralValue::Text)
+                .collect(),
+        ])))
     }
 
     fn data_body(&self) -> Option<Box<dyn Range>> {

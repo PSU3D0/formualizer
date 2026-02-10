@@ -569,9 +569,11 @@ fn write_inputs_rejects_out_of_range_record_field() -> Result<(), SheetPortError
         .write_inputs(update)
         .expect_err("expected constraint violation");
     let violations = expect_constraint(err);
-    assert!(violations
-        .iter()
-        .any(|v| v.path.ends_with("planning_window.month")));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.path.ends_with("planning_window.month"))
+    );
     Ok(())
 }
 
@@ -613,9 +615,11 @@ fn table_updates_require_all_columns() -> Result<(), SheetPortError> {
         .write_inputs(update)
         .expect_err("expected table violation");
     let violations = expect_constraint(err);
-    assert!(violations
-        .iter()
-        .any(|v| v.path.contains("sku_inventory[0].lead_time_days")));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.path.contains("sku_inventory[0].lead_time_days"))
+    );
     Ok(())
 }
 
@@ -932,9 +936,11 @@ fn table_update_rejects_unknown_columns() -> Result<(), SheetPortError> {
         .write_inputs(update)
         .expect_err("expected validation failure for unknown column");
     let violations = expect_constraint(err);
-    assert!(violations
-        .iter()
-        .any(|v| v.path.contains("sku_inventory[0].unexpected")));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.path.contains("sku_inventory[0].unexpected"))
+    );
     Ok(())
 }
 

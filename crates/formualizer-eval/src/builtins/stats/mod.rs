@@ -15,7 +15,7 @@
 //! - Empty numeric sets produce Excel-specific errors (#NUM! for LARGE/SMALL, #N/A for rank target
 //!   out of range, #DIV/0! for STDEV/VAR sample with n < 2, etc.).
 
-use super::super::builtins::utils::{coerce_num, ARG_RANGE_NUM_LENIENT_ONE};
+use super::super::builtins::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -1114,7 +1114,7 @@ pub struct DevsqFn;
 
 /* ─────────────────────────── MAXIFS / MINIFS ──────────────────────────── */
 
-use super::utils::{criteria_match, ARG_ANY_ONE};
+use super::utils::{ARG_ANY_ONE, criteria_match};
 
 /// MAXIFS(max_range, criteria_range1, criteria1, [criteria_range2, criteria2], ...)
 /// Returns the maximum value among cells specified by given conditions.
@@ -5631,10 +5631,9 @@ mod tests_basic_stats {
     }
     fn arr(vals: Vec<f64>) -> ASTNode {
         ASTNode::new(
-            ASTNodeType::Literal(LiteralValue::Array(vec![vals
-                .into_iter()
-                .map(LiteralValue::Number)
-                .collect()])),
+            ASTNodeType::Literal(LiteralValue::Array(vec![
+                vals.into_iter().map(LiteralValue::Number).collect(),
+            ])),
             None,
         )
     }

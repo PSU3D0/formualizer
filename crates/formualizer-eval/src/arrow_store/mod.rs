@@ -1,11 +1,11 @@
-use arrow_array::new_null_array;
 use arrow_array::Array;
+use arrow_array::new_null_array;
 use arrow_schema::DataType;
 use chrono::Timelike;
 use std::sync::Arc;
 
 use arrow_array::builder::{BooleanBuilder, Float64Builder, StringBuilder, UInt8Builder};
-use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt32Array, UInt8Array};
+use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt8Array, UInt32Array};
 use once_cell::sync::OnceCell;
 
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -1251,21 +1251,13 @@ impl ArrowSheet {
             let sl = Array::slice(a.as_ref(), off, len);
             let fa = sl.as_any().downcast_ref::<Float64Array>().unwrap().clone();
             let nn = len.saturating_sub(fa.null_count());
-            if nn == 0 {
-                None
-            } else {
-                Some(Arc::new(fa))
-            }
+            if nn == 0 { None } else { Some(Arc::new(fa)) }
         });
         let booleans: Option<Arc<BooleanArray>> = ch.booleans.as_ref().and_then(|a| {
             let sl = Array::slice(a.as_ref(), off, len);
             let ba = sl.as_any().downcast_ref::<BooleanArray>().unwrap().clone();
             let nn = len.saturating_sub(ba.null_count());
-            if nn == 0 {
-                None
-            } else {
-                Some(Arc::new(ba))
-            }
+            if nn == 0 { None } else { Some(Arc::new(ba)) }
         });
         let text: Option<ArrayRef> = ch.text.as_ref().and_then(|a| {
             let sl = Array::slice(a.as_ref(), off, len);
@@ -1281,11 +1273,7 @@ impl ArrowSheet {
             let sl = Array::slice(a.as_ref(), off, len);
             let ea = sl.as_any().downcast_ref::<UInt8Array>().unwrap().clone();
             let nn = len.saturating_sub(ea.null_count());
-            if nn == 0 {
-                None
-            } else {
-                Some(Arc::new(ea))
-            }
+            if nn == 0 { None } else { Some(Arc::new(ea)) }
         });
         // Split overlays for this slice
         let mut overlay = Overlay::new();
@@ -2942,7 +2930,7 @@ mod tests {
         assert_eq!(bools[0], Some(true));
         assert_eq!(bools[1], Some(true)); // overlay to true
         assert_eq!(bools[2], None); // overshadowed by text overlay
-                                    // spot-check others remain base
+        // spot-check others remain base
         assert_eq!(bools[3], Some(false));
     }
 
