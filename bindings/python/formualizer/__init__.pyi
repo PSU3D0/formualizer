@@ -46,7 +46,7 @@ class ASTNode:
     Use the top-level [`parse`] function to create an AST from a formula string.
     
     Example:
-        ```python
+    ```python
         from formualizer import parse
     
         ast = parse("=SUM(A1:A3)")
@@ -54,7 +54,7 @@ class ASTNode:
         print(ast.fingerprint())
         for ref in ast.walk_refs():
             print(ref)
-        ```
+    ```
     """
     def pretty(self) -> builtins.str:
         r"""
@@ -148,14 +148,14 @@ class EvaluationConfig:
     You typically pass this via `WorkbookConfig(eval_config=...)`.
     
     Example:
-        ```python
+    ```python
         import formualizer as fz
     
         eval_cfg = fz.EvaluationConfig()
         eval_cfg.enable_parallel = True
     
         wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=eval_cfg))
-        ```
+    ```
     """
     @property
     def enable_parallel(self) -> builtins.bool: ...
@@ -398,7 +398,7 @@ class LiteralValue:
     but most APIs also accept Python primitives and will convert them automatically.
     
     Example:
-        ```python
+    ```python
         import formualizer as fz
     
         v1 = fz.LiteralValue.number(1.5)
@@ -408,7 +408,7 @@ class LiteralValue:
         s = wb.sheet("Data")
         s.set_value(1, 1, v1)
         s.set_value(1, 2, v2)
-        ```
+    ```
     """
     @property
     def is_int(self) -> builtins.bool:
@@ -584,13 +584,13 @@ class Parser:
     if you want to parse multiple formulas with the same instance.
     
     Example:
-        ```python
+    ```python
         import formualizer as fz
     
         p = fz.Parser()
         ast = p.parse_string("=1+2")
         print(ast.pretty())
-        ```
+    ```
     """
     def __new__(cls) -> Parser: ...
     def parse_string(self, formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:
@@ -638,13 +638,13 @@ class RefWalker:
     Constructed via `ASTNode.walk_refs()`.
     
     Example:
-        ```python
+    ```python
         from formualizer import parse
     
         ast = parse("=SUM(A1, Sheet2!B3)")
         for r in ast.walk_refs():
             print(r)
-        ```
+    ```
     """
     def __iter__(self) -> RefWalker: ...
     def __next__(self) -> typing.Optional[typing.Any]: ...
@@ -659,7 +659,7 @@ class Sheet:
     In most cases you obtain a `Sheet` by calling `Workbook.sheet(name)`.
     
     Example:
-        ```python
+    ```python
         import formualizer as fz
     
         wb = fz.Workbook()
@@ -668,7 +668,7 @@ class Sheet:
         s.set_value(2, 1, 20)
         s.set_formula(3, 1, "=SUM(A1:A2)")
         print(wb.evaluate_cell("Data", 3, 1))
-        ```
+    ```
     """
     @property
     def name(self) -> builtins.str: ...
@@ -722,7 +722,7 @@ class SheetPortSession:
     - read outputs back into Python
     
     Example:
-        ```python
+    ```python
         from formualizer import SheetPortSession, Workbook
     
         manifest_yaml = (
@@ -757,7 +757,7 @@ class SheetPortSession:
         session.write_inputs({"base_price": 100.0})
         out = session.evaluate_once(freeze_volatile=True)
         print(out["final_price"])
-        ```
+    ```
     """
     @property
     def manifest(self) -> typing.Any:
@@ -784,9 +784,9 @@ class SheetPortSession:
         Values are validated and converted based on the manifest schema.
         
         Example:
-            ```python
+        ```python
             session.write_inputs({"base_price": 100.0, "qty": 2})
-            ```
+        ```
         """
     def evaluate_once(self, *, freeze_volatile: builtins.bool = False, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None) -> typing.Any:
         r"""
@@ -803,7 +803,7 @@ class SheetPortSession:
         - `deterministic_timestamp_utc` + `deterministic_timezone` control time and timezone.
         
         Example:
-            ```python
+        ```python
             import datetime
             from formualizer import SheetPortSession
         
@@ -814,7 +814,7 @@ class SheetPortSession:
                 deterministic_timezone="utc",
             )
             print(out)
-            ```
+        ```
         """
 
 @typing.final
@@ -838,14 +838,14 @@ class Token:
     byte offsets (`start`, `end`) pointing into the original formula string.
     
     Example:
-        ```python
+    ```python
         import formualizer as fz
     
         tok = fz.tokenize("=A1+1")[0]
         print(tok.value)
         print(tok.token_type, tok.subtype)
         print(tok.start, tok.end)
-        ```
+    ```
     """
     @property
     def value(self) -> builtins.str: ...
@@ -877,14 +877,14 @@ class Tokenizer:
     The tokenizer is iterable and supports indexing.
     
     Example:
-        ```python
+    ```python
         import formualizer as fz
     
         t = fz.Tokenizer("=SUM(A1:A3)")
         print(len(t))
         print(t.render())
         print([tok.value for tok in t.tokens()])
-        ```
+    ```
     """
     @property
     def dialect(self) -> FormulaDialect: ...
@@ -936,7 +936,7 @@ class Workbook:
     and (optionally) tracking a changelog for undo/redo.
     
     Quick start:
-        ```python
+    ```python
         import formualizer as fz
     
         wb = fz.Workbook()
@@ -948,7 +948,7 @@ class Workbook:
     
         s.set_formula(1, 2, "=PMT(A2/12, A3, -A1)")
         print(wb.evaluate_cell("Sheet1", 1, 2))
-        ```
+    ```
     """
     @property
     def sheet_names(self) -> builtins.list[builtins.str]: ...
@@ -966,12 +966,12 @@ class Workbook:
             mode/config: Optional workbook configuration.
         
         Example:
-            ```python
+        ```python
             import formualizer as fz
         
             wb = fz.Workbook.load_path("model.xlsx")
             print(wb.sheet_names)
-            ```
+        ```
         """
     def sheet(self, name: builtins.str) -> Sheet:
         r"""
@@ -984,13 +984,13 @@ class Workbook:
         - The sheet is created if it doesn't exist.
         
         Example:
-            ```python
+        ```python
             import formualizer as fz
         
             wb = fz.Workbook()
             s = wb.sheet("Data")
             s.set_value(1, 1, 123)
-            ```
+        ```
         """
     @classmethod
     def from_path(cls, path: builtins.str, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None) -> Workbook: ...
@@ -1001,13 +1001,13 @@ class Workbook:
         This is idempotent: adding an existing sheet name is a no-op.
         
         Example:
-            ```python
+        ```python
             import formualizer as fz
         
             wb = fz.Workbook()
             wb.add_sheet("Inputs")
             wb.add_sheet("Outputs")
-            ```
+        ```
         """
     def set_value(self, sheet: builtins.str, row: builtins.int, col: builtins.int, value: typing.Any) -> None:
         r"""
@@ -1019,7 +1019,7 @@ class Workbook:
         `datetime/date/time/timedelta`, or a [`LiteralValue`].
         
         Example:
-            ```python
+        ```python
             import datetime
             import formualizer as fz
         
@@ -1030,7 +1030,7 @@ class Workbook:
             wb.set_value("Sheet1", 2, 1, 3.14)
             wb.set_value("Sheet1", 3, 1, datetime.date(2024, 1, 1))
             wb.set_value("Sheet1", 4, 1, fz.LiteralValue.text("hello"))
-            ```
+        ```
         """
     def set_formula(self, sheet: builtins.str, row: builtins.int, col: builtins.int, formula: builtins.str) -> None:
         r"""
@@ -1040,7 +1040,7 @@ class Workbook:
         begin with `=`.
         
         Example:
-            ```python
+        ```python
             import formualizer as fz
         
             wb = fz.Workbook()
@@ -1049,7 +1049,7 @@ class Workbook:
             s.set_value(2, 1, 20)
             s.set_formula(3, 1, "=SUM(A1:A2)")
             print(wb.evaluate_cell("Sheet1", 3, 1))
-            ```
+        ```
         """
     def evaluate_cell(self, sheet: builtins.str, row: builtins.int, col: builtins.int) -> typing.Any:
         r"""
@@ -1063,7 +1063,7 @@ class Workbook:
             nested lists for arrays.
         
         Example:
-            ```python
+        ```python
             import formualizer as fz
         
             wb = fz.Workbook()
@@ -1072,7 +1072,7 @@ class Workbook:
             s.set_value(2, 1, 200)
             s.set_formula(3, 1, "=SUM(A1:A2)")
             print(wb.evaluate_cell("Data", 3, 1))
-            ```
+        ```
         """
     def evaluate_all(self) -> None: ...
     def evaluate_cells(self, targets: list) -> typing.Any: ...
@@ -1092,7 +1092,7 @@ class Workbook:
         This is only relevant when the changelog is enabled.
         
         Example:
-            ```python
+        ```python
             import formualizer as fz
         
             wb = fz.Workbook()
@@ -1105,7 +1105,7 @@ class Workbook:
             wb.end_action()
         
             wb.undo()  # reverts both values at once
-            ```
+        ```
         """
     def end_action(self) -> None:
         r"""
@@ -1134,7 +1134,7 @@ class WorkbookConfig:
     You typically pass this into `Workbook(config=...)`.
     
     Example:
-        ```python
+    ```python
         import formualizer as fz
     
         cfg = fz.WorkbookConfig(
@@ -1143,7 +1143,7 @@ class WorkbookConfig:
             eval_config=fz.EvaluationConfig(),
         )
         wb = fz.Workbook(config=cfg)
-        ```
+    ```
     """
     def __new__(cls, *, mode: WorkbookMode = ..., eval_config: typing.Optional[EvaluationConfig] = None, enable_changelog: typing.Optional[builtins.bool] = None) -> WorkbookConfig: ...
     def __repr__(self) -> builtins.str: ...
@@ -1220,12 +1220,12 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
             (The backend/strategy is currently fixed to `calamine` + eager load.)
     
     Example:
-        ```python
+    ```python
         import formualizer as fz
     
         wb = fz.load_workbook("financial_model.xlsx")
         print(wb.evaluate_cell("Summary", 1, 2))
-        ```
+    ```
     """
 
 def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:
@@ -1240,7 +1240,7 @@ def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None
         dialect: Optional dialect hint.
     
     Example:
-        ```python
+    ```python
         from formualizer import parse
         from formualizer.visitor import collect_references, collect_function_names
     
@@ -1249,7 +1249,7 @@ def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None
         print(ast.to_formula())
         print(collect_references(ast))
         print(collect_function_names(ast))
-        ```
+    ```
     """
 
 def parse_formula(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:
@@ -1271,7 +1271,7 @@ def tokenize(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = N
         A [`Tokenizer`] which can be iterated to yield [`Token`] objects.
     
     Example:
-        ```python
+    ```python
         import formualizer as fz
     
         t = fz.tokenize("=SUM(A1:A3)")
@@ -1279,7 +1279,7 @@ def tokenize(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = N
     
         for tok in t:
             print(tok.value, tok.token_type, tok.subtype, tok.start, tok.end)
-        ```
+    ```
     """
 
 
