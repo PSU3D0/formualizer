@@ -414,9 +414,112 @@ impl Function for OffsetFn {
     }
 }
 
+fn arg_indirect() -> Vec<ArgSchema> {
+    vec![
+        // ref_text: the string to parse as a reference
+        ArgSchema {
+            kinds: smallvec::smallvec![ArgKind::Any],
+            required: true,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::None,
+            max: None,
+            repeating: None,
+            default: None,
+        },
+        // a1_style: optional boolean (ignored — we always use A1 style)
+        ArgSchema {
+            kinds: smallvec::smallvec![ArgKind::Logical],
+            required: false,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::None,
+            max: None,
+            repeating: None,
+            default: None,
+        },
+    ]
+}
+
+#[derive(Debug)]
+pub struct IndirectFn;
+impl Function for IndirectFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE | FnCaps::RETURNS_REFERENCE
+    }
+    fn name(&self) -> &'static str {
+        "INDIRECT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use once_cell::sync::Lazy;
+        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_indirect);
+        &SCHEMA
+    }
+
+    fn eval_reference<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Option<Result<ReferenceType, ExcelError>> {
+        if args.is_empty() {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Value)));
+        }
+        // Evaluate first arg to get the reference string
+        let ref_string = match args[0].value() {
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Text(s) => s,
+                LiteralValue::Number(n) => format!("{}", n as i64),
+                LiteralValue::Int(i) => i.to_string(),
+                LiteralValue::Error(e) => return Some(Err(e)),
+                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
+            },
+            Err(e) => return Some(Err(e)),
+        };
+
+        // Parse the string as a reference
+        match ReferenceType::from_string(&ref_string) {
+            Ok(r) => Some(Ok(r)),
+            Err(_) => Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
+        }
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if let Some(Ok(r)) = self.eval_reference(args, ctx) {
+            let current_sheet = ctx.current_sheet();
+            match ctx.resolve_range_view(&r, current_sheet) {
+                Ok(rv) => {
+                    let (rows, cols) = rv.dims();
+                    if rows == 1 && cols == 1 {
+                        Ok(crate::traits::CalcValue::Scalar(
+                            rv.as_1x1().unwrap_or(LiteralValue::Empty),
+                        ))
+                    } else {
+                        Ok(crate::traits::CalcValue::Range(rv))
+                    }
+                }
+                Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            }
+        } else if let Some(Err(e)) = self.eval_reference(args, ctx) {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)))
+        } else {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Ref),
+            )))
+        }
+    }
+}
+
 pub fn register_builtins() {
     crate::function_registry::register_function(std::sync::Arc::new(IndexFn));
     crate::function_registry::register_function(std::sync::Arc::new(OffsetFn));
+    crate::function_registry::register_function(std::sync::Arc::new(IndirectFn));
 }
 
 #[cfg(test)]
