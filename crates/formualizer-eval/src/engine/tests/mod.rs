@@ -40,6 +40,10 @@ mod transactions;
 mod vertex_lifecycle;
 mod volatile_rng;
 
+mod engine_action_api_614;
+mod engine_action_rollback_615;
+mod engine_transactions_617;
+
 mod infinite_ranges;
 mod spill_atomic;
 mod spill_basic;

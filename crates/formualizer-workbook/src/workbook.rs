@@ -81,6 +81,80 @@ pub struct Workbook {
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
 }
 
+trait WorkbookActionOps {
+    fn set_value(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: LiteralValue,
+    ) -> Result<(), IoError>;
+
+    fn set_formula(&mut self, sheet: &str, row: u32, col: u32, formula: &str) -> Result<(), IoError>;
+
+    fn set_values(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        rows: &[Vec<LiteralValue>],
+    ) -> Result<(), IoError>;
+
+    fn write_range(
+        &mut self,
+        sheet: &str,
+        start: (u32, u32),
+        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+    ) -> Result<(), IoError>;
+}
+
+/// Transactional edit surface for `Workbook::action`.
+///
+/// This wrapper exists to avoid aliasing `&mut Workbook` while an Engine transaction is active.
+/// It intentionally exposes only valueful edit operations that can participate in rollback.
+pub struct WorkbookAction<'a> {
+    ops: &'a mut dyn WorkbookActionOps,
+}
+
+impl WorkbookAction<'_> {
+    #[inline]
+    pub fn set_value(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: LiteralValue,
+    ) -> Result<(), IoError> {
+        self.ops.set_value(sheet, row, col, value)
+    }
+
+    #[inline]
+    pub fn set_formula(&mut self, sheet: &str, row: u32, col: u32, formula: &str) -> Result<(), IoError> {
+        self.ops.set_formula(sheet, row, col, formula)
+    }
+
+    #[inline]
+    pub fn set_values(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        rows: &[Vec<LiteralValue>],
+    ) -> Result<(), IoError> {
+        self.ops.set_values(sheet, start_row, start_col, rows)
+    }
+
+    #[inline]
+    pub fn write_range(
+        &mut self,
+        sheet: &str,
+        start: (u32, u32),
+        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+    ) -> Result<(), IoError> {
+        self.ops.write_range(sheet, start, cells)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkbookMode {
     /// Fastpath parity with direct Engine usage.
@@ -197,6 +271,225 @@ impl Workbook {
         if self.enable_changelog {
             self.log.end_compound();
         }
+    }
+
+    /// Execute an atomic workbook action.
+    ///
+    /// When changelog is enabled, this delegates to `Engine::action_with_logger` and therefore:
+    /// - logs changes into the changelog as a compound
+    /// - rolls back graph + Arrow-truth value changes on error
+    /// - truncates the changelog on rollback
+    ///
+    /// The closure receives a `WorkbookAction` rather than `&mut Workbook` to avoid aliasing
+    /// `&mut Workbook` while the Engine transaction is active.
+    pub fn action<T>(
+        &mut self,
+        name: &str,
+        f: impl FnOnce(&mut WorkbookAction<'_>) -> Result<T, IoError>,
+    ) -> Result<T, IoError> {
+        let mut user_err: Option<IoError> = None;
+
+        if self.enable_changelog {
+            let res = self.engine.action_with_logger(&mut self.log, name, |tx| {
+                struct TxOps<'a, 'e> {
+                    tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
+                }
+                impl WorkbookActionOps for TxOps<'_, '_> {
+                    fn set_value(
+                        &mut self,
+                        sheet: &str,
+                        row: u32,
+                        col: u32,
+                        value: LiteralValue,
+                    ) -> Result<(), IoError> {
+                        self.tx
+                            .set_cell_value(sheet, row, col, value)
+                            .map_err(|e| match e {
+                                formualizer_eval::engine::EditorError::Excel(excel) => {
+                                    IoError::Engine(excel)
+                                }
+                                other => IoError::from_backend("editor", other),
+                            })
+                    }
+
+                    fn set_formula(
+                        &mut self,
+                        sheet: &str,
+                        row: u32,
+                        col: u32,
+                        formula: &str,
+                    ) -> Result<(), IoError> {
+                        let with_eq = if formula.starts_with('=') {
+                            formula.to_string()
+                        } else {
+                            format!("={formula}")
+                        };
+                        let ast = formualizer_parse::parser::parse(&with_eq)
+                            .map_err(|e| IoError::from_backend("parser", e))?;
+                        self.tx
+                            .set_cell_formula(sheet, row, col, ast)
+                            .map_err(|e| match e {
+                                formualizer_eval::engine::EditorError::Excel(excel) => {
+                                    IoError::Engine(excel)
+                                }
+                                other => IoError::from_backend("editor", other),
+                            })
+                    }
+
+                    fn set_values(
+                        &mut self,
+                        sheet: &str,
+                        start_row: u32,
+                        start_col: u32,
+                        rows: &[Vec<LiteralValue>],
+                    ) -> Result<(), IoError> {
+                        for (ri, rvals) in rows.iter().enumerate() {
+                            let r = start_row + ri as u32;
+                            for (ci, v) in rvals.iter().enumerate() {
+                                let c = start_col + ci as u32;
+                                self.set_value(sheet, r, c, v.clone())?;
+                            }
+                        }
+                        Ok(())
+                    }
+
+                    fn write_range(
+                        &mut self,
+                        sheet: &str,
+                        _start: (u32, u32),
+                        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+                    ) -> Result<(), IoError> {
+                        for ((r, c), d) in cells.into_iter() {
+                            if let Some(v) = d.value {
+                                self.set_value(sheet, r, c, v)?;
+                            }
+                            if let Some(f) = d.formula.as_ref() {
+                                self.set_formula(sheet, r, c, f)?;
+                            }
+                        }
+                        Ok(())
+                    }
+                }
+
+                let mut ops = TxOps { tx };
+                let mut wtx = WorkbookAction { ops: &mut ops };
+                match f(&mut wtx) {
+                    Ok(v) => Ok(v),
+                    Err(e) => {
+                        user_err = Some(e);
+                        Err(formualizer_eval::engine::EditorError::TransactionFailed {
+                            reason: "Workbook::action aborted".to_string(),
+                        })
+                    }
+                }
+            });
+
+            if let Some(e) = user_err {
+                return Err(e);
+            }
+            return res.map_err(|e| match e {
+                formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
+                other => IoError::from_backend("editor", other),
+            });
+        }
+
+        let res = self.engine.action(name, |tx| {
+            struct TxOps<'a, 'e> {
+                tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
+            }
+            impl WorkbookActionOps for TxOps<'_, '_> {
+                fn set_value(
+                    &mut self,
+                    sheet: &str,
+                    row: u32,
+                    col: u32,
+                    value: LiteralValue,
+                ) -> Result<(), IoError> {
+                    self.tx
+                        .set_cell_value(sheet, row, col, value)
+                        .map_err(|e| match e {
+                            formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
+                            other => IoError::from_backend("editor", other),
+                        })
+                }
+
+                fn set_formula(
+                    &mut self,
+                    sheet: &str,
+                    row: u32,
+                    col: u32,
+                    formula: &str,
+                ) -> Result<(), IoError> {
+                    let with_eq = if formula.starts_with('=') {
+                        formula.to_string()
+                    } else {
+                        format!("={formula}")
+                    };
+                    let ast = formualizer_parse::parser::parse(&with_eq)
+                        .map_err(|e| IoError::from_backend("parser", e))?;
+                    self.tx
+                        .set_cell_formula(sheet, row, col, ast)
+                        .map_err(|e| match e {
+                            formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
+                            other => IoError::from_backend("editor", other),
+                        })
+                }
+
+                fn set_values(
+                    &mut self,
+                    sheet: &str,
+                    start_row: u32,
+                    start_col: u32,
+                    rows: &[Vec<LiteralValue>],
+                ) -> Result<(), IoError> {
+                    for (ri, rvals) in rows.iter().enumerate() {
+                        let r = start_row + ri as u32;
+                        for (ci, v) in rvals.iter().enumerate() {
+                            let c = start_col + ci as u32;
+                            self.set_value(sheet, r, c, v.clone())?;
+                        }
+                    }
+                    Ok(())
+                }
+
+                fn write_range(
+                    &mut self,
+                    sheet: &str,
+                    _start: (u32, u32),
+                    cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+                ) -> Result<(), IoError> {
+                    for ((r, c), d) in cells.into_iter() {
+                        if let Some(v) = d.value {
+                            self.set_value(sheet, r, c, v)?;
+                        }
+                        if let Some(f) = d.formula.as_ref() {
+                            self.set_formula(sheet, r, c, f)?;
+                        }
+                    }
+                    Ok(())
+                }
+            }
+
+            let mut ops = TxOps { tx };
+            let mut wtx = WorkbookAction { ops: &mut ops };
+            match f(&mut wtx) {
+                Ok(v) => Ok(v),
+                Err(e) => {
+                    user_err = Some(e);
+                    Err(formualizer_eval::engine::EditorError::TransactionFailed {
+                        reason: "Workbook::action aborted".to_string(),
+                    })
+                }
+            }
+        });
+
+        if let Some(e) = user_err {
+            return Err(e);
+        }
+        res.map_err(|e| match e {
+            formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
+            other => IoError::from_backend("editor", other),
+        })
     }
     pub fn undo(&mut self) -> Result<(), IoError> {
         if self.enable_changelog {

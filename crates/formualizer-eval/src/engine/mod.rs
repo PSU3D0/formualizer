@@ -35,7 +35,7 @@ pub mod tuning;
 #[cfg(test)]
 mod tests;
 
-pub use eval::{Engine, EvalResult, RecalcPlan};
+pub use eval::{Engine, EngineAction, EvalResult, RecalcPlan};
 pub use eval_delta::{DeltaMode, EvalDelta};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;

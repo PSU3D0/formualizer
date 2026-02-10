@@ -47,6 +47,201 @@ pub struct Engine<R> {
     staged_formulas: std::collections::HashMap<String, Vec<(u32, u32, String)>>,
     /// Transient cancellation flag used during evaluation
     active_cancel_flag: Option<Arc<AtomicBool>>,
+
+    /// Engine-level action depth.
+    ///
+    /// Ticket 614 introduces `Engine::action` as a stable, commit-only transaction surface.
+    /// Nested actions are currently disallowed (deterministic rule) and will return an error.
+    action_depth: u32,
+}
+
+/// Minimal edit surface used by `Engine::action`.
+///
+/// This wrapper is intentionally thin for ticket 614 (commit-only): it delegates to existing
+/// `Engine` edit methods and does not create changelog boundaries or implement rollback.
+pub struct EngineAction<'a, R>
+where
+    R: EvaluationContext,
+{
+    engine: &'a mut Engine<R>,
+    name: String,
+    // Optional external ChangeLog pointer used by `Engine::action_with_logger`.
+    // Stored as a raw pointer to avoid creating aliasing `&mut` borrows alongside `&mut Engine`.
+    log: Option<*mut crate::engine::ChangeLog>,
+}
+
+impl<'a, R> EngineAction<'a, R>
+where
+    R: EvaluationContext,
+{
+    #[inline]
+    fn addr_for(&mut self, sheet: &str, row: u32, col: u32) -> crate::reference::CellRef {
+        let sheet_id = self.engine.graph.sheet_id_mut(sheet);
+        let coord = crate::reference::Coord::from_excel(row, col, true, true);
+        crate::reference::CellRef::new(sheet_id, coord)
+    }
+
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[inline]
+    pub fn set_cell_value(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: LiteralValue,
+    ) -> Result<(), crate::engine::EditorError> {
+        if self.log.is_some() {
+            let old_value = self.engine.read_cell_value(sheet, row, col);
+            let old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
+            let addr = self.addr_for(sheet, row, col);
+            let Some(log_ptr) = self.log else {
+                return Err(crate::engine::EditorError::TransactionFailed {
+                    reason: "action_with_logger: missing ChangeLog".to_string(),
+                });
+            };
+
+            // Safety: `log_ptr` comes from a unique `&mut ChangeLog` in `Engine::action_with_logger`.
+            let log = unsafe { &mut *log_ptr };
+            self.engine.edit_with_logger(log, |editor| {
+                editor.set_cell_value(addr, value.clone());
+            });
+            log.patch_last_cell_event_old_state(addr, old_value, old_formula);
+            Ok(())
+        } else {
+            self.engine
+                .set_cell_value(sheet, row, col, value)
+                .map_err(crate::engine::EditorError::from)
+        }
+    }
+
+    #[inline]
+    pub fn set_cell_formula(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        ast: ASTNode,
+    ) -> Result<(), crate::engine::EditorError> {
+        if self.log.is_some() {
+            let old_value = self.engine.read_cell_value(sheet, row, col);
+            let old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
+            let addr = self.addr_for(sheet, row, col);
+            let Some(log_ptr) = self.log else {
+                return Err(crate::engine::EditorError::TransactionFailed {
+                    reason: "action_with_logger: missing ChangeLog".to_string(),
+                });
+            };
+
+            // Safety: `log_ptr` comes from a unique `&mut ChangeLog` in `Engine::action_with_logger`.
+            let log = unsafe { &mut *log_ptr };
+            self.engine.edit_with_logger(log, |editor| {
+                editor.set_cell_formula(addr, ast.clone());
+            });
+            log.patch_last_cell_event_old_state(addr, old_value, old_formula);
+            Ok(())
+        } else {
+            self.engine
+                .set_cell_formula(sheet, row, col, ast)
+                .map_err(crate::engine::EditorError::from)
+        }
+    }
+
+    #[inline]
+    pub fn insert_rows(
+        &mut self,
+        sheet: &str,
+        before: u32,
+        count: u32,
+    ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
+        if self.log.is_some() {
+            return Err(crate::engine::EditorError::TransactionFailed {
+                reason: "Engine::action_with_logger does not support row/column structural edits yet (ticket 615 scope)"
+                    .to_string(),
+            });
+        }
+        self.engine.insert_rows(sheet, before, count)
+    }
+
+    #[inline]
+    pub fn delete_rows(
+        &mut self,
+        sheet: &str,
+        start: u32,
+        count: u32,
+    ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
+        if self.log.is_some() {
+            return Err(crate::engine::EditorError::TransactionFailed {
+                reason: "Engine::action_with_logger does not support row/column structural edits yet (ticket 615 scope)"
+                    .to_string(),
+            });
+        }
+        self.engine.delete_rows(sheet, start, count)
+    }
+
+    #[inline]
+    pub fn insert_columns(
+        &mut self,
+        sheet: &str,
+        before: u32,
+        count: u32,
+    ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
+        if self.log.is_some() {
+            return Err(crate::engine::EditorError::TransactionFailed {
+                reason: "Engine::action_with_logger does not support row/column structural edits yet (ticket 615 scope)"
+                    .to_string(),
+            });
+        }
+        self.engine.insert_columns(sheet, before, count)
+    }
+
+    #[inline]
+    pub fn delete_columns(
+        &mut self,
+        sheet: &str,
+        start: u32,
+        count: u32,
+    ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
+        if self.log.is_some() {
+            return Err(crate::engine::EditorError::TransactionFailed {
+                reason: "Engine::action_with_logger does not support row/column structural edits yet (ticket 615 scope)"
+                    .to_string(),
+            });
+        }
+        self.engine.delete_columns(sheet, start, count)
+    }
+
+    /// Start an action from within an action.
+    ///
+    /// Nested actions are currently disallowed (ticket 614), so this will return a
+    /// `EditorError::TransactionFailed` while an outer action is active.
+    #[inline]
+    pub fn action<T>(
+        &mut self,
+        name: impl AsRef<str>,
+        f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
+    ) -> Result<T, crate::engine::EditorError> {
+        self.engine.action(name, f)
+    }
+}
+
+struct ActionDepthGuard<'a, R> {
+    engine: *mut Engine<R>,
+    _marker: std::marker::PhantomData<&'a mut Engine<R>>,
+}
+
+impl<'a, R> Drop for ActionDepthGuard<'a, R> {
+    fn drop(&mut self) {
+        // Safety: the guard is created from a unique `&mut Engine` borrow and lives no longer
+        // than the surrounding `Engine::action` call.
+        unsafe {
+            let e = &mut *self.engine;
+            e.action_depth = e.action_depth.saturating_sub(1);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -371,6 +566,7 @@ where
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
             active_cancel_flag: None,
+            action_depth: 0,
         };
         // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
         engine.config.arrow_storage_enabled = true;
@@ -412,6 +608,7 @@ where
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
             active_cancel_flag: None,
+            action_depth: 0,
         };
         // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
         engine.config.arrow_storage_enabled = true;
@@ -796,6 +993,157 @@ where
 
     pub fn finalize_sheet_index(&mut self, sheet: &str) {
         self.graph.finalize_sheet_index(sheet);
+    }
+
+    /// Execute a named Engine action.
+    ///
+    /// Ticket 614 introduces this as the stable Engine-level transaction surface.
+    /// For now actions are commit-only: they do not create changelog boundaries and they do not
+    /// provide rollback/atomicity.
+    ///
+    /// Nested actions are deterministically handled by *disallowing* nesting: calling
+    /// `Engine::action` while another action is active returns `EditorError::TransactionFailed`.
+    pub fn action<T>(
+        &mut self,
+        name: impl AsRef<str>,
+        f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
+    ) -> Result<T, crate::engine::EditorError> {
+        if self.action_depth != 0 {
+            return Err(crate::engine::EditorError::TransactionFailed {
+                reason: "Nested Engine::action calls are not supported (ticket 614: commit-only surface)"
+                    .to_string(),
+            });
+        }
+
+        self.action_depth = 1;
+        let engine_ptr: *mut Engine<R> = self;
+        let _guard = ActionDepthGuard {
+            engine: engine_ptr,
+            _marker: std::marker::PhantomData,
+        };
+
+        let mut tx = EngineAction {
+            engine: self,
+            name: name.as_ref().to_string(),
+            log: None,
+        };
+        f(&mut tx)
+    }
+
+    /// Execute a named Engine action, logging graph changes into the provided ChangeLog.
+    ///
+    /// Ticket 615: this variant provides atomicity. If the action returns an error, it rolls back:
+    /// - Dependency graph structural edits (via inverse ChangeEvents)
+    /// - Arrow-truth overlay writes mirrored from ChangeEvents
+    /// - ChangeLog entries (truncated back to the pre-action length)
+    pub fn action_with_logger<T>(
+        &mut self,
+        log: &mut crate::engine::ChangeLog,
+        name: impl AsRef<str>,
+        f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
+    ) -> Result<T, crate::engine::EditorError> {
+        if self.action_depth != 0 {
+            return Err(crate::engine::EditorError::TransactionFailed {
+                reason: "Nested Engine::action calls are not supported (ticket 614: commit-only surface)"
+                    .to_string(),
+            });
+        }
+
+        self.action_depth = 1;
+        let engine_ptr: *mut Engine<R> = self;
+        let _guard = ActionDepthGuard {
+            engine: engine_ptr,
+            _marker: std::marker::PhantomData,
+        };
+
+        let start_len = log.len();
+        let name_str = name.as_ref().to_string();
+
+        // Establish a compound boundary for the action.
+        // Note: ChangeLog compound bookkeeping must also be rolled back, so we always end the
+        // compound before truncating events on rollback.
+        log.begin_compound(name_str.clone());
+        let log_ptr: *mut crate::engine::ChangeLog = log;
+
+        let mut tx = EngineAction {
+            engine: self,
+            name: name_str,
+            log: Some(log_ptr),
+        };
+
+        let res = f(&mut tx);
+
+        match res {
+            Ok(v) => {
+                unsafe { (&mut *log_ptr).end_compound() };
+                // Mirror Workbook's behavior: a logged edit session must bump the snapshot.
+                if unsafe { (&*log_ptr).len() } > start_len {
+                    self.mark_data_edited();
+                }
+                Ok(v)
+            }
+            Err(e) => {
+                // Close the compound before truncating so the compound stack is not leaked.
+                unsafe { (&mut *log_ptr).end_compound() };
+                // Extract and truncate log first (ChangeLog rollback requirement).
+                let events = unsafe { (&mut *log_ptr).take_from(start_len) };
+
+                // Rollback graph + Arrow overlays.
+                if let Err(rb) = self.rollback_from_change_events(&events) {
+                    return Err(crate::engine::EditorError::TransactionFailed {
+                        reason: format!(
+                            "Engine::action_with_logger rollback failed after error '{e}': {rb}"
+                        ),
+                    });
+                }
+
+                Err(e)
+            }
+        }
+    }
+
+    fn rollback_from_change_events(
+        &mut self,
+        events: &[crate::engine::ChangeEvent],
+    ) -> Result<(), crate::engine::EditorError> {
+        use crate::engine::ChangeEvent;
+
+        // 1) Roll back the dependency graph.
+        {
+            let mut editor = crate::engine::VertexEditor::new(&mut self.graph);
+            let mut compound_stack: Vec<usize> = Vec::new();
+            for ev in events.iter().rev() {
+                match ev {
+                    ChangeEvent::CompoundEnd { depth } => compound_stack.push(*depth),
+                    ChangeEvent::CompoundStart { depth, .. } => {
+                        if compound_stack.last() == Some(depth) {
+                            compound_stack.pop();
+                        }
+                    }
+                    _ => {
+                        editor.apply_inverse(ev.clone())?;
+                    }
+                }
+            }
+        }
+
+        // 2) Roll back Arrow-truth overlays mirrored from those ChangeEvents.
+        for ev in events.iter().rev() {
+            self.mirror_inverse_change_to_arrow(ev);
+        }
+
+        Ok(())
+    }
+
+    fn read_cell_formula_ast(&self, sheet: &str, row: u32, col: u32) -> Option<ASTNode> {
+        let sheet_id = self.graph.sheet_id(sheet)?;
+        let coord = Coord::from_excel(row, col, true, true);
+        let cell = CellRef::new(sheet_id, coord);
+        let vid = self.graph.get_vertex_for_cell(&cell)?;
+        let ast_id = self.graph.get_formula_id(vid)?;
+        self.graph
+            .data_store()
+            .retrieve_ast(ast_id, self.graph.sheet_reg())
     }
 
     pub fn edit_with_logger<T>(

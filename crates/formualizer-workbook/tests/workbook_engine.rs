@@ -1,5 +1,5 @@
 use formualizer_common::{LiteralValue, RangeAddress};
-use formualizer_workbook::{LoadStrategy, Workbook, WorkbookConfig};
+use formualizer_workbook::{IoError, LoadStrategy, Workbook, WorkbookConfig};
 
 fn assert_numeric_eq(v: Option<LiteralValue>, expected: f64) {
     match v {
@@ -437,4 +437,35 @@ fn write_range_formula_with_cached_value_overwrites_literal_then_undo_restores_l
     wb.undo().unwrap();
     assert_eq!(wb.get_formula("S", 1, 1), None);
     assert_numeric_eq(wb.get_value("S", 1, 1), 7.0);
+}
+
+#[test]
+fn workbook_action_is_atomic_on_error() {
+    let mut wb = Workbook::new();
+    wb.set_changelog_enabled(true);
+    wb.add_sheet("S").unwrap();
+
+    // Create a 2x2 spill at A1 and force evaluation so Arrow computed overlay is populated.
+    wb.set_formula("S", 1, 1, "{1,2;3,4}").unwrap();
+    let _ = wb.evaluate_cell("S", 1, 1).unwrap();
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(1.0)));
+    assert_eq!(wb.get_value("S", 1, 2), Some(LiteralValue::Number(2.0)));
+
+    // Run an action that clears the spill and writes another cell, then errors.
+    let err = wb
+        .action("boom", |tx| -> Result<(), IoError> {
+            tx.set_value("S", 1, 1, LiteralValue::Int(99))?; // clears spill
+            tx.set_value("S", 10, 1, LiteralValue::Int(5))?;
+            Err(IoError::Backend {
+                backend: "test".to_string(),
+                message: "boom".to_string(),
+            })
+        })
+        .unwrap_err();
+    assert!(err.to_string().contains("boom"));
+
+    // Must be fully rolled back.
+    assert_eq!(wb.get_value("S", 1, 1), Some(LiteralValue::Number(1.0)));
+    assert_eq!(wb.get_value("S", 1, 2), Some(LiteralValue::Number(2.0)));
+    assert_emptyish(wb.get_value("S", 10, 1));
 }
