@@ -184,10 +184,12 @@ impl Function for IfErrorFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        match v {
-            LiteralValue::Error(_) => args[1].value(),
-            other => Ok(crate::traits::CalcValue::Scalar(other)),
+        match args[0].value() {
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Error(_) => args[1].value(),
+                other => Ok(crate::traits::CalcValue::Scalar(other)),
+            },
+            Err(_) => args[1].value(),
         }
     }
 }
