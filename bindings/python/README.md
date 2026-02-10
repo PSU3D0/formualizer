@@ -1,133 +1,23 @@
-# Formualizer — Python Bindings
+# Formualizer for Python
 
-A blazing‑fast Excel formula **tokenizer, parser, and evaluator** powered by Rust, exposed through a clean, Pythonic API.
-These bindings wrap the core `formualizer‑core` and `formualizer‑eval` crates and let you work with spreadsheet logic at native speed while writing idiomatic Python.
+**Parse, evaluate, and mutate Excel workbooks at native speed from Python.**
 
----
+A Rust-powered spreadsheet engine with 320+ Excel-compatible functions, exposed through a clean Pythonic API. Tokenize formulas, walk ASTs, evaluate workbooks, and use SheetPort to treat spreadsheets as typed APIs.
 
-## Key Features
-
-| Capability              | Description                                                                                                                        |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Tokenization**        | Breaks a formula string into structured `Token` objects, preserving exact byte spans and operator metadata.                        |
-| **Parsing → AST**       | Produces a rich **Abstract Syntax Tree** (`ASTNode`) that normalises references, tracks source tokens, and fingerprints structure. |
-| **Reference Model**     | First‑class `CellRef`, `RangeRef`, `TableRef`, `NamedRangeRef` objects with helpers like `.normalise()` / `.to_excel()`.           |
-| **Pretty‑printing**     | Canonical formatter — returns Excel‑style string with consistent casing, spacing, and minimal parentheses.                         |
-| **Visitor utilities**   | `walk_ast`, `collect_references`, `collect_function_names`, and more for ergonomic tree traversal.                                 |
-| **Evaluation (opt‑in)** | Bring in `formualizer‑eval` to execute the AST with a pluggable workbook/resolver interface.                                       |
-| **Rich Errors**         | Typed `TokenizerError` / `ParserError` that annotate byte positions for precise diagnostics.                                       |
-
----
+[![PyPI](https://img.shields.io/pypi/v/formualizer.svg)](https://pypi.org/project/formualizer/)
+[![License: MIT/Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](../../LICENSE-MIT)
 
 ## Installation
 
-### Pre‑built wheels (recommended)
-
 ```bash
 pip install formualizer
-
-# For local development (tests + lint/typecheck)
-pip install formualizer[dev]
 ```
 
-### Build from source
+Prebuilt wheels are available for Python 3.8-3.13 on Linux, macOS, and Windows. No Rust toolchain required.
 
-You need a recent Rust toolchain (≥ 1.70) and **maturin**:
+## Quick start
 
-```bash
-# one‑off – install maturin
-pip install maturin
-
-# from repo root
-cd bindings/python
-maturin develop  # builds the native extension and installs an editable package
-```
-
-This compiles the Rust crates (`formualizer‑*`) into a CPython extension named `formualizer`.
-
----
-
-## Quick‑start
-
-```python
-from formualizer import tokenize, parse
-from formualizer.visitor import collect_references
-
-formula = "=SUM(A1:B2) + 3%"
-
-# 1️⃣ Tokenize
-for tok in tokenize(formula):
-    print(tok)
-
-# 2️⃣ Parse → AST
-ast = parse(formula)
-print(ast.pretty())           # indented tree
-print(ast.to_formula())       # canonical Excel string
-print(ast.fingerprint())      # 64‑bit structural hash
-
-# 3️⃣ Analyse
-refs = collect_references(ast)
-print([r.to_excel() for r in refs])  # ['A1:B2']
-```
-
-> **Tip:** You can build your own visitor by returning `VisitControl.SKIP` or `STOP` to short‑circuit traversal.
-
-### Changelog, Undo, and Redo
-
-Formualizer’s engine tracks edits and can undo/redo changes. You do not need to manually group edits for everyday use:
-
-- Single‑cell edits (e.g., `Workbook.set_value`, `Workbook.set_formula`) are individually undoable when changelog is enabled.
-- Batch operations (`Workbook.set_values_batch`, `Workbook.set_formulas_batch`) are automatically wrapped into a single undoable action for you.
-
-Power users can group multiple calls into one undo step using `begin_action(...)` / `end_action()` — this is optional and not required for typical workflows.
-
-```python
-wb.set_changelog_enabled(True)
-
-# Each set_value is its own undo step
-wb.set_value("S", 1, 1, fz.LiteralValue.int(10))
-wb.set_value("S", 1, 1, fz.LiteralValue.int(20))
-wb.undo()  # back to 10
-
-# Batch is auto‑grouped as one action
-wb.set_values_batch("S", 1, 1, [[fz.LiteralValue.int(1), fz.LiteralValue.int(2)]])
-wb.undo()  # reverts the entire batch
-```
-
----
-
-## Public API Surface
-
-### Convenience helpers
-
-```python
-tokenize(formula: str) -> Tokenizer
-parse(formula: str, include_whitespace: bool = False) -> ASTNode
-```
-
-### Core classes (excerpt)
-
-* **`Tokenizer`** — iterable collection of `Token`; `.render()` reconstructs the original string.
-* **`Token`** — `.value`, `.token_type`, `.subtype`, `.start`, `.end`, `.is_operator()`.
-* **`Parser`** — OO interface when you need to parse the same `Tokenizer` twice.
-* **`ASTNode`** — `.pretty()`, `.to_formula()`, `.children()`, `.walk_refs()`…
-* **Reference types** — `CellRef`, `RangeRef`, `TableRef`, `NamedRangeRef`, `UnknownRef`.
-* **Errors** — `TokenizerError`, `ParserError` (carry `.message` and `.position`).
-
-### Visitor helpers (`formualizer.visitor`)
-
-* `walk_ast(node, fn)` — DFS with early‑exit control.
-* `collect_nodes_by_type(node, "Function")` → list\[ASTNode]
-* `collect_references(node)` → list\[ReferenceLike]
-* `collect_function_names(node)` → list\[str]
-
-### Dependency Tracing (`formualizer.dependency_tracer`)
-
-This module is not part of the current Python package.
-
-If you need dependency information today, use the workbook engine itself (incremental recalculation + demand-driven evaluation) and treat the sheet as the source of truth. A higher-level dependency analysis API may be added in the future.
-
-### Workbook Evaluation
+### Evaluate a workbook
 
 ```python
 import formualizer as fz
@@ -135,129 +25,228 @@ import formualizer as fz
 wb = fz.Workbook()
 s = wb.sheet("Sheet1")
 
-s.set_value(1, 1, 10)
-s.set_value(2, 1, 20)
-s.set_formula(1, 2, "=A1+A2")
+s.set_value(1, 1, fz.LiteralValue.number(1000.0))   # A1: principal
+s.set_value(2, 1, fz.LiteralValue.number(0.05))      # A2: annual rate
+s.set_value(3, 1, fz.LiteralValue.number(12.0))       # A3: periods
 
-assert wb.evaluate_cell("Sheet1", 1, 2) == 30.0
+s.set_formula(1, 2, "=PMT(A2/12, A3, -A1)")
+print(wb.evaluate_cell("Sheet1", 1, 2))  # ~85.61
 ```
-
----
-
-## Workspace Layout
-
-```
-formualizer/
-│
-├─ crates/               # Pure‑Rust core, common types, evaluator, macros
-│   ├─ formualizer-common    (shared types: values/errors/addresses)
-│   ├─ formualizer-parse      (tokenizer + parser + pretty)
-│   ├─ formualizer-eval      (calc engine + built‑ins)
-│   ├─ formualizer-workbook  (workbook facade + I/O backends)
-│   ├─ formualizer-sheetport (SheetPort runtime)
-│   └─ formualizer-macros    (proc‑macro helpers)
-│
-└─ bindings/python/      # This package (native module + Python helpers)
-    ├─ formualizer/          # Python package (helpers + re-exports)
-    │   ├─ __init__.py
-    │   ├─ visitor.py
-    │   └─ _types.py
-    └─ src/                  # Rust‑Python bridge (pyo3)
-```
-
-The Python wheel links directly against the crates — there is **no runtime FFI overhead** beyond the initial C→Rust boundary.
-
----
-
-## Examples & Practical Usage
 
 ### Load an XLSX and evaluate
 
 ```python
 import formualizer as fz
 
-wb = fz.load_workbook("model.xlsx", strategy="eager_all")
-print(wb.evaluate_cell("Sheet1", 1, 2))
+wb = fz.load_workbook("financial_model.xlsx", strategy="eager_all")
+print(wb.evaluate_cell("Summary", 1, 2))
 ```
 
-### SheetPort: spreadsheets as typed functions
+### Parse and analyze formulas
 
 ```python
-import textwrap
+from formualizer import parse
+from formualizer.visitor import collect_references, collect_function_names
 
+ast = parse("=SUMIFS(Revenue,Region,A1,Year,B1)")
+print(ast.pretty())                          # indented AST tree
+print(ast.to_formula())                      # canonical Excel string
+print(collect_references(ast))               # [Revenue, Region, A1, Year, B1]
+print(collect_function_names(ast))           # ['SUMIFS']
+```
+
+---
+
+## Key features
+
+| Capability | Description |
+|---|---|
+| **Tokenization** | Break formulas into structured `Token` objects with byte spans and operator metadata |
+| **Parsing** | Produce a rich AST with reference normalization, source tracking, and 64-bit structural fingerprints |
+| **320+ built-in functions** | Math, text, lookup (XLOOKUP, VLOOKUP), date/time, financial, statistics, database, engineering |
+| **Workbook evaluation** | Set values and formulas, evaluate cells/ranges, load XLSX/CSV/JSON |
+| **Batch operations** | `set_values_batch` / `set_formulas_batch` for efficient bulk updates |
+| **Undo / redo** | Optional changelog with automatic action grouping — single edits are individually undoable |
+| **Evaluation planning** | Inspect the dependency graph and evaluation schedule before computing |
+| **SheetPort** | Treat spreadsheets as typed functions with YAML manifests, schema validation, and batch scenarios |
+| **Deterministic mode** | Inject clock, timezone, and RNG seed for reproducible evaluation |
+| **Visitor utilities** | `walk_ast`, `collect_references`, `collect_function_names` for ergonomic tree traversal |
+| **Rich errors** | Typed `TokenizerError` / `ParserError` / `ExcelEvaluationError` with position info |
+
+---
+
+## Workbook evaluation
+
+```python
+import formualizer as fz
+
+wb = fz.Workbook()
+s = wb.sheet("Data")
+
+# Set values and formulas
+s.set_value(1, 1, fz.LiteralValue.number(100.0))
+s.set_value(2, 1, fz.LiteralValue.number(200.0))
+s.set_value(3, 1, fz.LiteralValue.number(300.0))
+s.set_formula(4, 1, "=SUM(A1:A3)")
+s.set_formula(4, 2, "=AVERAGE(A1:A3)")
+
+print(wb.evaluate_cell("Data", 4, 1))  # 600.0
+print(wb.evaluate_cell("Data", 4, 2))  # 200.0
+```
+
+## Batch operations
+
+```python
+# Bulk-set values (auto-grouped as one undo step when changelog is enabled)
+s.set_values_batch(1, 1, 3, 2, [
+    [fz.LiteralValue.number(10.0), fz.LiteralValue.number(20.0)],
+    [fz.LiteralValue.number(30.0), fz.LiteralValue.number(40.0)],
+    [fz.LiteralValue.number(50.0), fz.LiteralValue.number(60.0)],
+])
+```
+
+## Undo / redo
+
+The changelog is opt-in. Once enabled, every edit is tracked:
+
+```python
+wb.set_changelog_enabled(True)
+
+s.set_value(1, 1, fz.LiteralValue.number(10.0))
+s.set_value(1, 1, fz.LiteralValue.number(20.0))
+wb.undo()  # back to 10
+wb.redo()  # back to 20
+
+# Batch methods are auto-grouped as one undo step.
+# For manual grouping of multiple calls:
+wb.begin_action("update prices")
+s.set_value(1, 1, fz.LiteralValue.number(100.0))
+s.set_value(2, 1, fz.LiteralValue.number(200.0))
+wb.end_action()
+wb.undo()  # reverts both values at once
+```
+
+## Evaluation planning
+
+Inspect what the engine will compute before running:
+
+```python
+plan = wb.get_eval_plan([("Sheet1", 1, 2)])
+print(f"Vertices to evaluate: {plan.total_vertices_to_evaluate}")
+print(f"Parallel layers: {plan.estimated_parallel_layers}")
+for layer in plan.layers:
+    print(f"  Layer: {layer.vertex_count} vertices, parallel={layer.parallel_eligible}")
+```
+
+## SheetPort: spreadsheets as typed APIs
+
+Define a YAML manifest to treat a spreadsheet as a typed function with validated inputs/outputs:
+
+```python
 from formualizer import SheetPortSession, Workbook
 
-manifest_yaml = textwrap.dedent(
-    """
-    spec: fio
-    spec_version: "0.3.0"
-    manifest:
-      id: demo
-      name: Demo
-      workbook:
-        uri: memory://demo.xlsx
-        locale: en-US
-        date_system: 1900
-    ports:
-      - id: demand
-        dir: in
-        shape: scalar
-        location: { a1: Inputs!A1 }
-        schema: { type: number }
-      - id: out
-        dir: out
-        shape: scalar
-        location: { a1: Outputs!A1 }
-        schema: { type: number }
-    """
-)
+manifest_yaml = """
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: pricing-model
+  name: Pricing Model
+  workbook:
+    uri: memory://pricing.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: base_price
+    dir: in
+    shape: scalar
+    location: { a1: Inputs!A1 }
+    schema: { type: number }
+  - id: final_price
+    dir: out
+    shape: scalar
+    location: { a1: Outputs!A1 }
+    schema: { type: number }
+"""
 
 wb = Workbook()
 wb.add_sheet("Inputs")
 wb.add_sheet("Outputs")
-wb.set_value("Inputs", 1, 1, 120)
+wb.set_formula("Outputs", 1, 1, "=Inputs!A1*1.2")
 
 session = SheetPortSession.from_manifest_yaml(manifest_yaml, wb)
-session.write_inputs({"demand": 250.5})
-print(session.evaluate_once())
+session.write_inputs({"base_price": 100.0})
+result = session.evaluate_once(freeze_volatile=True)
+print(result["final_price"])  # 120.0
 ```
 
 ---
 
-## Development & Testing
+## API reference
+
+### Top-level functions
+
+```python
+tokenize(formula: str, dialect: FormulaDialect = None) -> Tokenizer
+parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
+load_workbook(path: str, strategy: str = None) -> Workbook
+```
+
+### Core classes
+
+- **`Workbook`** — create, load, evaluate, undo/redo. Supports `from_path()` and `load_path()` class methods.
+- **`Sheet`** — per-sheet facade for `set_value`, `set_formula`, `get_cell`, batch operations.
+- **`LiteralValue`** — typed values: `.int()`, `.number()`, `.text()`, `.boolean()`, `.date()`, `.empty()`, `.error()`, `.array()`.
+- **`Tokenizer`** — iterable token sequence with `.render()` and `.tokens`.
+- **`ASTNode`** — `.pretty()`, `.to_formula()`, `.fingerprint()`, `.children()`, `.walk_refs()`.
+- **`CellRef` / `RangeRef` / `TableRef` / `NamedRangeRef`** — typed references.
+- **`SheetPortSession`** — bind manifests to workbooks, read/write typed ports, evaluate.
+- **`EvaluationConfig`** — tune parallel evaluation, warmup, range limits, date systems.
+
+### Visitor helpers (`formualizer.visitor`)
+
+```python
+walk_ast(node, visitor_fn)              # DFS with VisitControl (CONTINUE/SKIP/STOP)
+collect_references(node)                # -> list[ReferenceLike]
+collect_function_names(node)            # -> list[str]
+collect_nodes_by_type(node, "Function") # -> list[ASTNode]
+```
+
+Full type stubs are included in the package (`.pyi` files) for IDE autocompletion and mypy.
+
+---
+
+## Building from source
+
+Requires Rust >= 1.70 and [maturin](https://github.com/PyO3/maturin):
 
 ```bash
-# run Rust tests
-cargo test --workspace
+pip install maturin
+cd bindings/python
+maturin develop          # debug build
+maturin develop --release  # optimized build
+```
 
-# run Python tests
-pytest -q bindings/python/tests
+## Testing
 
-# lint / typecheck
+```bash
+pip install formualizer[dev]
+pytest bindings/python/tests
 ruff check bindings/python
 mypy bindings/python/formualizer
 ```
 
-When hacking on the Rust side, you can rebuild the extension in place:
+## Workspace layout
 
-```bash
-maturin develop --release  # faster extension; omit --release for debug builds
+```
+formualizer/
+  crates/                    # Rust core (parse, eval, workbook, sheetport)
+  bindings/python/
+    formualizer/             # Python package (helpers, visitor, type stubs)
+    src/                     # PyO3 bridge (Rust -> Python)
 ```
 
----
-
-## Roadmap
-
-* Full coverage of Excel 365 functions via `formualizer‑eval`
-* SIMD‑accelerated bulk range operations  
-* Enhanced dependency visualization and interactive formula exploration
-* ChatGPT‑powered formula explanations with dependency context 🎯
-* Integration with pandas DataFrames and other Python data analysis tools
-
-Have an idea or found a bug? Open an issue or PR — contributions are welcome!
-
----
+The Python wheel links directly against the Rust crates — there is no runtime FFI overhead beyond the initial C-to-Rust boundary.
 
 ## License
 
-Dual‑licensed under **MIT** or **Apache‑2.0** — choose whichever you prefer.
+Dual-licensed under [MIT](../../LICENSE-MIT) or [Apache-2.0](../../LICENSE-APACHE), at your option.

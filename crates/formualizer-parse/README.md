@@ -1,40 +1,43 @@
 # formualizer-parse
 
-`formualizer-parse` provides the tokenization, parsing, and pretty-printing
-infrastructure for the Formualizer spreadsheet engine. It understands both
-Excel-style and OpenFormula dialects, producing an AST that downstream crates
-(`formualizer-eval`, `formualizer-workbook`, and the language bindings) rely on.
+**High-performance Excel and OpenFormula tokenizer, parser, and pretty-printer.**
 
-## Features
+`formualizer-parse` turns raw formula strings into a structured AST that downstream crates use for evaluation, analysis, and transformation. It handles both Excel and OpenFormula dialects with source location tracking.
 
-- **Tokenization** – streaming tokenizer with dialect-aware classification and
-  source location tracking.
-- **Parser** – Pratt-style parser that yields a stable AST and reference model
-  shared with the evaluator.
-- **Dialects** – switch between Excel and OpenFormula syntaxes while defaulting
-  to Excel for backwards compatibility.
-- **Pretty printing** – canonicalize formulas or render diagnostic trees for
-  debugging and tests.
+## When to use this crate
 
-## Usage
+Use `formualizer-parse` when you need formula analysis **without** evaluation:
+- Formula linting and validation
+- Static analysis of cell dependencies
+- AST transformation and rewriting
+- Pretty-printing formulas to canonical form
+- Building custom formula tooling
+
+If you also need evaluation, use [`formualizer-workbook`](https://crates.io/crates/formualizer-workbook) or [`formualizer-eval`](https://crates.io/crates/formualizer-eval) instead.
+
+## Quick start
 
 ```rust
 use formualizer_parse::{FormulaDialect, Tokenizer, canonical_formula};
 use formualizer_parse::parser::Parser;
-# fn example() -> Result<(), Box<dyn std::error::Error>> {
+
+// Tokenize and parse
 let tokenizer = Tokenizer::new_with_dialect("=SUM(A1:B3)", FormulaDialect::Excel)?;
-let tokens = tokenizer.items;
-let mut parser = Parser::new(tokens, false);
+let mut parser = Parser::new(tokenizer.items, false);
 let ast = parser.parse()?;
+
+// Canonical form
 assert_eq!(canonical_formula(&ast), "=SUM(A1:B3)");
-#     Ok(())
-# }
-# example().unwrap();
 ```
 
-`Tokenizer::new(..)` keeps Excel semantics, while
-`Tokenizer::new_with_dialect(.., FormulaDialect::OpenFormula)` enables
-OpenFormula rules.
+## Features
+
+- **Tokenization** — streaming tokenizer with dialect-aware classification, source location tracking, and operator metadata.
+- **Pratt parser** — precedence-climbing parser producing a stable AST with reference normalization.
+- **Dialects** — Excel (default) and OpenFormula syntax support through a single API.
+- **Pretty-printing** — canonicalize formulas or render diagnostic trees for debugging.
+- **Source spans** — every token and AST node carries byte positions for precise error reporting.
+- **Fingerprinting** — 64-bit structural hashes for formula identity comparison.
 
 ## License
 

@@ -1,6 +1,11 @@
-# Formualizer (WASM)
+# Formualizer for WASM
 
-An open‑source, embeddable spreadsheet engine — in your browser and Node. Formualizer parses, evaluates, and mutates Excel‑style workbooks at speed, with a modern Rust core, Arrow‑powered storage, and a clean JS API.
+**Parse, evaluate, and mutate Excel workbooks in the browser or Node.js.**
+
+A Rust-powered spreadsheet engine compiled to WebAssembly with 320+ Excel-compatible functions, Arrow-powered storage, and a clean TypeScript API.
+
+[![npm](https://img.shields.io/npm/v/formualizer.svg)](https://www.npmjs.com/package/formualizer)
+[![License: MIT/Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](../../LICENSE-MIT)
 
 ## Installation
 
@@ -8,150 +13,172 @@ An open‑source, embeddable spreadsheet engine — in your browser and Node. Fo
 npm install formualizer
 ```
 
-## Usage
+## Quick start
 
-### JavaScript/TypeScript
+### Evaluate a workbook
 
 ```typescript
-import init, { tokenize, parse, Workbook } from 'formualizer';
-
-// Initialize the WASM module once
+import init, { Workbook } from 'formualizer';
 await init();
 
-// Tokenize a formula
-const tokenizer = await tokenize("=SUM(A1:B2)");
-console.log(tokenizer.tokens);
-console.log(tokenizer.render());
-
-// Parse a formula into an AST
-const ast = await parse("=A1+B2*2");
-console.log(ast);
-
-// Engine-backed workbook usage
 const wb = new Workbook();
-wb.addSheet("Data");
-wb.setValue("Data", 1, 1, 10);
-wb.setValue("Data", 1, 2, 20);
-wb.setFormula("Data", 1, 3, "=A1+B1");
-console.log(await wb.evaluateCell("Data", 1, 3)); // 30
+wb.addSheet('Loans');
 
-// Sheet facade
-const sheet = wb.sheet("Sheet2");
-await sheet.setValue(1, 1, 5);
-await sheet.setFormula(1, 2, "=A1*3");
-console.log(await sheet.evaluateCell(1, 2)); // 15
+wb.setValue('Loans', 1, 1, 250000);  // principal
+wb.setValue('Loans', 2, 1, 0.045);   // annual rate
+wb.setValue('Loans', 3, 1, 360);     // months
+
+wb.setFormula('Loans', 1, 2, '=PMT(A2/12, A3, -A1)');
+console.log(await wb.evaluateCell('Loans', 1, 2)); // ~1266.71
 ```
 
-### Node / Bundlers
+### Parse formulas
 
-```javascript
-import init, { Workbook } from 'formualizer';
-
+```typescript
+import init, { tokenize, parse } from 'formualizer';
 await init();
 
-// Workbook + changelog/undo/redo
+const tokens = await tokenize('=SUMIFS(Sales,Region,"West",Year,2024)');
+console.log(tokens.tokens);      // structured token array
+console.log(tokens.render());    // reconstructed formula string
+
+const ast = await parse('=IF(A1>100, A1*0.9, A1)');
+console.log(ast);  // AST with node types, references, operators
+```
+
+### Undo / redo
+
+```typescript
 const wb = new Workbook();
-wb.addSheet("S");
+wb.addSheet('S');
 await wb.setChangelogEnabled(true);
 
-await wb.beginAction("seed");
-await wb.setValue("S", 1, 1, 10);
-await wb.endAction();
+wb.setValue('S', 1, 1, 10);
+wb.setValue('S', 1, 1, 20);
+await wb.undo();  // back to 10
+await wb.redo();  // back to 20
 
-await wb.beginAction("edit");
-await wb.setValue("S", 1, 1, 20);
+// Group multiple edits into one undo step
+await wb.beginAction('bulk update');
+wb.setValue('S', 1, 1, 100);
+wb.setValue('S', 2, 1, 200);
 await wb.endAction();
-
-await wb.undo(); // value back to 10
-await wb.redo(); // value back to 20
+await wb.undo();  // reverts both
 ```
+
+---
 
 ## API
 
-### `tokenize(formula: string): Promise<Tokenizer>`
+### Initialization
 
-Tokenizes an Excel formula string into tokens.
+```typescript
+import init from 'formualizer';
+await init(); // must be called once before using any API
+```
 
-### `parse(formula: string): Promise<ASTNodeData>`
+### Formula parsing
 
-Parses an Excel formula string into an Abstract Syntax Tree.
+```typescript
+tokenize(formula: string, dialect?: FormulaDialect): Promise<Tokenizer>
+parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
+```
 
-### `Tokenizer`
+### Tokenizer
 
-- `tokens`: Get all tokens as an array
-- `render()`: Reconstruct the original formula from tokens
-- `length`: Number of tokens
-- `getToken(index)`: Get a specific token by index
+| Method / Property | Description |
+|---|---|
+| `tokens` | Array of all tokens |
+| `render()` | Reconstruct original formula from tokens |
+| `length` | Number of tokens |
+| `getToken(index)` | Get a specific token by index |
 
-### `Parser`
+### Workbook
 
-- `parse()`: Parse the formula and return an AST
+| Method | Description |
+|---|---|
+| `new Workbook()` | Create an empty workbook |
+| `addSheet(name)` | Add a new sheet |
+| `sheetNames()` | List all sheet names |
+| `sheet(name)` | Get or create a Sheet facade |
+| `setValue(sheet, row, col, value)` | Set a cell value |
+| `setFormula(sheet, row, col, formula)` | Set a cell formula |
+| `evaluateCell(sheet, row, col)` | Evaluate and return a cell's value |
+| `evaluateAll()` | Evaluate all dirty cells |
+| `evaluateCells(targets)` | Evaluate specific cells |
+| `setChangelogEnabled(enabled)` | Enable/disable undo tracking |
+| `beginAction(description)` | Start a named action group |
+| `endAction()` | End the current action group |
+| `undo()` | Undo the last action |
+| `redo()` | Redo the last undone action |
+| `static fromJson(json)` | Load workbook from JSON string |
 
-### `ASTNode`
+### Sheet
 
-- `toJSON()`: Convert the AST node to JSON
-- `toString()`: Get a string representation
-- `getType()`: Get the node type
+| Method | Description |
+|---|---|
+| `setValue(row, col, value)` | Set a cell value |
+| `getValue(row, col)` | Get a cell's current value |
+| `setFormula(row, col, formula)` | Set a cell formula |
+| `getFormula(row, col)` | Get a cell's formula (if any) |
+| `setValues(startRow, startCol, data)` | Bulk-set a 2D array of values |
+| `setFormulas(startRow, startCol, data)` | Bulk-set a 2D array of formulas |
+| `evaluateCell(row, col)` | Evaluate a single cell |
+| `readRange(startRow, startCol, endRow, endCol)` | Read a range of values |
 
-### `Reference`
+### SheetPortSession
 
-Represents a cell or range reference in Excel notation.
+| Method | Description |
+|---|---|
+| `static fromManifestYaml(yaml, workbook)` | Create session from YAML manifest |
+| `manifest()` | Get the parsed manifest |
+| `describePorts()` | List all port definitions |
+| `readInputs()` | Read current input values |
+| `readOutputs()` | Read current output values |
+| `writeInputs(updates)` | Write typed input values |
+| `evaluateOnce(options)` | Evaluate with deterministic options |
 
-### `Workbook`
+### Reference
 
-- `constructor()`
-- `addSheet(name: string): void`
-- `sheetNames(): string[]`
-- `sheet(name: string): Sheet` — idempotently creates and returns a sheet facade
-- `setValue(sheet: string, row: number, col: number, value: any): void`
-- `setFormula(sheet: string, row: number, col: number, formula: string): void`
-- `evaluateCell(sheet: string, row: number, col: number): any`
-- `setChangelogEnabled(enabled: boolean): void`
-- `beginAction(description: string): void`
-- `endAction(): void`
-- `undo(): void`
-- `redo(): void`
+| Method / Property | Description |
+|---|---|
+| `sheet` | Optional sheet name |
+| `rowStart` / `rowEnd` / `colStart` / `colEnd` | Coordinates |
+| `isSingleCell()` | True if single cell reference |
+| `isRange()` | True if range reference |
+| `toString()` | Excel-style string (e.g., `Sheet1!A1:B2`) |
 
-### `Sheet`
+---
 
-- `setValue(row: number, col: number, value: any): void`
-- `getValue(row: number, col: number): any`
-- `setFormula(row: number, col: number, formula: string): void`
-- `getFormula(row: number, col: number): string | undefined`
-- `setValues(startRow: number, startCol: number, data: any[][]): void`
-- `setFormulas(startRow: number, startCol: number, data: string[][]): void`
-- `evaluateCell(row: number, col: number): any`
-
-## Building from Source
+## Building from source
 
 ```bash
 # Install wasm-pack
 curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-# Build the WASM module (bundler target for npm)
+# Build
+cd bindings/wasm
 wasm-pack build --target bundler --out-dir pkg --release
+
+# Full build with TypeScript wrapper
+npm run build
 ```
 
 ## Testing
 
 ```bash
-# Run Rust tests
 cargo test -p formualizer-wasm
-
-# Run WASM tests
 wasm-pack test --node
 ```
 
+## Why Formualizer?
+
+- **Complete engine**: Parse, evaluate, mutate, and persist — not just read cached values.
+- **320+ functions**: Math, text, lookup (XLOOKUP), date/time, financial, statistics, and more.
+- **Fast**: Arrow-powered storage with incremental dependency tracking and parallel evaluation.
+- **Portable**: Same Rust engine runs natively, in Python, and in the browser via WASM.
+- **Deterministic**: Inject clock, timezone, and RNG for reproducible results.
+
 ## License
 
-MIT OR Apache-2.0
-
----
-
-## Why Formualizer
-
-- Speed: Arrow‑powered columnar storage, vectorized kernels, and a modern dependency graph enable fast recalculation at scale.
-- Ergonomics: Engine‑backed `Workbook` and `Sheet` surfaces mirror spreadsheet operations and support batch edits with undo/redo.
-- Compatibility: Aims for Excel parity across core built‑ins; conformance suite (OpenFormula/Excel) is in progress.
-
-Benchmarks and parity dashboards are coming soon.
+Dual-licensed under [MIT](../../LICENSE-MIT) or [Apache-2.0](../../LICENSE-APACHE), at your option.
