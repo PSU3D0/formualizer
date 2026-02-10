@@ -4,8 +4,7 @@ use formualizer::common::value::LiteralValue;
 use pyo3::conversion::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{
-    PyAny, PyBool, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyDict, PyFloat,
-    PyInt, PyList, PyString, PyTime, PyTimeAccess,
+    PyAny, PyBool, PyDate, PyDateTime, PyDelta, PyDict, PyFloat, PyInt, PyList, PyString, PyTime,
 };
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
@@ -517,45 +516,49 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
     if value.is_instance_of::<PyString>() {
         return Ok(LiteralValue::Text(value.extract::<String>()?));
     }
+    // NOTE: when building with PyO3's abi3/limited API, the `PyDateAccess`/`PyTimeAccess`/
+    // `PyDeltaAccess` helper traits are not available. Use attribute access instead.
     if let Ok(py_dt) = value.cast::<PyDateTime>() {
-        let date = NaiveDate::from_ymd_opt(
-            py_dt.get_year(),
-            py_dt.get_month() as u32,
-            py_dt.get_day() as u32,
-        )
-        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid datetime"))?;
-        let time = NaiveTime::from_hms_micro_opt(
-            py_dt.get_hour() as u32,
-            py_dt.get_minute() as u32,
-            py_dt.get_second() as u32,
-            py_dt.get_microsecond(),
-        )
-        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid datetime"))?;
+        let year: i32 = py_dt.getattr("year")?.extract()?;
+        let month: u32 = py_dt.getattr("month")?.extract()?;
+        let day: u32 = py_dt.getattr("day")?.extract()?;
+        let hour: u32 = py_dt.getattr("hour")?.extract()?;
+        let minute: u32 = py_dt.getattr("minute")?.extract()?;
+        let second: u32 = py_dt.getattr("second")?.extract()?;
+        let microsecond: u32 = py_dt.getattr("microsecond")?.extract()?;
+
+        let date = NaiveDate::from_ymd_opt(year, month, day)
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid datetime"))?;
+        let time = NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond)
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid datetime"))?;
         return Ok(LiteralValue::DateTime(NaiveDateTime::new(date, time)));
     }
     if let Ok(py_date) = value.cast::<PyDate>() {
-        let date = NaiveDate::from_ymd_opt(
-            py_date.get_year(),
-            py_date.get_month() as u32,
-            py_date.get_day() as u32,
-        )
-        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid date"))?;
+        let year: i32 = py_date.getattr("year")?.extract()?;
+        let month: u32 = py_date.getattr("month")?.extract()?;
+        let day: u32 = py_date.getattr("day")?.extract()?;
+
+        let date = NaiveDate::from_ymd_opt(year, month, day)
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid date"))?;
         return Ok(LiteralValue::Date(date));
     }
     if let Ok(py_time) = value.cast::<PyTime>() {
-        let time = NaiveTime::from_hms_micro_opt(
-            py_time.get_hour() as u32,
-            py_time.get_minute() as u32,
-            py_time.get_second() as u32,
-            py_time.get_microsecond(),
-        )
-        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid time"))?;
+        let hour: u32 = py_time.getattr("hour")?.extract()?;
+        let minute: u32 = py_time.getattr("minute")?.extract()?;
+        let second: u32 = py_time.getattr("second")?.extract()?;
+        let microsecond: u32 = py_time.getattr("microsecond")?.extract()?;
+
+        let time = NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond)
+            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Invalid time"))?;
         return Ok(LiteralValue::Time(time));
     }
     if let Ok(py_delta) = value.cast::<PyDelta>() {
-        let secs = (py_delta.get_days() * 86_400 + py_delta.get_seconds()) as i64;
-        let micros = py_delta.get_microseconds() as i64;
-        let duration = chrono::Duration::seconds(secs) + chrono::Duration::microseconds(micros);
+        let days: i64 = py_delta.getattr("days")?.extract()?;
+        let seconds: i64 = py_delta.getattr("seconds")?.extract()?;
+        let microseconds: i64 = py_delta.getattr("microseconds")?.extract()?;
+
+        let secs = days * 86_400 + seconds;
+        let duration = chrono::Duration::seconds(secs) + chrono::Duration::microseconds(microseconds);
         return Ok(LiteralValue::Duration(duration));
     }
     if let Ok(dict) = value.cast::<PyDict>()

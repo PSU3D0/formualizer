@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.4,<2.0"]
+requires = ["maturin>=1.11,<2.0"]
 build-backend = "maturin"
 
 [project]
@@ -27,7 +27,7 @@ dev = [
 # Keep Rust crate/module named `formualizer_py`, but install it under the
 # public Python package `formualizer` to avoid top-level module conflicts.
 module-name = "formualizer.formualizer_py"
-features = ["pyo3/extension-module"]
+features = ["pyo3/extension-module", "pyo3/abi3-py38"]
 
 [tool.ruff]
 target-version = "py38"
