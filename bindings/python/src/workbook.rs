@@ -18,7 +18,7 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 /// You typically pass this into `Workbook(config=...)`.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     import formualizer as fz
 ///
 ///     cfg = fz.WorkbookConfig(
@@ -27,7 +27,7 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 ///         eval_config=fz.EvaluationConfig(),
 ///     )
 ///     wb = fz.Workbook(config=cfg)
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "WorkbookConfig", module = "formualizer")]
 #[derive(Clone)]
@@ -74,7 +74,7 @@ impl PyWorkbookConfig {
 /// and (optionally) tracking a changelog for undo/redo.
 ///
 /// Quick start:
-///     ```python
+/// ```python
 ///     import formualizer as fz
 ///
 ///     wb = fz.Workbook()
@@ -86,7 +86,7 @@ impl PyWorkbookConfig {
 ///
 ///     s.set_formula(1, 2, "=PMT(A2/12, A3, -A1)")
 ///     print(wb.evaluate_cell("Sheet1", 1, 2))
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "Workbook", module = "formualizer")]
 #[derive(Clone)]
@@ -123,12 +123,12 @@ impl PyWorkbook {
     ///     mode/config: Optional workbook configuration.
     ///
     /// Example:
-    ///     ```python
+    /// ```python
     ///     import formualizer as fz
     ///
     ///     wb = fz.Workbook.load_path("model.xlsx")
     ///     print(wb.sheet_names)
-    ///     ```
+    /// ```
     #[classmethod]
     #[pyo3(signature = (path, strategy=None, backend=None, *, mode=None, config=None))]
     pub fn load_path(
@@ -152,13 +152,13 @@ impl PyWorkbook {
     /// - The sheet is created if it doesn't exist.
     ///
     /// Example:
-    ///     ```python
+    /// ```python
     ///     import formualizer as fz
     ///
     ///     wb = fz.Workbook()
     ///     s = wb.sheet("Data")
     ///     s.set_value(1, 1, 123)
-    ///     ```
+    /// ```
     pub fn sheet(&self, name: &str) -> PyResult<crate::sheet::PySheet> {
         // Ensure sheet exists
         {
@@ -223,13 +223,13 @@ impl PyWorkbook {
     /// This is idempotent: adding an existing sheet name is a no-op.
     ///
     /// Example:
-    ///     ```python
+    /// ```python
     ///     import formualizer as fz
     ///
     ///     wb = fz.Workbook()
     ///     wb.add_sheet("Inputs")
     ///     wb.add_sheet("Outputs")
-    ///     ```
+    /// ```
     pub fn add_sheet(&self, name: &str) -> PyResult<()> {
         let mut wb = self
             .inner
@@ -259,7 +259,7 @@ impl PyWorkbook {
     /// `datetime/date/time/timedelta`, or a [`LiteralValue`].
     ///
     /// Example:
-    ///     ```python
+    /// ```python
     ///     import datetime
     ///     import formualizer as fz
     ///
@@ -270,7 +270,7 @@ impl PyWorkbook {
     ///     wb.set_value("Sheet1", 2, 1, 3.14)
     ///     wb.set_value("Sheet1", 3, 1, datetime.date(2024, 1, 1))
     ///     wb.set_value("Sheet1", 4, 1, fz.LiteralValue.text("hello"))
-    ///     ```
+    /// ```
     pub fn set_value(
         &self,
         _py: Python<'_>,
@@ -305,7 +305,7 @@ impl PyWorkbook {
     /// begin with `=`.
     ///
     /// Example:
-    ///     ```python
+    /// ```python
     ///     import formualizer as fz
     ///
     ///     wb = fz.Workbook()
@@ -314,7 +314,7 @@ impl PyWorkbook {
     ///     s.set_value(2, 1, 20)
     ///     s.set_formula(3, 1, "=SUM(A1:A2)")
     ///     print(wb.evaluate_cell("Sheet1", 3, 1))
-    ///     ```
+    /// ```
     pub fn set_formula(&self, sheet: &str, row: u32, col: u32, formula: &str) -> PyResult<()> {
         let mut wb = self
             .inner
@@ -345,7 +345,7 @@ impl PyWorkbook {
     ///     nested lists for arrays.
     ///
     /// Example:
-    ///     ```python
+    /// ```python
     ///     import formualizer as fz
     ///
     ///     wb = fz.Workbook()
@@ -354,7 +354,7 @@ impl PyWorkbook {
     ///     s.set_value(2, 1, 200)
     ///     s.set_formula(3, 1, "=SUM(A1:A2)")
     ///     print(wb.evaluate_cell("Data", 3, 1))
-    ///     ```
+    /// ```
     pub fn evaluate_cell(
         &self,
         py: Python<'_>,
@@ -548,7 +548,7 @@ impl PyWorkbook {
     /// This is only relevant when the changelog is enabled.
     ///
     /// Example:
-    ///     ```python
+    /// ```python
     ///     import formualizer as fz
     ///
     ///     wb = fz.Workbook()
@@ -561,7 +561,7 @@ impl PyWorkbook {
     ///     wb.end_action()
     ///
     ///     wb.undo()  # reverts both values at once
-    ///     ```
+    /// ```
     pub fn begin_action(&self, description: &str) -> PyResult<()> {
         let mut wb = self
             .inner

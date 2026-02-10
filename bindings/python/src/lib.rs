@@ -32,7 +32,7 @@ use tokenizer::PyTokenizer;
 ///     A [`Tokenizer`] which can be iterated to yield [`Token`] objects.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     import formualizer as fz
 ///
 ///     t = fz.tokenize("=SUM(A1:A3)")
@@ -40,7 +40,7 @@ use tokenizer::PyTokenizer;
 ///
 ///     for tok in t:
 ///         print(tok.value, tok.token_type, tok.subtype, tok.start, tok.end)
-///     ```
+/// ```
 #[gen_stub_pyfunction(module = "formualizer")]
 #[pyfunction]
 #[pyo3(signature = (formula, dialect = None))]
@@ -58,7 +58,7 @@ fn tokenize(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyToke
 ///     dialect: Optional dialect hint.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     from formualizer import parse
 ///     from formualizer.visitor import collect_references, collect_function_names
 ///
@@ -67,7 +67,7 @@ fn tokenize(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyToke
 ///     print(ast.to_formula())
 ///     print(collect_references(ast))
 ///     print(collect_function_names(ast))
-///     ```
+/// ```
 #[gen_stub_pyfunction(module = "formualizer")]
 #[pyfunction]
 #[pyo3(signature = (formula, dialect = None))]
@@ -85,12 +85,12 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
 ///         (The backend/strategy is currently fixed to `calamine` + eager load.)
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     import formualizer as fz
 ///
 ///     wb = fz.load_workbook("financial_model.xlsx")
 ///     print(wb.evaluate_cell("Summary", 1, 2))
-///     ```
+/// ```
 #[gen_stub_pyfunction(module = "formualizer")]
 #[pyfunction]
 #[pyo3(signature = (path, strategy=None))]

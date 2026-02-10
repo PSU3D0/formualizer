@@ -16,7 +16,7 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 /// but most APIs also accept Python primitives and will convert them automatically.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     import formualizer as fz
 ///
 ///     v1 = fz.LiteralValue.number(1.5)
@@ -26,7 +26,7 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 ///     s = wb.sheet("Data")
 ///     s.set_value(1, 1, v1)
 ///     s.set_value(1, 2, v2)
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "LiteralValue", module = "formualizer")]
 #[derive(Clone, Debug)]

@@ -15,7 +15,7 @@ use formualizer::workbook::WorksheetHandle;
 /// In most cases you obtain a `Sheet` by calling `Workbook.sheet(name)`.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     import formualizer as fz
 ///
 ///     wb = fz.Workbook()
@@ -24,7 +24,7 @@ use formualizer::workbook::WorksheetHandle;
 ///     s.set_value(2, 1, 20)
 ///     s.set_formula(3, 1, "=SUM(A1:A2)")
 ///     print(wb.evaluate_cell("Data", 3, 1))
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "Sheet", module = "formualizer")]
 #[derive(Clone)]

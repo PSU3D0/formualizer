@@ -9,14 +9,14 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 /// The tokenizer is iterable and supports indexing.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     import formualizer as fz
 ///
 ///     t = fz.Tokenizer("=SUM(A1:A3)")
 ///     print(len(t))
 ///     print(t.render())
 ///     print([tok.value for tok in t.tokens()])
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "Tokenizer", module = "formualizer")]
 pub struct PyTokenizer {

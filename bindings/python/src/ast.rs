@@ -14,7 +14,7 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 /// Use the top-level [`parse`] function to create an AST from a formula string.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     from formualizer import parse
 ///
 ///     ast = parse("=SUM(A1:A3)")
@@ -22,7 +22,7 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 ///     print(ast.fingerprint())
 ///     for ref in ast.walk_refs():
 ///         print(ref)
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(module = "formualizer", name = "ASTNode")]
 #[derive(Clone)]
@@ -376,13 +376,13 @@ impl PyASTNode {
 /// Constructed via `ASTNode.walk_refs()`.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     from formualizer import parse
 ///
 ///     ast = parse("=SUM(A1, Sheet2!B3)")
 ///     for r in ast.walk_refs():
 ///         print(r)
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "RefWalker", module = "formualizer")]
 pub struct PyRefWalker {

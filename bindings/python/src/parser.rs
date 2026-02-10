@@ -13,13 +13,13 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pyme
 /// if you want to parse multiple formulas with the same instance.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     import formualizer as fz
 ///
 ///     p = fz.Parser()
 ///     ast = p.parse_string("=1+2")
 ///     print(ast.pretty())
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "Parser", module = "formualizer")]
 pub struct PyParser {

@@ -41,7 +41,7 @@ type RuntimeResult<T> = Result<T, RuntimeSheetPortError>;
 /// - read outputs back into Python
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     from formualizer import SheetPortSession, Workbook
 ///
 ///     manifest_yaml = (
@@ -76,7 +76,7 @@ type RuntimeResult<T> = Result<T, RuntimeSheetPortError>;
 ///     session.write_inputs({"base_price": 100.0})
 ///     out = session.evaluate_once(freeze_volatile=True)
 ///     print(out["final_price"])
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "SheetPortSession", module = "formualizer")]
 pub struct PySheetPortSession {
@@ -210,9 +210,9 @@ impl PySheetPortSession {
     /// Values are validated and converted based on the manifest schema.
     ///
     /// Example:
-    ///     ```python
+    /// ```python
     ///     session.write_inputs({"base_price": 100.0, "qty": 2})
-    ///     ```
+    /// ```
     pub fn write_inputs(&mut self, py: Python<'_>, update: &Bound<'_, PyAny>) -> PyResult<()> {
         let dict = update.cast::<PyDict>().map_err(|_| {
             PyErr::new::<PyTypeError, _>("input updates must be provided as a dict")
@@ -235,7 +235,7 @@ impl PySheetPortSession {
     /// - `deterministic_timestamp_utc` + `deterministic_timezone` control time and timezone.
     ///
     /// Example:
-    ///     ```python
+    /// ```python
     ///     import datetime
     ///     from formualizer import SheetPortSession
     ///
@@ -246,7 +246,7 @@ impl PySheetPortSession {
     ///         deterministic_timezone="utc",
     ///     )
     ///     print(out)
-    ///     ```
+    /// ```
     #[pyo3(signature = (*, freeze_volatile=false, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None))]
     pub fn evaluate_once<'py>(
         &mut self,

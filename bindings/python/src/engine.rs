@@ -7,14 +7,14 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 /// You typically pass this via `WorkbookConfig(eval_config=...)`.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     import formualizer as fz
 ///
 ///     eval_cfg = fz.EvaluationConfig()
 ///     eval_cfg.enable_parallel = True
 ///
 ///     wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=eval_cfg))
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "EvaluationConfig", module = "formualizer")]
 #[derive(Clone)]

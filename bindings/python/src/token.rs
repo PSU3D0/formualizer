@@ -12,14 +12,14 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 /// byte offsets (`start`, `end`) pointing into the original formula string.
 ///
 /// Example:
-///     ```python
+/// ```python
 ///     import formualizer as fz
 ///
 ///     tok = fz.tokenize("=A1+1")[0]
 ///     print(tok.value)
 ///     print(tok.token_type, tok.subtype)
 ///     print(tok.start, tok.end)
-///     ```
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "Token", module = "formualizer")]
 #[derive(Clone)]
