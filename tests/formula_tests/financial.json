@@ -75,6 +75,86 @@
       "result": 4000,
       "result_type": "int",
       "description": "double declining balance"
+    },
+    {
+      "formula": "=IRR({-1000, 400, 400, 400, 400})",
+      "result": 0.21862269609834224,
+      "result_type": "float",
+      "description": "IRR simple annual cash flows"
+    },
+    {
+      "formula": "=IRR({-1000, 400, 400, 400, 400}, 0.5)",
+      "result": 0.21862269609834224,
+      "result_type": "float",
+      "description": "IRR with explicit guess far from root"
+    },
+    {
+      "formula": "=IRR({-100, 30, 40, 50, 60})",
+      "result": 0.24888335662407088,
+      "result_type": "float",
+      "description": "IRR basic investment"
+    },
+    {
+      "formula": "=IRR({-10000, 2750, 4250, 3250, 2750})",
+      "result": 0.11541278310055848,
+      "result_type": "float",
+      "description": "IRR moderate return (scipy brentq reference)"
+    },
+    {
+      "formula": "=IRR(A1:BI1)",
+      "result": 0.014896916887517,
+      "result_type": "float",
+      "description": "IRR small monthly rate (~1.5%) — 61 cash flows (scipy: 1.489691688751711e-02)",
+      "context": {
+        "A1": -5000000,
+        "B1": 70000, "C1": 70000, "D1": 70000, "E1": 70000, "F1": 70000,
+        "G1": 70000, "H1": 70000, "I1": 70000, "J1": 70000, "K1": 70000,
+        "L1": 70000, "M1": 70000, "N1": 70000, "O1": 70000, "P1": 70000,
+        "Q1": 70000, "R1": 70000, "S1": 70000, "T1": 70000, "U1": 70000,
+        "V1": 70000, "W1": 70000, "X1": 70000, "Y1": 70000, "Z1": 70000,
+        "AA1": 70000, "AB1": 70000, "AC1": 70000, "AD1": 70000, "AE1": 70000,
+        "AF1": 70000, "AG1": 70000, "AH1": 70000, "AI1": 70000, "AJ1": 70000,
+        "AK1": 70000, "AL1": 70000, "AM1": 70000, "AN1": 70000, "AO1": 70000,
+        "AP1": 70000, "AQ1": 70000, "AR1": 70000, "AS1": 70000, "AT1": 70000,
+        "AU1": 70000, "AV1": 70000, "AW1": 70000, "AX1": 70000, "AY1": 70000,
+        "AZ1": 70000, "BA1": 70000, "BB1": 70000, "BC1": 70000, "BD1": 70000,
+        "BE1": 70000, "BF1": 70000, "BG1": 70000, "BH1": 70000,
+        "BI1": 5500000
+      }
+    },
+    {
+      "formula": "=IRR(A1:BJ1)",
+      "result": -0.005669715548890,
+      "result_type": "float",
+      "description": "IRR negative return — 62 cash flows (scipy: -5.669715548889694e-03)",
+      "context": {
+        "A1": -1000000,
+        "B1": 10000, "C1": 10000, "D1": 10000, "E1": 10000, "F1": 10000,
+        "G1": 10000, "H1": 10000, "I1": 10000, "J1": 10000, "K1": 10000,
+        "L1": 10000, "M1": 10000, "N1": 10000, "O1": 10000, "P1": 10000,
+        "Q1": 10000, "R1": 10000, "S1": 10000, "T1": 10000, "U1": 10000,
+        "V1": 10000, "W1": 10000, "X1": 10000, "Y1": 10000, "Z1": 10000,
+        "AA1": 10000, "AB1": 10000, "AC1": 10000, "AD1": 10000, "AE1": 10000,
+        "AF1": 10000, "AG1": 10000, "AH1": 10000, "AI1": 10000, "AJ1": 10000,
+        "AK1": 10000, "AL1": 10000, "AM1": 10000, "AN1": 10000, "AO1": 10000,
+        "AP1": 10000, "AQ1": 10000, "AR1": 10000, "AS1": 10000, "AT1": 10000,
+        "AU1": 10000, "AV1": 10000, "AW1": 10000, "AX1": 10000, "AY1": 10000,
+        "AZ1": 10000, "BA1": 10000, "BB1": 10000, "BC1": 10000, "BD1": 10000,
+        "BE1": 10000, "BF1": 10000, "BG1": 10000, "BH1": 10000, "BI1": 10000,
+        "BJ1": 200000
+      }
+    },
+    {
+      "formula": "=IRR({-500000, 100000, 100000, 100000, 100000, 100000, 100000})",
+      "result": 0.05471792502353683,
+      "result_type": "float",
+      "description": "IRR break-even (scipy brentq reference)"
+    },
+    {
+      "formula": "=IRR({100, -100, -100})",
+      "result": 0.6180339887498949,
+      "result_type": "float",
+      "description": "IRR with positive initial cash flow (golden ratio root)"
     }
   ]
 }

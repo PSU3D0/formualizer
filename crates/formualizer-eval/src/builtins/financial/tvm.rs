@@ -711,6 +711,181 @@ impl Function for NominalFn {
     }
 }
 
+/// Compute NPV at a given rate.
+fn irr_npv(cashflows: &[f64], rate: f64) -> f64 {
+    let mut npv = 0.0;
+    for (i, &cf) in cashflows.iter().enumerate() {
+        npv += cf / (1.0 + rate).powi(i as i32);
+    }
+    npv
+}
+
+/// Compute NPV and its derivative w.r.t. rate.
+fn irr_npv_deriv(cashflows: &[f64], rate: f64) -> (f64, f64) {
+    let mut npv = 0.0;
+    let mut d_npv = 0.0;
+    for (i, &cf) in cashflows.iter().enumerate() {
+        let factor = (1.0 + rate).powi(i as i32);
+        npv += cf / factor;
+        if i > 0 {
+            d_npv -= (i as f64) * cf / (factor * (1.0 + rate));
+        }
+    }
+    (npv, d_npv)
+}
+
+/// Solve for IRR using Newton-Raphson with Brent's method fallback.
+///
+/// Strategy:
+/// 1. Try Newton-Raphson from the user's guess (fast when it works).
+/// 2. If Newton diverges, bracket the root by scanning probe points,
+///    then use Brent's method (superlinear convergence with guaranteed
+///    bracketing) to find the root precisely.
+fn irr_solve(cashflows: &[f64], guess: f64) -> Option<f64> {
+    const MAX_NR: usize = 100;
+    const MAX_BRENT: usize = 200;
+    const TOL: f64 = 1e-12;
+    const MACH_EPS: f64 = f64::EPSILON;
+
+    // --- Phase 1: Newton-Raphson from the given guess ---
+    let mut rate = guess;
+    for _ in 0..MAX_NR {
+        let (npv, d_npv) = irr_npv_deriv(cashflows, rate);
+        if d_npv.abs() < TOL {
+            break; // flat derivative, fall through to Brent
+        }
+        let new_rate = rate - npv / d_npv;
+        // Accept if converged and rate > -1 (pole at -1)
+        if (new_rate - rate).abs() < TOL && new_rate > -1.0 {
+            return Some(new_rate);
+        }
+        // If Newton shoots below -1 or to NaN/Inf, bail out
+        if new_rate <= -1.0 || !new_rate.is_finite() {
+            break;
+        }
+        rate = new_rate;
+    }
+
+    // --- Phase 2: Bracket the root, then apply Brent's method ---
+    // Search for a sign change in NPV across a wide range of rates.
+    let probes: &[f64] = &[
+        -0.99, -0.9, -0.5, -0.1, -0.01, 0.0, 0.001, 0.005, 0.01, 0.02,
+        0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0,
+    ];
+    let mut lo = f64::NAN;
+    let mut hi = f64::NAN;
+    let mut npv_lo = f64::NAN;
+
+    for &r in probes {
+        let npv = irr_npv(cashflows, r);
+        if !npv.is_finite() {
+            continue;
+        }
+        if lo.is_nan() {
+            lo = r;
+            npv_lo = npv;
+            continue;
+        }
+        if npv_lo * npv < 0.0 {
+            hi = r;
+            break;
+        }
+        lo = r;
+        npv_lo = npv;
+    }
+
+    if hi.is_nan() {
+        return None; // no sign change found — no real IRR
+    }
+
+    // Brent's method (following scipy's brentq / Brent's zeroin algorithm).
+    // Combines inverse quadratic interpolation, secant, and bisection.
+    // xpre/xcur maintain the bracket; xblk is the contrapoint.
+    let mut xpre = lo;
+    let mut xcur = hi;
+    let mut fpre = irr_npv(cashflows, xpre);
+    let mut fcur = irr_npv(cashflows, xcur);
+
+    if fpre == 0.0 {
+        return Some(xpre);
+    }
+    if fcur == 0.0 {
+        return Some(xcur);
+    }
+
+    let mut xblk = 0.0;
+    let mut fblk = 0.0;
+    let mut spre = 0.0;
+    let mut scur = 0.0;
+
+    for _ in 0..MAX_BRENT {
+        // If xpre and xcur bracket the root, reset the contrapoint
+        if fpre * fcur < 0.0 {
+            xblk = xpre;
+            fblk = fpre;
+            spre = xcur - xpre;
+            scur = spre;
+        }
+
+        // Ensure xcur is the best approximation (|fcur| <= |fblk|)
+        if fblk.abs() < fcur.abs() {
+            xpre = xcur;
+            xcur = xblk;
+            xblk = xpre;
+            fpre = fcur;
+            fcur = fblk;
+            fblk = fpre;
+        }
+
+        let delta = (MACH_EPS * xcur.abs() + 0.5 * TOL).max(MACH_EPS);
+        let sbis = (xblk - xcur) * 0.5;
+
+        if fcur == 0.0 || sbis.abs() < delta {
+            return Some(xcur);
+        }
+
+        if spre.abs() >= delta && fcur.abs() < fpre.abs() {
+            // Try interpolation
+            let stry = if (xpre - xblk).abs() < MACH_EPS {
+                // Secant step
+                -fcur * (xcur - xpre) / (fcur - fpre)
+            } else {
+                // Inverse quadratic interpolation
+                let dpre = (fpre - fcur) / (xpre - xcur);
+                let dblk = (fblk - fcur) / (xblk - xcur);
+                -fcur * (fblk * dblk - fpre * dpre)
+                    / (dblk * dpre * (fblk - fpre))
+            };
+
+            // Accept if step is small enough
+            if 2.0 * stry.abs()
+                < spre.abs().min(3.0 * sbis.abs() - delta)
+            {
+                spre = scur;
+                scur = stry;
+            } else {
+                spre = sbis;
+                scur = sbis;
+            }
+        } else {
+            // Bisection
+            spre = sbis;
+            scur = sbis;
+        }
+
+        xpre = xcur;
+        fpre = fcur;
+
+        if scur.abs() > delta {
+            xcur += scur;
+        } else {
+            xcur += if sbis > 0.0 { delta } else { -delta };
+        }
+        fcur = irr_npv(cashflows, xcur);
+    }
+    Some(xcur)
+}
+
 /// IRR(values, [guess]) - Internal rate of return
 #[derive(Debug)]
 pub struct IrrFn;
@@ -779,39 +954,10 @@ impl Function for IrrFn {
             0.1
         };
 
-        // Newton-Raphson iteration to find IRR
-        let mut rate = guess;
-        const MAX_ITER: i32 = 100;
-        const EPSILON: f64 = 1e-10;
-
-        for _ in 0..MAX_ITER {
-            let mut npv = 0.0;
-            let mut d_npv = 0.0;
-
-            for (i, &cf) in cashflows.iter().enumerate() {
-                let factor = (1.0 + rate).powi(i as i32);
-                npv += cf / factor;
-                if i > 0 {
-                    d_npv -= (i as f64) * cf / (factor * (1.0 + rate));
-                }
-            }
-
-            if d_npv.abs() < EPSILON {
-                return Ok(CalcValue::Scalar(
-                    LiteralValue::Error(ExcelError::new_num()),
-                ));
-            }
-
-            let new_rate = rate - npv / d_npv;
-            if (new_rate - rate).abs() < EPSILON {
-                return Ok(CalcValue::Scalar(LiteralValue::Number(new_rate)));
-            }
-            rate = new_rate;
+        match irr_solve(&cashflows, guess) {
+            Some(rate) => Ok(CalcValue::Scalar(LiteralValue::Number(rate))),
+            None => Ok(CalcValue::Scalar(LiteralValue::Error(ExcelError::new_num()))),
         }
-
-        Ok(CalcValue::Scalar(
-            LiteralValue::Error(ExcelError::new_num()),
-        ))
     }
 }
 
