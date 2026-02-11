@@ -174,7 +174,7 @@ The evaluation engine is built on Apache Arrow columnar storage with:
 - Warm-up planning for large workbooks
 - Spill overlays for dynamic array results
 
-Formal benchmarks are in progress. See [WORK_ROADMAP.md](WORK_ROADMAP.md) for the current development plan.
+Formal benchmarks are in progress.
 
 ## Bindings
 
@@ -188,16 +188,11 @@ Both Python and WASM bindings expose the same core API surface: tokenization, pa
 
 ## Roadmap
 
-Active development is tracked in [WORK_ROADMAP.md](WORK_ROADMAP.md). Current focus areas:
-
-- Expanding Excel function parity and conformance testing
-- Arrow canonical migration (phased)
-- Formal benchmarks and performance dashboards
-- Additional I/O backends and integrations
+Roadmap and active development are tracked via GitHub Issues, milestones, and pull requests.
 
 ## Contributing
 
-Contributions are welcome. See the [tickets/](tickets/) directory for implementation plans and open work items.
+Contributions are welcome. If you're looking for something to work on, browse open issues or open a new issue to discuss a proposal.
 
 ```bash
 # Build and test

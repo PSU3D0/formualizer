@@ -1,6 +1,6 @@
 {
   "name": "formualizer",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "WebAssembly bindings for the Formualizer workbook + formula engine",
   "type": "module",
   "main": "dist/index.js",
