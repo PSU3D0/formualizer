@@ -2,6 +2,9 @@ name: Test Release (Python Wheels)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - test/release-workflow
 
 permissions:
   contents: read
