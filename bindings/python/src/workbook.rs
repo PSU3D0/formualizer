@@ -503,6 +503,120 @@ impl PyWorkbook {
         Ok(())
     }
 
+    /// Define a named range.
+    ///
+    /// Args:
+    ///     name: The name to define (e.g., "SalesData", "TotalRevenue").
+    ///     sheet: The sheet the range resides on.
+    ///     start_row: Start row (1-based).
+    ///     start_col: Start column (1-based).
+    ///     end_row: End row (1-based). Defaults to start_row for a single cell.
+    ///     end_col: End column (1-based). Defaults to start_col for a single cell.
+    ///     scope: "workbook" (default) or "sheet".
+    #[pyo3(signature = (name, sheet, start_row, start_col, end_row=None, end_col=None, scope="workbook"))]
+    pub fn define_named_range(
+        &self,
+        name: &str,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+        scope: &str,
+    ) -> PyResult<()> {
+        let er = end_row.unwrap_or(start_row);
+        let ec = end_col.unwrap_or(start_col);
+        let address = formualizer::workbook::RangeAddress::new(
+            sheet.to_string(),
+            start_row,
+            start_col,
+            er,
+            ec,
+        )
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+        let scope_enum = match scope {
+            "workbook" => formualizer::workbook::NamedRangeScope::Workbook,
+            "sheet" => formualizer::workbook::NamedRangeScope::Sheet,
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "scope must be 'workbook' or 'sheet'",
+                ))
+            }
+        };
+
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        wb.define_named_range(name, &address, scope_enum)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    /// List all defined names and their addresses.
+    ///
+    /// Returns a list of dicts, each with keys: name, sheet, start_row, start_col, end_row, end_col, scope.
+    pub fn list_defined_names(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+
+        let result = pyo3::types::PyList::empty(py);
+        let engine = wb.engine();
+
+        // Workbook-scoped names
+        for (name, _named) in engine.named_ranges_iter() {
+            if let Some(addr) = wb.named_range_address(name) {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("name", name.as_str())?;
+                dict.set_item("sheet", addr.sheet.as_str())?;
+                dict.set_item("start_row", addr.start_row)?;
+                dict.set_item("start_col", addr.start_col)?;
+                dict.set_item("end_row", addr.end_row)?;
+                dict.set_item("end_col", addr.end_col)?;
+                dict.set_item("scope", "workbook")?;
+                result.append(dict)?;
+            }
+        }
+
+        // Sheet-scoped names
+        for ((sheet_id, name), _named) in engine.sheet_named_ranges_iter() {
+            let _sheet_name = engine.sheet_name(*sheet_id);
+            if let Some(addr) = wb.named_range_address(name) {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("name", name.as_str())?;
+                dict.set_item("sheet", addr.sheet.as_str())?;
+                dict.set_item("start_row", addr.start_row)?;
+                dict.set_item("start_col", addr.start_col)?;
+                dict.set_item("end_row", addr.end_row)?;
+                dict.set_item("end_col", addr.end_col)?;
+                dict.set_item("scope", "sheet")?;
+                result.append(dict)?;
+            }
+        }
+
+        Ok(result.into())
+    }
+
+    /// Resolve a named range to its address.
+    ///
+    /// Returns a RangeAddress if the name exists, or None.
+    pub fn named_range_address(&self, name: &str) -> PyResult<Option<PyRangeAddress>> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+
+        Ok(wb.named_range_address(name).map(|addr| PyRangeAddress {
+            sheet: addr.sheet,
+            start_row: addr.start_row,
+            start_col: addr.start_col,
+            end_row: addr.end_row,
+            end_col: addr.end_col,
+        }))
+    }
+
     /// Indexing to get a Sheet view (compatibility)
     fn __getitem__(&self, name: &str) -> PyResult<crate::sheet::PySheet> {
         {
