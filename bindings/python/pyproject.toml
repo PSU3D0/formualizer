@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "formualizer"
-version = "0.3.2"
+version = "0.3.3"
 description = "Fast Excel-formula tooling (Python bindings)"
 requires-python = ">=3.10"
 license = {text = "MIT"}
