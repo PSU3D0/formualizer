@@ -4,15 +4,34 @@ build-backend = "maturin"
 
 [project]
 name = "formualizer"
-version = "0.3.3"
-description = "Fast Excel-formula tooling (Python bindings)"
+version = "0.3.4"
+description = "Embeddable spreadsheet engine — parse, evaluate & mutate Excel workbooks at native speed"
+readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
+keywords = ["spreadsheet", "excel", "formula", "evaluation", "parser", "arrow"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
+
+[project.urls]
+Homepage = "https://github.com/psu3d0/formualizer"
+Repository = "https://github.com/psu3d0/formualizer"
+"Bug Tracker" = "https://github.com/psu3d0/formualizer/issues"
 
 [project.optional-dependencies]
 dev = [

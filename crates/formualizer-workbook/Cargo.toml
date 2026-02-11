@@ -6,9 +6,10 @@ description = "Ergonomic workbook API over the Formualizer engine (sheets, loade
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation.workspace = true
 readme = "README.md"
-keywords = ["excel", "formula", "workbook", "engine", "spreadsheet"]
-categories = ["data-structures"]
+keywords = ["spreadsheet", "excel", "workbook", "xlsx", "undo-redo"]
+categories = ["data-structures", "mathematics"]
 
 [dependencies]
 formualizer-parse = { workspace = true }

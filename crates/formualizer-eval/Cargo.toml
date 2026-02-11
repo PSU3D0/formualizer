@@ -6,8 +6,9 @@ description = "High-performance Arrow-backed Excel formula engine with dependenc
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation.workspace = true
 readme = "README.md"
-keywords = ["excel", "formula", "engine", "arrow", "spreadsheet"]
+keywords = ["spreadsheet", "excel", "evaluation", "arrow", "dependency-graph"]
 categories = ["data-structures", "mathematics"]
 
 [lints.rust]

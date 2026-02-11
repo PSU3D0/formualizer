@@ -6,9 +6,10 @@ description = "SheetPort spec: schema, validation, and fio-lint CLI for portable
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation.workspace = true
 readme = "README.md"
 keywords = ["sheetport", "spreadsheet", "schema", "validation", "excel"]
-categories = ["data-structures"]
+categories = ["data-structures", "config"]
 
 [[bin]]
 name = "fio-lint"

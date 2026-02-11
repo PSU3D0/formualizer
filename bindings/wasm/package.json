@@ -1,7 +1,8 @@
 {
   "name": "formualizer",
-  "version": "0.3.3",
-  "description": "WebAssembly bindings for the Formualizer workbook + formula engine",
+  "version": "0.3.4",
+  "description": "Embeddable spreadsheet engine — parse, evaluate & mutate Excel workbooks in the browser. 320+ functions, Arrow-powered.",
+  "homepage": "https://github.com/psu3d0/formualizer",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -31,7 +32,9 @@
     "parser",
     "wasm",
     "webassembly",
-    "spreadsheet"
+    "spreadsheet",
+    "evaluation",
+    "workbook"
   ],
   "license": "MIT OR Apache-2.0",
   "devDependencies": {

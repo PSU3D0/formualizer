@@ -1,14 +1,15 @@
 [package]
 name = "formualizer"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
-description = "Formualizer product surface (roll-up): workbook + engine + SheetPort, feature-gated"
+description = "Embeddable spreadsheet engine — parse, evaluate & mutate Excel workbooks from Rust"
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation.workspace = true
 readme = "README.md"
-keywords = ["excel", "formula", "spreadsheet", "engine", "workbook"]
-categories = ["data-structures"]
+keywords = ["spreadsheet", "excel", "formula", "arrow", "wasm"]
+categories = ["data-structures", "mathematics", "parser-implementations"]
 
 [features]
 default = ["eval", "workbook", "sheetport", "parse", "common"]

@@ -6,8 +6,10 @@ description = "Proc macros for authoring Formualizer built-ins (caps, schemas, a
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation.workspace = true
 readme = "README.md"
-keywords = ["excel", "formula", "spreadsheet", "macro"]
+keywords = ["excel", "formula", "spreadsheet", "macro", "proc-macro"]
+categories = ["development-tools::procedural-macro-helpers"]
 
 [lib]
 proc-macro = true

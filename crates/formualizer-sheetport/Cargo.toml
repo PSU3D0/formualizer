@@ -6,8 +6,9 @@ description = "SheetPort runtime: bind manifests to workbooks, validate IO, and 
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
+documentation.workspace = true
 readme = "README.md"
-keywords = ["sheetport", "spreadsheet", "excel", "engine", "io"]
+keywords = ["spreadsheet", "excel", "api", "schema", "validation"]
 categories = ["data-structures"]
 
 [dependencies]
