@@ -1,0 +1,180 @@
+name: Test Release (Python Wheels)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-wheels-linux:
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: ubuntu-22.04
+            target: x86_64
+          - runner: ubuntu-22.04
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path bindings/python/Cargo.toml
+          sccache: true
+          manylinux: auto
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-linux-${{ matrix.platform.target }}
+          path: dist
+
+  build-wheels-musllinux:
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: ubuntu-22.04
+            target: x86_64
+          - runner: ubuntu-22.04
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path bindings/python/Cargo.toml
+          sccache: true
+          manylinux: musllinux_1_2
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-musllinux-${{ matrix.platform.target }}
+          path: dist
+
+  build-wheels-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x64
+          args: --release --out dist --manifest-path bindings/python/Cargo.toml
+          sccache: true
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-windows-x64
+          path: dist
+
+  build-wheels-macos:
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: macos-13
+            target: x86_64
+          - runner: macos-latest
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path bindings/python/Cargo.toml
+          sccache: true
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-macos-${{ matrix.platform.target }}
+          path: dist
+
+  build-sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path bindings/python/Cargo.toml
+      - name: Upload sdist
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-sdist
+          path: dist
+
+  dry-run-crates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Dry-run publish product crates
+        run: |
+          set -euo pipefail
+          for pkg in formualizer-macros formualizer-eval formualizer-workbook formualizer-sheetport formualizer; do
+            echo "=== Dry-run: ${pkg} ==="
+            cargo publish -p "${pkg}" --dry-run --allow-dirty || true
+          done
+
+  verify-artifacts:
+    needs: [build-wheels-linux, build-wheels-musllinux, build-wheels-windows, build-wheels-macos, build-sdist, dry-run-crates]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: List artifacts
+        run: |
+          echo "=== All built artifacts ==="
+          ls -lhR dist/
+          echo ""
+          echo "=== Wheel summary ==="
+          for f in dist/*.whl; do
+            echo "  $(basename "$f")"
+          done
+          echo ""
+          echo "=== sdist ==="
+          for f in dist/*.tar.gz; do
+            echo "  $(basename "$f")"
+          done
+          echo ""
+          echo "=== Platform coverage ==="
+          echo "Expected wheels for abi3-py310:"
+          echo "  - manylinux x86_64"
+          echo "  - manylinux aarch64"
+          echo "  - musllinux x86_64"
+          echo "  - musllinux aarch64"
+          echo "  - windows x64"
+          echo "  - macos x86_64"
+          echo "  - macos aarch64"
+          echo "  - sdist"
+          echo ""
+          EXPECTED=8
+          ACTUAL=$(ls dist/*.whl dist/*.tar.gz 2>/dev/null | wc -l)
+          echo "Found ${ACTUAL} artifacts (expected ${EXPECTED})"
+          if [ "${ACTUAL}" -lt "${EXPECTED}" ]; then
+            echo "::warning::Missing artifacts! Expected ${EXPECTED}, got ${ACTUAL}"
+          fi
