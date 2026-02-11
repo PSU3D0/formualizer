@@ -1,5 +1,6 @@
 use crate::traits::{
-    AccessGranularity, BackendCaps, CellData, MergedRange, SheetData, SpreadsheetReader,
+    AccessGranularity, BackendCaps, CellData, MergedRange, NamedRange, NamedRangeScope, SheetData,
+    SpreadsheetReader,
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
@@ -9,10 +10,12 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 
 use calamine::{Data, Range, Reader, Xlsx, open_workbook};
+use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{CellIngest, IngestBuilder, map_error_code};
 use formualizer_eval::engine::Engine as EvalEngine;
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::traits::EvaluationContext;
+use formualizer_parse::parser::ReferenceType;
 use zip::ZipArchive;
 
 pub struct CalamineAdapter {
@@ -84,6 +87,73 @@ impl CalamineAdapter {
             _ => ExcelErrorKind::Value,
         };
         map_error_code(kind)
+    }
+
+    /// Extract defined names from the calamine workbook into NamedRange structs.
+    fn collect_defined_names(workbook: &Xlsx<BufReader<File>>) -> Vec<NamedRange> {
+        let mut ranges = Vec::new();
+        for (name, address) in workbook.defined_names() {
+            let trimmed = address.trim();
+            // Skip empty, multi-area (comma-separated), or error values
+            if trimmed.is_empty() || trimmed.contains(',') || trimmed.starts_with('#') {
+                continue;
+            }
+
+            let reference = match ReferenceType::from_string(trimmed) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+
+            let (sheet_name, start_row, start_col, end_row, end_col) = match reference {
+                ReferenceType::Cell {
+                    sheet, row, col, ..
+                } => {
+                    let sheet = match sheet {
+                        Some(s) => s,
+                        None => continue, // skip names without sheet context
+                    };
+                    (sheet, row, col, row, col)
+                }
+                ReferenceType::Range {
+                    sheet,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    ..
+                } => {
+                    let sheet = match sheet {
+                        Some(s) => s,
+                        None => continue,
+                    };
+                    let sr = match start_row {
+                        Some(r) => r,
+                        None => continue,
+                    };
+                    let sc = match start_col {
+                        Some(c) => c,
+                        None => continue,
+                    };
+                    let er = end_row.unwrap_or(sr);
+                    let ec = end_col.unwrap_or(sc);
+                    (sheet, sr, sc, er, ec)
+                }
+                _ => continue, // skip external refs, tables, etc.
+            };
+
+            let addr =
+                match RangeAddress::new(sheet_name, start_row, start_col, end_row, end_col) {
+                    Ok(a) => a,
+                    Err(_) => continue,
+                };
+
+            ranges.push(NamedRange {
+                name: name.clone(),
+                scope: NamedRangeScope::Workbook, // calamine doesn't expose scope info
+                address: addr,
+            });
+        }
+        ranges
     }
 
     fn range_to_cells(
@@ -628,6 +698,59 @@ where
             // Mark as loaded for API parity
             self.loaded_sheets.insert(n.to_string());
         }
+        // Register defined names from the calamine workbook
+        {
+            use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
+            use formualizer_eval::reference::{CellRef, Coord};
+
+            let defined_names = Self::collect_defined_names(&self.workbook.read());
+            if debug && !defined_names.is_empty() {
+                eprintln!(
+                    "[fz][load] registering {} defined names",
+                    defined_names.len()
+                );
+            }
+            for named in &defined_names {
+                let Some(sheet_id) = engine.sheet_id(&named.address.sheet) else {
+                    if debug {
+                        eprintln!(
+                            "[fz][load]   skip name {:?}: sheet {:?} not found",
+                            named.name, named.address.sheet
+                        );
+                    }
+                    continue;
+                };
+                let addr = &named.address;
+                let sr0 = addr.start_row.saturating_sub(1);
+                let sc0 = addr.start_col.saturating_sub(1);
+                let er0 = addr.end_row.saturating_sub(1);
+                let ec0 = addr.end_col.saturating_sub(1);
+
+                let start_coord = Coord::new(sr0, sc0, true, true);
+                let end_coord = Coord::new(er0, ec0, true, true);
+                let start_ref = CellRef::new(sheet_id, start_coord);
+                let end_ref = CellRef::new(sheet_id, end_coord);
+
+                let definition = if sr0 == er0 && sc0 == ec0 {
+                    NamedDefinition::Cell(start_ref)
+                } else {
+                    let range_ref = formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                    NamedDefinition::Range(range_ref)
+                };
+
+                let scope = match named.scope {
+                    NamedRangeScope::Workbook => NameScope::Workbook,
+                    NamedRangeScope::Sheet => NameScope::Sheet(sheet_id),
+                };
+
+                if let Err(e) = engine.define_name(&named.name, definition, scope) {
+                    if debug {
+                        eprintln!("[fz][load]   name {:?} failed: {e}", named.name);
+                    }
+                }
+            }
+        }
+
         let tend0 = std::time::Instant::now();
         // Finish builder and finalize ingestion
         let tcommit0 = std::time::Instant::now();
