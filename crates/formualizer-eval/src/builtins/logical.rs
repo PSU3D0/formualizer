@@ -265,6 +265,8 @@ impl Function for IfFn {
             LiteralValue::Boolean(b) => b,
             LiteralValue::Number(n) => n != 0.0,
             LiteralValue::Int(i) => i != 0,
+            // Excel treats a blank/empty cell as FALSE
+            LiteralValue::Empty => false,
             _ => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new_value().with_message("IF condition must be boolean or number"),
