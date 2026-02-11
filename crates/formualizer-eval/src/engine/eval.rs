@@ -5342,9 +5342,12 @@ where
             if !self.graph.vertex_exists(v) {
                 continue;
             }
-            // Only schedule dirty/volatile formulas
+            // Only schedule dirty/volatile formulas and named ranges
             match self.graph.get_vertex_kind(v) {
-                VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                VertexKind::FormulaScalar
+                | VertexKind::FormulaArray
+                | VertexKind::NamedScalar
+                | VertexKind::NamedArray => {
                     if self.graph.is_dirty(v) || self.graph.is_volatile(v) {
                         to_evaluate.insert(v);
                     }
@@ -5357,7 +5360,10 @@ where
                 for &dep in dependencies {
                     if self.graph.vertex_exists(dep) {
                         match self.graph.get_vertex_kind(dep) {
-                            VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                            VertexKind::FormulaScalar
+                            | VertexKind::FormulaArray
+                            | VertexKind::NamedScalar
+                            | VertexKind::NamedArray => {
                                 if !visited.contains(&dep) {
                                     stack.push(dep);
                                 }
