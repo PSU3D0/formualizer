@@ -35,6 +35,36 @@ fn deferred_formula_evaluation() {
     assert_eq!(v, LiteralValue::Number(21.0));
 }
 
+#[test]
+fn prefixed_filter_formula_evaluates() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("S").unwrap();
+    wb.set_value("S", 1, 1, LiteralValue::Int(1)).unwrap();
+    wb.set_value("S", 2, 1, LiteralValue::Int(2)).unwrap();
+    wb.set_value("S", 1, 3, LiteralValue::Boolean(false))
+        .unwrap();
+    wb.set_value("S", 2, 3, LiteralValue::Boolean(true))
+        .unwrap();
+    wb.set_formula("S", 1, 2, "=_xlfn._xlws.FILTER(A1:A2,C1:C2)")
+        .unwrap();
+
+    let v = wb.evaluate_cell("S", 1, 2).unwrap();
+    assert_eq!(v, LiteralValue::Number(2.0));
+}
+
+#[test]
+fn prefixed_filter_formula_supports_expression_include() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("S").unwrap();
+    wb.set_value("S", 1, 1, LiteralValue::Int(1)).unwrap();
+    wb.set_value("S", 2, 1, LiteralValue::Int(2)).unwrap();
+    wb.set_formula("S", 1, 2, "=_xlfn._xlws.FILTER(A1:A2,A1:A2>1)")
+        .unwrap();
+
+    let v = wb.evaluate_cell("S", 1, 2).unwrap();
+    assert_eq!(v, LiteralValue::Number(2.0));
+}
+
 #[cfg(feature = "json")]
 #[test]
 fn load_from_json_reader() {

@@ -22,6 +22,7 @@
 use super::super::utils::collapse_if_scalar;
 use super::lookup_utils::{cmp_for_lookup, equals_maybe_wildcard, value_to_f64_lenient};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
+use crate::engine::range_view::RangeView;
 use crate::function::Function; // FnCaps imported via macro
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
@@ -497,9 +498,9 @@ impl Function for FilterFn {
                 },
                 // include
                 ArgSchema {
-                    kinds: smallvec::smallvec![ArgKind::Range],
+                    kinds: smallvec::smallvec![ArgKind::Any],
                     required: true,
-                    by_ref: true,
+                    by_ref: false,
                     shape: ShapeKind::Range,
                     coercion: CoercionPolicy::None,
                     max: None,
@@ -532,7 +533,7 @@ impl Function for FilterFn {
             )));
         }
         let array_view = args[0].range_view()?;
-        let include_view = args[1].range_view()?;
+        let include_grid = include_arg_to_grid(&args[1])?;
 
         let (array_rows, array_cols) = array_view.dims();
         if array_rows == 0 || array_cols == 0 {
@@ -541,7 +542,7 @@ impl Function for FilterFn {
             ));
         }
 
-        let (include_rows, include_cols) = include_view.dims();
+        let (include_rows, include_cols) = include_grid.dims();
         if include_rows != array_rows && include_rows != 1 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
@@ -553,7 +554,7 @@ impl Function for FilterFn {
             let include_r = if include_rows == array_rows { r } else { 0 };
             let mut include = false;
             for c in 0..include_cols {
-                if include_view.get_cell(include_r, c).is_truthy() {
+                if include_grid.get_cell(include_r, c).is_truthy() {
                     include = true;
                     break;
                 }
@@ -580,6 +581,45 @@ impl Function for FilterFn {
         Ok(crate::traits::CalcValue::Range(
             crate::engine::range_view::RangeView::from_owned_rows(result, _ctx.date_system()),
         ))
+    }
+}
+
+enum IncludeGrid<'a> {
+    Range(RangeView<'a>),
+    Array(Vec<Vec<LiteralValue>>),
+}
+
+impl IncludeGrid<'_> {
+    fn dims(&self) -> (usize, usize) {
+        match self {
+            IncludeGrid::Range(view) => view.dims(),
+            IncludeGrid::Array(rows) => (rows.len(), rows.first().map(|r| r.len()).unwrap_or(0)),
+        }
+    }
+
+    fn get_cell(&self, row: usize, col: usize) -> LiteralValue {
+        match self {
+            IncludeGrid::Range(view) => view.get_cell(row, col),
+            IncludeGrid::Array(rows) => rows
+                .get(row)
+                .and_then(|r| r.get(col))
+                .cloned()
+                .unwrap_or(LiteralValue::Empty),
+        }
+    }
+}
+
+fn include_arg_to_grid<'a, 'b>(
+    arg: &ArgumentHandle<'a, 'b>,
+) -> Result<IncludeGrid<'b>, ExcelError> {
+    if let Ok(range_view) = arg.range_view() {
+        return Ok(IncludeGrid::Range(range_view));
+    }
+
+    let literal = arg.value()?.into_literal();
+    match literal {
+        LiteralValue::Array(rows) => Ok(IncludeGrid::Array(rows)),
+        scalar => Ok(IncludeGrid::Array(vec![vec![scalar]])),
     }
 }
 
@@ -2848,7 +2888,7 @@ mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
     use std::sync::Arc;
 
     #[test]
@@ -3196,6 +3236,29 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(v_empty, LiteralValue::Text("EMPTY".into()));
+    }
+
+    #[test]
+    fn filter_include_expression_array() {
+        let wb = TestWorkbook::new().with_function(Arc::new(FilterFn));
+        let wb = wb
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(1))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(2));
+        let ctx = wb.interpreter();
+        let ast = parse("=FILTER(A1:A2, A1:A2>1)").expect("parse FILTER expression include");
+        let v = ctx.evaluate_ast(&ast).unwrap().into_literal();
+        match v {
+            LiteralValue::Array(a) => assert_eq!(a, vec![vec![LiteralValue::Number(2.0)]]),
+            LiteralValue::Number(n) => assert!((n - 2.0).abs() < 1e-9),
+            other => panic!("expected filtered result got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dynamic_registry_resolves_double_prefixed_function_names() {
+        crate::builtins::load_builtins();
+        let f = crate::function_registry::get("", "_xlfn._xlws.FILTER");
+        assert!(f.is_some(), "Expected _xlfn._xlws.FILTER to resolve");
     }
 
     #[test]

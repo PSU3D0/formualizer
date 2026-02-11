@@ -48,17 +48,27 @@ pub fn get(ns: &str, name: &str) -> Option<Arc<dyn Function>> {
         return Some(Arc::clone(v.value()));
     }
 
-    // Try stripping known Excel prefixes and create runtime alias if found
-    let normalized_name = norm(name);
-    for prefix in EXCEL_PREFIXES {
-        if let Some(stripped) = normalized_name.strip_prefix(prefix) {
-            let stripped_key = (norm(ns), stripped.to_string());
+    // Try stripping known Excel prefixes (possibly nested, e.g. "_XLFN._XLWS.")
+    // and create a runtime alias if found.
+    let mut normalized_name = norm(name);
+    loop {
+        let mut changed = false;
+        for prefix in EXCEL_PREFIXES {
+            if let Some(stripped) = normalized_name.strip_prefix(prefix) {
+                normalized_name = stripped.to_string();
+                changed = true;
 
-            if let Some(v) = REG.get(&stripped_key) {
-                // Cache this discovery as an alias for future lookups
-                ALIASES.insert(key, stripped_key);
-                return Some(Arc::clone(v.value()));
+                let stripped_key = (norm(ns), normalized_name.clone());
+                if let Some(v) = REG.get(&stripped_key) {
+                    // Cache this discovery as an alias for future lookups.
+                    ALIASES.insert(key.clone(), stripped_key);
+                    return Some(Arc::clone(v.value()));
+                }
+                break;
             }
+        }
+        if !changed {
+            break;
         }
     }
 
