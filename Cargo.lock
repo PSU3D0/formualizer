@@ -946,7 +946,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "formualizer-common",
  "formualizer-eval",
@@ -1033,7 +1033,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-python"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "chrono",
  "formualizer",
@@ -1062,7 +1062,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-wasm"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "console_error_panic_hook",
  "formualizer",

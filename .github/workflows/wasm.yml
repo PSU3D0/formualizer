@@ -41,7 +41,9 @@ jobs:
 
       - name: Build WASM (bundler target)
         working-directory: bindings/wasm
-        run: wasm-pack build --target bundler --out-dir pkg --release
+        run: |
+          wasm-pack build --target bundler --out-dir pkg --release
+          rm -f pkg/.gitignore
 
       - name: Install JS dependencies
         working-directory: bindings/wasm

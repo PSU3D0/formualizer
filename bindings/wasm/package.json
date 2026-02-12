@@ -1,6 +1,6 @@
 {
   "name": "formualizer",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Embeddable spreadsheet engine — parse, evaluate & mutate Excel workbooks in the browser. 320+ functions, Arrow-powered.",
   "homepage": "https://github.com/psu3d0/formualizer",
   "type": "module",
