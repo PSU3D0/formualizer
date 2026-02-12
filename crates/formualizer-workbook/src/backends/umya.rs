@@ -8,7 +8,7 @@ use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::io::Read;
+use std::io::{Cursor, Read, Seek};
 use std::path::Path;
 use umya_spreadsheet::{
     CellRawValue, CellValue, Spreadsheet,
@@ -30,6 +30,68 @@ pub struct UmyaAdapter {
 }
 
 impl UmyaAdapter {
+    fn extract_attr(tag: &str, key: &str) -> Option<String> {
+        let needle_dq = format!("{key}=\"");
+        if let Some(pos) = tag.find(&needle_dq) {
+            let start = pos + needle_dq.len();
+            let rest = &tag[start..];
+            if let Some(end) = rest.find('"') {
+                return Some(rest[..end].to_string());
+            }
+        }
+        let needle_sq = format!("{key}='");
+        if let Some(pos) = tag.find(&needle_sq) {
+            let start = pos + needle_sq.len();
+            let rest = &tag[start..];
+            if let Some(end) = rest.find('\'') {
+                return Some(rest[..end].to_string());
+            }
+        }
+        None
+    }
+
+    fn parse_table_tag(xml: &str) -> Option<(String, bool)> {
+        let start = xml.find("<table")?;
+        let after = &xml[start..];
+        let end = after.find('>')?;
+        let tag = &after[..end];
+
+        let name =
+            Self::extract_attr(tag, "name").or_else(|| Self::extract_attr(tag, "displayName"))?;
+
+        let header_row = match Self::extract_attr(tag, "headerRowCount") {
+            None => true,
+            Some(v) => v.parse::<u32>().ok().map(|n| n != 0).unwrap_or(true),
+        };
+        Some((name, header_row))
+    }
+
+    fn read_table_header_rows_from_reader<R: Read + Seek>(
+        reader: R,
+    ) -> Result<HashMap<String, bool>, std::io::Error> {
+        let mut archive = zip::ZipArchive::new(reader)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        let mut out: HashMap<String, bool> = HashMap::new();
+        for i in 0..archive.len() {
+            let mut entry = archive
+                .by_index(i)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            let name = entry.name().to_string();
+            if !name.starts_with("xl/tables/") || !name.ends_with(".xml") {
+                continue;
+            }
+
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml)?;
+            if let Some((tname, header_row)) = Self::parse_table_tag(&xml) {
+                out.insert(tname, header_row);
+            }
+        }
+
+        Ok(out)
+    }
+
     fn convert_cell_value(cv: &CellValue) -> Option<LiteralValue> {
         // Value portion
         let raw = cv.get_raw_value();
@@ -109,64 +171,8 @@ impl UmyaAdapter {
         path: &Path,
     ) -> Result<HashMap<String, bool>, std::io::Error> {
         use std::fs::File;
-
-        fn extract_attr(tag: &str, key: &str) -> Option<String> {
-            let needle_dq = format!("{key}=\"");
-            if let Some(pos) = tag.find(&needle_dq) {
-                let start = pos + needle_dq.len();
-                let rest = &tag[start..];
-                if let Some(end) = rest.find('"') {
-                    return Some(rest[..end].to_string());
-                }
-            }
-            let needle_sq = format!("{key}='");
-            if let Some(pos) = tag.find(&needle_sq) {
-                let start = pos + needle_sq.len();
-                let rest = &tag[start..];
-                if let Some(end) = rest.find('\'') {
-                    return Some(rest[..end].to_string());
-                }
-            }
-            None
-        }
-
-        fn parse_table_tag(xml: &str) -> Option<(String, bool)> {
-            let start = xml.find("<table")?;
-            let after = &xml[start..];
-            let end = after.find('>')?;
-            let tag = &after[..end];
-
-            let name = extract_attr(tag, "name").or_else(|| extract_attr(tag, "displayName"))?;
-
-            let header_row = match extract_attr(tag, "headerRowCount") {
-                None => true,
-                Some(v) => v.parse::<u32>().ok().map(|n| n != 0).unwrap_or(true),
-            };
-            Some((name, header_row))
-        }
-
         let file = File::open(path)?;
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
-        let mut out: HashMap<String, bool> = HashMap::new();
-        for i in 0..archive.len() {
-            let mut entry = archive
-                .by_index(i)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            let name = entry.name().to_string();
-            if !name.starts_with("xl/tables/") || !name.ends_with(".xml") {
-                continue;
-            }
-
-            let mut xml = String::new();
-            entry.read_to_string(&mut xml)?;
-            if let Some((tname, header_row)) = parse_table_tag(&xml) {
-                out.insert(tname, header_row);
-            }
-        }
-
-        Ok(out)
+        Self::read_table_header_rows_from_reader(file)
     }
 }
 
@@ -185,6 +191,7 @@ impl SpreadsheetReader for UmyaAdapter {
             lazy_loading: self.lazy,
             random_access: false,
             styles: true,
+            bytes_input: true,
             ..Default::default()
         }
     }
@@ -283,25 +290,35 @@ impl SpreadsheetReader for UmyaAdapter {
         })
     }
 
-    fn open_reader(_reader: Box<dyn Read + Send + Sync>) -> Result<Self, Self::Error>
+    fn open_reader(mut reader: Box<dyn Read + Send + Sync>) -> Result<Self, Self::Error>
     where
         Self: Sized,
     {
-        // Not implemented yet
-        Err(umya_spreadsheet::XlsxError::Io(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "open_reader unsupported for UmyaAdapter",
-        )))
+        let mut data = Vec::new();
+        reader
+            .read_to_end(&mut data)
+            .map_err(umya_spreadsheet::XlsxError::Io)?;
+        Self::open_bytes(data)
     }
 
-    fn open_bytes(_data: Vec<u8>) -> Result<Self, Self::Error>
+    fn open_bytes(data: Vec<u8>) -> Result<Self, Self::Error>
     where
         Self: Sized,
     {
-        Err(umya_spreadsheet::XlsxError::Io(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "open_bytes unsupported for UmyaAdapter",
-        )))
+        let (table_header_rows, table_header_rows_available) =
+            match Self::read_table_header_rows_from_reader(Cursor::new(data.as_slice())) {
+                Ok(m) => (m, true),
+                Err(_) => (HashMap::new(), false),
+            };
+        let sheet = xlsx::read_reader(Cursor::new(data), true)?;
+
+        Ok(Self {
+            workbook: RwLock::new(sheet),
+            lazy: false,
+            original_path: None,
+            table_header_rows,
+            table_header_rows_available,
+        })
     }
 
     fn read_range(

@@ -5,6 +5,7 @@ use formualizer_common::LiteralValue;
 use formualizer_workbook::{
     LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
 };
+use std::io::Cursor;
 
 fn rewrite_header_row_count(path: &std::path::Path, table_name: &str, header_row_count: u32) {
     use std::fs::File;
@@ -122,6 +123,75 @@ fn umya_respects_header_row_count_from_table_xml_when_headerless() {
     rewrite_header_row_count(&path, "Sales", 0);
 
     let backend = UmyaAdapter::open_path(&path).expect("open workbook");
+    let mut wb = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load into engine workbook");
+
+    let v = wb.evaluate_cell("Sheet1", 1, 4).unwrap();
+    assert_eq!(v, LiteralValue::Number(30.0));
+}
+
+#[test]
+fn umya_open_bytes_respects_header_row_count_from_table_xml_when_headerless() {
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+
+        // Headerless table region A1:B2: data rows only.
+        sh.get_cell_mut((1, 1)).set_value("N");
+        sh.get_cell_mut((2, 1)).set_value_number(10);
+        sh.get_cell_mut((1, 2)).set_value("S");
+        sh.get_cell_mut((2, 2)).set_value_number(20);
+
+        sh.get_cell_mut((4, 1)).set_formula("SUM(Sales[Amount])");
+
+        let mut table = umya_spreadsheet::structs::Table::new("Sales", ("A1", "B2"));
+        table.add_column(umya_spreadsheet::structs::TableColumn::new("Region"));
+        table.add_column(umya_spreadsheet::structs::TableColumn::new("Amount"));
+        sh.add_table(table);
+    });
+
+    rewrite_header_row_count(&path, "Sales", 0);
+    let bytes = std::fs::read(&path).expect("read fixture bytes");
+
+    let backend = UmyaAdapter::open_bytes(bytes).expect("open workbook from bytes");
+    let mut wb = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load into engine workbook");
+
+    let v = wb.evaluate_cell("Sheet1", 1, 4).unwrap();
+    assert_eq!(v, LiteralValue::Number(30.0));
+}
+
+#[test]
+fn umya_open_reader_respects_header_row_count_from_table_xml_when_headerless() {
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+
+        // Headerless table region A1:B2: data rows only.
+        sh.get_cell_mut((1, 1)).set_value("N");
+        sh.get_cell_mut((2, 1)).set_value_number(10);
+        sh.get_cell_mut((1, 2)).set_value("S");
+        sh.get_cell_mut((2, 2)).set_value_number(20);
+
+        sh.get_cell_mut((4, 1)).set_formula("SUM(Sales[Amount])");
+
+        let mut table = umya_spreadsheet::structs::Table::new("Sales", ("A1", "B2"));
+        table.add_column(umya_spreadsheet::structs::TableColumn::new("Region"));
+        table.add_column(umya_spreadsheet::structs::TableColumn::new("Amount"));
+        sh.add_table(table);
+    });
+
+    rewrite_header_row_count(&path, "Sales", 0);
+    let bytes = std::fs::read(&path).expect("read fixture bytes");
+
+    let backend =
+        UmyaAdapter::open_reader(Box::new(Cursor::new(bytes))).expect("open workbook from reader");
     let mut wb = Workbook::from_reader(
         backend,
         LoadStrategy::EagerAll,
