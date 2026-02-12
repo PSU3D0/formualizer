@@ -538,6 +538,11 @@ impl CsrEdges {
         }
     }
 
+    /// Check if the CSR contains any edges.
+    pub fn has_edges(&self) -> bool {
+        !self.edges.is_empty()
+    }
+
     /// Builder pattern for incremental construction
     pub fn builder() -> CsrBuilder {
         CsrBuilder::new()

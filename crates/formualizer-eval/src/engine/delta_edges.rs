@@ -509,6 +509,11 @@ impl CsrMutableEdges {
         self.delta.op_count()
     }
 
+    /// Check whether any edges exist in the base CSR or pending delta.
+    pub fn has_edges(&self) -> bool {
+        self.base.has_edges() || self.delta.op_count() > 0
+    }
+
     /// Force a rebuild of the CSR structure
     pub fn rebuild(&mut self) {
         if self.delta.op_count() > 0 || self.delta.needs_rebuild() {

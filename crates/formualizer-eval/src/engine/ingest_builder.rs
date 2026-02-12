@@ -322,7 +322,11 @@ impl<'g> BulkIngestBuilder<'g> {
             // Heuristic: avoid one-shot CSR when vertices are huge and rows are sparse
             let sparse_vs_huge =
                 total_vertices_now > 800_000 && (rows as f64) / (total_vertices_now as f64) < 0.05;
-            if sparse_vs_huge {
+            // Also use delta path when pre-existing edges exist (e.g. from
+            // define_name → rebuild_name_dependencies called before bulk ingest)
+            // to avoid wiping them out during the one-shot CSR rebuild.
+            let has_preexisting_edges = self.g.has_edges();
+            if sparse_vs_huge || has_preexisting_edges {
                 let t_delta0 = Instant::now();
                 if dbg {
                     eprintln!("[fz][ingest] finalize: using delta path (begin)");

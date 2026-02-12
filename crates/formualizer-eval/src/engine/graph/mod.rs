@@ -2826,6 +2826,11 @@ impl DependencyGraph {
         self.edges.delta_size()
     }
 
+    /// Check whether the edge structure already contains any edges.
+    pub fn has_edges(&self) -> bool {
+        self.edges.has_edges()
+    }
+
     /// Get vertex ID for specific cell address
     pub fn get_vertex_for_cell(&self, addr: &CellRef) -> Option<VertexId> {
         self.cell_to_vertex.get(addr).copied()
