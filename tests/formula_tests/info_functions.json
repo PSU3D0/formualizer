@@ -128,8 +128,7 @@
       "formula": "=ISBLANK(A1)",
       "result": true,
       "result_type": "bool",
-      "description": "ISBLANK of empty cell is TRUE",
-      "skip": "test runner does not populate empty cells for ISBLANK to detect"
+      "description": "ISBLANK of empty cell is TRUE"
     },
     {
       "formula": "=ISBLANK(A1)",

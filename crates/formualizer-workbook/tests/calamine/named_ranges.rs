@@ -18,7 +18,8 @@ fn calamine_extracts_defined_names_from_generated_xlsx() {
 
         // Define names at the sheet level (umya exposes add_defined_name on Worksheet)
         sh.add_defined_name("ScalarName", "Sheet1!$A$1").unwrap();
-        sh.add_defined_name("RangeName", "Sheet1!$A$1:$B$2").unwrap();
+        sh.add_defined_name("RangeName", "Sheet1!$A$1:$B$2")
+            .unwrap();
     });
 
     // Load via CalamineAdapter
@@ -31,10 +32,7 @@ fn calamine_extracts_defined_names_from_generated_xlsx() {
         .expect("load into engine");
 
     // Verify defined names are registered
-    let wb_names: Vec<String> = engine
-        .named_ranges_iter()
-        .map(|(n, _)| n.clone())
-        .collect();
+    let wb_names: Vec<String> = engine.named_ranges_iter().map(|(n, _)| n.clone()).collect();
     eprintln!("Workbook-scoped names: {:?}", wb_names);
 
     // Calamine extracts all names as workbook-scoped (no scope info from calamine)
@@ -87,10 +85,7 @@ fn calamine_loads_real_xlsx_with_defined_names() {
             .stream_into_engine(&mut engine)
             .expect("load into engine");
 
-        let wb_names: Vec<_> = engine
-            .named_ranges_iter()
-            .map(|(n, _)| n.clone())
-            .collect();
+        let wb_names: Vec<_> = engine.named_ranges_iter().map(|(n, _)| n.clone()).collect();
         let store = engine.sheet_store();
         let sheet_count = store.sheets.len();
         eprintln!(
@@ -116,9 +111,7 @@ fn calamine_loads_real_xlsx_with_defined_names() {
         let mut error_cells = 0u64;
         let mut error_samples: Vec<String> = Vec::new();
         for sheet_idx in 0..sheet_count {
-            let sheet_name = engine
-                .sheet_name(sheet_idx as u16)
-                .to_string();
+            let sheet_name = engine.sheet_name(sheet_idx as u16).to_string();
             // Check a generous grid — CVX models are typically < 200 cols x 500 rows
             for row in 1..=500u32 {
                 for col in 1..=200u32 {
@@ -127,9 +120,8 @@ fn calamine_loads_real_xlsx_with_defined_names() {
                         if matches!(val, LiteralValue::Error(_)) {
                             error_cells += 1;
                             if error_samples.len() < 20 {
-                                error_samples.push(format!(
-                                    "  {sheet_name}!R{row}C{col} = {val:?}"
-                                ));
+                                error_samples
+                                    .push(format!("  {sheet_name}!R{row}C{col} = {val:?}"));
                             }
                         }
                     }
@@ -141,9 +133,7 @@ fn calamine_loads_real_xlsx_with_defined_names() {
         } else {
             0.0
         };
-        eprintln!(
-            "  {total_cells} cells evaluated, {error_cells} errors ({error_pct:.1}%)"
-        );
+        eprintln!("  {total_cells} cells evaluated, {error_cells} errors ({error_pct:.1}%)");
         if !error_samples.is_empty() {
             eprintln!("  Sample errors:");
             for s in &error_samples {
@@ -190,10 +180,7 @@ fn calamine_evaluates_formulas_with_defined_names() {
         .expect("load into engine");
 
     // Verify defined names are registered
-    let wb_names: Vec<String> = engine
-        .named_ranges_iter()
-        .map(|(n, _)| n.clone())
-        .collect();
+    let wb_names: Vec<String> = engine.named_ranges_iter().map(|(n, _)| n.clone()).collect();
     eprintln!("Defined names: {:?}", wb_names);
     assert!(
         wb_names.contains(&"MyVal".to_string()),
@@ -265,8 +252,8 @@ fn calamine_evaluates_formulas_with_defined_names() {
 #[test]
 #[ignore]
 fn calamine_cvx_values_match_excel() {
-    use formualizer_eval::engine::named_range::NamedDefinition;
     use formualizer_eval::Coord;
+    use formualizer_eval::engine::named_range::NamedDefinition;
 
     let path = std::path::Path::new(
         "/Users/jn/workspace/supermod/xlsx-examples/CVX Multi-family Dev.xlsx",
@@ -300,7 +287,10 @@ fn calamine_cvx_values_match_excel() {
         .map(|((sheet_id, name), nr)| (*sheet_id, name.clone(), nr.clone()))
         .collect();
 
-    eprintln!("=== Workbook-scoped defined names ({}) ===\n", named_ranges.len());
+    eprintln!(
+        "=== Workbook-scoped defined names ({}) ===\n",
+        named_ranges.len()
+    );
 
     for (name, nr) in &named_ranges {
         match &nr.definition {
@@ -313,9 +303,7 @@ fn calamine_cvx_values_match_excel() {
                 let excel_col = col0 + 1;
                 let val = engine.get_cell_value(&sheet_name, excel_row, excel_col);
                 let display = format_value(&val);
-                eprintln!(
-                    "  {name} = {display}  [Cell -> '{sheet_name}'!{col_letter}{excel_row}]"
-                );
+                eprintln!("  {name} = {display}  [Cell -> '{sheet_name}'!{col_letter}{excel_row}]");
             }
             NamedDefinition::Range(range_ref) => {
                 let start = &range_ref.start;
@@ -326,11 +314,7 @@ fn calamine_cvx_values_match_excel() {
                 let start_row = start.coord.row() + 1;
                 let end_row = end.coord.row() + 1;
                 // Read value at top-left corner
-                let val = engine.get_cell_value(
-                    &sheet_name,
-                    start_row,
-                    start.coord.col() + 1,
-                );
+                let val = engine.get_cell_value(&sheet_name, start_row, start.coord.col() + 1);
                 let display = format_value(&val);
                 eprintln!(
                     "  {name} = {display}  [Range -> '{sheet_name}'!{start_col_letter}{start_row}:{end_col_letter}{end_row}]"
@@ -378,11 +362,7 @@ fn calamine_cvx_values_match_excel() {
                     let end_col_letter = Coord::col_to_letters(end.coord.col());
                     let start_row = start.coord.row() + 1;
                     let end_row = end.coord.row() + 1;
-                    let val = engine.get_cell_value(
-                        &sheet_name,
-                        start_row,
-                        start.coord.col() + 1,
-                    );
+                    let val = engine.get_cell_value(&sheet_name, start_row, start.coord.col() + 1);
                     let display = format_value(&val);
                     eprintln!(
                         "  [{scope_sheet}] {name} = {display}  [Range -> '{sheet_name}'!{start_col_letter}{start_row}:{end_col_letter}{end_row}]"
@@ -401,8 +381,11 @@ fn calamine_cvx_values_match_excel() {
         }
     }
 
-    eprintln!("\nDone. Total: {} workbook-scoped + {} sheet-scoped defined names.",
-        named_ranges.len(), sheet_named_ranges.len());
+    eprintln!(
+        "\nDone. Total: {} workbook-scoped + {} sheet-scoped defined names.",
+        named_ranges.len(),
+        sheet_named_ranges.len()
+    );
 }
 
 /// Format a cell value for display, with special handling for numbers

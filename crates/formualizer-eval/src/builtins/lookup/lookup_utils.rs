@@ -271,6 +271,34 @@ pub fn find_exact_index(
     None
 }
 
+/// Type-strict exact match: numbers only match numbers, text only matches text.
+/// Excel MATCH with match_type=0 distinguishes types.
+pub fn find_exact_index_type_strict(
+    values: &[LiteralValue],
+    needle: &LiteralValue,
+    wildcard: bool,
+) -> Option<usize> {
+    for (i, v) in values.iter().enumerate() {
+        if same_type_class(needle, v) && equals_maybe_wildcard(needle, v, wildcard) {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Check if two values belong to the same type class for strict matching.
+fn same_type_class(a: &LiteralValue, b: &LiteralValue) -> bool {
+    matches!(
+        (a, b),
+        (
+            LiteralValue::Number(_) | LiteralValue::Int(_),
+            LiteralValue::Number(_) | LiteralValue::Int(_)
+        ) | (LiteralValue::Text(_), LiteralValue::Text(_))
+            | (LiteralValue::Boolean(_), LiteralValue::Boolean(_))
+            | (LiteralValue::Empty, LiteralValue::Empty)
+    )
+}
+
 /// Find index of exact (or wildcard) match in a 1D RangeView; returns first match (Excel semantics).
 /// Supports both single-column (vertical) and single-row (horizontal) views.
 pub fn find_exact_index_in_view(

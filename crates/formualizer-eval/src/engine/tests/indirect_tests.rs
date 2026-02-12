@@ -3,8 +3,8 @@
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::parse as parse_formula;
 use formualizer_parse::parser::ASTNode;
+use formualizer_parse::parser::parse as parse_formula;
 
 fn parse(formula: &str) -> ASTNode {
     parse_formula(formula).unwrap()
@@ -85,7 +85,11 @@ fn indirect_constant_fold_with_concatenation() {
         // Row 1: A1=100
         aib.append_row(
             "Sheet1",
-            &[LiteralValue::Number(100.0), LiteralValue::Empty, LiteralValue::Empty],
+            &[
+                LiteralValue::Number(100.0),
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+            ],
         )
         .unwrap();
         // Row 2: A2=_, B2="Sheet1"
@@ -105,10 +109,7 @@ fn indirect_constant_fold_with_concatenation() {
     let mut builder = engine.begin_bulk_ingest();
     let sheet = builder.add_sheet("Sheet1");
     // =INDIRECT("'"&B2&"'!A1")
-    builder.add_formulas(
-        sheet,
-        vec![(1, 3, parse("=INDIRECT(\"'\"&B2&\"'!A1\")"))],
-    );
+    builder.add_formulas(sheet, vec![(1, 3, parse("=INDIRECT(\"'\"&B2&\"'!A1\")"))]);
     builder.finish().unwrap();
 
     engine.evaluate_all().unwrap();
@@ -145,7 +146,13 @@ fn indirect_constant_fold_cell_ref_building_column() {
         for _ in 0..4 {
             aib.append_row(
                 "Sheet1",
-                &[LiteralValue::Empty, LiteralValue::Empty, LiteralValue::Empty, LiteralValue::Empty, LiteralValue::Empty],
+                &[
+                    LiteralValue::Empty,
+                    LiteralValue::Empty,
+                    LiteralValue::Empty,
+                    LiteralValue::Empty,
+                    LiteralValue::Empty,
+                ],
             )
             .unwrap();
         }
@@ -229,12 +236,23 @@ fn indirect_with_formula_upstream_does_not_fold() {
         )
         .unwrap();
         // Row 2: empty
-        aib.append_row("Sheet1", &[LiteralValue::Empty, LiteralValue::Empty, LiteralValue::Empty])
-            .unwrap();
+        aib.append_row(
+            "Sheet1",
+            &[
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+            ],
+        )
+        .unwrap();
         // Row 3: A3=500
         aib.append_row(
             "Sheet1",
-            &[LiteralValue::Number(500.0), LiteralValue::Empty, LiteralValue::Empty],
+            &[
+                LiteralValue::Number(500.0),
+                LiteralValue::Empty,
+                LiteralValue::Empty,
+            ],
         )
         .unwrap();
         aib.finish().unwrap();
@@ -247,7 +265,7 @@ fn indirect_with_formula_upstream_does_not_fold() {
     builder.add_formulas(
         sheet,
         vec![
-            (1, 1, parse("=B1")),       // A1 = =B1 (produces "A3")
+            (1, 1, parse("=B1")),           // A1 = =B1 (produces "A3")
             (1, 3, parse("=INDIRECT(A1)")), // C1 = =INDIRECT(A1)
         ],
     );
@@ -290,10 +308,7 @@ fn indirect_inside_sum_with_constant_fold() {
 
     let mut builder = engine.begin_bulk_ingest();
     let sheet = builder.add_sheet("Sheet1");
-    builder.add_formulas(
-        sheet,
-        vec![(4, 1, parse("=SUM(INDIRECT(\"A1:A3\"))"))],
-    );
+    builder.add_formulas(sheet, vec![(4, 1, parse("=SUM(INDIRECT(\"A1:A3\"))"))]);
     builder.finish().unwrap();
 
     engine.evaluate_all().unwrap();

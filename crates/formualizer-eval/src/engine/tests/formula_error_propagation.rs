@@ -56,14 +56,20 @@ fn rri_basic_cagr_calculation() {
 
     match engine.get_cell_value("Sheet1", 1, 1) {
         Some(LiteralValue::Number(n)) => {
-            assert!((n - expected).abs() < 1e-10, "A1 expected {expected}, got {n}");
+            assert!(
+                (n - expected).abs() < 1e-10,
+                "A1 expected {expected}, got {n}"
+            );
         }
         other => panic!("A1 expected Number({expected}), got {other:?}"),
     }
 
     match engine.get_cell_value("Sheet1", 1, 2) {
         Some(LiteralValue::Number(n)) => {
-            assert!((n - expected).abs() < 1e-10, "B1 expected {expected}, got {n}");
+            assert!(
+                (n - expected).abs() < 1e-10,
+                "B1 expected {expected}, got {n}"
+            );
         }
         other => panic!("B1 expected Number({expected}), got {other:?}"),
     }
@@ -79,7 +85,12 @@ fn iferror_catches_name_error_from_unknown_function() {
     let mut engine = Engine::new(wb, EvalConfig::default());
 
     // A1 = IFERROR(NONEXISTENT_FUNC(), "fallback")
-    engine.stage_formula_text("Sheet1", 1, 1, "=IFERROR(NONEXISTENT_FUNC(), \"fallback\")".to_string());
+    engine.stage_formula_text(
+        "Sheet1",
+        1,
+        1,
+        "=IFERROR(NONEXISTENT_FUNC(), \"fallback\")".to_string(),
+    );
     // B1 = IFERROR(1/0, "div_caught") — sanity check that IFERROR catches #DIV/0!
     engine.stage_formula_text("Sheet1", 1, 2, "=IFERROR(1/0, \"div_caught\")".to_string());
 

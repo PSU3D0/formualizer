@@ -78,17 +78,18 @@ impl Function for EdateFn {
 
         let start_date = serial_to_date(start_serial)?;
 
-        // Calculate target year and month
-        let total_months = start_date.year() * 12 + start_date.month() as i32 + months;
-        let target_year = total_months / 12;
-        let target_month = ((total_months % 12) + 12) % 12; // Handle negative modulo
-        let target_month = if target_month == 0 { 12 } else { target_month };
+        // Calculate target year and month using Euclidean division
+        let total_months =
+            start_date.year() as i64 * 12 + start_date.month() as i64 + months as i64;
+        let tm = total_months - 1;
+        let target_year = tm.div_euclid(12) as i32;
+        let target_month = (tm.rem_euclid(12) + 1) as u32;
 
         // Keep the same day, but handle month-end overflow
-        let max_day = last_day_of_month(target_year, target_month as u32);
+        let max_day = last_day_of_month(target_year, target_month);
         let target_day = start_date.day().min(max_day);
 
-        let target_date = NaiveDate::from_ymd_opt(target_year, target_month as u32, target_day)
+        let target_date = NaiveDate::from_ymd_opt(target_year, target_month, target_day)
             .ok_or_else(ExcelError::new_num)?;
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
@@ -133,16 +134,17 @@ impl Function for EomonthFn {
 
         let start_date = serial_to_date(start_serial)?;
 
-        // Calculate target year and month
-        let total_months = start_date.year() * 12 + start_date.month() as i32 + months;
-        let target_year = total_months / 12;
-        let target_month = ((total_months % 12) + 12) % 12; // Handle negative modulo
-        let target_month = if target_month == 0 { 12 } else { target_month };
+        // Calculate target year and month using Euclidean division
+        let total_months =
+            start_date.year() as i64 * 12 + start_date.month() as i64 + months as i64;
+        let tm = total_months - 1;
+        let target_year = tm.div_euclid(12) as i32;
+        let target_month = (tm.rem_euclid(12) + 1) as u32;
 
         // Get the last day of the target month
-        let last_day = last_day_of_month(target_year, target_month as u32);
+        let last_day = last_day_of_month(target_year, target_month);
 
-        let target_date = NaiveDate::from_ymd_opt(target_year, target_month as u32, last_day)
+        let target_date = NaiveDate::from_ymd_opt(target_year, target_month, last_day)
             .ok_or_else(ExcelError::new_num)?;
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(

@@ -141,11 +141,10 @@ impl CalamineAdapter {
                 _ => continue, // skip external refs, tables, etc.
             };
 
-            let addr =
-                match RangeAddress::new(sheet_name, start_row, start_col, end_row, end_col) {
-                    Ok(a) => a,
-                    Err(_) => continue,
-                };
+            let addr = match RangeAddress::new(sheet_name, start_row, start_col, end_row, end_col) {
+                Ok(a) => a,
+                Err(_) => continue,
+            };
 
             ranges.push(NamedRange {
                 name: name.clone(),

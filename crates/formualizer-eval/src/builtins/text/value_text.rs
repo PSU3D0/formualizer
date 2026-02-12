@@ -106,11 +106,18 @@ impl Function for TextFn {
             }
             _ => 0.0,
         };
-        let out = if fmt.contains('%') {
-            format_percent(num)
-        } else if fmt.contains('#') && fmt.contains(',') {
+        // Strip currency prefix if present
+        let (currency_prefix, fmt_inner) = if fmt.starts_with('$') {
+            ("$", &fmt[1..])
+        } else {
+            ("", fmt.as_str())
+        };
+        let out = if fmt_inner.contains('%') {
+            format_percent(num, fmt_inner)
+        } else if fmt_inner.contains('#') && fmt_inner.contains(',') {
             // Handle formats like #,##0 or #,##0.00
-            format_with_thousands(num, &fmt)
+            let formatted = format_with_thousands(num, fmt_inner);
+            format!("{currency_prefix}{formatted}")
         } else if fmt.contains("0.00") {
             format!("{num:.2}")
         } else if fmt.contains("0") {
@@ -131,8 +138,15 @@ impl Function for TextFn {
     }
 }
 
-fn format_percent(n: f64) -> String {
-    format!("{:.0}%", n * 100.0)
+fn format_percent(n: f64, fmt: &str) -> String {
+    // Count decimal places from format string (e.g., "0.0%" → 1, "0.00%" → 2, "0%" → 0)
+    let decimal_places = if let Some(dot_pos) = fmt.find('.') {
+        let after_dot = &fmt[dot_pos + 1..];
+        after_dot.chars().take_while(|c| *c == '0').count()
+    } else {
+        0
+    };
+    format!("{:.prec$}%", n * 100.0, prec = decimal_places)
 }
 fn format_number_basic(n: f64) -> String {
     if n.fract() == 0.0 {

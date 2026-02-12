@@ -140,8 +140,7 @@
       "formula": "=DAY(0)",
       "result": 0,
       "result_type": "int",
-      "description": "DAY of serial 0",
-      "skip": "eval serial_to_date does not handle serial 0 edge case"
+      "description": "DAY of serial 0"
     },
     {
       "formula": "=DAY(50)",
@@ -153,8 +152,7 @@
       "formula": "=DAY(60)",
       "result": 29,
       "result_type": "int",
-      "description": "DAY of serial 60 (phantom Feb 29)",
-      "skip": "eval serial_to_date does not handle phantom Feb 29 (serial 60)"
+      "description": "DAY of serial 60 (phantom Feb 29)"
     },
     {
       "formula": "=DAY(100)",
@@ -166,8 +164,7 @@
       "formula": "=MONTH(0.7)",
       "result": 1,
       "result_type": "int",
-      "description": "MONTH of fractional serial near zero",
-      "skip": "eval serial_to_date does not handle serial 0 edge case"
+      "description": "MONTH of fractional serial near zero"
     },
     {
       "formula": "=HOUR(0.4006770833)",
@@ -245,22 +242,19 @@
       "formula": "=DATE(1900, 2, 29)",
       "result": 60,
       "result_type": "int",
-      "description": "DATE phantom Feb 29, 1900",
-      "skip": "DATE function does not handle phantom Feb 29, 1900"
+      "description": "DATE phantom Feb 29, 1900"
     },
     {
       "formula": "=DATE(1900, 3, -1)",
       "result": 59,
       "result_type": "int",
-      "description": "DATE with negative day",
-      "skip": "DATE function does not handle phantom Feb 29 boundary with negative day"
+      "description": "DATE with negative day"
     },
     {
       "formula": "=DATE(1900, 3, 0)",
       "result": 60,
       "result_type": "int",
-      "description": "DATE March 0 = Feb 29 phantom",
-      "skip": "DATE function does not handle phantom Feb 29, 1900"
+      "description": "DATE March 0 = Feb 29 phantom"
     },
     {
       "formula": "=DATE(2020, 2, 29)",
@@ -332,8 +326,7 @@
       "formula": "=DATEDIF(222, 222222, \"YD\")",
       "result": 297,
       "result_type": "int",
-      "description": "DATEDIF year-day between serials",
-      "skip": "DATEDIF YD off-by-one for large serial ranges"
+      "description": "DATEDIF year-day between serials"
     },
     {
       "formula": "=DATEDIF(222, 222222, \"YM\")",
@@ -357,29 +350,25 @@
       "formula": "=WEEKDAY(0, 17)",
       "result": 7,
       "result_type": "int",
-      "description": "WEEKDAY of serial 0 with return_type 17",
-      "skip": "WEEKDAY does not handle serial 0 correctly"
+      "description": "WEEKDAY of serial 0 with return_type 17"
     },
     {
       "formula": "=WEEKDAY(0, 11)",
       "result": 6,
       "result_type": "int",
-      "description": "WEEKDAY of serial 0 with return_type 11",
-      "skip": "WEEKDAY does not handle serial 0 correctly"
+      "description": "WEEKDAY of serial 0 with return_type 11"
     },
     {
       "formula": "=WEEKDAY(TRUE, 2)",
       "result": 7,
       "result_type": "int",
-      "description": "WEEKDAY with TRUE coerced to serial 1",
-      "skip": "WEEKDAY serial 1 returns wrong result with return_type 2"
+      "description": "WEEKDAY with TRUE coerced to serial 1"
     },
     {
       "formula": "=EDATE(0, 0)",
       "result": 0,
       "result_type": "int",
-      "description": "EDATE zero months from serial 0",
-      "skip": "EDATE does not handle serial 0 correctly"
+      "description": "EDATE zero months from serial 0"
     },
     {
       "formula": "=EDATE(2.4, 1)",
@@ -397,22 +386,19 @@
       "formula": "=EOMONTH(444, -3)",
       "result": 366,
       "result_type": "int",
-      "description": "EOMONTH 3 months backward from serial 444",
-      "skip": "EOMONTH negative month offset off by one"
+      "description": "EOMONTH 3 months backward from serial 444"
     },
     {
       "formula": "=WEEKNUM(0, 1)",
       "result": 0,
       "result_type": "int",
-      "description": "WEEKNUM serial 0, return_type 1",
-      "skip": "WEEKNUM does not handle serial 0 correctly"
+      "description": "WEEKNUM serial 0, return_type 1"
     },
     {
       "formula": "=WEEKNUM(1, 21)",
       "result": 52,
       "result_type": "int",
-      "description": "WEEKNUM serial 1, ISO return_type",
-      "skip": "WEEKNUM ISO does not handle serial 1 correctly"
+      "description": "WEEKNUM serial 1, ISO return_type"
     },
     {
       "formula": "=WEEKNUM(2, 21)",

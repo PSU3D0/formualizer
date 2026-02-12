@@ -255,7 +255,11 @@ impl Function for MatchFn {
             };
             let idx = if mt == 0 {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
-                find_exact_index(&values, &lookup_value, wildcard_mode)
+                super::lookup_utils::find_exact_index_type_strict(
+                    &values,
+                    &lookup_value,
+                    wildcard_mode,
+                )
             } else {
                 binary_search_match(&values, &lookup_value, mt)
             };
@@ -679,12 +683,130 @@ impl Function for HLookupFn {
     }
 }
 
+/// LOOKUP(lookup_value, lookup_vector, [result_vector])
+/// Vector form: searches lookup_vector (sorted ascending) for largest value <= lookup_value,
+/// returns corresponding value from result_vector (or lookup_vector if omitted).
+#[derive(Debug)]
+pub struct LookupFn;
+impl Function for LookupFn {
+    fn name(&self) -> &'static str {
+        "LOOKUP"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    func_caps!(PURE, LOOKUP);
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use once_cell::sync::Lazy;
+        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+            vec![
+                // lookup_value (any scalar)
+                ArgSchema {
+                    kinds: smallvec::smallvec![ArgKind::Any],
+                    required: true,
+                    by_ref: false,
+                    shape: ShapeKind::Scalar,
+                    coercion: CoercionPolicy::None,
+                    max: None,
+                    repeating: None,
+                    default: None,
+                },
+                // lookup_vector
+                ArgSchema {
+                    kinds: smallvec::smallvec![ArgKind::Any],
+                    required: true,
+                    by_ref: false,
+                    shape: ShapeKind::Range,
+                    coercion: CoercionPolicy::None,
+                    max: None,
+                    repeating: None,
+                    default: None,
+                },
+                // result_vector (optional)
+                ArgSchema {
+                    kinds: smallvec::smallvec![ArgKind::Any],
+                    required: false,
+                    by_ref: false,
+                    shape: ShapeKind::Range,
+                    coercion: CoercionPolicy::None,
+                    max: None,
+                    repeating: None,
+                    default: None,
+                },
+            ]
+        });
+        &SCHEMA
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() < 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Na),
+            )));
+        }
+        let lookup_value = args[0].value()?.into_literal();
+        if let LiteralValue::Error(e) = lookup_value {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
+
+        // Get lookup_vector
+        let lookup_vec = flatten_to_vec(&args[1])?;
+        if lookup_vec.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Na),
+            )));
+        }
+
+        // Get result_vector (defaults to lookup_vector)
+        let result_vec = if args.len() >= 3 {
+            flatten_to_vec(&args[2])?
+        } else {
+            lookup_vec.clone()
+        };
+
+        // LOOKUP uses approximate match (like MATCH mode 1): find largest <= lookup_value
+        let idx = binary_search_match(&lookup_vec, &lookup_value, 1);
+        match idx {
+            Some(i) => {
+                let val = result_vec.get(i).cloned().unwrap_or(LiteralValue::Empty);
+                Ok(crate::traits::CalcValue::Scalar(val))
+            }
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Na),
+            ))),
+        }
+    }
+}
+
+/// Flatten an argument to a Vec of LiteralValues (for LOOKUP vector args)
+fn flatten_to_vec(arg: &ArgumentHandle<'_, '_>) -> Result<Vec<LiteralValue>, ExcelError> {
+    let v = arg.value()?.into_literal();
+    Ok(match v {
+        LiteralValue::Array(rows) => {
+            if rows.len() == 1 {
+                rows.into_iter().next().unwrap_or_default()
+            } else if rows.iter().all(|r| r.len() == 1) {
+                rows.into_iter()
+                    .filter_map(|r| r.into_iter().next())
+                    .collect()
+            } else {
+                rows.into_iter().flatten().collect()
+            }
+        }
+        other => vec![other],
+    })
+}
+
 pub fn register_builtins() {
     use crate::function_registry::register_function;
     use std::sync::Arc;
     register_function(Arc::new(MatchFn));
     register_function(Arc::new(VLookupFn));
     register_function(Arc::new(HLookupFn));
+    register_function(Arc::new(LookupFn));
 }
 
 #[cfg(test)]

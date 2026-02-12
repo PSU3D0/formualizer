@@ -559,14 +559,11 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_reference() {
+    fn test_empty_cell_reference() {
         let wb = create_workbook();
+        // Z999 is a valid but unpopulated cell — should return Empty (like Excel)
         let result = evaluate_formula("=Z999", &wb).unwrap();
-        if let LiteralValue::Error(ref e) = result {
-            assert_eq!(e, "#REF!");
-        } else {
-            panic!("Expected error for invalid cell reference");
-        }
+        assert_eq!(result, LiteralValue::Empty);
     }
 
     #[test]

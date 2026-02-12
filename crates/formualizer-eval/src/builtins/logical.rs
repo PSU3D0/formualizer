@@ -267,6 +267,8 @@ impl Function for IfFn {
             LiteralValue::Int(i) => i != 0,
             // Excel treats a blank/empty cell as FALSE
             LiteralValue::Empty => false,
+            // Parser represents omitted arguments as Text(""); treat as FALSE
+            LiteralValue::Text(ref s) if s.is_empty() => false,
             _ => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new_value().with_message("IF condition must be boolean or number"),
@@ -274,14 +276,20 @@ impl Function for IfFn {
             }
         };
 
-        if b {
-            args[1].value()
+        let result = if b {
+            args[1].value()?
         } else if let Some(arg) = args.get(2) {
-            arg.value()
+            arg.value()?
         } else {
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
-                false,
-            )))
+            crate::traits::CalcValue::Scalar(LiteralValue::Boolean(false))
+        };
+
+        // If the selected branch was an omitted argument (Text("")), Excel returns 0
+        match result {
+            crate::traits::CalcValue::Scalar(LiteralValue::Text(ref s)) if s.is_empty() => {
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)))
+            }
+            _ => Ok(result),
         }
     }
 }
