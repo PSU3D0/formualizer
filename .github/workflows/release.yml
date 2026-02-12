@@ -73,31 +73,41 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             manylinux: auto
+            python-version: "3.11"
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: auto
+            python-version: "3.12"
           - os: macos-14
             target: aarch64-apple-darwin
-            manylinux: 'off'
+            manylinux: "off"
+            python-version: "3.11"
+          - os: macos-14
+            target: aarch64-apple-darwin
+            manylinux: "off"
+            python-version: "3.12"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Python 3.11
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           working-directory: bindings/python
           target: ${{ matrix.target }}
-          args: --release --out dist -i python3.11
+          args: --release --out dist -i python${{ matrix.python-version }}
           sccache: "true"
           manylinux: ${{ matrix.manylinux }}
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.target }}
+          name: wheels-${{ matrix.target }}-py${{ matrix.python-version }}
           path: bindings/python/dist/*.whl
 
   github-release:

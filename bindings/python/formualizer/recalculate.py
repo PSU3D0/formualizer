@@ -13,8 +13,12 @@ from xml.etree import ElementTree as ET
 NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 NS_PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
+NS_CONTENT_TYPES = "http://schemas.openxmlformats.org/package/2006/content-types"
 SHEET_REL_TYPE = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+)
+CALC_CHAIN_REL_TYPE = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain"
 )
 
 CELL_REF_RE = re.compile(r"^\$?([A-Za-z]+)\$?([0-9]+)$")
@@ -55,6 +59,7 @@ def recalculate_file(path: os.PathLike[str] | str, output: os.PathLike[str] | st
     wb = Workbook.from_path(str(in_path))
     summary: Dict[str, Any] = {"evaluated": 0, "errors": 0, "sheets": {}}
     modified_entries: Dict[str, bytes] = {}
+    removed_entries: set[str] = set()
 
     with zipfile.ZipFile(in_path, "r") as zin:
         sheet_path_by_name = _sheet_path_map(zin)
@@ -94,7 +99,16 @@ def recalculate_file(path: os.PathLike[str] | str, output: os.PathLike[str] | st
                     root, encoding="utf-8", xml_declaration=True
                 )
 
-    _rewrite_zip(in_path, out_path, modified_entries, in_place=in_place)
+    if summary["evaluated"] > 0:
+        _strip_calc_chain_parts(in_path, modified_entries, removed_entries)
+
+    _rewrite_zip(
+        in_path,
+        out_path,
+        modified_entries,
+        removed_entries=removed_entries,
+        in_place=in_place,
+    )
     return summary
 
 
@@ -283,6 +297,7 @@ def _rewrite_zip(
     out_path: Path,
     modified_entries: Dict[str, bytes],
     *,
+    removed_entries: set[str],
     in_place: bool,
 ) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -293,21 +308,73 @@ def _rewrite_zip(
         os.close(fd)
         temp_path = Path(temp_name)
         try:
-            _copy_zip_with_modifications(in_path, temp_path, modified_entries)
+            _copy_zip_with_modifications(
+                in_path, temp_path, modified_entries, removed_entries
+            )
             temp_path.replace(in_path)
         finally:
             if temp_path.exists():
                 temp_path.unlink()
     else:
-        _copy_zip_with_modifications(in_path, out_path, modified_entries)
+        _copy_zip_with_modifications(in_path, out_path, modified_entries, removed_entries)
 
 
 def _copy_zip_with_modifications(
-    source: Path, destination: Path, modified_entries: Dict[str, bytes]
+    source: Path,
+    destination: Path,
+    modified_entries: Dict[str, bytes],
+    removed_entries: set[str],
 ) -> None:
     with zipfile.ZipFile(source, "r") as zin, zipfile.ZipFile(destination, "w") as zout:
         for info in zin.infolist():
+            if info.filename in removed_entries:
+                continue
             data = modified_entries.get(info.filename)
             if data is None:
                 data = zin.read(info.filename)
             zout.writestr(info, data)
+
+
+def _strip_calc_chain_parts(
+    in_path: Path, modified_entries: Dict[str, bytes], removed_entries: set[str]
+) -> None:
+    ET.register_namespace("", NS_CONTENT_TYPES)
+    ET.register_namespace("", NS_PKG_REL)
+
+    with zipfile.ZipFile(in_path, "r") as zin:
+        names = set(zin.namelist())
+        has_chain_part = "xl/calcChain.xml" in names
+
+        rels_name = "xl/_rels/workbook.xml.rels"
+        if rels_name in names:
+            rels_root = ET.fromstring(zin.read(rels_name))
+            changed = False
+            for rel in list(rels_root.findall(f"{{{NS_PKG_REL}}}Relationship")):
+                rel_type = rel.attrib.get("Type")
+                target = rel.attrib.get("Target", "")
+                if rel_type == CALC_CHAIN_REL_TYPE or target.endswith("calcChain.xml"):
+                    rels_root.remove(rel)
+                    changed = True
+            if changed:
+                modified_entries[rels_name] = ET.tostring(
+                    rels_root, encoding="utf-8", xml_declaration=True
+                )
+                has_chain_part = True
+
+        content_types_name = "[Content_Types].xml"
+        if content_types_name in names:
+            ct_root = ET.fromstring(zin.read(content_types_name))
+            changed = False
+            for override in list(ct_root.findall(f"{{{NS_CONTENT_TYPES}}}Override")):
+                part_name = override.attrib.get("PartName")
+                if part_name == "/xl/calcChain.xml":
+                    ct_root.remove(override)
+                    changed = True
+            if changed:
+                modified_entries[content_types_name] = ET.tostring(
+                    ct_root, encoding="utf-8", xml_declaration=True
+                )
+                has_chain_part = True
+
+        if has_chain_part and "xl/calcChain.xml" in names:
+            removed_entries.add("xl/calcChain.xml")

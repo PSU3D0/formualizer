@@ -129,6 +129,7 @@ What it does:
 - Writes cached values to `<v>` with appropriate cell type metadata.
 - Preserves original formula text in `<f>`.
 - Retries some `_xlfn.*` unknown-function cases using temporary prefix stripping.
+- Removes stale `calcChain` parts/relationships after recalculation.
 
 Caveats:
 
