@@ -34,6 +34,7 @@ ERROR_TOKEN_MAP = {
     "Ref": "#REF!",
     "Value": "#VALUE!",
 }
+DEFAULT_ERROR_LOCATION_LIMIT = 20
 
 
 def recalculate_file(path: os.PathLike[str] | str, output: os.PathLike[str] | str | None = None) -> Dict[str, Any]:
@@ -57,7 +58,15 @@ def recalculate_file(path: os.PathLike[str] | str, output: os.PathLike[str] | st
     from .formualizer_py import Workbook  # lazy import to avoid import order issues
 
     wb = Workbook.from_path(str(in_path))
-    summary: Dict[str, Any] = {"evaluated": 0, "errors": 0, "sheets": {}}
+    summary: Dict[str, Any] = {
+        "status": "success",
+        "evaluated": 0,
+        "errors": 0,
+        "total_formulas": 0,
+        "total_errors": 0,
+        "sheets": {},
+    }
+    error_summary: Dict[str, Dict[str, Any]] = {}
     modified_entries: Dict[str, bytes] = {}
     removed_entries: set[str] = set()
 
@@ -88,11 +97,21 @@ def recalculate_file(path: os.PathLike[str] | str, output: os.PathLike[str] | st
                 value = _evaluate_cell_with_xlfn_fallback(wb, sheet_name, row, col)
                 if _is_error_dict(value):
                     sheet_err += 1
+                    error_token = _error_token_for(value)
+                    bucket = error_summary.setdefault(
+                        error_token, {"count": 0, "locations": []}
+                    )
+                    bucket["count"] += 1
+                    locations = bucket["locations"]
+                    if len(locations) < DEFAULT_ERROR_LOCATION_LIMIT:
+                        locations.append(f"{sheet_name}!{ref}")
                 _write_cached_value(cell, value)
 
             summary["sheets"][sheet_name] = {"evaluated": sheet_eval, "errors": sheet_err}
             summary["evaluated"] += sheet_eval
             summary["errors"] += sheet_err
+            summary["total_formulas"] += sheet_eval
+            summary["total_errors"] += sheet_err
 
             if sheet_eval > 0:
                 modified_entries[sheet_part] = ET.tostring(
@@ -109,6 +128,13 @@ def recalculate_file(path: os.PathLike[str] | str, output: os.PathLike[str] | st
         removed_entries=removed_entries,
         in_place=in_place,
     )
+    if summary["total_errors"] > 0:
+        summary["status"] = "errors_found"
+        for details in error_summary.values():
+            truncated = details["count"] - len(details["locations"])
+            if truncated > 0:
+                details["locations_truncated"] = truncated
+        summary["error_summary"] = error_summary
     return summary
 
 
@@ -202,6 +228,15 @@ def _is_xlfn_name_error(value: Any) -> bool:
 
 def _is_error_dict(value: Any) -> bool:
     return isinstance(value, dict) and value.get("type") == "Error"
+
+
+def _error_token_for(value: Any) -> str:
+    if not _is_error_dict(value):
+        return "#ERROR!"
+    kind = value.get("kind")
+    if isinstance(kind, str):
+        return ERROR_TOKEN_MAP.get(kind, f"#{kind.upper()}!")
+    return "#ERROR!"
 
 
 def _strip_xlfn_prefixes(formula: str) -> str:

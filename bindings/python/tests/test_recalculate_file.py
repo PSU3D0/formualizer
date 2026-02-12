@@ -78,10 +78,17 @@ def test_recalculate_file_in_place_writes_cached_values(tmp_path: Path):
     wb.save(path)
 
     result = fz.recalculate_file(path)
+    assert result["status"] == "errors_found"
     assert result["evaluated"] == 8
     assert result["errors"] == 1
+    assert result["total_formulas"] == 8
+    assert result["total_errors"] == 1
     assert result["sheets"]["Sheet1"] == {"evaluated": 5, "errors": 1}
     assert result["sheets"]["Sheet2"] == {"evaluated": 3, "errors": 0}
+    assert result["error_summary"]["#DIV/0!"] == {
+        "count": 1,
+        "locations": ["Sheet1!B5"],
+    }
 
     sheets = _sheet_xml_by_name(path)
     assert _cell_payload(sheets["Sheet1"], "B1") == (None, "6")
@@ -120,8 +127,12 @@ def test_recalculate_file_output_writes_to_new_path(tmp_path: Path):
     assert before["Sheet1"]["B1"].value is None
 
     result = fz.recalculate_file(in_path, output=out_path)
+    assert result["status"] == "success"
     assert result["evaluated"] == 1
     assert result["errors"] == 0
+    assert result["total_formulas"] == 1
+    assert result["total_errors"] == 0
+    assert "error_summary" not in result
 
     in_after = openpyxl.load_workbook(in_path, data_only=True)
     out_after = openpyxl.load_workbook(out_path, data_only=True)
@@ -141,8 +152,11 @@ def test_recalculate_file_xlfn_retry_keeps_formula_text(tmp_path: Path):
     wb.save(path)
 
     result = fz.recalculate_file(path)
+    assert result["status"] == "success"
     assert result["evaluated"] == 1
     assert result["errors"] == 0
+    assert result["total_formulas"] == 1
+    assert result["total_errors"] == 0
 
     sheets = _sheet_xml_by_name(path)
     assert _cell_payload(sheets["Sheet1"], "B1") == (None, "6")
@@ -167,9 +181,13 @@ def test_recalculate_file_maps_name_errors(tmp_path: Path):
 
     result = fz.recalculate_file(path)
     assert result == {
+        "status": "errors_found",
         "evaluated": 1,
         "errors": 1,
+        "total_formulas": 1,
+        "total_errors": 1,
         "sheets": {"Sheet1": {"evaluated": 1, "errors": 1}},
+        "error_summary": {"#NAME?": {"count": 1, "locations": ["Sheet1!A1"]}},
     }
 
     sheets = _sheet_xml_by_name(path)
@@ -177,3 +195,27 @@ def test_recalculate_file_maps_name_errors(tmp_path: Path):
 
     data_only = openpyxl.load_workbook(path, data_only=True)
     assert data_only["Sheet1"]["A1"].value == "#NAME?"
+
+
+def test_recalculate_file_caps_error_locations_per_type(tmp_path: Path):
+    path = tmp_path / "error_cap.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    for row in range(1, 26):
+        ws[f"A{row}"] = "=1/0"
+    wb.save(path)
+
+    result = fz.recalculate_file(path)
+    assert result["status"] == "errors_found"
+    assert result["evaluated"] == 25
+    assert result["errors"] == 25
+    assert result["total_formulas"] == 25
+    assert result["total_errors"] == 25
+
+    error_info = result["error_summary"]["#DIV/0!"]
+    assert error_info["count"] == 25
+    assert len(error_info["locations"]) == 20
+    assert error_info["locations"][0] == "Sheet1!A1"
+    assert error_info["locations"][-1] == "Sheet1!A20"
+    assert error_info["locations_truncated"] == 5

@@ -113,11 +113,20 @@ summary = formualizer.recalculate_file("input.xlsx", output="output.xlsx")
 
 print(summary)
 # {
+#   "status": "errors_found",  # or "success"
 #   "evaluated": 42,
 #   "errors": 2,
+#   "total_formulas": 42,
+#   "total_errors": 2,
 #   "sheets": {
 #     "Sheet1": {"evaluated": 30, "errors": 1},
 #     "Sheet2": {"evaluated": 12, "errors": 1},
+#   },
+#   "error_summary": {
+#     "#REF!": {
+#       "count": 2,
+#       "locations": ["Sheet1!B5", "Sheet1!C10"],
+#     }
 #   },
 # }
 ```
@@ -130,6 +139,10 @@ What it does:
 - Preserves original formula text in `<f>`.
 - Retries some `_xlfn.*` unknown-function cases using temporary prefix stripping.
 - Removes stale `calcChain` parts/relationships after recalculation.
+- Includes backward-compatible error reporting fields:
+  - `status` (`success` or `errors_found`)
+  - `total_formulas` and `total_errors`
+  - `error_summary` with per-type counts and up to 20 `Sheet!Cell` locations per error type (`locations_truncated` is included when capped)
 
 Caveats:
 
