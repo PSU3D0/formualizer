@@ -1,0 +1,10 @@
+node_modules/
+src/
+tests/
+*.rs
+Cargo.toml
+.cargo/
+tsconfig.json
+build.sh
+pnpm-lock.yaml
+.gitignore

@@ -515,7 +515,9 @@ jobs:
 
       - name: Build WASM package (bundler)
         working-directory: bindings/wasm
-        run: wasm-pack build --target bundler --out-dir pkg --release
+        run: |
+          wasm-pack build --target bundler --out-dir pkg --release
+          rm -f pkg/.gitignore
 
       - name: Install JS dependencies
         working-directory: bindings/wasm
@@ -531,7 +533,7 @@ jobs:
         working-directory: bindings/wasm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --ignore-scripts --access public
 
   github-release:
     if: startsWith(github.ref_name, 'v')
