@@ -98,6 +98,45 @@ wb.set_values_batch("S", 1, 1, [[fz.LiteralValue.int(1), fz.LiteralValue.int(2)]
 wb.undo()  # reverts the entire batch
 ```
 
+### Recalculate XLSX Cached Values
+
+Use `recalculate_file()` to evaluate formulas in an existing `.xlsx` and write cached `<v>` values back into worksheet XML.
+
+```python
+import formualizer
+
+# In-place update
+summary = formualizer.recalculate_file("output.xlsx")
+
+# Write to a different file
+summary = formualizer.recalculate_file("input.xlsx", output="output.xlsx")
+
+print(summary)
+# {
+#   "evaluated": 42,
+#   "errors": 2,
+#   "sheets": {
+#     "Sheet1": {"evaluated": 30, "errors": 1},
+#     "Sheet2": {"evaluated": 12, "errors": 1},
+#   },
+# }
+```
+
+What it does:
+
+- Scans worksheet XML for formula cells.
+- Evaluates formulas through the Rust engine (`Workbook.evaluate_cell`).
+- Writes cached values to `<v>` with appropriate cell type metadata.
+- Preserves original formula text in `<f>`.
+- Retries some `_xlfn.*` unknown-function cases using temporary prefix stripping.
+
+Caveats:
+
+- It updates cached values for formula cells; it does not rewrite formulas.
+- Unsupported functions are written as Excel error tokens (for example `#NAME?`, `#DIV/0!`).
+- Date/time-like formula outputs are cached as numeric serials, matching Excel value storage.
+- Workbooks using advanced formula metadata patterns should be validated in the target consumer.
+
 ---
 
 ## Public API Surface
@@ -107,6 +146,7 @@ wb.undo()  # reverts the entire batch
 ```python
 tokenize(formula: str) -> Tokenizer
 parse(formula: str, include_whitespace: bool = False) -> ASTNode
+recalculate_file(path: str | PathLike[str], output: str | PathLike[str] | None = None) -> dict
 ```
 
 ### Core classes (excerpt)

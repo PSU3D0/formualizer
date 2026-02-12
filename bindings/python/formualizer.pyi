@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
+from os import PathLike
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 # Public module API (manually authored for v1)
 
@@ -25,6 +26,10 @@ class WorkbookConfig:
 def tokenize(formula: str, dialect: Optional[FormulaDialect] = None) -> Tokenizer: ...
 def parse(formula: str, dialect: Optional[FormulaDialect] = None) -> ASTNode: ...
 def load_workbook(path: str, strategy: Optional[str] = None) -> Workbook: ...
+def recalculate_file(
+    path: Union[str, PathLike[str]],
+    output: Optional[Union[str, PathLike[str]]] = None,
+) -> Dict[str, Any]: ...
 
 # ---- Tokenizer / Token ----
 class Token:

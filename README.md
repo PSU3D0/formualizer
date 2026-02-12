@@ -34,6 +34,7 @@ Use what you need: parse only, run the engine against your own sheet model, or l
 ### Python (bindings/python)
 
 - Workbook: set values/formulas, batch operations, undo/redo, and evaluation
+- XLSX cache writeback: `formualizer.recalculate_file(path, output=None)` evaluates formulas and writes cached values into workbook XML
 - No begin/end required: single edits are individually undoable; batch methods auto‑group as one undo step
 
 Install: `pip install formualizer` (see bindings/python/README.md)
