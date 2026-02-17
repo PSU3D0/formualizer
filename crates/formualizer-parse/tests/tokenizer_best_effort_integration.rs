@@ -73,9 +73,14 @@ fn assert_full_span_coverage(formula: &str, spans: &[formualizer_parse::TokenSpa
     for span in spans {
         assert!(span.start <= span.end, "invalid span order {:?}", span);
         assert!(span.end <= formula.len(), "span out of bounds {:?}", span);
-        for idx in span.start..span.end {
-            assert!(!covered[idx], "overlap at {idx} for formula {formula:?}");
-            covered[idx] = true;
+        for (idx, slot) in covered
+            .iter_mut()
+            .enumerate()
+            .take(span.end)
+            .skip(span.start)
+        {
+            assert!(!*slot, "overlap at {idx} for formula {formula:?}");
+            *slot = true;
         }
     }
 

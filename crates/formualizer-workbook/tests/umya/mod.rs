@@ -5,6 +5,8 @@ mod common;
 #[cfg(feature = "umya")]
 mod formulas;
 #[cfg(feature = "umya")]
+mod ingest_recalc;
+#[cfg(feature = "umya")]
 mod large;
 #[cfg(feature = "umya")]
 mod named_ranges;

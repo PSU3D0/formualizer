@@ -15,6 +15,8 @@ use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::traits::EvaluationContext;
 use zip::ZipArchive;
 
+type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
+
 pub struct CalamineAdapter {
     workbook: RwLock<Xlsx<BufReader<File>>>,
     loaded_sheets: HashSet<String>,
@@ -335,6 +337,7 @@ where
         engine.reset_ensure_touched();
         let mut total_values = 0usize;
         let mut total_formulas = 0usize;
+        let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
         // Route formula ingest through the engine's bulk ingest builder for optimal edge construction
         // Arrow bulk ingest for base values (Phase A) is built per-sheet without borrowing the engine
         // Default Arrow chunk rows
@@ -575,8 +578,7 @@ where
                     let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
                         rustc_hash::FxHashMap::default();
                     cache.reserve(4096);
-                    let mut builder = engine.begin_bulk_ingest();
-                    let sid = builder.add_sheet(n);
+                    let mut formulas: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
                     for (row, col, formula) in frm_range.used_cells() {
                         if formula.is_empty() {
                             continue;
@@ -603,13 +605,15 @@ where
                             cache.insert(key_owned, parsed.clone());
                             parsed
                         };
-                        builder.add_formulas(sid, std::iter::once((excel_row, excel_col, ast)));
+                        formulas.push((excel_row, excel_col, ast));
                         parsed_n += 1;
                         if debug && parsed_n.is_multiple_of(5000) {
                             eprintln!("[fz][load]    parsed formulas: {parsed_n}");
                         }
                     }
-                    let _ = builder.finish();
+                    if !formulas.is_empty() {
+                        eager_formula_batches.push((n.clone(), formulas));
+                    }
                 }
             }
             total_formulas += parsed_n;
@@ -628,6 +632,18 @@ where
             // Mark as loaded for API parity
             self.loaded_sheets.insert(n.to_string());
         }
+
+        if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
+            let mut builder = engine.begin_bulk_ingest();
+            for (sheet_name, formulas) in eager_formula_batches {
+                let sid = builder.add_sheet(&sheet_name);
+                builder.add_formulas(sid, formulas.into_iter());
+            }
+            builder
+                .finish()
+                .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+        }
+
         let tend0 = std::time::Instant::now();
         // Finish builder and finalize ingestion
         let tcommit0 = std::time::Instant::now();

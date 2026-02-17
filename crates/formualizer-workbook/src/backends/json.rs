@@ -26,6 +26,8 @@ struct JsonWorkbook {
     sheets: BTreeMap<String, JsonSheet>,
 }
 
+type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
+
 #[derive(Clone, Copy, Debug)]
 pub struct JsonReadOptions {
     /// When true (default), invalid date/time strings are treated as an IO error.
@@ -691,6 +693,7 @@ where
 
         // Ingest values via Arrow IngestBuilder per sheet
         let chunk_rows: usize = 32 * 1024;
+        let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
         for (name, sheet) in self.data.sheets.iter() {
             let dims = sheet.dimensions.unwrap_or_else(|| {
                 let mut max_r = 0u32;
@@ -785,8 +788,7 @@ where
                     }
                 }
             } else {
-                let mut builder = engine.begin_bulk_ingest();
-                let sid = builder.add_sheet(name);
+                let mut formulas: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
                 for c in &sheet.cells {
                     if let Some(f) = &c.formula {
                         if f.is_empty() {
@@ -799,11 +801,22 @@ where
                         };
                         let parsed = formualizer_parse::parser::parse(&with_eq)
                             .map_err(|e| IoError::from_backend("json", e))?;
-                        builder.add_formulas(sid, std::iter::once((c.row, c.col, parsed)));
+                        formulas.push((c.row, c.col, parsed));
                     }
                 }
-                let _ = builder.finish();
+                if !formulas.is_empty() {
+                    eager_formula_batches.push((name.clone(), formulas));
+                }
             }
+        }
+
+        if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
+            let mut builder = engine.begin_bulk_ingest();
+            for (sheet_name, formulas) in eager_formula_batches {
+                let sid = builder.add_sheet(&sheet_name);
+                builder.add_formulas(sid, formulas.into_iter());
+            }
+            builder.finish().map_err(IoError::Engine)?;
         }
 
         // Register defined names into the dependency graph.

@@ -38,9 +38,14 @@ mod tests {
         for span in spans {
             assert!(span.start <= span.end, "invalid span order {:?}", span);
             assert!(span.end <= formula.len(), "span out of bounds {:?}", span);
-            for idx in span.start..span.end {
-                assert!(!covered[idx], "overlapping spans at {idx}: {:?}", span);
-                covered[idx] = true;
+            for (idx, slot) in covered
+                .iter_mut()
+                .enumerate()
+                .take(span.end)
+                .skip(span.start)
+            {
+                assert!(!*slot, "overlapping spans at {idx}: {:?}", span);
+                *slot = true;
             }
         }
 

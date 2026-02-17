@@ -18,6 +18,8 @@ use umya_spreadsheet::{
 
 use crate::traits::{DefinedName as WorkbookDefinedName, DefinedNameDefinition, DefinedNameScope};
 
+type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
+
 pub struct UmyaAdapter {
     workbook: RwLock<Spreadsheet>,
     lazy: bool,
@@ -825,6 +827,8 @@ where
 
         let chunk_rows: usize = 32 * 1024;
 
+        let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
+
         for n in &names {
             let sheet_data = self
                 .read_sheet(n)
@@ -897,8 +901,7 @@ where
                     }
                 }
             } else {
-                let mut builder = engine.begin_bulk_ingest();
-                let sid = builder.add_sheet(n);
+                let mut formulas: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
                 for ((row, col), cd) in &sheet_data.cells {
                     if let Some(f) = &cd.formula {
                         if f.is_empty() {
@@ -911,11 +914,22 @@ where
                         };
                         let parsed = formualizer_parse::parser::parse(&with_eq)
                             .map_err(|e| IoError::from_backend("umya", e))?;
-                        builder.add_formulas(sid, std::iter::once((*row, *col, parsed)));
+                        formulas.push((*row, *col, parsed));
                     }
                 }
-                let _ = builder.finish();
+                if !formulas.is_empty() {
+                    eager_formula_batches.push((n.clone(), formulas));
+                }
             }
+        }
+
+        if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
+            let mut builder = engine.begin_bulk_ingest();
+            for (sheet_name, formulas) in eager_formula_batches {
+                let sid = builder.add_sheet(&sheet_name);
+                builder.add_formulas(sid, formulas.into_iter());
+            }
+            builder.finish().map_err(IoError::Engine)?;
         }
 
         // Register defined names into the dependency graph.
