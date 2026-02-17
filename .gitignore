@@ -16,3 +16,4 @@ tickets/
 
 # Local git worktrees (repo-local)
 .worktrees/
+.forkops/

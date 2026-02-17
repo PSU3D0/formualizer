@@ -33,8 +33,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Product track: roll-up crate + bindings + internal product crates
 PRODUCT_PACKAGE_VERSION_FILES = [
-    # Primary version locations (must all match)
+    # Primary product surface version locations (must all match)
     ("crates/formualizer/Cargo.toml", "toml", ["package", "version"]),
+    # Rust product crates released on v* tags
+    ("crates/formualizer-macros/Cargo.toml", "toml", ["package", "version"]),
+    ("crates/formualizer-eval/Cargo.toml", "toml", ["package", "version"]),
+    ("crates/formualizer-workbook/Cargo.toml", "toml", ["package", "version"]),
+    ("crates/formualizer-sheetport/Cargo.toml", "toml", ["package", "version"]),
     # Python binding package metadata
     ("bindings/python/pyproject.toml", "toml", ["project", "version"]),
     # Python binding Rust crate metadata (used by cargo tooling; keep in sync)
@@ -48,11 +53,23 @@ PRODUCT_PACKAGE_VERSION_FILES = [
 ]
 
 # Workspace dependency versions that track product version
-PRODUCT_WORKSPACE_DEPS = []
+PRODUCT_WORKSPACE_DEPS = [
+    ("Cargo.toml", "formualizer-macros"),
+    ("Cargo.toml", "formualizer-eval"),
+    ("Cargo.toml", "formualizer-workbook"),
+]
 
 # Internal dependency references in product crates (dep name -> new version)
 # These are dependencies with explicit version = "X.Y.Z" alongside path = "..."
-PRODUCT_INTERNAL_DEPS = []
+PRODUCT_INTERNAL_DEPS = [
+    # crates/formualizer/Cargo.toml references to product crates
+    ("crates/formualizer/Cargo.toml", "formualizer-eval"),
+    ("crates/formualizer/Cargo.toml", "formualizer-workbook"),
+    ("crates/formualizer/Cargo.toml", "formualizer-sheetport"),
+    # crates/formualizer-sheetport/Cargo.toml references
+    ("crates/formualizer-sheetport/Cargo.toml", "formualizer-eval"),
+    ("crates/formualizer-sheetport/Cargo.toml", "formualizer-workbook"),
+]
 
 # Parser/SDK track
 PARSE_PACKAGE_VERSION_FILES = [
@@ -497,10 +514,9 @@ def bump_spec(version: str, dry_run: bool, verify: bool, force: bool) -> bool:
         status = "OK" if old != new else "unchanged"
         print(f"  {rel_path}: {old} -> {new} ({status})")
 
-    # Note: sheetport-spec is also bumped in product track, but if doing
-    # a standalone spec release, only bump the spec crate itself.
-    # Downstream deps (formualizer-sheetport, formualizer) would be updated
-    # in a subsequent product release.
+    # Note: spec is an independent track and is not auto-bumped by product releases.
+    # Downstream deps (formualizer-sheetport, formualizer) should be updated
+    # in a subsequent product release when adopting a newer spec.
 
     # 2. Verify with cargo check
     if verify and not dry_run:
