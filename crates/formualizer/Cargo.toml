@@ -1,6 +1,6 @@
 [package]
 name = "formualizer"
-version = "0.3.5"
+version = "0.4.0"
 edition = "2024"
 description = "Embeddable spreadsheet engine — parse, evaluate & mutate Excel workbooks from Rust"
 homepage.workspace = true
@@ -27,7 +27,7 @@ tracing_chrome = ["tracing", "formualizer-eval/tracing_chrome"]
 [dependencies]
 formualizer-common = { path = "../formualizer-common", version = "1.0.0", optional = true }
 formualizer-parse = { path = "../formualizer-parse", version = "1.0.0", optional = true }
-formualizer-eval = { path = "../formualizer-eval", version = "0.3.0", optional = true }
-formualizer-workbook = { path = "../formualizer-workbook", version = "0.3.0", optional = true }
-formualizer-sheetport = { path = "../formualizer-sheetport", version = "0.3.0", optional = true }
+formualizer-eval = { path = "../formualizer-eval", version = "0.4.0", optional = true }
+formualizer-workbook = { path = "../formualizer-workbook", version = "0.4.0", optional = true }
+formualizer-sheetport = { path = "../formualizer-sheetport", version = "0.4.0", optional = true }
 sheetport-spec = { path = "../sheetport-spec", version = "0.3.0", optional = true }
