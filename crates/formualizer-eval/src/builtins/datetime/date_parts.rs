@@ -1,6 +1,6 @@
 //! Date and time component extraction functions
 
-use super::serial::{serial_to_date, serial_to_datetime};
+use super::serial::{date_to_serial, datetime_to_serial, serial_to_date, serial_to_datetime};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -17,6 +17,8 @@ fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
             ExcelError::new_value().with_message("Date/time serial is not a valid number")
         }),
         LiteralValue::Boolean(b) => Ok(if b { 1.0 } else { 0.0 }),
+        LiteralValue::Date(d) => Ok(date_to_serial(&d)),
+        LiteralValue::DateTime(dt) => Ok(datetime_to_serial(&dt)),
         LiteralValue::Empty => Ok(0.0),
         LiteralValue::Error(e) => Err(e),
         _ => Err(ExcelError::new_value()
@@ -375,5 +377,34 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(second_result, LiteralValue::Int(45));
+    }
+
+    #[test]
+    fn test_year_accepts_date_and_datetime_literals() {
+        let wb = TestWorkbook::new().with_function(Arc::new(YearFn));
+        let ctx = wb.interpreter();
+        let year_fn = ctx.context.get_function("", "YEAR").unwrap();
+
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
+        let date_ast = lit(LiteralValue::Date(date));
+        let from_date = year_fn
+            .dispatch(
+                &[ArgumentHandle::new(&date_ast, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(from_date, LiteralValue::Int(2024));
+
+        let dt = date.and_hms_opt(13, 45, 0).unwrap();
+        let dt_ast = lit(LiteralValue::DateTime(dt));
+        let from_dt = year_fn
+            .dispatch(
+                &[ArgumentHandle::new(&dt_ast, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(from_dt, LiteralValue::Int(2024));
     }
 }

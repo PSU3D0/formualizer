@@ -265,6 +265,7 @@ impl Function for IfFn {
             LiteralValue::Boolean(b) => b,
             LiteralValue::Number(n) => n != 0.0,
             LiteralValue::Int(i) => i != 0,
+            LiteralValue::Empty => false,
             _ => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new_value().with_message("IF condition must be boolean or number"),
@@ -605,6 +606,38 @@ mod tests {
             err_counter.load(Ordering::SeqCst),
             0,
             "ERRORFN should not be evaluated"
+        );
+    }
+
+    #[test]
+    fn if_treats_empty_condition_as_false() {
+        let wb = TestWorkbook::new().with_function(Arc::new(IfFn));
+        let ctx = interp(&wb);
+        let fctx = ctx.function_context(None);
+        let iff = ctx.context.get_function("", "IF").unwrap();
+
+        let cond_empty = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Empty),
+            None,
+        );
+        let when_true = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Int(10)),
+            None,
+        );
+        let when_false = formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Int(20)),
+            None,
+        );
+
+        let args = vec![
+            ArgumentHandle::new(&cond_empty, &ctx),
+            ArgumentHandle::new(&when_true, &ctx),
+            ArgumentHandle::new(&when_false, &ctx),
+        ];
+
+        assert_eq!(
+            iff.eval(&args, &fctx).unwrap().into_literal(),
+            LiteralValue::Int(20)
         );
     }
 }

@@ -184,10 +184,12 @@ impl Function for IfErrorFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        match v {
-            LiteralValue::Error(_) => args[1].value(),
-            other => Ok(crate::traits::CalcValue::Scalar(other)),
+        match args[0].value() {
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Error(_) => args[1].value(),
+                other => Ok(crate::traits::CalcValue::Scalar(other)),
+            },
+            Err(_) => args[1].value(),
         }
     }
 }
@@ -545,5 +547,54 @@ mod tests {
             LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
             _ => panic!("expected value error"),
         }
+    }
+
+    #[derive(Debug)]
+    struct ThrowNameFn;
+
+    impl Function for ThrowNameFn {
+        func_caps!(PURE);
+
+        fn name(&self) -> &'static str {
+            "THROWNAME"
+        }
+
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+            Err(ExcelError::new_name())
+        }
+    }
+
+    #[test]
+    fn iferror_catches_evaluation_errors_returned_as_err() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(IfErrorFn))
+            .with_function(std::sync::Arc::new(ThrowNameFn));
+        let ctx = interp(&wb);
+
+        let throw = ASTNode::new(
+            ASTNodeType::Function {
+                name: "THROWNAME".to_string(),
+                args: vec![],
+            },
+            None,
+        );
+        let fallback = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(42)), None);
+
+        let args = vec![
+            ArgumentHandle::new(&throw, &ctx),
+            ArgumentHandle::new(&fallback, &ctx),
+        ];
+        let f = ctx.context.get_function("", "IFERROR").unwrap();
+
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Int(42)
+        );
     }
 }
