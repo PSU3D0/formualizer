@@ -47,6 +47,12 @@ pub use formualizer_workbook::{
     LoadStrategy, Workbook, WorkbookConfig, WorkbookMode, WorksheetHandle,
 };
 
+#[cfg(all(feature = "workbook", feature = "umya"))]
+pub use formualizer_workbook::{
+    DEFAULT_ERROR_LOCATION_LIMIT, RecalculateErrorSummary, RecalculateSheetSummary,
+    RecalculateStatus, RecalculateSummary, recalculate_file, recalculate_file_with_limit,
+};
+
 #[cfg(feature = "eval")]
 pub use formualizer_eval::engine::{DateSystem, EvalConfig};
 

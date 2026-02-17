@@ -1,6 +1,8 @@
 pub mod backends;
 pub mod builtins;
 pub mod error;
+#[cfg(feature = "umya")]
+pub mod recalculate;
 pub mod resolver;
 pub mod session;
 pub mod traits;
@@ -22,6 +24,11 @@ pub use backends::csv::CsvArrayPolicy;
 pub use backends::json::JsonReadOptions;
 pub use builtins::{ensure_builtins_loaded, register_function_dynamic, try_load_builtins};
 pub use error::{IoError, with_cell_context};
+#[cfg(feature = "umya")]
+pub use recalculate::{
+    DEFAULT_ERROR_LOCATION_LIMIT, RecalculateErrorSummary, RecalculateSheetSummary,
+    RecalculateStatus, RecalculateSummary, recalculate_file, recalculate_file_with_limit,
+};
 pub use resolver::IoResolver;
 pub use session::{EditorSession, IoConfig};
 pub use traits::{

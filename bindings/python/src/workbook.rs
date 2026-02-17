@@ -212,6 +212,30 @@ impl PyWorkbook {
                     cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 })
             }
+            "umya" => {
+                use formualizer::workbook::backends::UmyaAdapter;
+                use formualizer::workbook::traits::SpreadsheetReader;
+                let adapter =
+                    <UmyaAdapter as SpreadsheetReader>::open_path(std::path::Path::new(path))
+                        .map_err(|e| {
+                            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                                "open failed: {e}"
+                            ))
+                        })?;
+                let wb = formualizer::workbook::Workbook::from_reader(
+                    adapter,
+                    formualizer::workbook::LoadStrategy::EagerAll,
+                    cfg,
+                )
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
+                })?;
+                Ok(Self {
+                    inner: std::sync::Arc::new(std::sync::RwLock::new(wb)),
+                    sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
+                    cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                })
+            }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Unsupported backend: {backend}"
             ))),

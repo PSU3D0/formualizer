@@ -33,6 +33,7 @@ __all__ = [
     "WorkbookConfig",
     "WorkbookMode",
     "load_workbook",
+    "recalculate_file",
     "parse",
     "parse_formula",
     "tokenize",
@@ -1226,6 +1227,22 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
         wb = fz.load_workbook("financial_model.xlsx")
         print(wb.evaluate_cell("Summary", 1, 2))
     ```
+    """
+
+def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] = None) -> typing.Any:
+    r"""
+    Recalculate an XLSX workbook and write formula cached values back to file.
+
+    Args:
+        path: Input `.xlsx` path.
+        output: Optional output path. If omitted, updates `path` in-place.
+
+    Returns:
+        A summary dictionary containing total/per-sheet evaluated counts and errors.
+
+    Note:
+        Until an upstream umya patch lands, formula cached values are written as
+        string-typed payloads in XLSX cell XML. Formula text is preserved.
     """
 
 def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:

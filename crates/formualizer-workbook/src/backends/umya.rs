@@ -2,6 +2,7 @@ use crate::traits::{
     AccessGranularity, BackendCaps, CellData, NamedRange, NamedRangeScope, SheetData,
     SpreadsheetReader, SpreadsheetWriter,
 };
+use chrono::Timelike;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, RangeAddress};
 use formualizer_parse::parser::ReferenceType;
 use parking_lot::RwLock;
@@ -175,6 +176,105 @@ impl UmyaAdapter {
         use std::fs::File;
         let file = File::open(path)?;
         Self::read_table_header_rows_from_reader(file)
+    }
+
+    /// Enumerate all formula cells currently present in the workbook DOM.
+    pub fn formula_cells(&self) -> Vec<(String, u32, u32)> {
+        let mut wb = self.workbook.write();
+        let count = wb.get_sheet_count();
+        let mut out: Vec<(String, u32, u32)> = Vec::new();
+        for i in 0..count {
+            wb.read_sheet(i);
+            let Some(ws) = wb.get_sheet(&i) else {
+                continue;
+            };
+            let sheet_name = ws.get_name().to_string();
+            for cell in ws.get_cell_collection() {
+                if !cell.is_formula() {
+                    continue;
+                }
+                let coord = cell.get_coordinate();
+                out.push((
+                    sheet_name.clone(),
+                    *coord.get_row_num(),
+                    *coord.get_col_num(),
+                ));
+            }
+        }
+        out
+    }
+
+    pub fn set_formula_cached_value(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: &LiteralValue,
+        date_system: formualizer_eval::engine::DateSystem,
+    ) -> Result<(), umya_spreadsheet::XlsxError> {
+        let mut wb = self.workbook.write();
+        wb.read_sheet_by_name(sheet);
+        let ws = wb
+            .get_sheet_by_name_mut(sheet)
+            .ok_or_else(|| umya_spreadsheet::XlsxError::CellError("sheet not found".into()))?;
+
+        let cell = ws.get_cell_mut((col, row));
+        if !cell.is_formula() {
+            return Ok(());
+        }
+
+        let formula_obj = cell.get_formula_obj().cloned();
+        let mut cv = cell.get_cell_value().clone();
+
+        match value {
+            LiteralValue::Empty => {
+                cv.set_blank();
+            }
+            LiteralValue::Int(i) => {
+                cv.set_value_number(*i as f64);
+            }
+            LiteralValue::Number(n) => {
+                cv.set_value_number(*n);
+            }
+            LiteralValue::Boolean(b) => {
+                cv.set_value_bool(*b);
+            }
+            LiteralValue::Text(s) => {
+                cv.set_value_string(s.clone());
+            }
+            LiteralValue::Error(e) => {
+                cv.set_error(e.kind.to_string());
+            }
+            LiteralValue::Date(d) => {
+                let dt = d.and_hms_opt(0, 0, 0).unwrap();
+                let serial =
+                    formualizer_eval::builtins::datetime::datetime_to_serial_for(date_system, &dt);
+                cv.set_value_number(serial);
+            }
+            LiteralValue::DateTime(dt) => {
+                let serial =
+                    formualizer_eval::builtins::datetime::datetime_to_serial_for(date_system, dt);
+                cv.set_value_number(serial);
+            }
+            LiteralValue::Time(t) => {
+                let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
+                cv.set_value_number(serial);
+            }
+            LiteralValue::Duration(d) => {
+                let serial = d.num_seconds() as f64 / 86_400.0;
+                cv.set_value_number(serial);
+            }
+            LiteralValue::Pending | LiteralValue::Array(_) => {
+                cv.set_error(ExcelErrorKind::Value.to_string());
+            }
+        }
+
+        if let Some(formula) = formula_obj {
+            cv.set_formula_obj(formula);
+        }
+
+        cell.set_cell_value(cv);
+        Ok(())
     }
 }
 

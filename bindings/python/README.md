@@ -42,6 +42,22 @@ wb = fz.load_workbook("financial_model.xlsx", strategy="eager_all")
 print(wb.evaluate_cell("Summary", 1, 2))
 ```
 
+### Recalculate XLSX cached values (writeback)
+
+```python
+import formualizer as fz
+
+# in-place
+summary = fz.recalculate_file("financial_model.xlsx")
+print(summary["status"], summary["evaluated"], summary["errors"])
+
+# write to a new file
+summary = fz.recalculate_file("financial_model.xlsx", output="financial_model.recalc.xlsx")
+```
+
+> Current limitation: cached values for formula cells are currently written as
+> string-typed payloads by the underlying umya writer. Formula text is preserved.
+
 ### Parse and analyze formulas
 
 ```python
@@ -65,6 +81,7 @@ print(collect_function_names(ast))           # ['SUMIFS']
 | **Parsing** | Produce a rich AST with reference normalization, source tracking, and 64-bit structural fingerprints |
 | **320+ built-in functions** | Math, text, lookup (XLOOKUP, VLOOKUP), date/time, financial, statistics, database, engineering |
 | **Workbook evaluation** | Set values and formulas, evaluate cells/ranges, load XLSX/CSV/JSON |
+| **XLSX cache writeback** | `recalculate_file(path, output=None)` recalculates formulas and writes cached values back |
 | **Batch operations** | `set_values_batch` / `set_formulas_batch` for efficient bulk updates |
 | **Undo / redo** | Optional changelog with automatic action grouping — single edits are individually undoable |
 | **Evaluation planning** | Inspect the dependency graph and evaluation schedule before computing |
@@ -189,6 +206,7 @@ print(result["final_price"])  # 120.0
 tokenize(formula: str, dialect: FormulaDialect = None) -> Tokenizer
 parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
 load_workbook(path: str, strategy: str = None) -> Workbook
+recalculate_file(path: str, output: str | None = None) -> dict
 ```
 
 ### Core classes

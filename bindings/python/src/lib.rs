@@ -106,6 +106,62 @@ fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<wor
     )
 }
 
+/// Recalculate an XLSX workbook and write formula cached values back to file.
+///
+/// Args:
+///     path: Input `.xlsx` path.
+///     output: Optional output path. If omitted, updates `path` in-place.
+///
+/// Returns:
+///     A summary dictionary containing total/per-sheet evaluated counts and errors.
+///
+/// Note:
+///     Until an upstream umya patch lands, formula cached values are written as
+///     string-typed payloads in XLSX cell XML. Formula text is preserved.
+#[gen_stub_pyfunction(module = "formualizer")]
+#[pyfunction]
+#[pyo3(signature = (path, output=None))]
+fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResult<Py<PyAny>> {
+    let input = std::path::Path::new(path);
+    let output_path = output.map(std::path::Path::new);
+
+    let summary = formualizer::workbook::recalculate_file(input, output_path).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
+    })?;
+
+    let out = pyo3::types::PyDict::new(py);
+    out.set_item("status", summary.status.as_str())?;
+    out.set_item("evaluated", summary.evaluated)?;
+    out.set_item("errors", summary.errors)?;
+    out.set_item("total_formulas", summary.evaluated)?;
+    out.set_item("total_errors", summary.errors)?;
+
+    let sheets = pyo3::types::PyDict::new(py);
+    for (name, stats) in summary.sheets {
+        let s = pyo3::types::PyDict::new(py);
+        s.set_item("evaluated", stats.evaluated)?;
+        s.set_item("errors", stats.errors)?;
+        sheets.set_item(name, s)?;
+    }
+    out.set_item("sheets", sheets)?;
+
+    if !summary.error_summary.is_empty() {
+        let errors = pyo3::types::PyDict::new(py);
+        for (token, info) in summary.error_summary {
+            let e = pyo3::types::PyDict::new(py);
+            e.set_item("count", info.count)?;
+            e.set_item("locations", info.locations)?;
+            if info.locations_truncated > 0 {
+                e.set_item("locations_truncated", info.locations_truncated)?;
+            }
+            errors.set_item(token, e)?;
+        }
+        out.set_item("error_summary", errors)?;
+    }
+
+    Ok(out.into_any().unbind())
+}
+
 /// The main formualizer Python module
 #[pymodule]
 fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -126,6 +182,7 @@ fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(parse, m)?)?;
     m.add_function(wrap_pyfunction!(load_workbook, m)?)?;
+    m.add_function(wrap_pyfunction!(recalculate_file, m)?)?;
 
     // Backward-compatible aliases for older names which started with `Py...`.
     // These are not the preferred API, but keeping them avoids breaking existing callers.
