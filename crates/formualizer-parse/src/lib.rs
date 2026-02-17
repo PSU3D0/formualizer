@@ -11,7 +11,8 @@ pub use parser::{
 };
 pub use pretty::{canonical_formula, pretty_parse_render, pretty_print};
 pub use tokenizer::{
-    Token, TokenSpan, TokenStream, TokenSubType, TokenType, TokenView, Tokenizer, TokenizerError,
+    RecoveryAction, Token, TokenDiagnostic, TokenSpan, TokenStream, TokenSubType, TokenType,
+    TokenView, Tokenizer, TokenizerError,
 };
 pub use types::{FormulaDialect, ParsingError};
 

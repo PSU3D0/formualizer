@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::FormulaDialect;
-    use crate::tokenizer::{Token, TokenSubType, TokenType, Tokenizer};
+    use crate::tokenizer::{
+        RecoveryAction, Token, TokenSpan, TokenStream, TokenSubType, TokenType, Tokenizer,
+    };
     macro_rules! assert_token_types {
         ($actual:expr, $expected:expr) => {
             if $actual.len() != $expected.len() {
@@ -27,6 +29,31 @@ mod tests {
                 }
             }
         };
+    }
+
+    fn assert_full_span_coverage(formula: &str, spans: &[TokenSpan]) {
+        let mut covered = vec![false; formula.len()];
+        let offset = if formula.starts_with('=') { 1 } else { 0 };
+
+        for span in spans {
+            assert!(span.start <= span.end, "invalid span order {:?}", span);
+            assert!(span.end <= formula.len(), "span out of bounds {:?}", span);
+            for idx in span.start..span.end {
+                assert!(!covered[idx], "overlapping spans at {idx}: {:?}", span);
+                covered[idx] = true;
+            }
+        }
+
+        if formula.len() > offset {
+            assert!(
+                covered
+                    .iter()
+                    .enumerate()
+                    .skip(offset)
+                    .all(|(_, covered)| *covered),
+                "non-covered bytes in {formula:?}",
+            );
+        }
     }
 
     #[test]
@@ -1204,5 +1231,239 @@ mod tests {
         assert_eq!(scientific_token.start, 1);
         assert_eq!(scientific_token.end, 9);
         assert_token_substring_matches(formula, scientific_token);
+    }
+
+    #[test]
+    fn test_strict_tokenizer_rejects_unmatched_closer() {
+        let formula = "=A1+)";
+        assert!(Tokenizer::new(formula).is_err());
+        let strict = TokenStream::new(formula);
+        assert!(strict.is_err());
+    }
+
+    #[test]
+    fn test_token_stream_render_preserves_legacy_payload_behavior() {
+        let stream = TokenStream::new("=A1+2").unwrap();
+        assert_eq!(stream.render(), "A1+2");
+        assert_eq!(stream.render_formula(), "=A1+2");
+
+        let literal = TokenStream::new("A1+2").unwrap();
+        assert_eq!(literal.render(), "A1+2");
+        assert_eq!(literal.render_formula(), "A1+2");
+    }
+
+    #[test]
+    fn test_best_effort_unmatched_closer_recovers_span() {
+        let formula = "=A1+)";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+
+        let span = stream.invalid_spans()[0];
+        assert_eq!((span.start, span.end), (4, 5));
+        assert_eq!(stream.diagnostics().len(), 1);
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::SkippedUnmatchedCloser
+        );
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_unmatched_opener_recovers_span() {
+        let formula = "=SUM(A1";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (1, 5));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::UnmatchedOpener
+        );
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_unterminated_string_recovers_span() {
+        let formula = "=\"abc";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (1, 5));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::UnterminatedString
+        );
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_unmatched_bracket_recovers_span() {
+        let formula = "=[A1";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (1, 4));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::UnmatchedBracket
+        );
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_invalid_error_literal_recovers_span() {
+        let formula = "=#BAD";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert!(!stream.invalid_spans().is_empty());
+        assert!(stream.diagnostics()[0].recovery == RecoveryAction::InvalidErrorLiteral);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (1, 5));
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_mismatched_pair_recovers_span() {
+        let formula = "=(1}";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 2);
+        assert_eq!(stream.diagnostics().len(), 2);
+
+        let opener = stream.invalid_spans()[0];
+        assert_eq!((opener.start, opener.end), (1, 2));
+
+        let mismatched = stream.invalid_spans()[1];
+        assert_eq!((mismatched.start, mismatched.end), (3, 4));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::SkippedUnmatchedCloser
+        );
+        assert_eq!(
+            stream.diagnostics()[1].recovery,
+            RecoveryAction::UnmatchedOpener
+        );
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_invalid_error_literal_stops_before_opener() {
+        let formula = "=#BAD(A1)";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+        assert_eq!(stream.diagnostics().len(), 1);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (1, 5));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::InvalidErrorLiteral
+        );
+
+        assert_eq!(stream.spans[1].token_type, TokenType::Paren);
+        assert_eq!(stream.spans[1].subtype, TokenSubType::Open);
+        assert_eq!((stream.spans[1].start, stream.spans[1].end), (5, 6));
+
+        assert_eq!(stream.spans[3].token_type, TokenType::Paren);
+        assert_eq!(stream.spans[3].subtype, TokenSubType::Close);
+        assert_eq!((stream.spans[3].start, stream.spans[3].end), (8, 9));
+
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_mismatched_pair_preserves_stack_for_next_closer() {
+        let formula = "=(1})";
+        let stream = TokenStream::new_best_effort(formula);
+
+        assert!(stream.has_errors());
+        assert_eq!(stream.invalid_spans().len(), 1);
+        assert_eq!(stream.diagnostics().len(), 1);
+
+        let invalid = stream.invalid_spans()[0];
+        assert_eq!((invalid.start, invalid.end), (3, 4));
+        assert_eq!(
+            stream.diagnostics()[0].recovery,
+            RecoveryAction::SkippedUnmatchedCloser
+        );
+
+        let close = stream.spans.last().unwrap();
+        assert_eq!(close.token_type, TokenType::Paren);
+        assert_eq!(close.subtype, TokenSubType::Close);
+        assert_eq!((close.start, close.end), (4, 5));
+
+        assert_eq!(stream.render_formula(), formula);
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_best_effort_full_span_coverage_fuzz() {
+        let alphabet = [
+            '=', '(', ')', '{', '}', '[', ']', '!', '#', '+', '-', '*', '/', '^', '&', '<', '>',
+            '=', ',', ';', ',', 'A', '1', '.', '"', '\'', '\n', ' ', 'X', 'Y', 'Z', '0', '2', '3',
+        ];
+        let mut state = 0x1234_u64;
+
+        for _case_idx in 0..512 {
+            state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            let len = ((state % 32) + 1) as usize;
+
+            let mut formula = String::with_capacity(len);
+            let mut local = state;
+            for _ in 0..len {
+                local = local.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                let ch = alphabet[(local as usize) % alphabet.len()];
+                formula.push(ch);
+            }
+
+            let stream = TokenStream::new_best_effort(&formula);
+            assert_eq!(stream.render_formula(), formula);
+            assert_full_span_coverage(&formula, &stream.spans);
+
+            if stream.diagnostics_ref().is_empty() {
+                // Ensure no invalid spans are emitted on a diagnostic-free stream.
+                assert!(stream.invalid_spans().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn test_best_effort_tokenizer_api_matches_stream() {
+        let formula = "=A1+";
+
+        let stream = TokenStream::new_best_effort(formula);
+        let tokenizer = Tokenizer::new_best_effort(formula);
+
+        assert_eq!(tokenizer.items.len(), stream.spans.len());
+        for (token, span) in tokenizer.items.iter().zip(&stream.spans) {
+            assert_eq!(token.start, span.start);
+            assert_eq!(token.end, span.end);
+            assert_eq!(token.value, &stream.source()[span.start..span.end]);
+            assert_eq!(token.token_type, span.token_type);
+            assert_eq!(token.subtype, span.subtype);
+        }
     }
 }

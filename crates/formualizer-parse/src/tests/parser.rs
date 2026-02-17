@@ -30,6 +30,14 @@ mod tests {
     }
 
     #[test]
+    fn parser_rejects_best_effort_invalid_spans() {
+        let tokenizer = Tokenizer::new_best_effort("=A1+)");
+        let mut parser = Parser::new(tokenizer.items, false);
+        let err = parser.parse().unwrap_err();
+        assert!(err.message.contains("Unexpected"));
+    }
+
+    #[test]
     fn parser_try_from_formula_is_fallible() {
         let err = match Parser::try_from_formula("=\"unterminated") {
             Ok(_) => panic!("expected tokenizer error"),
