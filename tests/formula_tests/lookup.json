@@ -47,16 +47,40 @@
       "description": "row function"
     },
     {
+      "formula": "=ROW(A:A)",
+      "result": 1,
+      "result_type": "int",
+      "description": "row full-column reference"
+    },
+    {
       "formula": "=COLUMN(E1)",
       "result": 5,
       "result_type": "int",
       "description": "column function"
     },
     {
+      "formula": "=COLUMN(1:1)",
+      "result": 1,
+      "result_type": "int",
+      "description": "column full-row reference"
+    },
+    {
+      "formula": "=ROWS(A:A)",
+      "result": 1048576,
+      "result_type": "int",
+      "description": "rows full-column count"
+    },
+    {
       "formula": "=ROWS({1,2,3;4,5,6})",
       "result": 2,
       "result_type": "int",
       "description": "rows count"
+    },
+    {
+      "formula": "=COLUMNS(1:1)",
+      "result": 16384,
+      "result_type": "int",
+      "description": "columns full-row count"
     },
     {
       "formula": "=COLUMNS({1,2,3;4,5,6})",

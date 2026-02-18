@@ -250,6 +250,141 @@ fn named_range_descriptor_uses_arrow_cells_and_updates_on_cell_edits() {
 }
 
 #[test]
+fn column_named_range_uses_range_anchor_column_and_tracks_updates() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    let sid = engine.sheet_id("Sheet1").unwrap();
+    let start = CellRef::new(sid, Coord::from_excel(2, 4, true, true)); // D2
+    let end = CellRef::new(sid, Coord::from_excel(5, 6, true, true)); // F5
+    engine
+        .define_name(
+            "MyRange",
+            NamedDefinition::Range(RangeRef::new(start, end)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=COLUMN(MyRange)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Int(v)) => assert_eq!(v, 4),
+        Some(LiteralValue::Number(v)) => assert!((v - 4.0).abs() < 1e-9),
+        other => panic!("expected column index 4 from named range anchor, got {other:?}"),
+    }
+
+    // Move the named range anchor to column F and ensure dependent formulas update.
+    let start2 = CellRef::new(sid, Coord::from_excel(10, 6, true, true)); // F10
+    let end2 = CellRef::new(sid, Coord::from_excel(12, 8, true, true)); // H12
+    engine
+        .update_name(
+            "MyRange",
+            NamedDefinition::Range(RangeRef::new(start2, end2)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Int(v)) => assert_eq!(v, 6),
+        Some(LiteralValue::Number(v)) => assert!((v - 6.0).abs() < 1e-9),
+        other => panic!("expected column index 6 after name update, got {other:?}"),
+    }
+}
+
+#[test]
+fn row_and_columns_named_range_track_anchor_and_width_updates() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    let sid = engine.sheet_id("Sheet1").unwrap();
+    let start = CellRef::new(sid, Coord::from_excel(2, 4, true, true)); // D2
+    let end = CellRef::new(sid, Coord::from_excel(5, 6, true, true)); // F5 (3 columns)
+    engine
+        .define_name(
+            "RangeRC",
+            NamedDefinition::Range(RangeRef::new(start, end)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=ROW(RangeRC)").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=COLUMNS(RangeRC)").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Int(v)) => assert_eq!(v, 2),
+        Some(LiteralValue::Number(v)) => assert!((v - 2.0).abs() < 1e-9),
+        other => panic!("expected row index 2 from named range anchor, got {other:?}"),
+    }
+    match engine.get_cell_value("Sheet1", 1, 2) {
+        Some(LiteralValue::Int(v)) => assert_eq!(v, 3),
+        Some(LiteralValue::Number(v)) => assert!((v - 3.0).abs() < 1e-9),
+        other => panic!("expected width 3 from named range, got {other:?}"),
+    }
+
+    // Move anchor row and change width to verify both values update.
+    let start2 = CellRef::new(sid, Coord::from_excel(10, 6, true, true)); // F10
+    let end2 = CellRef::new(sid, Coord::from_excel(12, 10, true, true)); // J12 (5 columns)
+    engine
+        .update_name(
+            "RangeRC",
+            NamedDefinition::Range(RangeRef::new(start2, end2)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Int(v)) => assert_eq!(v, 10),
+        Some(LiteralValue::Number(v)) => assert!((v - 10.0).abs() < 1e-9),
+        other => panic!("expected row index 10 after name update, got {other:?}"),
+    }
+    match engine.get_cell_value("Sheet1", 1, 2) {
+        Some(LiteralValue::Int(v)) => assert_eq!(v, 5),
+        Some(LiteralValue::Number(v)) => assert!((v - 5.0).abs() < 1e-9),
+        other => panic!("expected width 5 after name update, got {other:?}"),
+    }
+}
+
+#[test]
+fn rows_full_column_reference_returns_excel_sheet_height() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=ROWS(A:A)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Int(v)) => assert_eq!(v, 1_048_576),
+        Some(LiteralValue::Number(v)) => assert!((v - 1_048_576.0).abs() < 1e-9),
+        other => panic!("expected 1048576 rows for full-column reference, got {other:?}"),
+    }
+}
+
+#[test]
+fn columns_full_row_reference_returns_excel_sheet_width() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=COLUMNS(1:1)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Int(v)) => assert_eq!(v, 16_384),
+        Some(LiteralValue::Number(v)) => assert!((v - 16_384.0).abs() < 1e-9),
+        other => panic!("expected 16384 columns for full-row reference, got {other:?}"),
+    }
+}
+
+#[test]
 fn removing_referenced_sheet_yields_ref_for_name_and_dependents() {
     let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
 

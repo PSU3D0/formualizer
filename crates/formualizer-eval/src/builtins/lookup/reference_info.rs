@@ -55,10 +55,10 @@ impl Function for RowFn {
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.is_empty() {
-            // Return current cell's row if available
+            // Return current cell's row (1-based) if available
             if let Some(cell_ref) = ctx.current_cell() {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
-                    cell_ref.coord.row() as i64,
+                    cell_ref.coord.row() as i64 + 1,
                 )));
             }
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -72,22 +72,37 @@ impl Function for RowFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
-        // Extract row number from reference
-        let row = match &reference {
-            ReferenceType::Cell { row, .. } => *row,
+        // Extract row number from reference (1-based)
+        let row_1based = match &reference {
+            ReferenceType::Cell { row, .. } => *row as i64,
             ReferenceType::Range {
                 start_row: Some(sr),
                 ..
-            } => *sr,
-            _ => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Ref),
-                )));
-            }
+            } => *sr as i64,
+            // Full-column references like A:A use first row
+            ReferenceType::Range {
+                start_row: None,
+                end_row: None,
+                ..
+            } => 1,
+            // Fallback: resolve the reference and use the view origin
+            _ => match ctx.resolve_range_view(&reference, ctx.current_sheet()) {
+                Ok(view) => {
+                    if view.is_empty() {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Ref),
+                        )));
+                    }
+                    view.start_row() as i64 + 1
+                }
+                Err(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+            },
         };
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
-            row as i64,
+            row_1based,
         )))
     }
 }
@@ -129,8 +144,10 @@ impl Function for RowsFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        const EXCEL_MAX_ROWS: i64 = 1_048_576;
+
         if args.is_empty() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
@@ -153,11 +170,31 @@ impl Function for RowsFn {
                         1
                     }
                 }
-                _ => {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new(ExcelErrorKind::Ref),
-                    )));
-                }
+                // Full-column references like A:A
+                ReferenceType::Range {
+                    start_row: None,
+                    end_row: None,
+                    ..
+                } => EXCEL_MAX_ROWS,
+                // Open-ended tail like A5:A
+                ReferenceType::Range {
+                    start_row: Some(sr),
+                    end_row: None,
+                    ..
+                } => EXCEL_MAX_ROWS.saturating_sub(*sr as i64).saturating_add(1),
+                // Open-ended head like A:A10 (treated as A1:A10)
+                ReferenceType::Range {
+                    start_row: None,
+                    end_row: Some(er),
+                    ..
+                } => *er as i64,
+                // Fallback for named ranges, table refs, etc.
+                _ => match ctx.resolve_range_view(&reference, ctx.current_sheet()) {
+                    Ok(view) => view.dims().0 as i64,
+                    Err(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                },
             };
             Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(rows)))
         } else {
@@ -212,10 +249,10 @@ impl Function for ColumnFn {
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.is_empty() {
-            // Return current cell's column if available
+            // Return current cell's column (1-based) if available
             if let Some(cell_ref) = ctx.current_cell() {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
-                    cell_ref.coord.col() as i64,
+                    cell_ref.coord.col() as i64 + 1,
                 )));
             }
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -229,22 +266,37 @@ impl Function for ColumnFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
-        // Extract column number from reference
-        let col = match &reference {
-            ReferenceType::Cell { col, .. } => *col,
+        // Extract column number from reference (1-based)
+        let col_1based = match &reference {
+            ReferenceType::Cell { col, .. } => *col as i64,
             ReferenceType::Range {
                 start_col: Some(sc),
                 ..
-            } => *sc,
-            _ => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Ref),
-                )));
-            }
+            } => *sc as i64,
+            // Full-row references like 1:1 use first column
+            ReferenceType::Range {
+                start_col: None,
+                end_col: None,
+                ..
+            } => 1,
+            // Fallback: resolve the reference and use the view origin
+            _ => match ctx.resolve_range_view(&reference, ctx.current_sheet()) {
+                Ok(view) => {
+                    if view.is_empty() {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new(ExcelErrorKind::Ref),
+                        )));
+                    }
+                    view.start_col() as i64 + 1
+                }
+                Err(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+            },
         };
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
-            col as i64,
+            col_1based,
         )))
     }
 }
@@ -286,8 +338,10 @@ impl Function for ColumnsFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        const EXCEL_MAX_COLS: i64 = 16_384;
+
         if args.is_empty() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
@@ -310,11 +364,31 @@ impl Function for ColumnsFn {
                         1
                     }
                 }
-                _ => {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new(ExcelErrorKind::Ref),
-                    )));
-                }
+                // Full-row references like 1:1
+                ReferenceType::Range {
+                    start_col: None,
+                    end_col: None,
+                    ..
+                } => EXCEL_MAX_COLS,
+                // Open-ended tail where start_col is known and end_col is omitted
+                ReferenceType::Range {
+                    start_col: Some(sc),
+                    end_col: None,
+                    ..
+                } => EXCEL_MAX_COLS.saturating_sub(*sc as i64).saturating_add(1),
+                // Open-ended head like :F (or equivalent parsed form)
+                ReferenceType::Range {
+                    start_col: None,
+                    end_col: Some(ec),
+                    ..
+                } => *ec as i64,
+                // Fallback for named ranges, table refs, etc.
+                _ => match ctx.resolve_range_view(&reference, ctx.current_sheet()) {
+                    Ok(view) => view.dims().1 as i64,
+                    Err(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                },
             };
             Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(cols)))
         } else {
@@ -333,6 +407,7 @@ impl Function for ColumnsFn {
 mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
+    use crate::{CellRef, Coord};
     use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
     use std::sync::Arc;
 
@@ -373,6 +448,67 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(result2, LiteralValue::Int(1));
+    }
+
+    #[test]
+    fn row_no_arg_uses_current_cell_1_based() {
+        let wb = TestWorkbook::new().with_function(Arc::new(RowFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "ROW").unwrap();
+
+        let current = CellRef::new(0, Coord::from_excel(7, 4, false, false));
+        let result = f
+            .dispatch(&[], &ctx.function_context(Some(&current)))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(7));
+    }
+
+    #[test]
+    fn row_full_column_reference_returns_first_row() {
+        let wb = TestWorkbook::new().with_function(Arc::new(RowFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "ROW").unwrap();
+
+        // ROW(A:A) -> 1
+        let col_range_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A:A".into(),
+                reference: ReferenceType::range(None, None, Some(1), None, Some(1)),
+            },
+            None,
+        );
+
+        let args = vec![ArgumentHandle::new(&col_range_ref, &ctx)];
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(1));
+    }
+
+    #[test]
+    fn row_named_range_falls_back_to_resolved_range_view() {
+        let wb = TestWorkbook::new()
+            .with_named_range("MyRow", vec![vec![LiteralValue::Int(42)]])
+            .with_function(Arc::new(RowFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "ROW").unwrap();
+
+        let named_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "MyRow".into(),
+                reference: ReferenceType::NamedRange("MyRow".into()),
+            },
+            None,
+        );
+
+        let args = vec![ArgumentHandle::new(&named_ref, &ctx)];
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(1));
     }
 
     #[test]
@@ -431,6 +567,60 @@ mod tests {
     }
 
     #[test]
+    fn rows_full_column_reference_returns_sheet_height() {
+        let wb = TestWorkbook::new().with_function(Arc::new(RowsFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "ROWS").unwrap();
+
+        // ROWS(A:A) -> 1048576
+        let col_range_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A:A".into(),
+                reference: ReferenceType::range(None, None, Some(1), None, Some(1)),
+            },
+            None,
+        );
+
+        let args = vec![ArgumentHandle::new(&col_range_ref, &ctx)];
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(1_048_576));
+    }
+
+    #[test]
+    fn rows_named_range_falls_back_to_resolved_range_view() {
+        let wb = TestWorkbook::new()
+            .with_named_range(
+                "MyRows",
+                vec![
+                    vec![LiteralValue::Int(1)],
+                    vec![LiteralValue::Int(2)],
+                    vec![LiteralValue::Int(3)],
+                ],
+            )
+            .with_function(Arc::new(RowsFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "ROWS").unwrap();
+
+        let named_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "MyRows".into(),
+                reference: ReferenceType::NamedRange("MyRows".into()),
+            },
+            None,
+        );
+
+        let args = vec![ArgumentHandle::new(&named_ref, &ctx)];
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(3));
+    }
+
+    #[test]
     fn column_with_reference() {
         let wb = TestWorkbook::new().with_function(Arc::new(ColumnFn));
         let ctx = wb.interpreter();
@@ -467,6 +657,67 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(result2, LiteralValue::Int(2));
+    }
+
+    #[test]
+    fn column_no_arg_uses_current_cell_1_based() {
+        let wb = TestWorkbook::new().with_function(Arc::new(ColumnFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "COLUMN").unwrap();
+
+        let current = CellRef::new(0, Coord::from_excel(7, 4, false, false));
+        let result = f
+            .dispatch(&[], &ctx.function_context(Some(&current)))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(4));
+    }
+
+    #[test]
+    fn column_full_row_reference_returns_first_column() {
+        let wb = TestWorkbook::new().with_function(Arc::new(ColumnFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "COLUMN").unwrap();
+
+        // COLUMN(5:5) -> 1
+        let row_range_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "5:5".into(),
+                reference: ReferenceType::range(None, Some(5), None, Some(5), None),
+            },
+            None,
+        );
+
+        let args = vec![ArgumentHandle::new(&row_range_ref, &ctx)];
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(1));
+    }
+
+    #[test]
+    fn column_named_range_falls_back_to_resolved_range_view() {
+        let wb = TestWorkbook::new()
+            .with_named_range("MyRange", vec![vec![LiteralValue::Int(42)]])
+            .with_function(Arc::new(ColumnFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "COLUMN").unwrap();
+
+        let named_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "MyRange".into(),
+                reference: ReferenceType::NamedRange("MyRange".into()),
+            },
+            None,
+        );
+
+        let args = vec![ArgumentHandle::new(&named_ref, &ctx)];
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(1));
     }
 
     #[test]
@@ -522,6 +773,67 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(result3, LiteralValue::Int(1));
+    }
+
+    #[test]
+    fn columns_full_row_reference_returns_sheet_width() {
+        let wb = TestWorkbook::new().with_function(Arc::new(ColumnsFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "COLUMNS").unwrap();
+
+        // COLUMNS(1:1) -> 16384
+        let row_range_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "1:1".into(),
+                reference: ReferenceType::range(None, Some(1), None, Some(1), None),
+            },
+            None,
+        );
+
+        let args = vec![ArgumentHandle::new(&row_range_ref, &ctx)];
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(16_384));
+    }
+
+    #[test]
+    fn columns_named_range_falls_back_to_resolved_range_view() {
+        let wb = TestWorkbook::new()
+            .with_named_range(
+                "MyCols",
+                vec![
+                    vec![
+                        LiteralValue::Int(1),
+                        LiteralValue::Int(2),
+                        LiteralValue::Int(3),
+                    ],
+                    vec![
+                        LiteralValue::Int(4),
+                        LiteralValue::Int(5),
+                        LiteralValue::Int(6),
+                    ],
+                ],
+            )
+            .with_function(Arc::new(ColumnsFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "COLUMNS").unwrap();
+
+        let named_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "MyCols".into(),
+                reference: ReferenceType::NamedRange("MyCols".into()),
+            },
+            None,
+        );
+
+        let args = vec![ArgumentHandle::new(&named_ref, &ctx)];
+        let result = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(3));
     }
 
     #[test]
