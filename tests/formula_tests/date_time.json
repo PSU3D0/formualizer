@@ -60,8 +60,8 @@
     },
     {
       "formula": "=DAYS(DATE(2024,12,31),DATE(2024,1,1))",
-      "result": "#NAME?",
-      "result_type": "str",
+      "result": 365,
+      "result_type": "int",
       "description": "days between"
     },
     {

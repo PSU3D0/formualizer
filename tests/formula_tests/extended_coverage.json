@@ -354,20 +354,20 @@
     },
     {
       "formula": "=MROUND(10,3)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 9,
+      "result_type": "int",
       "description": "mround to nearest multiple"
     },
     {
       "formula": "=MROUND(1.3,0.2)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 1.4,
+      "result_type": "float",
       "description": "mround decimal multiple"
     },
     {
       "formula": "=MROUND(-10,-3)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": -9,
+      "result_type": "int",
       "description": "mround negative"
     },
     {
@@ -420,14 +420,14 @@
     },
     {
       "formula": "=SUMSQ(1,2,3)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 14,
+      "result_type": "int",
       "description": "sumsq basic"
     },
     {
       "formula": "=SUMSQ({1,2,3,4})",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 30,
+      "result_type": "int",
       "description": "sumsq array"
     },
     {
@@ -702,50 +702,50 @@
     },
     {
       "formula": "=DAYS(45000, 44000)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 1000,
+      "result_type": "int",
       "description": "days between dates"
     },
     {
       "formula": "=DAYS(44000, 45000)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": -1000,
+      "result_type": "int",
       "description": "days negative"
     },
     {
       "formula": "=DAYS360(44927, 45292)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 360,
+      "result_type": "int",
       "description": "days360 US method one year"
     },
     {
       "formula": "=DAYS360(44927, 45292, TRUE)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 360,
+      "result_type": "int",
       "description": "days360 European method"
     },
     {
       "formula": "=YEARFRAC(44927, 45292, 0)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 1,
+      "result_type": "int",
       "description": "yearfrac 30/360 US one year"
     },
     {
       "formula": "=YEARFRAC(44927, 45292, 3)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 1,
+      "result_type": "int",
       "description": "yearfrac actual/365"
     },
     {
       "formula": "=ISOWEEKNUM(44927)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 52,
+      "result_type": "int",
       "description": "isoweeknum 2023-01-01"
     },
     {
       "formula": "=ISOWEEKNUM(44934)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 1,
+      "result_type": "int",
       "description": "isoweeknum 2023-01-08 (week 1)"
     },
     {
@@ -780,38 +780,38 @@
     },
     {
       "formula": "=ROMAN(499)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": "CDXCIX",
+      "result_type": "str",
       "description": "roman 499"
     },
     {
       "formula": "=ROMAN(2023)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": "MMXXIII",
+      "result_type": "str",
       "description": "roman 2023"
     },
     {
       "formula": "=ROMAN(0)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": "",
+      "result_type": "str",
       "description": "roman 0 is empty"
     },
     {
       "formula": "=ARABIC(\"MMXXIII\")",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 2023,
+      "result_type": "int",
       "description": "arabic MMXXIII"
     },
     {
       "formula": "=ARABIC(\"CDXCIX\")",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 499,
+      "result_type": "int",
       "description": "arabic CDXCIX"
     },
     {
       "formula": "=ARABIC(\"XIV\")",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 14,
+      "result_type": "int",
       "description": "arabic XIV"
     },
     {
