@@ -16,7 +16,6 @@ use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::ArgKind;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
-use formualizer_parse::parser::ReferenceType;
 
 fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32) -> Option<usize> {
     if mode == 0 || slice.is_empty() {
@@ -371,32 +370,15 @@ impl Function for VLookupFn {
         };
         // Handle both cell references and array literals
         if let Some(table_ref) = table_ref_opt {
-            let (sheet, sr, sc, er, ec) = match &table_ref {
-                ReferenceType::Range {
-                    sheet,
-                    start_row: Some(sr),
-                    start_col: Some(sc),
-                    end_row: Some(er),
-                    end_col: Some(ec),
-                    ..
-                } => (sheet.clone(), *sr, *sc, *er, *ec),
-                _ => {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new(ExcelErrorKind::Ref),
-                    )));
-                }
-            };
             let current_sheet = ctx.current_sheet();
-            let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-            let width = ec - sc + 1;
-            if col_index as u32 > width {
+            let rv = ctx.resolve_range_view(&table_ref, current_sheet)?;
+            let (rows, cols) = rv.dims();
+            if col_index as usize > cols {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Ref),
                 )));
             }
 
-            let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
-            let rows = rv.dims().0;
             let first_col_view = rv.sub_view(0, 0, rows, 1);
             let row_idx_opt = if !approximate {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
@@ -587,35 +569,17 @@ impl Function for HLookupFn {
         };
         // Handle both cell references and array literals
         if let Some(table_ref) = table_ref_opt {
-            let (sheet, sr, sc, er, ec) = match &table_ref {
-                ReferenceType::Range {
-                    sheet,
-                    start_row: Some(sr),
-                    start_col: Some(sc),
-                    end_row: Some(er),
-                    end_col: Some(ec),
-                    ..
-                } => (sheet.clone(), *sr, *sc, *er, *ec),
-                _ => {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new(ExcelErrorKind::Ref),
-                    )));
-                }
-            };
             let current_sheet = ctx.current_sheet();
-            let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-            let height = er - sr + 1;
-            let width = ec - sc + 1;
-            if row_index as u32 > height {
+            let rv = ctx.resolve_range_view(&table_ref, current_sheet)?;
+            let (rows, cols) = rv.dims();
+            if row_index as usize > rows {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Ref),
                 )));
             }
-            let rv = ctx.resolve_range_view(&table_ref, sheet_name)?;
-            let cols = rv.dims().1;
             let first_row_view = rv.sub_view(0, 0, 1, cols);
             let col_idx_opt = if approximate {
-                let mut first_row: Vec<LiteralValue> = Vec::with_capacity(width as usize);
+                let mut first_row: Vec<LiteralValue> = Vec::with_capacity(cols);
                 first_row_view.for_each_row(&mut |row| {
                     if first_row.is_empty() {
                         first_row.extend_from_slice(row);
@@ -938,6 +902,45 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(v, LiteralValue::Number(200.0));
+    }
+
+    #[test]
+    fn vlookup_named_range_reference() {
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(VLookupFn))
+            .with_named_range(
+                "Split",
+                vec![
+                    vec![
+                        LiteralValue::Text("Professional".into()),
+                        LiteralValue::Int(123),
+                    ],
+                    vec![LiteralValue::Text("Support".into()), LiteralValue::Int(77)],
+                ],
+            );
+        let ctx = wb.interpreter();
+        let table = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "Split".into(),
+                reference: ReferenceType::NamedRange("Split".into()),
+            },
+            None,
+        );
+        let f = ctx.context.get_function("", "VLOOKUP").unwrap();
+        let key = lit(LiteralValue::Text("Professional".into()));
+        let two = lit(LiteralValue::Int(2));
+        let false_lit = lit(LiteralValue::Boolean(false));
+        let args = vec![
+            ArgumentHandle::new(&key, &ctx),
+            ArgumentHandle::new(&table, &ctx),
+            ArgumentHandle::new(&two, &ctx),
+            ArgumentHandle::new(&false_lit, &ctx),
+        ];
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(v, LiteralValue::Number(123.0));
     }
 
     #[test]

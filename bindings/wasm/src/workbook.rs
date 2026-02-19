@@ -199,6 +199,113 @@ impl Workbook {
         arr
     }
 
+    #[wasm_bindgen(js_name = "getNamedRanges")]
+    pub fn get_named_ranges(&self, sheet: Option<String>) -> Result<js_sys::Array, JsValue> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        let engine = wb.engine();
+
+        let entries = if let Some(sheet_name) = sheet.as_deref() {
+            let sheet_id = engine
+                .sheet_id(sheet_name)
+                .ok_or_else(|| js_error(format!("Sheet not found: {sheet_name}")))?;
+            engine.named_ranges_snapshot_for_sheet(sheet_id)
+        } else {
+            engine.named_ranges_snapshot()
+        };
+
+        let out = js_sys::Array::new();
+        for entry in entries {
+            let obj = js_sys::Object::new();
+            set(&obj, "name", JsValue::from_str(&entry.name))?;
+
+            match entry.scope {
+                formualizer::eval::engine::named_range::NameScope::Workbook => {
+                    set(&obj, "scope", JsValue::from_str("workbook"))?;
+                    set(&obj, "scope_sheet", JsValue::NULL)?;
+                }
+                formualizer::eval::engine::named_range::NameScope::Sheet(sheet_id) => {
+                    set(&obj, "scope", JsValue::from_str("sheet"))?;
+                    set(
+                        &obj,
+                        "scope_sheet",
+                        JsValue::from_str(engine.sheet_name(sheet_id)),
+                    )?;
+                }
+            }
+
+            match entry.definition {
+                formualizer::eval::engine::named_range::NamedDefinition::Cell(cell) => {
+                    set(&obj, "kind", JsValue::from_str("cell"))?;
+                    set(
+                        &obj,
+                        "sheet",
+                        JsValue::from_str(engine.sheet_name(cell.sheet_id)),
+                    )?;
+                    let row = cell.coord.row() + 1;
+                    let col = cell.coord.col() + 1;
+                    set(&obj, "start_row", JsValue::from_f64(row as f64))?;
+                    set(&obj, "start_col", JsValue::from_f64(col as f64))?;
+                    set(&obj, "end_row", JsValue::from_f64(row as f64))?;
+                    set(&obj, "end_col", JsValue::from_f64(col as f64))?;
+                }
+                formualizer::eval::engine::named_range::NamedDefinition::Range(range) => {
+                    set(&obj, "kind", JsValue::from_str("range"))?;
+                    set(
+                        &obj,
+                        "start_sheet",
+                        JsValue::from_str(engine.sheet_name(range.start.sheet_id)),
+                    )?;
+                    set(
+                        &obj,
+                        "end_sheet",
+                        JsValue::from_str(engine.sheet_name(range.end.sheet_id)),
+                    )?;
+                    set(
+                        &obj,
+                        "start_row",
+                        JsValue::from_f64((range.start.coord.row() + 1) as f64),
+                    )?;
+                    set(
+                        &obj,
+                        "start_col",
+                        JsValue::from_f64((range.start.coord.col() + 1) as f64),
+                    )?;
+                    set(
+                        &obj,
+                        "end_row",
+                        JsValue::from_f64((range.end.coord.row() + 1) as f64),
+                    )?;
+                    set(
+                        &obj,
+                        "end_col",
+                        JsValue::from_f64((range.end.coord.col() + 1) as f64),
+                    )?;
+                    if range.start.sheet_id == range.end.sheet_id {
+                        set(
+                            &obj,
+                            "sheet",
+                            JsValue::from_str(engine.sheet_name(range.start.sheet_id)),
+                        )?;
+                    }
+                }
+                formualizer::eval::engine::named_range::NamedDefinition::Literal(value) => {
+                    set(&obj, "kind", JsValue::from_str("literal"))?;
+                    set(&obj, "value", literal_to_js(value))?;
+                }
+                formualizer::eval::engine::named_range::NamedDefinition::Formula { .. } => {
+                    set(&obj, "kind", JsValue::from_str("formula"))?;
+                }
+            }
+
+            out.push(&obj);
+        }
+
+        Ok(out)
+    }
+
     /// Get a sheet facade by name (creates if missing)
     #[wasm_bindgen(js_name = "sheet")]
     pub fn sheet(&self, name: String) -> Result<Sheet, JsValue> {

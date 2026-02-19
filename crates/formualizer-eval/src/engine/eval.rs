@@ -1083,6 +1083,53 @@ where
         self.graph.resolve_name_entry(name, current_sheet)
     }
 
+    pub fn named_ranges_snapshot(&self) -> Vec<crate::engine::named_range::NamedRangeSnapshot> {
+        let mut out: Vec<crate::engine::named_range::NamedRangeSnapshot> = Vec::new();
+
+        for (name, named) in self.graph.named_ranges_iter() {
+            out.push(crate::engine::named_range::NamedRangeSnapshot {
+                name: name.clone(),
+                scope: NameScope::Workbook,
+                definition: named.definition.clone(),
+            });
+        }
+
+        for ((sheet_id, name), named) in self.graph.sheet_named_ranges_iter() {
+            out.push(crate::engine::named_range::NamedRangeSnapshot {
+                name: name.clone(),
+                scope: NameScope::Sheet(*sheet_id),
+                definition: named.definition.clone(),
+            });
+        }
+
+        out.sort_by(|a, b| {
+            let a_scope = match a.scope {
+                NameScope::Workbook => (0u8, 0u32),
+                NameScope::Sheet(id) => (1u8, u32::from(id)),
+            };
+            let b_scope = match b.scope {
+                NameScope::Workbook => (0u8, 0u32),
+                NameScope::Sheet(id) => (1u8, u32::from(id)),
+            };
+            a_scope.cmp(&b_scope).then_with(|| a.name.cmp(&b.name))
+        });
+
+        out
+    }
+
+    pub fn named_ranges_snapshot_for_sheet(
+        &self,
+        sheet_id: SheetId,
+    ) -> Vec<crate::engine::named_range::NamedRangeSnapshot> {
+        self.named_ranges_snapshot()
+            .into_iter()
+            .filter(|entry| match entry.scope {
+                NameScope::Workbook => true,
+                NameScope::Sheet(id) => id == sheet_id,
+            })
+            .collect()
+    }
+
     pub fn define_name(
         &mut self,
         name: &str,

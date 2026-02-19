@@ -33,6 +33,9 @@ pub struct UmyaAdapter {
 }
 
 impl UmyaAdapter {
+    const EXCEL_MAX_ROWS: u32 = 1_048_576;
+    const EXCEL_MAX_COLS: u32 = 16_384;
+
     fn extract_attr(tag: &str, key: &str) -> Option<String> {
         let needle_dq = format!("{key}=\"");
         if let Some(pos) = tag.find(&needle_dq) {
@@ -67,6 +70,52 @@ impl UmyaAdapter {
             Some(v) => v.parse::<u32>().ok().map(|n| n != 0).unwrap_or(true),
         };
         Some((name, header_row))
+    }
+
+    fn normalize_open_ended_bounds(
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+    ) -> Option<(u32, u32, u32, u32)> {
+        let mut sr = start_row;
+        let mut sc = start_col;
+        let mut er = end_row;
+        let mut ec = end_col;
+
+        if sr.is_none() && er.is_none() {
+            sr = Some(1);
+            er = Some(Self::EXCEL_MAX_ROWS);
+        }
+        if sc.is_none() && ec.is_none() {
+            sc = Some(1);
+            ec = Some(Self::EXCEL_MAX_COLS);
+        }
+
+        if sr.is_some() && er.is_none() {
+            er = Some(Self::EXCEL_MAX_ROWS);
+        }
+        if er.is_some() && sr.is_none() {
+            sr = Some(1);
+        }
+
+        if sc.is_some() && ec.is_none() {
+            ec = Some(Self::EXCEL_MAX_COLS);
+        }
+        if ec.is_some() && sc.is_none() {
+            sc = Some(1);
+        }
+
+        let sr = sr?;
+        let sc = sc?;
+        let er = er?;
+        let ec = ec?;
+
+        if er < sr || ec < sc {
+            return None;
+        }
+
+        Some((sr, sc, er, ec))
     }
 
     fn read_table_header_rows_from_reader<R: Read + Seek>(
@@ -761,10 +810,8 @@ impl UmyaAdapter {
                 end_col,
                 ..
             } => {
-                let sr = start_row?;
-                let sc = start_col?;
-                let er = end_row.unwrap_or(sr);
-                let ec = end_col.unwrap_or(sc);
+                let (sr, sc, er, ec) =
+                    Self::normalize_open_ended_bounds(start_row, start_col, end_row, end_col)?;
                 let sheet = sheet.or_else(|| base_sheet.map(|s| s.to_string()))?;
                 (sheet, sr, sc, er, ec)
             }
@@ -865,10 +912,8 @@ impl UmyaAdapter {
                 end_col,
                 ..
             } => {
-                let sr = start_row?;
-                let sc = start_col?;
-                let er = end_row.unwrap_or(sr);
-                let ec = end_col.unwrap_or(sc);
+                let (sr, sc, er, ec) =
+                    Self::normalize_open_ended_bounds(start_row, start_col, end_row, end_col)?;
                 let sheet = sheet.unwrap_or_else(|| current_sheet.to_string());
                 (sheet, sr, sc, er, ec)
             }

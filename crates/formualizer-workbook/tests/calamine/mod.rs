@@ -17,4 +17,6 @@ mod it;
 #[cfg(feature = "calamine")]
 mod large;
 #[cfg(feature = "calamine")]
+mod named_ranges;
+#[cfg(feature = "calamine")]
 mod offsets;

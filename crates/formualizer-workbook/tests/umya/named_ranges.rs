@@ -156,6 +156,66 @@ fn umya_named_range_loader_evaluates() {
 }
 
 #[test]
+fn umya_imports_open_ended_column_named_ranges() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let path = tmp.path().join("named_range_open_ended.xlsx");
+
+    let mut book = umya_spreadsheet::new_file();
+    let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("default sheet");
+
+    // Lookup table in A:B
+    sheet1.get_cell_mut((1, 1)).set_value("Professional");
+    sheet1.get_cell_mut((2, 1)).set_value_number(123.0);
+
+    // Workbook named range with open-ended rows.
+    sheet1
+        .add_defined_name("Split", "Sheet1!$A:$B")
+        .expect("add split name");
+
+    // Lookup formula that relies on named range import.
+    sheet1
+        .get_cell_mut((3, 1))
+        .set_formula("=VLOOKUP(\"Professional\", Split, 2, FALSE())");
+
+    umya_spreadsheet::writer::xlsx::write(&book, &path).expect("write workbook");
+
+    let backend = UmyaAdapter::open_path(&path).expect("open workbook");
+    let mut workbook = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load workbook");
+
+    let split_addr = workbook
+        .named_range_address("Split")
+        .expect("split named range imported");
+    assert_eq!(split_addr.sheet, "Sheet1");
+    assert_eq!(split_addr.start_row, 1);
+    assert_eq!(split_addr.start_col, 1);
+    assert_eq!(split_addr.end_col, 2);
+    assert_eq!(split_addr.end_row, 1_048_576);
+
+    let sheet_id = workbook.engine().sheet_id("Sheet1").expect("sheet id");
+    assert!(
+        workbook
+            .engine()
+            .resolve_name_entry("Split", sheet_id)
+            .is_some(),
+        "engine should register open-ended named range"
+    );
+
+    let value = workbook
+        .evaluate_cell("Sheet1", 1, 3)
+        .expect("evaluate lookup");
+    match value {
+        LiteralValue::Number(n) => assert!((n - 123.0).abs() < 1e-9),
+        LiteralValue::Int(i) => assert_eq!(i, 123),
+        other => panic!("expected numeric lookup result, got {other:?}"),
+    }
+}
+
+#[test]
 fn umya_named_range_set_value_recalc() {
     let mut workbook = build_named_range_workbook();
     workbook.evaluate_all().expect("initial evaluate");

@@ -44,3 +44,11 @@ pub struct NamedRange {
     /// Vertex representing this named range within the dependency graph
     pub vertex: VertexId,
 }
+
+/// Cloned, binding-friendly snapshot of a named range entry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedRangeSnapshot {
+    pub name: String,
+    pub scope: NameScope,
+    pub definition: NamedDefinition,
+}

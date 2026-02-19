@@ -1,5 +1,6 @@
 use crate::traits::{
-    AccessGranularity, BackendCaps, CellData, MergedRange, SheetData, SpreadsheetReader,
+    AccessGranularity, BackendCaps, CellData, DefinedName, DefinedNameDefinition, DefinedNameScope,
+    MergedRange, SheetData, SpreadsheetReader,
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
@@ -9,10 +10,12 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 
 use calamine::{Data, Range, Reader, Xlsx, open_workbook};
+use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{CellIngest, IngestBuilder, map_error_code};
 use formualizer_eval::engine::Engine as EvalEngine;
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::traits::EvaluationContext;
+use formualizer_parse::parser::ReferenceType;
 use zip::ZipArchive;
 
 type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
@@ -25,8 +28,101 @@ pub struct CalamineAdapter {
 }
 
 impl CalamineAdapter {
+    const EXCEL_MAX_ROWS: u32 = 1_048_576;
+    const EXCEL_MAX_COLS: u32 = 16_384;
+
     pub fn external_link_target(&self, index: u32) -> Option<&str> {
         self.external_link_targets.get(&index).map(|s| s.as_str())
+    }
+
+    fn normalize_open_ended_bounds(
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+    ) -> Option<(u32, u32, u32, u32)> {
+        let mut sr = start_row;
+        let mut sc = start_col;
+        let mut er = end_row;
+        let mut ec = end_col;
+
+        if sr.is_none() && er.is_none() {
+            sr = Some(1);
+            er = Some(Self::EXCEL_MAX_ROWS);
+        }
+        if sc.is_none() && ec.is_none() {
+            sc = Some(1);
+            ec = Some(Self::EXCEL_MAX_COLS);
+        }
+
+        if sr.is_some() && er.is_none() {
+            er = Some(Self::EXCEL_MAX_ROWS);
+        }
+        if er.is_some() && sr.is_none() {
+            sr = Some(1);
+        }
+
+        if sc.is_some() && ec.is_none() {
+            ec = Some(Self::EXCEL_MAX_COLS);
+        }
+        if ec.is_some() && sc.is_none() {
+            sc = Some(1);
+        }
+
+        let sr = sr?;
+        let sc = sc?;
+        let er = er?;
+        let ec = ec?;
+
+        if er < sr || ec < sc {
+            return None;
+        }
+
+        Some((sr, sc, er, ec))
+    }
+
+    fn convert_defined_name(name: &str, raw_formula: &str) -> Option<DefinedName> {
+        let mut trimmed = raw_formula.trim();
+        if let Some(rest) = trimmed.strip_prefix('=') {
+            trimmed = rest.trim();
+        }
+        if trimmed.is_empty() || trimmed.contains(',') {
+            return None;
+        }
+
+        let reference = ReferenceType::from_string(trimmed).ok()?;
+
+        let (sheet_name, start_row, start_col, end_row, end_col) = match reference {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => {
+                let sheet = sheet?;
+                (sheet, row, col, row, col)
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                ..
+            } => {
+                let (sr, sc, er, ec) =
+                    Self::normalize_open_ended_bounds(start_row, start_col, end_row, end_col)?;
+                let sheet = sheet?;
+                (sheet, sr, sc, er, ec)
+            }
+            _ => return None,
+        };
+
+        let address = RangeAddress::new(sheet_name, start_row, start_col, end_row, end_col).ok()?;
+
+        Some(DefinedName {
+            name: name.to_string(),
+            scope: DefinedNameScope::Workbook,
+            scope_sheet: None,
+            definition: DefinedNameDefinition::Range { address },
+        })
     }
 
     fn scan_external_link_targets(path: &Path) -> BTreeMap<u32, String> {
@@ -190,6 +286,7 @@ impl SpreadsheetReader for CalamineAdapter {
         BackendCaps {
             read: true,
             formulas: true,
+            named_ranges: true,
             lazy_loading: false,
             random_access: false,
             styles: false,
@@ -211,6 +308,27 @@ impl SpreadsheetReader for CalamineAdapter {
         }
         let names = self.workbook.read().sheet_names().to_vec();
         Ok(names)
+    }
+
+    fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
+        let wb = self.workbook.read();
+        let mut out: Vec<DefinedName> = Vec::new();
+        let mut seen: HashSet<(DefinedNameScope, Option<String>, String)> = HashSet::new();
+
+        for (name, formula) in wb.defined_names() {
+            if let Some(converted) = Self::convert_defined_name(name, formula) {
+                let key = (
+                    converted.scope.clone(),
+                    converted.scope_sheet.clone(),
+                    converted.name.clone(),
+                );
+                if seen.insert(key) {
+                    out.push(converted);
+                }
+            }
+        }
+
+        Ok(out)
     }
 
     fn open_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error>
@@ -306,6 +424,9 @@ where
     type Error = calamine::Error;
 
     fn stream_into_engine(&mut self, engine: &mut EvalEngine<R>) -> Result<(), Self::Error> {
+        use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
+        use formualizer_eval::reference::{CellRef, Coord};
+
         #[cfg(feature = "tracing")]
         let _span_load =
             tracing::info_span!("io_stream_into_engine", backend = "calamine").entered();
@@ -655,6 +776,74 @@ where
             builder
                 .finish()
                 .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+        }
+
+        // Register defined names into the dependency graph.
+        {
+            use rustc_hash::FxHashSet;
+
+            let defined = self.defined_names()?;
+            let mut seen: FxHashSet<(DefinedNameScope, Option<String>, String)> =
+                FxHashSet::default();
+
+            for dn in defined {
+                let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
+                if !seen.insert(key) {
+                    continue;
+                }
+
+                let scope = match dn.scope {
+                    DefinedNameScope::Workbook => NameScope::Workbook,
+                    DefinedNameScope::Sheet => {
+                        let sheet_name = dn.scope_sheet.as_deref().ok_or_else(|| {
+                            calamine::Error::Io(std::io::Error::other(format!(
+                                "sheet-scoped defined name `{}` missing scope_sheet",
+                                dn.name
+                            )))
+                        })?;
+                        let sid = engine.sheet_id(sheet_name).ok_or_else(|| {
+                            calamine::Error::Io(std::io::Error::other(format!(
+                                "scope sheet not found: {sheet_name}"
+                            )))
+                        })?;
+                        NameScope::Sheet(sid)
+                    }
+                };
+
+                let definition = match dn.definition {
+                    DefinedNameDefinition::Range { address } => {
+                        let sheet_id = engine
+                            .sheet_id(&address.sheet)
+                            .or_else(|| engine.add_sheet(&address.sheet).ok())
+                            .ok_or_else(|| {
+                                calamine::Error::Io(std::io::Error::other(format!(
+                                    "sheet not found: {}",
+                                    address.sheet
+                                )))
+                            })?;
+
+                        let sr0 = address.start_row.saturating_sub(1);
+                        let sc0 = address.start_col.saturating_sub(1);
+                        let er0 = address.end_row.saturating_sub(1);
+                        let ec0 = address.end_col.saturating_sub(1);
+
+                        let start_ref = CellRef::new(sheet_id, Coord::new(sr0, sc0, true, true));
+                        if sr0 == er0 && sc0 == ec0 {
+                            NamedDefinition::Cell(start_ref)
+                        } else {
+                            let end_ref = CellRef::new(sheet_id, Coord::new(er0, ec0, true, true));
+                            let range_ref =
+                                formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                            NamedDefinition::Range(range_ref)
+                        }
+                    }
+                    DefinedNameDefinition::Literal { value } => NamedDefinition::Literal(value),
+                };
+
+                engine
+                    .define_name(&dn.name, definition, scope)
+                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+            }
         }
 
         let tend0 = std::time::Instant::now();

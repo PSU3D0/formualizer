@@ -1010,6 +1010,22 @@ class Workbook:
             wb.add_sheet("Outputs")
         ```
         """
+    def get_named_ranges(self, sheet: typing.Optional[builtins.str] = None) -> typing.Any:
+        r"""
+        Return named ranges visible to the workbook or a specific sheet.
+        
+        Args:
+            sheet: Optional sheet name. When provided, returns workbook-scoped names plus
+                sheet-scoped names visible on that sheet.
+        
+        Returns:
+            A list of dictionaries with keys:
+            - `name`
+            - `scope` (`"workbook" | "sheet"`)
+            - `scope_sheet` (optional)
+            - `kind` (`"cell" | "range" | "literal" | "formula"`)
+            - address fields for `cell`/`range` kinds
+        """
     def set_value(self, sheet: builtins.str, row: builtins.int, col: builtins.int, value: typing.Any) -> None:
         r"""
         Set a single cell value.

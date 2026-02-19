@@ -160,6 +160,39 @@ fn partial_ranges_column_tail_and_head_bounds() {
 }
 
 #[test]
+fn vlookup_with_open_ended_column_range_resolves() {
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, range_limit_config(16));
+
+    engine
+        .set_cell_value(
+            "Sheet1",
+            1,
+            1,
+            LiteralValue::Text("Professional".to_string()),
+        )
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 1, 2, LiteralValue::Int(123))
+        .unwrap();
+
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            3,
+            parse("=VLOOKUP(\"Professional\", A:B, 2, FALSE())").unwrap(),
+        )
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 3).unwrap(),
+        LiteralValue::Number(123.0)
+    );
+}
+
+#[test]
 fn invalidation_on_growth_column_and_row() {
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, range_limit_config(16));

@@ -663,6 +663,47 @@ fn engine_sheet_scope_precedence_prefers_sheet_over_workbook() {
 }
 
 #[test]
+fn engine_named_ranges_snapshot_includes_workbook_and_sheet_scopes() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let sheet1 = engine.sheet_id_mut("Sheet1");
+    engine.add_sheet("Sheet2").unwrap();
+
+    engine
+        .define_name(
+            "GlobalX",
+            NamedDefinition::Literal(LiteralValue::Number(1.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "LocalX",
+            NamedDefinition::Literal(LiteralValue::Number(2.0)),
+            NameScope::Sheet(sheet1),
+        )
+        .unwrap();
+
+    let all = engine.named_ranges_snapshot();
+    assert_eq!(all.len(), 2);
+    assert!(
+        all.iter()
+            .any(|n| n.name == "GlobalX" && n.scope == NameScope::Workbook)
+    );
+    assert!(
+        all.iter()
+            .any(|n| n.name == "LocalX" && n.scope == NameScope::Sheet(sheet1))
+    );
+
+    let visible_on_sheet1 = engine.named_ranges_snapshot_for_sheet(sheet1);
+    assert_eq!(visible_on_sheet1.len(), 2);
+
+    let sheet2 = engine.sheet_id("Sheet2").unwrap();
+    let visible_on_sheet2 = engine.named_ranges_snapshot_for_sheet(sheet2);
+    assert_eq!(visible_on_sheet2.len(), 1);
+    assert_eq!(visible_on_sheet2[0].name, "GlobalX");
+}
+
+#[test]
 fn named_range_resolution_is_case_insensitive_by_default() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     engine

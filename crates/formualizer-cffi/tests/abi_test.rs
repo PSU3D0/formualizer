@@ -217,18 +217,25 @@ fn test_workbook_invalid_formula() {
         );
         assert_eq!(status.code, fz_status_code::FZ_STATUS_OK);
 
-        // Error happens during evaluation/graph building
+        // Interactive mode now recovers malformed formulas by coercing them to error literals.
         let eval_buffer =
             fz_workbook_evaluate_all(wb, fz_encoding_format::FZ_ENCODING_JSON, &mut status);
-        assert_eq!(status.code, fz_status_code::FZ_STATUS_ERROR);
-        let err_msg = String::from_utf8_lossy(std::slice::from_raw_parts(
-            status.error.data,
-            status.error.len,
-        ));
-        assert!(err_msg.contains("Unmatched opening parenthesis"));
-
+        assert_eq!(status.code, fz_status_code::FZ_STATUS_OK);
         fz_buffer_free(eval_buffer);
-        fz_buffer_free(status.error);
+
+        let val_buffer = fz_workbook_get_cell_value(
+            wb,
+            sheet_name.as_ptr(),
+            1,
+            1,
+            fz_encoding_format::FZ_ENCODING_JSON,
+            &mut status,
+        );
+        assert_eq!(status.code, fz_status_code::FZ_STATUS_OK);
+        let value: LiteralValue = serde_json::from_slice(&buffer_as_bytes(&val_buffer)).unwrap();
+        assert!(matches!(value, LiteralValue::Error(_)));
+
+        fz_buffer_free(val_buffer);
         fz_workbook_free(wb);
     }
 }

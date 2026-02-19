@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use formualizer::common::LiteralValue;
@@ -273,6 +274,92 @@ impl PyWorkbook {
             .read()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         Ok(wb.sheet_names())
+    }
+
+    /// Return named ranges visible to the workbook or a specific sheet.
+    ///
+    /// Args:
+    ///     sheet: Optional sheet name. When provided, returns workbook-scoped names plus
+    ///         sheet-scoped names visible on that sheet.
+    ///
+    /// Returns:
+    ///     A list of dictionaries with keys:
+    ///     - `name`
+    ///     - `scope` (`"workbook" | "sheet"`)
+    ///     - `scope_sheet` (optional)
+    ///     - `kind` (`"cell" | "range" | "literal" | "formula"`)
+    ///     - address fields for `cell`/`range` kinds
+    #[pyo3(signature = (sheet=None))]
+    pub fn get_named_ranges(&self, py: Python<'_>, sheet: Option<&str>) -> PyResult<PyObject> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+
+        let engine = wb.engine();
+        let entries = if let Some(sheet_name) = sheet {
+            let sheet_id = engine.sheet_id(sheet_name).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Sheet not found: {sheet_name}"
+                ))
+            })?;
+            engine.named_ranges_snapshot_for_sheet(sheet_id)
+        } else {
+            engine.named_ranges_snapshot()
+        };
+
+        let out = PyList::empty(py);
+        for entry in entries {
+            let row = PyDict::new(py);
+            row.set_item("name", entry.name)?;
+
+            match entry.scope {
+                formualizer::eval::engine::named_range::NameScope::Workbook => {
+                    row.set_item("scope", "workbook")?;
+                    row.set_item("scope_sheet", py.None())?;
+                }
+                formualizer::eval::engine::named_range::NameScope::Sheet(sheet_id) => {
+                    row.set_item("scope", "sheet")?;
+                    row.set_item("scope_sheet", engine.sheet_name(sheet_id))?;
+                }
+            }
+
+            match entry.definition {
+                formualizer::eval::engine::named_range::NamedDefinition::Cell(cell) => {
+                    row.set_item("kind", "cell")?;
+                    row.set_item("sheet", engine.sheet_name(cell.sheet_id))?;
+                    let r = cell.coord.row() + 1;
+                    let c = cell.coord.col() + 1;
+                    row.set_item("start_row", r)?;
+                    row.set_item("start_col", c)?;
+                    row.set_item("end_row", r)?;
+                    row.set_item("end_col", c)?;
+                }
+                formualizer::eval::engine::named_range::NamedDefinition::Range(range) => {
+                    row.set_item("kind", "range")?;
+                    row.set_item("start_sheet", engine.sheet_name(range.start.sheet_id))?;
+                    row.set_item("end_sheet", engine.sheet_name(range.end.sheet_id))?;
+                    row.set_item("start_row", range.start.coord.row() + 1)?;
+                    row.set_item("start_col", range.start.coord.col() + 1)?;
+                    row.set_item("end_row", range.end.coord.row() + 1)?;
+                    row.set_item("end_col", range.end.coord.col() + 1)?;
+                    if range.start.sheet_id == range.end.sheet_id {
+                        row.set_item("sheet", engine.sheet_name(range.start.sheet_id))?;
+                    }
+                }
+                formualizer::eval::engine::named_range::NamedDefinition::Literal(value) => {
+                    row.set_item("kind", "literal")?;
+                    row.set_item("value", literal_to_py(py, &value)?)?;
+                }
+                formualizer::eval::engine::named_range::NamedDefinition::Formula { .. } => {
+                    row.set_item("kind", "formula")?;
+                }
+            }
+
+            out.append(row)?;
+        }
+
+        Ok(out.into())
     }
 
     /// Set a single cell value.
