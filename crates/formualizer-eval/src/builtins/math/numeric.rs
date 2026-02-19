@@ -1,4 +1,6 @@
-use super::super::utils::{ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, coerce_num};
+use super::super::utils::{
+    ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, ARG_RANGE_NUM_LENIENT_ONE, coerce_num,
+};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -804,6 +806,352 @@ impl Function for Log10Fn {
     }
 }
 
+#[derive(Debug)]
+pub struct SumsqFn;
+impl Function for SumsqFn {
+    func_caps!(PURE, REDUCTION, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "SUMSQ"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let mut total = 0.0;
+        for arg in args {
+            if let Ok(view) = arg.range_view() {
+                view.for_each_cell(&mut |cell| {
+                    match cell {
+                        LiteralValue::Error(e) => return Err(e.clone()),
+                        LiteralValue::Number(n) => total += n * n,
+                        LiteralValue::Int(i) => {
+                            let n = *i as f64;
+                            total += n * n;
+                        }
+                        LiteralValue::Date(d) => {
+                            let n = crate::builtins::datetime::date_to_serial(d);
+                            total += n * n;
+                        }
+                        LiteralValue::DateTime(dt) => {
+                            let n = crate::builtins::datetime::datetime_to_serial(dt);
+                            total += n * n;
+                        }
+                        LiteralValue::Time(t) => {
+                            let n = crate::builtins::datetime::time_to_fraction(t);
+                            total += n * n;
+                        }
+                        LiteralValue::Duration(d) => {
+                            let n = d.num_seconds() as f64 / 86_400.0;
+                            total += n * n;
+                        }
+                        _ => {}
+                    }
+                    Ok(())
+                })?;
+            } else {
+                let v = arg.value()?.into_literal();
+                match v {
+                    LiteralValue::Error(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                    other => {
+                        let n = coerce_num(&other)?;
+                        total += n * n;
+                    }
+                }
+            }
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            total,
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct MroundFn;
+impl Function for MroundFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "MROUND"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let number = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        let multiple = match args[1].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+
+        if multiple == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+        }
+        if number != 0.0 && number.signum() != multiple.signum() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let m = multiple.abs();
+        let scaled = number.abs() / m;
+        let rounded = (scaled + 0.5 + 1e-12).floor();
+        let out = rounded * m * number.signum();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(out)))
+    }
+}
+
+fn roman_classic(mut n: u32) -> String {
+    let table = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ];
+
+    let mut out = String::new();
+    for (value, glyph) in table {
+        while n >= value {
+            n -= value;
+            out.push_str(glyph);
+        }
+    }
+    out
+}
+
+fn roman_apply_form(classic: String, form: i64) -> String {
+    match form {
+        0 => classic,
+        1 => classic
+            .replace("CM", "LM")
+            .replace("CD", "LD")
+            .replace("XC", "VL")
+            .replace("XL", "VL")
+            .replace("IX", "IV"),
+        2 => roman_apply_form(classic, 1)
+            .replace("LD", "XD")
+            .replace("LM", "XM")
+            .replace("VLIV", "IX"),
+        3 => roman_apply_form(classic, 2)
+            .replace("XD", "VD")
+            .replace("XM", "VM")
+            .replace("IX", "IV"),
+        4 => roman_apply_form(classic, 3)
+            .replace("VDIV", "ID")
+            .replace("VMIV", "IM"),
+        _ => classic,
+    }
+}
+
+#[derive(Debug)]
+pub struct RomanFn;
+impl Function for RomanFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ROMAN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() > 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+
+        let number = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?.trunc() as i64,
+        };
+
+        if !(0..=3999).contains(&number) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        if number == 0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                "".to_string(),
+            )));
+        }
+
+        let form = if args.len() >= 2 {
+            match args[1].value()?.into_literal() {
+                LiteralValue::Boolean(b) => {
+                    if b {
+                        0
+                    } else {
+                        4
+                    }
+                }
+                LiteralValue::Number(n) => n.trunc() as i64,
+                LiteralValue::Int(i) => i,
+                LiteralValue::Empty => 0,
+                LiteralValue::Error(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                _ => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new_value(),
+                    )));
+                }
+            }
+        } else {
+            0
+        };
+
+        if !(0..=4).contains(&form) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+
+        let classic = roman_classic(number as u32);
+        let text = roman_apply_form(classic, form);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)))
+    }
+}
+
+fn roman_digit_value(ch: char) -> Option<i64> {
+    match ch {
+        'I' => Some(1),
+        'V' => Some(5),
+        'X' => Some(10),
+        'L' => Some(50),
+        'C' => Some(100),
+        'D' => Some(500),
+        'M' => Some(1000),
+        _ => None,
+    }
+}
+
+#[derive(Debug)]
+pub struct ArabicFn;
+impl Function for ArabicFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ARABIC"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static ONE: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| vec![ArgSchema::any()]);
+        &ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let raw = match args[0].value()?.into_literal() {
+            LiteralValue::Text(s) => s,
+            LiteralValue::Empty => String::new(),
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+        };
+
+        let mut text = raw.trim().to_uppercase();
+        if text.len() > 255 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        if text.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+        }
+
+        let sign = if text.starts_with('-') {
+            text.remove(0);
+            -1.0
+        } else {
+            1.0
+        };
+
+        if text.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+
+        let mut total = 0i64;
+        let mut prev = 0i64;
+        for ch in text.chars().rev() {
+            let v = match roman_digit_value(ch) {
+                Some(v) => v,
+                None => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new_value(),
+                    )));
+                }
+            };
+            if v < prev {
+                total -= v;
+            } else {
+                total += v;
+                prev = v;
+            }
+        }
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            sign * total as f64,
+        )))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(AbsFn));
@@ -824,6 +1172,10 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(LnFn));
     crate::function_registry::register_function(Arc::new(LogFn));
     crate::function_registry::register_function(Arc::new(Log10Fn));
+    crate::function_registry::register_function(Arc::new(SumsqFn));
+    crate::function_registry::register_function(Arc::new(MroundFn));
+    crate::function_registry::register_function(Arc::new(RomanFn));
+    crate::function_registry::register_function(Arc::new(ArabicFn));
 }
 
 #[cfg(test)]
@@ -1320,5 +1672,104 @@ mod tests_numeric {
             .into_literal(),
             LiteralValue::Number(4.0)
         );
+    }
+
+    #[test]
+    fn sumsq_basic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumsqFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "SUMSQ").unwrap();
+        let a = lit(LiteralValue::Int(3));
+        let b = lit(LiteralValue::Int(4));
+        assert_eq!(
+            f.dispatch(
+                &[ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&b, &ctx)],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(25.0)
+        );
+    }
+
+    #[test]
+    fn mround_sign_and_midpoint() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(MroundFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "MROUND").unwrap();
+
+        let n = lit(LiteralValue::Number(1.3));
+        let m = lit(LiteralValue::Number(0.2));
+        match f
+            .dispatch(
+                &[ArgumentHandle::new(&n, &ctx), ArgumentHandle::new(&m, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(v) => assert!((v - 1.4).abs() < 1e-12),
+            other => panic!("expected numeric result, got {other:?}"),
+        }
+
+        let bad_m = lit(LiteralValue::Number(-2.0));
+        let five = lit(LiteralValue::Number(5.0));
+        match f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&five, &ctx),
+                    ArgumentHandle::new(&bad_m, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
+            other => panic!("expected #NUM!, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roman_and_arabic_examples() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(RomanFn))
+            .with_function(std::sync::Arc::new(ArabicFn));
+        let ctx = interp(&wb);
+
+        let roman = ctx.context.get_function("", "ROMAN").unwrap();
+        let n499 = lit(LiteralValue::Int(499));
+        let out = roman
+            .dispatch(
+                &[ArgumentHandle::new(&n499, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Text("CDXCIX".to_string()));
+
+        let form4 = lit(LiteralValue::Int(4));
+        let out_form4 = roman
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&n499, &ctx),
+                    ArgumentHandle::new(&form4, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out_form4, LiteralValue::Text("ID".to_string()));
+
+        let arabic = ctx.context.get_function("", "ARABIC").unwrap();
+        let roman_text = lit(LiteralValue::Text("CDXCIX".to_string()));
+        let out_arabic = arabic
+            .dispatch(
+                &[ArgumentHandle::new(&roman_text, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out_arabic, LiteralValue::Number(499.0));
     }
 }
