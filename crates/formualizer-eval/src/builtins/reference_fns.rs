@@ -414,9 +414,172 @@ impl Function for OffsetFn {
     }
 }
 
+fn arg_indirect() -> Vec<ArgSchema> {
+    vec![
+        ArgSchema {
+            kinds: smallvec::smallvec![ArgKind::Text],
+            required: true,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::None,
+            max: None,
+            repeating: None,
+            default: None,
+        },
+        ArgSchema {
+            kinds: smallvec::smallvec![ArgKind::Logical, ArgKind::Number],
+            required: false,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::Logical,
+            max: None,
+            repeating: None,
+            default: Some(LiteralValue::Boolean(true)),
+        },
+    ]
+}
+
+#[derive(Debug)]
+pub struct IndirectFn;
+impl Function for IndirectFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE | FnCaps::RETURNS_REFERENCE | FnCaps::VOLATILE | FnCaps::DYNAMIC_DEPENDENCY
+    }
+    fn name(&self) -> &'static str {
+        "INDIRECT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use once_cell::sync::Lazy;
+        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_indirect);
+        &SCHEMA
+    }
+
+    fn eval_reference<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Option<Result<ReferenceType, ExcelError>> {
+        if args.is_empty() {
+            return Some(Err(ExcelError::new(ExcelErrorKind::Value)));
+        }
+
+        let ref_text = match args[0].value() {
+            Ok(cv) => match cv.into_literal() {
+                LiteralValue::Text(s) => s.to_string(),
+                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
+            },
+            Err(e) => return Some(Err(e)),
+        };
+
+        let a1_style = if args.len() >= 2 {
+            match args[1].value() {
+                Ok(cv) => match cv.into_literal() {
+                    LiteralValue::Boolean(b) => b,
+                    LiteralValue::Int(i) => i != 0,
+                    LiteralValue::Number(n) => n != 0.0,
+                    _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
+                },
+                Err(e) => return Some(Err(e)),
+            }
+        } else {
+            true
+        };
+
+        if !a1_style {
+            return Some(Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                "INDIRECT with R1C1 style (second argument FALSE) is not yet supported",
+            )));
+        }
+
+        let parsed = formualizer_parse::parser::ReferenceType::parse_sheet_ref(&ref_text);
+
+        match parsed {
+            Ok(formualizer_common::SheetRef::Cell(cell)) => {
+                let sheet = match cell.sheet {
+                    formualizer_common::SheetLocator::Current => None,
+                    formualizer_common::SheetLocator::Name(name) => Some(name.to_string()),
+                    formualizer_common::SheetLocator::Id(_) => None,
+                };
+                Some(Ok(ReferenceType::Cell {
+                    sheet,
+                    row: cell.coord.row() + 1,
+                    col: cell.coord.col() + 1,
+                    row_abs: cell.coord.row_abs(),
+                    col_abs: cell.coord.col_abs(),
+                }))
+            }
+            Ok(formualizer_common::SheetRef::Range(range)) => {
+                let sheet = match range.sheet {
+                    formualizer_common::SheetLocator::Current => None,
+                    formualizer_common::SheetLocator::Name(name) => Some(name.to_string()),
+                    formualizer_common::SheetLocator::Id(_) => None,
+                };
+                Some(Ok(ReferenceType::Range {
+                    sheet,
+                    start_row: range.start_row.map(|b| b.index + 1),
+                    start_col: range.start_col.map(|b| b.index + 1),
+                    end_row: range.end_row.map(|b| b.index + 1),
+                    end_col: range.end_col.map(|b| b.index + 1),
+                    start_row_abs: range.start_row.map(|b| b.abs).unwrap_or(false),
+                    start_col_abs: range.start_col.map(|b| b.abs).unwrap_or(false),
+                    end_row_abs: range.end_row.map(|b| b.abs).unwrap_or(false),
+                    end_col_abs: range.end_col.map(|b| b.abs).unwrap_or(false),
+                }))
+            }
+            Err(_) => match formualizer_parse::parser::ReferenceType::from_string(&ref_text) {
+                Ok(ReferenceType::NamedRange(name)) => Some(Ok(ReferenceType::NamedRange(name))),
+                Ok(ReferenceType::Table(tref)) => Some(Ok(ReferenceType::Table(tref))),
+                _ => Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
+            },
+        }
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        match self.eval_reference(args, ctx) {
+            Some(Ok(r)) => {
+                let current_sheet = ctx.current_sheet();
+                match ctx.resolve_range_view(&r, current_sheet) {
+                    Ok(rv) => {
+                        let (rows, cols) = rv.dims();
+                        if rows == 1 && cols == 1 {
+                            Ok(crate::traits::CalcValue::Scalar(
+                                rv.as_1x1().unwrap_or(LiteralValue::Empty),
+                            ))
+                        } else {
+                            Ok(crate::traits::CalcValue::Range(rv))
+                        }
+                    }
+                    Err(e) => {
+                        let mapped = if e.kind == ExcelErrorKind::Name {
+                            ExcelError::new(ExcelErrorKind::Ref)
+                        } else {
+                            e
+                        };
+                        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            mapped,
+                        )))
+                    }
+                }
+            }
+            Some(Err(e)) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Ref),
+            ))),
+        }
+    }
+}
+
 pub fn register_builtins() {
     crate::function_registry::register_function(std::sync::Arc::new(IndexFn));
     crate::function_registry::register_function(std::sync::Arc::new(OffsetFn));
+    crate::function_registry::register_function(std::sync::Arc::new(IndirectFn));
 }
 
 #[cfg(test)]

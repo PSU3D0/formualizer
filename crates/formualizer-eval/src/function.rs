@@ -62,7 +62,10 @@ bitflags::bitflags! {
     /// The engine should still fold results in argument order for determinism.
     const PARALLEL_ARGS  = 0b0010_0000_0000_0000;
     /// It is safe to chunk and process input windows in parallel (e.g., SUMIFS).
+    /// It is safe to chunk and process input windows in parallel (e.g., SUMIFS).
     const PARALLEL_CHUNKS= 0b0100_0000_0000_0000;
+    /// Function has dynamic dependencies determined at runtime (e.g. INDIRECT, OFFSET)
+    const DYNAMIC_DEPENDENCY = 0b1000_0000_0000_0000;
     }
 }
 

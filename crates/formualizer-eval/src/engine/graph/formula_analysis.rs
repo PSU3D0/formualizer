@@ -303,4 +303,29 @@ impl DependencyGraph {
             _ => false,
         }
     }
+
+    pub fn is_ast_dynamic(&self, ast: &ASTNode) -> bool {
+        use formualizer_parse::parser::ASTNodeType;
+
+        match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                if let Some(func) = crate::function_registry::get("", name)
+                    && func
+                        .caps()
+                        .contains(crate::function::FnCaps::DYNAMIC_DEPENDENCY)
+                {
+                    return true;
+                }
+                args.iter().any(|arg| self.is_ast_dynamic(arg))
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                self.is_ast_dynamic(left) || self.is_ast_dynamic(right)
+            }
+            ASTNodeType::UnaryOp { expr, .. } => self.is_ast_dynamic(expr),
+            ASTNodeType::Array(rows) => rows
+                .iter()
+                .any(|row| row.iter().any(|cell| self.is_ast_dynamic(cell))),
+            _ => false,
+        }
+    }
 }

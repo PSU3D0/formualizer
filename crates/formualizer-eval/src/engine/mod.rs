@@ -15,6 +15,7 @@ pub mod range_view;
 pub mod scheduler;
 pub mod spill;
 pub mod vertex;
+pub mod virtual_deps;
 
 // New SoA modules
 pub mod csr_edges;
@@ -36,7 +37,7 @@ pub mod tuning;
 #[cfg(test)]
 mod tests;
 
-pub use eval::{Engine, EngineAction, EvalResult, RecalcPlan};
+pub use eval::{Engine, EngineAction, EvalResult, RecalcPlan, VirtualDepTelemetry};
 pub use eval_delta::{DeltaMode, EvalDelta};
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation
@@ -246,6 +247,11 @@ pub struct EvalConfig {
     /// Defer dependency graph building: ingest values immediately but stage formulas
     /// for on-demand graph construction during evaluation.
     pub defer_graph_building: bool,
+
+    /// Enable virtual dependency convergence telemetry collection.
+    ///
+    /// When disabled, the engine avoids per-pass timing/edge-count bookkeeping.
+    pub enable_virtual_dep_telemetry: bool,
 }
 
 impl Default for EvalConfig {
@@ -296,6 +302,7 @@ impl Default for EvalConfig {
             max_overlay_memory_bytes: None,
             date_system: DateSystem::Excel1900,
             defer_graph_building: false,
+            enable_virtual_dep_telemetry: false,
         }
     }
 }
@@ -352,6 +359,12 @@ impl EvalConfig {
     #[inline]
     pub fn with_date_system(mut self, system: DateSystem) -> Self {
         self.date_system = system;
+        self
+    }
+
+    #[inline]
+    pub fn with_virtual_dep_telemetry(mut self, enable: bool) -> Self {
+        self.enable_virtual_dep_telemetry = enable;
         self
     }
 }

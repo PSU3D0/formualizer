@@ -4,6 +4,7 @@ use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
+use crate::engine::virtual_deps::VirtualDepBuilder;
 use crate::engine::{DependencyGraph, EvalConfig, Scheduler, VertexId, VertexKind};
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
@@ -53,6 +54,10 @@ pub struct Engine<R> {
     /// Ticket 614 introduces `Engine::action` as a stable, commit-only transaction surface.
     /// Nested actions are currently disallowed (deterministic rule) and will return an error.
     action_depth: u32,
+
+    // Phase 3b virtual-dependency convergence telemetry
+    last_virtual_dep_telemetry: VirtualDepTelemetry,
+    virtual_dep_fallback_activations: u64,
 }
 
 /// Minimal edit surface used by `Engine::action`.
@@ -382,15 +387,49 @@ pub struct EvalResult {
     pub elapsed: std::time::Duration,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct VirtualDepTelemetry {
+    pub candidate_vertices_total: usize,
+    pub vdeps_vertices_total: usize,
+    pub vdeps_edges_total: usize,
+    pub builder_elapsed_ms_total: u128,
+    pub schedule_virtual_passes: usize,
+    pub schedule_static_passes: usize,
+    pub replan_iterations: usize,
+    pub changed_vdeps_total: usize,
+    pub bailout_reason: Option<&'static str>,
+    pub fallback_mode_activations: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScheduleBuildMeta {
+    candidate_vertices: usize,
+    vdeps_vertices: usize,
+    vdeps_edges: usize,
+    builder_elapsed_ms: u128,
+    used_virtual_schedule: bool,
+}
+
+type ScheduleBuildOutput = (
+    crate::engine::scheduler::Schedule,
+    FxHashMap<VertexId, Vec<VertexId>>,
+    ScheduleBuildMeta,
+);
+
 /// Cached evaluation schedule that can be replayed across multiple recalculations.
 #[derive(Debug)]
 pub struct RecalcPlan {
     schedule: crate::engine::Schedule,
+    has_dynamic_refs: bool,
 }
 
 impl RecalcPlan {
     pub fn layer_count(&self) -> usize {
         self.schedule.layers.len()
+    }
+
+    pub fn has_dynamic_refs(&self) -> bool {
+        self.has_dynamic_refs
     }
 }
 
@@ -680,6 +719,8 @@ where
             staged_formulas: std::collections::HashMap::new(),
             active_cancel_flag: None,
             action_depth: 0,
+            last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
+            virtual_dep_fallback_activations: 0,
         };
         // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
         engine.config.arrow_storage_enabled = true;
@@ -722,6 +763,8 @@ where
             staged_formulas: std::collections::HashMap::new(),
             active_cancel_flag: None,
             action_depth: 0,
+            last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
+            virtual_dep_fallback_activations: 0,
         };
         // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
         engine.config.arrow_storage_enabled = true;
@@ -735,6 +778,23 @@ where
     fn clear_source_cache(&self) {
         if let Ok(mut g) = self.source_cache.write() {
             *g = SourceCache::default();
+        }
+    }
+
+    pub fn last_virtual_dep_telemetry(&self) -> &VirtualDepTelemetry {
+        &self.last_virtual_dep_telemetry
+    }
+
+    pub fn virtual_dep_fallback_activations(&self) -> u64 {
+        self.virtual_dep_fallback_activations
+    }
+
+    fn reset_virtual_dep_telemetry_if_disabled(&mut self) {
+        if !self.config.enable_virtual_dep_telemetry {
+            self.last_virtual_dep_telemetry = VirtualDepTelemetry {
+                fallback_mode_activations: self.virtual_dep_fallback_activations,
+                ..VirtualDepTelemetry::default()
+            };
         }
     }
 
@@ -3925,12 +3985,16 @@ where
                     layers: Vec::new(),
                     cycles: Vec::new(),
                 },
+                has_dynamic_refs: false,
             });
         }
 
-        let scheduler = Scheduler::new(&self.graph);
-        let schedule = scheduler.create_schedule(&vertices)?;
-        Ok(RecalcPlan { schedule })
+        let has_dynamic_refs = vertices.iter().copied().any(|v| self.graph.is_dynamic(v));
+        let (schedule, _, _) = self.create_evaluation_schedule(&vertices)?;
+        Ok(RecalcPlan {
+            schedule,
+            has_dynamic_refs,
+        })
     }
 
     /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
@@ -3949,6 +4013,14 @@ where
                 cycle_errors: 0,
                 elapsed: start.elapsed(),
             });
+        }
+
+        // Dynamic-reference formulas (INDIRECT/OFFSET-class) require per-pass virtual-dep
+        // augmentation. Reuse the direct recalc flow to preserve semantic parity.
+        if plan.has_dynamic_refs {
+            self.virtual_dep_fallback_activations =
+                self.virtual_dep_fallback_activations.saturating_add(1);
+            return self.evaluate_all();
         }
 
         let dirty_set: FxHashSet<VertexId> = dirty_vertices.iter().copied().collect();
@@ -4002,7 +4074,6 @@ where
             elapsed: start.elapsed(),
         })
     }
-
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
         let _source_cache = self.source_cache_session();
@@ -4011,49 +4082,89 @@ where
             // Build graph for all staged formulas before evaluating
             self.build_graph_all()?;
         }
+        self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all").entered();
         let start = web_time::Instant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
+        let mut replan_iterations = 0;
+        const MAX_REPLAN: usize = 5;
+        let mut telemetry = self
+            .config
+            .enable_virtual_dep_telemetry
+            .then(|| self.start_virtual_dep_telemetry());
 
-        let to_evaluate = self.graph.get_evaluation_vertices();
-        if to_evaluate.is_empty() {
-            return Ok(EvalResult {
-                computed_vertices,
-                cycle_errors,
-                elapsed: start.elapsed(),
-            });
-        }
-
-        let scheduler = Scheduler::new(&self.graph);
-        let schedule = scheduler.create_schedule(&to_evaluate)?;
-
-        // Handle cycles first by marking them with #CIRC!
-        for cycle in &schedule.cycles {
-            cycle_errors += 1;
-            let circ_error = LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Circ)
-                    .with_message("Circular dependency detected".to_string()),
-            );
-            for &vertex_id in cycle {
-                self.graph
-                    .update_vertex_value(vertex_id, circ_error.clone());
-                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+        loop {
+            let to_evaluate = self.graph.get_evaluation_vertices();
+            if to_evaluate.is_empty() {
+                if let Some(t) = telemetry.as_mut()
+                    && t.bailout_reason.is_none()
+                {
+                    t.bailout_reason = Some("no_work");
+                }
+                break;
             }
-        }
 
-        // Evaluate acyclic layers (parallel or sequential based on config)
-        for layer in &schedule.layers {
-            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                computed_vertices += self.evaluate_layer_parallel(layer)?;
-            } else {
-                computed_vertices += self.evaluate_layer_sequential(layer)?;
+            let (schedule, old_vdeps, meta) = self.create_evaluation_schedule(&to_evaluate)?;
+            if let Some(t) = telemetry.as_mut() {
+                Self::accumulate_schedule_meta(t, &meta);
             }
+
+            // Handle cycles first by marking them with #CIRC!
+            for cycle in &schedule.cycles {
+                cycle_errors += 1;
+                let circ_error = LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Circ)
+                        .with_message("Circular dependency detected".to_string()),
+                );
+                for &vertex_id in cycle {
+                    self.graph
+                        .update_vertex_value(vertex_id, circ_error.clone());
+                    self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                }
+            }
+
+            // Evaluate acyclic layers (parallel or sequential based on config)
+            for layer in &schedule.layers {
+                if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                    computed_vertices += self.evaluate_layer_parallel(layer)?;
+                } else {
+                    computed_vertices += self.evaluate_layer_sequential(layer)?;
+                }
+            }
+
+            // Check if dynamic dependencies changed
+            let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
+            if let Some(t) = telemetry.as_mut() {
+                t.changed_vdeps_total += changed_vertices.len();
+            }
+
+            self.graph.clear_dirty_flags(&to_evaluate);
+            for v in &changed_vertices {
+                self.graph.set_dirty(*v, true);
+            }
+
+            if changed_vertices.is_empty() {
+                if let Some(t) = telemetry.as_mut() {
+                    t.bailout_reason = Some("converged");
+                }
+                break;
+            }
+            if replan_iterations >= MAX_REPLAN {
+                if let Some(t) = telemetry.as_mut() {
+                    t.bailout_reason = Some("max_replan");
+                }
+                break;
+            }
+
+            replan_iterations += 1;
         }
 
-        // Clear dirty flags for all evaluated vertices (including cycles)
-        self.graph.clear_dirty_flags(&to_evaluate);
+        if let Some(mut t) = telemetry {
+            t.replan_iterations = replan_iterations;
+            self.last_virtual_dep_telemetry = t;
+        }
 
         // Re-dirty volatile vertices for the next evaluation cycle
         self.graph.redirty_volatiles();
@@ -4082,57 +4193,97 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all_with_delta").entered();
         let start = web_time::Instant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
 
-        let to_evaluate = self.graph.get_evaluation_vertices();
-        if to_evaluate.is_empty() {
-            return Ok(EvalResult {
-                computed_vertices,
-                cycle_errors,
-                elapsed: start.elapsed(),
-            });
-        }
+        let mut replan_iterations = 0;
+        const MAX_REPLAN: usize = 5;
+        let mut telemetry = self
+            .config
+            .enable_virtual_dep_telemetry
+            .then(|| self.start_virtual_dep_telemetry());
 
-        let scheduler = Scheduler::new(&self.graph);
-        let schedule = scheduler.create_schedule(&to_evaluate)?;
-
-        let circ_error = LiteralValue::Error(
-            ExcelError::new(ExcelErrorKind::Circ)
-                .with_message("Circular dependency detected".to_string()),
-        );
-        for cycle in &schedule.cycles {
-            cycle_errors += 1;
-            for &vertex_id in cycle {
-                if delta.mode != DeltaMode::Off
-                    && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id)
+        loop {
+            let to_evaluate = self.graph.get_evaluation_vertices();
+            if to_evaluate.is_empty() {
+                if let Some(t) = telemetry.as_mut()
+                    && t.bailout_reason.is_none()
                 {
-                    let sheet_name = self.graph.sheet_name(cell.sheet_id);
-                    let old = self
-                        .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
-                        .unwrap_or(LiteralValue::Empty);
-                    if old != circ_error {
-                        delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
-                    }
+                    t.bailout_reason = Some("no_work");
                 }
-                self.graph
-                    .update_vertex_value(vertex_id, circ_error.clone());
-                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                break;
             }
+
+            let (schedule, old_vdeps, meta) = self.create_evaluation_schedule(&to_evaluate)?;
+            if let Some(t) = telemetry.as_mut() {
+                Self::accumulate_schedule_meta(t, &meta);
+            }
+
+            let circ_error = LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Circ)
+                    .with_message("Circular dependency detected".to_string()),
+            );
+            for cycle in &schedule.cycles {
+                cycle_errors += 1;
+                for &vertex_id in cycle {
+                    if delta.mode != DeltaMode::Off
+                        && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id)
+                    {
+                        let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                        let old = self
+                            .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                            .unwrap_or(LiteralValue::Empty);
+                        if old != circ_error {
+                            delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                        }
+                    }
+                    self.graph
+                        .update_vertex_value(vertex_id, circ_error.clone());
+                    self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                }
+            }
+
+            for layer in &schedule.layers {
+                if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                    computed_vertices += self.evaluate_layer_parallel_with_delta(layer, delta)?;
+                } else {
+                    computed_vertices += self.evaluate_layer_sequential_with_delta(layer, delta)?;
+                }
+            }
+
+            let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
+            if let Some(t) = telemetry.as_mut() {
+                t.changed_vdeps_total += changed_vertices.len();
+            }
+            self.graph.clear_dirty_flags(&to_evaluate);
+            for v in &changed_vertices {
+                self.graph.set_dirty(*v, true);
+            }
+
+            if changed_vertices.is_empty() {
+                if let Some(t) = telemetry.as_mut() {
+                    t.bailout_reason = Some("converged");
+                }
+                break;
+            }
+            if replan_iterations >= MAX_REPLAN {
+                if let Some(t) = telemetry.as_mut() {
+                    t.bailout_reason = Some("max_replan");
+                }
+                break;
+            }
+            replan_iterations += 1;
         }
 
-        for layer in &schedule.layers {
-            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                computed_vertices += self.evaluate_layer_parallel_with_delta(layer, delta)?;
-            } else {
-                computed_vertices += self.evaluate_layer_sequential_with_delta(layer, delta)?;
-            }
+        if let Some(mut t) = telemetry {
+            t.replan_iterations = replan_iterations;
+            self.last_virtual_dep_telemetry = t;
         }
 
-        self.graph.clear_dirty_flags(&to_evaluate);
         self.graph.redirty_volatiles();
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
 
@@ -4414,6 +4565,98 @@ where
             target_cells: addresses,
         })
     }
+    /// Helper to create a schedule, integrating virtual dependencies automatically.
+    fn create_evaluation_schedule(
+        &self,
+        to_evaluate: &[VertexId],
+    ) -> Result<ScheduleBuildOutput, ExcelError> {
+        let builder = VirtualDepBuilder::new(self);
+        let (vdeps, augmented, builder_elapsed_ms, vdeps_edges) =
+            if self.config.enable_virtual_dep_telemetry {
+                let build_started = web_time::Instant::now();
+                let (vdeps, augmented) = builder.build(to_evaluate);
+                let builder_elapsed_ms = build_started.elapsed().as_millis();
+                let vdeps_edges = vdeps.values().map(|deps| deps.len()).sum::<usize>();
+                (vdeps, augmented, builder_elapsed_ms, vdeps_edges)
+            } else {
+                let (vdeps, augmented) = builder.build(to_evaluate);
+                (vdeps, augmented, 0, 0)
+            };
+
+        let mut final_evaluate = to_evaluate.to_vec();
+        if !augmented.is_empty() {
+            final_evaluate.extend(augmented);
+            final_evaluate.sort_unstable();
+            final_evaluate.dedup();
+        }
+
+        let use_virtual = !vdeps.is_empty();
+
+        let scheduler = Scheduler::new(&self.graph);
+        let schedule = if use_virtual {
+            scheduler.create_schedule_with_virtual(&final_evaluate, &vdeps)?
+        } else {
+            scheduler.create_schedule(&final_evaluate)?
+        };
+
+        let meta = ScheduleBuildMeta {
+            candidate_vertices: to_evaluate.len(),
+            vdeps_vertices: vdeps.len(),
+            vdeps_edges,
+            builder_elapsed_ms,
+            used_virtual_schedule: use_virtual,
+        };
+
+        Ok((schedule, vdeps, meta))
+    }
+
+    fn start_virtual_dep_telemetry(&self) -> VirtualDepTelemetry {
+        VirtualDepTelemetry {
+            fallback_mode_activations: self.virtual_dep_fallback_activations,
+            ..VirtualDepTelemetry::default()
+        }
+    }
+
+    fn accumulate_schedule_meta(telemetry: &mut VirtualDepTelemetry, meta: &ScheduleBuildMeta) {
+        telemetry.candidate_vertices_total += meta.candidate_vertices;
+        telemetry.vdeps_vertices_total += meta.vdeps_vertices;
+        telemetry.vdeps_edges_total += meta.vdeps_edges;
+        telemetry.builder_elapsed_ms_total += meta.builder_elapsed_ms;
+        if meta.used_virtual_schedule {
+            telemetry.schedule_virtual_passes += 1;
+        } else {
+            telemetry.schedule_static_passes += 1;
+        }
+    }
+
+    fn changed_virtual_dep_vertices(
+        &self,
+        to_evaluate: &[VertexId],
+        old_vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
+    ) -> Vec<VertexId> {
+        if !to_evaluate
+            .iter()
+            .copied()
+            .any(|v| self.graph.is_dynamic(v))
+        {
+            return Vec::new();
+        }
+
+        let builder = VirtualDepBuilder::new(self);
+        let (new_vdeps, _) = builder.build(to_evaluate);
+
+        let mut candidates = FxHashSet::default();
+        candidates.extend(old_vdeps.keys().copied());
+        candidates.extend(new_vdeps.keys().copied());
+
+        let mut changed = Vec::new();
+        for v in candidates {
+            if old_vdeps.get(&v) != new_vdeps.get(&v) {
+                changed.push(v);
+            }
+        }
+        changed
+    }
 
     /// Build a demand-driven subgraph for the given targets, including ephemeral edges for
     /// compressed ranges, and returning the set of dirty/volatile precedents and virtual deps.
@@ -4467,121 +4710,14 @@ where
                         _ => {}
                     }
                 }
-            }
-
-            // Compressed range dependencies → discover formula precedents in used/bounded window
-            if let Some(ranges) = self.graph.get_range_dependencies(v) {
-                let current_sheet_id = self.graph.get_vertex_sheet_id(v);
-                for r in ranges {
-                    let sheet_id = match r.sheet {
-                        formualizer_common::SheetLocator::Id(id) => id,
-                        _ => current_sheet_id,
-                    };
-                    let sheet_name = self.graph.sheet_name(sheet_id);
-
-                    // Infer bounds like resolve_range_view (r bounds are 0-based)
-                    let mut sr = r.start_row.map(|b| b.index + 1);
-                    let mut sc = r.start_col.map(|b| b.index + 1);
-                    let mut er = r.end_row.map(|b| b.index + 1);
-                    let mut ec = r.end_col.map(|b| b.index + 1);
-
-                    if sr.is_none() && er.is_none() {
-                        let scv = sc.unwrap_or(1);
-                        let ecv = ec.unwrap_or(scv);
-                        if let Some((min_r, max_r)) =
-                            self.used_rows_for_columns(sheet_name, scv, ecv)
-                        {
-                            sr = Some(min_r);
-                            er = Some(max_r);
-                        } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                            sr = Some(1);
-                            er = Some(self.config.max_open_ended_rows);
-                        }
-                    }
-                    if sc.is_none() && ec.is_none() {
-                        let srv = sr.unwrap_or(1);
-                        let erv = er.unwrap_or(srv);
-                        if let Some((min_c, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv)
-                        {
-                            sc = Some(min_c);
-                            ec = Some(max_c);
-                        } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                            sc = Some(1);
-                            ec = Some(self.config.max_open_ended_cols);
-                        }
-                    }
-                    if sr.is_some() && er.is_none() {
-                        let scv = sc.unwrap_or(1);
-                        let ecv = ec.unwrap_or(scv);
-                        if let Some((_, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
-                            er = Some(max_r);
-                        } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                            er = Some(self.config.max_open_ended_rows);
-                        }
-                    }
-                    if er.is_some() && sr.is_none() {
-                        let scv = sc.unwrap_or(1);
-                        let ecv = ec.unwrap_or(scv);
-                        if let Some((min_r, _)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
-                            sr = Some(min_r);
-                        } else {
-                            sr = Some(1);
-                        }
-                    }
-                    if sc.is_some() && ec.is_none() {
-                        let srv = sr.unwrap_or(1);
-                        let erv = er.unwrap_or(srv);
-                        if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
-                            ec = Some(max_c);
-                        } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                            ec = Some(self.config.max_open_ended_cols);
-                        }
-                    }
-                    if ec.is_some() && sc.is_none() {
-                        let srv = sr.unwrap_or(1);
-                        let erv = er.unwrap_or(srv);
-                        if let Some((min_c, _)) = self.used_cols_for_rows(sheet_name, srv, erv) {
-                            sc = Some(min_c);
-                        } else {
-                            sc = Some(1);
-                        }
-                    }
-
-                    let sr = sr.unwrap_or(1);
-                    let sc = sc.unwrap_or(1);
-                    let er = er.unwrap_or(sr.saturating_sub(1));
-                    let ec = ec.unwrap_or(sc.saturating_sub(1));
-                    if er < sr || ec < sc {
-                        continue;
-                    }
-
-                    if let Some(index) = self.graph.sheet_index(sheet_id) {
-                        let sr0 = sr.saturating_sub(1);
-                        let er0 = er.saturating_sub(1);
-                        let sc0 = sc.saturating_sub(1);
-                        let ec0 = ec.saturating_sub(1);
-                        // enumerate vertices in col range, filter row and kind
-                        for u in index.vertices_in_col_range(sc0, ec0) {
-                            let pc = self.graph.vertex_coord(u);
-                            let row0 = pc.row();
-                            if row0 < sr0 || row0 > er0 {
-                                continue;
-                            }
-                            match self.graph.get_vertex_kind(u) {
-                                VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                                    // only link and schedule if producer is dirty/volatile
-                                    if (self.graph.is_dirty(u) || self.graph.is_volatile(u))
-                                        && u != v
-                                    {
-                                        vdeps.entry(v).or_default().push(u);
-                                        if !visited.contains(&u) {
-                                            stack.push(u);
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
+            } // Virtual dependencies (compressed ranges + dynamic like INDIRECT)
+            let builder = VirtualDepBuilder::new(self);
+            let (vdeps_map, _) = builder.build(&[v]);
+            if let Some(deps) = vdeps_map.get(&v) {
+                for &u in deps {
+                    vdeps.entry(v).or_default().push(u);
+                    if !visited.contains(&u) {
+                        stack.push(u);
                     }
                 }
             }
@@ -4617,66 +4753,129 @@ where
         &mut self,
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
+        let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
+        if self.config.defer_graph_building {
+            self.build_graph_all()?;
+        }
+        self.reset_virtual_dep_telemetry_if_disabled();
         let start = web_time::Instant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
 
-        let to_evaluate = self.graph.get_evaluation_vertices();
-        if to_evaluate.is_empty() {
-            return Ok(EvalResult {
-                computed_vertices,
-                cycle_errors,
-                elapsed: start.elapsed(),
-            });
-        }
+        let mut replan_iterations = 0;
+        const MAX_REPLAN: usize = 5;
+        let mut telemetry = self
+            .config
+            .enable_virtual_dep_telemetry
+            .then(|| self.start_virtual_dep_telemetry());
 
-        let scheduler = Scheduler::new(&self.graph);
-        let schedule = scheduler.create_schedule(&to_evaluate)?;
-
-        // Handle cycles first by marking them with #CIRC!
-        for cycle in &schedule.cycles {
-            // Check cancellation between cycles
+        loop {
             if cancel_flag.load(Ordering::Relaxed) {
+                if let Some(mut t) = telemetry {
+                    t.bailout_reason = Some("cancelled");
+                    t.replan_iterations = replan_iterations;
+                    self.last_virtual_dep_telemetry = t;
+                }
                 return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message("Evaluation cancelled during cycle handling".to_string()));
+                    .with_message("Evaluation cancelled before scheduling".to_string()));
             }
 
-            cycle_errors += 1;
-            let circ_error = LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Circ)
-                    .with_message("Circular dependency detected".to_string()),
-            );
-            for &vertex_id in cycle {
-                self.graph
-                    .update_vertex_value(vertex_id, circ_error.clone());
-                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+            let to_evaluate = self.graph.get_evaluation_vertices();
+            if to_evaluate.is_empty() {
+                if let Some(t) = telemetry.as_mut()
+                    && t.bailout_reason.is_none()
+                {
+                    t.bailout_reason = Some("no_work");
+                }
+                break;
             }
+
+            let (schedule, old_vdeps, meta) = self.create_evaluation_schedule(&to_evaluate)?;
+            if let Some(t) = telemetry.as_mut() {
+                Self::accumulate_schedule_meta(t, &meta);
+            }
+
+            // Handle cycles first by marking them with #CIRC!
+            for cycle in &schedule.cycles {
+                // Check cancellation between cycles
+                if cancel_flag.load(Ordering::Relaxed) {
+                    if let Some(mut t) = telemetry {
+                        t.bailout_reason = Some("cancelled");
+                        t.replan_iterations = replan_iterations;
+                        self.last_virtual_dep_telemetry = t;
+                    }
+                    return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                        .with_message("Evaluation cancelled during cycle handling".to_string()));
+                }
+
+                cycle_errors += 1;
+                let circ_error = LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Circ)
+                        .with_message("Circular dependency detected".to_string()),
+                );
+                for &vertex_id in cycle {
+                    self.graph
+                        .update_vertex_value(vertex_id, circ_error.clone());
+                    self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                }
+            }
+
+            // Evaluate acyclic layers sequentially with cancellation checks
+            for layer in &schedule.layers {
+                // Check cancellation between layers
+                if cancel_flag.load(Ordering::Relaxed) {
+                    if let Some(mut t) = telemetry {
+                        t.bailout_reason = Some("cancelled");
+                        t.replan_iterations = replan_iterations;
+                        self.last_virtual_dep_telemetry = t;
+                    }
+                    return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                        .with_message("Evaluation cancelled between layers".to_string()));
+                }
+
+                // Evaluate vertices in this layer (parallel or sequential)
+                if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                    computed_vertices +=
+                        self.evaluate_layer_parallel_cancellable(layer, cancel_flag)?;
+                } else {
+                    computed_vertices +=
+                        self.evaluate_layer_sequential_cancellable(layer, cancel_flag)?;
+                }
+            }
+
+            let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
+            if let Some(t) = telemetry.as_mut() {
+                t.changed_vdeps_total += changed_vertices.len();
+            }
+            self.graph.clear_dirty_flags(&to_evaluate);
+            for v in &changed_vertices {
+                self.graph.set_dirty(*v, true);
+            }
+
+            if changed_vertices.is_empty() {
+                if let Some(t) = telemetry.as_mut() {
+                    t.bailout_reason = Some("converged");
+                }
+                break;
+            }
+            if replan_iterations >= MAX_REPLAN {
+                if let Some(t) = telemetry.as_mut() {
+                    t.bailout_reason = Some("max_replan");
+                }
+                break;
+            }
+            replan_iterations += 1;
         }
 
-        // Evaluate acyclic layers sequentially with cancellation checks
-        for layer in &schedule.layers {
-            // Check cancellation between layers
-            if cancel_flag.load(Ordering::Relaxed) {
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                    .with_message("Evaluation cancelled between layers".to_string()));
-            }
-
-            // Evaluate vertices in this layer (parallel or sequential)
-            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                computed_vertices +=
-                    self.evaluate_layer_parallel_cancellable(layer, cancel_flag)?;
-            } else {
-                computed_vertices +=
-                    self.evaluate_layer_sequential_cancellable(layer, cancel_flag)?;
-            }
+        if let Some(mut t) = telemetry {
+            t.replan_iterations = replan_iterations;
+            self.last_virtual_dep_telemetry = t;
         }
-
-        // Clear dirty flags for all evaluated vertices (including cycles)
-        self.graph.clear_dirty_flags(&to_evaluate);
 
         // Re-dirty volatile vertices for the next evaluation cycle
         self.graph.redirty_volatiles();
+        self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
 
         Ok(EvalResult {
             computed_vertices,
@@ -7466,46 +7665,86 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        self.reset_virtual_dep_telemetry_if_disabled();
         let start = web_time::Instant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
 
-        let to_evaluate = self.graph.get_evaluation_vertices();
-        if to_evaluate.is_empty() {
-            return Ok(EvalResult {
-                computed_vertices,
-                cycle_errors,
-                elapsed: start.elapsed(),
-            });
-        }
-
-        let scheduler = Scheduler::new(&self.graph);
-        let schedule = scheduler.create_schedule(&to_evaluate)?;
+        let mut replan_iterations = 0;
+        const MAX_REPLAN: usize = 5;
+        let mut telemetry = self
+            .config
+            .enable_virtual_dep_telemetry
+            .then(|| self.start_virtual_dep_telemetry());
 
         log.begin_compound(format!("evaluate_all(epoch={})", self.recalc_epoch));
 
-        // Handle cycles.
-        let circ_error = LiteralValue::Error(
-            ExcelError::new(ExcelErrorKind::Circ)
-                .with_message("Circular dependency detected".to_string()),
-        );
-        for cycle in &schedule.cycles {
-            cycle_errors += 1;
-            for &vertex_id in cycle {
-                self.graph
-                    .update_vertex_value(vertex_id, circ_error.clone());
-                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+        loop {
+            let to_evaluate = self.graph.get_evaluation_vertices();
+            if to_evaluate.is_empty() {
+                if let Some(t) = telemetry.as_mut()
+                    && t.bailout_reason.is_none()
+                {
+                    t.bailout_reason = Some("no_work");
+                }
+                break;
             }
+
+            let (schedule, old_vdeps, meta) = self.create_evaluation_schedule(&to_evaluate)?;
+            if let Some(t) = telemetry.as_mut() {
+                Self::accumulate_schedule_meta(t, &meta);
+            }
+
+            // Handle cycles.
+            let circ_error = LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Circ)
+                    .with_message("Circular dependency detected".to_string()),
+            );
+            for cycle in &schedule.cycles {
+                cycle_errors += 1;
+                for &vertex_id in cycle {
+                    self.graph
+                        .update_vertex_value(vertex_id, circ_error.clone());
+                    self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                }
+            }
+
+            // Evaluate layers.
+            for layer in &schedule.layers {
+                computed_vertices += self.evaluate_layer_logged(layer, log)?;
+            }
+
+            let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
+            if let Some(t) = telemetry.as_mut() {
+                t.changed_vdeps_total += changed_vertices.len();
+            }
+            self.graph.clear_dirty_flags(&to_evaluate);
+            for v in &changed_vertices {
+                self.graph.set_dirty(*v, true);
+            }
+
+            if changed_vertices.is_empty() {
+                if let Some(t) = telemetry.as_mut() {
+                    t.bailout_reason = Some("converged");
+                }
+                break;
+            }
+            if replan_iterations >= MAX_REPLAN {
+                if let Some(t) = telemetry.as_mut() {
+                    t.bailout_reason = Some("max_replan");
+                }
+                break;
+            }
+            replan_iterations += 1;
         }
 
-        // Evaluate layers.
-        for layer in &schedule.layers {
-            computed_vertices += self.evaluate_layer_logged(layer, log)?;
+        if let Some(mut t) = telemetry {
+            t.replan_iterations = replan_iterations;
+            self.last_virtual_dep_telemetry = t;
         }
 
         log.end_compound();
 
-        self.graph.clear_dirty_flags(&to_evaluate);
         self.graph.redirty_volatiles();
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
 

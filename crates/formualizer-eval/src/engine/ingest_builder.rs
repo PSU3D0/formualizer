@@ -211,10 +211,11 @@ impl<'g> BulkIngestBuilder<'g> {
                 let mut target_vids: Vec<VertexId> = Vec::with_capacity(plan.formula_targets.len());
                 for (i, (sid, pc)) in plan.formula_targets.iter().enumerate() {
                     let vid = self.g.vid_for_sid_pc(*sid, *pc).expect("VID must exist");
-                    target_vids.push(vid);
-                    // Remove old edges if replacing a formula
+                    target_vids.push(vid); // Remove old edges if replacing a formula
+                    let ast_ref = &stage.formulas[i].2;
+                    let dynamic = self.g.is_ast_dynamic(ast_ref);
                     self.g
-                        .assign_formula_vertex(vid, ast_ids[i], stage.formulas[i].3);
+                        .assign_formula_vertex(vid, ast_ids[i], stage.formulas[i].3, dynamic);
                 }
                 total_formulas += target_vids.len();
                 t_assign_ms = ta0.elapsed().as_millis();

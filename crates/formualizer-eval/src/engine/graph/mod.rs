@@ -362,9 +362,14 @@ impl DependencyGraph {
         let (sid, pc) = plan.global_cells.get(idx as usize).copied()?;
         self.vid_for_sid_pc(sid, pc)
     }
-
     /// Assign a formula to an existing vertex, removing prior edges and setting flags
-    pub fn assign_formula_vertex(&mut self, vid: VertexId, ast_id: AstNodeId, volatile: bool) {
+    pub fn assign_formula_vertex(
+        &mut self,
+        vid: VertexId,
+        ast_id: AstNodeId,
+        volatile: bool,
+        dynamic: bool,
+    ) {
         if self.vertex_formulas.contains_key(&vid) {
             self.remove_dependent_edges(vid);
         }
@@ -373,6 +378,8 @@ impl DependencyGraph {
         self.vertex_values.remove(&vid);
         self.vertex_formulas.insert(vid, ast_id);
         self.mark_volatile(vid, volatile);
+        self.store.set_dynamic(vid, dynamic);
+
         // schedule evaluation
         self.mark_vertex_dirty(vid);
     }
@@ -1035,6 +1042,8 @@ impl DependencyGraph {
         self.vertex_values.remove(&addr_vertex_id);
 
         self.mark_volatile(addr_vertex_id, volatile);
+        let dynamic = self.is_ast_dynamic(&ast);
+        self.store.set_dynamic(addr_vertex_id, dynamic);
 
         if !named_dependencies.is_empty() {
             self.attach_vertex_to_names(addr_vertex_id, &named_dependencies);
@@ -1682,7 +1691,6 @@ impl DependencyGraph {
         let ast_ids = self
             .data_store
             .store_asts_batch(collected.iter().map(|(_, _, ast)| ast), &self.sheet_reg);
-
         for (i, &tvid) in target_vids.iter().enumerate() {
             // If this cell already had a formula, remove its edges once here
             if self.vertex_formulas.contains_key(&tvid) {
@@ -1693,6 +1701,9 @@ impl DependencyGraph {
             self.vertex_values.remove(&tvid);
             self.vertex_formulas.insert(tvid, ast_ids[i]);
             self.mark_volatile(tvid, vol_flags.get(i).copied().unwrap_or(false));
+
+            let dynamic = self.is_ast_dynamic(&collected[i].2);
+            self.store.set_dynamic(tvid, dynamic);
         }
 
         // 4) Add edges in one batch
@@ -2516,6 +2527,10 @@ impl DependencyGraph {
     /// Check if a vertex is volatile
     pub(crate) fn is_volatile(&self, vertex_id: VertexId) -> bool {
         self.store.is_volatile(vertex_id)
+    }
+
+    pub(crate) fn is_dynamic(&self, vertex_id: VertexId) -> bool {
+        self.store.is_dynamic(vertex_id)
     }
 
     /// Get vertex ID for a cell address
