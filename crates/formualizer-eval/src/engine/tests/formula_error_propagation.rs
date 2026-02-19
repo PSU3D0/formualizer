@@ -1,6 +1,7 @@
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
+use formualizer_parse::parser::parse;
 
 #[test]
 fn formula_ref_propagates_error_after_bulk_ingest() {
@@ -35,4 +36,36 @@ fn formula_ref_propagates_error_after_bulk_ingest() {
         Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Div),
         other => panic!("E8 expected #DIV/0!, got {other:?}"),
     }
+}
+
+#[test]
+fn if_blank_cell_condition_takes_false_branch() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=IF(A1,1,2)").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(2.0))
+    );
+}
+
+#[test]
+fn iferror_catches_name_errors_from_eval_path() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=IFERROR(UNKNOWN_FN(),42)").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(42.0))
+    );
 }

@@ -122,3 +122,36 @@ fn round_days_times_14_preserves_date_tag() {
         NaiveDate::from_ymd_opt(2024, 11, 1).unwrap(),
     );
 }
+
+#[test]
+fn year_accepts_date_and_datetime_cells_in_engine_flow() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+
+    let d = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
+    let dt = d.and_hms_opt(8, 30, 0).unwrap();
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Date(d))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::DateTime(dt))
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=YEAR(A1)").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 2, 2, parse("=YEAR(A2)").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(2024.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(2024.0))
+    );
+}
