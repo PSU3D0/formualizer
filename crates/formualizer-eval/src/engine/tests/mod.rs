@@ -88,6 +88,7 @@ mod formula_edit_propagation;
 mod formula_error_propagation;
 mod formula_overlay_writeback;
 mod indirect;
+mod offset_dynamic;
 mod open_ended_bounds_caps;
 mod overlay_compaction;
 mod region_lock;
