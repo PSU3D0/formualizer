@@ -344,11 +344,15 @@ fn test_cancellation_message_differentiation() {
             message: Some(msg),
             ..
         }) => {
-            // Should contain context about where cancellation occurred
+            // Should contain context about where cancellation occurred.
+            // Immediate cancellation can now happen before scheduling.
             assert!(
-                msg.contains("between layers")
+                msg.contains("before scheduling")
+                    || msg.contains("between layers")
                     || msg.contains("cycle handling")
                     || msg.contains("within layer")
+                    || msg.contains("before starting")
+                    || msg.contains("during execution")
             );
         }
         _ => panic!("Expected cancellation error with message"),
