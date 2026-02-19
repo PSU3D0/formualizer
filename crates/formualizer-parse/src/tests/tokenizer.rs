@@ -1471,4 +1471,22 @@ mod tests {
             assert_eq!(token.subtype, span.subtype);
         }
     }
+
+    #[test]
+    fn test_error_literals_are_case_insensitive() {
+        let tokenizer = Tokenizer::new("=#ref!").expect("tokenize lowercase ref error");
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Error);
+        assert_eq!(tokenizer.items[0].value, "#ref!");
+    }
+
+    #[test]
+    fn test_sheet_prefixed_lowercase_error_literal_tokenizes() {
+        let tokenizer = Tokenizer::new("=source!#ref!").expect("tokenize sheet-prefixed lowercase");
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+        assert_eq!(tokenizer.items[0].value, "source!#ref!");
+    }
 }

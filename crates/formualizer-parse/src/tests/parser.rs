@@ -38,6 +38,26 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_lowercase_error_literals() {
+        let ast = parse_formula("=#ref!").expect("parse lowercase error literal");
+        match ast.node_type {
+            ASTNodeType::Literal(LiteralValue::Error(e)) => {
+                assert_eq!(e.kind, ExcelError::new_ref().kind)
+            }
+            other => panic!("expected error literal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parser_accepts_sheet_prefixed_lowercase_error_literal() {
+        let ast = parse_formula("=source!#ref!").expect("parse sheet-prefixed lowercase");
+        match ast.node_type {
+            ASTNodeType::Reference { .. } => {}
+            other => panic!("expected reference node, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parser_try_from_formula_is_fallible() {
         let err = match Parser::try_from_formula("=\"unterminated") {
             Ok(_) => panic!("expected tokenizer error"),

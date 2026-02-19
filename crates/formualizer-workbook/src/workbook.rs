@@ -192,6 +192,7 @@ impl WorkbookConfig {
     pub fn interactive() -> Self {
         let eval = formualizer_eval::engine::EvalConfig {
             defer_graph_building: true,
+            formula_parse_policy: formualizer_eval::engine::FormulaParsePolicy::CoerceToError,
             ..Default::default()
         };
         Self {

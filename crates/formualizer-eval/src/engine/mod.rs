@@ -153,6 +153,30 @@ impl DeterministicMode {
     }
 }
 
+/// Policy for handling malformed formulas encountered during workbook ingest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormulaParsePolicy {
+    /// Reject malformed formulas and fail the load/evaluation path.
+    Strict,
+    /// Convert malformed formulas into literal error formulas (`#ERROR!`).
+    CoerceToError,
+    /// Keep the backend-provided cached value and drop the formula.
+    KeepCachedValue,
+    /// Treat the original formula text as a plain text literal.
+    AsText,
+}
+
+/// Captured diagnostic for a malformed formula encountered during ingest/graph-build.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaParseDiagnostic {
+    pub sheet: String,
+    pub row: u32,
+    pub col: u32,
+    pub formula: String,
+    pub message: String,
+    pub policy: FormulaParsePolicy,
+}
+
 /// Configuration for the evaluation engine
 #[derive(Debug, Clone)]
 pub struct EvalConfig {
@@ -244,6 +268,9 @@ pub struct EvalConfig {
     /// Workbook date system: Excel 1900 (default) or 1904.
     pub date_system: DateSystem,
 
+    /// Policy for malformed formulas encountered during ingest/graph-build.
+    pub formula_parse_policy: FormulaParsePolicy,
+
     /// Defer dependency graph building: ingest values immediately but stage formulas
     /// for on-demand graph construction during evaluation.
     pub defer_graph_building: bool,
@@ -301,6 +328,7 @@ impl Default for EvalConfig {
             write_formula_overlay_enabled: true,
             max_overlay_memory_bytes: None,
             date_system: DateSystem::Excel1900,
+            formula_parse_policy: FormulaParsePolicy::Strict,
             defer_graph_building: false,
             enable_virtual_dep_telemetry: false,
         }
@@ -359,6 +387,12 @@ impl EvalConfig {
     #[inline]
     pub fn with_date_system(mut self, system: DateSystem) -> Self {
         self.date_system = system;
+        self
+    }
+
+    #[inline]
+    pub fn with_formula_parse_policy(mut self, policy: FormulaParsePolicy) -> Self {
+        self.formula_parse_policy = policy;
         self
     }
 

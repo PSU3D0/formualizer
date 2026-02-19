@@ -1023,7 +1023,7 @@ impl<'a> SpanTokenizer<'a> {
             let err_bytes = err_code.as_bytes();
             if self.offset + err_bytes.len() <= self.formula.len() {
                 let slice = &self.formula.as_bytes()[self.offset..self.offset + err_bytes.len()];
-                if slice == err_bytes {
+                if slice.eq_ignore_ascii_case(err_bytes) {
                     self.push_span(
                         TokenType::Operand,
                         TokenSubType::Error,
@@ -1596,7 +1596,7 @@ impl Tokenizer {
             let err_bytes = err_code.as_bytes();
             if self.offset + err_bytes.len() <= self.formula.len() {
                 let slice = &self.formula.as_bytes()[self.offset..self.offset + err_bytes.len()];
-                if slice == err_bytes {
+                if slice.eq_ignore_ascii_case(err_bytes) {
                     let token = Token::make_operand_from_slice(
                         &self.formula,
                         error_start,

@@ -596,16 +596,29 @@ where
                             );
                         }
                         let ast = if let Some(ast) = cache.get(&key_owned) {
-                            ast.clone()
+                            Some(ast.clone())
                         } else {
-                            let parsed =
-                                formualizer_parse::parser::parse(&key_owned).map_err(|e| {
-                                    calamine::Error::Io(std::io::Error::other(e.to_string()))
-                                })?;
-                            cache.insert(key_owned, parsed.clone());
-                            parsed
+                            match formualizer_parse::parser::parse(&key_owned) {
+                                Ok(parsed) => {
+                                    cache.insert(key_owned.clone(), parsed.clone());
+                                    Some(parsed)
+                                }
+                                Err(e) => engine
+                                    .handle_formula_parse_error(
+                                        n,
+                                        excel_row,
+                                        excel_col,
+                                        &key_owned,
+                                        e.to_string(),
+                                    )
+                                    .map_err(|e| {
+                                        calamine::Error::Io(std::io::Error::other(e.to_string()))
+                                    })?,
+                            }
                         };
-                        formulas.push((excel_row, excel_col, ast));
+                        if let Some(ast) = ast {
+                            formulas.push((excel_row, excel_col, ast));
+                        }
                         parsed_n += 1;
                         if debug && parsed_n.is_multiple_of(5000) {
                             eprintln!("[fz][load]    parsed formulas: {parsed_n}");

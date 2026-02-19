@@ -5,7 +5,10 @@ use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::virtual_deps::VirtualDepBuilder;
-use crate::engine::{DependencyGraph, EvalConfig, Scheduler, VertexId, VertexKind};
+use crate::engine::{
+    DependencyGraph, EvalConfig, FormulaParseDiagnostic, FormulaParsePolicy, Scheduler, VertexId,
+    VertexKind,
+};
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
@@ -13,11 +16,17 @@ use crate::traits::{EvaluationContext, Resolver};
 use chrono::Timelike;
 use formualizer_common::{col_letters_from_1based, parse_a1_1based};
 use formualizer_parse::parser::ReferenceType;
-use formualizer_parse::{ASTNode, ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_parse::{ASTNode, ASTNodeType, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+type StagedFormulaEntry = (u32, u32, String);
+type ParsedFormulaEntry = (u32, u32, ASTNode);
+type StagedFormulaMap = std::collections::HashMap<String, Vec<StagedFormulaEntry>>;
+type PreparedFormulaBatches = Vec<(String, Vec<ParsedFormulaEntry>)>;
+type StagedFormulaBatches = Vec<(String, Vec<StagedFormulaEntry>)>;
 
 pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
@@ -45,7 +54,9 @@ pub struct Engine<R> {
     row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
     source_cache: Arc<std::sync::RwLock<SourceCache>>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
-    staged_formulas: std::collections::HashMap<String, Vec<(u32, u32, String)>>,
+    staged_formulas: StagedFormulaMap,
+    /// Non-fatal malformed formula diagnostics captured during ingest/graph-build.
+    formula_parse_diagnostics: Vec<FormulaParseDiagnostic>,
     /// Transient cancellation flag used during evaluation
     active_cancel_flag: Option<Arc<AtomicBool>>,
 
@@ -717,6 +728,7 @@ where
             row_bounds_cache: std::sync::RwLock::new(None),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
+            formula_parse_diagnostics: Vec::new(),
             active_cancel_flag: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
@@ -761,6 +773,7 @@ where
             row_bounds_cache: std::sync::RwLock::new(None),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
+            formula_parse_diagnostics: Vec::new(),
             active_cancel_flag: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
@@ -1692,23 +1705,81 @@ where
         })
     }
 
+    pub fn formula_parse_diagnostics(&self) -> &[FormulaParseDiagnostic] {
+        &self.formula_parse_diagnostics
+    }
+
+    pub fn take_formula_parse_diagnostics(&mut self) -> Vec<FormulaParseDiagnostic> {
+        std::mem::take(&mut self.formula_parse_diagnostics)
+    }
+
+    pub fn clear_formula_parse_diagnostics(&mut self) {
+        self.formula_parse_diagnostics.clear();
+    }
+
+    pub fn handle_formula_parse_error(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        formula: &str,
+        message: String,
+    ) -> Result<Option<ASTNode>, ExcelError> {
+        let policy = self.config.formula_parse_policy;
+
+        if policy == FormulaParsePolicy::Strict {
+            let col_a1 = col_letters_from_1based(col).unwrap_or_else(|_| "?".to_string());
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "Formula parse error at {sheet}!{col_a1}{row}: {message}"
+            )));
+        }
+
+        self.formula_parse_diagnostics.push(FormulaParseDiagnostic {
+            sheet: sheet.to_string(),
+            row,
+            col,
+            formula: formula.to_string(),
+            message: message.clone(),
+            policy,
+        });
+
+        match policy {
+            FormulaParsePolicy::Strict => unreachable!(),
+            FormulaParsePolicy::KeepCachedValue => Ok(None),
+            FormulaParsePolicy::AsText => Ok(Some(ASTNode::new(
+                ASTNodeType::Literal(LiteralValue::Text(formula.to_string())),
+                None,
+            ))),
+            FormulaParsePolicy::CoerceToError => {
+                let err = ExcelError::new(ExcelErrorKind::Error)
+                    .with_message(format!("Malformed formula: {message}"));
+                Ok(Some(ASTNode::new(
+                    ASTNodeType::Literal(LiteralValue::Error(err)),
+                    None,
+                )))
+            }
+        }
+    }
+
     /// Build graph for all staged formulas.
     pub fn build_graph_all(&mut self) -> Result<(), formualizer_parse::ExcelError> {
         if self.staged_formulas.is_empty() {
             return Ok(());
         }
-        // Take staged formulas before borrowing graph via builder
+        // Take staged formulas before borrowing graph via builder.
         let staged = std::mem::take(&mut self.staged_formulas);
         for sheet in staged.keys() {
             let _ = self.add_sheet(sheet);
         }
-        let mut builder = self.begin_bulk_ingest();
+
+        // Parse/recover first, then borrow graph builder.
+        let mut prepared: PreparedFormulaBatches = Vec::new();
         for (sheet, entries) in staged {
-            let sid = builder.add_sheet(&sheet);
-            // Parse with small cache for shared formulas
-            let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
+            let mut formulas: Vec<ParsedFormulaEntry> = Vec::new();
+            let mut cache: rustc_hash::FxHashMap<String, ASTNode> =
                 rustc_hash::FxHashMap::default();
             cache.reserve(4096);
+
             for (row, col, txt) in entries {
                 let key = if txt.starts_with('=') {
                     txt
@@ -1716,19 +1787,37 @@ where
                     format!("={txt}")
                 };
                 let ast = if let Some(p) = cache.get(&key) {
-                    p.clone()
+                    Some(p.clone())
                 } else {
-                    let parsed = formualizer_parse::parser::parse(&key).map_err(|e| {
-                        formualizer_parse::ExcelError::new(formualizer_parse::ExcelErrorKind::Value)
-                            .with_message(e.to_string())
-                    })?;
-                    cache.insert(key.clone(), parsed.clone());
-                    parsed
+                    match formualizer_parse::parser::parse(&key) {
+                        Ok(parsed) => {
+                            cache.insert(key.clone(), parsed.clone());
+                            Some(parsed)
+                        }
+                        Err(e) => {
+                            self.handle_formula_parse_error(&sheet, row, col, &key, e.to_string())?
+                        }
+                    }
                 };
-                builder.add_formulas(sid, std::iter::once((row, col, ast)));
+
+                if let Some(ast) = ast {
+                    formulas.push((row, col, ast));
+                }
+            }
+
+            if !formulas.is_empty() {
+                prepared.push((sheet, formulas));
             }
         }
-        let _ = builder.finish();
+
+        if !prepared.is_empty() {
+            let mut builder = self.begin_bulk_ingest();
+            for (sheet, formulas) in prepared {
+                let sid = builder.add_sheet(&sheet);
+                builder.add_formulas(sid, formulas.into_iter());
+            }
+            let _ = builder.finish();
+        }
         Ok(())
     }
 
@@ -1737,29 +1826,28 @@ where
         &mut self,
         sheets: I,
     ) -> Result<(), formualizer_parse::ExcelError> {
-        let mut any = false;
-        // Collect entries first to avoid aliasing self while builder borrows graph
-        struct SheetFormulas<'s> {
-            sheet: &'s str,
-            entries: Vec<(u32, u32, String)>,
-        }
-        let mut collected: Vec<SheetFormulas<'_>> = Vec::new();
+        let mut collected: StagedFormulaBatches = Vec::new();
         for s in sheets {
             if let Some(entries) = self.staged_formulas.remove(s) {
-                collected.push(SheetFormulas { sheet: s, entries });
+                collected.push((s.to_string(), entries));
             }
         }
-        for SheetFormulas { sheet, .. } in collected.iter() {
+
+        if collected.is_empty() {
+            return Ok(());
+        }
+
+        for (sheet, _) in &collected {
             let _ = self.add_sheet(sheet);
         }
-        let mut builder = self.begin_bulk_ingest();
-        // small parse cache per call
-        let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
-            rustc_hash::FxHashMap::default();
+
+        // Parse/recover first, then borrow graph builder.
+        let mut prepared: PreparedFormulaBatches = Vec::new();
+        let mut cache: rustc_hash::FxHashMap<String, ASTNode> = rustc_hash::FxHashMap::default();
         cache.reserve(4096);
-        for SheetFormulas { sheet: s, entries } in collected.into_iter() {
-            any = true;
-            let sid = builder.add_sheet(s);
+
+        for (sheet, entries) in collected {
+            let mut formulas: Vec<ParsedFormulaEntry> = Vec::new();
             for (row, col, txt) in entries {
                 let key = if txt.starts_with('=') {
                     txt
@@ -1767,19 +1855,34 @@ where
                     format!("={txt}")
                 };
                 let ast = if let Some(p) = cache.get(&key) {
-                    p.clone()
+                    Some(p.clone())
                 } else {
-                    let parsed = formualizer_parse::parser::parse(&key).map_err(|e| {
-                        formualizer_parse::ExcelError::new(formualizer_parse::ExcelErrorKind::Value)
-                            .with_message(e.to_string())
-                    })?;
-                    cache.insert(key.clone(), parsed.clone());
-                    parsed
+                    match formualizer_parse::parser::parse(&key) {
+                        Ok(parsed) => {
+                            cache.insert(key.clone(), parsed.clone());
+                            Some(parsed)
+                        }
+                        Err(e) => {
+                            self.handle_formula_parse_error(&sheet, row, col, &key, e.to_string())?
+                        }
+                    }
                 };
-                builder.add_formulas(sid, std::iter::once((row, col, ast)));
+
+                if let Some(ast) = ast {
+                    formulas.push((row, col, ast));
+                }
+            }
+            if !formulas.is_empty() {
+                prepared.push((sheet, formulas));
             }
         }
-        if any {
+
+        if !prepared.is_empty() {
+            let mut builder = self.begin_bulk_ingest();
+            for (sheet, formulas) in prepared {
+                let sid = builder.add_sheet(&sheet);
+                builder.add_formulas(sid, formulas.into_iter());
+            }
             let _ = builder.finish();
         }
         Ok(())

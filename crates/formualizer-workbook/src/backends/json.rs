@@ -799,9 +799,23 @@ where
                         } else {
                             format!("={f}")
                         };
-                        let parsed = formualizer_parse::parser::parse(&with_eq)
-                            .map_err(|e| IoError::from_backend("json", e))?;
-                        formulas.push((c.row, c.col, parsed));
+                        match formualizer_parse::parser::parse(&with_eq) {
+                            Ok(parsed) => formulas.push((c.row, c.col, parsed)),
+                            Err(e) => {
+                                if let Some(recovered) = engine
+                                    .handle_formula_parse_error(
+                                        name,
+                                        c.row,
+                                        c.col,
+                                        &with_eq,
+                                        e.to_string(),
+                                    )
+                                    .map_err(IoError::Engine)?
+                                {
+                                    formulas.push((c.row, c.col, recovered));
+                                }
+                            }
+                        }
                     }
                 }
                 if !formulas.is_empty() {
