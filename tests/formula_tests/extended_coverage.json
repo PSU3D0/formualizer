@@ -336,19 +336,19 @@
     },
     {
       "formula": "=QUOTIENT(10,3)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 3,
+      "result_type": "int",
       "description": "quotient integer division"
     },
     {
       "formula": "=QUOTIENT(-10,3)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": -3,
+      "result_type": "int",
       "description": "quotient negative"
     },
     {
       "formula": "=QUOTIENT(5,0)",
-      "result": "#NAME?",
+      "result": "#DIV/0!",
       "result_type": "error",
       "description": "quotient div by zero"
     },
@@ -372,50 +372,50 @@
     },
     {
       "formula": "=EVEN(1.5)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 2,
+      "result_type": "int",
       "description": "even rounds up positive"
     },
     {
       "formula": "=EVEN(3)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 4,
+      "result_type": "int",
       "description": "even odd number"
     },
     {
       "formula": "=EVEN(-1)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": -2,
+      "result_type": "int",
       "description": "even negative rounds away from zero"
     },
     {
       "formula": "=EVEN(2)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 2,
+      "result_type": "int",
       "description": "even already even"
     },
     {
       "formula": "=ODD(1.5)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 3,
+      "result_type": "int",
       "description": "odd rounds up positive"
     },
     {
       "formula": "=ODD(2)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 3,
+      "result_type": "int",
       "description": "odd even number"
     },
     {
       "formula": "=ODD(-1)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": -1,
+      "result_type": "int",
       "description": "odd already odd negative"
     },
     {
       "formula": "=ODD(0)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 1,
+      "result_type": "int",
       "description": "odd of zero"
     },
     {
@@ -750,32 +750,32 @@
     },
     {
       "formula": "=SQRTPI(1)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 1.772453850905516,
+      "result_type": "float",
       "description": "sqrtpi(1) = sqrt(PI)"
     },
     {
       "formula": "=SQRTPI(2)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 2.5066282746310002,
+      "result_type": "float",
       "description": "sqrtpi(2)"
     },
     {
       "formula": "=MULTINOMIAL(2, 3)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 10,
+      "result_type": "int",
       "description": "multinomial 5!/(2!*3!)"
     },
     {
       "formula": "=MULTINOMIAL(2, 3, 4)",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 1260,
+      "result_type": "int",
       "description": "multinomial 9!/(2!*3!*4!)"
     },
     {
       "formula": "=SERIESSUM(2, 0, 1, {1,2,3})",
-      "result": "#NAME?",
-      "result_type": "error",
+      "result": 17,
+      "result_type": "int",
       "description": "seriessum 1*2^0 + 2*2^1 + 3*2^2"
     },
     {

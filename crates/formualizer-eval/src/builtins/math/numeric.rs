@@ -806,6 +806,323 @@ impl Function for Log10Fn {
     }
 }
 
+fn factorial_checked(n: i64) -> Option<f64> {
+    if !(0..=170).contains(&n) {
+        return None;
+    }
+    let mut out = 1.0;
+    for i in 2..=n {
+        out *= i as f64;
+    }
+    Some(out)
+}
+
+#[derive(Debug)]
+pub struct QuotientFn;
+impl Function for QuotientFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "QUOTIENT"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let n = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        let d = match args[1].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        if d == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            (n / d).trunc(),
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct EvenFn;
+impl Function for EvenFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "EVEN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let number = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        if number == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+        }
+
+        let sign = number.signum();
+        let mut v = number.abs().ceil() as i64;
+        if v % 2 != 0 {
+            v += 1;
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            sign * v as f64,
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct OddFn;
+impl Function for OddFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ODD"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let number = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+
+        let sign = if number < 0.0 { -1.0 } else { 1.0 };
+        let mut v = number.abs().ceil() as i64;
+        if v % 2 == 0 {
+            v += 1;
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            sign * v as f64,
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct SqrtPiFn;
+impl Function for SqrtPiFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SQRTPI"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let n = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        if n < 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            (n * std::f64::consts::PI).sqrt(),
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct MultinomialFn;
+impl Function for MultinomialFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "MULTINOMIAL"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let mut values: Vec<i64> = Vec::new();
+        for arg in args {
+            for value in arg.lazy_values_owned()? {
+                let n = match value {
+                    LiteralValue::Error(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                    other => coerce_num(&other)?.trunc() as i64,
+                };
+                if n < 0 {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new_num(),
+                    )));
+                }
+                values.push(n);
+            }
+        }
+
+        let sum: i64 = values.iter().sum();
+        let num = match factorial_checked(sum) {
+            Some(v) => v,
+            None => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
+        };
+
+        let mut den = 1.0;
+        for n in values {
+            let fact = match factorial_checked(n) {
+                Some(v) => v,
+                None => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new_num(),
+                    )));
+                }
+            };
+            den *= fact;
+        }
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            (num / den).round(),
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct SeriesSumFn;
+impl Function for SeriesSumFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SERIESSUM"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::any(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        let n = match args[1].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        let m = match args[2].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+
+        let mut coeffs: Vec<f64> = Vec::new();
+        if let Ok(view) = args[3].range_view() {
+            view.for_each_cell(&mut |cell| {
+                match cell {
+                    LiteralValue::Error(e) => return Err(e.clone()),
+                    other => coeffs.push(coerce_num(other)?),
+                }
+                Ok(())
+            })?;
+        } else {
+            match args[3].value()?.into_literal() {
+                LiteralValue::Array(rows) => {
+                    for row in rows {
+                        for cell in row {
+                            match cell {
+                                LiteralValue::Error(e) => {
+                                    return Ok(crate::traits::CalcValue::Scalar(
+                                        LiteralValue::Error(e),
+                                    ));
+                                }
+                                other => coeffs.push(coerce_num(&other)?),
+                            }
+                        }
+                    }
+                }
+                LiteralValue::Error(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                other => coeffs.push(coerce_num(&other)?),
+            }
+        }
+
+        let mut sum = 0.0;
+        for (i, c) in coeffs.into_iter().enumerate() {
+            sum += c * x.powf(n + (i as f64) * m);
+        }
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(sum)))
+    }
+}
+
 #[derive(Debug)]
 pub struct SumsqFn;
 impl Function for SumsqFn {
@@ -1172,6 +1489,12 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(LnFn));
     crate::function_registry::register_function(Arc::new(LogFn));
     crate::function_registry::register_function(Arc::new(Log10Fn));
+    crate::function_registry::register_function(Arc::new(QuotientFn));
+    crate::function_registry::register_function(Arc::new(EvenFn));
+    crate::function_registry::register_function(Arc::new(OddFn));
+    crate::function_registry::register_function(Arc::new(SqrtPiFn));
+    crate::function_registry::register_function(Arc::new(MultinomialFn));
+    crate::function_registry::register_function(Arc::new(SeriesSumFn));
     crate::function_registry::register_function(Arc::new(SumsqFn));
     crate::function_registry::register_function(Arc::new(MroundFn));
     crate::function_registry::register_function(Arc::new(RomanFn));
@@ -1671,6 +1994,219 @@ mod tests_numeric {
             .unwrap()
             .into_literal(),
             LiteralValue::Number(4.0)
+        );
+    }
+
+    #[test]
+    fn quotient_basic_and_div_zero() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(QuotientFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "QUOTIENT").unwrap();
+
+        let ten = lit(LiteralValue::Int(10));
+        let three = lit(LiteralValue::Int(3));
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&ten, &ctx),
+                    ArgumentHandle::new(&three, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(3.0)
+        );
+
+        let neg_ten = lit(LiteralValue::Int(-10));
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&neg_ten, &ctx),
+                    ArgumentHandle::new(&three, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(-3.0)
+        );
+
+        let zero = lit(LiteralValue::Int(0));
+        match f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&ten, &ctx),
+                    ArgumentHandle::new(&zero, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#DIV/0!"),
+            other => panic!("expected #DIV/0!, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn even_odd_examples() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(EvenFn))
+            .with_function(std::sync::Arc::new(OddFn));
+        let ctx = interp(&wb);
+
+        let even = ctx.context.get_function("", "EVEN").unwrap();
+        let odd = ctx.context.get_function("", "ODD").unwrap();
+
+        let one_half = lit(LiteralValue::Number(1.5));
+        let three = lit(LiteralValue::Int(3));
+        let neg_one = lit(LiteralValue::Int(-1));
+        let two = lit(LiteralValue::Int(2));
+        let zero = lit(LiteralValue::Int(0));
+
+        assert_eq!(
+            even.dispatch(
+                &[ArgumentHandle::new(&one_half, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(2.0)
+        );
+        assert_eq!(
+            even.dispatch(
+                &[ArgumentHandle::new(&three, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(4.0)
+        );
+        assert_eq!(
+            even.dispatch(
+                &[ArgumentHandle::new(&neg_one, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(-2.0)
+        );
+        assert_eq!(
+            even.dispatch(
+                &[ArgumentHandle::new(&two, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(2.0)
+        );
+
+        assert_eq!(
+            odd.dispatch(
+                &[ArgumentHandle::new(&one_half, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(3.0)
+        );
+        assert_eq!(
+            odd.dispatch(
+                &[ArgumentHandle::new(&two, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(3.0)
+        );
+        assert_eq!(
+            odd.dispatch(
+                &[ArgumentHandle::new(&neg_one, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(-1.0)
+        );
+        assert_eq!(
+            odd.dispatch(
+                &[ArgumentHandle::new(&zero, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Number(1.0)
+        );
+    }
+
+    #[test]
+    fn sqrtpi_multinomial_and_seriessum_examples() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(SqrtPiFn))
+            .with_function(std::sync::Arc::new(MultinomialFn))
+            .with_function(std::sync::Arc::new(SeriesSumFn));
+        let ctx = interp(&wb);
+
+        let sqrtpi = ctx.context.get_function("", "SQRTPI").unwrap();
+        let one = lit(LiteralValue::Int(1));
+        match sqrtpi
+            .dispatch(
+                &[ArgumentHandle::new(&one, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(v) => assert!((v - std::f64::consts::PI.sqrt()).abs() < 1e-12),
+            other => panic!("expected numeric SQRTPI, got {other:?}"),
+        }
+
+        let multinomial = ctx.context.get_function("", "MULTINOMIAL").unwrap();
+        let two = lit(LiteralValue::Int(2));
+        let three = lit(LiteralValue::Int(3));
+        let four = lit(LiteralValue::Int(4));
+        assert_eq!(
+            multinomial
+                .dispatch(
+                    &[
+                        ArgumentHandle::new(&two, &ctx),
+                        ArgumentHandle::new(&three, &ctx),
+                        ArgumentHandle::new(&four, &ctx),
+                    ],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(1260.0)
+        );
+
+        let seriessum = ctx.context.get_function("", "SERIESSUM").unwrap();
+        let x = lit(LiteralValue::Int(2));
+        let n0 = lit(LiteralValue::Int(0));
+        let m1 = lit(LiteralValue::Int(1));
+        let coeffs = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Array(vec![vec![
+                LiteralValue::Int(1),
+                LiteralValue::Int(2),
+                LiteralValue::Int(3),
+            ]])),
+            None,
+        );
+        assert_eq!(
+            seriessum
+                .dispatch(
+                    &[
+                        ArgumentHandle::new(&x, &ctx),
+                        ArgumentHandle::new(&n0, &ctx),
+                        ArgumentHandle::new(&m1, &ctx),
+                        ArgumentHandle::new(&coeffs, &ctx),
+                    ],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(17.0)
         );
     }
 
