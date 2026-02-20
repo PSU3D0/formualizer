@@ -66,6 +66,40 @@ await wb.endAction();
 await wb.undo();  // reverts both
 ```
 
+### Register custom functions
+
+```typescript
+import init, { Workbook } from 'formualizer';
+await init();
+
+const wb = new Workbook();
+wb.addSheet('Sheet1');
+
+wb.registerFunction(
+  'js_add',
+  (a, b) => Number(a) + Number(b),
+  { minArgs: 2, maxArgs: 2 },
+);
+
+wb.setFormula('Sheet1', 1, 1, '=JS_ADD(20,22)');
+console.log(wb.evaluateCell('Sheet1', 1, 1)); // 42
+console.log(wb.listFunctions());
+wb.unregisterFunction('js_add');
+```
+
+Key semantics:
+
+- Names are case-insensitive and normalized internally.
+- Custom functions are workbook-local and resolve before global built-ins.
+- Built-in override is blocked by default; opt in with `allowOverrideBuiltin: true`.
+- Args are by value; ranges are delivered as JS arrays (`[[...], [...]]`).
+- Return scalars, `null`/`undefined`, 1D/2D arrays (array results spill into the grid).
+- JS exceptions are sanitized and mapped to `#VALUE!` errors.
+
+Runnable example: `node bindings/wasm/examples/custom-function-registration.mjs` (after `npm run build`)
+
+Note: the phase-4 Rust plugin seam (`register_wasm_function`) is intentionally still stubbed/pending runtime integration and is not yet surfaced in the JS API.
+
 ---
 
 ## API
@@ -111,6 +145,9 @@ parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
 | `endAction()` | End the current action group |
 | `undo()` | Undo the last action |
 | `redo()` | Redo the last undone action |
+| `registerFunction(name, callback, options?)` | Register a workbook-local custom function |
+| `unregisterFunction(name)` | Remove a previously registered custom function |
+| `listFunctions()` | List registered custom function metadata |
 | `static fromJson(json)` | Load workbook from JSON string |
 
 ### Sheet

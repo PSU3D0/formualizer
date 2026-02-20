@@ -111,6 +111,40 @@ print(wb.evaluate_cell("Data", 4, 1))  # 600.0
 print(wb.evaluate_cell("Data", 4, 2))  # 200.0
 ```
 
+## Custom functions
+
+Register workbook-local callbacks without forking Formualizer:
+
+```python
+import formualizer as fz
+
+wb = fz.Workbook(mode=fz.WorkbookMode.Ephemeral)
+wb.add_sheet("Sheet1")
+
+wb.register_function(
+    "py_add",
+    lambda a, b: a + b,
+    min_args=2,
+    max_args=2,
+)
+
+wb.set_formula("Sheet1", 1, 1, "=PY_ADD(20,22)")
+print(wb.evaluate_cell("Sheet1", 1, 1))  # 42
+print(wb.list_functions())
+wb.unregister_function("py_add")
+```
+
+Key semantics:
+
+- Names are case-insensitive and stored canonically (`py_add` -> `PY_ADD`).
+- Custom functions are workbook-local and take precedence over global built-ins.
+- Built-in override is disabled by default; set `allow_override_builtin=True` to opt in.
+- Args are passed by value; range inputs arrive as nested Python lists.
+- Return Python primitives, datetime/date/time/timedelta, dict error objects, or nested lists for array spill output.
+- Python callback exceptions are sanitized and mapped to `#VALUE!`.
+
+Runnable example: `python bindings/python/examples/custom_function_registration.py`
+
 ## Batch operations
 
 ```python

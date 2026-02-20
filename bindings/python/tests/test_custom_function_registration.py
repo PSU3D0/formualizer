@@ -1,3 +1,5 @@
+import pytest
+
 import formualizer as fz
 
 
@@ -20,6 +22,30 @@ def test_register_simple_add_function_and_evaluate_formula():
 
     wb.set_formula("Sheet1", 1, 1, "=PY_ADD(2,3)")
     assert wb.evaluate_cell("Sheet1", 1, 1) == 5
+
+
+def test_function_name_lookup_and_unregistration_are_case_insensitive():
+    wb = make_workbook()
+
+    wb.register_function("MiXeD", lambda x: x + 1, min_args=1, max_args=1)
+
+    wb.set_formula("Sheet1", 1, 1, "=mixed(41)")
+    assert wb.evaluate_cell("Sheet1", 1, 1) == 42
+
+    wb.unregister_function("mixed")
+    wb.set_formula("Sheet1", 1, 1, "=MIXED(1)")
+    assert_excel_error(wb.evaluate_cell("Sheet1", 1, 1), "Name")
+
+
+def test_override_builtin_requires_explicit_opt_in():
+    wb = make_workbook()
+
+    with pytest.raises(RuntimeError, match="allow_override_builtin"):
+        wb.register_function("sum", lambda *_args: 999)
+
+    wb.register_function("sum", lambda *_args: 999, allow_override_builtin=True)
+    wb.set_formula("Sheet1", 1, 1, "=SUM(1,2)")
+    assert wb.evaluate_cell("Sheet1", 1, 1) == 999
 
 
 def test_register_function_arity_handling():

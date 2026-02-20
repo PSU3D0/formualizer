@@ -32,6 +32,34 @@ let result = wb.evaluate_cell("Sheet1", 1, 2)?;
 assert_eq!(result, LiteralValue::Number(300.0));
 ```
 
+## Workbook-local custom functions
+
+You can register callbacks directly on a `Workbook`:
+
+- `register_custom_function(name, options, handler)`
+- `unregister_custom_function(name)`
+- `list_custom_functions()`
+
+Semantics:
+
+- Names are case-insensitive and canonicalized to uppercase.
+- Workbook-local custom functions resolve before global built-ins.
+- Overriding a built-in is blocked unless `CustomFnOptions { allow_override_builtin: true, .. }` is set.
+- Args are by value (`LiteralValue`); range args are materialized as `LiteralValue::Array`.
+- Returning `LiteralValue::Array` spills like dynamic-array formulas.
+- Handler errors propagate as `ExcelError` values.
+
+Runnable example:
+
+```bash
+cargo run -p formualizer-workbook --example custom_function_registration
+```
+
+WASM plugin seam status:
+
+- `register_wasm_function(name, options, spec)` exists as a forward-compatible API seam.
+- The runtime integration is not shipped yet, so registration currently returns `ExcelErrorKind::NImpl`.
+
 ## Features
 
 - **Mutable workbook model** — add sheets, edit cells, and track staged formula changes without rebuilding the entire dependency graph.

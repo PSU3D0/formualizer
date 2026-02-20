@@ -109,6 +109,35 @@ wb.setFormula('Pricing', 1, 2, '=A1*(1-A2)');
 console.log(await wb.evaluateCell('Pricing', 1, 2)); // 85
 ```
 
+## Custom functions (workbook-local)
+
+You can register custom functions per workbook in Rust, Python, and JS/WASM.
+
+- Rust: `register_custom_function` / `unregister_custom_function` / `list_custom_functions`
+- Python: `register_function` / `unregister_function` / `list_functions`
+- JS/WASM: `registerFunction` / `unregisterFunction` / `listFunctions`
+
+Semantics are consistent across hosts:
+
+- Function names are case-insensitive (`my_fn`, `MY_FN`, and `My_Fn` refer to the same function).
+- Custom functions are workbook-local and resolve before global built-ins.
+- Overriding built-ins is blocked by default; opt in with `allow_override_builtin` (Rust/Python) or `allowOverrideBuiltin` (JS).
+- Arguments are passed by value; range arguments are materialized as 2D arrays/lists.
+- Returning an array spills into the grid using normal dynamic-array behavior.
+- Callback failures become spreadsheet errors (`ExcelError` in Rust, `#VALUE!` mapping for Python/JS exceptions).
+
+Runnable examples:
+
+- Rust: `cargo run -p formualizer-workbook --example custom_function_registration`
+- Python: `python bindings/python/examples/custom_function_registration.py`
+- JS/WASM: `cd bindings/wasm && npm run build && node examples/custom-function-registration.mjs`
+
+WASM plugin seam status:
+
+- `Workbook::register_wasm_function(...)` is available as a phase-4 API seam.
+- It is currently stubbed and returns `#N/IMPL` until runtime plugin integration lands.
+- Without the `wasm_plugins` feature, registration is intentionally gated.
+
 ## How is this different?
 
 | Library | Language | Parse | Evaluate | Write | Functions | Dep. graph | License |

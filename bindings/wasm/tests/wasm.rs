@@ -307,6 +307,78 @@ fn test_register_simple_function_and_evaluate() {
 }
 
 #[wasm_bindgen_test]
+fn test_case_insensitive_name_lookup_and_unregistration() {
+    let wb = Workbook::new();
+    wb.add_sheet("Sheet1".to_string()).unwrap();
+
+    let callback = Function::new_with_args("x", "return x + 1;");
+    wb.register_function(
+        "MiXeD".to_string(),
+        callback,
+        Some(make_custom_fn_options(
+            Some(1.0),
+            Some(Some(1.0)),
+            None,
+            None,
+            None,
+            None,
+        )),
+    )
+    .unwrap();
+
+    wb.set_formula("Sheet1".to_string(), 1, 1, "=mixed(41)".to_string())
+        .unwrap();
+    let value = wb.evaluate_cell("Sheet1".to_string(), 1, 1).unwrap();
+    assert_eq!(value.as_f64().unwrap(), 42.0);
+
+    wb.unregister_function("mixed".to_string()).unwrap();
+    wb.set_formula("Sheet1".to_string(), 1, 1, "=MIXED(1)".to_string())
+        .unwrap();
+    let value = wb.evaluate_cell("Sheet1".to_string(), 1, 1).unwrap();
+    assert!(value.as_string().unwrap().contains("#NAME?"));
+}
+
+#[wasm_bindgen_test]
+fn test_override_builtin_requires_explicit_opt_in() {
+    let wb = Workbook::new();
+    wb.add_sheet("Sheet1".to_string()).unwrap();
+
+    let blocked = wb.register_function(
+        "sum".to_string(),
+        Function::new_with_args("", "return 999;"),
+        None,
+    );
+    let err = blocked.expect_err("builtin override should be blocked by default");
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(
+        error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("allow_override_builtin")
+    );
+
+    wb.register_function(
+        "sum".to_string(),
+        Function::new_with_args("", "return 999;"),
+        Some(make_custom_fn_options(
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+        )),
+    )
+    .unwrap();
+
+    wb.set_formula("Sheet1".to_string(), 1, 1, "=SUM(1,2)".to_string())
+        .unwrap();
+    let value = wb.evaluate_cell("Sheet1".to_string(), 1, 1).unwrap();
+    assert_eq!(value.as_f64().unwrap(), 999.0);
+}
+
+#[wasm_bindgen_test]
 fn test_register_array_mapping_behavior() {
     let wb = Workbook::new();
     wb.add_sheet("Sheet1".to_string()).unwrap();
