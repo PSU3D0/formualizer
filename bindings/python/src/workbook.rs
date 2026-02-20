@@ -1,8 +1,9 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyDict, PyList, PyTuple};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use formualizer::common::LiteralValue;
+use formualizer::common::error::{ExcelError, ExcelErrorKind};
 
 use crate::engine::{PyEvaluationConfig, eval_plan_to_py};
 use crate::enums::PyWorkbookMode;
@@ -13,6 +14,64 @@ type SheetCellMap = HashMap<(u32, u32), CellData>;
 type SheetCache = HashMap<String, SheetCellMap>;
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
+
+struct PyCustomFnHandler {
+    callback: PyObject,
+}
+
+impl PyCustomFnHandler {
+    fn new(callback: PyObject) -> Self {
+        Self { callback }
+    }
+
+    fn pyerr_to_excel_value(err: pyo3::PyErr, py: Python<'_>) -> ExcelError {
+        let exc_name = err
+            .get_type(py)
+            .name()
+            .ok()
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| "Exception".to_string());
+
+        let mut detail = err.to_string().replace(['\r', '\n'], " ");
+        if let Some(stripped) = detail.strip_prefix(&format!("{exc_name}:")) {
+            detail = stripped.trim().to_string();
+        } else {
+            detail = detail.trim().to_string();
+        }
+
+        if detail.len() > 240 {
+            detail.truncate(240);
+            detail.push_str("...");
+        }
+
+        let message = if detail.is_empty() {
+            format!("Python callback raised {exc_name}")
+        } else {
+            format!("Python callback raised {exc_name}: {detail}")
+        };
+
+        ExcelError::new(ExcelErrorKind::Value).with_message(message)
+    }
+}
+
+impl formualizer::workbook::CustomFnHandler for PyCustomFnHandler {
+    fn call(&self, args: &[LiteralValue]) -> Result<LiteralValue, ExcelError> {
+        Python::attach(|py| {
+            let callback = self.callback.bind(py);
+            let py_args = args
+                .iter()
+                .map(|arg| literal_to_py(py, arg))
+                .collect::<PyResult<Vec<_>>>()
+                .map_err(|err| Self::pyerr_to_excel_value(err, py))?;
+            let tuple =
+                PyTuple::new(py, py_args).map_err(|err| Self::pyerr_to_excel_value(err, py))?;
+            let result = callback
+                .call1(tuple)
+                .map_err(|err| Self::pyerr_to_excel_value(err, py))?;
+            py_to_literal(&result).map_err(|err| Self::pyerr_to_excel_value(err, py))
+        })
+    }
+}
 
 /// Configuration for creating a [`Workbook`].
 ///
@@ -274,6 +333,80 @@ impl PyWorkbook {
             .read()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         Ok(wb.sheet_names())
+    }
+
+    /// Register a workbook-local custom function backed by a Python callable.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (name, callback, *, min_args = 0, max_args = None, volatile = false, thread_safe = false, deterministic = true, allow_override_builtin = false))]
+    pub fn register_function(
+        &self,
+        name: &str,
+        callback: &Bound<'_, PyAny>,
+        min_args: usize,
+        max_args: Option<usize>,
+        volatile: bool,
+        thread_safe: bool,
+        deterministic: bool,
+        allow_override_builtin: bool,
+    ) -> PyResult<()> {
+        if !callback.is_callable() {
+            return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "callback must be callable",
+            ));
+        }
+
+        let handler = std::sync::Arc::new(PyCustomFnHandler::new(callback.clone().unbind()));
+        let options = formualizer::workbook::CustomFnOptions {
+            min_args,
+            max_args,
+            volatile,
+            thread_safe,
+            deterministic,
+            allow_override_builtin,
+        };
+
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        wb.register_custom_function(name, options, handler)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    /// Unregister a previously registered workbook-local custom function.
+    pub fn unregister_function(&self, name: &str) -> PyResult<()> {
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        wb.unregister_custom_function(name)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    /// List registered workbook-local custom functions and their options.
+    pub fn list_functions(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let out = PyList::empty(py);
+
+        for info in wb.list_custom_functions() {
+            let row = PyDict::new(py);
+            row.set_item("name", info.name)?;
+            row.set_item("min_args", info.options.min_args)?;
+            row.set_item("max_args", info.options.max_args)?;
+            row.set_item("volatile", info.options.volatile)?;
+            row.set_item("thread_safe", info.options.thread_safe)?;
+            row.set_item("deterministic", info.options.deterministic)?;
+            row.set_item(
+                "allow_override_builtin",
+                info.options.allow_override_builtin,
+            )?;
+            out.append(row)?;
+        }
+
+        Ok(out.into())
     }
 
     /// Return named ranges visible to the workbook or a specific sheet.

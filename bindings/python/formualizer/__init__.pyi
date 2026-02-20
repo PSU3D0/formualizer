@@ -1010,6 +1010,18 @@ class Workbook:
             wb.add_sheet("Outputs")
         ```
         """
+    def register_function(self, name: builtins.str, callback: typing.Any, *, min_args: builtins.int = 0, max_args: typing.Optional[builtins.int] = None, volatile: builtins.bool = False, thread_safe: builtins.bool = False, deterministic: builtins.bool = True, allow_override_builtin: builtins.bool = False) -> None:
+        r"""
+        Register a workbook-local custom function backed by a Python callable.
+        """
+    def unregister_function(self, name: builtins.str) -> None:
+        r"""
+        Unregister a previously registered workbook-local custom function.
+        """
+    def list_functions(self) -> builtins.list[dict[builtins.str, typing.Any]]:
+        r"""
+        List registered workbook-local custom functions and their options.
+        """
     def get_named_ranges(self, sheet: typing.Optional[builtins.str] = None) -> typing.Any:
         r"""
         Return named ranges visible to the workbook or a specific sheet.
