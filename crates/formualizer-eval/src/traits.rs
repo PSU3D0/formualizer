@@ -82,10 +82,34 @@ impl Range for Box<dyn Range> {
 
 pub type CowValue<'a> = Cow<'a, LiteralValue>;
 
-#[derive(Debug, Clone)]
+pub trait CustomCallable: Send + Sync {
+    fn arity(&self) -> usize;
+
+    fn invoke<'ctx>(
+        &self,
+        interp: &Interpreter<'ctx>,
+        args: &[LiteralValue],
+    ) -> Result<CalcValue<'ctx>, ExcelError>;
+}
+
+#[derive(Clone)]
 pub enum CalcValue<'a> {
     Scalar(LiteralValue),
     Range(RangeView<'a>),
+    Callable(Arc<dyn CustomCallable>),
+}
+
+impl<'a> std::fmt::Debug for CalcValue<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CalcValue::Scalar(v) => f.debug_tuple("Scalar").field(v).finish(),
+            CalcValue::Range(rv) => {
+                let (r, c) = rv.dims();
+                f.debug_tuple("Range").field(&(r, c)).finish()
+            }
+            CalcValue::Callable(_) => f.write_str("Callable(<opaque>)"),
+        }
+    }
 }
 
 impl<'a> CalcValue<'a> {
@@ -107,6 +131,9 @@ impl<'a> CalcValue<'a> {
                     LiteralValue::Array(data)
                 }
             }
+            CalcValue::Callable(_) => LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+            ),
         }
     }
 
@@ -120,6 +147,13 @@ impl<'a> CalcValue<'a> {
     pub fn as_range(&self) -> Option<&RangeView<'a>> {
         match self {
             CalcValue::Range(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    pub fn as_callable(&self) -> Option<&Arc<dyn CustomCallable>> {
+        match self {
+            CalcValue::Callable(c) => Some(c),
             _ => None,
         }
     }
@@ -162,6 +196,7 @@ impl<'a> PartialEq<LiteralValue> for CalcValue<'a> {
                     rows == 1 && cols == 1 && &rv.get_cell(0, 0) == other
                 }
             },
+            CalcValue::Callable(_) => false,
         }
     }
 }
@@ -237,6 +272,30 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 .interp
                 .evaluate_arena_ast(*id, data_store, sheet_registry),
         }
+    }
+
+    pub fn value_with_env(
+        &self,
+        env: crate::interpreter::LocalEnv,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let scoped = self.interp.with_local_env(env);
+        match &self.expr {
+            ArgumentExpr::Ast(node) => {
+                if let ASTNodeType::Literal(ref v) = node.node_type {
+                    return Ok(crate::traits::CalcValue::Scalar(v.clone()));
+                }
+                scoped.evaluate_ast(node)
+            }
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => scoped.evaluate_arena_ast(*id, data_store, sheet_registry),
+        }
+    }
+
+    pub fn current_env(&self) -> crate::interpreter::LocalEnv {
+        self.interp.local_env().clone()
     }
 
     pub fn inline_array_literal(&self) -> Result<Option<Vec<Vec<LiteralValue>>>, ExcelError> {

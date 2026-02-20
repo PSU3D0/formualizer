@@ -254,6 +254,12 @@ pub fn validate_and_prepare<'a, 'b>(
                             }
                             crate::traits::CalcValue::Range(rv) => Cow::Owned(rv.get_cell(0, 0)),
                             crate::traits::CalcValue::Scalar(s) => Cow::Owned(s),
+                            crate::traits::CalcValue::Callable(_) => {
+                                Cow::Owned(LiteralValue::Error(
+                                    ExcelError::new(ExcelErrorKind::Calc)
+                                        .with_message("LAMBDA value must be invoked"),
+                                ))
+                            }
                         };
                         // Apply coercion policy to Value shapes when applicable
                         let coerced = match spec.coercion {

@@ -30,6 +30,9 @@ mod tests {
                     });
                     LiteralValue::Array(data)
                 }
+                crate::traits::CalcValue::Callable(_) => {
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Calc))
+                }
             })
         } else {
             Ok(cv.into_literal())

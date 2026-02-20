@@ -3,7 +3,7 @@
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
-use formualizer_common::{ExcelError, LiteralValue};
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 
 fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
@@ -764,6 +764,12 @@ impl Function for IrrFn {
                     }
                 }
             }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
+            }
         }
 
         if cashflows.len() < 2 {
@@ -869,6 +875,12 @@ impl Function for MirrFn {
                         }
                     }
                 }
+            }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
             }
         }
 
@@ -1129,6 +1141,12 @@ impl Function for XnpvFn {
                     }
                 }
             }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
+            }
         }
 
         // Collect dates
@@ -1158,6 +1176,12 @@ impl Function for XnpvFn {
                         }
                     }
                 }
+            }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
             }
         }
 
@@ -1272,6 +1296,12 @@ impl Function for XirrFn {
                     }
                 }
             }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
+            }
         }
 
         // Collect dates
@@ -1301,6 +1331,12 @@ impl Function for XirrFn {
                         }
                     }
                 }
+            }
+            CalcValue::Callable(_) => {
+                return Ok(CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::Calc)
+                        .with_message("LAMBDA value must be invoked"),
+                )));
             }
         }
 

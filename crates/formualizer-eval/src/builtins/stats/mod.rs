@@ -27,6 +27,10 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
     Ok(match arg.value()? {
         crate::traits::CalcValue::Scalar(v) => v,
         crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
+        crate::traits::CalcValue::Callable(_) => LiteralValue::Error(
+            ExcelError::new(formualizer_common::ExcelErrorKind::Calc)
+                .with_message("LAMBDA value must be invoked"),
+        ),
     })
 }
 

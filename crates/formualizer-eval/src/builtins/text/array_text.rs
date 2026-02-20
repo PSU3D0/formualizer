@@ -15,6 +15,9 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
     Ok(match arg.value()? {
         CalcValue::Scalar(v) => v,
         CalcValue::Range(rv) => rv.get_cell(0, 0),
+        CalcValue::Callable(_) => LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+        ),
     })
 }
 
@@ -74,6 +77,9 @@ fn get_delimiters(arg: &ArgumentHandle<'_, '_>) -> Result<Vec<String>, ExcelErro
                 Ok(())
             })?;
             Ok(delims)
+        }
+        CalcValue::Callable(_) => {
+            Err(ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"))
         }
     }
 }

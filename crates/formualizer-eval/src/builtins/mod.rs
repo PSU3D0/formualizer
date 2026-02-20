@@ -3,6 +3,7 @@ pub mod datetime; // Phase 3 date and time functions
 pub mod engineering; // Phase 2 engineering functions (bitwise, base conversion, complex numbers, etc.)
 pub mod financial; // Phase 5 financial functions
 pub mod info; // Sprint 9 info / error introspection
+pub mod lambda;
 pub mod logical;
 pub mod logical_ext;
 pub mod lookup; // Sprint 4 classic lookup (partial)
@@ -21,6 +22,7 @@ pub fn load_builtins() {
     datetime::register_builtins();
     engineering::register_builtins();
     financial::register_builtins();
+    lambda::register_builtins();
     logical::register_builtins();
     logical_ext::register_builtins();
     info::register_builtins();

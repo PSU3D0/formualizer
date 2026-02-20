@@ -6,16 +6,69 @@ use crate::{
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
 
 use crate::engine::arena::{AstNodeData, AstNodeId, DataStore};
 use crate::engine::sheet_registry::SheetRegistry;
 
-// no Arc needed here after cache removal
+#[derive(Clone)]
+pub enum LocalBinding {
+    Value(LiteralValue),
+    Callable(Arc<dyn crate::traits::CustomCallable>),
+}
+
+#[derive(Clone, Default)]
+pub struct LocalEnv {
+    head: Option<Arc<EnvFrame>>,
+}
+
+#[derive(Clone)]
+struct EnvFrame {
+    parent: Option<Arc<EnvFrame>>,
+    bindings: FxHashMap<String, LocalBinding>,
+}
+
+impl LocalEnv {
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.head.is_none()
+    }
+
+    fn norm(name: &str) -> String {
+        name.to_ascii_uppercase()
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<LocalBinding> {
+        self.head.as_ref()?;
+        let key = Self::norm(name);
+        let mut cur = self.head.as_ref().cloned();
+        while let Some(frame) = cur {
+            if let Some(v) = frame.bindings.get(&key) {
+                return Some(v.clone());
+            }
+            cur = frame.parent.clone();
+        }
+        None
+    }
+
+    pub fn with_binding(&self, name: &str, value: LocalBinding) -> Self {
+        let mut bindings = FxHashMap::default();
+        bindings.insert(Self::norm(name), value);
+        Self {
+            head: Some(Arc::new(EnvFrame {
+                parent: self.head.clone(),
+                bindings,
+            })),
+        }
+    }
+}
 
 pub struct Interpreter<'a> {
     pub context: &'a dyn EvaluationContext,
     current_sheet: &'a str,
     current_cell: Option<crate::CellRef>,
+    local_env: LocalEnv,
 }
 
 impl<'a> Interpreter<'a> {
@@ -24,6 +77,7 @@ impl<'a> Interpreter<'a> {
             context,
             current_sheet,
             current_cell: None,
+            local_env: LocalEnv::default(),
         }
     }
 
@@ -36,11 +90,56 @@ impl<'a> Interpreter<'a> {
             context,
             current_sheet,
             current_cell: Some(cell),
+            local_env: LocalEnv::default(),
         }
     }
 
     pub fn current_sheet(&self) -> &'a str {
         self.current_sheet
+    }
+
+    pub fn local_env(&self) -> &LocalEnv {
+        &self.local_env
+    }
+
+    pub fn with_local_env(&self, env: LocalEnv) -> Self {
+        Self {
+            context: self.context,
+            current_sheet: self.current_sheet,
+            current_cell: self.current_cell,
+            local_env: env,
+        }
+    }
+
+    fn resolve_local_reference(
+        &self,
+        reference: &ReferenceType,
+    ) -> Option<crate::traits::CalcValue<'a>> {
+        if self.local_env.is_empty() {
+            return None;
+        }
+        let name = match reference {
+            ReferenceType::NamedRange(name) => name,
+            _ => return None,
+        };
+        match self.local_env.lookup(name)? {
+            LocalBinding::Value(v) => Some(crate::traits::CalcValue::Scalar(v)),
+            LocalBinding::Callable(c) => Some(crate::traits::CalcValue::Callable(c)),
+        }
+    }
+
+    fn resolve_local_callable(&self, name: &str) -> Option<Arc<dyn crate::traits::CustomCallable>> {
+        if self.local_env.is_empty() {
+            return None;
+        }
+        match self.local_env.lookup(name)? {
+            LocalBinding::Callable(c) => Some(c),
+            LocalBinding::Value(_) => None,
+        }
+    }
+
+    pub fn resolve_local_name(&self, name: &str) -> Option<LocalBinding> {
+        self.local_env.lookup(name)
     }
 
     pub fn resolve_range_view<'c>(
@@ -176,6 +275,9 @@ impl<'a> Interpreter<'a> {
             AstNodeData::Reference { ref_type, .. } => {
                 let reference =
                     data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                if let Some(local) = self.resolve_local_reference(&reference) {
+                    return Ok(local);
+                }
                 self.eval_reference_to_calc(&reference)
             }
             AstNodeData::UnaryOp { op_id, expr_id } => {
@@ -304,30 +406,41 @@ impl<'a> Interpreter<'a> {
             }
             AstNodeData::Function { name_id, .. } => {
                 let name = data_store.resolve_ast_string(*name_id);
-                let fun = self.context.get_function("", name).ok_or_else(|| {
-                    ExcelError::new(ExcelErrorKind::Name)
-                        .with_message(format!("Unknown function: {name}"))
-                })?;
-
                 let args = data_store.get_args(node_id).ok_or_else(|| {
                     ExcelError::new(ExcelErrorKind::Value).with_message("Missing function args")
                 })?;
 
-                let handles: Vec<ArgumentHandle> = args
-                    .iter()
-                    .copied()
-                    .map(|arg_id| {
-                        ArgumentHandle::new_arena(arg_id, self, data_store, sheet_registry)
-                    })
-                    .collect();
+                if let Some(fun) = self.context.get_function("", name) {
+                    let handles: Vec<ArgumentHandle> = args
+                        .iter()
+                        .copied()
+                        .map(|arg_id| {
+                            ArgumentHandle::new_arena(arg_id, self, data_store, sheet_registry)
+                        })
+                        .collect();
 
-                let fctx = DefaultFunctionContext::new_with_sheet(
-                    self.context,
-                    self.current_cell,
-                    self.current_sheet,
-                );
+                    let fctx = DefaultFunctionContext::new_with_sheet(
+                        self.context,
+                        self.current_cell,
+                        self.current_sheet,
+                    );
 
-                fun.dispatch(&handles, &fctx)
+                    return fun.dispatch(&handles, &fctx);
+                }
+
+                if let Some(callable) = self.resolve_local_callable(name) {
+                    let mut eval_args = Vec::with_capacity(args.len());
+                    for arg_id in args {
+                        eval_args.push(
+                            self.evaluate_arena_ast(*arg_id, data_store, sheet_registry)?
+                                .into_literal(),
+                        );
+                    }
+                    return callable.invoke(self, &eval_args);
+                }
+
+                Err(ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("Unknown function: {name}")))
             }
         }
     }
@@ -450,7 +563,13 @@ impl<'a> Interpreter<'a> {
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         match &node.node_type {
             ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
-            ASTNodeType::Reference { reference, .. } => self.eval_reference_to_calc(reference),
+            ASTNodeType::Reference { reference, .. } => {
+                if let Some(local) = self.resolve_local_reference(reference) {
+                    Ok(local)
+                } else {
+                    self.eval_reference_to_calc(reference)
+                }
+            }
             ASTNodeType::UnaryOp { op, expr } => {
                 // For now, reuse existing unary implementation (which recurses).
                 // In a later phase, we can map plan_node.children[0].
@@ -626,6 +745,9 @@ impl<'a> Interpreter<'a> {
                 let rel_c = cur_c0 - sc;
                 rv.get_cell(rel_r, rel_c)
             }
+            crate::traits::CalcValue::Callable(_) => LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+            ),
         }
     }
 
@@ -879,14 +1001,21 @@ impl<'a> Interpreter<'a> {
                 self.current_cell,
                 self.current_sheet,
             );
-            fun.dispatch(&handles, &fctx)
-        } else {
-            // Include the function name in the error message for better debugging
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Name)
-                    .with_message(format!("Unknown function: {name}")),
-            )))
+            return fun.dispatch(&handles, &fctx);
         }
+
+        if let Some(callable) = self.resolve_local_callable(name) {
+            let mut eval_args = Vec::with_capacity(args.len());
+            for arg in args {
+                eval_args.push(self.evaluate_ast(arg)?.into_literal());
+            }
+            return callable.invoke(self, &eval_args);
+        }
+
+        // Include the function name in the error message for better debugging
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Name).with_message(format!("Unknown function: {name}")),
+        )))
     }
 
     fn eval_function(&self, name: &str, args: &[ASTNode]) -> Result<LiteralValue, ExcelError> {
