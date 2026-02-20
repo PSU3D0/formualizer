@@ -39,6 +39,7 @@ tracing = ["dep:tracing"]
 compression = ["dep:zstd"]
 calamine_integration = ["calamine"]
 umya_integration = ["umya"]
+wasm_plugins = []
 
 [dependencies.calamine]
 version = "0.24"

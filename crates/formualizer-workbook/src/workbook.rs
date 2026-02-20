@@ -32,6 +32,30 @@ fn stable_fn_salt(name: &str) -> u64 {
     hash
 }
 
+fn validate_custom_arity(name: &str, options: &CustomFnOptions) -> Result<(), ExcelError> {
+    if let Some(max_args) = options.max_args
+        && max_args < options.min_args
+    {
+        return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+            "Invalid arity for {name}: max_args ({max_args}) < min_args ({})",
+            options.min_args
+        )));
+    }
+    Ok(())
+}
+
+fn validate_wasm_spec(spec: &WasmFunctionSpec) -> Result<(), ExcelError> {
+    if spec.module_id.trim().is_empty() {
+        return Err(ExcelError::new(ExcelErrorKind::Value)
+            .with_message("WASM function module_id cannot be empty"));
+    }
+    if spec.export_name.trim().is_empty() {
+        return Err(ExcelError::new(ExcelErrorKind::Value)
+            .with_message("WASM function export_name cannot be empty"));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomFnOptions {
     pub min_args: usize,
@@ -59,6 +83,37 @@ impl Default for CustomFnOptions {
 pub struct CustomFnInfo {
     pub name: String,
     pub options: CustomFnOptions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmFunctionSpec {
+    pub module_id: String,
+    pub export_name: String,
+    pub codec_version: u32,
+    pub runtime_hint: Option<WasmRuntimeHint>,
+    pub reserved: BTreeMap<String, String>,
+}
+
+impl WasmFunctionSpec {
+    pub fn new(
+        module_id: impl Into<String>,
+        export_name: impl Into<String>,
+        codec_version: u32,
+    ) -> Self {
+        Self {
+            module_id: module_id.into(),
+            export_name: export_name.into(),
+            codec_version,
+            runtime_hint: None,
+            reserved: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WasmRuntimeHint {
+    pub fuel_limit: Option<u64>,
+    pub memory_limit_bytes: Option<u64>,
 }
 
 pub trait CustomFnHandler: Send + Sync {
@@ -436,14 +491,7 @@ impl Workbook {
     ) -> Result<(), ExcelError> {
         let canonical_name = normalize_custom_fn_name(name)?;
 
-        if let Some(max_args) = options.max_args
-            && max_args < options.min_args
-        {
-            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
-                "Invalid arity for {canonical_name}: max_args ({max_args}) < min_args ({})",
-                options.min_args
-            )));
-        }
+        validate_custom_arity(&canonical_name, &options)?;
 
         if self.custom_functions.read().contains_key(&canonical_name) {
             return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
@@ -473,6 +521,33 @@ impl Workbook {
             .write()
             .insert(canonical_name, RegisteredCustomFn { info, function });
         Ok(())
+    }
+
+    pub fn register_wasm_function(
+        &mut self,
+        name: &str,
+        options: CustomFnOptions,
+        spec: WasmFunctionSpec,
+    ) -> Result<(), ExcelError> {
+        let canonical_name = normalize_custom_fn_name(name)?;
+        validate_custom_arity(&canonical_name, &options)?;
+        validate_wasm_spec(&spec)?;
+
+        #[cfg(feature = "wasm_plugins")]
+        {
+            Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                "WASM plugin runtime integration is pending for {canonical_name} (module_id={}, export_name={}, codec_version={})",
+                spec.module_id, spec.export_name, spec.codec_version
+            )))
+        }
+
+        #[cfg(not(feature = "wasm_plugins"))]
+        {
+            Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                "WASM plugin registration for {canonical_name} requires the `wasm_plugins` feature (module_id={}, export_name={}, codec_version={})",
+                spec.module_id, spec.export_name, spec.codec_version
+            )))
+        }
     }
 
     pub fn unregister_custom_function(&mut self, name: &str) -> Result<(), ExcelError> {
