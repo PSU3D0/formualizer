@@ -238,7 +238,46 @@ export async function parse(
   });
 }
 
-export const Workbook = wasm.Workbook;
+export type CellScalar = null | undefined | boolean | number | string;
+export type CellArray = CellScalar[] | CellScalar[][];
+export type CellValue = CellScalar | CellArray;
+
+export interface CustomFunctionOptions {
+  minArgs?: number;
+  maxArgs?: number | null;
+  volatile?: boolean;
+  threadSafe?: boolean;
+  deterministic?: boolean;
+  allowOverrideBuiltin?: boolean;
+}
+
+export interface RegisteredFunctionInfo {
+  name: string;
+  minArgs: number;
+  maxArgs: number | null;
+  volatile: boolean;
+  threadSafe: boolean;
+  deterministic: boolean;
+  allowOverrideBuiltin: boolean;
+}
+
+export interface WorkbookApi extends wasm.Workbook {
+  registerFunction(
+    name: string,
+    callback: (...args: CellValue[]) => CellValue,
+    options?: CustomFunctionOptions,
+  ): void;
+  unregisterFunction(name: string): void;
+  listFunctions(): RegisteredFunctionInfo[];
+}
+
+export type WorkbookConstructor = {
+  new (): WorkbookApi;
+  fromJson(json: string): WorkbookApi;
+  prototype: WorkbookApi;
+};
+
+export const Workbook = wasm.Workbook as unknown as WorkbookConstructor;
 export const SheetPortSession = wasm.SheetPortSession;
 
 // Re-export the initialization function as default
