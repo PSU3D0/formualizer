@@ -91,7 +91,7 @@ pub fn recalculate_file_with_limit(
     let mut adapter =
         UmyaAdapter::open_path(input).map_err(|e| IoError::from_backend("umya", e))?;
 
-    let mut engine: Engine<WBResolver> = Engine::new(WBResolver, EvalConfig::default());
+    let mut engine: Engine<WBResolver> = Engine::new(WBResolver::default(), EvalConfig::default());
     adapter.stream_into_engine(&mut engine)?;
     engine.evaluate_all().map_err(IoError::Engine)?;
 

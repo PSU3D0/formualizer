@@ -7,11 +7,193 @@ use formualizer_common::{
 };
 use formualizer_eval::engine::eval::EvalPlan;
 use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
+use parking_lot::RwLock;
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+fn normalize_custom_fn_name(name: &str) -> Result<String, ExcelError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(
+            ExcelError::new(ExcelErrorKind::Name).with_message("Function name cannot be empty")
+        );
+    }
+    Ok(trimmed.to_ascii_uppercase())
+}
+
+fn stable_fn_salt(name: &str) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET;
+    for b in name.as_bytes() {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomFnOptions {
+    pub min_args: usize,
+    pub max_args: Option<usize>,
+    pub volatile: bool,
+    pub thread_safe: bool,
+    pub deterministic: bool,
+    pub allow_override_builtin: bool,
+}
+
+impl Default for CustomFnOptions {
+    fn default() -> Self {
+        Self {
+            min_args: 0,
+            max_args: None,
+            volatile: false,
+            thread_safe: false,
+            deterministic: true,
+            allow_override_builtin: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomFnInfo {
+    pub name: String,
+    pub options: CustomFnOptions,
+}
+
+pub trait CustomFnHandler: Send + Sync {
+    fn call(&self, args: &[LiteralValue]) -> Result<LiteralValue, ExcelError>;
+
+    fn call_batch(&self, _rows: &[Vec<LiteralValue>]) -> Option<Result<LiteralValue, ExcelError>> {
+        None
+    }
+}
+
+impl<F> CustomFnHandler for F
+where
+    F: Fn(&[LiteralValue]) -> Result<LiteralValue, ExcelError> + Send + Sync,
+{
+    fn call(&self, args: &[LiteralValue]) -> Result<LiteralValue, ExcelError> {
+        (self)(args)
+    }
+}
+
+#[derive(Clone)]
+struct RegisteredCustomFn {
+    info: CustomFnInfo,
+    function: Arc<dyn formualizer_eval::function::Function>,
+}
+
+type CustomFnRegistry = BTreeMap<String, RegisteredCustomFn>;
+
+struct WorkbookCustomFunction {
+    canonical_name: String,
+    options: CustomFnOptions,
+    handler: Arc<dyn CustomFnHandler>,
+}
+
+impl WorkbookCustomFunction {
+    fn new(name: String, options: CustomFnOptions, handler: Arc<dyn CustomFnHandler>) -> Self {
+        Self {
+            canonical_name: name,
+            options,
+            handler,
+        }
+    }
+
+    fn validate_arity(&self, provided: usize) -> Result<(), ExcelError> {
+        if provided < self.options.min_args {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "{} expects at least {} argument(s), got {}",
+                self.canonical_name, self.options.min_args, provided
+            )));
+        }
+        if let Some(max) = self.options.max_args
+            && provided > max
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "{} expects at most {} argument(s), got {}",
+                self.canonical_name, max, provided
+            )));
+        }
+        Ok(())
+    }
+
+    fn materialize_arg<'a, 'b>(
+        arg: &formualizer_eval::traits::ArgumentHandle<'a, 'b>,
+    ) -> Result<LiteralValue, ExcelError> {
+        match arg.value_or_range()? {
+            formualizer_eval::traits::EvaluatedArg::LiteralValue(v) => Ok(v.into_owned()),
+            formualizer_eval::traits::EvaluatedArg::Range(r) => {
+                Ok(LiteralValue::Array(r.materialise().into_owned()))
+            }
+        }
+    }
+}
+
+impl formualizer_eval::function::Function for WorkbookCustomFunction {
+    fn caps(&self) -> formualizer_eval::function::FnCaps {
+        let mut caps = formualizer_eval::function::FnCaps::empty();
+        if self.options.volatile {
+            caps |= formualizer_eval::function::FnCaps::VOLATILE;
+        } else if self.options.deterministic {
+            caps |= formualizer_eval::function::FnCaps::PURE;
+        }
+        caps
+    }
+
+    fn name(&self) -> &'static str {
+        "__WORKBOOK_CUSTOM__"
+    }
+
+    fn function_salt(&self) -> u64 {
+        stable_fn_salt(&self.canonical_name)
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [formualizer_eval::traits::ArgumentHandle<'a, 'b>],
+        _ctx: &dyn formualizer_eval::traits::FunctionContext<'b>,
+    ) -> Result<formualizer_eval::traits::CalcValue<'b>, ExcelError> {
+        self.validate_arity(args.len())?;
+
+        let mut materialized = Vec::with_capacity(args.len());
+        for arg in args {
+            materialized.push(Self::materialize_arg(arg)?);
+        }
+
+        let callback_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.handler.call(&materialized)
+        }));
+
+        match callback_result {
+            Ok(Ok(value)) => Ok(formualizer_eval::traits::CalcValue::Scalar(value)),
+            Ok(Err(err)) => Err(err),
+            Err(_) => Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("Custom function callback panicked")),
+        }
+    }
+}
 
 /// Minimal resolver for engine-backed workbook (cells/ranges via graph/arrow; functions via registry).
-#[derive(Default, Debug, Clone, Copy)]
-pub struct WBResolver;
+#[derive(Clone)]
+pub struct WBResolver {
+    custom_functions: Arc<RwLock<CustomFnRegistry>>,
+}
+
+impl Default for WBResolver {
+    fn default() -> Self {
+        Self {
+            custom_functions: Arc::new(RwLock::new(BTreeMap::new())),
+        }
+    }
+}
+
+impl WBResolver {
+    fn new(custom_functions: Arc<RwLock<CustomFnRegistry>>) -> Self {
+        Self { custom_functions }
+    }
+}
 
 impl formualizer_eval::traits::ReferenceResolver for WBResolver {
     fn resolve_cell_reference(
@@ -67,6 +249,12 @@ impl formualizer_eval::traits::FunctionProvider for WBResolver {
         ns: &str,
         name: &str,
     ) -> Option<std::sync::Arc<dyn formualizer_eval::function::Function>> {
+        if ns.is_empty() {
+            let key = name.to_ascii_uppercase();
+            if let Some(local) = self.custom_functions.read().get(&key) {
+                return Some(local.function.clone());
+            }
+        }
         formualizer_eval::function_registry::get(ns, name)
     }
 }
@@ -76,6 +264,7 @@ impl formualizer_eval::traits::EvaluationContext for WBResolver {}
 /// Engine-backed workbook facade.
 pub struct Workbook {
     engine: formualizer_eval::engine::Engine<WBResolver>,
+    custom_functions: Arc<RwLock<CustomFnRegistry>>,
     enable_changelog: bool,
     log: formualizer_eval::engine::ChangeLog,
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
@@ -213,11 +402,16 @@ impl Workbook {
         config.eval.arrow_storage_enabled = true;
         config.eval.delta_overlay_enabled = true;
         config.eval.write_formula_overlay_enabled = true;
-        let engine = formualizer_eval::engine::Engine::new(WBResolver, config.eval);
+
+        let custom_functions = Arc::new(RwLock::new(BTreeMap::new()));
+        let resolver = WBResolver::new(custom_functions.clone());
+        let engine = formualizer_eval::engine::Engine::new(resolver, config.eval);
+
         let mut log = formualizer_eval::engine::ChangeLog::new();
         log.set_enabled(config.enable_changelog);
         Self {
             engine,
+            custom_functions,
             enable_changelog: config.enable_changelog,
             log,
             undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new(),
@@ -232,6 +426,76 @@ impl Workbook {
     }
     pub fn new() -> Self {
         Self::new_with_mode(WorkbookMode::Interactive)
+    }
+
+    pub fn register_custom_function(
+        &mut self,
+        name: &str,
+        options: CustomFnOptions,
+        handler: Arc<dyn CustomFnHandler>,
+    ) -> Result<(), ExcelError> {
+        let canonical_name = normalize_custom_fn_name(name)?;
+
+        if let Some(max_args) = options.max_args
+            && max_args < options.min_args
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "Invalid arity for {canonical_name}: max_args ({max_args}) < min_args ({})",
+                options.min_args
+            )));
+        }
+
+        if self.custom_functions.read().contains_key(&canonical_name) {
+            return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                "Custom function {canonical_name} is already registered"
+            )));
+        }
+
+        if !options.allow_override_builtin
+            && formualizer_eval::function_registry::get("", &canonical_name).is_some()
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                "Custom function {canonical_name} conflicts with a global function; set allow_override_builtin=true to override"
+            )));
+        }
+
+        let info = CustomFnInfo {
+            name: canonical_name.clone(),
+            options: options.clone(),
+        };
+        let function = Arc::new(WorkbookCustomFunction::new(
+            canonical_name.clone(),
+            options,
+            handler,
+        ));
+
+        self.custom_functions
+            .write()
+            .insert(canonical_name, RegisteredCustomFn { info, function });
+        Ok(())
+    }
+
+    pub fn unregister_custom_function(&mut self, name: &str) -> Result<(), ExcelError> {
+        let canonical_name = normalize_custom_fn_name(name)?;
+        if self
+            .custom_functions
+            .write()
+            .remove(&canonical_name)
+            .is_none()
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                "Custom function {canonical_name} is not registered"
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn list_custom_functions(&self) -> Vec<CustomFnInfo> {
+        self.custom_functions
+            .read()
+            .values()
+            .map(|registered| registered.info.clone())
+            .collect()
     }
 
     pub fn engine(&self) -> &formualizer_eval::engine::Engine<WBResolver> {

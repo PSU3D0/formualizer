@@ -83,6 +83,7 @@ mod countifs_date_criteria;
 mod criteria_mask_oob_column;
 mod criteria_mask_text_chunked;
 mod criteria_overlay_parity;
+mod custom_function_registry_compat;
 mod dynamic_lookup_arrow;
 mod eval_delta;
 mod formula_edit_propagation;
