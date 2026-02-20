@@ -1,0 +1,19 @@
+{
+  "schema": "formualizer.udf.module/v1",
+  "module": {
+    "id": "plugin://finance/core",
+    "version": "1.0.0",
+    "abi": 1,
+    "codec": 1
+  },
+  "functions": [
+    {
+      "id": 1,
+      "name": "SAFE_DIV",
+      "aliases": [],
+      "export": "fn_safe_div",
+      "min_args": 3,
+      "max_args": 2
+    }
+  ]
+}

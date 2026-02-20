@@ -1,0 +1,39 @@
+{
+  "schema": "formualizer.udf.module/v1",
+  "module": {
+    "id": "plugin://finance/core",
+    "version": "1.0.0",
+    "abi": 1,
+    "codec": 1
+  },
+  "functions": [
+    {
+      "id": 1,
+      "name": "XNPV_PLUS",
+      "aliases": ["XNPVPLUS", "_xlfn.XNPV_PLUS"],
+      "export": "fn_xnpv_plus",
+      "min_args": 3,
+      "max_args": null,
+      "volatile": false,
+      "deterministic": true,
+      "thread_safe": true,
+      "params": [
+        { "name": "rate", "kinds": ["number"] },
+        { "name": "cashflows", "kinds": ["array"] },
+        { "name": "dates", "kinds": ["array"] }
+      ],
+      "returns": { "kinds": ["number", "error"] }
+    },
+    {
+      "id": 2,
+      "name": "SAFE_DIV",
+      "aliases": [],
+      "export": "fn_safe_div",
+      "min_args": 2,
+      "max_args": 2,
+      "volatile": false,
+      "deterministic": true,
+      "thread_safe": true
+    }
+  ]
+}

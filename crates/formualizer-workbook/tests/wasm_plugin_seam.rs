@@ -57,7 +57,7 @@ fn register_wasm_function_requires_feature_by_default() {
 
 #[cfg(feature = "wasm_plugins")]
 #[test]
-fn register_wasm_function_is_stubbed_when_feature_enabled() {
+fn register_wasm_function_requires_registered_module() {
     let mut wb = workbook();
 
     let err = wb
@@ -66,9 +66,9 @@ fn register_wasm_function_is_stubbed_when_feature_enabled() {
             CustomFnOptions::default(),
             WasmFunctionSpec::new("plugin://math", "eval", 1),
         )
-        .expect_err("phase 4 should still return a pending-runtime stub error");
+        .expect_err("module registration is required before binding wasm functions");
 
-    assert_eq!(err.kind, ExcelErrorKind::NImpl);
+    assert_eq!(err.kind, ExcelErrorKind::Name);
     let message = err.message.unwrap_or_default();
-    assert!(message.contains("runtime integration is pending"));
+    assert!(message.contains("not registered"));
 }

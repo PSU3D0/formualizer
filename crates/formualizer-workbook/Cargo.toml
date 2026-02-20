@@ -39,7 +39,7 @@ tracing = ["dep:tracing"]
 compression = ["dep:zstd"]
 calamine_integration = ["calamine"]
 umya_integration = ["umya"]
-wasm_plugins = []
+wasm_plugins = ["dep:wasmparser", "dep:serde_json"]
 
 [dependencies.calamine]
 version = "0.24"
@@ -59,6 +59,10 @@ optional = true
 
 [dependencies.zstd]
 version = "0.13"
+optional = true
+
+[dependencies.wasmparser]
+version = "0.240"
 optional = true
 
 [dev-dependencies]

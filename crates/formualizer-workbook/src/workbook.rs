@@ -8,8 +8,11 @@ use formualizer_common::{
 use formualizer_eval::engine::eval::EvalPlan;
 use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
 use parking_lot::RwLock;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+
+#[cfg(feature = "wasm_plugins")]
+use wasmparser::{Parser, Payload};
 
 fn normalize_custom_fn_name(name: &str) -> Result<String, ExcelError> {
     let trimmed = name.trim();
@@ -19,6 +22,21 @@ fn normalize_custom_fn_name(name: &str) -> Result<String, ExcelError> {
         );
     }
     Ok(trimmed.to_ascii_uppercase())
+}
+
+pub const WASM_MANIFEST_SCHEMA_V1: &str = "formualizer.udf.module/v1";
+pub const WASM_MANIFEST_SECTION_V1: &str = "formualizer.udf.manifest.v1";
+pub const WASM_ABI_VERSION_V1: u32 = 1;
+pub const WASM_CODEC_VERSION_V1: u32 = 1;
+
+fn normalize_wasm_module_id(module_id: &str) -> Result<String, ExcelError> {
+    let trimmed = module_id.trim();
+    if trimmed.is_empty() {
+        return Err(
+            ExcelError::new(ExcelErrorKind::Value).with_message("WASM module_id cannot be empty")
+        );
+    }
+    Ok(trimmed.to_string())
 }
 
 fn stable_fn_salt(name: &str) -> u64 {
@@ -114,6 +132,286 @@ impl WasmFunctionSpec {
 pub struct WasmRuntimeHint {
     pub fuel_limit: Option<u64>,
     pub memory_limit_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WasmModuleInfo {
+    pub module_id: String,
+    pub version: String,
+    pub abi_version: u32,
+    pub codec_version: u32,
+    pub function_count: usize,
+    pub module_size_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WasmModuleManifest {
+    pub schema: String,
+    pub module: WasmManifestModule,
+    pub functions: Vec<WasmManifestFunction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WasmManifestModule {
+    pub id: String,
+    pub version: String,
+    pub abi: u32,
+    pub codec: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WasmManifestFunction {
+    pub id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(rename = "export")]
+    pub export_name: String,
+    pub min_args: usize,
+    #[serde(default)]
+    pub max_args: Option<usize>,
+    #[serde(default)]
+    pub volatile: bool,
+    #[serde(default = "default_true")]
+    pub deterministic: bool,
+    #[serde(default)]
+    pub thread_safe: bool,
+    #[serde(default)]
+    pub params: Vec<WasmManifestParam>,
+    #[serde(default)]
+    pub returns: Option<WasmManifestReturn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WasmManifestParam {
+    pub name: String,
+    #[serde(default)]
+    pub kinds: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WasmManifestReturn {
+    #[serde(default)]
+    pub kinds: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+pub fn validate_wasm_manifest(manifest: &WasmModuleManifest) -> Result<(), ExcelError> {
+    if manifest.schema != WASM_MANIFEST_SCHEMA_V1 {
+        return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+            "Unsupported WASM manifest schema: {}",
+            manifest.schema
+        )));
+    }
+
+    let module_id = normalize_wasm_module_id(&manifest.module.id)?;
+    if module_id != manifest.module.id {
+        return Err(ExcelError::new(ExcelErrorKind::Value)
+            .with_message("WASM manifest module.id must not have leading/trailing whitespace"));
+    }
+
+    if manifest.module.version.trim().is_empty() {
+        return Err(ExcelError::new(ExcelErrorKind::Value)
+            .with_message("WASM manifest module.version cannot be empty"));
+    }
+
+    if manifest.module.abi != WASM_ABI_VERSION_V1 {
+        return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+            "Unsupported WASM ABI version {} (expected {})",
+            manifest.module.abi, WASM_ABI_VERSION_V1
+        )));
+    }
+
+    if manifest.module.codec != WASM_CODEC_VERSION_V1 {
+        return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+            "Unsupported WASM codec version {} (expected {})",
+            manifest.module.codec, WASM_CODEC_VERSION_V1
+        )));
+    }
+
+    if manifest.functions.is_empty() {
+        return Err(ExcelError::new(ExcelErrorKind::Value)
+            .with_message("WASM manifest must define at least one function"));
+    }
+
+    let mut function_ids = BTreeSet::new();
+    let mut export_names = BTreeSet::new();
+    let mut names_and_aliases = BTreeSet::new();
+
+    for function in &manifest.functions {
+        if !function_ids.insert(function.id) {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "Duplicate WASM manifest function id {}",
+                function.id
+            )));
+        }
+
+        if function.export_name.trim().is_empty() {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "WASM function {} has empty export name",
+                function.id
+            )));
+        }
+
+        if !export_names.insert(function.export_name.clone()) {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "Duplicate WASM export name: {}",
+                function.export_name
+            )));
+        }
+
+        let canonical_name = normalize_custom_fn_name(&function.name)?;
+        if !names_and_aliases.insert(canonical_name.clone()) {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "Duplicate WASM function name or alias: {}",
+                function.name
+            )));
+        }
+
+        if let Some(max_args) = function.max_args
+            && max_args < function.min_args
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "Invalid WASM function arity for {}: max_args ({max_args}) < min_args ({})",
+                function.name, function.min_args
+            )));
+        }
+
+        for alias in &function.aliases {
+            let canonical_alias = normalize_custom_fn_name(alias)?;
+            if !names_and_aliases.insert(canonical_alias.clone()) {
+                return Err(ExcelError::new(ExcelErrorKind::Value)
+                    .with_message(format!("Duplicate WASM function alias: {alias}")));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "wasm_plugins")]
+pub fn parse_wasm_manifest_json(bytes: &[u8]) -> Result<WasmModuleManifest, ExcelError> {
+    let manifest = serde_json::from_slice::<WasmModuleManifest>(bytes).map_err(|err| {
+        ExcelError::new(ExcelErrorKind::Value)
+            .with_message(format!("Failed to parse WASM manifest JSON: {err}"))
+    })?;
+    validate_wasm_manifest(&manifest)?;
+    Ok(manifest)
+}
+
+#[cfg(feature = "wasm_plugins")]
+pub fn extract_wasm_manifest_json_from_module(wasm_bytes: &[u8]) -> Result<Vec<u8>, ExcelError> {
+    let mut found: Option<Vec<u8>> = None;
+
+    for payload in Parser::new(0).parse_all(wasm_bytes) {
+        let payload = payload.map_err(|err| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("Invalid WASM module bytes: {err}"))
+        })?;
+
+        if let Payload::CustomSection(section) = payload
+            && section.name() == WASM_MANIFEST_SECTION_V1
+        {
+            if found.is_some() {
+                return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                    "WASM module has multiple formualizer manifest custom sections",
+                ));
+            }
+            found = Some(section.data().to_vec());
+        }
+    }
+
+    found.ok_or_else(|| {
+        ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+            "WASM module is missing required custom section: {WASM_MANIFEST_SECTION_V1}"
+        ))
+    })
+}
+
+#[derive(Clone)]
+struct RegisteredWasmModule {
+    info: WasmModuleInfo,
+    #[allow(dead_code)]
+    manifest: WasmModuleManifest,
+    wasm_bytes: Arc<Vec<u8>>,
+}
+
+#[derive(Default)]
+struct WasmPluginManager {
+    modules: BTreeMap<String, RegisteredWasmModule>,
+}
+
+impl WasmPluginManager {
+    fn list_module_infos(&self) -> Vec<WasmModuleInfo> {
+        self.modules
+            .values()
+            .map(|registered| {
+                let mut info = registered.info.clone();
+                info.module_size_bytes = registered.wasm_bytes.len();
+                info
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "wasm_plugins")]
+    fn get(&self, module_id: &str) -> Option<&RegisteredWasmModule> {
+        self.modules.get(module_id)
+    }
+
+    #[cfg(feature = "wasm_plugins")]
+    fn unregister_module(&mut self, module_id: &str) -> Result<(), ExcelError> {
+        if self.modules.remove(module_id).is_none() {
+            return Err(ExcelError::new(ExcelErrorKind::Name)
+                .with_message(format!("WASM module {module_id} is not registered")));
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "wasm_plugins")]
+    fn register_module_bytes(
+        &mut self,
+        requested_module_id: &str,
+        wasm_bytes: &[u8],
+    ) -> Result<WasmModuleInfo, ExcelError> {
+        if self.modules.contains_key(requested_module_id) {
+            return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                "WASM module {requested_module_id} is already registered"
+            )));
+        }
+
+        let manifest_json = extract_wasm_manifest_json_from_module(wasm_bytes)?;
+        let manifest = parse_wasm_manifest_json(&manifest_json)?;
+
+        if manifest.module.id != requested_module_id {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "WASM manifest module id mismatch: requested {requested_module_id}, manifest {}",
+                manifest.module.id
+            )));
+        }
+
+        let info = WasmModuleInfo {
+            module_id: requested_module_id.to_string(),
+            version: manifest.module.version.clone(),
+            abi_version: manifest.module.abi,
+            codec_version: manifest.module.codec,
+            function_count: manifest.functions.len(),
+            module_size_bytes: wasm_bytes.len(),
+        };
+
+        self.modules.insert(
+            requested_module_id.to_string(),
+            RegisteredWasmModule {
+                info: info.clone(),
+                manifest,
+                wasm_bytes: Arc::new(wasm_bytes.to_vec()),
+            },
+        );
+
+        Ok(info)
+    }
 }
 
 pub trait CustomFnHandler: Send + Sync {
@@ -320,6 +618,7 @@ impl formualizer_eval::traits::EvaluationContext for WBResolver {}
 pub struct Workbook {
     engine: formualizer_eval::engine::Engine<WBResolver>,
     custom_functions: Arc<RwLock<CustomFnRegistry>>,
+    wasm_plugins: WasmPluginManager,
     enable_changelog: bool,
     log: formualizer_eval::engine::ChangeLog,
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
@@ -467,6 +766,7 @@ impl Workbook {
         Self {
             engine,
             custom_functions,
+            wasm_plugins: WasmPluginManager::default(),
             enable_changelog: config.enable_changelog,
             log,
             undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new(),
@@ -523,6 +823,48 @@ impl Workbook {
         Ok(())
     }
 
+    pub fn register_wasm_module_bytes(
+        &mut self,
+        module_id: &str,
+        wasm_bytes: &[u8],
+    ) -> Result<WasmModuleInfo, ExcelError> {
+        let canonical_module_id = normalize_wasm_module_id(module_id)?;
+
+        #[cfg(feature = "wasm_plugins")]
+        {
+            self.wasm_plugins
+                .register_module_bytes(&canonical_module_id, wasm_bytes)
+        }
+
+        #[cfg(not(feature = "wasm_plugins"))]
+        {
+            let _ = wasm_bytes;
+            Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                "WASM module registration for {canonical_module_id} requires the `wasm_plugins` feature"
+            )))
+        }
+    }
+
+    pub fn list_wasm_modules(&self) -> Vec<WasmModuleInfo> {
+        self.wasm_plugins.list_module_infos()
+    }
+
+    pub fn unregister_wasm_module(&mut self, module_id: &str) -> Result<(), ExcelError> {
+        let canonical_module_id = normalize_wasm_module_id(module_id)?;
+
+        #[cfg(feature = "wasm_plugins")]
+        {
+            self.wasm_plugins.unregister_module(&canonical_module_id)
+        }
+
+        #[cfg(not(feature = "wasm_plugins"))]
+        {
+            Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                "WASM module unregistration for {canonical_module_id} requires the `wasm_plugins` feature"
+            )))
+        }
+    }
+
     pub fn register_wasm_function(
         &mut self,
         name: &str,
@@ -535,9 +877,34 @@ impl Workbook {
 
         #[cfg(feature = "wasm_plugins")]
         {
+            let module_id = normalize_wasm_module_id(&spec.module_id)?;
+            let module = self.wasm_plugins.get(&module_id).ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("WASM module {module_id} is not registered"))
+            })?;
+
+            if module.manifest.module.codec != spec.codec_version {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                    "WASM codec mismatch for {canonical_name}: spec codec {} != module codec {}",
+                    spec.codec_version, module.manifest.module.codec
+                )));
+            }
+
+            if !module
+                .manifest
+                .functions
+                .iter()
+                .any(|function| function.export_name == spec.export_name)
+            {
+                return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                    "WASM export {} is not declared in module {}",
+                    spec.export_name, module_id
+                )));
+            }
+
             Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
                 "WASM plugin runtime integration is pending for {canonical_name} (module_id={}, export_name={}, codec_version={})",
-                spec.module_id, spec.export_name, spec.codec_version
+                module_id, spec.export_name, spec.codec_version
             )))
         }
 
