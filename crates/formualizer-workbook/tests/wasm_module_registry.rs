@@ -14,6 +14,9 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+#[cfg(all(feature = "wasm_plugins", not(target_arch = "wasm32")))]
+use std::fs;
+
 #[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
 use std::borrow::Cow;
 
@@ -53,6 +56,34 @@ const DIV_ONLY_MANIFEST: &str = r#"{
 
 fn workbook() -> Workbook {
     Workbook::new_with_mode(WorkbookMode::Ephemeral)
+}
+
+#[cfg(all(feature = "wasm_plugins", not(target_arch = "wasm32")))]
+fn manifest_with_module(module_id: &str, export_name: &str) -> String {
+    format!(
+        r#"{{
+  "schema": "formualizer.udf.module/v1",
+  "module": {{
+    "id": "{module_id}",
+    "version": "1.0.0",
+    "abi": 1,
+    "codec": 1
+  }},
+  "functions": [
+    {{
+      "id": 1,
+      "name": "SAFE_DIV",
+      "aliases": ["DIV_SAFE"],
+      "export": "{export_name}",
+      "min_args": 2,
+      "max_args": 2,
+      "volatile": false,
+      "deterministic": true,
+      "thread_safe": true
+    }}
+  ]
+}}"#
+    )
 }
 
 #[cfg(feature = "wasm_plugins")]
@@ -253,6 +284,70 @@ fn inspect_wasm_module_is_effect_free() {
 
     // Ensure inspection does not register/attach module.
     assert!(wb.list_wasm_modules().is_empty());
+}
+
+#[cfg(all(feature = "wasm_plugins", not(target_arch = "wasm32")))]
+#[test]
+fn inspect_and_attach_wasm_module_file() {
+    let mut wb = workbook();
+    let bytes = wasm_module_with_manifest(VALID_MANIFEST);
+
+    let temp = tempfile::tempdir().unwrap();
+    let module_path = temp.path().join("finance_core.wasm");
+    fs::write(&module_path, &bytes).unwrap();
+
+    let info = wb.inspect_wasm_module_file(&module_path).unwrap();
+    assert_eq!(info.module_id, "plugin://finance/core");
+    assert!(wb.list_wasm_modules().is_empty());
+
+    let attached = wb.attach_wasm_module_file(&module_path).unwrap();
+    assert_eq!(attached.module_id, "plugin://finance/core");
+    assert_eq!(wb.list_wasm_modules().len(), 1);
+}
+
+#[cfg(all(feature = "wasm_plugins", not(target_arch = "wasm32")))]
+#[test]
+fn inspect_and_attach_wasm_modules_dir() {
+    let mut wb = workbook();
+
+    let temp = tempfile::tempdir().unwrap();
+
+    let manifest_a = manifest_with_module("plugin://math/div-a", "fn_safe_div");
+    let manifest_b = manifest_with_module("plugin://math/div-b", "fn_safe_div");
+
+    fs::write(
+        temp.path().join("a_plugin.wasm"),
+        wasm_module_with_manifest(&manifest_a),
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("b_plugin.wasm"),
+        wasm_module_with_manifest(&manifest_b),
+    )
+    .unwrap();
+    fs::write(temp.path().join("ignored.txt"), b"not wasm").unwrap();
+
+    let inspected = wb.inspect_wasm_modules_dir(temp.path()).unwrap();
+    assert_eq!(inspected.len(), 2);
+    assert_eq!(wb.list_wasm_modules().len(), 0);
+
+    let attached = wb.attach_wasm_modules_dir(temp.path()).unwrap();
+    assert_eq!(attached.len(), 2);
+
+    let mut ids = attached
+        .iter()
+        .map(|info| info.module_id.clone())
+        .collect::<Vec<_>>();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec![
+            "plugin://math/div-a".to_string(),
+            "plugin://math/div-b".to_string()
+        ]
+    );
+
+    assert_eq!(wb.list_wasm_modules().len(), 2);
 }
 
 #[cfg(feature = "wasm_plugins")]

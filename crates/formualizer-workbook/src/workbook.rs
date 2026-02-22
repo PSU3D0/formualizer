@@ -42,6 +42,59 @@ fn normalize_wasm_module_id(module_id: &str) -> Result<String, ExcelError> {
     Ok(trimmed.to_string())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn read_wasm_file_bytes(path: &std::path::Path) -> Result<Vec<u8>, ExcelError> {
+    std::fs::read(path).map_err(|err| {
+        ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+            "Failed to read WASM module file {}: {err}",
+            path.display()
+        ))
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn collect_wasm_files_in_dir(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, ExcelError> {
+    if !dir.is_dir() {
+        return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+            "WASM module directory does not exist or is not a directory: {}",
+            dir.display()
+        )));
+    }
+
+    let mut files = Vec::new();
+    let entries = std::fs::read_dir(dir).map_err(|err| {
+        ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+            "Failed to read WASM module directory {}: {err}",
+            dir.display()
+        ))
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|err| {
+            ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "Failed to iterate WASM module directory {}: {err}",
+                dir.display()
+            ))
+        })?;
+
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
+            continue;
+        };
+
+        if ext.eq_ignore_ascii_case("wasm") {
+            files.push(path);
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
 fn stable_fn_salt(name: &str) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
@@ -1044,6 +1097,48 @@ impl Workbook {
         }
     }
 
+    /// Inspect a WASM module file without mutating workbook state.
+    pub fn inspect_wasm_module_file(
+        &self,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<WasmModuleInfo, ExcelError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let bytes = read_wasm_file_bytes(path.as_ref())?;
+            self.inspect_wasm_module_bytes(&bytes)
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("WASM module file inspection is not available on wasm32 hosts"))
+        }
+    }
+
+    /// Inspect all `*.wasm` files in a directory without mutating workbook state.
+    pub fn inspect_wasm_modules_dir(
+        &self,
+        dir: impl AsRef<std::path::Path>,
+    ) -> Result<Vec<WasmModuleInfo>, ExcelError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut infos = Vec::new();
+            for path in collect_wasm_files_in_dir(dir.as_ref())? {
+                let bytes = read_wasm_file_bytes(&path)?;
+                infos.push(self.inspect_wasm_module_bytes(&bytes)?);
+            }
+            Ok(infos)
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = dir;
+            Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("WASM module directory inspection is not available on wasm32 hosts"))
+        }
+    }
+
     /// Alias for clearer workbook-local terminology.
     pub fn attach_wasm_module_bytes(
         &mut self,
@@ -1051,6 +1146,48 @@ impl Workbook {
         wasm_bytes: &[u8],
     ) -> Result<WasmModuleInfo, ExcelError> {
         self.register_wasm_module_bytes(module_id, wasm_bytes)
+    }
+
+    /// Attach a WASM module from a file path using the module id from its manifest.
+    pub fn attach_wasm_module_file(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<WasmModuleInfo, ExcelError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let bytes = read_wasm_file_bytes(path.as_ref())?;
+            let info = self.inspect_wasm_module_bytes(&bytes)?;
+            self.attach_wasm_module_bytes(&info.module_id, &bytes)
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("WASM module file attachment is not available on wasm32 hosts"))
+        }
+    }
+
+    /// Attach all `*.wasm` modules found in a directory.
+    pub fn attach_wasm_modules_dir(
+        &mut self,
+        dir: impl AsRef<std::path::Path>,
+    ) -> Result<Vec<WasmModuleInfo>, ExcelError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut attached = Vec::new();
+            for path in collect_wasm_files_in_dir(dir.as_ref())? {
+                attached.push(self.attach_wasm_module_file(path)?);
+            }
+            Ok(attached)
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = dir;
+            Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("WASM module directory attachment is not available on wasm32 hosts"))
+        }
     }
 
     pub fn list_wasm_modules(&self) -> Vec<WasmModuleInfo> {

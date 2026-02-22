@@ -55,10 +55,31 @@ Runnable example:
 cargo run -p formualizer-workbook --example custom_function_registration
 ```
 
-WASM plugin seam status:
+WASM plugin support (native Rust, workbook-local):
 
-- `register_wasm_function(name, options, spec)` exists as a forward-compatible API seam.
-- The runtime integration is not shipped yet, so registration currently returns `ExcelErrorKind::NImpl`.
+- Effect-free inspect APIs:
+  - `inspect_wasm_module_bytes(...)`
+  - `inspect_wasm_module_file(...)` *(native only)*
+  - `inspect_wasm_modules_dir(...)` *(native only)*
+- Explicit workbook-local attach APIs:
+  - `attach_wasm_module_bytes(...)`
+  - `attach_wasm_module_file(...)` *(native only)*
+  - `attach_wasm_modules_dir(...)` *(native only)*
+- Bind formula names explicitly:
+  - `bind_wasm_function(name, options, spec)`
+
+Runtime notes:
+
+- With `wasm_plugins` only, default runtime remains pending and bind returns `ExcelErrorKind::NImpl`.
+- With `wasm_runtime_wasmtime` on native targets, you can call `use_wasmtime_runtime()` and execute compatible exports.
+
+Runnable plugin examples:
+
+```bash
+cargo run -p formualizer-workbook --features wasm_plugins --example wasm_plugin_inspect_catalog
+cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example wasm_plugin_inspect_attach_bind
+cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example wasm_plugin_attach_dir
+```
 
 ## Features
 

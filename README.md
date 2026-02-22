@@ -128,15 +128,25 @@ Semantics are consistent across hosts:
 
 Runnable examples:
 
-- Rust: `cargo run -p formualizer-workbook --example custom_function_registration`
-- Python: `python bindings/python/examples/custom_function_registration.py`
-- JS/WASM: `cd bindings/wasm && npm run build && node examples/custom-function-registration.mjs`
+- Rust callback custom function: `cargo run -p formualizer-workbook --example custom_function_registration`
+- Python callback custom function: `python bindings/python/examples/custom_function_registration.py`
+- JS/WASM callback custom function: `cd bindings/wasm && npm run build && node examples/custom-function-registration.mjs`
+- Rust WASM plugin inspect catalog: `cargo run -p formualizer-workbook --features wasm_plugins --example wasm_plugin_inspect_catalog`
+- Rust WASM plugin inspect + attach + bind: `cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example wasm_plugin_inspect_attach_bind`
+- Rust WASM plugin directory attach: `cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example wasm_plugin_attach_dir`
 
-WASM plugin seam status:
+WASM plugin path (Rust workbook API):
 
-- `Workbook::register_wasm_function(...)` is available as a phase-4 API seam.
-- It is currently stubbed and returns `#N/IMPL` until runtime plugin integration lands.
-- Without the `wasm_plugins` feature, registration is intentionally gated.
+- Effect-free inspect APIs are available:
+  - `inspect_wasm_module_bytes`
+  - `inspect_wasm_module_file` *(native only)*
+  - `inspect_wasm_modules_dir` *(native only)*
+- Explicit workbook-local attach/bind APIs are available:
+  - `attach_wasm_module_bytes` / `attach_wasm_module_file` / `attach_wasm_modules_dir`
+  - `bind_wasm_function`
+- Runtime behavior:
+  - `wasm_plugins` only: runtime remains pending (`#N/IMPL` on bind)
+  - `wasm_runtime_wasmtime` (native): `use_wasmtime_runtime()` enables executable plugin bindings
 
 ## How is this different?
 
