@@ -43,6 +43,16 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
 
 #[derive(Debug)]
 pub struct TrimFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TRIM
+/// Type: TrimFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TRIM(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TrimFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -81,6 +91,16 @@ impl Function for TrimFn {
 
 #[derive(Debug)]
 pub struct UpperFn;
+/// [formualizer-docgen:schema:start]
+/// Name: UPPER
+/// Type: UpperFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: UPPER(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for UpperFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -104,6 +124,16 @@ impl Function for UpperFn {
 }
 #[derive(Debug)]
 pub struct LowerFn;
+/// [formualizer-docgen:schema:start]
+/// Name: LOWER
+/// Type: LowerFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: LOWER(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LowerFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -127,6 +157,16 @@ impl Function for LowerFn {
 }
 #[derive(Debug)]
 pub struct ProperFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PROPER
+/// Type: ProperFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: PROPER(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ProperFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -170,6 +210,16 @@ impl Function for ProperFn {
 // CONCAT(text1, text2, ...)
 #[derive(Debug)]
 pub struct ConcatFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CONCAT
+/// Type: ConcatFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CONCAT(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ConcatFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -199,6 +249,16 @@ impl Function for ConcatFn {
 // CONCATENATE (alias semantics)
 #[derive(Debug)]
 pub struct ConcatenateFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CONCATENATE
+/// Type: ConcatenateFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CONCATENATE(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ConcatenateFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -225,6 +285,16 @@ impl Function for ConcatenateFn {
 // TEXTJOIN(delimiter, ignore_empty, text1, [text2, ...])
 #[derive(Debug)]
 pub struct TextJoinFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TEXTJOIN
+/// Type: TextJoinFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: TEXTJOIN(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TextJoinFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

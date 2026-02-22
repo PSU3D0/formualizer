@@ -18,6 +18,16 @@ use formualizer_parse::parser::ReferenceType;
 #[derive(Debug)]
 pub struct RowFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: ROW
+/// Type: RowFn
+/// Min args: 0
+/// Max args: 1
+/// Variadic: false
+/// Signature: ROW(arg1?: range@range)
+/// Arg schema: arg1{kinds=range,required=false,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RowFn {
     fn name(&self) -> &'static str {
         "ROW"
@@ -110,6 +120,16 @@ impl Function for RowFn {
 #[derive(Debug)]
 pub struct RowsFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: ROWS
+/// Type: RowsFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ROWS(arg1: any@range)
+/// Arg schema: arg1{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RowsFn {
     fn name(&self) -> &'static str {
         "ROWS"
@@ -212,6 +232,16 @@ impl Function for RowsFn {
 #[derive(Debug)]
 pub struct ColumnFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: COLUMN
+/// Type: ColumnFn
+/// Min args: 0
+/// Max args: 1
+/// Variadic: false
+/// Signature: COLUMN(arg1?: range@range)
+/// Arg schema: arg1{kinds=range,required=false,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ColumnFn {
     fn name(&self) -> &'static str {
         "COLUMN"
@@ -304,6 +334,16 @@ impl Function for ColumnFn {
 #[derive(Debug)]
 pub struct ColumnsFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: COLUMNS
+/// Type: ColumnsFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COLUMNS(arg1: any@range)
+/// Arg schema: arg1{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ColumnsFn {
     fn name(&self) -> &'static str {
         "COLUMNS"

@@ -5003,7 +5003,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "formualizer-common",
+ "formualizer-eval",
  "globset",
+ "quote",
+ "regex",
  "serde",
  "serde_json",
  "syn",

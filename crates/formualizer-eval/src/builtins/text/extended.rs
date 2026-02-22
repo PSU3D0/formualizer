@@ -42,6 +42,16 @@ fn coerce_text(v: &LiteralValue) -> String {
 
 #[derive(Debug)]
 pub struct CleanFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CLEAN
+/// Type: CleanFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CLEAN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CleanFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -76,6 +86,16 @@ impl Function for CleanFn {
 
 #[derive(Debug)]
 pub struct UnicharFn;
+/// [formualizer-docgen:schema:start]
+/// Name: UNICHAR
+/// Type: UnicharFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: UNICHAR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for UnicharFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -122,6 +142,16 @@ impl Function for UnicharFn {
 
 #[derive(Debug)]
 pub struct UnicodeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: UNICODE
+/// Type: UnicodeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: UNICODE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for UnicodeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -196,6 +226,16 @@ fn arg_textbefore() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct TextBeforeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TEXTBEFORE
+/// Type: TextBeforeFn
+/// Min args: 2
+/// Max args: 3
+/// Variadic: false
+/// Signature: TEXTBEFORE(arg1: any@scalar, arg2: any@scalar, arg3?: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TextBeforeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -286,6 +326,16 @@ impl Function for TextBeforeFn {
 
 #[derive(Debug)]
 pub struct TextAfterFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TEXTAFTER
+/// Type: TextAfterFn
+/// Min args: 2
+/// Max args: 3
+/// Variadic: false
+/// Signature: TEXTAFTER(arg1: any@scalar, arg2: any@scalar, arg3?: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TextAfterFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -402,6 +452,16 @@ fn arg_dollar() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct DollarFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DOLLAR
+/// Type: DollarFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: DOLLAR(arg1: number@scalar, arg2?: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DollarFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -527,6 +587,16 @@ fn arg_fixed() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct FixedFn;
+/// [formualizer-docgen:schema:start]
+/// Name: FIXED
+/// Type: FixedFn
+/// Min args: 1
+/// Max args: 3
+/// Variadic: false
+/// Signature: FIXED(arg1: number@scalar, arg2?: number@scalar, arg3?: logical@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FixedFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

@@ -10,6 +10,16 @@ use formualizer_macros::func_caps;
 #[derive(Debug)]
 pub struct TodayFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: TODAY
+/// Type: TodayFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: TODAY()
+/// Arg schema: []
+/// Caps: VOLATILE
+/// [formualizer-docgen:schema:end]
 impl Function for TodayFn {
     func_caps!(VOLATILE);
 
@@ -38,6 +48,16 @@ impl Function for TodayFn {
 #[derive(Debug)]
 pub struct NowFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: NOW
+/// Type: NowFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: NOW()
+/// Arg schema: []
+/// Caps: VOLATILE
+/// [formualizer-docgen:schema:end]
 impl Function for NowFn {
     func_caps!(VOLATILE);
 

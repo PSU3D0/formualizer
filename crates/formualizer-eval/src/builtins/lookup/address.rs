@@ -22,6 +22,16 @@ fn column_to_letters(col: u32) -> String {
 #[derive(Debug)]
 pub struct AddressFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: ADDRESS
+/// Type: AddressFn
+/// Min args: 2
+/// Max args: 5
+/// Variadic: false
+/// Signature: ADDRESS(arg1: number@scalar, arg2: number@scalar, arg3?: number@scalar, arg4?: logical@scalar, arg5?: text@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=true}; arg4{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}; arg5{kinds=text,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for AddressFn {
     fn name(&self) -> &'static str {
         "ADDRESS"

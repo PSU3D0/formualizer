@@ -34,6 +34,16 @@ TODO(excel-nuance): Track formula provenance to support ISFORMULA.
 
 #[derive(Debug)]
 pub struct IsNumberFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ISNUMBER
+/// Type: IsNumberFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISNUMBER(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsNumberFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -73,6 +83,16 @@ impl Function for IsNumberFn {
 
 #[derive(Debug)]
 pub struct IsTextFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ISTEXT
+/// Type: IsTextFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISTEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsTextFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -103,6 +123,16 @@ impl Function for IsTextFn {
 
 #[derive(Debug)]
 pub struct IsLogicalFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ISLOGICAL
+/// Type: IsLogicalFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISLOGICAL(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsLogicalFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -133,6 +163,16 @@ impl Function for IsLogicalFn {
 
 #[derive(Debug)]
 pub struct IsBlankFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ISBLANK
+/// Type: IsBlankFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISBLANK(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsBlankFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -163,6 +203,16 @@ impl Function for IsBlankFn {
 
 #[derive(Debug)]
 pub struct IsErrorFn; // TRUE for any error (#N/A included)
+/// [formualizer-docgen:schema:start]
+/// Name: ISERROR
+/// Type: IsErrorFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISERROR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsErrorFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -193,6 +243,16 @@ impl Function for IsErrorFn {
 
 #[derive(Debug)]
 pub struct IsErrFn; // TRUE for any error except #N/A
+/// [formualizer-docgen:schema:start]
+/// Name: ISERR
+/// Type: IsErrFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISERR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsErrFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -227,6 +287,16 @@ impl Function for IsErrFn {
 
 #[derive(Debug)]
 pub struct IsNaFn; // TRUE only for #N/A
+/// [formualizer-docgen:schema:start]
+/// Name: ISNA
+/// Type: IsNaFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISNA(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsNaFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -258,6 +328,16 @@ impl Function for IsNaFn {
 
 #[derive(Debug)]
 pub struct IsFormulaFn; // Requires provenance tracking (not yet) => always FALSE.
+/// [formualizer-docgen:schema:start]
+/// Name: ISFORMULA
+/// Type: IsFormulaFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISFORMULA(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsFormulaFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -288,6 +368,16 @@ impl Function for IsFormulaFn {
 
 #[derive(Debug)]
 pub struct TypeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TYPE
+/// Type: TypeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TYPE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TypeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -333,6 +423,16 @@ impl Function for TypeFn {
 
 #[derive(Debug)]
 pub struct NaFn; // NA() -> #N/A error
+/// [formualizer-docgen:schema:start]
+/// Name: NA
+/// Type: NaFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: NA()
+/// Arg schema: []
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NaFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -354,6 +454,16 @@ impl Function for NaFn {
 
 #[derive(Debug)]
 pub struct NFn; // N(value)
+/// [formualizer-docgen:schema:start]
+/// Name: N
+/// Type: NFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: N(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -415,6 +525,16 @@ impl Function for NFn {
 
 #[derive(Debug)]
 pub struct TFn; // T(value)
+/// [formualizer-docgen:schema:start]
+/// Name: T
+/// Type: TFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: T(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -450,6 +570,16 @@ impl Function for TFn {
 /// ISEVEN(number) - Returns TRUE if number is even
 #[derive(Debug)]
 pub struct IsEvenFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ISEVEN
+/// Type: IsEvenFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISEVEN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsEvenFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -502,6 +632,16 @@ impl Function for IsEvenFn {
 /// ISODD(number) - Returns TRUE if number is odd
 #[derive(Debug)]
 pub struct IsOddFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ISODD
+/// Type: IsOddFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISODD(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsOddFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -565,6 +705,16 @@ impl Function for IsOddFn {
 /// NOTE: Error codes 9-13 are non-standard extensions for internal error types.
 #[derive(Debug)]
 pub struct ErrorTypeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ERROR.TYPE
+/// Type: ErrorTypeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ERROR.TYPE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ErrorTypeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

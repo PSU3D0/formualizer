@@ -160,6 +160,16 @@ pub fn super_wildcard_match(pattern: &str, text: &str) -> bool {
 #[derive(Debug)]
 pub struct XLookupFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: XLOOKUP
+/// Type: XLookupFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: XLOOKUP(arg1: any@scalar, arg2: range@range, arg3: range@range, arg4?: any@scalar, arg5?: number@scalar, arg6?...: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg6{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for XLookupFn {
     func_caps!(PURE, LOOKUP);
     fn name(&self) -> &'static str {
@@ -469,6 +479,16 @@ impl Function for XLookupFn {
 
 #[derive(Debug)]
 pub struct XMatchFn;
+/// [formualizer-docgen:schema:start]
+/// Name: XMATCH
+/// Type: XMatchFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: XMATCH(arg1: any@scalar, arg2: range@range, arg3?: number@scalar, arg4?...: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for XMatchFn {
     func_caps!(PURE, LOOKUP);
     fn name(&self) -> &'static str {
@@ -740,6 +760,16 @@ impl Function for XMatchFn {
 
 #[derive(Debug)]
 pub struct SortFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SORT
+/// Type: SortFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SORT(arg1: range@range, arg2?: number@scalar, arg3?: number@scalar, arg4?...: logical@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg4{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SortFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -919,6 +949,16 @@ impl Function for SortFn {
 
 #[derive(Debug)]
 pub struct SortByFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SORTBY
+/// Type: SortByFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SORTBY(arg1: range@range, arg2: range@range, arg3?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SortByFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1098,6 +1138,16 @@ impl Function for SortByFn {
 
 #[derive(Debug)]
 pub struct RandArrayFn;
+/// [formualizer-docgen:schema:start]
+/// Name: RANDARRAY
+/// Type: RandArrayFn
+/// Min args: 0
+/// Max args: variadic
+/// Variadic: true
+/// Signature: RANDARRAY(arg1?: number@scalar, arg2?: number@scalar, arg3?: number@scalar, arg4?: number@scalar, arg5?...: logical@scalar)
+/// Arg schema: arg1{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg5{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: none
+/// [formualizer-docgen:schema:end]
 impl Function for RandArrayFn {
     // Note: RANDARRAY is NOT pure - it returns different values on each evaluation
     fn caps(&self) -> crate::function::FnCaps {
@@ -1411,6 +1461,16 @@ fn literal_to_num_opt(v: &LiteralValue) -> Option<f64> {
 #[derive(Debug)]
 pub struct GroupByFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: GROUPBY
+/// Type: GroupByFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: GROUPBY(arg1: range@range, arg2: range@range, arg3: any@scalar, arg4?: number@scalar, arg5?: number@scalar, arg6?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg6{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for GroupByFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1714,6 +1774,16 @@ impl Function for GroupByFn {
 #[derive(Debug)]
 pub struct PivotByFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: PIVOTBY
+/// Type: PivotByFn
+/// Min args: 4
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PIVOTBY(arg1: range@range, arg2: range@range, arg3: range@range, arg4: any@scalar, arg5?: number@scalar, arg6?: number@scalar, arg7?: number@scalar, arg8?: number@scalar, arg9?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg6{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg7{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg8{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg9{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PivotByFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2128,6 +2198,16 @@ impl Function for PivotByFn {
 
 #[derive(Debug)]
 pub struct FilterFn;
+/// [formualizer-docgen:schema:start]
+/// Name: FILTER
+/// Type: FilterFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: FILTER(arg1: range@range, arg2: range@range, arg3?...: any@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FilterFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2246,6 +2326,16 @@ impl Function for FilterFn {
 
 #[derive(Debug)]
 pub struct UniqueFn;
+/// [formualizer-docgen:schema:start]
+/// Name: UNIQUE
+/// Type: UniqueFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: UNIQUE(arg1: range@range, arg2?: logical@scalar, arg3?...: logical@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}; arg3{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for UniqueFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2381,6 +2471,16 @@ impl Function for UniqueFn {
 
 #[derive(Debug)]
 pub struct SequenceFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SEQUENCE
+/// Type: SequenceFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SEQUENCE(arg1: number@scalar, arg2?: number@scalar, arg3?: number@scalar, arg4?...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SequenceFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2499,6 +2599,16 @@ impl Function for SequenceFn {
 
 #[derive(Debug)]
 pub struct TransposeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TRANSPOSE
+/// Type: TransposeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TRANSPOSE(arg1: range@range)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TransposeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2556,6 +2666,16 @@ impl Function for TransposeFn {
 
 #[derive(Debug)]
 pub struct TakeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TAKE
+/// Type: TakeFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: TAKE(arg1: range@range, arg2: number@scalar, arg3?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TakeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2688,6 +2808,16 @@ impl Function for TakeFn {
 
 #[derive(Debug)]
 pub struct DropFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DROP
+/// Type: DropFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: DROP(arg1: range@range, arg2: number@scalar, arg3?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DropFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

@@ -45,6 +45,16 @@ fn materialize_arg<'b>(
     }
 }
 
+/// [formualizer-docgen:schema:start]
+/// Name: HSTACK
+/// Type: HStackFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: HSTACK(arg1...: range|any@range)
+/// Arg schema: arg1{kinds=range|any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for HStackFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -157,6 +167,16 @@ enum HStackEntry<'a> {
     Scalar(LiteralValue),
 }
 
+/// [formualizer-docgen:schema:start]
+/// Name: VSTACK
+/// Type: VStackFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: VSTACK(arg1...: range|any@range)
+/// Arg schema: arg1{kinds=range|any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for VStackFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

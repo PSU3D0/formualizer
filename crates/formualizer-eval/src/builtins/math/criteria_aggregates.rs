@@ -678,6 +678,16 @@ fn eval_if_family<'a, 'b>(
 /* ─────────────────────────── AVERAGEIF() ──────────────────────────── */
 #[derive(Debug)]
 pub struct AverageIfFn;
+/// [formualizer-docgen:schema:start]
+/// Name: AVERAGEIF
+/// Type: AverageIfFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: AVERAGEIF(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for AverageIfFn {
     func_caps!(
         PURE,
@@ -711,6 +721,16 @@ impl Function for AverageIfFn {
 /* ─────────────────────────── SUMIF() ──────────────────────────── */
 #[derive(Debug)]
 pub struct SumIfFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SUMIF
+/// Type: SumIfFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUMIF(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for SumIfFn {
     func_caps!(
         PURE,
@@ -744,6 +764,16 @@ impl Function for SumIfFn {
 /* ─────────────────────────── COUNTIF() ──────────────────────────── */
 #[derive(Debug)]
 pub struct CountIfFn;
+/// [formualizer-docgen:schema:start]
+/// Name: COUNTIF
+/// Type: CountIfFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: COUNTIF(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for CountIfFn {
     func_caps!(
         PURE,
@@ -777,6 +807,16 @@ impl Function for CountIfFn {
 /* ─────────────────────────── SUMIFS() ──────────────────────────── */
 #[derive(Debug)]
 pub struct SumIfsFn; // SUMIFS(sum_range, criteria_range1, criteria1, ...)
+/// [formualizer-docgen:schema:start]
+/// Name: SUMIFS
+/// Type: SumIfsFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUMIFS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for SumIfsFn {
     func_caps!(
         PURE,
@@ -810,6 +850,16 @@ impl Function for SumIfsFn {
 /* ─────────────────────────── COUNTIFS() ──────────────────────────── */
 #[derive(Debug)]
 pub struct CountIfsFn; // COUNTIFS(criteria_range1, criteria1, ...)
+/// [formualizer-docgen:schema:start]
+/// Name: COUNTIFS
+/// Type: CountIfsFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: COUNTIFS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for CountIfsFn {
     func_caps!(
         PURE,
@@ -843,6 +893,16 @@ impl Function for CountIfsFn {
 /* ─────────────────────────── AVERAGEIFS() (moved) ──────────────────────────── */
 #[derive(Debug)]
 pub struct AverageIfsFn;
+/// [formualizer-docgen:schema:start]
+/// Name: AVERAGEIFS
+/// Type: AverageIfsFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: AVERAGEIFS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for AverageIfsFn {
     func_caps!(
         PURE,
@@ -876,6 +936,16 @@ impl Function for AverageIfsFn {
 /* ─────────────────────────── COUNTA() ──────────────────────────── */
 #[derive(Debug)]
 pub struct CountAFn; // counts non-empty (including empty text "")
+/// [formualizer-docgen:schema:start]
+/// Name: COUNTA
+/// Type: CountAFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: COUNTA(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for CountAFn {
     func_caps!(PURE, REDUCTION);
     fn name(&self) -> &'static str {
@@ -924,6 +994,16 @@ impl Function for CountAFn {
 /* ─────────────────────────── COUNTBLANK() ──────────────────────────── */
 #[derive(Debug)]
 pub struct CountBlankFn; // counts truly empty cells and empty text
+/// [formualizer-docgen:schema:start]
+/// Name: COUNTBLANK
+/// Type: CountBlankFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: COUNTBLANK(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for CountBlankFn {
     func_caps!(PURE, REDUCTION);
     fn name(&self) -> &'static str {

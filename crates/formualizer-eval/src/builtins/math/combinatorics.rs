@@ -8,6 +8,16 @@ use formualizer_macros::func_caps;
 /// FACT(number) - Returns the factorial of a number
 #[derive(Debug)]
 pub struct FactFn;
+/// [formualizer-docgen:schema:start]
+/// Name: FACT
+/// Type: FactFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: FACT(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FactFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -58,6 +68,16 @@ impl Function for FactFn {
 /// GCD(number1, [number2], ...) - Returns the greatest common divisor
 #[derive(Debug)]
 pub struct GcdFn;
+/// [formualizer-docgen:schema:start]
+/// Name: GCD
+/// Type: GcdFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: GCD(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for GcdFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -114,6 +134,16 @@ impl Function for GcdFn {
 /// LCM(number1, [number2], ...) - Returns the least common multiple
 #[derive(Debug)]
 pub struct LcmFn;
+/// [formualizer-docgen:schema:start]
+/// Name: LCM
+/// Type: LcmFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LCM(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LcmFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -176,6 +206,16 @@ impl Function for LcmFn {
 /// COMBIN(n, k) - Returns the number of combinations
 #[derive(Debug)]
 pub struct CombinFn;
+/// [formualizer-docgen:schema:start]
+/// Name: COMBIN
+/// Type: CombinFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: COMBIN(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CombinFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -237,6 +277,16 @@ impl Function for CombinFn {
 /// PERMUT(n, k) - Returns the number of permutations
 #[derive(Debug)]
 pub struct PermutFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PERMUT
+/// Type: PermutFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: PERMUT(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PermutFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

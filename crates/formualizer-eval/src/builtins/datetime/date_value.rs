@@ -12,6 +12,16 @@ use formualizer_macros::func_caps;
 #[derive(Debug)]
 pub struct DateValueFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DATEVALUE
+/// Type: DateValueFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: DATEVALUE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DateValueFn {
     func_caps!(PURE);
 
@@ -76,6 +86,16 @@ impl Function for DateValueFn {
 #[derive(Debug)]
 pub struct TimeValueFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: TIMEVALUE
+/// Type: TimeValueFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TIMEVALUE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TimeValueFn {
     func_caps!(PURE);
 

@@ -61,6 +61,16 @@ fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32)
 
 #[derive(Debug)]
 pub struct MatchFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MATCH
+/// Type: MatchFn
+/// Min args: 2
+/// Max args: 3
+/// Variadic: false
+/// Signature: MATCH(arg1: any@scalar, arg2: any@range, arg3?: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for MatchFn {
     fn name(&self) -> &'static str {
         "MATCH"
@@ -272,6 +282,16 @@ impl Function for MatchFn {
 
 #[derive(Debug)]
 pub struct VLookupFn;
+/// [formualizer-docgen:schema:start]
+/// Name: VLOOKUP
+/// Type: VLookupFn
+/// Min args: 3
+/// Max args: 4
+/// Variadic: false
+/// Signature: VLOOKUP(arg1: any@scalar, arg2: any@range, arg3: number@scalar, arg4?: logical@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg4{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for VLookupFn {
     fn name(&self) -> &'static str {
         "VLOOKUP"
@@ -471,6 +491,16 @@ impl Function for VLookupFn {
 
 #[derive(Debug)]
 pub struct HLookupFn;
+/// [formualizer-docgen:schema:start]
+/// Name: HLOOKUP
+/// Type: HLookupFn
+/// Min args: 3
+/// Max args: 4
+/// Variadic: false
+/// Signature: HLOOKUP(arg1: any@scalar, arg2: any@range, arg3: number@scalar, arg4?: logical@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg4{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for HLookupFn {
     fn name(&self) -> &'static str {
         "HLOOKUP"

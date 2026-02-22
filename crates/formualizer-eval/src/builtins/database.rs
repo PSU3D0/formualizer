@@ -670,6 +670,16 @@ fn eval_dcounta<'a, 'b>(
 #[derive(Debug)]
 pub struct DSumFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DSUM
+/// Type: DSumFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DSUM(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DSumFn {
     func_caps!(PURE, REDUCTION);
 
@@ -702,6 +712,16 @@ impl Function for DSumFn {
 #[derive(Debug)]
 pub struct DAverageFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DAVERAGE
+/// Type: DAverageFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DAVERAGE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DAverageFn {
     func_caps!(PURE, REDUCTION);
 
@@ -734,6 +754,16 @@ impl Function for DAverageFn {
 #[derive(Debug)]
 pub struct DCountFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DCOUNT
+/// Type: DCountFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DCOUNT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DCountFn {
     func_caps!(PURE, REDUCTION);
 
@@ -766,6 +796,16 @@ impl Function for DCountFn {
 #[derive(Debug)]
 pub struct DMaxFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DMAX
+/// Type: DMaxFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DMAX(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DMaxFn {
     func_caps!(PURE, REDUCTION);
 
@@ -798,6 +838,16 @@ impl Function for DMaxFn {
 #[derive(Debug)]
 pub struct DMinFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DMIN
+/// Type: DMinFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DMIN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DMinFn {
     func_caps!(PURE, REDUCTION);
 
@@ -830,6 +880,16 @@ impl Function for DMinFn {
 #[derive(Debug)]
 pub struct DProductFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DPRODUCT
+/// Type: DProductFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DPRODUCT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DProductFn {
     func_caps!(PURE, REDUCTION);
 
@@ -862,6 +922,16 @@ impl Function for DProductFn {
 #[derive(Debug)]
 pub struct DStdevFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DSTDEV
+/// Type: DStdevFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DSTDEV(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DStdevFn {
     func_caps!(PURE, REDUCTION);
 
@@ -894,6 +964,16 @@ impl Function for DStdevFn {
 #[derive(Debug)]
 pub struct DStdevPFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DSTDEVP
+/// Type: DStdevPFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DSTDEVP(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DStdevPFn {
     func_caps!(PURE, REDUCTION);
 
@@ -926,6 +1006,16 @@ impl Function for DStdevPFn {
 #[derive(Debug)]
 pub struct DVarFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DVAR
+/// Type: DVarFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DVAR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DVarFn {
     func_caps!(PURE, REDUCTION);
 
@@ -958,6 +1048,16 @@ impl Function for DVarFn {
 #[derive(Debug)]
 pub struct DVarPFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DVARP
+/// Type: DVarPFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DVARP(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DVarPFn {
     func_caps!(PURE, REDUCTION);
 
@@ -990,6 +1090,16 @@ impl Function for DVarPFn {
 #[derive(Debug)]
 pub struct DGetFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DGET
+/// Type: DGetFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DGET(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DGetFn {
     func_caps!(PURE, REDUCTION);
 
@@ -1022,6 +1132,16 @@ impl Function for DGetFn {
 #[derive(Debug)]
 pub struct DCountAFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DCOUNTA
+/// Type: DCountAFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DCOUNTA(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DCountAFn {
     func_caps!(PURE, REDUCTION);
 

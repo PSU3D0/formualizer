@@ -22,6 +22,16 @@ fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
 /// Returns the straight-line depreciation of an asset for one period
 #[derive(Debug)]
 pub struct SlnFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SLN
+/// Type: SlnFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: SLN(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SlnFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -65,6 +75,16 @@ impl Function for SlnFn {
 /// Returns the sum-of-years' digits depreciation of an asset for a specified period
 #[derive(Debug)]
 pub struct SydFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SYD
+/// Type: SydFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: SYD(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SydFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -115,6 +135,16 @@ impl Function for SydFn {
 /// Returns the depreciation of an asset for a specified period using the fixed-declining balance method
 #[derive(Debug)]
 pub struct DbFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DB
+/// Type: DbFn
+/// Min args: 4
+/// Max args: variadic
+/// Variadic: true
+/// Signature: DB(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DbFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -218,6 +248,16 @@ impl Function for DbFn {
 /// See merge-review/03-financial.md for full analysis.
 #[derive(Debug)]
 pub struct DdbFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DDB
+/// Type: DdbFn
+/// Min args: 4
+/// Max args: variadic
+/// Variadic: true
+/// Signature: DDB(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DdbFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

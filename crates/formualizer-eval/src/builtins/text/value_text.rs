@@ -37,6 +37,16 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
 // VALUE(text) - parse number
 #[derive(Debug)]
 pub struct ValueFn;
+/// [formualizer-docgen:schema:start]
+/// Name: VALUE
+/// Type: ValueFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: VALUE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ValueFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -66,6 +76,16 @@ impl Function for ValueFn {
 // TEXT(value, format_text) - limited formatting (#,0,0.00, percent, yyyy, mm, dd, hh:mm) naive
 #[derive(Debug)]
 pub struct TextFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TEXT
+/// Type: TextFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: TEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TextFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

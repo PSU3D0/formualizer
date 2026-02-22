@@ -9,6 +9,16 @@ use rand::Rng;
 #[derive(Debug)]
 pub struct RandFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: RAND
+/// Type: RandFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: RAND()
+/// Arg schema: []
+/// Caps: VOLATILE
+/// [formualizer-docgen:schema:end]
 impl Function for RandFn {
     func_caps!(VOLATILE);
 
@@ -103,6 +113,16 @@ mod tests {
 #[derive(Debug)]
 pub struct RandBetweenFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: RANDBETWEEN
+/// Type: RandBetweenFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: RANDBETWEEN(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: VOLATILE
+/// [formualizer-docgen:schema:end]
 impl Function for RandBetweenFn {
     func_caps!(VOLATILE);
 

@@ -228,6 +228,16 @@ fn split_by_delimiters(text: &str, delimiters: &[String], case_insensitive: bool
 #[derive(Debug)]
 pub struct TextSplitFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: TEXTSPLIT
+/// Type: TextSplitFn
+/// Min args: 2
+/// Max args: 6
+/// Variadic: false
+/// Signature: TEXTSPLIT(arg1: any@scalar, arg2: any@scalar, arg3?: any@scalar, arg4?: logical@scalar, arg5?: number@scalar, arg6?: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg6{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TextSplitFn {
     func_caps!(PURE);
 
@@ -438,6 +448,16 @@ fn value_to_text_repr(v: &LiteralValue, strict: bool) -> String {
 #[derive(Debug)]
 pub struct ValueToTextFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: VALUETOTEXT
+/// Type: ValueToTextFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: VALUETOTEXT(arg1: any@scalar, arg2?: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ValueToTextFn {
     func_caps!(PURE);
 
@@ -527,6 +547,16 @@ fn arg_arraytotext() -> Vec<ArgSchema> {
 #[derive(Debug)]
 pub struct ArrayToTextFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: ARRAYTOTEXT
+/// Type: ArrayToTextFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: ARRAYTOTEXT(arg1: any|range@range, arg2?: number@scalar)
+/// Arg schema: arg1{kinds=any|range,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ArrayToTextFn {
     func_caps!(PURE);
 

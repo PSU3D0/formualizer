@@ -24,6 +24,16 @@ fn to_bitwise_int(v: &LiteralValue) -> Result<i64, ExcelError> {
 /// BITAND(number1, number2) - Returns bitwise AND of two numbers
 #[derive(Debug)]
 pub struct BitAndFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BITAND
+/// Type: BitAndFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: BITAND(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for BitAndFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -69,6 +79,16 @@ impl Function for BitAndFn {
 /// BITOR(number1, number2) - Returns bitwise OR of two numbers
 #[derive(Debug)]
 pub struct BitOrFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BITOR
+/// Type: BitOrFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: BITOR(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for BitOrFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -114,6 +134,16 @@ impl Function for BitOrFn {
 /// BITXOR(number1, number2) - Returns bitwise XOR of two numbers
 #[derive(Debug)]
 pub struct BitXorFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BITXOR
+/// Type: BitXorFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: BITXOR(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for BitXorFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -159,6 +189,16 @@ impl Function for BitXorFn {
 /// BITLSHIFT(number, shift_amount) - Returns number shifted left by shift_amount bits
 #[derive(Debug)]
 pub struct BitLShiftFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BITLSHIFT
+/// Type: BitLShiftFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: BITLSHIFT(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for BitLShiftFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -222,6 +262,16 @@ impl Function for BitLShiftFn {
 /// BITRSHIFT(number, shift_amount) - Returns number shifted right by shift_amount bits
 #[derive(Debug)]
 pub struct BitRShiftFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BITRSHIFT
+/// Type: BitRShiftFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: BITRSHIFT(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for BitRShiftFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -298,6 +348,16 @@ fn coerce_base_text(v: &LiteralValue) -> Result<String, ExcelError> {
 /// BIN2DEC(number) - Converts binary number to decimal
 #[derive(Debug)]
 pub struct Bin2DecFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BIN2DEC
+/// Type: Bin2DecFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: BIN2DEC(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Bin2DecFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -349,6 +409,16 @@ impl Function for Bin2DecFn {
 /// DEC2BIN(number, [places]) - Converts decimal to binary
 #[derive(Debug)]
 pub struct Dec2BinFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DEC2BIN
+/// Type: Dec2BinFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: DEC2BIN(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Dec2BinFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -418,6 +488,16 @@ impl Function for Dec2BinFn {
 /// HEX2DEC(number) - Converts hexadecimal to decimal
 #[derive(Debug)]
 pub struct Hex2DecFn;
+/// [formualizer-docgen:schema:start]
+/// Name: HEX2DEC
+/// Type: Hex2DecFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: HEX2DEC(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Hex2DecFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -468,6 +548,16 @@ impl Function for Hex2DecFn {
 /// DEC2HEX(number, [places]) - Converts decimal to hexadecimal
 #[derive(Debug)]
 pub struct Dec2HexFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DEC2HEX
+/// Type: Dec2HexFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: DEC2HEX(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Dec2HexFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -537,6 +627,16 @@ impl Function for Dec2HexFn {
 /// OCT2DEC(number) - Converts octal to decimal
 #[derive(Debug)]
 pub struct Oct2DecFn;
+/// [formualizer-docgen:schema:start]
+/// Name: OCT2DEC
+/// Type: Oct2DecFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: OCT2DEC(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Oct2DecFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -587,6 +687,16 @@ impl Function for Oct2DecFn {
 /// DEC2OCT(number, [places]) - Converts decimal to octal
 #[derive(Debug)]
 pub struct Dec2OctFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DEC2OCT
+/// Type: Dec2OctFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: DEC2OCT(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Dec2OctFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -658,6 +768,16 @@ impl Function for Dec2OctFn {
 /// BIN2HEX(number, [places]) - Converts binary to hexadecimal
 #[derive(Debug)]
 pub struct Bin2HexFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BIN2HEX
+/// Type: Bin2HexFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: BIN2HEX(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Bin2HexFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -736,6 +856,16 @@ impl Function for Bin2HexFn {
 /// HEX2BIN(number, [places]) - Converts hexadecimal to binary
 #[derive(Debug)]
 pub struct Hex2BinFn;
+/// [formualizer-docgen:schema:start]
+/// Name: HEX2BIN
+/// Type: Hex2BinFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: HEX2BIN(arg1: any@scalar, arg2...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Hex2BinFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -821,6 +951,16 @@ impl Function for Hex2BinFn {
 /// BIN2OCT(number, [places]) - Converts binary to octal
 #[derive(Debug)]
 pub struct Bin2OctFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BIN2OCT
+/// Type: Bin2OctFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: BIN2OCT(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Bin2OctFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -898,6 +1038,16 @@ impl Function for Bin2OctFn {
 /// OCT2BIN(number, [places]) - Converts octal to binary
 #[derive(Debug)]
 pub struct Oct2BinFn;
+/// [formualizer-docgen:schema:start]
+/// Name: OCT2BIN
+/// Type: Oct2BinFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: OCT2BIN(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Oct2BinFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -982,6 +1132,16 @@ impl Function for Oct2BinFn {
 /// HEX2OCT(number, [places]) - Converts hexadecimal to octal
 #[derive(Debug)]
 pub struct Hex2OctFn;
+/// [formualizer-docgen:schema:start]
+/// Name: HEX2OCT
+/// Type: Hex2OctFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: HEX2OCT(arg1: any@scalar, arg2...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Hex2OctFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1066,6 +1226,16 @@ impl Function for Hex2OctFn {
 /// OCT2HEX(number, [places]) - Converts octal to hexadecimal
 #[derive(Debug)]
 pub struct Oct2HexFn;
+/// [formualizer-docgen:schema:start]
+/// Name: OCT2HEX
+/// Type: Oct2HexFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: OCT2HEX(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Oct2HexFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1145,6 +1315,16 @@ impl Function for Oct2HexFn {
 /// DELTA(number1, [number2]) - Tests whether two values are equal
 #[derive(Debug)]
 pub struct DeltaFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DELTA
+/// Type: DeltaFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: DELTA(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DeltaFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1191,6 +1371,16 @@ impl Function for DeltaFn {
 /// GESTEP(number, [step]) - Tests whether a number is >= step value
 #[derive(Debug)]
 pub struct GestepFn;
+/// [formualizer-docgen:schema:start]
+/// Name: GESTEP
+/// Type: GestepFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: GESTEP(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for GestepFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1407,6 +1597,16 @@ fn erfc_direct(x: f64) -> f64 {
 /// If both are provided, returns erf(upper_limit) - erf(lower_limit)
 #[derive(Debug)]
 pub struct ErfFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ERF
+/// Type: ErfFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: ERF(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ErfFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1456,6 +1656,16 @@ impl Function for ErfFn {
 /// ERFC(x) - Returns the complementary error function = 1 - erf(x)
 #[derive(Debug)]
 pub struct ErfcFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ERFC
+/// Type: ErfcFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ERFC(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ErfcFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1489,6 +1699,16 @@ impl Function for ErfcFn {
 /// ERF.PRECISE(x) - Returns the error function (same as ERF with one argument)
 #[derive(Debug)]
 pub struct ErfPreciseFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ERF.PRECISE
+/// Type: ErfPreciseFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ERF.PRECISE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ErfPreciseFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1692,6 +1912,16 @@ static ARG_COMPLEX_THREE: std::sync::LazyLock<Vec<ArgSchema>> =
 /// COMPLEX(real_num, i_num, [suffix]) - Converts real and imaginary coefficients into a complex number
 #[derive(Debug)]
 pub struct ComplexFn;
+/// [formualizer-docgen:schema:start]
+/// Name: COMPLEX
+/// Type: ComplexFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: COMPLEX(arg1: any@scalar, arg2: any@scalar, arg3...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ComplexFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1763,6 +1993,16 @@ impl Function for ComplexFn {
 /// IMREAL(inumber) - Returns the real coefficient of a complex number
 #[derive(Debug)]
 pub struct ImRealFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMREAL
+/// Type: ImRealFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMREAL(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImRealFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1801,6 +2041,16 @@ impl Function for ImRealFn {
 /// IMAGINARY(inumber) - Returns the imaginary coefficient of a complex number
 #[derive(Debug)]
 pub struct ImaginaryFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMAGINARY
+/// Type: ImaginaryFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMAGINARY(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImaginaryFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1839,6 +2089,16 @@ impl Function for ImaginaryFn {
 /// IMABS(inumber) - Returns the absolute value (modulus) of a complex number
 #[derive(Debug)]
 pub struct ImAbsFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMABS
+/// Type: ImAbsFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMABS(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImAbsFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1878,6 +2138,16 @@ impl Function for ImAbsFn {
 /// IMARGUMENT(inumber) - Returns the argument theta (angle in radians) of a complex number
 #[derive(Debug)]
 pub struct ImArgumentFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMARGUMENT
+/// Type: ImArgumentFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMARGUMENT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImArgumentFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1924,6 +2194,16 @@ impl Function for ImArgumentFn {
 /// IMCONJUGATE(inumber) - Returns the complex conjugate of a complex number
 #[derive(Debug)]
 pub struct ImConjugateFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMCONJUGATE
+/// Type: ImConjugateFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMCONJUGATE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImConjugateFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1977,6 +2257,16 @@ fn check_suffix_compatibility(s1: char, s2: char) -> Result<char, ExcelError> {
 /// IMSUM(inumber1, [inumber2], ...) - Returns the sum of complex numbers
 #[derive(Debug)]
 pub struct ImSumFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMSUM
+/// Type: ImSumFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: IMSUM(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImSumFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2036,6 +2326,16 @@ impl Function for ImSumFn {
 /// IMSUB(inumber1, inumber2) - Returns the difference of two complex numbers
 #[derive(Debug)]
 pub struct ImSubFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMSUB
+/// Type: ImSubFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: IMSUB(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImSubFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2091,6 +2391,16 @@ impl Function for ImSubFn {
 /// IMPRODUCT(inumber1, [inumber2], ...) - Returns the product of complex numbers
 #[derive(Debug)]
 pub struct ImProductFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMPRODUCT
+/// Type: ImProductFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: IMPRODUCT(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImProductFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2154,6 +2464,16 @@ impl Function for ImProductFn {
 /// IMDIV(inumber1, inumber2) - Returns the quotient of two complex numbers
 #[derive(Debug)]
 pub struct ImDivFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMDIV
+/// Type: ImDivFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: IMDIV(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImDivFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2223,6 +2543,16 @@ impl Function for ImDivFn {
 /// e^(a+bi) = e^a * (cos(b) + i*sin(b))
 #[derive(Debug)]
 pub struct ImExpFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMEXP
+/// Type: ImExpFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMEXP(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImExpFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2268,6 +2598,16 @@ impl Function for ImExpFn {
 /// ln(a+bi) = ln(|z|) + i*arg(z)
 #[derive(Debug)]
 pub struct ImLnFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMLN
+/// Type: ImLnFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMLN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImLnFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2320,6 +2660,16 @@ impl Function for ImLnFn {
 /// log10(z) = ln(z) / ln(10)
 #[derive(Debug)]
 pub struct ImLog10Fn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMLOG10
+/// Type: ImLog10Fn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMLOG10(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImLog10Fn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2373,6 +2723,16 @@ impl Function for ImLog10Fn {
 /// log2(z) = ln(z) / ln(2)
 #[derive(Debug)]
 pub struct ImLog2Fn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMLOG2
+/// Type: ImLog2Fn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMLOG2(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImLog2Fn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2426,6 +2786,16 @@ impl Function for ImLog2Fn {
 /// z^n = |z|^n * (cos(n*theta) + i*sin(n*theta))
 #[derive(Debug)]
 pub struct ImPowerFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMPOWER
+/// Type: ImPowerFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: IMPOWER(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImPowerFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2496,6 +2866,16 @@ impl Function for ImPowerFn {
 /// sqrt(z) = sqrt(|z|) * (cos(theta/2) + i*sin(theta/2))
 #[derive(Debug)]
 pub struct ImSqrtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMSQRT
+/// Type: ImSqrtFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMSQRT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImSqrtFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2545,6 +2925,16 @@ impl Function for ImSqrtFn {
 /// sin(a+bi) = sin(a)*cosh(b) + i*cos(a)*sinh(b)
 #[derive(Debug)]
 pub struct ImSinFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMSIN
+/// Type: ImSinFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMSIN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImSinFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2589,6 +2979,16 @@ impl Function for ImSinFn {
 /// cos(a+bi) = cos(a)*cosh(b) - i*sin(a)*sinh(b)
 #[derive(Debug)]
 pub struct ImCosFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMCOS
+/// Type: ImCosFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMCOS(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ImCosFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2797,6 +3197,16 @@ fn convert_units(value: f64, from: &str, to: &str) -> Result<f64, ExcelError> {
 /// CONVERT(number, from_unit, to_unit) - Converts between measurement units
 #[derive(Debug)]
 pub struct ConvertFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CONVERT
+/// Type: ConvertFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: CONVERT(arg1: any@scalar, arg2: any@scalar, arg3: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ConvertFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

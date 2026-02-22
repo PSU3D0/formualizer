@@ -21,6 +21,16 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 /// Excel uses Windows-1252 encoding for codes 1-255
 #[derive(Debug)]
 pub struct CharFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CHAR
+/// Type: CharFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CHAR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CharFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -97,6 +107,16 @@ impl Function for CharFn {
 /// CODE(text) - Returns a numeric code for the first character in a text string
 #[derive(Debug)]
 pub struct CodeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CODE
+/// Type: CodeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CODE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CodeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -173,6 +193,16 @@ impl Function for CodeFn {
 /// REPT(text, number_times) - Repeats text a given number of times
 #[derive(Debug)]
 pub struct ReptFn;
+/// [formualizer-docgen:schema:start]
+/// Name: REPT
+/// Type: ReptFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: REPT(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ReptFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

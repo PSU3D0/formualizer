@@ -8,7 +8,11 @@ publish = false
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 globset = "0.4"
+quote = "1.0"
+regex = "1.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 syn = { version = "2.0", features = ["full", "visit"] }
 walkdir = "2.5"
+formualizer-eval = { path = "../formualizer-eval" }
+formualizer-common = { path = "../formualizer-common" }

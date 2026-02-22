@@ -1,14 +1,21 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use formualizer_eval::args::{ArgSchema, ShapeKind};
+use formualizer_eval::function::FnCaps;
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use quote::ToTokens;
+use regex::Regex;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use syn::visit::Visit;
 use syn::{Expr, ExprCall, ImplItem, Item, ItemImpl, ItemStruct, Lit, Meta, Type};
 
 const BUILTINS_DIR: &str = "crates/formualizer-eval/src/builtins";
+const DOCGEN_SCHEMA_START: &str = "[formualizer-docgen:schema:start]";
+const DOCGEN_SCHEMA_END: &str = "[formualizer-docgen:schema:end]";
 
 #[derive(Parser, Debug)]
 #[command(name = "xtask", about = "Workspace developer tasks")]
@@ -21,6 +28,8 @@ struct Cli {
 enum Command {
     /// Audit builtin function documentation coverage and example quality.
     DocsAudit(DocsAuditArgs),
+    /// Generate/apply schema metadata blocks in builtin doc comments.
+    DocsSchema(DocsSchemaArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -40,6 +49,25 @@ struct DocsAuditArgs {
     /// Fail with non-zero exit code when any issue is found.
     #[arg(long)]
     strict: bool,
+}
+
+#[derive(Parser, Debug)]
+struct DocsSchemaArgs {
+    /// Glob filter(s) applied to builtin source files (relative to repo root).
+    #[arg(long = "paths")]
+    paths: Vec<String>,
+
+    /// Function name filter(s), case-insensitive. May be repeated or comma-separated.
+    #[arg(long = "functions", value_delimiter = ',')]
+    functions: Vec<String>,
+
+    /// Apply generated schema sections in-place.
+    #[arg(long)]
+    apply: bool,
+
+    /// Allow apply while git working tree is dirty.
+    #[arg(long)]
+    allow_dirty: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -66,9 +94,36 @@ struct DocsAuditReport {
 }
 
 #[derive(Debug, Clone)]
+struct DocsSchemaEntry {
+    type_name: String,
+    function_name: String,
+    min_args: Option<usize>,
+    max_args: Option<usize>,
+    variadic: Option<bool>,
+    arg_schema: Option<String>,
+    signature: Option<String>,
+    caps: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeFunctionMeta {
+    min_args: usize,
+    max_args: Option<usize>,
+    variadic: bool,
+    arg_schema: String,
+    signature: String,
+    caps: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 struct ImplInfo {
     file: String,
     function_name: Option<String>,
+    min_args: Option<usize>,
+    max_args: Option<usize>,
+    variadic: Option<bool>,
+    arg_schema: Option<String>,
+    caps: Vec<String>,
     doc_text: String,
 }
 
@@ -101,6 +156,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::DocsAudit(args) => run_docs_audit(args),
+        Command::DocsSchema(args) => run_docs_schema(args),
     }
 }
 
@@ -201,10 +257,6 @@ fn run_docs_audit(args: DocsAuditArgs) -> Result<()> {
             issues.push("missing-doc-comment".to_string());
         }
 
-        if rust_blocks == 0 {
-            issues.push("missing-rust-example".to_string());
-        }
-
         if formula_blocks == 0 {
             issues.push("missing-formula-example".to_string());
         }
@@ -259,6 +311,141 @@ fn run_docs_audit(args: DocsAuditArgs) -> Result<()> {
         bail!(
             "docs-audit failed: {} function(s) with issues",
             report.failing_functions
+        );
+    }
+
+    Ok(())
+}
+
+fn run_docs_schema(args: DocsSchemaArgs) -> Result<()> {
+    if args.apply && !args.allow_dirty {
+        ensure_git_clean()?;
+    }
+
+    let builtins_files = collect_builtin_files(Path::new(BUILTINS_DIR))?;
+    let file_filter = build_glob_filter(&args.paths)?;
+    let function_filter: Option<BTreeSet<String>> = if args.functions.is_empty() {
+        None
+    } else {
+        Some(
+            args.functions
+                .iter()
+                .map(|name| name.trim().to_uppercase())
+                .filter(|name| !name.is_empty())
+                .collect(),
+        )
+    };
+
+    let mut impls_by_type: BTreeMap<String, Vec<ImplInfo>> = BTreeMap::new();
+    let mut registrations: Vec<(String, String)> = Vec::new();
+
+    for file in &builtins_files {
+        let file_rel = path_to_repo_string(file)?;
+        let facts = parse_file_facts(file, &file_rel)
+            .with_context(|| format!("failed to parse builtin file: {file_rel}"))?;
+
+        for (type_name, impl_info) in facts.impls {
+            impls_by_type.entry(type_name).or_default().push(impl_info);
+        }
+
+        for type_name in facts.registrations {
+            registrations.push((file_rel.clone(), type_name));
+        }
+    }
+
+    let runtime_meta = collect_runtime_function_meta()?;
+
+    let mut entries_by_file: BTreeMap<String, Vec<DocsSchemaEntry>> = BTreeMap::new();
+
+    for (registration_file, type_name) in registrations {
+        if let Some(filter) = &file_filter
+            && !filter.is_match(&registration_file)
+        {
+            continue;
+        }
+
+        let Some(impl_info) =
+            select_impl_for_registration(&impls_by_type, &type_name, &registration_file)
+        else {
+            continue;
+        };
+
+        let function_name = impl_info
+            .function_name
+            .clone()
+            .unwrap_or_else(|| type_name.clone());
+
+        if let Some(filter) = &function_filter
+            && !filter.contains(&function_name.to_uppercase())
+        {
+            continue;
+        }
+
+        let runtime = runtime_meta.get(&function_name.to_uppercase());
+
+        entries_by_file
+            .entry(impl_info.file.clone())
+            .or_default()
+            .push(DocsSchemaEntry {
+                type_name,
+                function_name: function_name.clone(),
+                min_args: runtime.map(|meta| meta.min_args).or(impl_info.min_args),
+                max_args: runtime
+                    .and_then(|meta| meta.max_args)
+                    .or(impl_info.max_args),
+                variadic: runtime.map(|meta| meta.variadic).or(impl_info.variadic),
+                arg_schema: runtime
+                    .map(|meta| meta.arg_schema.clone())
+                    .or(impl_info.arg_schema.clone()),
+                signature: runtime.map(|meta| meta.signature.clone()),
+                caps: runtime
+                    .map(|meta| meta.caps.clone())
+                    .unwrap_or_else(|| impl_info.caps.clone()),
+            });
+    }
+
+    let mut touched_entries = 0usize;
+    let mut scanned_files = 0usize;
+    let mut changed_files = 0usize;
+    let mut stale_files = Vec::new();
+
+    for (file, entries) in entries_by_file {
+        scanned_files += 1;
+        let source = fs::read_to_string(&file)
+            .with_context(|| format!("failed to read source file: {file}"))?;
+        let (updated, touched) = apply_schema_sections_to_source(&source, &entries)?;
+        touched_entries += touched;
+
+        if source != updated {
+            stale_files.push(file.clone());
+            if args.apply {
+                fs::write(&file, updated)
+                    .with_context(|| format!("failed to write source file: {file}"))?;
+                changed_files += 1;
+            }
+        }
+    }
+
+    let stale_count = stale_files.len();
+
+    println!("docs-schema summary");
+    println!("  files scanned: {}", scanned_files);
+    println!("  entries touched: {touched_entries}");
+    println!("  stale files: {stale_count}");
+
+    if args.apply {
+        println!("  files updated: {changed_files}");
+    } else if stale_count > 0 {
+        println!("\nFiles requiring schema update:");
+        for file in stale_files.iter().take(30) {
+            println!("  - {file}");
+        }
+        if stale_files.len() > 30 {
+            println!("  ... and {} more", stale_files.len() - 30);
+        }
+        bail!(
+            "docs-schema check failed: {} file(s) have stale or missing schema blocks",
+            stale_count
         );
     }
 
@@ -374,12 +561,41 @@ fn collect_function_impl(item_impl: &ItemImpl, file_rel: &str, facts: &mut FileF
     };
 
     let mut function_name = None;
+    let mut min_args = None;
+    let mut max_args = None;
+    let mut variadic = None;
+    let mut arg_schema = None;
+    let mut caps = Vec::new();
+
     for impl_item in &item_impl.items {
-        if let ImplItem::Fn(function) = impl_item
-            && function.sig.ident == "name"
-        {
-            function_name = extract_name_literal_from_block(&function.block);
-            break;
+        match impl_item {
+            ImplItem::Fn(function) if function.sig.ident == "name" => {
+                function_name = extract_name_literal_from_block(&function.block);
+            }
+            ImplItem::Fn(function) if function.sig.ident == "min_args" => {
+                min_args = extract_usize_literal_from_block(&function.block);
+            }
+            ImplItem::Fn(function) if function.sig.ident == "max_args" => {
+                max_args = extract_option_usize_from_block(&function.block);
+            }
+            ImplItem::Fn(function) if function.sig.ident == "variadic" => {
+                variadic = extract_bool_literal_from_block(&function.block);
+            }
+            ImplItem::Fn(function) if function.sig.ident == "arg_schema" => {
+                arg_schema = extract_expr_string_from_block(&function.block);
+            }
+            ImplItem::Macro(mac)
+                if mac
+                    .mac
+                    .path
+                    .segments
+                    .last()
+                    .map(|segment| segment.ident == "func_caps")
+                    .unwrap_or(false) =>
+            {
+                caps = parse_caps_from_macro_tokens(mac.mac.tokens.clone());
+            }
+            _ => {}
         }
     }
 
@@ -388,30 +604,134 @@ fn collect_function_impl(item_impl: &ItemImpl, file_rel: &str, facts: &mut FileF
         ImplInfo {
             file: file_rel.to_string(),
             function_name,
+            min_args,
+            max_args,
+            variadic,
+            arg_schema,
+            caps,
             doc_text: collect_doc_attrs(&item_impl.attrs),
         },
     ));
 }
 
 fn extract_name_literal_from_block(block: &syn::Block) -> Option<String> {
+    extract_tail_expr(block).and_then(extract_string_literal)
+}
+
+fn extract_usize_literal_from_block(block: &syn::Block) -> Option<usize> {
+    let expr = extract_tail_expr(block)?;
+    extract_usize_literal(expr)
+}
+
+fn extract_bool_literal_from_block(block: &syn::Block) -> Option<bool> {
+    let expr = extract_tail_expr(block)?;
+    extract_bool_literal(expr)
+}
+
+fn extract_option_usize_from_block(block: &syn::Block) -> Option<usize> {
+    let expr = extract_tail_expr(block)?;
+    extract_option_usize_literal(expr)
+}
+
+fn extract_expr_string_from_block(block: &syn::Block) -> Option<String> {
+    let expr = extract_tail_expr(block)?;
+    let expr = unwrap_expr(expr);
+    Some(expr.to_token_stream().to_string())
+}
+
+fn extract_tail_expr(block: &syn::Block) -> Option<&Expr> {
     for stmt in block.stmts.iter().rev() {
         match stmt {
-            syn::Stmt::Expr(expr, _) => {
-                if let Some(value) = extract_string_literal(expr) {
-                    return Some(value);
-                }
-            }
+            syn::Stmt::Expr(expr, _) => return Some(expr),
             syn::Stmt::Local(local) => {
-                if let Some(init) = &local.init
-                    && let Some(value) = extract_string_literal(&init.expr)
-                {
-                    return Some(value);
+                if let Some(init) = &local.init {
+                    return Some(&init.expr);
                 }
             }
             syn::Stmt::Item(_) | syn::Stmt::Macro(_) => {}
         }
     }
     None
+}
+
+fn extract_usize_literal(expr: &Expr) -> Option<usize> {
+    let expr = unwrap_expr(expr);
+    match expr {
+        Expr::Lit(lit_expr) => match &lit_expr.lit {
+            Lit::Int(value) => value.base10_parse().ok(),
+            _ => None,
+        },
+        Expr::Return(return_expr) => return_expr.expr.as_deref().and_then(extract_usize_literal),
+        Expr::Block(block_expr) => extract_usize_literal_from_block(&block_expr.block),
+        _ => None,
+    }
+}
+
+fn extract_bool_literal(expr: &Expr) -> Option<bool> {
+    let expr = unwrap_expr(expr);
+    match expr {
+        Expr::Lit(lit_expr) => match &lit_expr.lit {
+            Lit::Bool(value) => Some(value.value),
+            _ => None,
+        },
+        Expr::Return(return_expr) => return_expr.expr.as_deref().and_then(extract_bool_literal),
+        Expr::Block(block_expr) => extract_bool_literal_from_block(&block_expr.block),
+        _ => None,
+    }
+}
+
+fn extract_option_usize_literal(expr: &Expr) -> Option<usize> {
+    let expr = unwrap_expr(expr);
+    match expr {
+        Expr::Path(path_expr)
+            if path_expr
+                .path
+                .segments
+                .last()
+                .map(|segment| segment.ident == "None")
+                .unwrap_or(false) =>
+        {
+            None
+        }
+        Expr::Call(call_expr) => {
+            let func = unwrap_expr(&call_expr.func);
+            if let Expr::Path(path_expr) = func
+                && path_expr
+                    .path
+                    .segments
+                    .last()
+                    .map(|segment| segment.ident == "Some")
+                    .unwrap_or(false)
+            {
+                return call_expr.args.first().and_then(extract_usize_literal);
+            }
+            None
+        }
+        Expr::Return(return_expr) => return_expr
+            .expr
+            .as_deref()
+            .and_then(extract_option_usize_literal),
+        Expr::Block(block_expr) => extract_option_usize_from_block(&block_expr.block),
+        _ => None,
+    }
+}
+
+fn parse_caps_from_macro_tokens<T: ToTokens>(tokens: T) -> Vec<String> {
+    let raw = tokens.to_token_stream().to_string();
+    let trimmed = raw
+        .trim()
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    trimmed
+        .split(',')
+        .map(|part| part.trim().to_string())
+        .filter(|part| !part.is_empty())
+        .collect()
 }
 
 fn extract_string_literal(expr: &Expr) -> Option<String> {
@@ -621,6 +941,333 @@ fn count_formula_example_blocks(blocks: &[FencedBlock]) -> usize {
         .count()
 }
 
+fn ensure_git_clean() -> Result<()> {
+    let output = ProcessCommand::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .context("failed to run `git status --porcelain`")?;
+
+    if !output.status.success() {
+        bail!("`git status --porcelain` returned non-zero exit status");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.trim().is_empty() {
+        bail!("working tree is dirty; re-run with --allow-dirty to apply schema updates anyway");
+    }
+
+    Ok(())
+}
+
+fn catch_unwind_silent<F, R>(f: F) -> std::thread::Result<R>
+where
+    F: FnOnce() -> R,
+{
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    std::panic::set_hook(hook);
+    result
+}
+
+fn collect_runtime_function_meta() -> Result<BTreeMap<String, RuntimeFunctionMeta>> {
+    formualizer_eval::builtins::load_builtins();
+
+    let mut map = BTreeMap::new();
+    for (namespace, name, function) in formualizer_eval::function_registry::snapshot_registered() {
+        if !namespace.is_empty() {
+            continue;
+        }
+
+        let variadic = function.variadic();
+        let min_args = function.min_args();
+        let caps = fn_caps_labels(function.caps());
+
+        let schema_eval = catch_unwind_silent(|| function.arg_schema());
+
+        let (arg_schema, signature, max_args) = match schema_eval {
+            Ok(schema) => {
+                let max_args = if variadic { None } else { Some(schema.len()) };
+                (
+                    format_arg_schema(schema),
+                    format_signature(function.name(), schema, variadic),
+                    max_args,
+                )
+            }
+            Err(_) => (
+                "<unavailable: arg_schema panicked>".to_string(),
+                format!("{}(<schema unavailable>)", function.name()),
+                None,
+            ),
+        };
+
+        map.insert(
+            name,
+            RuntimeFunctionMeta {
+                min_args,
+                max_args,
+                variadic,
+                arg_schema,
+                signature,
+                caps,
+            },
+        );
+    }
+
+    Ok(map)
+}
+
+fn fn_caps_labels(caps: FnCaps) -> Vec<String> {
+    const KNOWN: &[(FnCaps, &str)] = &[
+        (FnCaps::PURE, "PURE"),
+        (FnCaps::VOLATILE, "VOLATILE"),
+        (FnCaps::REDUCTION, "REDUCTION"),
+        (FnCaps::ELEMENTWISE, "ELEMENTWISE"),
+        (FnCaps::WINDOWED, "WINDOWED"),
+        (FnCaps::LOOKUP, "LOOKUP"),
+        (FnCaps::NUMERIC_ONLY, "NUMERIC_ONLY"),
+        (FnCaps::BOOL_ONLY, "BOOL_ONLY"),
+        (FnCaps::SIMD_OK, "SIMD_OK"),
+        (FnCaps::STREAM_OK, "STREAM_OK"),
+        (FnCaps::GPU_OK, "GPU_OK"),
+        (FnCaps::RETURNS_REFERENCE, "RETURNS_REFERENCE"),
+        (FnCaps::SHORT_CIRCUIT, "SHORT_CIRCUIT"),
+        (FnCaps::PARALLEL_ARGS, "PARALLEL_ARGS"),
+        (FnCaps::PARALLEL_CHUNKS, "PARALLEL_CHUNKS"),
+        (FnCaps::DYNAMIC_DEPENDENCY, "DYNAMIC_DEPENDENCY"),
+    ];
+
+    KNOWN
+        .iter()
+        .filter(|(flag, _)| caps.contains(*flag))
+        .map(|(_, label)| (*label).to_string())
+        .collect()
+}
+
+fn format_arg_schema(schema: &[ArgSchema]) -> String {
+    if schema.is_empty() {
+        return "[]".to_string();
+    }
+
+    schema
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| {
+            let kinds = spec
+                .kinds
+                .iter()
+                .map(|kind| format!("{kind:?}").to_lowercase())
+                .collect::<Vec<_>>()
+                .join("|");
+
+            let shape = match spec.shape {
+                ShapeKind::Scalar => "scalar",
+                ShapeKind::Range => "range",
+                ShapeKind::Array => "array",
+            };
+
+            format!(
+                "arg{}{{kinds={kinds},required={},shape={shape},by_ref={},coercion={:?},max={:?},repeating={:?},default={}}}",
+                index + 1,
+                spec.required,
+                spec.by_ref,
+                spec.coercion,
+                spec.max,
+                spec.repeating,
+                spec.default.is_some()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn format_signature(name: &str, schema: &[ArgSchema], variadic: bool) -> String {
+    if schema.is_empty() {
+        return format!("{name}()");
+    }
+
+    let mut args = Vec::new();
+    for (index, spec) in schema.iter().enumerate() {
+        let mut arg_name = format!("arg{}", index + 1);
+        if !spec.required {
+            arg_name.push('?');
+        }
+        if variadic && index == schema.len() - 1 {
+            arg_name.push_str("...");
+        }
+
+        let kinds = spec
+            .kinds
+            .iter()
+            .map(|kind| format!("{kind:?}").to_lowercase())
+            .collect::<Vec<_>>()
+            .join("|");
+
+        let shape = match spec.shape {
+            ShapeKind::Scalar => "scalar",
+            ShapeKind::Range => "range",
+            ShapeKind::Array => "array",
+        };
+
+        args.push(format!("{arg_name}: {kinds}@{shape}"));
+    }
+
+    format!("{name}({})", args.join(", "))
+}
+
+fn apply_schema_sections_to_source(
+    source: &str,
+    entries: &[DocsSchemaEntry],
+) -> Result<(String, usize)> {
+    if entries.is_empty() {
+        return Ok((source.to_string(), 0));
+    }
+
+    let impl_re = Regex::new(
+        r"^(\s*)impl\s+(?:(?:[A-Za-z_][A-Za-z0-9_]*::)*)Function\s+for\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+    )
+    .context("failed to compile impl regex")?;
+
+    let mut entries_by_type: BTreeMap<String, DocsSchemaEntry> = BTreeMap::new();
+    for entry in entries {
+        entries_by_type
+            .entry(entry.type_name.clone())
+            .or_insert_with(|| entry.clone());
+    }
+
+    let had_trailing_newline = source.ends_with('\n');
+    let mut lines: Vec<String> = source.lines().map(|line| line.to_string()).collect();
+
+    let mut i = 0usize;
+    let mut touched = 0usize;
+
+    while i < lines.len() {
+        let line = lines[i].clone();
+        let Some(caps) = impl_re.captures(&line) else {
+            i += 1;
+            continue;
+        };
+
+        let indent = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let type_name = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+
+        let Some(entry) = entries_by_type.get(type_name) else {
+            i += 1;
+            continue;
+        };
+
+        touched += 1;
+
+        let mut doc_start = i;
+        while doc_start > 0 && lines[doc_start - 1].trim_start().starts_with("///") {
+            doc_start -= 1;
+        }
+
+        let existing_doc_lines: Vec<String> = lines[doc_start..i].to_vec();
+        let updated_doc_lines = upsert_schema_doc_lines(existing_doc_lines, entry, indent);
+
+        lines.splice(doc_start..i, updated_doc_lines.clone());
+        i = doc_start + updated_doc_lines.len() + 1;
+    }
+
+    let mut updated = lines.join("\n");
+    if had_trailing_newline {
+        updated.push('\n');
+    }
+
+    Ok((updated, touched))
+}
+
+fn upsert_schema_doc_lines(
+    existing_doc_lines: Vec<String>,
+    entry: &DocsSchemaEntry,
+    indent: &str,
+) -> Vec<String> {
+    let section_lines = render_schema_section_lines(entry, indent);
+
+    if existing_doc_lines.is_empty() {
+        return section_lines;
+    }
+
+    let start_idx = existing_doc_lines
+        .iter()
+        .position(|line| line.contains(DOCGEN_SCHEMA_START));
+    let end_idx = existing_doc_lines
+        .iter()
+        .position(|line| line.contains(DOCGEN_SCHEMA_END));
+
+    if let (Some(start), Some(end)) = (start_idx, end_idx)
+        && start <= end
+    {
+        let mut replaced = Vec::new();
+        replaced.extend_from_slice(&existing_doc_lines[..start]);
+        replaced.extend_from_slice(&section_lines);
+        replaced.extend_from_slice(&existing_doc_lines[end + 1..]);
+        return replaced;
+    }
+
+    let mut appended = existing_doc_lines;
+    if appended
+        .last()
+        .map(|line| line.trim() != "///")
+        .unwrap_or(true)
+    {
+        appended.push(format!("{indent}///"));
+    }
+    appended.extend(section_lines);
+    appended
+}
+
+fn render_schema_section_lines(entry: &DocsSchemaEntry, indent: &str) -> Vec<String> {
+    let max_args = if entry.variadic.unwrap_or(false) {
+        "variadic".to_string()
+    } else {
+        entry
+            .max_args
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unspecified".to_string())
+    };
+
+    let variadic = entry
+        .variadic
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let min_args = entry
+        .min_args
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let arg_schema = entry
+        .arg_schema
+        .clone()
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let signature = entry
+        .signature
+        .clone()
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let caps = if entry.caps.is_empty() {
+        "none".to_string()
+    } else {
+        entry.caps.join(", ")
+    };
+
+    vec![
+        format!("{indent}/// {DOCGEN_SCHEMA_START}"),
+        format!("{indent}/// Name: {}", entry.function_name),
+        format!("{indent}/// Type: {}", entry.type_name),
+        format!("{indent}/// Min args: {min_args}"),
+        format!("{indent}/// Max args: {max_args}"),
+        format!("{indent}/// Variadic: {variadic}"),
+        format!("{indent}/// Signature: {signature}"),
+        format!("{indent}/// Arg schema: {arg_schema}"),
+        format!("{indent}/// Caps: {caps}"),
+        format!("{indent}/// {DOCGEN_SCHEMA_END}"),
+    ]
+}
+
 fn derive_category(path: &str) -> String {
     let prefix = format!("{BUILTINS_DIR}/");
     let rel = path.strip_prefix(&prefix).unwrap_or(path);
@@ -663,7 +1310,10 @@ fn build_glob_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_fenced_blocks_by_lang, count_formula_example_blocks, parse_fenced_blocks};
+    use super::{
+        DOCGEN_SCHEMA_END, DOCGEN_SCHEMA_START, DocsSchemaEntry, apply_schema_sections_to_source,
+        count_fenced_blocks_by_lang, count_formula_example_blocks, parse_fenced_blocks,
+    };
 
     #[test]
     fn rust_fence_with_modifiers_counts_as_rust() {
@@ -693,5 +1343,59 @@ let x = 1;
 
         let blocks = parse_fenced_blocks(doc);
         assert_eq!(count_formula_example_blocks(&blocks), 1);
+    }
+
+    #[test]
+    fn docs_schema_appends_block_when_missing() {
+        let source = r#"impl Function for SumFn {
+    fn name(&self) -> &'static str { "SUM" }
+}
+"#;
+
+        let entry = DocsSchemaEntry {
+            type_name: "SumFn".to_string(),
+            function_name: "SUM".to_string(),
+            min_args: Some(0),
+            max_args: None,
+            variadic: Some(true),
+            arg_schema: Some("arg1{kinds=number,required=true,shape=range}".to_string()),
+            signature: Some("SUM(arg1...: number@range)".to_string()),
+            caps: vec!["PURE".to_string(), "REDUCTION".to_string()],
+        };
+
+        let (updated, touched) = apply_schema_sections_to_source(source, &[entry]).unwrap();
+        assert_eq!(touched, 1);
+        assert!(updated.contains(DOCGEN_SCHEMA_START));
+        assert!(updated.contains(DOCGEN_SCHEMA_END));
+        assert!(updated.contains("Name: SUM"));
+    }
+
+    #[test]
+    fn docs_schema_updates_existing_block_in_place() {
+        let source = r#"/// Summary.
+/// [formualizer-docgen:schema:start]
+/// Name: OLD
+/// [formualizer-docgen:schema:end]
+impl Function for SumFn {
+    fn name(&self) -> &'static str { "SUM" }
+}
+"#;
+
+        let entry = DocsSchemaEntry {
+            type_name: "SumFn".to_string(),
+            function_name: "SUM".to_string(),
+            min_args: Some(0),
+            max_args: None,
+            variadic: Some(true),
+            arg_schema: Some("arg1{kinds=number,required=true,shape=range}".to_string()),
+            signature: Some("SUM(arg1...: number@range)".to_string()),
+            caps: vec!["PURE".to_string()],
+        };
+
+        let (updated, touched) = apply_schema_sections_to_source(source, &[entry]).unwrap();
+        assert_eq!(touched, 1);
+        assert!(updated.contains("/// Summary."));
+        assert!(updated.contains("Name: SUM"));
+        assert!(!updated.contains("Name: OLD"));
     }
 }

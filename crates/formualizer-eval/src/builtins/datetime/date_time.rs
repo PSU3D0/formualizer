@@ -28,6 +28,16 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
 #[derive(Debug)]
 pub struct DateFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DATE
+/// Type: DateFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: DATE(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DateFn {
     func_caps!(PURE);
 
@@ -81,6 +91,16 @@ impl Function for DateFn {
 #[derive(Debug)]
 pub struct TimeFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: TIME
+/// Type: TimeFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: TIME(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TimeFn {
     func_caps!(PURE);
 

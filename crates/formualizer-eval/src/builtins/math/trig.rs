@@ -13,6 +13,16 @@ use std::f64::consts::PI;
 
 #[derive(Debug)]
 pub struct SinFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SIN
+/// Type: SinFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SIN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SinFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -110,6 +120,16 @@ mod tests_sin {
 
 #[derive(Debug)]
 pub struct CosFn;
+/// [formualizer-docgen:schema:start]
+/// Name: COS
+/// Type: CosFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COS(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CosFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -168,6 +188,16 @@ mod tests_cos {
 
 #[derive(Debug)]
 pub struct TanFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TAN
+/// Type: TanFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TAN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for TanFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -226,6 +256,16 @@ mod tests_tan {
 
 #[derive(Debug)]
 pub struct AsinFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ASIN
+/// Type: AsinFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ASIN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AsinFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -304,6 +344,16 @@ mod tests_asin {
 
 #[derive(Debug)]
 pub struct AcosFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ACOS
+/// Type: AcosFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOS(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AcosFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -380,6 +430,16 @@ mod tests_acos {
 
 #[derive(Debug)]
 pub struct AtanFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ATAN
+/// Type: AtanFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ATAN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AtanFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -441,6 +501,16 @@ mod tests_atan {
 
 #[derive(Debug)]
 pub struct Atan2Fn;
+/// [formualizer-docgen:schema:start]
+/// Name: ATAN2
+/// Type: Atan2Fn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: ATAN2(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for Atan2Fn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -568,6 +638,16 @@ mod tests_atan2 {
 
 #[derive(Debug)]
 pub struct SecFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SEC
+/// Type: SecFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SEC(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SecFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -646,6 +726,16 @@ mod tests_sec {
 
 #[derive(Debug)]
 pub struct CscFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CSC
+/// Type: CscFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CSC(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CscFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -723,6 +813,16 @@ mod tests_csc {
 
 #[derive(Debug)]
 pub struct CotFn;
+/// [formualizer-docgen:schema:start]
+/// Name: COT
+/// Type: CotFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COT(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CotFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -800,6 +900,16 @@ mod tests_cot {
 
 #[derive(Debug)]
 pub struct AcotFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ACOT
+/// Type: AcotFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOT(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AcotFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -870,6 +980,16 @@ mod tests_acot {
 
 #[derive(Debug)]
 pub struct SinhFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SINH
+/// Type: SinhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SINH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SinhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -928,6 +1048,16 @@ mod tests_sinh {
 
 #[derive(Debug)]
 pub struct CoshFn;
+/// [formualizer-docgen:schema:start]
+/// Name: COSH
+/// Type: CoshFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COSH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CoshFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -989,6 +1119,16 @@ mod tests_cosh {
 
 #[derive(Debug)]
 pub struct TanhFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TANH
+/// Type: TanhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TANH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for TanhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1050,6 +1190,16 @@ mod tests_tanh {
 
 #[derive(Debug)]
 pub struct AsinhFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ASINH
+/// Type: AsinhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ASINH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AsinhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1111,6 +1261,16 @@ mod tests_asinh {
 
 #[derive(Debug)]
 pub struct AcoshFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ACOSH
+/// Type: AcoshFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOSH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AcoshFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1182,6 +1342,16 @@ mod tests_acosh {
 
 #[derive(Debug)]
 pub struct AtanhFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ATANH
+/// Type: AtanhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ATANH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AtanhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1258,6 +1428,16 @@ mod tests_atanh {
 
 #[derive(Debug)]
 pub struct SechFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SECH
+/// Type: SechFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SECH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SechFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1319,6 +1499,16 @@ mod tests_sech {
 
 #[derive(Debug)]
 pub struct CschFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CSCH
+/// Type: CschFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CSCH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CschFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1398,6 +1588,16 @@ mod tests_csch {
 
 #[derive(Debug)]
 pub struct CothFn;
+/// [formualizer-docgen:schema:start]
+/// Name: COTH
+/// Type: CothFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COTH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CothFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1464,6 +1664,16 @@ mod tests_coth {
 
 #[derive(Debug)]
 pub struct RadiansFn;
+/// [formualizer-docgen:schema:start]
+/// Name: RADIANS
+/// Type: RadiansFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: RADIANS(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for RadiansFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1525,6 +1735,16 @@ mod tests_radians {
 
 #[derive(Debug)]
 pub struct DegreesFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DEGREES
+/// Type: DegreesFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: DEGREES(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for DegreesFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1586,6 +1806,16 @@ mod tests_degrees {
 
 #[derive(Debug)]
 pub struct PiFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PI
+/// Type: PiFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: PI()
+/// Arg schema: []
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PiFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

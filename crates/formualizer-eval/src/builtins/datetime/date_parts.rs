@@ -93,6 +93,16 @@ fn days_360_between(start: NaiveDate, end: NaiveDate, european: bool) -> i64 {
 #[derive(Debug)]
 pub struct DaysFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DAYS
+/// Type: DaysFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: DAYS(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DaysFn {
     func_caps!(PURE);
 
@@ -132,6 +142,16 @@ impl Function for DaysFn {
 #[derive(Debug)]
 pub struct Days360Fn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DAYS360
+/// Type: Days360Fn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: DAYS360(arg1: number@scalar, arg2: number@scalar, arg3...: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Days360Fn {
     func_caps!(PURE);
 
@@ -196,6 +216,16 @@ impl Function for Days360Fn {
 #[derive(Debug)]
 pub struct YearFracFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: YEARFRAC
+/// Type: YearFracFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: YEARFRAC(arg1: number@scalar, arg2: number@scalar, arg3...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for YearFracFn {
     func_caps!(PURE);
 
@@ -305,6 +335,16 @@ impl Function for YearFracFn {
 #[derive(Debug)]
 pub struct IsoWeekNumFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: ISOWEEKNUM
+/// Type: IsoWeekNumFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISOWEEKNUM(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsoWeekNumFn {
     func_caps!(PURE);
 
@@ -339,6 +379,16 @@ impl Function for IsoWeekNumFn {
 #[derive(Debug)]
 pub struct YearFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: YEAR
+/// Type: YearFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: YEAR(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for YearFn {
     func_caps!(PURE);
 
@@ -374,6 +424,16 @@ impl Function for YearFn {
 #[derive(Debug)]
 pub struct MonthFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: MONTH
+/// Type: MonthFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: MONTH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for MonthFn {
     func_caps!(PURE);
 
@@ -409,6 +469,16 @@ impl Function for MonthFn {
 #[derive(Debug)]
 pub struct DayFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DAY
+/// Type: DayFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: DAY(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DayFn {
     func_caps!(PURE);
 
@@ -444,6 +514,16 @@ impl Function for DayFn {
 #[derive(Debug)]
 pub struct HourFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: HOUR
+/// Type: HourFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: HOUR(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for HourFn {
     func_caps!(PURE);
 
@@ -482,6 +562,16 @@ impl Function for HourFn {
 #[derive(Debug)]
 pub struct MinuteFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: MINUTE
+/// Type: MinuteFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: MINUTE(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for MinuteFn {
     func_caps!(PURE);
 
@@ -519,6 +609,16 @@ impl Function for MinuteFn {
 #[derive(Debug)]
 pub struct SecondFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: SECOND
+/// Type: SecondFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SECOND(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SecondFn {
     func_caps!(PURE);
 

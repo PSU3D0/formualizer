@@ -9,6 +9,16 @@ use formualizer_macros::func_caps;
 
 #[derive(Debug)]
 pub struct AbsFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ABS
+/// Type: AbsFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ABS(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for AbsFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -37,6 +47,16 @@ impl Function for AbsFn {
 
 #[derive(Debug)]
 pub struct SignFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SIGN
+/// Type: SignFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SIGN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SignFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -74,6 +94,16 @@ impl Function for SignFn {
 
 #[derive(Debug)]
 pub struct IntFn; // floor toward -inf
+/// [formualizer-docgen:schema:start]
+/// Name: INT
+/// Type: IntFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: INT(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IntFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -102,6 +132,16 @@ impl Function for IntFn {
 
 #[derive(Debug)]
 pub struct TruncFn; // truncate toward zero
+/// [formualizer-docgen:schema:start]
+/// Name: TRUNC
+/// Type: TruncFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: TRUNC(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TruncFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -155,6 +195,16 @@ impl Function for TruncFn {
 
 #[derive(Debug)]
 pub struct RoundFn; // ROUND(number, digits)
+/// [formualizer-docgen:schema:start]
+/// Name: ROUND
+/// Type: RoundFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: ROUND(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RoundFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -195,6 +245,16 @@ impl Function for RoundFn {
 
 #[derive(Debug)]
 pub struct RoundDownFn; // toward zero
+/// [formualizer-docgen:schema:start]
+/// Name: ROUNDDOWN
+/// Type: RoundDownFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: ROUNDDOWN(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RoundDownFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -235,6 +295,16 @@ impl Function for RoundDownFn {
 
 #[derive(Debug)]
 pub struct RoundUpFn; // away from zero
+/// [formualizer-docgen:schema:start]
+/// Name: ROUNDUP
+/// Type: RoundUpFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: ROUNDUP(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RoundUpFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -277,6 +347,16 @@ impl Function for RoundUpFn {
 
 #[derive(Debug)]
 pub struct ModFn; // MOD(a,b)
+/// [formualizer-docgen:schema:start]
+/// Name: MOD
+/// Type: ModFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: MOD(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ModFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -329,6 +409,16 @@ impl Function for ModFn {
 
 #[derive(Debug)]
 pub struct CeilingFn; // CEILING(number, [significance]) legacy semantics simplified
+/// [formualizer-docgen:schema:start]
+/// Name: CEILING
+/// Type: CeilingFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CEILING(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CeilingFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -386,6 +476,16 @@ impl Function for CeilingFn {
 
 #[derive(Debug)]
 pub struct CeilingMathFn; // CEILING.MATH(number,[significance],[mode])
+/// [formualizer-docgen:schema:start]
+/// Name: CEILING.MATH
+/// Type: CeilingMathFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CEILING.MATH(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CeilingMathFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -454,6 +554,16 @@ impl Function for CeilingMathFn {
 
 #[derive(Debug)]
 pub struct FloorFn; // FLOOR(number,[significance])
+/// [formualizer-docgen:schema:start]
+/// Name: FLOOR
+/// Type: FloorFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: FLOOR(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FloorFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -511,6 +621,16 @@ impl Function for FloorFn {
 
 #[derive(Debug)]
 pub struct FloorMathFn; // FLOOR.MATH(number,[significance],[mode])
+/// [formualizer-docgen:schema:start]
+/// Name: FLOOR.MATH
+/// Type: FloorMathFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: FLOOR.MATH(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FloorMathFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -579,6 +699,16 @@ impl Function for FloorMathFn {
 
 #[derive(Debug)]
 pub struct SqrtFn; // SQRT(number)
+/// [formualizer-docgen:schema:start]
+/// Name: SQRT
+/// Type: SqrtFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SQRT(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SqrtFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -614,6 +744,16 @@ impl Function for SqrtFn {
 
 #[derive(Debug)]
 pub struct PowerFn; // POWER(number, power)
+/// [formualizer-docgen:schema:start]
+/// Name: POWER
+/// Type: PowerFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: POWER(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PowerFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -655,6 +795,16 @@ impl Function for PowerFn {
 
 #[derive(Debug)]
 pub struct ExpFn; // EXP(number)
+/// [formualizer-docgen:schema:start]
+/// Name: EXP
+/// Type: ExpFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: EXP(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ExpFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -685,6 +835,16 @@ impl Function for ExpFn {
 
 #[derive(Debug)]
 pub struct LnFn; // LN(number)
+/// [formualizer-docgen:schema:start]
+/// Name: LN
+/// Type: LnFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: LN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LnFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -720,6 +880,16 @@ impl Function for LnFn {
 
 #[derive(Debug)]
 pub struct LogFn; // LOG(number,[base]) default base 10
+/// [formualizer-docgen:schema:start]
+/// Name: LOG
+/// Type: LogFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LOG(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LogFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -773,6 +943,16 @@ impl Function for LogFn {
 
 #[derive(Debug)]
 pub struct Log10Fn; // LOG10(number)
+/// [formualizer-docgen:schema:start]
+/// Name: LOG10
+/// Type: Log10Fn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: LOG10(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for Log10Fn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -819,6 +999,16 @@ fn factorial_checked(n: i64) -> Option<f64> {
 
 #[derive(Debug)]
 pub struct QuotientFn;
+/// [formualizer-docgen:schema:start]
+/// Name: QUOTIENT
+/// Type: QuotientFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: QUOTIENT(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for QuotientFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -860,6 +1050,16 @@ impl Function for QuotientFn {
 
 #[derive(Debug)]
 pub struct EvenFn;
+/// [formualizer-docgen:schema:start]
+/// Name: EVEN
+/// Type: EvenFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: EVEN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for EvenFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -899,6 +1099,16 @@ impl Function for EvenFn {
 
 #[derive(Debug)]
 pub struct OddFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ODD
+/// Type: OddFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ODD(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for OddFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -935,6 +1145,16 @@ impl Function for OddFn {
 
 #[derive(Debug)]
 pub struct SqrtPiFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SQRTPI
+/// Type: SqrtPiFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SQRTPI(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SqrtPiFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -970,6 +1190,16 @@ impl Function for SqrtPiFn {
 
 #[derive(Debug)]
 pub struct MultinomialFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MULTINOMIAL
+/// Type: MultinomialFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MULTINOMIAL(arg1...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for MultinomialFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1038,6 +1268,16 @@ impl Function for MultinomialFn {
 
 #[derive(Debug)]
 pub struct SeriesSumFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SERIESSUM
+/// Type: SeriesSumFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: SERIESSUM(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SeriesSumFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1125,6 +1365,16 @@ impl Function for SeriesSumFn {
 
 #[derive(Debug)]
 pub struct SumsqFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SUMSQ
+/// Type: SumsqFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUMSQ(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SumsqFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1196,6 +1446,16 @@ impl Function for SumsqFn {
 
 #[derive(Debug)]
 pub struct MroundFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MROUND
+/// Type: MroundFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: MROUND(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for MroundFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1295,6 +1555,16 @@ fn roman_apply_form(classic: String, form: i64) -> String {
 
 #[derive(Debug)]
 pub struct RomanFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ROMAN
+/// Type: RomanFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: ROMAN(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RomanFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1390,6 +1660,16 @@ fn roman_digit_value(ch: char) -> Option<i64> {
 
 #[derive(Debug)]
 pub struct ArabicFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ARABIC
+/// Type: ArabicFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ARABIC(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ArabicFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

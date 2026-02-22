@@ -43,6 +43,16 @@ fn binding_from_calc_value(cv: CalcValue<'_>) -> LocalBinding {
 #[derive(Debug)]
 pub struct LetFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: LET
+/// Type: LetFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LET(<schema unavailable>)
+/// Arg schema: <unavailable: arg_schema panicked>
+/// Caps: PURE, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for LetFn {
     fn caps(&self) -> FnCaps {
         FnCaps::PURE | FnCaps::SHORT_CIRCUIT
@@ -135,6 +145,16 @@ impl CustomCallable for LambdaClosure {
 #[derive(Debug)]
 pub struct LambdaFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: LAMBDA
+/// Type: LambdaFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LAMBDA(<schema unavailable>)
+/// Arg schema: <unavailable: arg_schema panicked>
+/// Caps: PURE, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for LambdaFn {
     fn caps(&self) -> FnCaps {
         FnCaps::PURE | FnCaps::SHORT_CIRCUIT

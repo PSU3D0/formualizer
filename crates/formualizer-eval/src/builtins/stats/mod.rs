@@ -137,6 +137,16 @@ fn percentile_exc(sorted: &[f64], p: f64) -> Result<f64, ExcelError> {
 /// - ties return same rank (position of first in ordering)
 #[derive(Debug)]
 pub struct RankEqFn;
+/// [formualizer-docgen:schema:start]
+/// Name: RANK.EQ
+/// Type: RankEqFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: RANK.EQ(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for RankEqFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -208,6 +218,16 @@ impl Function for RankEqFn {
 /// RANK.AVG(number, ref, [order]) ties return average of ranks
 #[derive(Debug)]
 pub struct RankAvgFn;
+/// [formualizer-docgen:schema:start]
+/// Name: RANK.AVG
+/// Type: RankAvgFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: RANK.AVG(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for RankAvgFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -277,6 +297,16 @@ impl Function for RankAvgFn {
 
 #[derive(Debug)]
 pub struct LARGE;
+/// [formualizer-docgen:schema:start]
+/// Name: LARGE
+/// Type: LARGE
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LARGE(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for LARGE {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -330,6 +360,16 @@ impl Function for LARGE {
 
 #[derive(Debug)]
 pub struct SMALL;
+/// [formualizer-docgen:schema:start]
+/// Name: SMALL
+/// Type: SMALL
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SMALL(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SMALL {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -383,6 +423,16 @@ impl Function for SMALL {
 
 #[derive(Debug)]
 pub struct MEDIAN;
+/// [formualizer-docgen:schema:start]
+/// Name: MEDIAN
+/// Type: MEDIAN
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MEDIAN(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for MEDIAN {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -422,6 +472,16 @@ impl Function for MEDIAN {
 
 #[derive(Debug)]
 pub struct StdevSample; // sample
+/// [formualizer-docgen:schema:start]
+/// Name: STDEV.S
+/// Type: StdevSample
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: STDEV.S(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK
+/// [formualizer-docgen:schema:end]
 impl Function for StdevSample {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION, STREAM_OK);
     fn name(&self) -> &'static str {
@@ -465,6 +525,16 @@ impl Function for StdevSample {
 
 #[derive(Debug)]
 pub struct StdevPop; // population
+/// [formualizer-docgen:schema:start]
+/// Name: STDEV.P
+/// Type: StdevPop
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: STDEV.P(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK
+/// [formualizer-docgen:schema:end]
 impl Function for StdevPop {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION, STREAM_OK);
     fn name(&self) -> &'static str {
@@ -508,6 +578,16 @@ impl Function for StdevPop {
 
 #[derive(Debug)]
 pub struct VarSample; // sample variance
+/// [formualizer-docgen:schema:start]
+/// Name: VAR.S
+/// Type: VarSample
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: VAR.S(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK
+/// [formualizer-docgen:schema:end]
 impl Function for VarSample {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION, STREAM_OK);
     fn name(&self) -> &'static str {
@@ -551,6 +631,16 @@ impl Function for VarSample {
 
 #[derive(Debug)]
 pub struct VarPop; // population variance
+/// [formualizer-docgen:schema:start]
+/// Name: VAR.P
+/// Type: VarPop
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: VAR.P(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK
+/// [formualizer-docgen:schema:end]
 impl Function for VarPop {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION, STREAM_OK);
     fn name(&self) -> &'static str {
@@ -595,6 +685,16 @@ impl Function for VarPop {
 // MODE.SNGL (alias MODE) and MODE.MULT
 #[derive(Debug)]
 pub struct ModeSingleFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MODE.SNGL
+/// Type: ModeSingleFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MODE.SNGL(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for ModeSingleFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -658,6 +758,16 @@ impl Function for ModeSingleFn {
 
 #[derive(Debug)]
 pub struct ModeMultiFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MODE.MULT
+/// Type: ModeMultiFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MODE.MULT(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for ModeMultiFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -714,6 +824,16 @@ impl Function for ModeMultiFn {
 
 #[derive(Debug)]
 pub struct PercentileInc; // inclusive
+/// [formualizer-docgen:schema:start]
+/// Name: PERCENTILE.INC
+/// Type: PercentileInc
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PERCENTILE.INC(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for PercentileInc {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -766,6 +886,16 @@ impl Function for PercentileInc {
 
 #[derive(Debug)]
 pub struct PercentileExc; // exclusive
+/// [formualizer-docgen:schema:start]
+/// Name: PERCENTILE.EXC
+/// Type: PercentileExc
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PERCENTILE.EXC(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for PercentileExc {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -815,6 +945,16 @@ impl Function for PercentileExc {
 
 #[derive(Debug)]
 pub struct QuartileInc; // quartile inclusive
+/// [formualizer-docgen:schema:start]
+/// Name: QUARTILE.INC
+/// Type: QuartileInc
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: QUARTILE.INC(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for QuartileInc {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -893,6 +1033,16 @@ impl Function for QuartileInc {
 
 #[derive(Debug)]
 pub struct QuartileExc; // quartile exclusive
+/// [formualizer-docgen:schema:start]
+/// Name: QUARTILE.EXC
+/// Type: QuartileExc
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: QUARTILE.EXC(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for QuartileExc {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -959,6 +1109,16 @@ impl Function for QuartileExc {
 /// PRODUCT(number1, [number2], ...) - Multiplies all arguments
 #[derive(Debug)]
 pub struct ProductFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PRODUCT
+/// Type: ProductFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PRODUCT(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for ProductFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -992,6 +1152,16 @@ impl Function for ProductFn {
 /// GEOMEAN(number1, [number2], ...) - Returns the geometric mean
 #[derive(Debug)]
 pub struct GeomeanFn;
+/// [formualizer-docgen:schema:start]
+/// Name: GEOMEAN
+/// Type: GeomeanFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: GEOMEAN(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for GeomeanFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -1036,6 +1206,16 @@ impl Function for GeomeanFn {
 /// HARMEAN(number1, [number2], ...) - Returns the harmonic mean
 #[derive(Debug)]
 pub struct HarmeanFn;
+/// [formualizer-docgen:schema:start]
+/// Name: HARMEAN
+/// Type: HarmeanFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: HARMEAN(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for HarmeanFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -1079,6 +1259,16 @@ impl Function for HarmeanFn {
 /// AVEDEV(number1, [number2], ...) - Returns the average of absolute deviations from mean
 #[derive(Debug)]
 pub struct AvedevFn;
+/// [formualizer-docgen:schema:start]
+/// Name: AVEDEV
+/// Type: AvedevFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: AVEDEV(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AvedevFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -1124,6 +1314,16 @@ use super::utils::{ARG_ANY_ONE, criteria_match};
 /// Returns the maximum value among cells specified by given conditions.
 #[derive(Debug)]
 pub struct MaxIfsFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MAXIFS
+/// Type: MaxIfsFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MAXIFS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for MaxIfsFn {
     func_caps!(PURE, REDUCTION);
     fn name(&self) -> &'static str {
@@ -1151,6 +1351,16 @@ impl Function for MaxIfsFn {
 /// Returns the minimum value among cells specified by given conditions.
 #[derive(Debug)]
 pub struct MinIfsFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MINIFS
+/// Type: MinIfsFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MINIFS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for MinIfsFn {
     func_caps!(PURE, REDUCTION);
     fn name(&self) -> &'static str {
@@ -1304,6 +1514,16 @@ fn eval_maxminifs<'a, 'b>(
 /// Excludes a percentage of data points from both ends
 #[derive(Debug)]
 pub struct TrimmeanFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TRIMMEAN
+/// Type: TrimmeanFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: TRIMMEAN(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for TrimmeanFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -1383,6 +1603,16 @@ fn collect_paired_arrays(args: &[ArgumentHandle]) -> Result<(Vec<f64>, Vec<f64>)
 /// CORREL(array1, array2) - Returns the correlation coefficient between two data sets
 #[derive(Debug)]
 pub struct CorrelFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CORREL
+/// Type: CorrelFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: CORREL(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CorrelFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -1439,6 +1669,16 @@ impl Function for CorrelFn {
 /// SLOPE(known_y's, known_x's) - Returns the slope of the linear regression line
 #[derive(Debug)]
 pub struct SlopeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SLOPE
+/// Type: SlopeFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: SLOPE(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SlopeFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -1492,6 +1732,16 @@ impl Function for SlopeFn {
 /// INTERCEPT(known_y's, known_x's) - Returns the y-intercept of the linear regression line
 #[derive(Debug)]
 pub struct InterceptFn;
+/// [formualizer-docgen:schema:start]
+/// Name: INTERCEPT
+/// Type: InterceptFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: INTERCEPT(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for InterceptFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -1541,6 +1791,16 @@ impl Function for InterceptFn {
     }
 }
 
+/// [formualizer-docgen:schema:start]
+/// Name: DEVSQ
+/// Type: DevsqFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: DEVSQ(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for DevsqFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -1672,6 +1932,16 @@ fn std_norm_inv(p: f64) -> Option<f64> {
 /// NORM.S.DIST(z, cumulative) - Standard normal distribution
 #[derive(Debug)]
 pub struct NormSDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NORM.S.DIST
+/// Type: NormSDistFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: NORM.S.DIST(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NormSDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1712,6 +1982,16 @@ impl Function for NormSDistFn {
 /// NORM.S.INV(probability) - Inverse standard normal distribution
 #[derive(Debug)]
 pub struct NormSInvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NORM.S.INV
+/// Type: NormSInvFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: NORM.S.INV(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NormSInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1745,6 +2025,16 @@ impl Function for NormSInvFn {
 /// NORM.DIST(x, mean, standard_dev, cumulative) - Normal distribution
 #[derive(Debug)]
 pub struct NormDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NORM.DIST
+/// Type: NormDistFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: NORM.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NormDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1797,6 +2087,16 @@ impl Function for NormDistFn {
 /// NORM.INV(probability, mean, standard_dev) - Inverse normal distribution
 #[derive(Debug)]
 pub struct NormInvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NORM.INV
+/// Type: NormInvFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: NORM.INV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NormInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1845,6 +2145,16 @@ impl Function for NormInvFn {
 /// LOGNORM.DIST(x, mean, standard_dev, cumulative) - Log-normal distribution
 #[derive(Debug)]
 pub struct LognormDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: LOGNORM.DIST
+/// Type: LognormDistFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: LOGNORM.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LognormDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1897,6 +2207,16 @@ impl Function for LognormDistFn {
 /// LOGNORM.INV(probability, mean, standard_dev) - Inverse log-normal distribution
 #[derive(Debug)]
 pub struct LognormInvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: LOGNORM.INV
+/// Type: LognormInvFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: LOGNORM.INV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LognormInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1945,6 +2265,16 @@ impl Function for LognormInvFn {
 /// PHI(x) - Standard normal distribution density function (alias for NORM.S.DIST PDF)
 #[derive(Debug)]
 pub struct PhiFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PHI
+/// Type: PhiFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: PHI(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PhiFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1974,6 +2304,16 @@ impl Function for PhiFn {
 /// GAUSS(z) - Returns the probability that a member of a standard normal population will fall between the mean and z standard deviations from the mean
 #[derive(Debug)]
 pub struct GaussFn;
+/// [formualizer-docgen:schema:start]
+/// Name: GAUSS
+/// Type: GaussFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: GAUSS(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for GaussFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2321,6 +2661,16 @@ fn f_pdf(f: f64, d1: f64, d2: f64) -> f64 {
 /// T.DIST(x, deg_freedom, cumulative) - Student's t-distribution
 #[derive(Debug)]
 pub struct TDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: T.DIST
+/// Type: TDistFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: T.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2369,6 +2719,16 @@ impl Function for TDistFn {
 /// T.INV(probability, deg_freedom) - Inverse of Student's t-distribution
 #[derive(Debug)]
 pub struct TInvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: T.INV
+/// Type: TInvFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: T.INV(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2415,6 +2775,16 @@ impl Function for TInvFn {
 /// CHISQ.DIST(x, deg_freedom, cumulative) - Chi-squared distribution
 #[derive(Debug)]
 pub struct ChisqDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CHISQ.DIST
+/// Type: ChisqDistFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: CHISQ.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ChisqDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2463,6 +2833,16 @@ impl Function for ChisqDistFn {
 /// CHISQ.INV(probability, deg_freedom) - Inverse of chi-squared distribution
 #[derive(Debug)]
 pub struct ChisqInvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CHISQ.INV
+/// Type: ChisqInvFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: CHISQ.INV(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ChisqInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2509,6 +2889,16 @@ impl Function for ChisqInvFn {
 /// F.DIST(x, deg_freedom1, deg_freedom2, cumulative) - F distribution
 #[derive(Debug)]
 pub struct FDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: F.DIST
+/// Type: FDistFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: F.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2559,6 +2949,16 @@ impl Function for FDistFn {
 /// F.INV(probability, deg_freedom1, deg_freedom2) - Inverse of F distribution
 #[derive(Debug)]
 pub struct FInvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: F.INV
+/// Type: FInvFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: F.INV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FInvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2607,6 +3007,16 @@ impl Function for FInvFn {
 /// STANDARDIZE(x, mean, standard_dev) - Returns the normalized value
 #[derive(Debug)]
 pub struct StandardizeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: STANDARDIZE
+/// Type: StandardizeFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: STANDARDIZE(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for StandardizeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2680,6 +3090,16 @@ fn ln_binom(n: i64, k: i64) -> f64 {
 /// BINOM.DIST(number_s, trials, probability_s, cumulative) - Binomial distribution
 #[derive(Debug)]
 pub struct BinomDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BINOM.DIST
+/// Type: BinomDistFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: BINOM.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for BinomDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2740,6 +3160,16 @@ impl Function for BinomDistFn {
 /// POISSON.DIST(x, mean, cumulative) - Poisson distribution
 #[derive(Debug)]
 pub struct PoissonDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: POISSON.DIST
+/// Type: PoissonDistFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: POISSON.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PoissonDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2794,6 +3224,16 @@ impl Function for PoissonDistFn {
 /// EXPON.DIST(x, lambda, cumulative) - Exponential distribution
 #[derive(Debug)]
 pub struct ExponDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: EXPON.DIST
+/// Type: ExponDistFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: EXPON.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ExponDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2845,6 +3285,16 @@ impl Function for ExponDistFn {
 /// GAMMA.DIST(x, alpha, beta, cumulative) - Gamma distribution
 #[derive(Debug)]
 pub struct GammaDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: GAMMA.DIST
+/// Type: GammaDistFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: GAMMA.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for GammaDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2900,6 +3350,16 @@ impl Function for GammaDistFn {
 /// alpha = shape parameter, beta = scale parameter
 #[derive(Debug)]
 pub struct WeibullDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: WEIBULL.DIST
+/// Type: WeibullDistFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: WEIBULL.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for WeibullDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2964,6 +3424,16 @@ impl Function for WeibullDistFn {
 /// A and B are optional bounds, defaults to 0 and 1
 #[derive(Debug)]
 pub struct BetaDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BETA.DIST
+/// Type: BetaDistFn
+/// Min args: 4
+/// Max args: variadic
+/// Variadic: true
+/// Signature: BETA.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for BetaDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -3065,6 +3535,16 @@ impl Function for BetaDistFn {
 /// number_f = number of failures, number_s = threshold number of successes, probability_s = probability of success
 #[derive(Debug)]
 pub struct NegbinomDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NEGBINOM.DIST
+/// Type: NegbinomDistFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: NEGBINOM.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NegbinomDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -3127,6 +3607,16 @@ impl Function for NegbinomDistFn {
 /// number_pop = population size
 #[derive(Debug)]
 pub struct HypgeomDistFn;
+/// [formualizer-docgen:schema:start]
+/// Name: HYPGEOM.DIST
+/// Type: HypgeomDistFn
+/// Min args: 5
+/// Max args: 5
+/// Variadic: false
+/// Signature: HYPGEOM.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for HypgeomDistFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -3223,6 +3713,16 @@ COVARIANCE AND CORRELATION FUNCTIONS
 /// COVARIANCE.P(array1, array2) - Population covariance
 #[derive(Debug)]
 pub struct CovariancePFn;
+/// [formualizer-docgen:schema:start]
+/// Name: COVARIANCE.P
+/// Type: CovariancePFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: COVARIANCE.P(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CovariancePFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -3269,6 +3769,16 @@ impl Function for CovariancePFn {
 /// COVARIANCE.S(array1, array2) - Sample covariance
 #[derive(Debug)]
 pub struct CovarianceSFn;
+/// [formualizer-docgen:schema:start]
+/// Name: COVARIANCE.S
+/// Type: CovarianceSFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: COVARIANCE.S(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CovarianceSFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -3318,6 +3828,16 @@ impl Function for CovarianceSFn {
 /// PEARSON(array1, array2) - Pearson correlation coefficient (same as CORREL)
 #[derive(Debug)]
 pub struct PearsonFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PEARSON
+/// Type: PearsonFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: PEARSON(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for PearsonFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -3372,6 +3892,16 @@ impl Function for PearsonFn {
 /// RSQ(known_y's, known_x's) - R-squared value (square of correlation)
 #[derive(Debug)]
 pub struct RsqFn;
+/// [formualizer-docgen:schema:start]
+/// Name: RSQ
+/// Type: RsqFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: RSQ(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for RsqFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -3425,6 +3955,16 @@ impl Function for RsqFn {
 /// STEYX(known_y's, known_x's) - Standard error of the predicted y-value
 #[derive(Debug)]
 pub struct SteyxFn;
+/// [formualizer-docgen:schema:start]
+/// Name: STEYX
+/// Type: SteyxFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: STEYX(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SteyxFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -3493,6 +4033,16 @@ impl Function for SteyxFn {
 /// SKEW(number1, [number2], ...) - Skewness of a distribution
 #[derive(Debug)]
 pub struct SkewFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SKEW
+/// Type: SkewFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SKEW(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SkewFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -3557,6 +4107,16 @@ impl Function for SkewFn {
 /// KURT(number1, [number2], ...) - Kurtosis of a distribution
 #[derive(Debug)]
 pub struct KurtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: KURT
+/// Type: KurtFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: KURT(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for KurtFn {
     func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
     fn name(&self) -> &'static str {
@@ -3624,6 +4184,16 @@ impl Function for KurtFn {
 /// FISHER(x) - Fisher transformation
 #[derive(Debug)]
 pub struct FisherFn;
+/// [formualizer-docgen:schema:start]
+/// Name: FISHER
+/// Type: FisherFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: FISHER(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for FisherFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -3662,6 +4232,16 @@ impl Function for FisherFn {
 /// FISHERINV(y) - Inverse Fisher transformation
 #[derive(Debug)]
 pub struct FisherInvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: FISHERINV
+/// Type: FisherInvFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: FISHERINV(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for FisherInvFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -3697,6 +4277,16 @@ impl Function for FisherInvFn {
 /// and intercept = mean_y - slope * mean_x
 #[derive(Debug)]
 pub struct ForecastLinearFn;
+/// [formualizer-docgen:schema:start]
+/// Name: FORECAST.LINEAR
+/// Type: ForecastLinearFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: FORECAST.LINEAR(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for ForecastLinearFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -3781,6 +4371,16 @@ impl Function for ForecastLinearFn {
 /// With stats=TRUE: returns 5x2 array with regression statistics
 #[derive(Debug)]
 pub struct LinestFn;
+/// [formualizer-docgen:schema:start]
+/// Name: LINEST
+/// Type: LinestFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LINEST(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for LinestFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -4003,6 +4603,16 @@ impl Function for LinestFn {
 /// Formula: z_crit * standard_dev / sqrt(size), where z_crit = NORM.S.INV(1 - alpha/2)
 #[derive(Debug)]
 pub struct ConfidenceNormFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CONFIDENCE.NORM
+/// Type: ConfidenceNormFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: CONFIDENCE.NORM(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ConfidenceNormFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -4075,6 +4685,16 @@ impl Function for ConfidenceNormFn {
 /// Formula: t_crit * standard_dev / sqrt(size), where t_crit = T.INV(1 - alpha/2, size - 1)
 #[derive(Debug)]
 pub struct ConfidenceTFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CONFIDENCE.T
+/// Type: ConfidenceTFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: CONFIDENCE.T(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ConfidenceTFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -4147,6 +4767,16 @@ impl Function for ConfidenceTFn {
 /// If sigma is omitted, uses the population standard deviation of the array.
 #[derive(Debug)]
 pub struct ZTestFn;
+/// [formualizer-docgen:schema:start]
+/// Name: Z.TEST
+/// Type: ZTestFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: Z.TEST(arg1: number@range, arg2: number@scalar, arg3...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ZTestFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -4239,6 +4869,16 @@ impl Function for ZTestFn {
 /// - const=FALSE: force intercept through origin
 #[derive(Debug)]
 pub struct TrendFn;
+/// [formualizer-docgen:schema:start]
+/// Name: TREND
+/// Type: TrendFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: TREND(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for TrendFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -4390,6 +5030,16 @@ impl Function for TrendFn {
 /// - const=FALSE: force b = 1
 #[derive(Debug)]
 pub struct GrowthFn;
+/// [formualizer-docgen:schema:start]
+/// Name: GROWTH
+/// Type: GrowthFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: GROWTH(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for GrowthFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -4557,6 +5207,16 @@ impl Function for GrowthFn {
 /// The exponential curve is y = b * m^x
 #[derive(Debug)]
 pub struct LogestFn;
+/// [formualizer-docgen:schema:start]
+/// Name: LOGEST
+/// Type: LogestFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LOGEST(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for LogestFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -4802,6 +5462,16 @@ impl Function for LogestFn {
 /// significance: number of significant digits (default 3)
 #[derive(Debug)]
 pub struct PercentRankIncFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PERCENTRANK.INC
+/// Type: PercentRankIncFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PERCENTRANK.INC(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for PercentRankIncFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -4917,6 +5587,16 @@ impl Function for PercentRankIncFn {
 /// Range is 1/(n+1) to n/(n+1)
 #[derive(Debug)]
 pub struct PercentRankExcFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PERCENTRANK.EXC
+/// Type: PercentRankExcFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PERCENTRANK.EXC(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for PercentRankExcFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -5026,6 +5706,16 @@ impl Function for PercentRankExcFn {
 /// Returns array with one more element than bins_array
 #[derive(Debug)]
 pub struct FrequencyFn;
+/// [formualizer-docgen:schema:start]
+/// Name: FREQUENCY
+/// Type: FrequencyFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: FREQUENCY(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for FrequencyFn {
     func_caps!(PURE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -5112,6 +5802,16 @@ impl Function for FrequencyFn {
 /// Returns P(|T| > x) = 2 * (1 - t_cdf(|x|, df))
 #[derive(Debug)]
 pub struct TDist2TFn;
+/// [formualizer-docgen:schema:start]
+/// Name: T.DIST.2T
+/// Type: TDist2TFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: T.DIST.2T(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TDist2TFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -5158,6 +5858,16 @@ impl Function for TDist2TFn {
 /// This is equivalent to t_inv(1 - probability/2, df)
 #[derive(Debug)]
 pub struct TInv2TFn;
+/// [formualizer-docgen:schema:start]
+/// Name: T.INV.2T
+/// Type: TInv2TFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: T.INV.2T(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TInv2TFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -5216,6 +5926,16 @@ impl Function for TInv2TFn {
 /// type: 1=paired, 2=two-sample equal variance, 3=two-sample unequal variance (Welch's)
 #[derive(Debug)]
 pub struct TTestFn;
+/// [formualizer-docgen:schema:start]
+/// Name: T.TEST
+/// Type: TTestFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: T.TEST(arg1: number@range, arg2: number@range, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TTestFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -5372,6 +6092,16 @@ impl Function for TTestFn {
 /// F = larger_variance / smaller_variance
 #[derive(Debug)]
 pub struct FTestFn;
+/// [formualizer-docgen:schema:start]
+/// Name: F.TEST
+/// Type: FTestFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: F.TEST(arg1: number@range, arg2: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FTestFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -5458,6 +6188,16 @@ impl Function for FTestFn {
 /// Returns p-value from chi-squared distribution
 #[derive(Debug)]
 pub struct ChisqTestFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CHISQ.TEST
+/// Type: ChisqTestFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: CHISQ.TEST(arg1: number@range, arg2: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ChisqTestFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

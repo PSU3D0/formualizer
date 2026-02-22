@@ -17,6 +17,16 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 
 #[derive(Debug)]
 pub struct LenFn;
+/// [formualizer-docgen:schema:start]
+/// Name: LEN
+/// Type: LenFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: LEN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LenFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -48,6 +58,16 @@ impl Function for LenFn {
 
 #[derive(Debug)]
 pub struct LeftFn;
+/// [formualizer-docgen:schema:start]
+/// Name: LEFT
+/// Type: LeftFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LEFT(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LeftFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -101,6 +121,16 @@ impl Function for LeftFn {
 
 #[derive(Debug)]
 pub struct RightFn;
+/// [formualizer-docgen:schema:start]
+/// Name: RIGHT
+/// Type: RightFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: RIGHT(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RightFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

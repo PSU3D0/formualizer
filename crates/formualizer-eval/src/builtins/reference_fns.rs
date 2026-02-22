@@ -86,6 +86,16 @@ fn arg_byref_reference() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct IndexFn;
+/// [formualizer-docgen:schema:start]
+/// Name: INDEX
+/// Type: IndexFn
+/// Min args: 2
+/// Max args: 3
+/// Variadic: false
+/// Signature: INDEX(arg1: any@range, arg2: number@scalar, arg3?: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}
+/// Caps: PURE, RETURNS_REFERENCE
+/// [formualizer-docgen:schema:end]
 impl Function for IndexFn {
     fn caps(&self) -> FnCaps {
         FnCaps::PURE | FnCaps::RETURNS_REFERENCE
@@ -276,6 +286,16 @@ impl Function for IndexFn {
 
 #[derive(Debug)]
 pub struct OffsetFn;
+/// [formualizer-docgen:schema:start]
+/// Name: OFFSET
+/// Type: OffsetFn
+/// Min args: 3
+/// Max args: 5
+/// Variadic: false
+/// Signature: OFFSET(arg1: range@range, arg2: number@scalar, arg3: number@scalar, arg4?: number@scalar, arg5?: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}
+/// Caps: PURE, VOLATILE, RETURNS_REFERENCE, DYNAMIC_DEPENDENCY
+/// [formualizer-docgen:schema:end]
 impl Function for OffsetFn {
     fn caps(&self) -> FnCaps {
         // OFFSET is volatile in Excel semantics and has runtime-dynamic dependencies.
@@ -441,6 +461,16 @@ fn arg_indirect() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct IndirectFn;
+/// [formualizer-docgen:schema:start]
+/// Name: INDIRECT
+/// Type: IndirectFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: INDIRECT(arg1: text@scalar, arg2?: logical|number@scalar)
+/// Arg schema: arg1{kinds=text,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=logical|number,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE, VOLATILE, RETURNS_REFERENCE, DYNAMIC_DEPENDENCY
+/// [formualizer-docgen:schema:end]
 impl Function for IndirectFn {
     fn caps(&self) -> FnCaps {
         FnCaps::PURE | FnCaps::RETURNS_REFERENCE | FnCaps::VOLATILE | FnCaps::DYNAMIC_DEPENDENCY

@@ -44,6 +44,16 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
 #[derive(Debug)]
 pub struct EdateFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: EDATE
+/// Type: EdateFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: EDATE(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for EdateFn {
     func_caps!(PURE);
 
@@ -101,6 +111,16 @@ impl Function for EdateFn {
 #[derive(Debug)]
 pub struct EomonthFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: EOMONTH
+/// Type: EomonthFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: EOMONTH(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for EomonthFn {
     func_caps!(PURE);
 

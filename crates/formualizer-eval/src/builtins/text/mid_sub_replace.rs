@@ -18,6 +18,16 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 // MID(text, start_num, num_chars)
 #[derive(Debug)]
 pub struct MidFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MID
+/// Type: MidFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: MID(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for MidFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -64,6 +74,16 @@ impl Function for MidFn {
 // SUBSTITUTE(text, old_text, new_text, [instance_num]) - limited semantics
 #[derive(Debug)]
 pub struct SubstituteFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SUBSTITUTE
+/// Type: SubstituteFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUBSTITUTE(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SubstituteFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -128,6 +148,16 @@ impl Function for SubstituteFn {
 // REPLACE(old_text, start_num, num_chars, new_text)
 #[derive(Debug)]
 pub struct ReplaceFn;
+/// [formualizer-docgen:schema:start]
+/// Name: REPLACE
+/// Type: ReplaceFn
+/// Min args: 4
+/// Max args: 1
+/// Variadic: false
+/// Signature: REPLACE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ReplaceFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

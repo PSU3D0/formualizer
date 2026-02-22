@@ -8,6 +8,16 @@ use formualizer_macros::func_caps;
 
 #[derive(Debug)]
 pub struct MinFn; // MIN(...)
+/// [formualizer-docgen:schema:start]
+/// Name: MIN
+/// Type: MinFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MIN(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for MinFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -78,6 +88,16 @@ impl Function for MinFn {
 
 #[derive(Debug)]
 pub struct MaxFn; // MAX(...)
+/// [formualizer-docgen:schema:start]
+/// Name: MAX
+/// Type: MaxFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MAX(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for MaxFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY);
     fn name(&self) -> &'static str {

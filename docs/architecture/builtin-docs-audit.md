@@ -10,17 +10,22 @@ We need a repeatable, automatable way to ensure that every registered builtin fu
 
 1. Documentation content
 2. At least one inline **formula** example
-3. At least one inline **Rust** example
+
+Rust examples are encouraged for high-value functions and guides, but are not globally required for every builtin.
 
 This enables large parallel docs refinement passes with subagents and a deterministic CI gate.
 
-## Tool entrypoint
+## Tool entrypoints
 
 A workspace task binary is provided via `xtask`:
 
 ```bash
 cargo run -p xtask -- docs-audit
+cargo run -p xtask -- docs-schema
 ```
+
+- `docs-audit`: validates doc coverage quality checks.
+- `docs-schema`: ensures generated schema sections in doc comments are present and up to date.
 
 ## How discovery works (v1)
 
@@ -40,7 +45,6 @@ For each registered builtin, the checker reports issues for:
 - `missing-function-impl`
 - `missing-name-literal`
 - `missing-doc-comment`
-- `missing-rust-example`
 - `missing-formula-example`
 
 ## Example doc-comment pattern
@@ -89,6 +93,34 @@ Flags:
 - `--functions <A,B,...>`: constrain by function names
 - `--json-out <path>`: emit machine-readable report for subagent orchestration
 - `--strict`: non-zero exit on any finding
+
+## docs-schema command
+
+`docs-schema` writes or checks generated schema metadata blocks inside impl doc comments.
+
+Markers:
+
+- `[formualizer-docgen:schema:start]`
+- `[formualizer-docgen:schema:end]`
+
+Behavior:
+
+- If markers exist, schema block is updated in place.
+- If markers are missing, schema block is appended to existing doc comments.
+- If no doc comment exists, schema block is inserted above `impl Function for ...`.
+
+Usage:
+
+```bash
+# check mode (fails if stale/missing)
+cargo run -p xtask -- docs-schema
+
+# apply mode
+cargo run -p xtask -- docs-schema --apply
+
+# apply even when working tree is dirty
+cargo run -p xtask -- docs-schema --apply --allow-dirty
+```
 
 ## Subagent workflow
 

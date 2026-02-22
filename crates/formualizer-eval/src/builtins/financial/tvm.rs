@@ -26,6 +26,16 @@ fn coerce_literal_num(v: &LiteralValue) -> Result<f64, ExcelError> {
 /// Calculates the payment for a loan based on constant payments and a constant interest rate
 #[derive(Debug)]
 pub struct PmtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PMT
+/// Type: PmtFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PmtFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -94,6 +104,16 @@ impl Function for PmtFn {
 /// Calculates the present value of an investment
 #[derive(Debug)]
 pub struct PvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PV
+/// Type: PvFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -153,6 +173,16 @@ impl Function for PvFn {
 /// Calculates the future value of an investment
 #[derive(Debug)]
 pub struct FvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: FV
+/// Type: FvFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: FV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -212,6 +242,16 @@ impl Function for FvFn {
 /// Calculates the net present value of an investment
 #[derive(Debug)]
 pub struct NpvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NPV
+/// Type: NpvFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: NPV(arg1: number@scalar, arg2...: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NpvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -285,6 +325,16 @@ impl Function for NpvFn {
 /// Calculates the number of periods for an investment
 #[derive(Debug)]
 pub struct NperFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NPER
+/// Type: NperFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: NPER(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NperFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -356,6 +406,16 @@ impl Function for NperFn {
 /// Calculates the interest rate per period
 #[derive(Debug)]
 pub struct RateFn;
+/// [formualizer-docgen:schema:start]
+/// Name: RATE
+/// Type: RateFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: RATE(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RateFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -460,6 +520,16 @@ impl Function for RateFn {
 /// Calculates the interest payment for a given period
 #[derive(Debug)]
 pub struct IpmtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IPMT
+/// Type: IpmtFn
+/// Min args: 4
+/// Max args: variadic
+/// Variadic: true
+/// Signature: IPMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IpmtFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -545,6 +615,16 @@ impl Function for IpmtFn {
 /// Calculates the principal payment for a given period
 #[derive(Debug)]
 pub struct PpmtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: PPMT
+/// Type: PpmtFn
+/// Min args: 4
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PPMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PpmtFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -630,6 +710,16 @@ impl Function for PpmtFn {
 /// EFFECT(nominal_rate, npery) - Returns the effective annual interest rate
 #[derive(Debug)]
 pub struct EffectFn;
+/// [formualizer-docgen:schema:start]
+/// Name: EFFECT
+/// Type: EffectFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: EFFECT(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for EffectFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -672,6 +762,16 @@ impl Function for EffectFn {
 /// NOMINAL(effect_rate, npery) - Returns the nominal annual interest rate
 #[derive(Debug)]
 pub struct NominalFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NOMINAL
+/// Type: NominalFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: NOMINAL(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NominalFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -714,6 +814,16 @@ impl Function for NominalFn {
 /// IRR(values, [guess]) - Internal rate of return
 #[derive(Debug)]
 pub struct IrrFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IRR
+/// Type: IrrFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: IRR(arg1: any@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IrrFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -824,6 +934,16 @@ impl Function for IrrFn {
 /// MIRR(values, finance_rate, reinvest_rate) - Modified IRR
 #[derive(Debug)]
 pub struct MirrFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MIRR
+/// Type: MirrFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: MIRR(arg1: any@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for MirrFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -923,6 +1043,16 @@ impl Function for MirrFn {
 /// CUMIPMT(rate, nper, pv, start_period, end_period, type) - Cumulative interest payment
 #[derive(Debug)]
 pub struct CumipmtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CUMIPMT
+/// Type: CumipmtFn
+/// Min args: 6
+/// Max args: 6
+/// Variadic: false
+/// Signature: CUMIPMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CumipmtFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1004,6 +1134,16 @@ impl Function for CumipmtFn {
 /// CUMPRINC(rate, nper, pv, start_period, end_period, type) - Cumulative principal payment
 #[derive(Debug)]
 pub struct CumprincFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CUMPRINC
+/// Type: CumprincFn
+/// Min args: 6
+/// Max args: 6
+/// Variadic: false
+/// Signature: CUMPRINC(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5: number@scalar, arg6: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CumprincFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1087,6 +1227,16 @@ impl Function for CumprincFn {
 /// Formula: Sum of values[i] / (1 + rate)^((dates[i] - dates[0]) / 365)
 #[derive(Debug)]
 pub struct XnpvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: XNPV
+/// Type: XnpvFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: XNPV(arg1: number@scalar, arg2: any@scalar, arg3: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for XnpvFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1241,6 +1391,16 @@ fn calculate_xnpv_derivative(rate: f64, values: &[f64], dates: &[f64]) -> f64 {
 /// Uses Newton-Raphson iteration to find rate where XNPV = 0
 #[derive(Debug)]
 pub struct XirrFn;
+/// [formualizer-docgen:schema:start]
+/// Name: XIRR
+/// Type: XirrFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: XIRR(arg1: any@scalar, arg2: any@scalar, arg3...: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for XirrFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1402,6 +1562,16 @@ impl Function for XirrFn {
 /// Example: DOLLARDE(1.02, 16) = 1.125 (1 and 2/16)
 #[derive(Debug)]
 pub struct DollardeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DOLLARDE
+/// Type: DollardeFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: DOLLARDE(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DollardeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1459,6 +1629,16 @@ impl Function for DollardeFn {
 /// Example: DOLLARFR(1.125, 16) = 1.02
 #[derive(Debug)]
 pub struct DollarfrFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DOLLARFR
+/// Type: DollarfrFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: DOLLARFR(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DollarfrFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

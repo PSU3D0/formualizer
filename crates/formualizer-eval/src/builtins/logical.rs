@@ -12,6 +12,16 @@ use formualizer_macros::func_caps;
 #[derive(Debug)]
 pub struct TrueFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: TRUE
+/// Type: TrueFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: TRUE()
+/// Arg schema: []
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TrueFn {
     func_caps!(PURE);
 
@@ -38,6 +48,16 @@ impl Function for TrueFn {
 #[derive(Debug)]
 pub struct FalseFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: FALSE
+/// Type: FalseFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: FALSE()
+/// Arg schema: []
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FalseFn {
     func_caps!(PURE);
 
@@ -64,6 +84,16 @@ impl Function for FalseFn {
 #[derive(Debug)]
 pub struct AndFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: AND
+/// Type: AndFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: AND(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for AndFn {
     func_caps!(PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT);
 
@@ -147,6 +177,16 @@ impl Function for AndFn {
 #[derive(Debug)]
 pub struct OrFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: OR
+/// Type: OrFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: OR(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for OrFn {
     func_caps!(PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT);
 
@@ -228,6 +268,16 @@ impl Function for OrFn {
 #[derive(Debug)]
 pub struct IfFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: IF
+/// Type: IfFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: IF(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for IfFn {
     func_caps!(PURE, SHORT_CIRCUIT);
 

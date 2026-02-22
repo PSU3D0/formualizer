@@ -45,6 +45,16 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i64, ExcelError> {
 ///   11-17: Various configurations
 #[derive(Debug)]
 pub struct WeekdayFn;
+/// [formualizer-docgen:schema:start]
+/// Name: WEEKDAY
+/// Type: WeekdayFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: WEEKDAY(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for WeekdayFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -194,6 +204,16 @@ impl Function for WeekdayFn {
 /// WEEKNUM(serial_number, [return_type]) - Returns the week number of the year
 #[derive(Debug)]
 pub struct WeeknumFn;
+/// [formualizer-docgen:schema:start]
+/// Name: WEEKNUM
+/// Type: WeeknumFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: WEEKNUM(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for WeeknumFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -284,6 +304,16 @@ impl Function for WeeknumFn {
 /// certain leap year date combinations.
 #[derive(Debug)]
 pub struct DatedifFn;
+/// [formualizer-docgen:schema:start]
+/// Name: DATEDIF
+/// Type: DatedifFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: DATEDIF(arg1: number@scalar, arg2: number@scalar, arg3: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DatedifFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -438,6 +468,16 @@ fn is_weekend(date: &NaiveDate) -> bool {
 /// Holiday values passed to this function will be silently ignored.
 #[derive(Debug)]
 pub struct NetworkdaysFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NETWORKDAYS
+/// Type: NetworkdaysFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: NETWORKDAYS(arg1: number@scalar, arg2: number@scalar, arg3...: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NetworkdaysFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -505,6 +545,16 @@ impl Function for NetworkdaysFn {
 /// Holiday values passed to this function will be silently ignored.
 #[derive(Debug)]
 pub struct WorkdayFn;
+/// [formualizer-docgen:schema:start]
+/// Name: WORKDAY
+/// Type: WorkdayFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: WORKDAY(arg1: number@scalar, arg2: number@scalar, arg3...: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for WorkdayFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

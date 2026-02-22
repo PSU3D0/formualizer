@@ -19,6 +19,11 @@ Use this template when documenting builtin function implementations in
 /// // assert specific expected value here
 /// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
 /// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: FUNCTION_NAME
+/// ... generated fields ...
+/// [formualizer-docgen:schema:end]
 impl Function for FunctionType {
     // ...
 }
@@ -28,6 +33,7 @@ impl Function for FunctionType {
 
 - Keep the summary short and user-facing.
 - Prefer one formula example with concrete expected output.
+- Rust example blocks are optional for builtin pages; include them where they add value.
 - Use `formualizer::doc_examples::eval_scalar` to avoid verbose workbook setup.
 - If a snippet should not run in doctests yet, keep `no_run`.
 - Formula comments can use either `# ...` or `// ...`.

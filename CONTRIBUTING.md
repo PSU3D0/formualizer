@@ -21,14 +21,19 @@ cargo test -p formualizer-eval
 cargo test -p formualizer-workbook
 ```
 
-### Builtin docs audit
+### Builtin docs audit and schema generation
 
-Use the workspace task to audit builtin function docs coverage and example quality:
+Use workspace tasks to keep builtin docs structured:
 
 ```bash
 cargo run -p xtask -- docs-audit
 # strict CI-style mode:
 cargo run -p xtask -- docs-audit --strict
+
+# check generated schema sections are up to date:
+cargo run -p xtask -- docs-schema
+# apply updates in place:
+cargo run -p xtask -- docs-schema --apply --allow-dirty
 ```
 
 For builtin doc comments:

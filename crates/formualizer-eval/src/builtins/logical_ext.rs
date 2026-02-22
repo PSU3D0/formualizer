@@ -9,6 +9,16 @@ use formualizer_macros::func_caps;
 
 #[derive(Debug)]
 pub struct NotFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NOT
+/// Type: NotFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: NOT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NotFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -51,6 +61,16 @@ impl Function for NotFn {
 
 #[derive(Debug)]
 pub struct XorFn;
+/// [formualizer-docgen:schema:start]
+/// Name: XOR
+/// Type: XorFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: XOR(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, BOOL_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for XorFn {
     func_caps!(PURE, REDUCTION, BOOL_ONLY);
     fn name(&self) -> &'static str {
@@ -156,6 +176,16 @@ impl Function for XorFn {
 
 #[derive(Debug)]
 pub struct IfErrorFn; // IFERROR(value, fallback)
+/// [formualizer-docgen:schema:start]
+/// Name: IFERROR
+/// Type: IfErrorFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: IFERROR(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IfErrorFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -196,6 +226,16 @@ impl Function for IfErrorFn {
 
 #[derive(Debug)]
 pub struct IfNaFn; // IFNA(value, fallback)
+/// [formualizer-docgen:schema:start]
+/// Name: IFNA
+/// Type: IfNaFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: IFNA(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IfNaFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -235,6 +275,16 @@ impl Function for IfNaFn {
 
 #[derive(Debug)]
 pub struct IfsFn; // IFS(cond1, val1, cond2, val2, ...)
+/// [formualizer-docgen:schema:start]
+/// Name: IFS
+/// Type: IfsFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: IFS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for IfsFn {
     func_caps!(PURE, SHORT_CIRCUIT);
     fn name(&self) -> &'static str {

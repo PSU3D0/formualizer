@@ -37,6 +37,16 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
 // FIND(find_text, within_text, [start_num]) - case sensitive
 #[derive(Debug)]
 pub struct FindFn;
+/// [formualizer-docgen:schema:start]
+/// Name: FIND
+/// Type: FindFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: FIND(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FindFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -97,6 +107,16 @@ impl Function for FindFn {
 // SEARCH(find_text, within_text, [start_num]) - case insensitive + simple wildcard * ?
 #[derive(Debug)]
 pub struct SearchFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SEARCH
+/// Type: SearchFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SEARCH(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SearchFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -207,6 +227,16 @@ fn wildcard_match(pat: &str, text: &str) -> bool {
 // EXACT(text1,text2)
 #[derive(Debug)]
 pub struct ExactFn;
+/// [formualizer-docgen:schema:start]
+/// Name: EXACT
+/// Type: ExactFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: EXACT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ExactFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

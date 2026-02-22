@@ -20,6 +20,16 @@ pub struct ChooseColsFn;
 #[derive(Debug)]
 pub struct ChooseRowsFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: CHOOSE
+/// Type: ChooseFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: CHOOSE(arg1: number@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for ChooseFn {
     fn name(&self) -> &'static str {
         "CHOOSE"
@@ -127,6 +137,16 @@ fn materialize_rows_2d<'b>(
     }
 }
 
+/// [formualizer-docgen:schema:start]
+/// Name: CHOOSECOLS
+/// Type: ChooseColsFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CHOOSECOLS(arg1: range|any@range, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=range|any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=Some(1),default=false}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for ChooseColsFn {
     func_caps!(PURE, LOOKUP);
     fn name(&self) -> &'static str {
@@ -231,6 +251,16 @@ impl Function for ChooseColsFn {
     }
 }
 
+/// [formualizer-docgen:schema:start]
+/// Name: CHOOSEROWS
+/// Type: ChooseRowsFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CHOOSEROWS(arg1: range|any@range, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=range|any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=Some(1),default=false}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for ChooseRowsFn {
     func_caps!(PURE, LOOKUP);
     fn name(&self) -> &'static str {

@@ -11,6 +11,41 @@ use formualizer_macros::func_caps;
 #[derive(Debug)]
 pub struct SumFn;
 
+/// Adds numeric values across scalars and ranges, ignoring blanks and propagating errors.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 6
+/// =SUM(1,2,3)
+/// ```
+///
+/// # Rust example
+/// ```rust,no_run
+/// use formualizer_common::LiteralValue;
+/// use formualizer_eval::engine::{Engine, EvalConfig};
+/// use formualizer_eval::test_workbook::TestWorkbook;
+/// use formualizer_parse::parser::parse;
+///
+/// let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+/// let ast = parse("=SUM(1,2,3)")?;
+/// engine.set_cell_formula("Sheet1", 1, 1, ast)?;
+/// let value = engine
+///     .evaluate_cell("Sheet1", 1, 1)?
+///     .unwrap_or(LiteralValue::Empty);
+/// assert_eq!(value, LiteralValue::Number(6.0));
+/// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SUM
+/// Type: SumFn
+/// Min args: 0
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUM(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK, PARALLEL_ARGS
+/// [formualizer-docgen:schema:end]
 impl Function for SumFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK, PARALLEL_ARGS);
 
@@ -81,6 +116,41 @@ impl Function for SumFn {
 #[derive(Debug)]
 pub struct CountFn;
 
+/// Counts numeric values across scalars and ranges.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 3
+/// =COUNT(1,"x",2,3)
+/// ```
+///
+/// # Rust example
+/// ```rust,no_run
+/// use formualizer_common::LiteralValue;
+/// use formualizer_eval::engine::{Engine, EvalConfig};
+/// use formualizer_eval::test_workbook::TestWorkbook;
+/// use formualizer_parse::parser::parse;
+///
+/// let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+/// let ast = parse("=COUNT(1,\"x\",2,3)")?;
+/// engine.set_cell_formula("Sheet1", 1, 1, ast)?;
+/// let value = engine
+///     .evaluate_cell("Sheet1", 1, 1)?
+///     .unwrap_or(LiteralValue::Empty);
+/// assert_eq!(value, LiteralValue::Number(3.0));
+/// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: COUNT
+/// Type: CountFn
+/// Min args: 0
+/// Max args: variadic
+/// Variadic: true
+/// Signature: COUNT(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK
+/// [formualizer-docgen:schema:end]
 impl Function for CountFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
 
@@ -132,6 +202,41 @@ impl Function for CountFn {
 #[derive(Debug)]
 pub struct AverageFn;
 
+/// Returns the arithmetic mean of numeric values across scalars and ranges.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 2
+/// =AVERAGE(1,2,3)
+/// ```
+///
+/// # Rust example
+/// ```rust,no_run
+/// use formualizer_common::LiteralValue;
+/// use formualizer_eval::engine::{Engine, EvalConfig};
+/// use formualizer_eval::test_workbook::TestWorkbook;
+/// use formualizer_parse::parser::parse;
+///
+/// let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+/// let ast = parse("=AVERAGE(1,2,3)")?;
+/// engine.set_cell_formula("Sheet1", 1, 1, ast)?;
+/// let value = engine
+///     .evaluate_cell("Sheet1", 1, 1)?
+///     .unwrap_or(LiteralValue::Empty);
+/// assert_eq!(value, LiteralValue::Number(2.0));
+/// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: AVERAGE
+/// Type: AverageFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: AVERAGE(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK
+/// [formualizer-docgen:schema:end]
 impl Function for AverageFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
 
@@ -209,6 +314,16 @@ impl Function for AverageFn {
 #[derive(Debug)]
 pub struct SumProductFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: SUMPRODUCT
+/// Type: SumProductFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUMPRODUCT(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for SumProductFn {
     // Pure reduction over arrays; uses broadcasting and lenient coercion
     func_caps!(PURE, REDUCTION);
