@@ -44,7 +44,8 @@ pub use workbook::{
     CustomFnHandler, CustomFnInfo, CustomFnOptions, WASM_ABI_VERSION_V1, WASM_CODEC_VERSION_V1,
     WASM_MANIFEST_SCHEMA_V1, WASM_MANIFEST_SECTION_V1, WasmFunctionSpec, WasmManifestFunction,
     WasmManifestModule, WasmManifestParam, WasmManifestReturn, WasmModuleInfo, WasmModuleManifest,
-    WasmRuntimeHint, Workbook, WorkbookConfig, WorkbookMode, validate_wasm_manifest,
+    WasmRuntimeHint, WasmUdfRuntime, Workbook, WorkbookConfig, WorkbookMode,
+    validate_wasm_manifest,
 };
 
 #[cfg(feature = "wasm_plugins")]

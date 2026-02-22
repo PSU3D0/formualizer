@@ -2,7 +2,17 @@ use formualizer_common::ExcelErrorKind;
 use formualizer_workbook::{Workbook, WorkbookMode};
 
 #[cfg(feature = "wasm_plugins")]
-use formualizer_workbook::{CustomFnOptions, WasmFunctionSpec};
+use formualizer_common::{ExcelError, LiteralValue};
+#[cfg(feature = "wasm_plugins")]
+use formualizer_workbook::{
+    CustomFnOptions, WasmFunctionSpec, WasmModuleManifest, WasmRuntimeHint, WasmUdfRuntime,
+};
+
+#[cfg(feature = "wasm_plugins")]
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 const VALID_MANIFEST: &str = include_str!("fixtures/wasm_manifest/valid_v1.json");
 #[cfg(feature = "wasm_plugins")]
@@ -10,6 +20,91 @@ const INVALID_SCHEMA_MANIFEST: &str = include_str!("fixtures/wasm_manifest/inval
 
 fn workbook() -> Workbook {
     Workbook::new_with_mode(WorkbookMode::Ephemeral)
+}
+
+#[cfg(feature = "wasm_plugins")]
+#[derive(Clone, Copy)]
+enum FakeRuntimeMode {
+    Divide,
+    AlwaysError,
+}
+
+#[cfg(feature = "wasm_plugins")]
+struct FakeWasmRuntime {
+    mode: FakeRuntimeMode,
+    calls: Arc<AtomicUsize>,
+}
+
+#[cfg(feature = "wasm_plugins")]
+impl FakeWasmRuntime {
+    fn new(mode: FakeRuntimeMode, calls: Arc<AtomicUsize>) -> Self {
+        Self { mode, calls }
+    }
+}
+
+#[cfg(feature = "wasm_plugins")]
+impl WasmUdfRuntime for FakeWasmRuntime {
+    fn can_bind_functions(&self) -> bool {
+        true
+    }
+
+    fn validate_module(
+        &self,
+        _module_id: &str,
+        _wasm_bytes: &[u8],
+        _manifest: &WasmModuleManifest,
+    ) -> Result<(), ExcelError> {
+        Ok(())
+    }
+
+    fn invoke(
+        &self,
+        _module_id: &str,
+        _export_name: &str,
+        _function_name: &str,
+        _codec_version: u32,
+        args: &[LiteralValue],
+        _runtime_hint: Option<&WasmRuntimeHint>,
+    ) -> Result<LiteralValue, ExcelError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+
+        match self.mode {
+            FakeRuntimeMode::AlwaysError => {
+                Err(ExcelError::new(ExcelErrorKind::Value).with_message("fake runtime failure"))
+            }
+            FakeRuntimeMode::Divide => {
+                if args.len() != 2 {
+                    return Err(ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("expected exactly 2 args"));
+                }
+
+                let lhs = match args[0] {
+                    LiteralValue::Number(n) => n,
+                    LiteralValue::Int(i) => i as f64,
+                    _ => {
+                        return Err(ExcelError::new(ExcelErrorKind::Value)
+                            .with_message("lhs must be numeric"));
+                    }
+                };
+                let rhs = match args[1] {
+                    LiteralValue::Number(n) => n,
+                    LiteralValue::Int(i) => i as f64,
+                    _ => {
+                        return Err(ExcelError::new(ExcelErrorKind::Value)
+                            .with_message("rhs must be numeric"));
+                    }
+                };
+
+                if rhs == 0.0 {
+                    return Err(
+                        ExcelError::new(ExcelErrorKind::Div).with_message("division by zero")
+                    );
+                }
+
+                Ok(LiteralValue::Number(lhs / rhs))
+            }
+        }
+    }
 }
 
 fn push_leb_u32(out: &mut Vec<u8>, mut value: u32) {
@@ -137,7 +232,7 @@ fn requested_module_id_must_match_manifest() {
 
 #[cfg(feature = "wasm_plugins")]
 #[test]
-fn register_wasm_function_validates_module_and_export_before_stub_error() {
+fn register_wasm_function_validates_module_and_export_before_binding() {
     let mut wb = workbook();
 
     let missing_module = wb
@@ -146,7 +241,7 @@ fn register_wasm_function_validates_module_and_export_before_stub_error() {
             CustomFnOptions::default(),
             WasmFunctionSpec::new("plugin://finance/core", "fn_safe_div", 1),
         )
-        .expect_err("missing module should fail before runtime stub path");
+        .expect_err("missing module should fail before runtime binding");
     assert_eq!(missing_module.kind, ExcelErrorKind::Name);
 
     let bytes = wasm_module_with_manifest(VALID_MANIFEST);
@@ -176,14 +271,28 @@ fn register_wasm_function_validates_module_and_export_before_stub_error() {
             .unwrap_or_default()
             .contains("codec mismatch")
     );
+}
+
+#[cfg(feature = "wasm_plugins")]
+#[test]
+fn register_wasm_function_with_pending_runtime_returns_nimpl() {
+    let mut wb = workbook();
+    let bytes = wasm_module_with_manifest(VALID_MANIFEST);
+    wb.register_wasm_module_bytes("plugin://finance/core", &bytes)
+        .unwrap();
 
     let pending_runtime = wb
         .register_wasm_function(
-            "WASM_ADD",
-            CustomFnOptions::default(),
+            "WASM_DIV",
+            CustomFnOptions {
+                min_args: 2,
+                max_args: Some(2),
+                ..Default::default()
+            },
             WasmFunctionSpec::new("plugin://finance/core", "fn_safe_div", 1),
         )
-        .expect_err("runtime is intentionally not wired yet");
+        .expect_err("default runtime remains pending");
+
     assert_eq!(pending_runtime.kind, ExcelErrorKind::NImpl);
     assert!(
         pending_runtime
@@ -191,4 +300,97 @@ fn register_wasm_function_validates_module_and_export_before_stub_error() {
             .unwrap_or_default()
             .contains("runtime integration is pending")
     );
+}
+
+#[cfg(feature = "wasm_plugins")]
+#[test]
+fn fake_runtime_binding_evaluates_through_wasm_runtime_abstraction() {
+    let mut wb = workbook();
+    let bytes = wasm_module_with_manifest(VALID_MANIFEST);
+    wb.register_wasm_module_bytes("plugin://finance/core", &bytes)
+        .unwrap();
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    wb.set_wasm_runtime(Arc::new(FakeWasmRuntime::new(
+        FakeRuntimeMode::Divide,
+        calls.clone(),
+    )));
+
+    wb.register_wasm_function(
+        "WASM_DIV",
+        CustomFnOptions {
+            min_args: 2,
+            max_args: Some(2),
+            ..Default::default()
+        },
+        WasmFunctionSpec::new("plugin://finance/core", "fn_safe_div", 1),
+    )
+    .unwrap();
+
+    wb.set_formula("Sheet1", 1, 1, "=WASM_DIV(20,4)").unwrap();
+    assert_eq!(
+        wb.evaluate_cell("Sheet1", 1, 1).unwrap(),
+        LiteralValue::Number(5.0)
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[cfg(feature = "wasm_plugins")]
+#[test]
+fn fake_runtime_binding_uses_arity_and_error_mapping() {
+    let mut wb = workbook();
+    let bytes = wasm_module_with_manifest(VALID_MANIFEST);
+    wb.register_wasm_module_bytes("plugin://finance/core", &bytes)
+        .unwrap();
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    wb.set_wasm_runtime(Arc::new(FakeWasmRuntime::new(
+        FakeRuntimeMode::Divide,
+        calls.clone(),
+    )));
+
+    wb.register_wasm_function(
+        "WASM_DIV",
+        CustomFnOptions {
+            min_args: 2,
+            max_args: Some(2),
+            ..Default::default()
+        },
+        WasmFunctionSpec::new("plugin://finance/core", "fn_safe_div", 1),
+    )
+    .unwrap();
+
+    wb.set_formula("Sheet1", 1, 1, "=WASM_DIV(20)").unwrap();
+    let arity_err = wb.evaluate_cell("Sheet1", 1, 1).unwrap();
+    let LiteralValue::Error(arity_err) = arity_err else {
+        panic!("expected VALUE error for arity mismatch");
+    };
+    assert_eq!(arity_err.kind, ExcelErrorKind::Value);
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    wb.set_wasm_runtime(Arc::new(FakeWasmRuntime::new(
+        FakeRuntimeMode::AlwaysError,
+        calls.clone(),
+    )));
+
+    wb.unregister_custom_function("WASM_DIV").unwrap();
+    wb.register_wasm_function(
+        "WASM_DIV",
+        CustomFnOptions {
+            min_args: 2,
+            max_args: Some(2),
+            ..Default::default()
+        },
+        WasmFunctionSpec::new("plugin://finance/core", "fn_safe_div", 1),
+    )
+    .unwrap();
+
+    wb.set_formula("Sheet1", 2, 1, "=WASM_DIV(20,4)").unwrap();
+    let runtime_err = wb.evaluate_cell("Sheet1", 2, 1).unwrap();
+    let LiteralValue::Error(runtime_err) = runtime_err else {
+        panic!("expected runtime error to propagate");
+    };
+    assert_eq!(runtime_err.kind, ExcelErrorKind::Value);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
 }

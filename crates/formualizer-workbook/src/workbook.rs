@@ -199,6 +199,56 @@ fn default_true() -> bool {
     true
 }
 
+pub trait WasmUdfRuntime: Send + Sync {
+    fn can_bind_functions(&self) -> bool {
+        true
+    }
+
+    fn validate_module(
+        &self,
+        _module_id: &str,
+        _wasm_bytes: &[u8],
+        _manifest: &WasmModuleManifest,
+    ) -> Result<(), ExcelError> {
+        Ok(())
+    }
+
+    fn invoke(
+        &self,
+        module_id: &str,
+        export_name: &str,
+        function_name: &str,
+        codec_version: u32,
+        args: &[LiteralValue],
+        runtime_hint: Option<&WasmRuntimeHint>,
+    ) -> Result<LiteralValue, ExcelError>;
+}
+
+#[cfg(feature = "wasm_plugins")]
+#[derive(Default)]
+struct PendingWasmRuntime;
+
+#[cfg(feature = "wasm_plugins")]
+impl WasmUdfRuntime for PendingWasmRuntime {
+    fn can_bind_functions(&self) -> bool {
+        false
+    }
+
+    fn invoke(
+        &self,
+        module_id: &str,
+        export_name: &str,
+        function_name: &str,
+        codec_version: u32,
+        _args: &[LiteralValue],
+        _runtime_hint: Option<&WasmRuntimeHint>,
+    ) -> Result<LiteralValue, ExcelError> {
+        Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+            "WASM plugin runtime integration is pending for {function_name} (module_id={module_id}, export_name={export_name}, codec_version={codec_version})"
+        )))
+    }
+}
+
 pub fn validate_wasm_manifest(manifest: &WasmModuleManifest) -> Result<(), ExcelError> {
     if manifest.schema != WASM_MANIFEST_SCHEMA_V1 {
         return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
@@ -339,12 +389,33 @@ struct RegisteredWasmModule {
     wasm_bytes: Arc<Vec<u8>>,
 }
 
-#[derive(Default)]
+#[cfg_attr(not(feature = "wasm_plugins"), derive(Default))]
 struct WasmPluginManager {
     modules: BTreeMap<String, RegisteredWasmModule>,
+    #[cfg(feature = "wasm_plugins")]
+    runtime: Arc<dyn WasmUdfRuntime>,
+}
+
+#[cfg(feature = "wasm_plugins")]
+impl Default for WasmPluginManager {
+    fn default() -> Self {
+        Self {
+            modules: BTreeMap::new(),
+            runtime: Arc::new(PendingWasmRuntime),
+        }
+    }
 }
 
 impl WasmPluginManager {
+    #[cfg(feature = "wasm_plugins")]
+    fn set_runtime(&mut self, runtime: Arc<dyn WasmUdfRuntime>) {
+        self.runtime = runtime;
+    }
+
+    #[cfg(feature = "wasm_plugins")]
+    fn runtime(&self) -> Arc<dyn WasmUdfRuntime> {
+        self.runtime.clone()
+    }
     fn list_module_infos(&self) -> Vec<WasmModuleInfo> {
         self.modules
             .values()
@@ -391,6 +462,9 @@ impl WasmPluginManager {
                 manifest.module.id
             )));
         }
+
+        self.runtime
+            .validate_module(requested_module_id, wasm_bytes, &manifest)?;
 
         let info = WasmModuleInfo {
             module_id: requested_module_id.to_string(),
@@ -524,6 +598,90 @@ impl formualizer_eval::function::Function for WorkbookCustomFunction {
             Ok(Err(err)) => Err(err),
             Err(_) => Err(ExcelError::new(ExcelErrorKind::Value)
                 .with_message("Custom function callback panicked")),
+        }
+    }
+}
+
+#[cfg(feature = "wasm_plugins")]
+struct WorkbookWasmFunction {
+    canonical_name: String,
+    options: CustomFnOptions,
+    module_id: String,
+    export_name: String,
+    codec_version: u32,
+    runtime_hint: Option<WasmRuntimeHint>,
+    runtime: Arc<dyn WasmUdfRuntime>,
+}
+
+#[cfg(feature = "wasm_plugins")]
+impl WorkbookWasmFunction {
+    fn validate_arity(&self, provided: usize) -> Result<(), ExcelError> {
+        if provided < self.options.min_args {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "{} expects at least {} argument(s), got {}",
+                self.canonical_name, self.options.min_args, provided
+            )));
+        }
+        if let Some(max) = self.options.max_args
+            && provided > max
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "{} expects at most {} argument(s), got {}",
+                self.canonical_name, max, provided
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "wasm_plugins")]
+impl formualizer_eval::function::Function for WorkbookWasmFunction {
+    fn caps(&self) -> formualizer_eval::function::FnCaps {
+        let mut caps = formualizer_eval::function::FnCaps::empty();
+        if self.options.volatile {
+            caps |= formualizer_eval::function::FnCaps::VOLATILE;
+        } else if self.options.deterministic {
+            caps |= formualizer_eval::function::FnCaps::PURE;
+        }
+        caps
+    }
+
+    fn name(&self) -> &'static str {
+        "__WORKBOOK_WASM__"
+    }
+
+    fn function_salt(&self) -> u64 {
+        stable_fn_salt(&self.canonical_name)
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [formualizer_eval::traits::ArgumentHandle<'a, 'b>],
+        _ctx: &dyn formualizer_eval::traits::FunctionContext<'b>,
+    ) -> Result<formualizer_eval::traits::CalcValue<'b>, ExcelError> {
+        self.validate_arity(args.len())?;
+
+        let mut materialized = Vec::with_capacity(args.len());
+        for arg in args {
+            materialized.push(WorkbookCustomFunction::materialize_arg(arg)?);
+        }
+
+        let runtime_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.runtime.invoke(
+                &self.module_id,
+                &self.export_name,
+                &self.canonical_name,
+                self.codec_version,
+                &materialized,
+                self.runtime_hint.as_ref(),
+            )
+        }));
+
+        match runtime_result {
+            Ok(Ok(value)) => Ok(formualizer_eval::traits::CalcValue::Scalar(value)),
+            Ok(Err(err)) => Err(err),
+            Err(_) => Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("WASM function runtime panicked")),
         }
     }
 }
@@ -865,6 +1023,12 @@ impl Workbook {
         }
     }
 
+    #[cfg(feature = "wasm_plugins")]
+    #[doc(hidden)]
+    pub fn set_wasm_runtime(&mut self, runtime: Arc<dyn WasmUdfRuntime>) {
+        self.wasm_plugins.set_runtime(runtime);
+    }
+
     pub fn register_wasm_function(
         &mut self,
         name: &str,
@@ -902,10 +1066,46 @@ impl Workbook {
                 )));
             }
 
-            Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
-                "WASM plugin runtime integration is pending for {canonical_name} (module_id={}, export_name={}, codec_version={})",
-                module_id, spec.export_name, spec.codec_version
-            )))
+            if self.custom_functions.read().contains_key(&canonical_name) {
+                return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                    "Custom function {canonical_name} is already registered"
+                )));
+            }
+
+            if !options.allow_override_builtin
+                && formualizer_eval::function_registry::get("", &canonical_name).is_some()
+            {
+                return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                    "Custom function {canonical_name} conflicts with a global function; set allow_override_builtin=true to override"
+                )));
+            }
+
+            let runtime = self.wasm_plugins.runtime();
+            if !runtime.can_bind_functions() {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                    "WASM plugin runtime integration is pending for {canonical_name} (module_id={}, export_name={}, codec_version={})",
+                    module_id, spec.export_name, spec.codec_version
+                )));
+            }
+
+            let info = CustomFnInfo {
+                name: canonical_name.clone(),
+                options: options.clone(),
+            };
+            let function = Arc::new(WorkbookWasmFunction {
+                canonical_name: canonical_name.clone(),
+                options,
+                module_id,
+                export_name: spec.export_name,
+                codec_version: spec.codec_version,
+                runtime_hint: spec.runtime_hint,
+                runtime,
+            });
+
+            self.custom_functions
+                .write()
+                .insert(canonical_name, RegisteredCustomFn { info, function });
+            Ok(())
         }
 
         #[cfg(not(feature = "wasm_plugins"))]
