@@ -1,39 +1,77 @@
 ---
 title: Workbook Edits and Batching
-description: Apply many workbook changes efficiently while controlling recalculation cost.
+description: Use batch writes and action grouping to reduce recalculation churn and keep undo/redo behavior predictable.
 ---
 
-Batching groups related edits so dependency invalidation and recalculation happen once per logical unit of work.
+Formualizer supports both single-cell edits and grouped updates. Use the grouped path whenever you are importing or editing many cells at once.
 
-## Typical flow
+## Choose the right edit path
 
-- Start a batch scope.
-- Apply many cell/value/formula edits.
-- Commit and trigger recalculation once.
+- **Single edit:** `set_value` / `set_formula` (simple and direct).
+- **Rectangular batch write:** `set_values`, `set_formulas`, or `write_range` (Rust); `set_values_batch` / `set_formulas_batch` (Python); `setValues` / `setFormulas` (JS sheet facade).
+- **Atomic multi-step edit:** `Workbook::action(...)` in Rust rolls back all changes if one step fails.
+- **Undo/redo grouping:** `begin_action(...)` + `end_action(...)` groups many writes into one user-visible action.
 
-## Short example
+## Rust: atomic action + targeted evaluation
 
-```text
-begin_batch()
-set_value("A1", 10)
-set_formula("B1", "=A1*2")
-set_formula("C1", "=B1+5")
-commit_batch()  // single invalidation + recalc pass
+```rust
+use formualizer_common::LiteralValue;
+use formualizer_workbook::Workbook;
+
+let mut wb = Workbook::new();
+wb.add_sheet("S")?;
+wb.set_changelog_enabled(true);
+
+wb.action("seed pricing block", |tx| {
+    tx.set_value("S", 1, 1, LiteralValue::Number(100.0))?;
+    tx.set_value("S", 2, 1, LiteralValue::Number(0.1))?;
+    tx.set_formula("S", 1, 2, "=A1*(1-A2)")?;
+    Ok(())
+})?;
+
+let out = wb.evaluate_cells(&[("S", 1, 2)])?;
+assert_eq!(out[0], LiteralValue::Number(90.0));
 ```
 
-## Why this helps
+## Python: bulk write, then evaluate
 
-- Fewer repeated graph traversals during bulk imports.
-- More predictable performance for user-driven edit sessions.
-- Cleaner event/log boundaries for debugging.
+```python
+import formualizer as fz
+
+wb = fz.Workbook()
+s = wb.sheet("S")
+
+s.set_values_batch(1, 1, [[100.0], [0.1]])
+s.set_formulas_batch(1, 2, [["=A1*(1-A2)"]])
+
+assert wb.evaluate_cell("S", 1, 2) == 90.0
+```
+
+## JS/WASM: sheet-level batch helpers
+
+```ts
+import init, { Workbook } from "formualizer";
+
+await init();
+const wb = new Workbook();
+wb.addSheet("S");
+
+const s = wb.sheet("S");
+s.setValues(1, 1, [[100], [0.1]]);
+s.setFormulas(1, 2, [["=A1*(1-A2)"]]);
+
+console.log(wb.evaluateCell("S", 1, 2)); // 90
+```
+
+## Practical notes
+
+- Batch helpers reduce repeated graph/editor churn compared with many per-cell calls.
+- In Python/JS bindings, batch helpers internally wrap writes in an action for cleaner undo history.
+- After staging formulas, run `evaluate_cell`, `evaluate_cells`, or `evaluate_all` explicitly where your flow needs computed values.
+- For large imports, evaluate only target cells first (`evaluate_cells`) before full-sheet recomputation.
 
 ## Related
 
 - [Dependency Graph and Recalculation](../core-concepts/dependency-graph-and-recalc)
-- [Spill Behavior](../core-concepts/spill-behavior)
 - [Deterministic Testing](./deterministic-testing)
-
-## TODO: Deep dive follow-ups
-
-- Add API-specific batching examples for Rust, Python, and JS.
-- Add guidance for error handling inside failed batch commits.
+- [Custom Functions (Rust, Python, JS)](./custom-functions-rust-python-js)

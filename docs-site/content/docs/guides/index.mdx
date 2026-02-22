@@ -1,28 +1,26 @@
 ---
 title: Guides
-description: Task-oriented walkthroughs for building, extending, and testing Formualizer integrations.
+description: Task-oriented implementation guides for extending and testing Formualizer.
 ---
 
-Use these guides when you already understand the basics and want practical implementation patterns.
+Use this section when you already know the basics and need concrete integration patterns.
 
 ## In this section
 
-- [Workbook Edits and Batching](./workbook-edits-and-batching)
-- [Custom Functions (Rust, Python, JS)](./custom-functions-rust-python-js)
-- [WASM Plugins: Inspect, Attach, Bind](./wasm-plugins-inspect-attach-bind)
-- [LET/LAMBDA and Callables](./let-lambda-and-callables)
-- [Deterministic Testing](./deterministic-testing)
+- [Workbook Edits and Batching](./workbook-edits-and-batching): grouped writes, undo boundaries, and evaluation patterns.
+- [Custom Functions (Rust, Python, JS)](./custom-functions-rust-python-js): callback registration semantics and runtime parity.
+- [WASM Plugins: Inspect, Attach, Bind](./wasm-plugins-inspect-attach-bind): Rust plugin lifecycle with feature/runtime gating.
+- [LET/LAMBDA and Callables](./let-lambda-and-callables): currently implemented callable semantics and edge cases.
+- [Deterministic Testing](./deterministic-testing): reproducible test checklist and command matrix.
 
 ## Suggested reading order
 
-1. Start with batching to avoid unnecessary recomputation work.
-2. Add custom functions and plugin integration patterns.
-3. Lock in deterministic tests before scaling integrations.
+1. Start with [Workbook Edits and Batching](./workbook-edits-and-batching).
+2. Add [Custom Functions (Rust, Python, JS)](./custom-functions-rust-python-js).
+3. If needed, add [WASM Plugins: Inspect, Attach, Bind](./wasm-plugins-inspect-attach-bind).
+4. Lock semantics with [LET/LAMBDA and Callables](./let-lambda-and-callables) and [Deterministic Testing](./deterministic-testing).
 
 ## Related
 
 - [Core Concepts](../core-concepts)
-
-## TODO: Deep dive follow-ups
-
-- Add per-binding setup checklists and compatibility matrix.
+- [Reference](../reference)
