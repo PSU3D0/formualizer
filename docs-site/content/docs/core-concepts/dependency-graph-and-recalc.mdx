@@ -1,0 +1,45 @@
+---
+title: Dependency Graph and Recalculation
+description: Learn how dependency edges drive incremental recomputation.
+---
+
+A workbook is more than cells and values; it is also a graph.
+
+- **Nodes** are cells (and sometimes named entities).
+- **Edges** point from a dependent formula cell to its precedents.
+- **Recalc order** is derived from graph topology.
+
+## Practical behavior
+
+- Editing an input cell marks downstream dependents dirty.
+- Recalculation visits dirty subgraphs instead of the entire workbook.
+- Cycles are detected and surfaced as errors with location context.
+
+## Short example
+
+```text
+A1 = 1
+B1 = A1 + 1
+C1 = B1 * 2
+
+Edit A1 -> 5
+Dirty set: B1, C1
+Recalc order: B1 then C1
+```
+
+## Design implications
+
+- Graph correctness is required for deterministic results.
+- Batch operations can reduce repeated invalidation work.
+- Stable traversal order helps produce reproducible tests.
+
+## Related
+
+- [Parse -> AST -> Evaluate -> Workbook](./parse-ast-evaluate-workbook)
+- [Workbook Edits and Batching](../guides/workbook-edits-and-batching)
+- [Deterministic Testing](../guides/deterministic-testing)
+
+## TODO: Deep dive follow-ups
+
+- Add section on cycle handling policy and diagnostics format.
+- Add examples of partial recalculation in large sheets.

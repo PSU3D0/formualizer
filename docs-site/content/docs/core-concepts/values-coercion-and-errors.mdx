@@ -1,0 +1,37 @@
+---
+title: Values, Coercion, and Errors
+description: Understand runtime value types, implicit conversions, and spreadsheet-style error propagation.
+---
+
+Formualizer operations work over a compact set of runtime values (number, text, boolean, blank, arrays, and errors).
+
+## Coercion rules in practice
+
+- Numeric functions coerce text when valid (for example, "42" -> 42).
+- Invalid coercions return spreadsheet errors instead of panicking.
+- Blank handling differs by operation (arithmetic vs logical vs text).
+
+## Error propagation
+
+- Errors usually short-circuit the current expression branch.
+- Functions may choose to absorb or expose errors based on semantics.
+- Consistent error values make cross-binding behavior predictable.
+
+## Short examples
+
+```text
+="1" + 2        -> 3
+="x" + 2        -> #VALUE!
+=IFERROR(A1, 0)  -> 0 when A1 is an error
+```
+
+## Related
+
+- [Spill Behavior](./spill-behavior)
+- [LET/LAMBDA and Callables](../guides/let-lambda-and-callables)
+- [Deterministic Testing](../guides/deterministic-testing)
+
+## TODO: Deep dive follow-ups
+
+- Document exact coercion matrix by operand type.
+- Add function-by-function notes for error behavior differences.

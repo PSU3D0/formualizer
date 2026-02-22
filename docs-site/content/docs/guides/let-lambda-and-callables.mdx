@@ -1,0 +1,39 @@
+---
+title: LET/LAMBDA and Callables
+description: Build reusable expression logic with lexical bindings and first-class callable execution.
+---
+
+`LET` and `LAMBDA` enable composable formula logic and reduce repeated expression work.
+
+## Mental model
+
+- `LET` introduces local names for subexpressions.
+- `LAMBDA` creates callable expressions with argument binding.
+- Callables can be evaluated directly or passed to higher-order functions.
+
+## Short examples
+
+```text
+=LET(x, A1*2, y, x+10, y)
+```
+
+```text
+=LAMBDA(n, n*2)(21)
+```
+
+## Practical guidance
+
+- Use `LET` for readability and repeated subexpression reuse.
+- Validate argument count and scope resolution in callable execution.
+- Ensure callable closures respect workbook context boundaries.
+
+## Related
+
+- [Parse -> AST -> Evaluate -> Workbook](../core-concepts/parse-ast-evaluate-workbook)
+- [Values, Coercion, and Errors](../core-concepts/values-coercion-and-errors)
+- [Custom Functions (Rust, Python, JS)](./custom-functions-rust-python-js)
+
+## TODO: Deep dive follow-ups
+
+- Add evaluator internals for lexical scope and callable lifetimes.
+- Add coverage matrix for nested LET/LAMBDA edge cases.

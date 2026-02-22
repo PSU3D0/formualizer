@@ -1,0 +1,38 @@
+---
+title: Spill Behavior
+description: Learn how array-like results expand across cells and when spill conflicts occur.
+---
+
+Some formulas return multi-cell outputs. Formualizer treats these as spill ranges rooted at an anchor cell.
+
+## Core ideas
+
+- The anchor cell owns the formula and spill metadata.
+- Neighbor cells inside the spill range expose derived values.
+- Blocking content in the target range produces spill errors.
+
+## Short example
+
+```text
+B2 = SEQUENCE(2, 3)
+Spill target: B2:D3
+
+If C2 already has a literal value, B2 evaluates to a spill-related error.
+```
+
+## Practical guidance
+
+- Clear target ranges before writing dynamic array formulas.
+- Recompute spill bounds when inputs change shape.
+- Keep spill diagnostics explicit so users can fix conflicts quickly.
+
+## Related
+
+- [Values, Coercion, and Errors](./values-coercion-and-errors)
+- [Named Ranges and Tables](./named-ranges-and-tables)
+- [Workbook Edits and Batching](../guides/workbook-edits-and-batching)
+
+## TODO: Deep dive follow-ups
+
+- Add conflict resolution rules and overwrite policies.
+- Add examples for resize and shrink scenarios.

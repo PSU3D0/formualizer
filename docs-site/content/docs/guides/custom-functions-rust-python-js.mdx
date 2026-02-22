@@ -1,0 +1,37 @@
+---
+title: Custom Functions (Rust, Python, JS)
+description: Define and register custom functions consistently across language bindings.
+---
+
+Formualizer aims for one function model with multiple host-language entry points.
+
+## Core steps
+
+- Define function signature and argument validation.
+- Implement runtime logic using host-language wrappers.
+- Register function into the workbook/evaluator function registry.
+- Verify behavior parity across bindings.
+
+## Practical checklist
+
+- Keep names and arity aligned across Rust, Python, and JS.
+- Return canonical value/error types, not host-specific ad hoc objects.
+- Add conformance tests that reuse the same formula cases.
+
+## Short pseudo-example
+
+```text
+register("DOUBLE", args=[Number], returns=Number)
+DOUBLE(x) = x * 2
+```
+
+## Related
+
+- [Values, Coercion, and Errors](../core-concepts/values-coercion-and-errors)
+- [LET/LAMBDA and Callables](./let-lambda-and-callables)
+- [WASM Plugins: Inspect, Attach, Bind](./wasm-plugins-inspect-attach-bind)
+
+## TODO: Deep dive follow-ups
+
+- Add real API snippets per binding with packaging/deployment notes.
+- Add section on deterministic floating-point expectations across runtimes.

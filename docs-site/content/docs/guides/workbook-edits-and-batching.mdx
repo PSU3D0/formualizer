@@ -1,0 +1,39 @@
+---
+title: Workbook Edits and Batching
+description: Apply many workbook changes efficiently while controlling recalculation cost.
+---
+
+Batching groups related edits so dependency invalidation and recalculation happen once per logical unit of work.
+
+## Typical flow
+
+- Start a batch scope.
+- Apply many cell/value/formula edits.
+- Commit and trigger recalculation once.
+
+## Short example
+
+```text
+begin_batch()
+set_value("A1", 10)
+set_formula("B1", "=A1*2")
+set_formula("C1", "=B1+5")
+commit_batch()  // single invalidation + recalc pass
+```
+
+## Why this helps
+
+- Fewer repeated graph traversals during bulk imports.
+- More predictable performance for user-driven edit sessions.
+- Cleaner event/log boundaries for debugging.
+
+## Related
+
+- [Dependency Graph and Recalculation](../core-concepts/dependency-graph-and-recalc)
+- [Spill Behavior](../core-concepts/spill-behavior)
+- [Deterministic Testing](./deterministic-testing)
+
+## TODO: Deep dive follow-ups
+
+- Add API-specific batching examples for Rust, Python, and JS.
+- Add guidance for error handling inside failed batch commits.

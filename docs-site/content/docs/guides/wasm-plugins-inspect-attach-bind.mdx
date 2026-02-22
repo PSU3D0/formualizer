@@ -1,0 +1,38 @@
+---
+title: WASM Plugins: Inspect, Attach, Bind
+description: Integrate WebAssembly plugins for runtime extension and workbook introspection workflows.
+---
+
+WASM plugins let you extend behavior without recompiling the core engine.
+
+## Workflow
+
+- **Inspect:** discover available plugin exports and metadata.
+- **Attach:** load plugin into a host runtime with capability limits.
+- **Bind:** map plugin functions to Formualizer callable interfaces.
+
+## Practical concerns
+
+- Validate plugin ABI/version compatibility before attach.
+- Restrict host capabilities for deterministic and safe execution.
+- Surface plugin load/runtime failures as standard evaluator errors.
+
+## Short example
+
+```text
+plugin = load_wasm("stats.wasm")
+exports = inspect(plugin)
+attach(plugin)
+bind_function("MEDIAN_FAST", exports.median_fast)
+```
+
+## Related
+
+- [Custom Functions (Rust, Python, JS)](./custom-functions-rust-python-js)
+- [Named Ranges and Tables](../core-concepts/named-ranges-and-tables)
+- [Deterministic Testing](./deterministic-testing)
+
+## TODO: Deep dive follow-ups
+
+- Add end-to-end lifecycle diagram (load, validate, bind, unload).
+- Add section on debugging host <-> plugin value marshalling.

@@ -1,0 +1,38 @@
+---
+title: Deterministic Testing
+description: Build reliable tests that produce stable results across crates, bindings, and environments.
+---
+
+Determinism is required for trustable spreadsheet-engine test suites.
+
+## Testing pillars
+
+- Fix execution order where graph traversal can vary.
+- Normalize floating-point assertions with explicit tolerances.
+- Use canonical error/value snapshots across Rust, Python, and JS.
+
+## Practical recipe
+
+- Create workbook fixtures with explicit dependency shapes.
+- Run parse/eval/recalc assertions in repeat loops.
+- Compare results across bindings from the same expected cases.
+
+## Short pseudo-test
+
+```text
+for run in 1..=100:
+  apply_fixture("recalc_chain")
+  recalc_all()
+  assert cell("C1") == 12
+```
+
+## Related
+
+- [Dependency Graph and Recalculation](../core-concepts/dependency-graph-and-recalc)
+- [Workbook Edits and Batching](./workbook-edits-and-batching)
+- [LET/LAMBDA and Callables](./let-lambda-and-callables)
+
+## TODO: Deep dive follow-ups
+
+- Add flaky-test triage checklist for CI.
+- Add fixture generation strategy for randomized but reproducible cases.
