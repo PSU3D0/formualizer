@@ -1,0 +1,25 @@
+---
+title: Python API Map
+description: Planned public Python binding surfaces and how they map to core Rust behavior.
+---
+
+> **v1 scaffold:** This page tracks the intended Python-facing API shape while bindings continue to evolve.
+
+## Planned Surface Areas
+
+- **Parser access:** Parse a formula string and inspect AST/diagnostics.
+- **Evaluator access:** Evaluate formulas against provided context data.
+- **Value conversion:** Convert between Python-native values and Formualizer values.
+- **Error translation:** Preserve structured engine errors with Python-friendly exceptions.
+
+## Mapping Notes
+
+- Python parser/evaluator endpoints map onto Rust parser and eval crates.
+- Function behavior should stay aligned with the shared function registry.
+- Error payloads should remain compatible with [Errors and Types](/docs/reference/errors-and-types).
+
+Related docs:
+
+- [Rust API Map](/docs/reference/rust-api-map)
+- [JS/WASM API Map](/docs/reference/js-wasm-api-map)
+- [Function Reference](/docs/reference/functions)

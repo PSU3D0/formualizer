@@ -1,0 +1,30 @@
+---
+title: Function Reference
+description: Strategy for generated function documentation and the upcoming function index/search experience.
+---
+
+> **v1 scaffold:** Function docs are planned as generated pages backed by registry metadata.
+
+## Generation Strategy
+
+- The Rust function registry remains the source of truth for function metadata.
+- A docs generation step will emit normalized function records (name, category, arity, signatures, notes).
+- MDX pages under this section will be generated from those records to avoid drift.
+
+## URL and Page Structure
+
+- Canonical pages will live under `/docs/reference/functions/...`.
+- Each function page will include signatures, parameter notes, examples, and related functions.
+- Category pages may be introduced once enough functions are documented.
+
+## Upcoming Index/Search Behavior
+
+- v1 index: precomputed list grouped by category and alpha order.
+- v1 search: client-side filter by function name and aliases.
+- follow-up filters: category, argument count, and volatility/behavior flags.
+
+Related docs:
+
+- [Reference Index](/docs/reference)
+- [Errors and Types](/docs/reference/errors-and-types)
+- [Formula Sandbox](/docs/playground/formula-sandbox)

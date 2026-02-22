@@ -1,0 +1,25 @@
+---
+title: Errors and Types
+description: Shared type and error model guidance across Rust core and language bindings.
+---
+
+> **v1 scaffold:** This page captures the common model used to keep behavior consistent across targets.
+
+## Core Type Model
+
+- Formula values should preserve explicit kinds (number, text, boolean, blank, error, arrays/ranges where applicable).
+- Bindings should avoid lossy coercions unless explicitly documented.
+- Cross-language conversion should keep semantics aligned with engine expectations.
+
+## Error Model
+
+- Parse, evaluation, and binding-layer errors should remain distinguishable.
+- Error payloads should include machine-readable codes plus user-readable messages.
+- Binding adapters should preserve source context when available.
+
+## Where to Go Next
+
+- [Rust API Map](/docs/reference/rust-api-map)
+- [Python API Map](/docs/reference/python-api-map)
+- [JS/WASM API Map](/docs/reference/js-wasm-api-map)
+- [Function Reference](/docs/reference/functions)

@@ -1,0 +1,25 @@
+---
+title: JS/WASM API Map
+description: Planned JavaScript/WASM wrapper surfaces and their relationship to core engine APIs.
+---
+
+> **v1 scaffold:** This map describes the target structure for browser and Node-facing APIs.
+
+## Planned Surface Areas
+
+- **Parser API:** Parse formulas and inspect AST/diagnostics in JavaScript.
+- **Evaluator API:** Evaluate formulas with explicit input context.
+- **Type bridges:** Map JS values to engine values and back.
+- **Error bridges:** Return stable, structured error payloads.
+
+## Mapping Notes
+
+- JS/WASM APIs are thin wrappers over the same Rust parser/evaluator core.
+- Function behavior should align with [Function Reference](/docs/reference/functions).
+- Diagnostic shape should align with [Errors and Types](/docs/reference/errors-and-types).
+
+Related docs:
+
+- [Rust API Map](/docs/reference/rust-api-map)
+- [Python API Map](/docs/reference/python-api-map)
+- [Playground](/docs/playground)
