@@ -34,7 +34,10 @@
     "wasm",
     "webassembly",
     "spreadsheet",
+    "spreadsheet-engine",
+    "formula-evaluation",
     "evaluation",
+    "arrow",
     "workbook"
   ],
   "license": "MIT OR Apache-2.0",

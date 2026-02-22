@@ -1018,7 +1018,7 @@ class Workbook:
         r"""
         Unregister a previously registered workbook-local custom function.
         """
-    def list_functions(self) -> builtins.list[dict[builtins.str, typing.Any]]:
+    def list_functions(self) -> typing.Any:
         r"""
         List registered workbook-local custom functions and their options.
         """

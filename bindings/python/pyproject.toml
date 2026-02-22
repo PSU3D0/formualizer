@@ -26,12 +26,14 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
     "Topic :: Office/Business :: Financial :: Spreadsheet",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: General",
 ]
 
 [project.urls]
-Homepage = "https://github.com/psu3d0/formualizer"
-Repository = "https://github.com/psu3d0/formualizer"
-"Bug Tracker" = "https://github.com/psu3d0/formualizer/issues"
+Homepage = "https://github.com/PSU3D0/formualizer"
+Documentation = "https://docs.rs/formualizer"
+Repository = "https://github.com/PSU3D0/formualizer"
+"Bug Tracker" = "https://github.com/PSU3D0/formualizer/issues"
 
 [project.optional-dependencies]
 dev = [
