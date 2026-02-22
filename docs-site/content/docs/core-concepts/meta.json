@@ -1,0 +1,11 @@
+{
+  "title": "Core Concepts",
+  "pages": [
+    "index",
+    "parse-ast-evaluate-workbook",
+    "dependency-graph-and-recalc",
+    "values-coercion-and-errors",
+    "spill-behavior",
+    "named-ranges-and-tables"
+  ]
+}
