@@ -1,7 +1,6 @@
 import { getPageImage, source } from '@/lib/source';
 import { notFound } from 'next/navigation';
-import { ImageResponse } from '@takumi-rs/image-response';
-import { generate as DefaultImage } from 'fumadocs-ui/og/takumi';
+import { ImageResponse } from 'next/og';
 
 export const revalidate = false;
 
@@ -11,11 +10,30 @@ export async function GET(_req: Request, { params }: RouteContext<'/og/docs/[...
   if (!page) notFound();
 
   return new ImageResponse(
-    <DefaultImage title={page.data.title} description={page.data.description} site="My App" />,
+    (
+      <div
+        style={{
+          height: '100%',
+          width: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          padding: '64px',
+          background: '#0b1020',
+          color: '#f8fafc',
+          fontFamily: 'Inter, sans-serif',
+        }}
+      >
+        <div style={{ fontSize: 24, opacity: 0.7, marginBottom: 16 }}>Formualizer Docs</div>
+        <div style={{ fontSize: 56, fontWeight: 700, lineHeight: 1.1, marginBottom: 20 }}>
+          {page.data.title}
+        </div>
+        <div style={{ fontSize: 28, opacity: 0.9, maxWidth: 980 }}>{page.data.description}</div>
+      </div>
+    ),
     {
       width: 1200,
       height: 630,
-      format: 'webp',
     },
   );
 }
