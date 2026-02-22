@@ -5,7 +5,6 @@
     "": {
       "name": "formualizer-docs",
       "dependencies": {
-        "@takumi-rs/image-response": "^0.68.17",
         "fumadocs-core": "16.6.5",
         "fumadocs-mdx": "14.2.8",
         "fumadocs-ui": "16.6.5",
