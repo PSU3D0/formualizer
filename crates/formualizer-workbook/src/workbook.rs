@@ -14,6 +14,9 @@ use std::sync::Arc;
 #[cfg(feature = "wasm_plugins")]
 use wasmparser::{Parser, Payload};
 
+#[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+use crate::wasm_runtime_wasmtime::new_wasmtime_runtime;
+
 fn normalize_custom_fn_name(name: &str) -> Result<String, ExcelError> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -381,6 +384,22 @@ pub fn extract_wasm_manifest_json_from_module(wasm_bytes: &[u8]) -> Result<Vec<u
     })
 }
 
+#[cfg(feature = "wasm_plugins")]
+fn wasm_module_info_from_manifest(
+    module_id: String,
+    module_size_bytes: usize,
+    manifest: &WasmModuleManifest,
+) -> WasmModuleInfo {
+    WasmModuleInfo {
+        module_id,
+        version: manifest.module.version.clone(),
+        abi_version: manifest.module.abi,
+        codec_version: manifest.module.codec,
+        function_count: manifest.functions.len(),
+        module_size_bytes,
+    }
+}
+
 #[derive(Clone)]
 struct RegisteredWasmModule {
     info: WasmModuleInfo,
@@ -466,14 +485,11 @@ impl WasmPluginManager {
         self.runtime
             .validate_module(requested_module_id, wasm_bytes, &manifest)?;
 
-        let info = WasmModuleInfo {
-            module_id: requested_module_id.to_string(),
-            version: manifest.module.version.clone(),
-            abi_version: manifest.module.abi,
-            codec_version: manifest.module.codec,
-            function_count: manifest.functions.len(),
-            module_size_bytes: wasm_bytes.len(),
-        };
+        let info = wasm_module_info_from_manifest(
+            requested_module_id.to_string(),
+            wasm_bytes.len(),
+            &manifest,
+        );
 
         self.modules.insert(
             requested_module_id.to_string(),
@@ -981,6 +997,31 @@ impl Workbook {
         Ok(())
     }
 
+    /// Inspect a WASM module manifest and return module metadata without mutating workbook state.
+    pub fn inspect_wasm_module_bytes(
+        &self,
+        wasm_bytes: &[u8],
+    ) -> Result<WasmModuleInfo, ExcelError> {
+        #[cfg(feature = "wasm_plugins")]
+        {
+            let manifest_json = extract_wasm_manifest_json_from_module(wasm_bytes)?;
+            let manifest = parse_wasm_manifest_json(&manifest_json)?;
+            let canonical_module_id = normalize_wasm_module_id(&manifest.module.id)?;
+            Ok(wasm_module_info_from_manifest(
+                canonical_module_id,
+                wasm_bytes.len(),
+                &manifest,
+            ))
+        }
+
+        #[cfg(not(feature = "wasm_plugins"))]
+        {
+            let _ = wasm_bytes;
+            Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("WASM module inspection requires the `wasm_plugins` feature"))
+        }
+    }
+
     pub fn register_wasm_module_bytes(
         &mut self,
         module_id: &str,
@@ -1001,6 +1042,15 @@ impl Workbook {
                 "WASM module registration for {canonical_module_id} requires the `wasm_plugins` feature"
             )))
         }
+    }
+
+    /// Alias for clearer workbook-local terminology.
+    pub fn attach_wasm_module_bytes(
+        &mut self,
+        module_id: &str,
+        wasm_bytes: &[u8],
+    ) -> Result<WasmModuleInfo, ExcelError> {
+        self.register_wasm_module_bytes(module_id, wasm_bytes)
     }
 
     pub fn list_wasm_modules(&self) -> Vec<WasmModuleInfo> {
@@ -1027,6 +1077,12 @@ impl Workbook {
     #[doc(hidden)]
     pub fn set_wasm_runtime(&mut self, runtime: Arc<dyn WasmUdfRuntime>) {
         self.wasm_plugins.set_runtime(runtime);
+    }
+
+    #[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+    pub fn use_wasmtime_runtime(&mut self) {
+        self.wasm_plugins
+            .set_runtime(Arc::new(new_wasmtime_runtime()));
     }
 
     pub fn register_wasm_function(
@@ -1115,6 +1171,16 @@ impl Workbook {
                 spec.module_id, spec.export_name, spec.codec_version
             )))
         }
+    }
+
+    /// Alias for clearer workbook-local terminology.
+    pub fn bind_wasm_function(
+        &mut self,
+        name: &str,
+        options: CustomFnOptions,
+        spec: WasmFunctionSpec,
+    ) -> Result<(), ExcelError> {
+        self.register_wasm_function(name, options, spec)
     }
 
     pub fn unregister_custom_function(&mut self, name: &str) -> Result<(), ExcelError> {

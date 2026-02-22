@@ -7,6 +7,8 @@ pub mod resolver;
 pub mod session;
 pub mod traits;
 pub mod transaction;
+#[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+mod wasm_runtime_wasmtime;
 pub mod workbook;
 pub mod worksheet;
 
