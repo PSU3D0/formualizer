@@ -1,6 +1,5 @@
 import formualizer as fz
 
-
 wb = fz.Workbook(mode=fz.WorkbookMode.Ephemeral)
 wb.add_sheet("Sheet1")
 
