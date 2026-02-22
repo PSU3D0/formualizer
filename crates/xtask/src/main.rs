@@ -180,8 +180,9 @@ fn run_docs_audit(args: DocsAuditArgs) -> Result<()> {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let rust_blocks = count_fenced_blocks(&doc_text, &["rust", "rs"]);
-        let formula_blocks = count_fenced_blocks(&doc_text, &["excel", "formula", "fx"]);
+        let fenced_blocks = parse_fenced_blocks(&doc_text);
+        let rust_blocks = count_fenced_blocks_by_lang(&fenced_blocks, &["rust", "rs"]);
+        let formula_blocks = count_formula_example_blocks(&fenced_blocks);
         let mut issues = Vec::new();
 
         if impl_info.is_none() {
@@ -535,44 +536,89 @@ fn select_struct_doc_for_registration(
         .or_else(|| docs.first().map(|(_, doc)| doc.clone()))
 }
 
-fn count_fenced_blocks(doc_text: &str, languages: &[&str]) -> usize {
-    let language_set: BTreeSet<String> = languages
-        .iter()
-        .map(|lang| lang.to_ascii_lowercase())
-        .collect();
+#[derive(Debug, Clone)]
+struct FencedBlock {
+    language: String,
+    content: String,
+}
 
-    let mut count = 0;
-    let mut lines = doc_text.lines().peekable();
+fn parse_fenced_blocks(doc_text: &str) -> Vec<FencedBlock> {
+    let mut blocks = Vec::new();
+    let mut lines = doc_text.lines();
+
     while let Some(line) = lines.next() {
         let trimmed = line.trim_start();
         if !trimmed.starts_with("```") {
             continue;
         }
 
-        let lang = trimmed
-            .trim_start_matches("```")
-            .trim()
-            .to_ascii_lowercase();
-        let normalized = if lang.is_empty() {
-            "text"
-        } else {
-            lang.as_str()
-        };
-
+        let language = parse_fence_language(trimmed);
+        let mut content_lines = Vec::new();
         let mut block_closed = false;
+
         for next_line in lines.by_ref() {
             if next_line.trim_start().starts_with("```") {
                 block_closed = true;
                 break;
             }
+            content_lines.push(next_line);
         }
 
-        if block_closed && language_set.contains(normalized) {
-            count += 1;
+        if block_closed {
+            blocks.push(FencedBlock {
+                language,
+                content: content_lines.join("\n"),
+            });
         }
     }
 
-    count
+    blocks
+}
+
+fn parse_fence_language(fence_line: &str) -> String {
+    let raw = fence_line.trim_start_matches("```").trim();
+    let language = raw
+        .split(|ch: char| ch == ',' || ch.is_whitespace())
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+
+    if language.is_empty() {
+        "text".to_string()
+    } else {
+        language
+    }
+}
+
+fn count_fenced_blocks_by_lang(blocks: &[FencedBlock], languages: &[&str]) -> usize {
+    let language_set: BTreeSet<String> = languages
+        .iter()
+        .map(|lang| lang.to_ascii_lowercase())
+        .collect();
+
+    blocks
+        .iter()
+        .filter(|block| language_set.contains(&block.language))
+        .count()
+}
+
+fn count_formula_example_blocks(blocks: &[FencedBlock]) -> usize {
+    let language_set: BTreeSet<String> = ["excel", "formula", "fx"]
+        .into_iter()
+        .map(|lang| lang.to_string())
+        .collect();
+
+    blocks
+        .iter()
+        .filter(|block| language_set.contains(&block.language))
+        .filter(|block| {
+            block.content.lines().any(|line| {
+                let trimmed = line.trim();
+                !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with("//")
+            })
+        })
+        .count()
 }
 
 fn derive_category(path: &str) -> String {
@@ -613,4 +659,39 @@ fn build_glob_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
     }
 
     Ok(Some(builder.build()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{count_fenced_blocks_by_lang, count_formula_example_blocks, parse_fenced_blocks};
+
+    #[test]
+    fn rust_fence_with_modifiers_counts_as_rust() {
+        let doc = r#"
+```rust,no_run
+let x = 1;
+```
+"#;
+
+        let blocks = parse_fenced_blocks(doc);
+        assert_eq!(count_fenced_blocks_by_lang(&blocks, &["rust"]), 1);
+    }
+
+    #[test]
+    fn formula_fence_allows_comment_lines_but_requires_formula_content() {
+        let doc = r#"
+```excel
+# returns: 6
+=SUM(1,2,3)
+```
+
+```excel
+# comments only
+# still comments
+```
+"#;
+
+        let blocks = parse_fenced_blocks(doc);
+        assert_eq!(count_formula_example_blocks(&blocks), 1);
+    }
 }

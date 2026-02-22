@@ -31,6 +31,11 @@ cargo run -p xtask -- docs-audit
 cargo run -p xtask -- docs-audit --strict
 ```
 
+For builtin doc comments:
+
+- Use template: `docs/architecture/builtin-doc-comment-template.md`
+- Prefer `formualizer::doc_examples::eval_scalar` in Rust snippets to keep examples concise.
+
 Full (environment permitting):
 
 ```bash

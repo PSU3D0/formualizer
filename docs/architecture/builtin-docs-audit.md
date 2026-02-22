@@ -45,19 +45,23 @@ For each registered builtin, the checker reports issues for:
 
 ## Example doc-comment pattern
 
+Use the shared helper to keep Rust examples concise and doctest-friendly.
+
 ```rust
 /// Return the sum of numeric arguments.
 ///
 /// # Formula example
 /// ```excel
+/// # returns: 6
 /// =SUM(1,2,3)
 /// ```
 ///
 /// # Rust example
-/// ```rust
-/// // pseudo-code example for docs quality checks
-/// let result = "=SUM(1,2,3)";
-/// assert!(!result.is_empty());
+/// ```rust,no_run
+/// # use formualizer::doc_examples::eval_scalar;
+/// let value = eval_scalar("=SUM(1,2,3)")?;
+/// assert_eq!(value, formualizer::LiteralValue::Number(6.0));
+/// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
 /// ```
 impl Function for SumFn {
     // ...
@@ -65,7 +69,9 @@ impl Function for SumFn {
 ```
 
 Notes:
-- v1 checks for fenced blocks tagged `excel|formula|fx` and `rust|rs`.
+- Rust fences with modifiers (`rust,no_run`, `rust,ignore`) are recognized as Rust examples.
+- Formula fences use `excel|formula|fx` and may include comment lines (`# ...`, `// ...`).
+- Formula blocks must contain at least one non-comment line to count.
 - v1 does not yet execute snippet content; it is a structural quality gate.
 
 ## CLI options
