@@ -21,6 +21,16 @@ cargo test -p formualizer-eval
 cargo test -p formualizer-workbook
 ```
 
+### Builtin docs audit
+
+Use the workspace task to audit builtin function docs coverage and example quality:
+
+```bash
+cargo run -p xtask -- docs-audit
+# strict CI-style mode:
+cargo run -p xtask -- docs-audit --strict
+```
+
 Full (environment permitting):
 
 ```bash

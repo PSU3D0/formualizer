@@ -13,6 +13,7 @@ members = [
   "crates/sheetport-spec",
   "crates/formualizer-sheetport",
   "crates/formualizer",
+  "crates/xtask",
 ]
 
 [workspace.package]
