@@ -1,0 +1,25 @@
+---
+title: Architecture at a Glance
+description: A high-level view of Formualizer's core modules.
+---
+
+Formualizer is organized as a Rust workspace with clear crate boundaries and optional language bindings.
+
+## High-Level Components
+
+- Parsing layer for tokenization and AST construction.
+- Evaluation layer for function resolution and execution.
+- Common shared types for values, errors, and workbook state.
+- Bindings layer for Python and WebAssembly integration.
+
+## Why This Layout
+
+This separation keeps the core engine reusable while allowing bindings to evolve independently.
+
+## See Also
+
+- [What is Formualizer?](/docs/introduction/what-is-formualizer)
+- [Versioning and Stability](/docs/introduction/versioning-and-stability)
+- [JavaScript/WASM Quickstart](/docs/quickstarts/js-wasm-quickstart)
+
+> **TODO:** Add a crate-level dependency diagram and execution flow from parse to evaluate.
