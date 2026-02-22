@@ -129,6 +129,6 @@ Reference page generation can map formula examples to sandbox props automaticall
 
 ## Implementation notes
 
-- Keep sandbox code isolated in `docs-site/components/sandbox/*`
+- Keep sandbox code isolated in `docs-site/src/components/sandbox/*`
 - Provide a single WASM loader utility to prevent duplicate initialization logic
 - Avoid coupling docs rendering to engine internals beyond public wasm API surface
