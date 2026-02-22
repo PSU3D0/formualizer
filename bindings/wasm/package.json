@@ -25,7 +25,7 @@
     "build:ts": "tsc -p tsconfig.json",
     "prepack": "npm run build",
     "test": "wasm-pack test --node",
-    "clean": "rimraf dist pkg"
+    "clean": "rm -rf dist pkg"
   },
   "keywords": [
     "excel",
@@ -44,7 +44,6 @@
   "devDependencies": {
     "@rollup/plugin-typescript": "^11.1.5",
     "@types/node": "^20.10.0",
-    "rimraf": "^5.0.5",
     "rollup": "^4.9.0",
     "typescript": "^5.3.0"
   },
