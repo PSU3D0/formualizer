@@ -1,24 +1,30 @@
 ---
 title: Why Formualizer?
-description: The main reasons teams adopt Formualizer.
+description: Why teams choose Formualizer for spreadsheet logic in production systems.
 ---
 
-Formualizer exists to provide a reliable and reusable formula layer instead of re-implementing formula logic per product or language.
+Teams usually adopt Formualizer to stop duplicating formula logic across services and languages.
 
-Common reasons to adopt it:
+## Practical reasons to use it
 
-- Consistent behavior across runtimes.
-- Shared core engine with language-specific bindings.
-- A foundation for extensible function libraries and workbook tooling.
+- **Cross-runtime consistency**: Use the same workbook/formula behavior in Rust, Python, and WASM.
+- **Spreadsheet-native model**: Work directly with sheets, cells, formulas, references, and recalculation.
+- **Embeddable API**: Call workbook methods from your code instead of shelling out to office tooling.
+- **Extensibility**: Add custom functions in each runtime when built-ins are not enough.
 
-## Tradeoffs and Expectations
+## Good fit
 
-Formualizer prioritizes correctness and portability. Some advanced ecosystem integrations are still expanding over time.
+- You need deterministic workbook calculations in CI or production.
+- You need one source of truth for formula behavior across backend + frontend.
+- You need to load/edit/evaluate workbooks programmatically.
 
-## See Also
+## Tradeoffs to plan for
 
-- [What is Formualizer?](/docs/introduction/what-is-formualizer)
+- API surface is broad; start with quickstarts and grow incrementally.
+- Pin versions and run workbook regression tests during upgrades.
+
+## See also
+
 - [Versioning and Stability](/docs/introduction/versioning-and-stability)
-- [Python Quickstart](/docs/quickstarts/python-quickstart)
-
-> **TODO:** Add benchmark and performance guidance once baseline profiling docs are published.
+- [First Workbook in 5 Minutes](/docs/quickstarts/first-workbook-in-5-minutes)
+- [Deterministic Testing](/docs/guides/deterministic-testing)

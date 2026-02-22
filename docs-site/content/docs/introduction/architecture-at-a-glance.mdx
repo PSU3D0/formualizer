@@ -1,25 +1,42 @@
 ---
 title: Architecture at a Glance
-description: A high-level view of Formualizer's core modules.
+description: How the Formualizer crates and bindings fit together.
 ---
 
-Formualizer is organized as a Rust workspace with clear crate boundaries and optional language bindings.
+Formualizer is a layered Rust workspace with language bindings built on top.
 
-## High-Level Components
+## Workspace layers
 
-- Parsing layer for tokenization and AST construction.
-- Evaluation layer for function resolution and execution.
-- Common shared types for values, errors, and workbook state.
-- Bindings layer for Python and WebAssembly integration.
+| Layer | Crates | Purpose |
+| --- | --- | --- |
+| Parse | `formualizer-parse` | Tokenize formula text and build ASTs |
+| Evaluate | `formualizer-eval` | Execute formulas, built-ins, and dependency-aware evaluation |
+| Shared types | `formualizer-common` | Values, errors, references, and shared enums |
+| Workbook API | `formualizer-workbook` | High-level sheet/cell API, recalc, custom functions, plugin seams |
+| Meta crate | `formualizer` | Re-exports core surfaces for easier app integration |
 
-## Why This Layout
+## Bindings
 
-This separation keeps the core engine reusable while allowing bindings to evolve independently.
+- **Python** (`bindings/python`): PyO3 binding over workbook + parser/eval surfaces.
+- **WASM/JS** (`bindings/wasm`): `wasm-bindgen` wrapper with TypeScript API.
 
-## See Also
+Both bindings map to the same underlying engine semantics, so workbook behavior should stay aligned across runtimes.
 
-- [What is Formualizer?](/docs/introduction/what-is-formualizer)
-- [Versioning and Stability](/docs/introduction/versioning-and-stability)
-- [JavaScript/WASM Quickstart](/docs/quickstarts/js-wasm-quickstart)
+## Typical request flow
 
-> **TODO:** Add a crate-level dependency diagram and execution flow from parse to evaluate.
+1. Write literals/formulas to workbook cells.
+2. Parser converts formula text into AST.
+3. Evaluator resolves references/functions and computes results.
+4. Workbook graph tracks dependencies for incremental recalculation.
+
+## Where to inspect implementation details
+
+- Built-ins and evaluator internals: `crates/formualizer-eval/src/`
+- Workbook API: `crates/formualizer-workbook/src/workbook.rs`
+- Python binding: `bindings/python/src/`
+- WASM binding: `bindings/wasm/src/`
+
+## Next
+
+- [Quickstarts](/docs/quickstarts)
+- [Core Concepts](/docs/core-concepts)

@@ -1,28 +1,47 @@
 ---
 title: First Workbook in 5 Minutes
-description: Build a tiny workbook flow end to end.
+description: End-to-end mini-flow: write inputs, set formula, evaluate output.
 ---
 
-This walkthrough shows a minimal workbook-style setup: define cells, evaluate formulas, and read resulting values.
+This walkthrough gives one tiny but realistic workbook flow:
 
-## What You Will Do
+- Inputs in `A1` and `A2`
+- Formula in `B1`
+- Evaluate and assert result
 
-1. Create an in-memory workbook model.
-2. Populate a few values and formula cells.
-3. Trigger evaluation.
-4. Read and verify computed outputs.
+## Rust example (complete)
 
-## Suggested Pairing
+```rust
+use formualizer_common::LiteralValue;
+use formualizer_workbook::Workbook;
 
-Pick one runtime quickstart first, then return here for a workbook-oriented workflow:
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut wb = Workbook::new();
+    wb.add_sheet("Pricing")?;
 
-- [Rust Quickstart](/docs/quickstarts/rust-quickstart)
-- [Python Quickstart](/docs/quickstarts/python-quickstart)
-- [JavaScript/WASM Quickstart](/docs/quickstarts/js-wasm-quickstart)
+    // Inputs
+    wb.set_value("Pricing", 1, 1, LiteralValue::Number(100.0))?; // A1 base price
+    wb.set_value("Pricing", 2, 1, LiteralValue::Number(0.15))?;  // A2 discount
 
-## See Also
+    // Formula
+    wb.set_formula("Pricing", 1, 2, "=A1*(1-A2)")?;            // B1
 
-- [Introduction](/docs/introduction)
-- [Versioning and Stability](/docs/introduction/versioning-and-stability)
+    // Evaluate
+    let result = wb.evaluate_cell("Pricing", 1, 2)?;
+    assert_eq!(result, LiteralValue::Number(85.0));
 
-> **TODO:** Add a full worked example with expected intermediate and final cell values.
+    Ok(())
+}
+```
+
+Expected output: `85.0`.
+
+## Same flow in other runtimes
+
+- Python: [Python Quickstart](/docs/quickstarts/python-quickstart)
+- JS/WASM: [JavaScript/WASM Quickstart](/docs/quickstarts/js-wasm-quickstart)
+
+## Next
+
+- [Workbook Edits and Batching](/docs/guides/workbook-edits-and-batching)
+- [Custom Functions (Rust, Python, JS)](/docs/guides/custom-functions-rust-python-js)

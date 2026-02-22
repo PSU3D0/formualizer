@@ -1,21 +1,38 @@
 ---
 title: Python Quickstart
-description: Install and run Formualizer from Python.
+description: Install formualizer, build a workbook, and evaluate formulas from Python.
 ---
 
-This guide introduces the Python binding workflow for parsing and evaluating formulas.
+## 1) Install
 
-## Steps
+```bash
+pip install formualizer
+```
 
-1. Install Formualizer Python package in your environment.
-2. Import the binding and create a minimal evaluator context.
-3. Evaluate a simple formula and print the result.
-4. Add a small test to lock behavior.
+## 2) Evaluate a formula
 
-## Next Reads
+```python
+import formualizer as fz
+
+wb = fz.Workbook()
+wb.add_sheet("Sheet1")
+
+wb.set_value("Sheet1", 1, 1, 100)
+wb.set_value("Sheet1", 2, 1, 20)
+wb.set_formula("Sheet1", 1, 2, "=A1-A2")
+
+result = wb.evaluate_cell("Sheet1", 1, 2)
+print(result)  # 80.0
+```
+
+## 3) Try the binding example in this repo
+
+```bash
+python bindings/python/examples/custom_function_registration.py
+```
+
+## Next
 
 - [First Workbook in 5 Minutes](/docs/quickstarts/first-workbook-in-5-minutes)
-- [What is Formualizer?](/docs/introduction/what-is-formualizer)
-- [JavaScript/WASM Quickstart](/docs/quickstarts/js-wasm-quickstart)
-
-> **TODO:** Add virtual environment setup and packaging notes for local development.
+- [Custom Functions (Rust, Python, JS)](/docs/guides/custom-functions-rust-python-js)
+- [Deterministic Testing](/docs/guides/deterministic-testing)

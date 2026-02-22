@@ -1,21 +1,41 @@
 ---
 title: JavaScript/WASM Quickstart
-description: Run Formualizer in JavaScript via WebAssembly bindings.
+description: Initialize the WASM module and evaluate workbook formulas from JS.
 ---
 
-This quickstart covers using the WASM package from a JavaScript project and evaluating formulas in the browser or Node.js.
+## 1) Install
 
-## Steps
+```bash
+npm install formualizer
+```
 
-1. Install the WASM package and runtime dependencies.
-2. Initialize the module in your JavaScript entry point.
-3. Evaluate a formula and inspect the result.
-4. Add a smoke test for loading and execution.
+## 2) Initialize and evaluate
 
-## Next Reads
+```ts
+import init, { Workbook } from "formualizer";
+
+await init();
+
+const wb = new Workbook();
+wb.addSheet("Sheet1");
+
+wb.setValue("Sheet1", 1, 1, 100);
+wb.setValue("Sheet1", 2, 1, 20);
+wb.setFormula("Sheet1", 1, 2, "=A1-A2");
+
+console.log(wb.evaluateCell("Sheet1", 1, 2)); // 80
+```
+
+## 3) Run the repo example
+
+```bash
+cd bindings/wasm
+npm run build
+node examples/custom-function-registration.mjs
+```
+
+## Next
 
 - [First Workbook in 5 Minutes](/docs/quickstarts/first-workbook-in-5-minutes)
-- [Architecture at a Glance](/docs/introduction/architecture-at-a-glance)
-- [Rust Quickstart](/docs/quickstarts/rust-quickstart)
-
-> **TODO:** Add browser vs Node.js initialization examples and bundler caveats.
+- [Custom Functions (Rust, Python, JS)](/docs/guides/custom-functions-rust-python-js)
+- [WASM Plugins: Inspect, Attach, Bind](/docs/guides/wasm-plugins-inspect-attach-bind)
