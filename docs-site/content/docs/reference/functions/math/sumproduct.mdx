@@ -49,12 +49,20 @@ description: "SUMPRODUCT: Multiplies aligned values across arrays and returns th
 
 ## Related functions
 
+- [SUM](/docs/reference/functions/math/sum)
+- [PRODUCT](/docs/reference/functions/stats/product)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
 - [AVERAGE](/docs/reference/functions/math/average)
 - [MAX](/docs/reference/functions/math/max)
 - [MIN](/docs/reference/functions/math/min)
-- [SUMSQ](/docs/reference/functions/math/sumsq)
-- [COUNT](/docs/reference/functions/math/count)
-- [COUNTA](/docs/reference/functions/math/counta)
+
+## FAQ
+
+### Why does SUMPRODUCT return #VALUE! with some array shapes?
+The argument arrays must be broadcast-compatible; incompatible shapes raise #VALUE!.
+
+### How are text values handled in multiplication?
+Non-numeric values are treated as 0, unless an explicit error is present.
 
 ## Runtime metadata
 

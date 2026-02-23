@@ -39,12 +39,17 @@ Returns TRUE when the value is text.
 
 ## Related functions
 
+- [T](/docs/reference/functions/info/t)
+- [TYPE](/docs/reference/functions/info/type)
+- [ISNUMBER](/docs/reference/functions/info/isnumber)
 - [ERROR.TYPE](/docs/reference/functions/info/error-type)
 - [ISBLANK](/docs/reference/functions/info/isblank)
 - [ISERR](/docs/reference/functions/info/iserr)
-- [ISERROR](/docs/reference/functions/info/iserror)
-- [ISEVEN](/docs/reference/functions/info/iseven)
-- [ISFORMULA](/docs/reference/functions/info/isformula)
+
+## FAQ
+
+### Is an empty string treated as text?
+Yes. An empty string literal is still text, so ISTEXT("") returns TRUE.
 
 ## Runtime metadata
 

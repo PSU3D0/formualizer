@@ -41,11 +41,16 @@ Returns text that appears before a delimiter.
 ## Related functions
 
 - [TEXTAFTER](/docs/reference/functions/text/textafter)
+- [FIND](/docs/reference/functions/text/find)
+- [SEARCH](/docs/reference/functions/text/search)
 - [TEXTSPLIT](/docs/reference/functions/text/textsplit)
 - [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
 - [EXACT](/docs/reference/functions/text/exact)
-- [REPT](/docs/reference/functions/text/rept)
-- [TEXT](/docs/reference/functions/text/text)
+
+## FAQ
+
+### What happens when the delimiter is missing?
+TEXTBEFORE returns #N/A when the requested delimiter occurrence is not found.
 
 ## Runtime metadata
 

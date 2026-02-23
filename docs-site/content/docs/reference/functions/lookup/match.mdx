@@ -42,12 +42,20 @@ description: "MATCH: Returns the relative position of a lookup value in a one-di
 
 ## Related functions
 
+- [XMATCH](/docs/reference/functions/lookup/xmatch)
+- [XLOOKUP](/docs/reference/functions/lookup/xlookup)
+- [VLOOKUP](/docs/reference/functions/lookup/vlookup)
 - [CHOOSE](/docs/reference/functions/lookup/choose)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [HLOOKUP](/docs/reference/functions/lookup/hlookup)
-- [VLOOKUP](/docs/reference/functions/lookup/vlookup)
-- [XMATCH](/docs/reference/functions/lookup/xmatch)
+
+## FAQ
+
+### Why does MATCH with match_type 1 or -1 return #N/A on unsorted data?
+Approximate modes assume ordered lookup data; this implementation treats detected unsorted inputs as no valid match and returns #N/A.
+
+### When are wildcards interpreted in MATCH?
+Wildcard patterns (*, ?, ~ escapes) are only applied in exact mode (match_type=0) for text lookup values.
 
 ## Runtime metadata
 

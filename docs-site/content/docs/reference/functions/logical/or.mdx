@@ -47,6 +47,11 @@ description: "OR: Returns TRUE when any supplied value evaluates to TRUE."
 - [FALSE](/docs/reference/functions/logical/false)
 - [TRUE](/docs/reference/functions/logical/true)
 
+## FAQ
+
+### How does OR treat blanks and text?
+Blanks are ignored; non-coercible text returns #VALUE! unless a prior TRUE already short-circuits.
+
 ## Runtime metadata
 
 {/* [formualizer-docgen:function-meta:start] */}

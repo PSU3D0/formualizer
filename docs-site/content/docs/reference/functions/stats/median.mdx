@@ -39,12 +39,17 @@ For an even number of values, `MEDIAN` returns the average of the two center val
 
 ## Related functions
 
+- [AVERAGE](/docs/reference/functions/math/average)
+- [MODE.SNGL](/docs/reference/functions/stats/mode-sngl)
+- [QUARTILE.INC](/docs/reference/functions/stats/quartile-inc)
 - [AVEDEV](/docs/reference/functions/stats/avedev)
 - [DEVSQ](/docs/reference/functions/stats/devsq)
 - [GEOMEAN](/docs/reference/functions/stats/geomean)
-- [HARMEAN](/docs/reference/functions/stats/harmean)
-- [KURT](/docs/reference/functions/stats/kurt)
-- [MODE.MULT](/docs/reference/functions/stats/mode-mult)
+
+## FAQ
+
+### When does MEDIAN return #NUM!?
+MEDIAN returns #NUM! when no numeric values are available after filtering/coercion.
 
 ## Runtime metadata
 

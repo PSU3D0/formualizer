@@ -40,12 +40,17 @@ Returns a substring starting at a 1-based position.
 
 ## Related functions
 
+- [LEFT](/docs/reference/functions/text/left)
+- [RIGHT](/docs/reference/functions/text/right)
+- [REPLACE](/docs/reference/functions/text/replace)
 - [CHAR](/docs/reference/functions/text/char)
 - [CLEAN](/docs/reference/functions/text/clean)
 - [CODE](/docs/reference/functions/text/code)
-- [EXACT](/docs/reference/functions/text/exact)
-- [LEN](/docs/reference/functions/text/len)
-- [LOWER](/docs/reference/functions/text/lower)
+
+## FAQ
+
+### How does MID handle out-of-range start positions?
+If start_num is beyond the text length, MID returns an empty string.
 
 ## Runtime metadata
 

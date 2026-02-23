@@ -40,12 +40,17 @@ Returns the rightmost characters from a text value.
 
 ## Related functions
 
+- [LEFT](/docs/reference/functions/text/left)
+- [MID](/docs/reference/functions/text/mid)
+- [LEN](/docs/reference/functions/text/len)
 - [CONCAT](/docs/reference/functions/text/concat)
 - [CONCATENATE](/docs/reference/functions/text/concatenate)
-- [LEFT](/docs/reference/functions/text/left)
 - [FIND](/docs/reference/functions/text/find)
-- [SEARCH](/docs/reference/functions/text/search)
-- [SUBSTITUTE](/docs/reference/functions/text/substitute)
+
+## FAQ
+
+### If num_chars is larger than the text length, what is returned?
+RIGHT returns the full text when the requested count exceeds available characters.
 
 ## Runtime metadata
 

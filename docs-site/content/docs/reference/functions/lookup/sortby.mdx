@@ -41,12 +41,20 @@ description: "SORTBY: Sorts an array based on one or more aligned sort-by arrays
 
 ## Related functions
 
+- [SORT](/docs/reference/functions/lookup/sort)
+- [UNIQUE](/docs/reference/functions/lookup/unique)
+- [FILTER](/docs/reference/functions/lookup/filter)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 - [DROP](/docs/reference/functions/lookup/drop)
-- [TAKE](/docs/reference/functions/lookup/take)
-- [XMATCH](/docs/reference/functions/lookup/xmatch)
-- [FILTER](/docs/reference/functions/lookup/filter)
+
+## FAQ
+
+### How are multiple sort criteria applied?
+SORTBY evaluates criteria left-to-right, using later by_array values only when earlier criteria compare equal.
+
+### Why do I get #VALUE! with SORTBY?
+Each by_array must be one-dimensional and aligned to the primary array row count; mismatched shapes return #VALUE!.
 
 ## Runtime metadata
 

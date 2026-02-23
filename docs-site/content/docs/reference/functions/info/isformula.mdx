@@ -39,12 +39,17 @@ Current engine metadata does not track formula provenance at this call site.
 
 ## Related functions
 
+- [TYPE](/docs/reference/functions/info/type)
+- [ISNUMBER](/docs/reference/functions/info/isnumber)
+- [ISTEXT](/docs/reference/functions/info/istext)
 - [ERROR.TYPE](/docs/reference/functions/info/error-type)
 - [ISBLANK](/docs/reference/functions/info/isblank)
 - [ISERR](/docs/reference/functions/info/iserr)
-- [ISERROR](/docs/reference/functions/info/iserror)
-- [ISEVEN](/docs/reference/functions/info/iseven)
-- [ISLOGICAL](/docs/reference/functions/info/islogical)
+
+## FAQ
+
+### Can ISFORMULA currently detect formula provenance?
+Not yet. This implementation always returns FALSE because provenance metadata is not tracked here.
 
 ## Runtime metadata
 

@@ -40,11 +40,19 @@ description: "Counts numeric values across scalars and ranges."
 ## Related functions
 
 - [COUNTA](/docs/reference/functions/math/counta)
+- [COUNTBLANK](/docs/reference/functions/math/countblank)
 - [COUNTIF](/docs/reference/functions/math/countif)
 - [COUNTIFS](/docs/reference/functions/math/countifs)
-- [COUNTBLANK](/docs/reference/functions/math/countblank)
 - [SUM](/docs/reference/functions/math/sum)
 - [AVERAGE](/docs/reference/functions/math/average)
+
+## FAQ
+
+### Why doesn't COUNT include text in a range?
+COUNT only counts numeric values; text cells in ranges are ignored.
+
+### Can direct text like "12" be counted?
+Yes. Direct scalar arguments are coerced and counted when they parse as numbers.
 
 ## Runtime metadata
 

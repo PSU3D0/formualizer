@@ -39,12 +39,17 @@ Rounds a number to the nearest multiple.
 
 ## Related functions
 
+- [ROUND](/docs/reference/functions/math/round)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [FLOOR](/docs/reference/functions/math/floor)
 - [ATAN2](/docs/reference/functions/math/atan2)
 - [COMBIN](/docs/reference/functions/math/combin)
 - [MOD](/docs/reference/functions/math/mod)
-- [PERMUT](/docs/reference/functions/math/permut)
-- [POWER](/docs/reference/functions/math/power)
-- [QUOTIENT](/docs/reference/functions/math/quotient)
+
+## FAQ
+
+### Why does MROUND return #NUM! for mixed signs?
+If number and multiple have different signs (excluding zero), MROUND returns #NUM!.
 
 ## Runtime metadata
 

@@ -48,12 +48,20 @@ description: "COUNTIFS: Counts cells that satisfy all supplied criteria pairs."
 
 ## Related functions
 
+- [COUNTIF](/docs/reference/functions/math/countif)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
+- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
+- [FILTER](/docs/reference/functions/lookup/filter)
 - [AVERAGEIF](/docs/reference/functions/math/averageif)
 - [SUMIF](/docs/reference/functions/math/sumif)
-- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
-- [SUMIFS](/docs/reference/functions/math/sumifs)
-- [COUNTIF](/docs/reference/functions/math/countif)
-- [SUM](/docs/reference/functions/math/sum)
+
+## FAQ
+
+### Why can COUNTIFS return 0 even when one criterion matches rows?
+Each row must satisfy every criterion pair; partial matches are excluded.
+
+### Does COUNTIFS require at least one criteria pair?
+Yes. It expects arguments in (range, criteria) pairs.
 
 ## Runtime metadata
 

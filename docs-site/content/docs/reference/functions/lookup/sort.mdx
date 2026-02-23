@@ -41,12 +41,20 @@ description: "Sorts an array by a selected row or column and returns a spilled r
 
 ## Related functions
 
+- [SORTBY](/docs/reference/functions/lookup/sortby)
+- [TAKE](/docs/reference/functions/lookup/take)
+- [DROP](/docs/reference/functions/lookup/drop)
 - [UNIQUE](/docs/reference/functions/lookup/unique)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [DROP](/docs/reference/functions/lookup/drop)
-- [GROUPBY](/docs/reference/functions/lookup/groupby)
-- [HSTACK](/docs/reference/functions/lookup/hstack)
+
+## FAQ
+
+### What changes when by_col is TRUE?
+SORT reorders columns instead of rows, and sort_index is interpreted as a row index used as the sort key.
+
+### What causes #VALUE! in SORT?
+If sort_index is outside the active axis (row or column axis based on by_col), SORT returns #VALUE!.
 
 ## Runtime metadata
 

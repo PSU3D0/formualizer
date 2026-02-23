@@ -39,12 +39,17 @@ Returns the multinomial coefficient for one or more values.
 
 ## Related functions
 
+- [FACT](/docs/reference/functions/math/fact)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [PERMUT](/docs/reference/functions/math/permut)
 - [AVERAGE](/docs/reference/functions/math/average)
 - [CEILING](/docs/reference/functions/math/ceiling)
 - [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
-- [FLOOR](/docs/reference/functions/math/floor)
-- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
-- [GCD](/docs/reference/functions/math/gcd)
+
+## FAQ
+
+### Why does MULTINOMIAL return #NUM! for large terms?
+If any required factorial falls outside 0..=170, the function returns #NUM!.
 
 ## Runtime metadata
 

@@ -49,6 +49,14 @@ description: "HLOOKUP: Looks up a value in the first row of a table and returns 
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 
+## FAQ
+
+### Does HLOOKUP default to exact or approximate matching?
+It defaults to exact matching in this engine because range_lookup defaults to FALSE.
+
+### How are invalid row_index_num values reported?
+If row_index_num is outside table height HLOOKUP returns #REF!; if it is non-numeric it returns #VALUE!.
+
 ## Runtime metadata
 
 {/* [formualizer-docgen:function-meta:start] */}

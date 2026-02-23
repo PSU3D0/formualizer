@@ -48,12 +48,20 @@ description: "Returns the number of permutations for selecting and ordering `k` 
 
 ## Related functions
 
-- [ATAN2](/docs/reference/functions/math/atan2)
 - [COMBIN](/docs/reference/functions/math/combin)
+- [FACT](/docs/reference/functions/math/fact)
+- [MULTINOMIAL](/docs/reference/functions/math/multinomial)
+- [ATAN2](/docs/reference/functions/math/atan2)
 - [MOD](/docs/reference/functions/math/mod)
 - [MROUND](/docs/reference/functions/math/mround)
-- [POWER](/docs/reference/functions/math/power)
-- [QUOTIENT](/docs/reference/functions/math/quotient)
+
+## FAQ
+
+### Why does PERMUT fail when k is larger than n?
+Permutations require choosing at most n items, so k &gt; n returns #NUM!.
+
+### How are decimal inputs handled?
+PERMUT truncates n and k toward zero before computing n!/(n-k)!.
 
 ## Runtime metadata
 

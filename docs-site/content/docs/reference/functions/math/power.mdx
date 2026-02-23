@@ -39,12 +39,17 @@ Raises a base number to a specified power.
 
 ## Related functions
 
+- [SQRT](/docs/reference/functions/math/sqrt)
+- [EXP](/docs/reference/functions/math/exp)
+- [LN](/docs/reference/functions/math/ln)
 - [ATAN2](/docs/reference/functions/math/atan2)
 - [COMBIN](/docs/reference/functions/math/combin)
 - [MOD](/docs/reference/functions/math/mod)
-- [MROUND](/docs/reference/functions/math/mround)
-- [PERMUT](/docs/reference/functions/math/permut)
-- [QUOTIENT](/docs/reference/functions/math/quotient)
+
+## FAQ
+
+### Why can POWER return #NUM! for negative bases?
+Negative bases with fractional exponents are rejected to avoid complex-number results.
 
 ## Runtime metadata
 

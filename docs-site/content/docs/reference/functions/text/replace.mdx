@@ -40,12 +40,17 @@ description: "Replaces part of a text string by position."
 
 ## Related functions
 
+- [SUBSTITUTE](/docs/reference/functions/text/substitute)
+- [MID](/docs/reference/functions/text/mid)
+- [LEFT](/docs/reference/functions/text/left)
 - [CHAR](/docs/reference/functions/text/char)
 - [CLEAN](/docs/reference/functions/text/clean)
 - [CODE](/docs/reference/functions/text/code)
-- [EXACT](/docs/reference/functions/text/exact)
-- [LEN](/docs/reference/functions/text/len)
-- [LOWER](/docs/reference/functions/text/lower)
+
+## FAQ
+
+### Does REPLACE match text patterns?
+No. REPLACE is position-based and replaces by start_num and num_chars, not by searching old text.
 
 ## Runtime metadata
 

@@ -40,12 +40,17 @@ description: "NOT: Reverses the logical value of its argument."
 
 ## Related functions
 
+- [AND](/docs/reference/functions/logical/and)
+- [OR](/docs/reference/functions/logical/or)
+- [XOR](/docs/reference/functions/logical-ext/xor)
 - [IFERROR](/docs/reference/functions/logical-ext/iferror)
 - [IFNA](/docs/reference/functions/logical-ext/ifna)
-- [XOR](/docs/reference/functions/logical-ext/xor)
 - [IFS](/docs/reference/functions/logical-ext/ifs)
-- [ACOSH](/docs/reference/functions/math/acosh)
-- [ARABIC](/docs/reference/functions/math/arabic)
+
+## FAQ
+
+### How does NOT treat blanks?
+Blank is treated as FALSE first, so NOT(blank) returns TRUE.
 
 ## Runtime metadata
 

@@ -40,12 +40,17 @@ Repeats a text string a specified number of times.
 
 ## Related functions
 
+- [CONCAT](/docs/reference/functions/text/concat)
+- [TEXTJOIN](/docs/reference/functions/text/textjoin)
+- [SUBSTITUTE](/docs/reference/functions/text/substitute)
 - [EXACT](/docs/reference/functions/text/exact)
 - [TEXT](/docs/reference/functions/text/text)
 - [TEXTAFTER](/docs/reference/functions/text/textafter)
-- [TEXTBEFORE](/docs/reference/functions/text/textbefore)
-- [TEXTSPLIT](/docs/reference/functions/text/textsplit)
-- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
+
+## FAQ
+
+### Can REPT return very long strings?
+Only up to 32,767 characters; longer results return #VALUE! like Excel.
 
 ## Runtime metadata
 

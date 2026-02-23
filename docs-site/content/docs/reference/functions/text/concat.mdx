@@ -41,11 +41,16 @@ Concatenates multiple values into one text string.
 ## Related functions
 
 - [CONCATENATE](/docs/reference/functions/text/concatenate)
+- [TEXTJOIN](/docs/reference/functions/text/textjoin)
+- [VALUE](/docs/reference/functions/text/value)
 - [LEFT](/docs/reference/functions/text/left)
 - [RIGHT](/docs/reference/functions/text/right)
 - [FIND](/docs/reference/functions/text/find)
-- [SEARCH](/docs/reference/functions/text/search)
-- [SUBSTITUTE](/docs/reference/functions/text/substitute)
+
+## FAQ
+
+### Do blank arguments add separators or characters?
+No. CONCAT appends each value directly, and blanks contribute an empty string.
 
 ## Runtime metadata
 

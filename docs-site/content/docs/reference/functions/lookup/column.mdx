@@ -40,12 +40,20 @@ description: "Returns the column number of a reference, or of the current cell w
 
 ## Related functions
 
-- [ROW](/docs/reference/functions/lookup/row)
-- [TRANSPOSE](/docs/reference/functions/lookup/transpose)
 - [COLUMNS](/docs/reference/functions/lookup/columns)
-- [ROWS](/docs/reference/functions/lookup/rows)
+- [ROW](/docs/reference/functions/lookup/row)
 - [ADDRESS](/docs/reference/functions/lookup/address)
+- [TRANSPOSE](/docs/reference/functions/lookup/transpose)
+- [ROWS](/docs/reference/functions/lookup/rows)
 - [CHOOSE](/docs/reference/functions/lookup/choose)
+
+## FAQ
+
+### What does COLUMN return for a range like B2:D4?
+COLUMN returns the first column index of the reference (2 for column B).
+
+### What if COLUMN() is used without a reference?
+It returns the formula cell's column number, or #VALUE! if current-cell context is unavailable.
 
 ## Runtime metadata
 

@@ -48,12 +48,20 @@ description: "SUMIFS: Adds values that satisfy multiple criteria."
 
 ## Related functions
 
-- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
-- [AVERAGEIF](/docs/reference/functions/math/averageif)
-- [COUNTIFS](/docs/reference/functions/math/countifs)
 - [SUMIF](/docs/reference/functions/math/sumif)
+- [COUNTIFS](/docs/reference/functions/math/countifs)
+- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
+- [SUMPRODUCT](/docs/reference/functions/math/sumproduct)
+- [AVERAGEIF](/docs/reference/functions/math/averageif)
 - [SUM](/docs/reference/functions/math/sum)
-- [COUNTIF](/docs/reference/functions/math/countif)
+
+## FAQ
+
+### How are multiple SUMIFS criteria combined?
+All criteria pairs are applied with logical AND; every condition must match.
+
+### What if criteria range sizes differ?
+Ranges are broadcast/padded under engine rules instead of strict Excel-size rejection.
 
 ## Runtime metadata
 

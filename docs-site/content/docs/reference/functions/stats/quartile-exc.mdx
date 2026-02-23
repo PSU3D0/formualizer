@@ -41,11 +41,16 @@ description: "QUARTILE.EXC: Returns an exclusive quartile value for a data set."
 ## Related functions
 
 - [QUARTILE.INC](/docs/reference/functions/stats/quartile-inc)
-- [LARGE](/docs/reference/functions/stats/large)
 - [PERCENTILE.EXC](/docs/reference/functions/stats/percentile-exc)
+- [MEDIAN](/docs/reference/functions/stats/median)
+- [LARGE](/docs/reference/functions/stats/large)
 - [PERCENTILE.INC](/docs/reference/functions/stats/percentile-inc)
 - [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
-- [PERCENTRANK.INC](/docs/reference/functions/stats/percentrank-inc)
+
+## FAQ
+
+### Why can QUARTILE.EXC return #NUM! on small datasets?
+Exclusive quartiles need enough data for valid interior rank interpolation.
 
 ## Runtime metadata
 

@@ -40,11 +40,16 @@ Rounds a number down to the nearest integer or multiple using `FLOOR.MATH` rules
 ## Related functions
 
 - [FLOOR](/docs/reference/functions/math/floor)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+- [ROUNDDOWN](/docs/reference/functions/math/rounddown)
 - [AVERAGE](/docs/reference/functions/math/average)
 - [CEILING](/docs/reference/functions/math/ceiling)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
 - [GCD](/docs/reference/functions/math/gcd)
-- [LCM](/docs/reference/functions/math/lcm)
+
+## FAQ
+
+### How does mode affect negative numbers in FLOOR.MATH?
+With non-zero mode, negatives round toward zero; otherwise they round away from zero.
 
 ## Runtime metadata
 

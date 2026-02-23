@@ -43,11 +43,22 @@ description: "XLOOKUP: Looks up a value in one array and returns the aligned val
 ## Related functions
 
 - [XMATCH](/docs/reference/functions/lookup/xmatch)
+- [MATCH](/docs/reference/functions/lookup/match)
+- [FILTER](/docs/reference/functions/lookup/filter)
 - [VLOOKUP](/docs/reference/functions/lookup/vlookup)
 - [HLOOKUP](/docs/reference/functions/lookup/hlookup)
-- [MATCH](/docs/reference/functions/lookup/match)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+
+## FAQ
+
+### How do match_mode and search_mode interact?
+match_mode controls exact/approximate/wildcard behavior, while search_mode controls scan direction; reverse search (-1) returns the last matching position.
+
+### What happens when no match is found?
+If if_not_found is provided, XLOOKUP returns that value; otherwise it returns #N/A.
+
+### Why do I get #VALUE! from XLOOKUP on valid ranges?
+The lookup_array must be one-dimensional (single row or single column); multi-row-and-column lookup ranges return #VALUE!.
 
 ## Runtime metadata
 

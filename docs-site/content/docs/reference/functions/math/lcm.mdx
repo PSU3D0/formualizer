@@ -48,12 +48,20 @@ description: "LCM: Returns the least common multiple of one or more integers."
 
 ## Related functions
 
+- [GCD](/docs/reference/functions/math/gcd)
+- [MOD](/docs/reference/functions/math/mod)
+- [MROUND](/docs/reference/functions/math/mround)
 - [AVERAGE](/docs/reference/functions/math/average)
 - [CEILING](/docs/reference/functions/math/ceiling)
 - [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
-- [FLOOR](/docs/reference/functions/math/floor)
-- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
-- [GCD](/docs/reference/functions/math/gcd)
+
+## FAQ
+
+### Why does LCM return 0 when one argument is 0?
+LCM is defined as 0 if any truncated input is 0 in this implementation.
+
+### Are fractional inputs accepted?
+Yes, but they are truncated toward zero before the LCM calculation.
 
 ## Runtime metadata
 

@@ -41,12 +41,20 @@ description: "PIVOTBY: Builds a pivot-style summary matrix from row fields, colu
 
 ## Related functions
 
+- [GROUPBY](/docs/reference/functions/lookup/groupby)
+- [SORTBY](/docs/reference/functions/lookup/sortby)
+- [UNIQUE](/docs/reference/functions/lookup/unique)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [GROUPBY](/docs/reference/functions/lookup/groupby)
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
-- [XMATCH](/docs/reference/functions/lookup/xmatch)
-- [DROP](/docs/reference/functions/lookup/drop)
+
+## FAQ
+
+### What rows must align in PIVOTBY inputs?
+row_fields, col_fields, and values must share the same row count; otherwise PIVOTBY returns #VALUE!.
+
+### What value range is currently aggregated?
+Current implementation aggregates using the first value column (and first col_fields column for keys), so extra columns are not yet summarized independently.
 
 ## Runtime metadata
 

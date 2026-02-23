@@ -40,12 +40,20 @@ description: "TAKE: Returns a subset from the start or end of rows and optional 
 
 ## Related functions
 
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 - [DROP](/docs/reference/functions/lookup/drop)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [SORTBY](/docs/reference/functions/lookup/sortby)
 - [XMATCH](/docs/reference/functions/lookup/xmatch)
 - [FILTER](/docs/reference/functions/lookup/filter)
+
+## FAQ
+
+### How are negative rows or columns interpreted?
+Negative counts take from the end of the array, so TAKE(...,-1) returns the last row and TAKE(...,,-1) returns the last column.
+
+### When does TAKE return #VALUE!?
+If the absolute requested row or column count exceeds source dimensions, TAKE returns #VALUE!.
 
 ## Runtime metadata
 

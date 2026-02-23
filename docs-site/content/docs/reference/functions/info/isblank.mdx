@@ -39,12 +39,17 @@ Returns TRUE only for a truly empty value.
 
 ## Related functions
 
+- [ISTEXT](/docs/reference/functions/info/istext)
+- [LEN](/docs/reference/functions/text/len)
+- [T](/docs/reference/functions/info/t)
 - [ERROR.TYPE](/docs/reference/functions/info/error-type)
 - [ISERR](/docs/reference/functions/info/iserr)
 - [ISERROR](/docs/reference/functions/info/iserror)
-- [ISEVEN](/docs/reference/functions/info/iseven)
-- [ISFORMULA](/docs/reference/functions/info/isformula)
-- [ISLOGICAL](/docs/reference/functions/info/islogical)
+
+## FAQ
+
+### Why does ISBLANK("") return FALSE?
+Because an empty string is text, not a truly empty cell value.
 
 ## Runtime metadata
 

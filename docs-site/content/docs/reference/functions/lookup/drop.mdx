@@ -40,12 +40,20 @@ description: "DROP: Removes rows and optional columns from the start or end of a
 
 ## Related functions
 
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [SORTBY](/docs/reference/functions/lookup/sortby)
 - [TAKE](/docs/reference/functions/lookup/take)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [SORTBY](/docs/reference/functions/lookup/sortby)
 - [XMATCH](/docs/reference/functions/lookup/xmatch)
 - [FILTER](/docs/reference/functions/lookup/filter)
+
+## FAQ
+
+### What does a negative drop count mean?
+Negative counts drop from the end, so DROP(array,0,-1) removes the last column and keeps the leading columns.
+
+### What if DROP removes every row or column?
+The result is an empty spill rather than an error when all rows or all columns are removed.
 
 ## Runtime metadata
 

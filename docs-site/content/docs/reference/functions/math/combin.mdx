@@ -48,12 +48,20 @@ description: "Returns the number of combinations for selecting `k` items from `n
 
 ## Related functions
 
+- [PERMUT](/docs/reference/functions/math/permut)
+- [FACT](/docs/reference/functions/math/fact)
 - [ATAN2](/docs/reference/functions/math/atan2)
 - [MOD](/docs/reference/functions/math/mod)
 - [MROUND](/docs/reference/functions/math/mround)
-- [PERMUT](/docs/reference/functions/math/permut)
 - [POWER](/docs/reference/functions/math/power)
-- [QUOTIENT](/docs/reference/functions/math/quotient)
+
+## FAQ
+
+### When does COMBIN return #NUM!?
+It returns #NUM! if n or k is negative, or if k is greater than n after truncation.
+
+### Can COMBIN take non-integer values?
+Yes, but both inputs are truncated toward zero before evaluation.
 
 ## Runtime metadata
 

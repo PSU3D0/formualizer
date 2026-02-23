@@ -39,12 +39,17 @@ Converts text to lowercase.
 
 ## Related functions
 
+- [UPPER](/docs/reference/functions/text/upper)
+- [PROPER](/docs/reference/functions/text/proper)
+- [EXACT](/docs/reference/functions/text/exact)
 - [CHAR](/docs/reference/functions/text/char)
 - [CLEAN](/docs/reference/functions/text/clean)
 - [CODE](/docs/reference/functions/text/code)
-- [LEN](/docs/reference/functions/text/len)
-- [PROPER](/docs/reference/functions/text/proper)
-- [TRIM](/docs/reference/functions/text/trim)
+
+## FAQ
+
+### How are booleans handled by LOWER?
+Inputs are coerced to text first, so TRUE/FALSE become lowercase string values.
 
 ## Runtime metadata
 

@@ -39,12 +39,17 @@ description: "COTH: Returns the hyperbolic cotangent of a number, defined as `CO
 
 ## Related functions
 
+- [TANH](/docs/reference/functions/math/tanh)
+- [CSCH](/docs/reference/functions/math/csch)
+- [SECH](/docs/reference/functions/math/sech)
 - [ACOS](/docs/reference/functions/math/acos)
 - [ACOT](/docs/reference/functions/math/acot)
 - [ASIN](/docs/reference/functions/math/asin)
-- [ASINH](/docs/reference/functions/math/asinh)
-- [ATAN](/docs/reference/functions/math/atan)
-- [COS](/docs/reference/functions/math/cos)
+
+## FAQ
+
+### Why is COTH undefined at zero?
+COTH divides by SINH(x), and SINH(0) is zero, so #DIV/0! is returned.
 
 ## Runtime metadata
 

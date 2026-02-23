@@ -48,12 +48,20 @@ description: "GCD: Returns the greatest common divisor of one or more integers."
 
 ## Related functions
 
+- [LCM](/docs/reference/functions/math/lcm)
+- [MOD](/docs/reference/functions/math/mod)
+- [QUOTIENT](/docs/reference/functions/math/quotient)
 - [AVERAGE](/docs/reference/functions/math/average)
 - [CEILING](/docs/reference/functions/math/ceiling)
 - [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
-- [FLOOR](/docs/reference/functions/math/floor)
-- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
-- [LCM](/docs/reference/functions/math/lcm)
+
+## FAQ
+
+### What happens to decimal inputs in GCD?
+Each argument is truncated toward zero before the divisor is computed.
+
+### When does GCD return #NUM!?
+Negative values or values outside the supported bound return #NUM!.
 
 ## Runtime metadata
 

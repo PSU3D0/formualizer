@@ -41,12 +41,20 @@ description: "Filters rows from an array using a Boolean include mask."
 
 ## Related functions
 
+- [XLOOKUP](/docs/reference/functions/lookup/xlookup)
+- [UNIQUE](/docs/reference/functions/lookup/unique)
+- [SORT](/docs/reference/functions/lookup/sort)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 - [XMATCH](/docs/reference/functions/lookup/xmatch)
-- [DROP](/docs/reference/functions/lookup/drop)
-- [GROUPBY](/docs/reference/functions/lookup/groupby)
-- [HSTACK](/docs/reference/functions/lookup/hstack)
+
+## FAQ
+
+### What happens when include has no TRUE rows?
+FILTER returns if_empty when provided; otherwise it returns #CALC! to signal an empty result set.
+
+### How strict is include shape matching?
+include must match array row count or be a single broadcast row; incompatible dimensions return #VALUE!.
 
 ## Runtime metadata
 

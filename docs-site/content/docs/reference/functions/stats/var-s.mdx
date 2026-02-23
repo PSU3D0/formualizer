@@ -40,11 +40,16 @@ description: "VAR.S: Estimates sample variance using `n-1` in the denominator."
 ## Related functions
 
 - [VAR.P](/docs/reference/functions/stats/var-p)
-- [STDEV.P](/docs/reference/functions/stats/stdev-p)
 - [STDEV.S](/docs/reference/functions/stats/stdev-s)
+- [STDEV.P](/docs/reference/functions/stats/stdev-p)
 - [AVEDEV](/docs/reference/functions/stats/avedev)
 - [DEVSQ](/docs/reference/functions/stats/devsq)
 - [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### Why does VAR.S return #DIV/0!?
+Sample variance requires at least two numeric observations.
 
 ## Runtime metadata
 

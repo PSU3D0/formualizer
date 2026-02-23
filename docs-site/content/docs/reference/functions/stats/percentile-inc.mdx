@@ -41,11 +41,16 @@ description: "PERCENTILE.INC: Returns the k-th percentile of a data set using in
 ## Related functions
 
 - [PERCENTILE.EXC](/docs/reference/functions/stats/percentile-exc)
+- [QUARTILE.INC](/docs/reference/functions/stats/quartile-inc)
+- [PERCENTRANK.INC](/docs/reference/functions/stats/percentrank-inc)
 - [LARGE](/docs/reference/functions/stats/large)
 - [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
-- [PERCENTRANK.INC](/docs/reference/functions/stats/percentrank-inc)
 - [QUARTILE.EXC](/docs/reference/functions/stats/quartile-exc)
-- [QUARTILE.INC](/docs/reference/functions/stats/quartile-inc)
+
+## FAQ
+
+### What k range is valid for PERCENTILE.INC?
+k must be between 0 and 1 inclusive; outside that range returns #NUM!.
 
 ## Runtime metadata
 

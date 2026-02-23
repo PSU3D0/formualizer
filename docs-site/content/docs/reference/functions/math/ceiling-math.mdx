@@ -40,11 +40,16 @@ Rounds a number up to the nearest integer or multiple using `CEILING.MATH` rules
 ## Related functions
 
 - [CEILING](/docs/reference/functions/math/ceiling)
+- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
+- [ROUNDUP](/docs/reference/functions/math/roundup)
 - [AVERAGE](/docs/reference/functions/math/average)
 - [FLOOR](/docs/reference/functions/math/floor)
-- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
 - [GCD](/docs/reference/functions/math/gcd)
-- [LCM](/docs/reference/functions/math/lcm)
+
+## FAQ
+
+### How does mode affect negative numbers in CEILING.MATH?
+With non-zero mode, negatives round away from zero; otherwise they round toward +infinity.
 
 ## Runtime metadata
 

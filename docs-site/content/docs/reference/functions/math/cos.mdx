@@ -38,12 +38,17 @@ Returns the cosine of an angle in radians.
 
 ## Related functions
 
+- [SIN](/docs/reference/functions/math/sin)
+- [TAN](/docs/reference/functions/math/tan)
+- [PI](/docs/reference/functions/math/pi)
 - [ACOS](/docs/reference/functions/math/acos)
 - [ACOT](/docs/reference/functions/math/acot)
 - [ASIN](/docs/reference/functions/math/asin)
-- [ASINH](/docs/reference/functions/math/asinh)
-- [ATAN](/docs/reference/functions/math/atan)
-- [COSH](/docs/reference/functions/math/cosh)
+
+## FAQ
+
+### Why can COS look wrong for degree values like 60?
+COS interprets 60 as radians, not degrees; use COS(RADIANS(60)).
 
 ## Runtime metadata
 

@@ -40,12 +40,20 @@ description: "CHOOSE: Returns one value from a list using a 1-based index."
 
 ## Related functions
 
-- [MATCH](/docs/reference/functions/lookup/match)
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+- [MATCH](/docs/reference/functions/lookup/match)
 - [HLOOKUP](/docs/reference/functions/lookup/hlookup)
 - [VLOOKUP](/docs/reference/functions/lookup/vlookup)
-- [XMATCH](/docs/reference/functions/lookup/xmatch)
+
+## FAQ
+
+### How are decimal index_num values handled?
+The index is truncated toward zero before selection, so CHOOSE(2.9,...) selects the second argument.
+
+### What error do I get for index_num 0 or too large?
+CHOOSE returns #VALUE! when index_num is less than 1 or greater than the number of provided choices.
 
 ## Runtime metadata
 

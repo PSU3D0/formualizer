@@ -42,10 +42,18 @@ description: "HSTACK: Concatenates arrays horizontally into a single spilled arr
 
 - [VSTACK](/docs/reference/functions/lookup/vstack)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [TAKE](/docs/reference/functions/lookup/take)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 - [FILTER](/docs/reference/functions/lookup/filter)
 - [GROUPBY](/docs/reference/functions/lookup/groupby)
-- [PIVOTBY](/docs/reference/functions/lookup/pivotby)
+
+## FAQ
+
+### Why does HSTACK return #VALUE! when combining ranges?
+All non-empty inputs must have identical row counts; mismatched heights produce #VALUE!.
+
+### How are scalar arguments treated in HSTACK?
+Each scalar is treated as a 1x1 block, so it only aligns with other arguments when the target row count is 1.
 
 ## Runtime metadata
 

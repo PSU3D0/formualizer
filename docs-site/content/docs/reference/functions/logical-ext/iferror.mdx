@@ -41,11 +41,16 @@ description: "IFERROR: Returns a fallback when the first expression evaluates to
 ## Related functions
 
 - [IFNA](/docs/reference/functions/logical-ext/ifna)
+- [IF](/docs/reference/functions/logical/if)
+- [ISERROR](/docs/reference/functions/info/iserror)
 - [IFS](/docs/reference/functions/logical-ext/ifs)
 - [NOT](/docs/reference/functions/logical-ext/not)
 - [XOR](/docs/reference/functions/logical-ext/xor)
-- [CHOOSE](/docs/reference/functions/lookup/choose)
-- [IMDIV](/docs/reference/functions/engineering/imdiv)
+
+## FAQ
+
+### Does IFERROR catch all error types?
+Yes. Any error kind in the first argument triggers the fallback value.
 
 ## Runtime metadata
 

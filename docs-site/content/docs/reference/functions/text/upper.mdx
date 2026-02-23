@@ -39,12 +39,17 @@ Converts text to uppercase.
 
 ## Related functions
 
+- [LOWER](/docs/reference/functions/text/lower)
+- [PROPER](/docs/reference/functions/text/proper)
+- [EXACT](/docs/reference/functions/text/exact)
 - [CHAR](/docs/reference/functions/text/char)
 - [CLEAN](/docs/reference/functions/text/clean)
 - [CODE](/docs/reference/functions/text/code)
-- [LEN](/docs/reference/functions/text/len)
-- [LOWER](/docs/reference/functions/text/lower)
-- [PROPER](/docs/reference/functions/text/proper)
+
+## FAQ
+
+### Is uppercasing fully Unicode-aware?
+This implementation uses ASCII uppercasing semantics, so non-ASCII case rules are limited.
 
 ## Runtime metadata
 

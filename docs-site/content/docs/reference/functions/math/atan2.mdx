@@ -38,12 +38,17 @@ Returns the arctangent of `y/x`, preserving quadrant information.
 
 ## Related functions
 
-- [ACOS](/docs/reference/functions/math/acos)
+- [ATAN](/docs/reference/functions/math/atan)
 - [ACOT](/docs/reference/functions/math/acot)
+- [RADIANS](/docs/reference/functions/math/radians)
+- [ACOS](/docs/reference/functions/math/acos)
 - [ASIN](/docs/reference/functions/math/asin)
 - [ASINH](/docs/reference/functions/math/asinh)
-- [ATAN](/docs/reference/functions/math/atan)
-- [COS](/docs/reference/functions/math/cos)
+
+## FAQ
+
+### Why does ATAN2 return #DIV/0! at (0,0)?
+The origin has no defined direction angle, so ATAN2 reports #DIV/0!.
 
 ## Runtime metadata
 

@@ -39,12 +39,17 @@ Rounds a number away from zero to a specified number of digits.
 
 ## Related functions
 
+- [ROUND](/docs/reference/functions/math/round)
+- [ROUNDDOWN](/docs/reference/functions/math/rounddown)
+- [CEILING](/docs/reference/functions/math/ceiling)
 - [ATAN2](/docs/reference/functions/math/atan2)
 - [COMBIN](/docs/reference/functions/math/combin)
 - [MOD](/docs/reference/functions/math/mod)
-- [MROUND](/docs/reference/functions/math/mround)
-- [PERMUT](/docs/reference/functions/math/permut)
-- [POWER](/docs/reference/functions/math/power)
+
+## FAQ
+
+### What does ROUNDUP do when discarded digits are already zero?
+It leaves the value unchanged because no non-zero discarded part remains.
 
 ## Runtime metadata
 

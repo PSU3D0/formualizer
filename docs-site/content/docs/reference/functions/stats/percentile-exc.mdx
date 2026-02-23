@@ -40,11 +40,16 @@ description: "PERCENTILE.EXC: Returns the k-th percentile of a data set using ex
 ## Related functions
 
 - [PERCENTILE.INC](/docs/reference/functions/stats/percentile-inc)
-- [LARGE](/docs/reference/functions/stats/large)
-- [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
-- [PERCENTRANK.INC](/docs/reference/functions/stats/percentrank-inc)
 - [QUARTILE.EXC](/docs/reference/functions/stats/quartile-exc)
+- [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
+- [LARGE](/docs/reference/functions/stats/large)
+- [PERCENTRANK.INC](/docs/reference/functions/stats/percentrank-inc)
 - [QUARTILE.INC](/docs/reference/functions/stats/quartile-inc)
+
+## FAQ
+
+### Why does PERCENTILE.EXC reject k=0 or k=1?
+Exclusive percentile uses the n+1 basis and requires strictly 0 &lt; k &lt; 1.
 
 ## Runtime metadata
 

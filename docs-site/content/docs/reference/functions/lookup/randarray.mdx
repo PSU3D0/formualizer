@@ -40,12 +40,20 @@ description: "RANDARRAY: Generates a random spilled array of numbers."
 
 ## Related functions
 
+- [SEQUENCE](/docs/reference/functions/lookup/sequence)
 - [SORT](/docs/reference/functions/lookup/sort)
+- [UNIQUE](/docs/reference/functions/lookup/unique)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 - [DROP](/docs/reference/functions/lookup/drop)
-- [GROUPBY](/docs/reference/functions/lookup/groupby)
-- [PIVOTBY](/docs/reference/functions/lookup/pivotby)
+
+## FAQ
+
+### Are RANDARRAY bounds inclusive?
+In whole_number mode, min and max are inclusive integer bounds; in decimal mode values are generated over the numeric interval from min toward max.
+
+### Why does RANDARRAY recalculate on every recalc pass?
+RANDARRAY is volatile and non-deterministic by design, so its spilled results are regenerated each evaluation.
 
 ## Runtime metadata
 

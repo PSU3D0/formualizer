@@ -42,12 +42,20 @@ description: "OFFSET: Returns a reference shifted from a starting reference by r
 
 ## Related functions
 
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
 - [INDIRECT](/docs/reference/functions/reference-fns/indirect)
 - [ADDRESS](/docs/reference/functions/lookup/address)
-- [INDEX](/docs/reference/functions/reference-fns/index-fn)
 - [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
 - [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
 - [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
+
+## FAQ
+
+### What defaults are used when height and width are omitted?
+OFFSET keeps the source reference size, then applies the row/column shift to that same-sized block.
+
+### When does OFFSET return #REF!?
+It returns #REF! if the shifted start goes to row/column &lt;= 0 or if requested height/width are non-positive.
 
 ## Runtime metadata
 

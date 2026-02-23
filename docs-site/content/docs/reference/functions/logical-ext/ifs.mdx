@@ -40,12 +40,17 @@ description: "IFS: Returns the value for the first TRUE condition in condition-v
 
 ## Related functions
 
+- [IF](/docs/reference/functions/logical/if)
+- [AND](/docs/reference/functions/logical/and)
+- [OR](/docs/reference/functions/logical/or)
 - [XOR](/docs/reference/functions/logical-ext/xor)
 - [IFERROR](/docs/reference/functions/logical-ext/iferror)
 - [IFNA](/docs/reference/functions/logical-ext/ifna)
-- [NOT](/docs/reference/functions/logical-ext/not)
-- [IF](/docs/reference/functions/logical/if)
-- [AND](/docs/reference/functions/logical/and)
+
+## FAQ
+
+### What errors can IFS return on structure issues?
+Odd argument counts return #VALUE!, and no TRUE condition returns #N/A.
 
 ## Runtime metadata
 

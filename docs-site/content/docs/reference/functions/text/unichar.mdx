@@ -40,12 +40,17 @@ Returns the Unicode character for a given code point.
 
 ## Related functions
 
+- [UNICODE](/docs/reference/functions/text/unicode)
 - [CHAR](/docs/reference/functions/text/char)
-- [CLEAN](/docs/reference/functions/text/clean)
 - [CODE](/docs/reference/functions/text/code)
+- [CLEAN](/docs/reference/functions/text/clean)
 - [LEN](/docs/reference/functions/text/len)
 - [LOWER](/docs/reference/functions/text/lower)
-- [PROPER](/docs/reference/functions/text/proper)
+
+## FAQ
+
+### Which code points are invalid?
+0, surrogate values, and anything above 0x10FFFF return #VALUE!.
 
 ## Runtime metadata
 

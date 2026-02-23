@@ -40,12 +40,20 @@ description: "Returns the number of rows in a reference or array."
 
 ## Related functions
 
+- [ROW](/docs/reference/functions/lookup/row)
 - [COLUMNS](/docs/reference/functions/lookup/columns)
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
 - [TRANSPOSE](/docs/reference/functions/lookup/transpose)
 - [CHOOSE](/docs/reference/functions/lookup/choose)
 - [HLOOKUP](/docs/reference/functions/lookup/hlookup)
-- [HSTACK](/docs/reference/functions/lookup/hstack)
-- [MATCH](/docs/reference/functions/lookup/match)
+
+## FAQ
+
+### Does ROWS count populated rows or reference height?
+ROWS returns reference height only; blanks inside the range do not reduce the count.
+
+### How does ROWS behave for full-column references?
+A full-column reference (like A:A) returns the sheet row limit, 1048576.
 
 ## Runtime metadata
 

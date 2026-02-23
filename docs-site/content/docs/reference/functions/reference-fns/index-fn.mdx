@@ -42,12 +42,20 @@ description: "INDEX: Returns the value or reference at a 1-based row and column 
 
 ## Related functions
 
-- [INDIRECT](/docs/reference/functions/reference-fns/indirect)
-- [OFFSET](/docs/reference/functions/reference-fns/offset)
 - [MATCH](/docs/reference/functions/lookup/match)
+- [XLOOKUP](/docs/reference/functions/lookup/xlookup)
+- [OFFSET](/docs/reference/functions/reference-fns/offset)
+- [INDIRECT](/docs/reference/functions/reference-fns/indirect)
 - [TEXTAFTER](/docs/reference/functions/text/textafter)
 - [TEXTBEFORE](/docs/reference/functions/text/textbefore)
-- [CHOOSE](/docs/reference/functions/lookup/choose)
+
+## FAQ
+
+### How does INDEX behave when column_num is omitted?
+For 1D arrays, row_num selects the position along that vector; for 2D arrays, omitted column_num defaults to the first column.
+
+### Which errors indicate bad indexes?
+Non-numeric index arguments return #VALUE!, while 0/negative or out-of-bounds indexes return #REF!.
 
 ## Runtime metadata
 

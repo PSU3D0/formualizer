@@ -39,12 +39,17 @@ description: "HARMEAN: Returns the harmonic mean of positive numeric values."
 
 ## Related functions
 
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [PRODUCT](/docs/reference/functions/stats/product)
 - [AVEDEV](/docs/reference/functions/stats/avedev)
 - [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
 - [KURT](/docs/reference/functions/stats/kurt)
-- [MEDIAN](/docs/reference/functions/stats/median)
-- [MODE.MULT](/docs/reference/functions/stats/mode-mult)
+
+## FAQ
+
+### Why does HARMEAN fail on zeros?
+Harmonic mean uses reciprocals, so inputs must be strictly positive.
 
 ## Runtime metadata
 

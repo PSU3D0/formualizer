@@ -39,12 +39,17 @@ Truncates a number toward zero, optionally at a specified digit position.
 
 ## Related functions
 
+- [INT](/docs/reference/functions/math/int)
+- [ROUND](/docs/reference/functions/math/round)
+- [ROUNDDOWN](/docs/reference/functions/math/rounddown)
 - [AVERAGE](/docs/reference/functions/math/average)
 - [CEILING](/docs/reference/functions/math/ceiling)
 - [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
-- [FLOOR](/docs/reference/functions/math/floor)
-- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
-- [GCD](/docs/reference/functions/math/gcd)
+
+## FAQ
+
+### How does TRUNC differ from INT for negative numbers?
+TRUNC removes digits toward zero, while INT floors toward negative infinity.
 
 ## Runtime metadata
 

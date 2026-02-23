@@ -48,12 +48,20 @@ description: "COUNTA: Counts non-empty cells and scalar arguments."
 
 ## Related functions
 
+- [COUNT](/docs/reference/functions/math/count)
 - [COUNTBLANK](/docs/reference/functions/math/countblank)
+- [COUNTIF](/docs/reference/functions/math/countif)
 - [AVERAGE](/docs/reference/functions/math/average)
 - [AVERAGEIF](/docs/reference/functions/math/averageif)
 - [AVERAGEIFS](/docs/reference/functions/math/averageifs)
-- [COUNTIFS](/docs/reference/functions/math/countifs)
-- [MAX](/docs/reference/functions/math/max)
+
+## FAQ
+
+### Does COUNTA count empty-string results like ""?
+Yes. Empty text is counted as non-empty by COUNTA.
+
+### Are error values counted?
+Yes. Errors are considered populated values and increase the count.
 
 ## Runtime metadata
 

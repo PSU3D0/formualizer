@@ -46,6 +46,14 @@ description: "SUM: Adds numeric values across scalars and ranges."
 - [COUNT](/docs/reference/functions/math/count)
 - [AVERAGEIF](/docs/reference/functions/math/averageif)
 
+## FAQ
+
+### Why does SUM return #VALUE! for some text arguments?
+Direct scalar text that cannot be parsed as a number raises #VALUE! during coercion.
+
+### Do text and logical values inside ranges get added?
+No. In ranged inputs, only numeric cells contribute to the total.
+
 ## Runtime metadata
 
 {/* [formualizer-docgen:function-meta:start] */}

@@ -39,12 +39,17 @@ Returns TRUE when the value is a boolean.
 
 ## Related functions
 
+- [TRUE](/docs/reference/functions/logical/true)
+- [FALSE](/docs/reference/functions/logical/false)
+- [TYPE](/docs/reference/functions/info/type)
 - [ERROR.TYPE](/docs/reference/functions/info/error-type)
 - [ISBLANK](/docs/reference/functions/info/isblank)
 - [ISERR](/docs/reference/functions/info/iserr)
-- [ISERROR](/docs/reference/functions/info/iserror)
-- [ISEVEN](/docs/reference/functions/info/iseven)
-- [ISFORMULA](/docs/reference/functions/info/isformula)
+
+## FAQ
+
+### Do truthy numbers count as logical values?
+No. ISLOGICAL returns TRUE only for actual boolean TRUE/FALSE values.
 
 ## Runtime metadata
 

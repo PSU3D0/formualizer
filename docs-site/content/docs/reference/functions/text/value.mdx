@@ -40,12 +40,17 @@ Converts text that represents a number into a numeric value.
 
 ## Related functions
 
+- [TEXT](/docs/reference/functions/text/text)
+- [N](/docs/reference/functions/info/n)
+- [ISNUMBER](/docs/reference/functions/info/isnumber)
 - [CHAR](/docs/reference/functions/text/char)
 - [CLEAN](/docs/reference/functions/text/clean)
 - [CODE](/docs/reference/functions/text/code)
-- [LEN](/docs/reference/functions/text/len)
-- [LOWER](/docs/reference/functions/text/lower)
-- [PROPER](/docs/reference/functions/text/proper)
+
+## FAQ
+
+### Does VALUE coerce arbitrary text like TRUE/FALSE?
+VALUE parses numeric text only; non-numeric strings return #VALUE!.
 
 ## Runtime metadata
 

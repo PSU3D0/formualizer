@@ -42,11 +42,19 @@ description: "CHOOSEROWS: Returns selected rows from an array or range."
 ## Related functions
 
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [TAKE](/docs/reference/functions/lookup/take)
+- [DROP](/docs/reference/functions/lookup/drop)
 - [XMATCH](/docs/reference/functions/lookup/xmatch)
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
-- [DROP](/docs/reference/functions/lookup/drop)
 - [FILTER](/docs/reference/functions/lookup/filter)
-- [GROUPBY](/docs/reference/functions/lookup/groupby)
+
+## FAQ
+
+### Can I return rows in a custom order?
+Yes. CHOOSEROWS returns rows in the exact order of the supplied indexes, and repeated indexes duplicate rows.
+
+### When does CHOOSEROWS return #VALUE!?
+It returns #VALUE! for index 0 and for row indexes outside the source height after applying negative-index conversion.
 
 ## Runtime metadata
 

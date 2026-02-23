@@ -48,12 +48,20 @@ description: "AVERAGEIFS: Returns the average of cells that satisfy multiple cri
 
 ## Related functions
 
-- [SUMIFS](/docs/reference/functions/math/sumifs)
 - [AVERAGEIF](/docs/reference/functions/math/averageif)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
 - [COUNTIFS](/docs/reference/functions/math/countifs)
 - [SUMIF](/docs/reference/functions/math/sumif)
 - [SUM](/docs/reference/functions/math/sum)
-- [COUNTIF](/docs/reference/functions/math/countif)
+
+## FAQ
+
+### When does AVERAGEIFS return #DIV/0!?
+It returns #DIV/0! when no matching numeric cells are available to average.
+
+### Do non-numeric matched cells count in the average?
+No. Only numeric target cells contribute to sum and count.
 
 ## Runtime metadata
 

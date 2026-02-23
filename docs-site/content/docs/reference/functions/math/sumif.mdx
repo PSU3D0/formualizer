@@ -48,12 +48,20 @@ description: "SUMIF: Adds values that satisfy a single criterion."
 
 ## Related functions
 
+- [SUM](/docs/reference/functions/math/sum)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
+- [COUNTIF](/docs/reference/functions/math/countif)
 - [AVERAGEIF](/docs/reference/functions/math/averageif)
 - [COUNTIFS](/docs/reference/functions/math/countifs)
 - [AVERAGEIFS](/docs/reference/functions/math/averageifs)
-- [SUMIFS](/docs/reference/functions/math/sumifs)
-- [COUNTIF](/docs/reference/functions/math/countif)
-- [SUM](/docs/reference/functions/math/sum)
+
+## FAQ
+
+### What happens when matching cells are non-numeric in SUMIF?
+They contribute 0 to the sum target after coercion logic.
+
+### Can SUMIF use wildcard criteria like * and ??
+Yes. Text criteria support wildcard matching semantics.
 
 ## Runtime metadata
 

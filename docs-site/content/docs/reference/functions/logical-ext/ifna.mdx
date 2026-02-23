@@ -41,11 +41,16 @@ description: "IFNA: Returns a fallback only when the first expression is `#N/A`.
 ## Related functions
 
 - [IFERROR](/docs/reference/functions/logical-ext/iferror)
+- [ISNA](/docs/reference/functions/info/isna)
+- [NA](/docs/reference/functions/info/na)
 - [IFS](/docs/reference/functions/logical-ext/ifs)
 - [NOT](/docs/reference/functions/logical-ext/not)
 - [XOR](/docs/reference/functions/logical-ext/xor)
-- [CHOOSE](/docs/reference/functions/lookup/choose)
-- [IMDIV](/docs/reference/functions/engineering/imdiv)
+
+## FAQ
+
+### Which errors does IFNA intercept?
+Only #N/A is intercepted; all other errors pass through unchanged.
 
 ## Runtime metadata
 

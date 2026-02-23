@@ -39,12 +39,17 @@ description: "Returns the cotangent of an angle, defined as `1 / TAN(angle)`."
 
 ## Related functions
 
+- [TAN](/docs/reference/functions/math/tan)
+- [SEC](/docs/reference/functions/math/sec)
+- [CSC](/docs/reference/functions/math/csc)
 - [ACOS](/docs/reference/functions/math/acos)
 - [ACOT](/docs/reference/functions/math/acot)
 - [ASIN](/docs/reference/functions/math/asin)
-- [ASINH](/docs/reference/functions/math/asinh)
-- [ATAN](/docs/reference/functions/math/atan)
-- [COS](/docs/reference/functions/math/cos)
+
+## FAQ
+
+### Why is COT undefined at integer multiples of PI()?
+At those points TAN is zero, so 1/TAN triggers a #DIV/0! condition.
 
 ## Runtime metadata
 

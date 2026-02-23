@@ -49,6 +49,14 @@ description: "VLOOKUP: Looks up a value in the first column of a table and retur
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 
+## FAQ
+
+### What is the default behavior when range_lookup is omitted?
+This engine defaults range_lookup to FALSE, so VLOOKUP performs exact matching unless TRUE is explicitly provided.
+
+### What happens if col_index_num points outside the table?
+A numeric out-of-range column index returns #REF!, while a non-numeric col_index_num returns #VALUE!.
+
 ## Runtime metadata
 
 {/* [formualizer-docgen:function-meta:start] */}

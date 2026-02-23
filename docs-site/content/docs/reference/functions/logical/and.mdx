@@ -47,6 +47,11 @@ description: "AND: Returns TRUE only when all supplied values evaluate to TRUE."
 - [FALSE](/docs/reference/functions/logical/false)
 - [TRUE](/docs/reference/functions/logical/true)
 
+## FAQ
+
+### What happens with blanks and text in AND?
+Blank values evaluate as FALSE; non-coercible text yields #VALUE! unless a prior FALSE short-circuits.
+
 ## Runtime metadata
 
 {/* [formualizer-docgen:function-meta:start] */}

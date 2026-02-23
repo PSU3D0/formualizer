@@ -49,11 +49,19 @@ description: "COUNTBLANK: Counts blank cells, including empty-string text result
 ## Related functions
 
 - [COUNTA](/docs/reference/functions/math/counta)
+- [COUNT](/docs/reference/functions/math/count)
+- [COUNTIF](/docs/reference/functions/math/countif)
 - [AVERAGE](/docs/reference/functions/math/average)
 - [AVERAGEIF](/docs/reference/functions/math/averageif)
 - [AVERAGEIFS](/docs/reference/functions/math/averageifs)
-- [COUNTIFS](/docs/reference/functions/math/countifs)
-- [MAX](/docs/reference/functions/math/max)
+
+## FAQ
+
+### Does COUNTBLANK include cells that contain ""?
+Yes. Empty-string text values are treated as blank for COUNTBLANK.
+
+### Are numeric zeros considered blank?
+No. Zero is a numeric value, so it is not counted as blank.
 
 ## Runtime metadata
 

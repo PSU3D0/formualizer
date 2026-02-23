@@ -40,12 +40,20 @@ description: "Returns the row number of a reference, or of the current cell when
 
 ## Related functions
 
+- [ROWS](/docs/reference/functions/lookup/rows)
 - [COLUMN](/docs/reference/functions/lookup/column)
+- [ADDRESS](/docs/reference/functions/lookup/address)
 - [TRANSPOSE](/docs/reference/functions/lookup/transpose)
 - [COLUMNS](/docs/reference/functions/lookup/columns)
-- [ROWS](/docs/reference/functions/lookup/rows)
-- [ADDRESS](/docs/reference/functions/lookup/address)
 - [CHOOSE](/docs/reference/functions/lookup/choose)
+
+## FAQ
+
+### What does ROW return for a multi-cell reference?
+ROW returns the first row index of the reference, not an array of every row number.
+
+### What if ROW() is called without arguments?
+It uses the formula cell position; if no current cell context exists, it returns #VALUE!.
 
 ## Runtime metadata
 

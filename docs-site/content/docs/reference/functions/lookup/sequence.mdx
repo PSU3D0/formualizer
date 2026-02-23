@@ -40,12 +40,20 @@ description: "SEQUENCE: Generates a sequential numeric array with configurable s
 
 ## Related functions
 
+- [RANDARRAY](/docs/reference/functions/lookup/randarray)
+- [TAKE](/docs/reference/functions/lookup/take)
+- [DROP](/docs/reference/functions/lookup/drop)
 - [SORT](/docs/reference/functions/lookup/sort)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [DROP](/docs/reference/functions/lookup/drop)
-- [GROUPBY](/docs/reference/functions/lookup/groupby)
-- [HSTACK](/docs/reference/functions/lookup/hstack)
+
+## FAQ
+
+### What input values are invalid for SEQUENCE?
+rows and columns must be positive numbers; zero or negative sizes return #VALUE!.
+
+### Does SEQUENCE fill by rows or by columns first?
+SEQUENCE fills row-by-row across columns, then continues on the next row using the same step increment.
 
 ## Runtime metadata
 

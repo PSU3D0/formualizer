@@ -43,10 +43,18 @@ description: "XMATCH: Returns the 1-based position of a value in a one-dimension
 
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
 - [MATCH](/docs/reference/functions/lookup/match)
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
 - [VLOOKUP](/docs/reference/functions/lookup/vlookup)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [DROP](/docs/reference/functions/lookup/drop)
+
+## FAQ
+
+### How do search_mode values affect duplicate matches?
+search_mode=1 returns the first qualifying match, while search_mode=-1 scans from the end and returns the last qualifying match.
+
+### When do binary-intent search modes (2 or -2) return #N/A?
+For approximate modes they require sorted data in the expected direction; unsorted arrays are treated as no valid match and return #N/A.
 
 ## Runtime metadata
 

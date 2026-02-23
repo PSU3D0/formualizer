@@ -39,12 +39,17 @@ description: "GEOMEAN: Returns the geometric mean of positive numeric values."
 
 ## Related functions
 
+- [HARMEAN](/docs/reference/functions/stats/harmean)
+- [PRODUCT](/docs/reference/functions/stats/product)
+- [AVERAGE](/docs/reference/functions/math/average)
 - [AVEDEV](/docs/reference/functions/stats/avedev)
 - [DEVSQ](/docs/reference/functions/stats/devsq)
-- [HARMEAN](/docs/reference/functions/stats/harmean)
 - [KURT](/docs/reference/functions/stats/kurt)
-- [MEDIAN](/docs/reference/functions/stats/median)
-- [MODE.MULT](/docs/reference/functions/stats/mode-mult)
+
+## FAQ
+
+### When does GEOMEAN return #NUM!?
+GEOMEAN returns #NUM! if any numeric value is &lt;= 0 or if no numeric values exist.
 
 ## Runtime metadata
 

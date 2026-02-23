@@ -41,11 +41,19 @@ description: "VSTACK: Concatenates arrays vertically into a single spilled array
 ## Related functions
 
 - [HSTACK](/docs/reference/functions/lookup/hstack)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+- [DROP](/docs/reference/functions/lookup/drop)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [FILTER](/docs/reference/functions/lookup/filter)
 - [GROUPBY](/docs/reference/functions/lookup/groupby)
-- [PIVOTBY](/docs/reference/functions/lookup/pivotby)
+
+## FAQ
+
+### When does VSTACK return #VALUE!?
+VSTACK requires matching column counts across non-empty range arguments; differing widths return #VALUE!.
+
+### What happens if all VSTACK inputs are empty ranges?
+Empty inputs are skipped, and if every argument is empty the function returns an empty spill.
 
 ## Runtime metadata
 

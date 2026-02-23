@@ -42,11 +42,19 @@ description: "CHOOSECOLS: Returns selected columns from an array or range."
 ## Related functions
 
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+- [TAKE](/docs/reference/functions/lookup/take)
+- [DROP](/docs/reference/functions/lookup/drop)
 - [XMATCH](/docs/reference/functions/lookup/xmatch)
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
-- [DROP](/docs/reference/functions/lookup/drop)
 - [FILTER](/docs/reference/functions/lookup/filter)
-- [GROUPBY](/docs/reference/functions/lookup/groupby)
+
+## FAQ
+
+### How do negative column indexes work?
+Negative indexes count from the right edge of the array, so -1 selects the last column, -2 the second-to-last, and so on.
+
+### What triggers #VALUE! in CHOOSECOLS?
+Index 0 and any index whose absolute position falls outside the source width return #VALUE!.
 
 ## Runtime metadata
 

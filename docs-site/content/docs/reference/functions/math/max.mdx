@@ -49,12 +49,20 @@ description: "MAX: Returns the largest numeric value from one or more arguments.
 
 ## Related functions
 
-- [MAXIFS](/docs/reference/functions/stats/maxifs)
 - [MIN](/docs/reference/functions/math/min)
+- [LARGE](/docs/reference/functions/stats/large)
+- [SMALL](/docs/reference/functions/stats/small)
+- [MAXIFS](/docs/reference/functions/stats/maxifs)
 - [AVERAGE](/docs/reference/functions/math/average)
 - [SUMSQ](/docs/reference/functions/math/sumsq)
-- [COUNT](/docs/reference/functions/math/count)
-- [SUM](/docs/reference/functions/math/sum)
+
+## FAQ
+
+### Why can MAX return 0 for non-numeric input sets?
+When no numeric values are found, MAX returns 0 by design.
+
+### Does MAX evaluate scalar text arguments?
+Yes, but only when scalar text can be coerced to a numeric value.
 
 ## Runtime metadata
 

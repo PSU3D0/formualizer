@@ -40,11 +40,16 @@ This implementation defaults significance to `1` and normalizes negative signifi
 ## Related functions
 
 - [FLOOR.MATH](/docs/reference/functions/math/floor-math)
-- [AVERAGE](/docs/reference/functions/math/average)
 - [CEILING](/docs/reference/functions/math/ceiling)
+- [ROUNDDOWN](/docs/reference/functions/math/rounddown)
+- [AVERAGE](/docs/reference/functions/math/average)
 - [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
 - [GCD](/docs/reference/functions/math/gcd)
-- [LCM](/docs/reference/functions/math/lcm)
+
+## FAQ
+
+### Why does FLOOR move negative values farther from zero?
+FLOOR rounds down to a lower multiple, which is more negative for negative inputs.
 
 ## Runtime metadata
 

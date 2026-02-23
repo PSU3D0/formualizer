@@ -48,12 +48,20 @@ description: "Returns the factorial of a non-negative integer."
 
 ## Related functions
 
+- [COMBIN](/docs/reference/functions/math/combin)
 - [ABS](/docs/reference/functions/math/abs)
 - [ACOS](/docs/reference/functions/math/acos)
 - [ACOT](/docs/reference/functions/math/acot)
 - [ASIN](/docs/reference/functions/math/asin)
 - [ASINH](/docs/reference/functions/math/asinh)
-- [ATAN](/docs/reference/functions/math/atan)
+
+## FAQ
+
+### Why does FACT(171) return #NUM!?
+Excel-compatible factorial support is capped at 170!; larger values overflow and return #NUM!.
+
+### Does FACT round fractional inputs?
+No. It truncates toward zero before computing the factorial.
 
 ## Runtime metadata
 

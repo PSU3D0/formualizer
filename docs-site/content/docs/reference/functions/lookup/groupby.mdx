@@ -41,12 +41,20 @@ description: "GROUPBY: Groups rows by key fields and returns aggregated values a
 
 ## Related functions
 
+- [PIVOTBY](/docs/reference/functions/lookup/pivotby)
+- [SORTBY](/docs/reference/functions/lookup/sortby)
+- [UNIQUE](/docs/reference/functions/lookup/unique)
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [PIVOTBY](/docs/reference/functions/lookup/pivotby)
-- [XMATCH](/docs/reference/functions/lookup/xmatch)
-- [DROP](/docs/reference/functions/lookup/drop)
+
+## FAQ
+
+### What shape constraints does GROUPBY enforce?
+row_fields and values must have the same number of rows; mismatched heights return #VALUE!.
+
+### Can the aggregation function be numeric instead of text?
+Yes. GROUPBY accepts either function names (like "SUM") or numeric function codes, and invalid entries return #VALUE!.
 
 ## Runtime metadata
 

@@ -40,12 +40,20 @@ description: "Returns the number of columns in a reference or array."
 
 ## Related functions
 
+- [COLUMN](/docs/reference/functions/lookup/column)
 - [ROWS](/docs/reference/functions/lookup/rows)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [TRANSPOSE](/docs/reference/functions/lookup/transpose)
 - [CHOOSE](/docs/reference/functions/lookup/choose)
 - [HLOOKUP](/docs/reference/functions/lookup/hlookup)
-- [HSTACK](/docs/reference/functions/lookup/hstack)
-- [MATCH](/docs/reference/functions/lookup/match)
+
+## FAQ
+
+### Does COLUMNS count non-empty cells?
+No. COLUMNS returns the width of the referenced array/range, including blank cells.
+
+### What does COLUMNS return for a full-row reference like 1:1?
+It returns the sheet column limit, 16384.
 
 ## Runtime metadata
 

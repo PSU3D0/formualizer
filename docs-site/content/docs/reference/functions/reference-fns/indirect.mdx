@@ -41,12 +41,20 @@ description: "INDIRECT: Converts text into a reference and returns the reference
 
 ## Related functions
 
-- [OFFSET](/docs/reference/functions/reference-fns/offset)
 - [ADDRESS](/docs/reference/functions/lookup/address)
 - [INDEX](/docs/reference/functions/reference-fns/index-fn)
+- [OFFSET](/docs/reference/functions/reference-fns/offset)
 - [FIXED](/docs/reference/functions/text/fixed)
 - [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
 - [DOLLAR](/docs/reference/functions/text/dollar)
+
+## FAQ
+
+### What happens if a1_style is FALSE?
+R1C1 parsing is not implemented here yet, so INDIRECT(...,FALSE) returns #N/IMPL!.
+
+### How are bad reference strings reported?
+If the text cannot be parsed or resolved to a valid reference, INDIRECT returns #REF!.
 
 ## Runtime metadata
 

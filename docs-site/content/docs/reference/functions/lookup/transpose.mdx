@@ -39,12 +39,20 @@ description: "TRANSPOSE: Swaps rows and columns in an input range."
 
 ## Related functions
 
+- [TAKE](/docs/reference/functions/lookup/take)
+- [DROP](/docs/reference/functions/lookup/drop)
+- [HSTACK](/docs/reference/functions/lookup/hstack)
 - [COLUMN](/docs/reference/functions/lookup/column)
 - [COLUMNS](/docs/reference/functions/lookup/columns)
 - [ROW](/docs/reference/functions/lookup/row)
-- [ROWS](/docs/reference/functions/lookup/rows)
-- [HSTACK](/docs/reference/functions/lookup/hstack)
-- [SORT](/docs/reference/functions/lookup/sort)
+
+## FAQ
+
+### What happens to errors inside the source array?
+TRANSPOSE preserves error values and only changes their position in the output matrix.
+
+### Does TRANSPOSE return a scalar for 1x1 inputs?
+Yes. After transposition, a 1x1 result collapses to a scalar in this engine.
 
 ## Runtime metadata
 

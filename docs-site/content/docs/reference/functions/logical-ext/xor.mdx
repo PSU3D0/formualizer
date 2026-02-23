@@ -40,12 +40,17 @@ description: "XOR: Returns TRUE when an odd number of arguments evaluate to TRUE
 
 ## Related functions
 
-- [IFS](/docs/reference/functions/logical-ext/ifs)
-- [NOT](/docs/reference/functions/logical-ext/not)
-- [IFERROR](/docs/reference/functions/logical-ext/iferror)
-- [IFNA](/docs/reference/functions/logical-ext/ifna)
 - [AND](/docs/reference/functions/logical/and)
 - [OR](/docs/reference/functions/logical/or)
+- [NOT](/docs/reference/functions/logical-ext/not)
+- [IFS](/docs/reference/functions/logical-ext/ifs)
+- [IFERROR](/docs/reference/functions/logical-ext/iferror)
+- [IFNA](/docs/reference/functions/logical-ext/ifna)
+
+## FAQ
+
+### What determines XOR's final result?
+XOR returns TRUE when the count of truthy inputs is odd; blanks are ignored.
 
 ## Runtime metadata
 

@@ -49,12 +49,20 @@ description: "AVERAGEIF: Returns the average of cells that satisfy a single crit
 
 ## Related functions
 
-- [COUNTIFS](/docs/reference/functions/math/countifs)
-- [SUMIF](/docs/reference/functions/math/sumif)
+- [AVERAGE](/docs/reference/functions/math/average)
 - [AVERAGEIFS](/docs/reference/functions/math/averageifs)
-- [SUMIFS](/docs/reference/functions/math/sumifs)
+- [SUMIF](/docs/reference/functions/math/sumif)
 - [COUNTIF](/docs/reference/functions/math/countif)
-- [SUM](/docs/reference/functions/math/sum)
+- [COUNTIFS](/docs/reference/functions/math/countifs)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
+
+## FAQ
+
+### When does AVERAGEIF return #DIV/0!?
+It returns #DIV/0! when no matching cells contribute numeric values.
+
+### If average_range is omitted, what gets averaged?
+The function averages matching numeric cells from the criteria range itself.
 
 ## Runtime metadata
 

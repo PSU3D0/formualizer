@@ -40,11 +40,16 @@ Use `MODE.MULT` when a data set can have multiple values with the same highest f
 ## Related functions
 
 - [MODE.SNGL](/docs/reference/functions/stats/mode-sngl)
+- [FREQUENCY](/docs/reference/functions/stats/frequency)
+- [MEDIAN](/docs/reference/functions/stats/median)
 - [AVEDEV](/docs/reference/functions/stats/avedev)
 - [DEVSQ](/docs/reference/functions/stats/devsq)
 - [GEOMEAN](/docs/reference/functions/stats/geomean)
-- [HARMEAN](/docs/reference/functions/stats/harmean)
-- [KURT](/docs/reference/functions/stats/kurt)
+
+## FAQ
+
+### Why can MODE.MULT return an array result?
+It emits every value tied for highest frequency as separate rows.
 
 ## Runtime metadata
 
