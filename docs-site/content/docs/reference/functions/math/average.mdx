@@ -5,20 +5,49 @@ description: "Returns the arithmetic mean of numeric values across scalars and r
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`AVERAGE` sums numeric inputs and divides by the count of numeric values that participated.
 
-## returns: 2
- =AVERAGE(1,2,3)
- ```
+## Remarks
+ - Errors in any scalar argument or referenced range propagate immediately.
+ - In ranges, only numeric/date-time serial values are included; text and blanks are ignored.
+ - Scalar arguments use lenient number coercion with locale support.
+ - If no numeric values are found, `AVERAGE` returns `#DIV/0!`.
 
-## Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
- ```
+## Examples
 
-## Formula example
+<Tabs items={[
+  'Average of scalar values',
+  'Average over a mixed range',
+  'No numeric values returns divide-by-zero',
+]}>
+<Tab value="Average of scalar values">
+<FunctionSandbox
+  title="Average of scalar values"
+  formula={`=AVERAGE(10, 20, 5)`}
+  grid={{}}
+  expected={"11.666666666666666"}
+/>
+</Tab>
 
-```text
-=AVERAGE(A1)
-```
+<Tab value="Average over a mixed range">
+<FunctionSandbox
+  title="Average over a mixed range"
+  formula={`=AVERAGE(A1:A3)`}
+  grid={{"A1":"10","A2":"x","A3":"20"}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="No numeric values returns divide-by-zero">
+<FunctionSandbox
+  title="No numeric values returns divide-by-zero"
+  formula={`=AVERAGE("x", "")`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

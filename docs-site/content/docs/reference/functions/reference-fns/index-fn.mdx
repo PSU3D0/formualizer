@@ -1,17 +1,45 @@
 ---
 title: "INDEX"
-description: "Reference for the INDEX function."
+description: "Returns the value or reference at a 1-based row and column within an array or range."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`INDEX` can operate on both references and array literals. When the first argument is
+ a reference, this implementation resolves a referenced cell and materializes its value in
+ value context.
 
-## Formula example
+## Remarks
+ - Indexing is 1-based for both `row_num` and `column_num`.
+ - If `column_num` is omitted for a 1D array, `row_num` selects the position in that vector.
+ - `row_num <= 0`, `column_num <= 0`, or out-of-bounds indexes return `#REF!`.
+ - Non-numeric index arguments return `#VALUE!`.
 
-```text
-=INDEX(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Pick a value from a 2D table',
+  'Index into a 1D vector',
+]}>
+<Tab value="Pick a value from a 2D table">
+<FunctionSandbox
+  title="Pick a value from a 2D table"
+  formula={`=INDEX(A1:B3,3,2)`}
+  grid={{"A1":"Item","A2":"Pen","A3":"Book","B1":"Price","B2":"2.5","B3":"8"}}
+  expected={"8"}
+/>
+</Tab>
+
+<Tab value="Index into a 1D vector">
+<FunctionSandbox
+  title="Index into a 1D vector"
+  formula={`=INDEX(A1:A3,2)`}
+  grid={{"A1":"Q1","A2":"Q2","A3":"Q3"}}
+  expected={"Q2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,52 @@
 ---
 title: "COUNTA"
-description: "Reference for the COUNTA function."
+description: "Counts non-empty cells and scalar arguments."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`COUNTA` counts any value except true empty cells.
 
-## Formula example
+## Remarks
+ - Numbers, text, booleans, and errors all count.
+ - Empty string values (`""`) are counted as non-empty.
+ - Truly empty cells are the only values excluded.
 
-```text
-=COUNTA(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Count mixed populated values',
+  'Range count excludes only true blanks',
+  'Errors are counted',
+]}>
+<Tab value="Count mixed populated values">
+<FunctionSandbox
+  title="Count mixed populated values"
+  formula={`=COUNTA(1, "x", TRUE, "")`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Range count excludes only true blanks">
+<FunctionSandbox
+  title="Range count excludes only true blanks"
+  formula={`=COUNTA(A1:A3)`}
+  grid={{"A1":"10","A2":""}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Errors are counted">
+<FunctionSandbox
+  title="Errors are counted"
+  formula={`=COUNTA(1/0, 5)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

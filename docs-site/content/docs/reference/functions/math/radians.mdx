@@ -1,17 +1,41 @@
 ---
 title: "RADIANS"
-description: "Reference for the RADIANS function."
+description: "Converts an angle from degrees to radians."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Use this before trigonometric functions when your source angle is in degrees.
+ - Output is `degrees * PI() / 180`.
 
-```text
-=RADIANS(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Convert 180°',
+  'Convert 45°',
+]}>
+<Tab value="Convert 180°">
+<FunctionSandbox
+  title="Convert 180°"
+  formula={`=RADIANS(180)`}
+  grid={{}}
+  expected={"3.141592653589793"}
+/>
+</Tab>
+
+<Tab value="Convert 45°">
+<FunctionSandbox
+  title="Convert 45°"
+  formula={`=RADIANS(45)`}
+  grid={{}}
+  expected={"0.7853981633974483"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

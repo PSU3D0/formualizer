@@ -1,17 +1,43 @@
 ---
 title: "NOT"
-description: "Reference for the NOT function."
+description: "Reverses the logical value of its argument."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`NOT` converts the input to a logical value, then flips it.
 
-## Formula example
+## Remarks
+ - Numbers are coerced (`0` -> TRUE after inversion, non-zero -> FALSE after inversion).
+ - Blank values are treated as FALSE, so `NOT(blank)` returns TRUE.
+ - Text and other non-coercible values return `#VALUE!`.
+ - Errors are propagated unchanged.
 
-```text
-=NOT(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Invert boolean',
+  'Invert numeric truthiness',
+]}>
+<Tab value="Invert boolean">
+<FunctionSandbox
+  title="Invert boolean"
+  formula={`=NOT(TRUE)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+<Tab value="Invert numeric truthiness">
+<FunctionSandbox
+  title="Invert numeric truthiness"
+  formula={`=NOT(0)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

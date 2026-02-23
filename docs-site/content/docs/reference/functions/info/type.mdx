@@ -1,17 +1,42 @@
 ---
 title: "TYPE"
-description: "Reference for the TYPE function."
+description: "Returns an Excel TYPE code describing the value category."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Codes: `1` number, `2` text, `4` logical, `64` array.
+ - Errors are propagated unchanged instead of returning `16`.
+ - Blank values map to numeric code `1` in this implementation.
 
-```text
-=TYPE(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Text type code',
+  'Boolean type code',
+]}>
+<Tab value="Text type code">
+<FunctionSandbox
+  title="Text type code"
+  formula={`=TYPE("abc")`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Boolean type code">
+<FunctionSandbox
+  title="Boolean type code"
+  formula={`=TYPE(TRUE)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,43 @@
 ---
 title: "FIXED"
-description: "Reference for the FIXED function."
+description: "Formats a number as text with fixed decimal places."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Default decimal places is `2` when omitted.
+ - Third argument controls comma grouping (`TRUE` disables commas).
+ - Values are rounded to the requested decimal precision.
+ - Numeric coercion failures return `#VALUE!`.
 
-```text
-=FIXED(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Fixed with commas',
+  'Fixed without commas',
+]}>
+<Tab value="Fixed with commas">
+<FunctionSandbox
+  title="Fixed with commas"
+  formula={`=FIXED(12345.678, 1, FALSE)`}
+  grid={{}}
+  expected={"12,345.7"}
+/>
+</Tab>
+
+<Tab value="Fixed without commas">
+<FunctionSandbox
+  title="Fixed without commas"
+  formula={`=FIXED(12345.678, 1, TRUE)`}
+  grid={{}}
+  expected={"12345.7"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

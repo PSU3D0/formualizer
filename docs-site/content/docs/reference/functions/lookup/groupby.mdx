@@ -1,17 +1,44 @@
 ---
 title: "GROUPBY"
-description: "Reference for the GROUPBY function."
+description: "Groups rows by key fields and returns aggregated values as a spilled table."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`GROUPBY` summarizes one or more value columns using a selected aggregation function.
 
-## Formula example
+## Remarks
+ - `row_fields` and `values` must have the same row count.
+ - Aggregation can be supplied as text (for example `"SUM"`) or numeric code.
+ - Optional controls: `field_headers`, `total_depth`, `sort_order`.
+ - Invalid aggregation names/codes return `#VALUE!`.
+ - Output is dynamic-array shaped and may include generated headers or totals.
 
-```text
-=GROUPBY(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Sum sales by region',
+  'Average with grand total',
+]}>
+<Tab value="Sum sales by region">
+<FunctionSandbox
+  title="Sum sales by region"
+  formula={`=GROUPBY(A1:A4,B1:B4,"SUM",3,0,1)`}
+  grid={{"A1":"Region","A2":"East","A3":"West","A4":"East","B1":"Sales","B2":"100","B3":"80","B4":"50"}}
+  expected={"[[\"Region\",\"Sales\"],[\"East\",150],[\"West\",80]]"}
+/>
+</Tab>
+
+<Tab value="Average with grand total">
+<FunctionSandbox
+  title="Average with grand total"
+  formula={`=GROUPBY(A1:A4,B1:B4,"AVERAGE",3,1,1)`}
+  grid={{"A1":"Team","A2":"A","A3":"A","A4":"B","B1":"Score","B2":"90","B3":"70","B4":"80"}}
+  expected={"Grouped table with team averages plus grand total row"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

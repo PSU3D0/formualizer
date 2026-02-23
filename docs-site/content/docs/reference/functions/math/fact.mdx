@@ -1,17 +1,52 @@
 ---
 title: "FACT"
-description: "Reference for the FACT function."
+description: "Returns the factorial of a non-negative integer."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`FACT` truncates fractional inputs toward zero before computing the factorial.
 
-## Formula example
+## Remarks
+ - Non-numeric values that cannot be coerced return `#VALUE!`.
+ - Negative inputs return `#NUM!`.
+ - Results above `170!` overflow Excel-compatible limits and return `#NUM!`.
 
-```text
-=FACT(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Basic factorial',
+  'Fractional input is truncated',
+  'Negative input returns numeric error',
+]}>
+<Tab value="Basic factorial">
+<FunctionSandbox
+  title="Basic factorial"
+  formula={`=FACT(5)`}
+  grid={{}}
+  expected={"120"}
+/>
+</Tab>
+
+<Tab value="Fractional input is truncated">
+<FunctionSandbox
+  title="Fractional input is truncated"
+  formula={`=FACT(5.9)`}
+  grid={{}}
+  expected={"120"}
+/>
+</Tab>
+
+<Tab value="Negative input returns numeric error">
+<FunctionSandbox
+  title="Negative input returns numeric error"
+  formula={`=FACT(-1)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

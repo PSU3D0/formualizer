@@ -1,17 +1,42 @@
 ---
 title: "T"
-description: "Reference for the T function."
+description: "Returns text when input is text, otherwise returns empty text."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Text values pass through unchanged.
+ - Errors propagate unchanged.
+ - Numbers, booleans, and blanks return an empty string.
 
-```text
-=T(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Text passthrough',
+  'Number becomes empty text',
+]}>
+<Tab value="Text passthrough">
+<FunctionSandbox
+  title="Text passthrough"
+  formula={`=T("report")`}
+  grid={{}}
+  expected={"report"}
+/>
+</Tab>
+
+<Tab value="Number becomes empty text">
+<FunctionSandbox
+  title="Number becomes empty text"
+  formula={`=T(99)`}
+  grid={{}}
+  expected={""}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

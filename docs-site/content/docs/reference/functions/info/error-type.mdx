@@ -1,17 +1,42 @@
 ---
 title: "ERROR.TYPE"
-description: "Reference for the ERROR.TYPE function."
+description: "Returns the numeric code for a specific error value."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Standard mappings include: `#NULL!`=1, `#DIV/0!`=2, `#VALUE!`=3, `#REF!`=4, `#NAME?`=5, `#NUM!`=6, `#N/A`=7.
+ - Non-error inputs return `#N/A`.
+ - Additional internal error kinds may map to extended non-standard codes.
 
-```text
-=ERROR.TYPE(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Map DIV/0 to code',
+  'Non-error input returns N/A',
+]}>
+<Tab value="Map DIV/0 to code">
+<FunctionSandbox
+  title="Map DIV/0 to code"
+  formula={`=ERROR.TYPE(1/0)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Non-error input returns N/A">
+<FunctionSandbox
+  title="Non-error input returns N/A"
+  formula={`=ERROR.TYPE(10)`}
+  grid={{}}
+  expected={"#N/A"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

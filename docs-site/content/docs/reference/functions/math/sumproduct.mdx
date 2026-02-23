@@ -1,17 +1,53 @@
 ---
 title: "SUMPRODUCT"
-description: "Reference for the SUMPRODUCT function."
+description: "Multiplies aligned values across arrays and returns the sum of those products."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`SUMPRODUCT` supports scalar or range inputs, applies broadcast semantics, and accumulates
+ the product for each aligned cell position.
 
-## Formula example
+## Remarks
+ - Input shapes must be broadcast-compatible; otherwise `SUMPRODUCT` returns `#VALUE!`.
+ - Non-numeric values are treated as `0` during multiplication.
+ - Any explicit error value in the inputs propagates immediately.
 
-```text
-=SUMPRODUCT(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Pairwise sum of products',
+  'Range-based sumproduct',
+  'Text entries contribute zero',
+]}>
+<Tab value="Pairwise sum of products">
+<FunctionSandbox
+  title="Pairwise sum of products"
+  formula={`=SUMPRODUCT({1,2,3}, {4,5,6})`}
+  grid={{}}
+  expected={"32"}
+/>
+</Tab>
+
+<Tab value="Range-based sumproduct">
+<FunctionSandbox
+  title="Range-based sumproduct"
+  formula={`=SUMPRODUCT(A1:A3, B1:B3)`}
+  grid={{"A1":"2","A2":"3","A3":"4","B1":"10","B2":"20","B3":"30"}}
+  expected={"200"}
+/>
+</Tab>
+
+<Tab value="Text entries contribute zero">
+<FunctionSandbox
+  title="Text entries contribute zero"
+  formula={`=SUMPRODUCT({1,"x",3}, {1,1,1})`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

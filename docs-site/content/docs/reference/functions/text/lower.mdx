@@ -1,17 +1,42 @@
 ---
 title: "LOWER"
-description: "Reference for the LOWER function."
+description: "Converts text to lowercase."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Uses ASCII lowercasing semantics in this implementation.
+ - Numbers and booleans are first converted to text.
+ - Errors are propagated unchanged.
 
-```text
-=LOWER(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Lowercase letters',
+  'Boolean coerced to text',
+]}>
+<Tab value="Lowercase letters">
+<FunctionSandbox
+  title="Lowercase letters"
+  formula={`=LOWER("Data PIPELINE")`}
+  grid={{}}
+  expected={"data pipeline"}
+/>
+</Tab>
+
+<Tab value="Boolean coerced to text">
+<FunctionSandbox
+  title="Boolean coerced to text"
+  formula={`=LOWER(TRUE)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

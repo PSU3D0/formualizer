@@ -1,17 +1,42 @@
 ---
 title: "SIGN"
-description: "Reference for the SIGN function."
+description: "Returns the sign of a number as -1, 0, or 1."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Returns `1` for positive numbers.
+ - Returns `-1` for negative numbers.
+ - Returns `0` when input is zero.
 
-```text
-=SIGN(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Positive input',
+  'Negative input',
+]}>
+<Tab value="Positive input">
+<FunctionSandbox
+  title="Positive input"
+  formula={`=SIGN(12)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Negative input">
+<FunctionSandbox
+  title="Negative input"
+  formula={`=SIGN(-12)`}
+  grid={{}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

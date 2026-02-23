@@ -1,17 +1,42 @@
 ---
 title: "ISTEXT"
-description: "Reference for the ISTEXT function."
+description: "Returns TRUE when the value is text."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Only text literals return TRUE.
+ - Numbers, booleans, blanks, and errors return FALSE.
+ - No coercion from other types to text is performed for this check.
 
-```text
-=ISTEXT(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Detect text',
+  'Number is not text',
+]}>
+<Tab value="Detect text">
+<FunctionSandbox
+  title="Detect text"
+  formula={`=ISTEXT("alpha")`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Number is not text">
+<FunctionSandbox
+  title="Number is not text"
+  formula={`=ISTEXT(100)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

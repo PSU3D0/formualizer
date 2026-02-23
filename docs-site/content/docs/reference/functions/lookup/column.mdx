@@ -1,17 +1,43 @@
 ---
 title: "COLUMN"
-description: "Reference for the COLUMN function."
+description: "Returns the column number of a reference, or of the current cell when omitted."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`COLUMN` returns a 1-based column index (`A` = 1).
 
-## Formula example
+## Remarks
+ - With a range argument, `COLUMN` returns the first column in that reference.
+ - Without arguments, it uses the column of the formula cell.
+ - Full-row references such as `5:5` return `1`.
+ - Invalid references return an error (`#REF!`/`#VALUE!` depending on context).
 
-```text
-=COLUMN()
-```
+## Examples
+
+<Tabs items={[
+  'Column of a single-cell reference',
+  'Column of a range',
+]}>
+<Tab value="Column of a single-cell reference">
+<FunctionSandbox
+  title="Column of a single-cell reference"
+  formula={`=COLUMN(C5)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Column of a range">
+<FunctionSandbox
+  title="Column of a range"
+  formula={`=COLUMN(B2:D4)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

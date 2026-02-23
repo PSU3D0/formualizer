@@ -1,17 +1,52 @@
 ---
 title: "AVERAGEIFS"
-description: "Reference for the AVERAGEIFS function."
+description: "Returns the average of cells that satisfy multiple criteria."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`AVERAGEIFS` filters by all criteria pairs, then averages matching numeric values.
 
-## Formula example
+## Remarks
+ - The first argument is the average target range.
+ - Criteria are supplied in `(criteria_range, criteria)` pairs.
+ - If no numeric cells match, the function returns `#DIV/0!`.
 
-```text
-=AVERAGEIFS(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Average with two criteria',
+  'Average over inline arrays',
+  'No matches returns divide-by-zero',
+]}>
+<Tab value="Average with two criteria">
+<FunctionSandbox
+  title="Average with two criteria"
+  formula={`=AVERAGEIFS(C1:C3, A1:A3, "East", B1:B3, ">=2025")`}
+  grid={{"A1":"East","A2":"East","A3":"West","B1":"2025","B2":"2024","B3":"2025","C1":"10","C2":"40","C3":"30"}}
+  expected={"10"}
+/>
+</Tab>
+
+<Tab value="Average over inline arrays">
+<FunctionSandbox
+  title="Average over inline arrays"
+  formula={`=AVERAGEIFS({10,20,30}, {1,2,3}, ">=2")`}
+  grid={{}}
+  expected={"25"}
+/>
+</Tab>
+
+<Tab value="No matches returns divide-by-zero">
+<FunctionSandbox
+  title="No matches returns divide-by-zero"
+  formula={`=AVERAGEIFS({10,20}, {"A","B"}, "C")`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,43 @@
 ---
 title: "HSTACK"
-description: "Reference for the HSTACK function."
+description: "Concatenates arrays horizontally into a single spilled array."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`HSTACK` appends columns from each argument left-to-right.
 
-## Formula example
+## Remarks
+ - All non-empty range arguments must have the same row count.
+ - Scalar arguments are treated as 1x1 values.
+ - Mismatched row counts return `#VALUE!`.
+ - Empty inputs are skipped; if all inputs are empty, result is an empty spill.
 
-```text
-=HSTACK(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Join two 2-row ranges side by side',
+  'Append a scalar column',
+]}>
+<Tab value="Join two 2-row ranges side by side">
+<FunctionSandbox
+  title="Join two 2-row ranges side by side"
+  formula={`=HSTACK(A1:A2,B1:B2)`}
+  grid={{"A1":"1","A2":"2","B1":"10","B2":"20"}}
+  expected={"[[1,10],[2,20]]"}
+/>
+</Tab>
+
+<Tab value="Append a scalar column">
+<FunctionSandbox
+  title="Append a scalar column"
+  formula={`=HSTACK(A1,"OK")`}
+  grid={{"A1":"Item"}}
+  expected={"[[\"Item\",\"OK\"]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

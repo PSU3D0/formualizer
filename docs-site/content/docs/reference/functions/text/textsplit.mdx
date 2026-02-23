@@ -1,17 +1,43 @@
 ---
 title: "TEXTSPLIT"
-description: "Reference for the TEXTSPLIT function."
+description: "Splits text into a dynamic 2D array by column and optional row delimiters."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`TEXTSPLIT` supports multiple delimiters, optional case-insensitive matching, and output padding.
 
-## Formula example
+## Remarks
+ - Column delimiter is required; row delimiter is optional.
+ - `match_mode=0` is case-sensitive, `match_mode=1` is case-insensitive.
+ - `ignore_empty=TRUE` drops empty segments created by adjacent delimiters.
+ - Rows are padded to equal width using `pad_with` (default `#N/A`).
 
-```text
-=TEXTSPLIT(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Split CSV row',
+  'Row and column split with padding',
+]}>
+<Tab value="Split CSV row">
+<FunctionSandbox
+  title="Split CSV row"
+  formula={`=TEXTSPLIT("A,B,C", ",")`}
+  grid={{}}
+  expected={"{A,B,C}"}
+/>
+</Tab>
+
+<Tab value="Row and column split with padding">
+<FunctionSandbox
+  title="Row and column split with padding"
+  formula={`=TEXTSPLIT("A,B;C", ",", ";")`}
+  grid={{}}
+  expected={"{A,B;C,#N/A}"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

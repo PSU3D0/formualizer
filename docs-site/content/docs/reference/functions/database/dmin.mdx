@@ -1,17 +1,42 @@
 ---
 title: "DMIN"
-description: "Reference for the DMIN function."
+description: "Returns the smallest value in a database field for records matching criteria."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`DMIN` applies criteria filtering and then evaluates the minimum numeric value from `field`.
 
-## Formula example
+## Remarks
+ - Criteria rows are ORed together; criteria columns on the same row are ANDed.
+ - `field` resolves from a case-insensitive header label or 1-based index, and invalid resolution yields `#VALUE!`.
+ - If no numeric values are matched, this implementation returns `0`.
 
-```text
-=DMIN(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Minimum revenue for East or West',
+  'Minimum units where revenue exceeds 100000',
+]}>
+<Tab value="Minimum revenue for East or West">
+<FunctionSandbox
+  title="Minimum revenue for East or West"
+  formula={`=DMIN(A1:E7, "Revenue", G1:G3)`}
+  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Region","G2":"East","G3":"West"}}
+  expected={"46000"}
+/>
+</Tab>
+
+<Tab value="Minimum units where revenue exceeds 100000">
+<FunctionSandbox
+  title="Minimum units where revenue exceeds 100000"
+  formula={`=DMIN(A1:E7, 4, G1:G2)`}
+  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Revenue","G2":">100000"}}
+  expected={"22"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,43 @@
 ---
 title: "IFERROR"
-description: "Reference for the IFERROR function."
+description: "Returns a fallback when the first expression evaluates to any error."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`IFERROR(value, value_if_error)` is useful for user-friendly error handling.
 
-## Formula example
+## Remarks
+ - Any error kind in the first argument triggers the fallback branch.
+ - Non-error results pass through unchanged.
+ - Evaluation failures surfaced as interpreter errors are also caught.
+ - Exactly two arguments are required; other arities return `#VALUE!`.
 
-```text
-=IFERROR(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Replace division error',
+  'Pass through non-error',
+]}>
+<Tab value="Replace division error">
+<FunctionSandbox
+  title="Replace division error"
+  formula={`=IFERROR(1/0, "n/a")`}
+  grid={{}}
+  expected={"n/a"}
+/>
+</Tab>
+
+<Tab value="Pass through non-error">
+<FunctionSandbox
+  title="Pass through non-error"
+  formula={`=IFERROR(42, 0)`}
+  grid={{}}
+  expected={"42"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,42 @@
 ---
 title: "ISLOGICAL"
-description: "Reference for the ISLOGICAL function."
+description: "Returns TRUE when the value is a boolean."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Only logical TRUE/FALSE values return TRUE.
+ - Numeric truthy/falsy values are not considered logical by this predicate.
+ - Errors return FALSE.
 
-```text
-=ISLOGICAL(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Boolean input',
+  'Numeric input',
+]}>
+<Tab value="Boolean input">
+<FunctionSandbox
+  title="Boolean input"
+  formula={`=ISLOGICAL(TRUE)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Numeric input">
+<FunctionSandbox
+  title="Numeric input"
+  formula={`=ISLOGICAL(1)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

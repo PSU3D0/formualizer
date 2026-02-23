@@ -1,17 +1,42 @@
 ---
 title: "ISNA"
-description: "Reference for the ISNA function."
+description: "Returns TRUE only for the `#N/A` error."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Other error kinds return FALSE.
+ - Non-error values return FALSE.
+ - Useful when `#N/A` has special business meaning.
 
-```text
-=ISNA(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Check for N/A',
+  'Other errors are not N/A',
+]}>
+<Tab value="Check for N/A">
+<FunctionSandbox
+  title="Check for N/A"
+  formula={`=ISNA(NA())`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Other errors are not N/A">
+<FunctionSandbox
+  title="Other errors are not N/A"
+  formula={`=ISNA(1/0)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

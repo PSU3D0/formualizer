@@ -1,17 +1,44 @@
 ---
 title: "UNIQUE"
-description: "Reference for the UNIQUE function."
+description: "Returns distinct rows or columns from a range."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`UNIQUE` preserves first-occurrence order and can optionally return only values that appear once.
 
-## Formula example
+## Remarks
+ - Defaults: `by_col=FALSE`, `exactly_once=FALSE`.
+ - With `by_col=FALSE`, uniqueness is evaluated by full rows.
+ - With `by_col=TRUE`, uniqueness is evaluated by full columns.
+ - With `exactly_once=TRUE`, only entries with frequency 1 are returned.
+ - Result spills as an array.
 
-```text
-=UNIQUE(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Unique values by row',
+  'Only values that appear once',
+]}>
+<Tab value="Unique values by row">
+<FunctionSandbox
+  title="Unique values by row"
+  formula={`=UNIQUE(A1:A4)`}
+  grid={{"A1":"A","A2":"A","A3":"B","A4":"C"}}
+  expected={"[[\"A\"],[\"B\"],[\"C\"]]"}
+/>
+</Tab>
+
+<Tab value="Only values that appear once">
+<FunctionSandbox
+  title="Only values that appear once"
+  formula={`=UNIQUE(A1:A4,FALSE,TRUE)`}
+  grid={{"A1":"1","A2":"1","A3":"2","A4":"3"}}
+  expected={"[[2],[3]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

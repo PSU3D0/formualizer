@@ -1,17 +1,43 @@
 ---
 title: "RIGHT"
-description: "Reference for the RIGHT function."
+description: "Returns the rightmost characters from a text value."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - `num_chars` defaults to `1` when omitted.
+ - Negative `num_chars` returns `#VALUE!`.
+ - If `num_chars` exceeds length, the full text is returned.
+ - Non-text values are coerced to text before slicing.
 
-```text
-=RIGHT(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Take last three characters',
+  'Default count is one',
+]}>
+<Tab value="Take last three characters">
+<FunctionSandbox
+  title="Take last three characters"
+  formula={`=RIGHT("engine", 3)`}
+  grid={{}}
+  expected={"ine"}
+/>
+</Tab>
+
+<Tab value="Default count is one">
+<FunctionSandbox
+  title="Default count is one"
+  formula={`=RIGHT("abc")`}
+  grid={{}}
+  expected={"c"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

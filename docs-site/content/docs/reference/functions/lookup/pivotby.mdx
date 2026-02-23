@@ -1,17 +1,44 @@
 ---
 title: "PIVOTBY"
-description: "Reference for the PIVOTBY function."
+description: "Builds a pivot-style summary matrix from row fields, column fields, and values."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`PIVOTBY` aggregates intersections of row keys and column keys into a dynamic result grid.
 
-## Formula example
+## Remarks
+ - `row_fields`, `col_fields`, and `values` must have matching row counts.
+ - Aggregation accepts text names (for example `"SUM"`) or numeric codes.
+ - Optional controls include header handling, row/column totals, and sort order.
+ - Current implementation uses the first column of `col_fields` and `values` for aggregation.
+ - Invalid setup returns `#VALUE!`.
 
-```text
-=PIVOTBY(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Pivot sales by region and quarter',
+  'Pivot with totals enabled',
+]}>
+<Tab value="Pivot sales by region and quarter">
+<FunctionSandbox
+  title="Pivot sales by region and quarter"
+  formula={`=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,0,1,0,1)`}
+  grid={{"A1":"Region","A2":"East","A3":"East","A4":"West","B1":"Quarter","B2":"Q1","B3":"Q2","B4":"Q1","C1":"Sales","C2":"100","C3":"150","C4":"120"}}
+  expected={"Pivot table with regions as rows and quarters as columns"}
+/>
+</Tab>
+
+<Tab value="Pivot with totals enabled">
+<FunctionSandbox
+  title="Pivot with totals enabled"
+  formula={`=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,1,1,1,1)`}
+  grid={{"A1":"Dept","A2":"Ops","A3":"Ops","A4":"Sales","B1":"Month","B2":"Jan","B3":"Feb","B4":"Jan","C1":"Cost","C2":"40","C3":"35","C4":"55"}}
+  expected={"Pivot table including row and column totals"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

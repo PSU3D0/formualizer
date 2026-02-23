@@ -1,17 +1,43 @@
 ---
 title: "COLUMNS"
-description: "Reference for the COLUMNS function."
+description: "Returns the number of columns in a reference or array."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`COLUMNS` reports width, not data density.
 
-## Formula example
+## Remarks
+ - For a single cell reference, returns `1`.
+ - For full-row references (for example `1:1`), returns `16384`.
+ - For array literals, returns the first row width.
+ - Invalid references return an error.
 
-```text
-=COLUMNS(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Count columns in a rectangular range',
+  'Count columns in a full row reference',
+]}>
+<Tab value="Count columns in a rectangular range">
+<FunctionSandbox
+  title="Count columns in a rectangular range"
+  formula={`=COLUMNS(B2:D10)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Count columns in a full row reference">
+<FunctionSandbox
+  title="Count columns in a full row reference"
+  formula={`=COLUMNS(1:1)`}
+  grid={{}}
+  expected={"16384"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

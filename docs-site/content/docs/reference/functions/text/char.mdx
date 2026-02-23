@@ -1,17 +1,43 @@
 ---
 title: "CHAR"
-description: "Reference for the CHAR function."
+description: "Returns the character represented by a numeric code."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`CHAR` follows Excel-style Windows-1252 behavior for codes `1..255`.
 
-## Formula example
+## Remarks
+ - Input is truncated to an integer code.
+ - Valid code range is `1` through `255`; outside this range returns `#VALUE!`.
+ - Codes in the Windows-1252 extension range (128-159) are mapped to Unicode equivalents.
+ - Errors are propagated unchanged.
 
-```text
-=CHAR(A1)
-```
+## Examples
+
+<Tabs items={[
+  'ASCII character',
+  'Out-of-range code',
+]}>
+<Tab value="ASCII character">
+<FunctionSandbox
+  title="ASCII character"
+  formula={`=CHAR(65)`}
+  grid={{}}
+  expected={"A"}
+/>
+</Tab>
+
+<Tab value="Out-of-range code">
+<FunctionSandbox
+  title="Out-of-range code"
+  formula={`=CHAR(300)`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

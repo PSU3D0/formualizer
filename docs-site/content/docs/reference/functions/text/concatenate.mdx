@@ -1,17 +1,43 @@
 ---
 title: "CONCATENATE"
-description: "Reference for the CONCATENATE function."
+description: "Legacy alias for `CONCAT` that joins multiple values as text."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Semantics match `CONCAT` in this implementation.
+ - Blank values contribute an empty string.
+ - Numbers and booleans are coerced to text.
+ - Errors are propagated as soon as encountered.
 
-```text
-=CONCATENATE(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Legacy concatenate behavior',
+  'Boolean coercion',
+]}>
+<Tab value="Legacy concatenate behavior">
+<FunctionSandbox
+  title="Legacy concatenate behavior"
+  formula={`=CONCATENATE("Jan", "-", 2026)`}
+  grid={{}}
+  expected={"Jan-2026"}
+/>
+</Tab>
+
+<Tab value="Boolean coercion">
+<FunctionSandbox
+  title="Boolean coercion"
+  formula={`=CONCATENATE("Flag:", TRUE)`}
+  grid={{}}
+  expected={"Flag:TRUE"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

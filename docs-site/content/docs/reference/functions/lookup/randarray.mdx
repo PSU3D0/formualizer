@@ -1,17 +1,43 @@
 ---
 title: "RANDARRAY"
-description: "Reference for the RANDARRAY function."
+description: "Generates a random spilled array of numbers."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`RANDARRAY` can return decimal values or whole numbers in a specified range.
 
-## Formula example
+## Remarks
+ - Defaults: `rows=1`, `columns=1`, `min=0`, `max=1`, `whole_number=FALSE`.
+ - The function is non-deterministic and recalculates to new values.
+ - For whole numbers, values are generated in an inclusive integer range.
+ - `rows <= 0`, `columns <= 0`, or invalid integer bounds return `#VALUE!`.
 
-```text
-=RANDARRAY()
-```
+## Examples
+
+<Tabs items={[
+  'Generate a 2x3 decimal matrix',
+  'Generate six integer dice rolls',
+]}>
+<Tab value="Generate a 2x3 decimal matrix">
+<FunctionSandbox
+  title="Generate a 2x3 decimal matrix"
+  formula={`=RANDARRAY(2,3)`}
+  grid={{}}
+  expected={"2x3 array of decimals in [0,1)"}
+/>
+</Tab>
+
+<Tab value="Generate six integer dice rolls">
+<FunctionSandbox
+  title="Generate six integer dice rolls"
+  formula={`=RANDARRAY(6,1,1,6,TRUE)`}
+  grid={{}}
+  expected={"6x1 array of integers from 1 to 6"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

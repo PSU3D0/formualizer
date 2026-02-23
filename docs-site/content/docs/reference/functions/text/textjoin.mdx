@@ -1,17 +1,43 @@
 ---
 title: "TEXTJOIN"
-description: "Reference for the TEXTJOIN function."
+description: "Joins text values using a delimiter, with optional empty-value filtering."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`TEXTJOIN(delimiter, ignore_empty, text1, ...)` is useful for building labels and lists.
 
-## Formula example
+## Remarks
+ - `ignore_empty=TRUE` skips empty strings and empty cells.
+ - `ignore_empty=FALSE` includes empty items, which can produce adjacent delimiters.
+ - Delimiter and values are coerced to text.
+ - Any error in inputs propagates immediately.
 
-```text
-=TEXTJOIN(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Ignore empty entries',
+  'Keep empty entries',
+]}>
+<Tab value="Ignore empty entries">
+<FunctionSandbox
+  title="Ignore empty entries"
+  formula={`=TEXTJOIN(",", TRUE, "a", "", "c")`}
+  grid={{}}
+  expected={"a,c"}
+/>
+</Tab>
+
+<Tab value="Keep empty entries">
+<FunctionSandbox
+  title="Keep empty entries"
+  formula={`=TEXTJOIN("-", FALSE, "a", "", "c")`}
+  grid={{}}
+  expected={"a--c"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

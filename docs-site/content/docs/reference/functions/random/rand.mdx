@@ -1,17 +1,42 @@
 ---
 title: "RAND"
-description: "Reference for the RAND function."
+description: "Returns a uniformly distributed pseudo-random number in the interval `[0, 1)`."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`RAND` is volatile and recalculates whenever dependent formulas recalculate.
 
-## Formula example
+## Remarks
+ - The result is always greater than or equal to `0` and strictly less than `1`.
+ - Because the function is volatile, repeated evaluations can return different values.
+ - The engine seeds randomness per evaluation context for reproducible execution flows.
 
-```text
-=RAND()
-```
+## Examples
+
+<Tabs items={[
+  'RAND stays within bounds',
+  'Derived integer bucket from RAND',
+]}>
+<Tab value="RAND stays within bounds">
+<FunctionSandbox
+  title="RAND stays within bounds"
+  formula={`=LET(n, RAND(), AND(n>=0, n<1))`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Derived integer bucket from RAND">
+<FunctionSandbox
+  title="Derived integer bucket from RAND"
+  formula={`=LET(n, INT(RAND()*10), AND(n>=0, n<=9))`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

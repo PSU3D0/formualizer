@@ -1,17 +1,41 @@
 ---
 title: "COS"
-description: "Reference for the COS function."
+description: "Returns the cosine of an angle in radians."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Input must be in radians.
+ - Supports elementwise evaluation for array inputs.
 
-```text
-=COS(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Cosine at zero',
+  'Cosine at PI',
+]}>
+<Tab value="Cosine at zero">
+<FunctionSandbox
+  title="Cosine at zero"
+  formula={`=COS(0)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Cosine at PI">
+<FunctionSandbox
+  title="Cosine at PI"
+  formula={`=COS(PI())`}
+  grid={{}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

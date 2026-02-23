@@ -1,17 +1,43 @@
 ---
 title: "UNICHAR"
-description: "Reference for the UNICHAR function."
+description: "Returns the Unicode character for a given code point."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Input is truncated to an integer code point.
+ - Code point `0`, surrogate range, and values above `0x10FFFF` return `#VALUE!`.
+ - Errors are propagated unchanged.
+ - Non-numeric inputs are coerced with numeric coercion rules.
 
-```text
-=UNICHAR(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Basic Unicode code point',
+  'Invalid code point',
+]}>
+<Tab value="Basic Unicode code point">
+<FunctionSandbox
+  title="Basic Unicode code point"
+  formula={`=UNICHAR(9731)`}
+  grid={{}}
+  expected={"☃"}
+/>
+</Tab>
+
+<Tab value="Invalid code point">
+<FunctionSandbox
+  title="Invalid code point"
+  formula={`=UNICHAR(0)`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

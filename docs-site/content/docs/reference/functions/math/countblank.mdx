@@ -1,17 +1,52 @@
 ---
 title: "COUNTBLANK"
-description: "Reference for the COUNTBLANK function."
+description: "Counts blank cells, including empty-string text results."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`COUNTBLANK` treats both true empty cells and `""` text values as blank.
 
-## Formula example
+## Remarks
+ - Empty-string text values are counted.
+ - Numbers, booleans, and non-empty text are not counted.
+ - Supports scalar arguments and ranges.
 
-```text
-=COUNTBLANK(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Count blanks in a range',
+  'Scalar empty-string counts as blank',
+  'Non-empty values are excluded',
+]}>
+<Tab value="Count blanks in a range">
+<FunctionSandbox
+  title="Count blanks in a range"
+  formula={`=COUNTBLANK(A1:A3)`}
+  grid={{"A1":"10","A2":""}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Scalar empty-string counts as blank">
+<FunctionSandbox
+  title="Scalar empty-string counts as blank"
+  formula={`=COUNTBLANK("", 5)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Non-empty values are excluded">
+<FunctionSandbox
+  title="Non-empty values are excluded"
+  formula={`=COUNTBLANK(1, "x", TRUE)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

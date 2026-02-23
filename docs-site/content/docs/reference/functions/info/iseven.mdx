@@ -1,17 +1,43 @@
 ---
 title: "ISEVEN"
-description: "Reference for the ISEVEN function."
+description: "Returns TRUE when a number is even."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Numeric input is truncated toward zero before parity is checked.
+ - Booleans are coerced (`TRUE` -> 1, `FALSE` -> 0).
+ - Non-numeric text returns `#VALUE!`.
+ - Errors propagate unchanged.
 
-```text
-=ISEVEN(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Even integer',
+  'Decimal truncation before parity',
+]}>
+<Tab value="Even integer">
+<FunctionSandbox
+  title="Even integer"
+  formula={`=ISEVEN(6)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Decimal truncation before parity">
+<FunctionSandbox
+  title="Decimal truncation before parity"
+  formula={`=ISEVEN(3.9)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

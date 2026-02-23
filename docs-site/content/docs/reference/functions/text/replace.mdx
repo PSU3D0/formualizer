@@ -1,17 +1,43 @@
 ---
 title: "REPLACE"
-description: "Reference for the REPLACE function."
+description: "Replaces part of a text string by position."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`REPLACE(old_text, start_num, num_chars, new_text)` works by character index.
 
-## Formula example
+## Remarks
+ - `start_num` is 1-based and must be at least `1`.
+ - `num_chars` must be non-negative.
+ - If start is beyond the end, the original text is returned unchanged.
+ - Non-text inputs are coerced to text.
 
-```text
-=REPLACE(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Replace middle segment',
+  'Insert at start',
+]}>
+<Tab value="Replace middle segment">
+<FunctionSandbox
+  title="Replace middle segment"
+  formula={`=REPLACE("abcdef", 3, 2, "ZZ")`}
+  grid={{}}
+  expected={"abZZef"}
+/>
+</Tab>
+
+<Tab value="Insert at start">
+<FunctionSandbox
+  title="Insert at start"
+  formula={`=REPLACE("report", 1, 0, "Q1-")`}
+  grid={{}}
+  expected={"Q1-report"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

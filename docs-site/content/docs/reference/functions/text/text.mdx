@@ -1,17 +1,43 @@
 ---
 title: "TEXT"
-description: "Reference for the TEXT function."
+description: "Formats a value as text using a format pattern."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+This implementation supports common numeric, percent, grouping, and basic date tokens.
 
-## Formula example
+## Remarks
+ - Requires exactly two arguments: value and format text.
+ - Numeric text is parsed before formatting; invalid numeric text returns `#VALUE!`.
+ - Error inputs are propagated unchanged.
+ - Supported patterns are intentionally limited compared with full Excel formatting.
 
-```text
-=TEXT(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Fixed decimal formatting',
+  'Percent formatting',
+]}>
+<Tab value="Fixed decimal formatting">
+<FunctionSandbox
+  title="Fixed decimal formatting"
+  formula={`=TEXT(12.3, "0.00")`}
+  grid={{}}
+  expected={"12.30"}
+/>
+</Tab>
+
+<Tab value="Percent formatting">
+<FunctionSandbox
+  title="Percent formatting"
+  formula={`=TEXT(0.256, "0%")`}
+  grid={{}}
+  expected={"26%"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

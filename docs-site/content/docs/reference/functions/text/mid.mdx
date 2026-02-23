@@ -1,17 +1,43 @@
 ---
 title: "MID"
-description: "Reference for the MID function."
+description: "Returns a substring starting at a 1-based position."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - `start_num` is 1-based; values below `1` return `#VALUE!`.
+ - `num_chars` must be non-negative; negatives return `#VALUE!`.
+ - If start is beyond the end of the text, returns an empty string.
+ - Non-text inputs are coerced to text.
 
-```text
-=MID(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Extract middle segment',
+  'Start past end returns empty',
+]}>
+<Tab value="Extract middle segment">
+<FunctionSandbox
+  title="Extract middle segment"
+  formula={`=MID("spreadsheet", 3, 5)`}
+  grid={{}}
+  expected={"reads"}
+/>
+</Tab>
+
+<Tab value="Start past end returns empty">
+<FunctionSandbox
+  title="Start past end returns empty"
+  formula={`=MID("abc", 10, 2)`}
+  grid={{}}
+  expected={""}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

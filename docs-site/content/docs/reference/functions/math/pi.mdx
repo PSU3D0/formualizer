@@ -1,17 +1,41 @@
 ---
 title: "PI"
-description: "Reference for the PI function."
+description: "Returns the mathematical constant π."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - `PI()` takes no arguments.
+ - Commonly used with trig and geometry formulas.
 
-```text
-=PI()
-```
+## Examples
+
+<Tabs items={[
+  'Pi constant',
+  'Circle circumference with radius 2',
+]}>
+<Tab value="Pi constant">
+<FunctionSandbox
+  title="Pi constant"
+  formula={`=PI()`}
+  grid={{}}
+  expected={"3.141592653589793"}
+/>
+</Tab>
+
+<Tab value="Circle circumference with radius 2">
+<FunctionSandbox
+  title="Circle circumference with radius 2"
+  formula={`=2*PI()*2`}
+  grid={{}}
+  expected={"12.566370614359172"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

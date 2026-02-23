@@ -1,17 +1,45 @@
 ---
 title: "VLOOKUP"
-description: "Reference for the VLOOKUP function."
+description: "Looks up a value in the first column of a table and returns a value from another column."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`VLOOKUP` searches vertically and returns the matching row's value from `col_index_num`.
 
-## Formula example
+## Remarks
+ - `col_index_num` is 1-based and must be within the table width.
+ - `range_lookup` defaults to `FALSE` in this engine (exact match by default).
+ - When `range_lookup=TRUE`, approximate match logic is used against the first column.
+ - If the lookup value is not found, returns `#N/A`.
+ - If `col_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
+ - A matched empty target cell is materialized as numeric `0`.
 
-```text
-=VLOOKUP(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Exact match in a key/value table',
+  'Approximate tier lookup',
+]}>
+<Tab value="Exact match in a key/value table">
+<FunctionSandbox
+  title="Exact match in a key/value table"
+  formula={`=VLOOKUP("SKU-2",A1:B2,2,FALSE)`}
+  grid={{"A1":"SKU-1","A2":"SKU-2","B1":"12.5","B2":"18"}}
+  expected={"18"}
+/>
+</Tab>
+
+<Tab value="Approximate tier lookup">
+<FunctionSandbox
+  title="Approximate tier lookup"
+  formula={`=VLOOKUP(3200,A1:B3,2,TRUE)`}
+  grid={{"A1":"0","A2":"1000","A3":"5000","B1":"Bronze","B2":"Silver","B3":"Gold"}}
+  expected={"Silver"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

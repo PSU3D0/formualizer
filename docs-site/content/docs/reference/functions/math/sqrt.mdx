@@ -1,17 +1,41 @@
 ---
 title: "SQRT"
-description: "Reference for the SQRT function."
+description: "Returns the positive square root of a number."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Input must be greater than or equal to zero.
+ - Negative input returns `#NUM!`.
 
-```text
-=SQRT(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Square root of a perfect square',
+  'Square root from a reference',
+]}>
+<Tab value="Square root of a perfect square">
+<FunctionSandbox
+  title="Square root of a perfect square"
+  formula={`=SQRT(144)`}
+  grid={{}}
+  expected={"12"}
+/>
+</Tab>
+
+<Tab value="Square root from a reference">
+<FunctionSandbox
+  title="Square root from a reference"
+  formula={`=SQRT(A1)`}
+  grid={{"A1":"2"}}
+  expected={"1.4142135623730951"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

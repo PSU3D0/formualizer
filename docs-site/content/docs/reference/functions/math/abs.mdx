@@ -1,17 +1,42 @@
 ---
 title: "ABS"
-description: "Reference for the ABS function."
+description: "Returns the absolute value of a number."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Negative numbers are returned as positive values.
+ - Zero and positive numbers are unchanged.
+ - Errors are propagated.
 
-```text
-=ABS(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Absolute value of a negative number',
+  'Absolute value from a cell reference',
+]}>
+<Tab value="Absolute value of a negative number">
+<FunctionSandbox
+  title="Absolute value of a negative number"
+  formula={`=ABS(-12.5)`}
+  grid={{}}
+  expected={"12.5"}
+/>
+</Tab>
+
+<Tab value="Absolute value from a cell reference">
+<FunctionSandbox
+  title="Absolute value from a cell reference"
+  formula={`=ABS(A1)`}
+  grid={{"A1":"-42"}}
+  expected={"42"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

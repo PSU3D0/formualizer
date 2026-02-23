@@ -1,17 +1,42 @@
 ---
 title: "ISBLANK"
-description: "Reference for the ISBLANK function."
+description: "Returns TRUE only for a truly empty value."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Empty string `""` is text, not blank, so it returns FALSE.
+ - Numeric zero and FALSE are not blank.
+ - Errors return FALSE.
 
-```text
-=ISBLANK(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Reference to an empty cell',
+  'Empty string is not blank',
+]}>
+<Tab value="Reference to an empty cell">
+<FunctionSandbox
+  title="Reference to an empty cell"
+  formula={`=ISBLANK(A1)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Empty string is not blank">
+<FunctionSandbox
+  title="Empty string is not blank"
+  formula={`=ISBLANK("")`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

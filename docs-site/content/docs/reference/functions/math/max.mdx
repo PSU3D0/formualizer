@@ -1,17 +1,53 @@
 ---
 title: "MAX"
-description: "Reference for the MAX function."
+description: "Returns the largest numeric value from one or more arguments."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`MAX` scans scalar values and ranges, considering only values that can be treated as numbers.
 
-## Formula example
+## Remarks
+ - Errors in any scalar argument or range cell propagate immediately.
+ - In ranges, non-numeric cells are ignored.
+ - Scalar text is included only when it can be coerced to a number.
+ - If no numeric value is found, `MAX` returns `0`.
 
-```text
-=MAX(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Maximum in a numeric range',
+  'Scalar text can be coerced',
+  'No numeric values returns zero',
+]}>
+<Tab value="Maximum in a numeric range">
+<FunctionSandbox
+  title="Maximum in a numeric range"
+  formula={`=MAX(A1:A3)`}
+  grid={{"A1":"5","A2":"9","A3":"1"}}
+  expected={"9"}
+/>
+</Tab>
+
+<Tab value="Scalar text can be coerced">
+<FunctionSandbox
+  title="Scalar text can be coerced"
+  formula={`=MAX(2, "11", 4)`}
+  grid={{}}
+  expected={"11"}
+/>
+</Tab>
+
+<Tab value="No numeric values returns zero">
+<FunctionSandbox
+  title="No numeric values returns zero"
+  formula={`=MAX("x")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

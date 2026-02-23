@@ -1,17 +1,45 @@
 ---
 title: "MATCH"
-description: "Reference for the MATCH function."
+description: "Returns the relative position of a lookup value in a one-dimensional array."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`MATCH` supports exact and approximate modes and returns a 1-based position.
 
-## Formula example
+## Remarks
+ - `match_type` defaults to `1` (approximate, ascending).
+ - `match_type=0` performs exact matching and supports `*`, `?`, and `~` wildcards for text.
+ - `match_type=1` looks for the largest value less than or equal to the lookup value.
+ - `match_type=-1` looks for the smallest value greater than or equal to the lookup value.
+ - Approximate modes require sorted data; unsorted data returns `#N/A`.
+ - If no match is found, returns `#N/A`.
 
-```text
-=MATCH(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Exact text match',
+  'Approximate numeric match',
+]}>
+<Tab value="Exact text match">
+<FunctionSandbox
+  title="Exact text match"
+  formula={`=MATCH("B",A1:A3,0)`}
+  grid={{"A1":"A","A2":"B","A3":"C"}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Approximate numeric match">
+<FunctionSandbox
+  title="Approximate numeric match"
+  formula={`=MATCH(27,A1:A4,1)`}
+  grid={{"A1":"10","A2":"20","A3":"30","A4":"40"}}
+  expected={"2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

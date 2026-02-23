@@ -1,17 +1,43 @@
 ---
 title: "VALUETOTEXT"
-description: "Reference for the VALUETOTEXT function."
+description: "Converts a value to text representation."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`VALUETOTEXT(value, [format])` supports concise (`0`) and strict (`1`) modes.
 
-## Formula example
+## Remarks
+ - Concise mode (`0`) returns natural text for scalars.
+ - Strict mode (`1`) adds explicit quoting for text and serializes arrays with braces.
+ - In concise mode, error values are propagated as errors.
+ - In strict mode, error values are rendered as their error text.
 
-```text
-=VALUETOTEXT(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Concise text conversion',
+  'Strict quoting for text',
+]}>
+<Tab value="Concise text conversion">
+<FunctionSandbox
+  title="Concise text conversion"
+  formula={`=VALUETOTEXT(123)`}
+  grid={{}}
+  expected={"123"}
+/>
+</Tab>
+
+<Tab value="Strict quoting for text">
+<FunctionSandbox
+  title="Strict quoting for text"
+  formula={`=VALUETOTEXT("hello", 1)`}
+  grid={{}}
+  expected={"\"hello\""}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

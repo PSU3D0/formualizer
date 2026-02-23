@@ -1,17 +1,41 @@
 ---
 title: "TAN"
-description: "Reference for the TAN function."
+description: "Returns the tangent of an angle in radians."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Input is interpreted as radians.
+ - Near odd multiples of `PI()/2`, results can become very large.
 
-```text
-=TAN(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Tangent at PI/4',
+  'Tangent at zero',
+]}>
+<Tab value="Tangent at PI/4">
+<FunctionSandbox
+  title="Tangent at PI/4"
+  formula={`=TAN(PI()/4)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Tangent at zero">
+<FunctionSandbox
+  title="Tangent at zero"
+  formula={`=TAN(0)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

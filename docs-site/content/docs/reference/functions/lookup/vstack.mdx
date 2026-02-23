@@ -1,17 +1,43 @@
 ---
 title: "VSTACK"
-description: "Reference for the VSTACK function."
+description: "Concatenates arrays vertically into a single spilled array."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`VSTACK` appends rows from each argument top-to-bottom.
 
-## Formula example
+## Remarks
+ - All non-empty range arguments must have the same column count.
+ - Scalar arguments are treated as 1x1 values.
+ - Mismatched column counts return `#VALUE!`.
+ - Empty inputs are skipped; if all inputs are empty, result is an empty spill.
 
-```text
-=VSTACK(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Join two 1-row ranges vertically',
+  'Stack scalar values',
+]}>
+<Tab value="Join two 1-row ranges vertically">
+<FunctionSandbox
+  title="Join two 1-row ranges vertically"
+  formula={`=VSTACK(A1:B1,A2:B2)`}
+  grid={{"A1":"1","A2":"2","B1":"10","B2":"20"}}
+  expected={"[[1,10],[2,20]]"}
+/>
+</Tab>
+
+<Tab value="Stack scalar values">
+<FunctionSandbox
+  title="Stack scalar values"
+  formula={`=VSTACK(5,9)`}
+  grid={{}}
+  expected={"[[5],[9]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

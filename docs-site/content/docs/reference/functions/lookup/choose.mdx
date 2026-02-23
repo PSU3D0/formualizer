@@ -1,17 +1,43 @@
 ---
 title: "CHOOSE"
-description: "Reference for the CHOOSE function."
+description: "Returns one value from a list using a 1-based index."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`CHOOSE` selects from `value1, value2, ...` based on `index_num`.
 
-## Formula example
+## Remarks
+ - `index_num` is 1-based and is truncated to an integer.
+ - Indexes less than 1 or greater than the number of choices return `#VALUE!`.
+ - Errors in `index_num` are propagated.
+ - The selected argument is returned as-is, including non-text/non-numeric values.
 
-```text
-=CHOOSE(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Select a label',
+  'Use numeric choices',
+]}>
+<Tab value="Select a label">
+<FunctionSandbox
+  title="Select a label"
+  formula={`=CHOOSE(2,"Low","Medium","High")`}
+  grid={{}}
+  expected={"Medium"}
+/>
+</Tab>
+
+<Tab value="Use numeric choices">
+<FunctionSandbox
+  title="Use numeric choices"
+  formula={`=CHOOSE(3,10,20,30,40)`}
+  grid={{}}
+  expected={"30"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

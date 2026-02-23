@@ -1,17 +1,43 @@
 ---
 title: "N"
-description: "Reference for the N function."
+description: "Converts a value to its numeric representation."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Numbers pass through unchanged; booleans convert to `1`/`0`.
+ - Text and blank values convert to `0`.
+ - Errors propagate unchanged.
+ - Temporal values are converted using serial number representation.
 
-```text
-=N(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Boolean to number',
+  'Text to zero',
+]}>
+<Tab value="Boolean to number">
+<FunctionSandbox
+  title="Boolean to number"
+  formula={`=N(TRUE)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Text to zero">
+<FunctionSandbox
+  title="Text to zero"
+  formula={`=N("hello")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

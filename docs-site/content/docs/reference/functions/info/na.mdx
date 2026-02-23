@@ -1,17 +1,42 @@
 ---
 title: "NA"
-description: "Reference for the NA function."
+description: "Returns the `#N/A` error value."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - `NA()` is commonly used to mark missing lookup results.
+ - The function takes no arguments.
+ - The returned value is an error and propagates through dependent formulas.
 
-```text
-=NA()
-```
+## Examples
+
+<Tabs items={[
+  'Direct N/A',
+  'Detect N/A',
+]}>
+<Tab value="Direct N/A">
+<FunctionSandbox
+  title="Direct N/A"
+  formula={`=NA()`}
+  grid={{}}
+  expected={"#N/A"}
+/>
+</Tab>
+
+<Tab value="Detect N/A">
+<FunctionSandbox
+  title="Detect N/A"
+  formula={`=ISNA(NA())`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

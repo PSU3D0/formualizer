@@ -1,17 +1,42 @@
 ---
 title: "MOD"
-description: "Reference for the MOD function."
+description: "Returns the remainder after division, with the sign of the divisor."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - If divisor is `0`, returns `#DIV/0!`.
+ - Result sign follows Excel-style MOD semantics (sign of divisor).
+ - Errors in either argument are propagated.
 
-```text
-=MOD(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Positive divisor',
+  'Negative dividend',
+]}>
+<Tab value="Positive divisor">
+<FunctionSandbox
+  title="Positive divisor"
+  formula={`=MOD(10,3)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Negative dividend">
+<FunctionSandbox
+  title="Negative dividend"
+  formula={`=MOD(-3,2)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

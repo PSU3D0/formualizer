@@ -1,17 +1,44 @@
 ---
 title: "FILTER"
-description: "Reference for the FILTER function."
+description: "Filters rows from an array using a Boolean include mask."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`FILTER` returns only rows where the include condition evaluates to true.
 
-## Formula example
+## Remarks
+ - `include` must have the same row count as `array`, or a single row used as broadcast.
+ - A row is kept if any include cell for that row is truthy.
+ - If no rows match, `if_empty` is returned when supplied; otherwise `#CALC!`.
+ - Dimension mismatches return `#VALUE!`.
+ - Results spill as dynamic arrays.
 
-```text
-=FILTER(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Filter active records',
+  'Return fallback when no rows match',
+]}>
+<Tab value="Filter active records">
+<FunctionSandbox
+  title="Filter active records"
+  formula={`=FILTER(A1:A3,B1:B3)`}
+  grid={{"A1":"Ana","A2":"Bo","A3":"Cy","B1":"true","B2":"false","B3":"true"}}
+  expected={"[[\"Ana\"],[\"Cy\"]]"}
+/>
+</Tab>
+
+<Tab value="Return fallback when no rows match">
+<FunctionSandbox
+  title="Return fallback when no rows match"
+  formula={`=FILTER(A1:A2,B1:B2,"No matches")`}
+  grid={{"A1":"10","A2":"20","B1":"false","B2":"false"}}
+  expected={"No matches"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

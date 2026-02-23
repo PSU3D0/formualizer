@@ -1,17 +1,41 @@
 ---
 title: "FALSE"
-description: "Reference for the FALSE function."
+description: "Returns the logical constant FALSE."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Use `FALSE()` when you want an explicit boolean false value in formulas.
 
-## Formula example
+## Remarks
+ - `FALSE` takes no arguments and always returns the boolean value `FALSE`.
+ - No coercion or evaluation side effects are involved.
 
-```text
-=FALSE()
-```
+## Examples
+
+<Tabs items={[
+  'Return FALSE directly',
+  'Use FALSE in branching',
+]}>
+<Tab value="Return FALSE directly">
+<FunctionSandbox
+  title="Return FALSE directly"
+  formula={`=FALSE()`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+<Tab value="Use FALSE in branching">
+<FunctionSandbox
+  title="Use FALSE in branching"
+  formula={`=IF(FALSE(), "yes", "no")`}
+  grid={{}}
+  expected={"no"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

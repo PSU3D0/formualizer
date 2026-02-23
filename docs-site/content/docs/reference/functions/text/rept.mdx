@@ -1,17 +1,43 @@
 ---
 title: "REPT"
-description: "Reference for the REPT function."
+description: "Repeats a text string a specified number of times."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Repeat count is truncated to an integer.
+ - Negative counts return `#VALUE!`.
+ - Output longer than 32,767 characters returns `#VALUE!`.
+ - Non-text first argument is coerced to text.
 
-```text
-=REPT(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Repeat text three times',
+  'Negative count',
+]}>
+<Tab value="Repeat text three times">
+<FunctionSandbox
+  title="Repeat text three times"
+  formula={`=REPT("ab", 3)`}
+  grid={{}}
+  expected={"ababab"}
+/>
+</Tab>
+
+<Tab value="Negative count">
+<FunctionSandbox
+  title="Negative count"
+  formula={`=REPT("x", -1)`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

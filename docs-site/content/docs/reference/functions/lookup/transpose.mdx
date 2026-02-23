@@ -1,17 +1,42 @@
 ---
 title: "TRANSPOSE"
-description: "Reference for the TRANSPOSE function."
+description: "Swaps rows and columns in an input range."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`TRANSPOSE` returns a spilled array whose shape is the inverse of the source shape.
 
-## Formula example
+## Remarks
+ - Input with shape `R x C` returns output shape `C x R`.
+ - Empty input returns an empty spill.
+ - Errors in source cells are preserved in transposed positions.
 
-```text
-=TRANSPOSE(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Transpose a row into a column',
+  'Transpose a 2x2 matrix',
+]}>
+<Tab value="Transpose a row into a column">
+<FunctionSandbox
+  title="Transpose a row into a column"
+  formula={`=TRANSPOSE(A1:C1)`}
+  grid={{"A1":"10","B1":"20","C1":"30"}}
+  expected={"[[10],[20],[30]]"}
+/>
+</Tab>
+
+<Tab value="Transpose a 2x2 matrix">
+<FunctionSandbox
+  title="Transpose a 2x2 matrix"
+  formula={`=TRANSPOSE(A1:B2)`}
+  grid={{"A1":"1","A2":"3","B1":"2","B2":"4"}}
+  expected={"[[1,3],[2,4]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

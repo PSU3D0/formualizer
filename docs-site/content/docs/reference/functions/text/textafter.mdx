@@ -1,17 +1,43 @@
 ---
 title: "TEXTAFTER"
-description: "Reference for the TEXTAFTER function."
+description: "Returns text that appears after a delimiter."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Delimiter matching is case-sensitive.
+ - `instance_num` defaults to `1`; negative instances search from the end.
+ - `instance_num=0` or empty delimiter returns `#VALUE!`.
+ - If requested delimiter occurrence is not found, returns `#N/A`.
 
-```text
-=TEXTAFTER(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Text after first delimiter',
+  'Text after last delimiter',
+]}>
+<Tab value="Text after first delimiter">
+<FunctionSandbox
+  title="Text after first delimiter"
+  formula={`=TEXTAFTER("a-b-c", "-")`}
+  grid={{}}
+  expected={"b-c"}
+/>
+</Tab>
+
+<Tab value="Text after last delimiter">
+<FunctionSandbox
+  title="Text after last delimiter"
+  formula={`=TEXTAFTER("a-b-c", "-", -1)`}
+  grid={{}}
+  expected={"c"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

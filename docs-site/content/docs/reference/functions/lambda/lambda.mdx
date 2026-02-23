@@ -1,17 +1,53 @@
 ---
 title: "LAMBDA"
-description: "Reference for the LAMBDA function."
+description: "Creates an anonymous callable that can be invoked with spreadsheet arguments."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`LAMBDA` captures its defining local scope and returns a reusable function value.
 
-## Formula example
+## Remarks
+ - All arguments except the last are parameter names; the last argument is the body expression.
+ - Parameter names must be unique (case-insensitive), or `#VALUE!` is returned.
+ - Invocation arity must exactly match the declared parameter count.
+ - Returning an uninvoked lambda as a final cell value yields a `#CALC!` in evaluation.
 
-```text
-=LAMBDA(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Inline lambda invocation',
+  'Lambda captures outer LET bindings',
+  'Duplicate parameter names are invalid',
+]}>
+<Tab value="Inline lambda invocation">
+<FunctionSandbox
+  title="Inline lambda invocation"
+  formula={`=LAMBDA(x,x+1)(41)`}
+  grid={{}}
+  expected={"42"}
+/>
+</Tab>
+
+<Tab value="Lambda captures outer LET bindings">
+<FunctionSandbox
+  title="Lambda captures outer LET bindings"
+  formula={`=LET(k,10,addk,LAMBDA(n,n+k),addk(5))`}
+  grid={{}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="Duplicate parameter names are invalid">
+<FunctionSandbox
+  title="Duplicate parameter names are invalid"
+  formula={`=LAMBDA(x,x,x+1)`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

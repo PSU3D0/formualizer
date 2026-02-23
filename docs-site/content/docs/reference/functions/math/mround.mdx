@@ -1,17 +1,42 @@
 ---
 title: "MROUND"
-description: "Reference for the MROUND function."
+description: "Rounds a number to the nearest multiple."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Returns `0` when `multiple` is `0`.
+ - If `number` and `multiple` have different signs, returns `#NUM!`.
+ - Midpoints are rounded away from zero.
 
-```text
-=MROUND(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Round to nearest 5',
+  'Round negative value',
+]}>
+<Tab value="Round to nearest 5">
+<FunctionSandbox
+  title="Round to nearest 5"
+  formula={`=MROUND(17,5)`}
+  grid={{}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="Round negative value">
+<FunctionSandbox
+  title="Round negative value"
+  formula={`=MROUND(-17,-5)`}
+  grid={{}}
+  expected={"-15"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

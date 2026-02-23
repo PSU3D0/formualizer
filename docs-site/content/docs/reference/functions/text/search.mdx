@@ -1,17 +1,43 @@
 ---
 title: "SEARCH"
-description: "Reference for the SEARCH function."
+description: "Returns the 1-based position of one text string inside another."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`SEARCH` is case-insensitive and supports `*` and `?` wildcards.
 
-## Formula example
+## Remarks
+ - Search is case-insensitive.
+ - `*` matches any sequence and `?` matches a single character.
+ - `start_num` is 1-based and must be greater than `0`.
+ - If no match is found, returns `#VALUE!`.
 
-```text
-=SEARCH(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Case-insensitive search',
+  'Wildcard pattern',
+]}>
+<Tab value="Case-insensitive search">
+<FunctionSandbox
+  title="Case-insensitive search"
+  formula={`=SEARCH("world", "Hello World")`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+<Tab value="Wildcard pattern">
+<FunctionSandbox
+  title="Wildcard pattern"
+  formula={`=SEARCH("d?ta*", "Meta Data Lake")`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

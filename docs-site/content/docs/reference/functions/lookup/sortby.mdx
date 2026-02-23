@@ -1,17 +1,44 @@
 ---
 title: "SORTBY"
-description: "Reference for the SORTBY function."
+description: "Sorts an array based on one or more aligned sort-by arrays."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`SORTBY` separates what is returned (`array`) from what determines ordering (`by_array`).
 
-## Formula example
+## Remarks
+ - Requires at least one `by_array` aligned to the row count of `array`.
+ - `sort_order` defaults to ascending when omitted.
+ - Additional `by_array`/`sort_order` criteria are processed left-to-right.
+ - Shape mismatches or invalid criteria return `#VALUE!`.
+ - Returns a spilled sorted array.
 
-```text
-=SORTBY(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Sort names by score',
+  'Sort descending by key',
+]}>
+<Tab value="Sort names by score">
+<FunctionSandbox
+  title="Sort names by score"
+  formula={`=SORTBY(A1:A3,B1:B3)`}
+  grid={{"A1":"Charlie","A2":"Alice","A3":"Bob","B1":"3","B2":"1","B3":"2"}}
+  expected={"[[\"Alice\"],[\"Bob\"],[\"Charlie\"]]"}
+/>
+</Tab>
+
+<Tab value="Sort descending by key">
+<FunctionSandbox
+  title="Sort descending by key"
+  formula={`=SORTBY(A1:A3,B1:B3,-1)`}
+  grid={{"A1":"Q1","A2":"Q2","A3":"Q3","B1":"100","B2":"300","B3":"200"}}
+  expected={"[[\"Q2\"],[\"Q3\"],[\"Q1\"]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

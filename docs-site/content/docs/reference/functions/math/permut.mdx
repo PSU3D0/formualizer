@@ -1,17 +1,52 @@
 ---
 title: "PERMUT"
-description: "Reference for the PERMUT function."
+description: "Returns the number of permutations for selecting and ordering `k` items from `n`."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`PERMUT` computes `n!/(n-k)!` after truncating both inputs toward zero.
 
-## Formula example
+## Remarks
+ - Fractional inputs are truncated to integers.
+ - If `n < 0`, `k < 0`, or `k > n`, the function returns `#NUM!`.
+ - Argument errors propagate directly.
 
-```text
-=PERMUT(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Basic permutations',
+  'Fractional arguments are truncated',
+  'Out-of-range k returns numeric error',
+]}>
+<Tab value="Basic permutations">
+<FunctionSandbox
+  title="Basic permutations"
+  formula={`=PERMUT(5, 2)`}
+  grid={{}}
+  expected={"20"}
+/>
+</Tab>
+
+<Tab value="Fractional arguments are truncated">
+<FunctionSandbox
+  title="Fractional arguments are truncated"
+  formula={`=PERMUT(7.9, 3.1)`}
+  grid={{}}
+  expected={"210"}
+/>
+</Tab>
+
+<Tab value="Out-of-range k returns numeric error">
+<FunctionSandbox
+  title="Out-of-range k returns numeric error"
+  formula={`=PERMUT(4, 6)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

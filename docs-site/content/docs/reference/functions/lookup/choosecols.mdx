@@ -1,17 +1,44 @@
 ---
 title: "CHOOSECOLS"
-description: "Reference for the CHOOSECOLS function."
+description: "Returns selected columns from an array or range."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`CHOOSECOLS` builds a new spilled array containing only the requested columns, in the
+ order provided.
 
-## Formula example
+## Remarks
+ - Column indexes are 1-based; negative indexes count from the end (`-1` is last column).
+ - Repeated indexes are allowed and duplicate columns in the output.
+ - Index `0` or out-of-bounds indexes return `#VALUE!`.
+ - The result spills as an array unless it collapses to a single cell.
 
-```text
-=CHOOSECOLS(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Select first and third columns',
+  'Select the last column with a negative index',
+]}>
+<Tab value="Select first and third columns">
+<FunctionSandbox
+  title="Select first and third columns"
+  formula={`=CHOOSECOLS(A1:C2,1,3)`}
+  grid={{"A1":"Name","A2":"Ana","B1":"Dept","B2":"Ops","C1":"Score","C2":"91"}}
+  expected={"[[\"Name\",\"Score\"],[\"Ana\",91]]"}
+/>
+</Tab>
+
+<Tab value="Select the last column with a negative index">
+<FunctionSandbox
+  title="Select the last column with a negative index"
+  formula={`=CHOOSECOLS(A1:C1,-1)`}
+  grid={{"A1":"10","B1":"20","C1":"30"}}
+  expected={"30"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

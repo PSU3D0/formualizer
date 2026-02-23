@@ -1,17 +1,43 @@
 ---
 title: "EXACT"
-description: "Reference for the EXACT function."
+description: "Compares two text values for exact equality."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Comparison is case-sensitive.
+ - No wildcard semantics are applied.
+ - Non-text values are converted to text before comparison.
+ - Errors in either argument are propagated.
 
-```text
-=EXACT(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Exact same text',
+  'Case difference is not equal',
+]}>
+<Tab value="Exact same text">
+<FunctionSandbox
+  title="Exact same text"
+  formula={`=EXACT("Form", "Form")`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Case difference is not equal">
+<FunctionSandbox
+  title="Case difference is not equal"
+  formula={`=EXACT("Form", "form")`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

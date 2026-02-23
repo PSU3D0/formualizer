@@ -1,17 +1,42 @@
 ---
 title: "ISFORMULA"
-description: "Reference for the ISFORMULA function."
+description: "Returns whether a value originates from a formula."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Current engine metadata does not track formula provenance at this call site.
 
-## Formula example
+## Remarks
+ - This implementation currently returns FALSE for all inputs.
+ - Errors are not raised solely due to provenance unavailability.
+ - Arity mismatch returns `#VALUE!`.
 
-```text
-=ISFORMULA(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Literal value',
+  'Computed value in expression context',
+]}>
+<Tab value="Literal value">
+<FunctionSandbox
+  title="Literal value"
+  formula={`=ISFORMULA(10)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+<Tab value="Computed value in expression context">
+<FunctionSandbox
+  title="Computed value in expression context"
+  formula={`=ISFORMULA(1+1)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

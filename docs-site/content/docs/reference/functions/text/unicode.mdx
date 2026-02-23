@@ -1,17 +1,43 @@
 ---
 title: "UNICODE"
-description: "Reference for the UNICODE function."
+description: "Returns the Unicode code point of the first character in text."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Only the first character is evaluated.
+ - Empty text returns `#VALUE!`.
+ - Non-text inputs are coerced to text before inspection.
+ - Errors are propagated unchanged.
 
-```text
-=UNICODE(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Code point for letter A',
+  'Code point for emoji',
+]}>
+<Tab value="Code point for letter A">
+<FunctionSandbox
+  title="Code point for letter A"
+  formula={`=UNICODE("A")`}
+  grid={{}}
+  expected={"65"}
+/>
+</Tab>
+
+<Tab value="Code point for emoji">
+<FunctionSandbox
+  title="Code point for emoji"
+  formula={`=UNICODE("😀")`}
+  grid={{}}
+  expected={"128512"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

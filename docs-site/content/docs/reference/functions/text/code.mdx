@@ -1,17 +1,43 @@
 ---
 title: "CODE"
-description: "Reference for the CODE function."
+description: "Returns the numeric code of the first character in text."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`CODE` mirrors Excel behavior with Windows-1252 compatibility mappings.
 
-## Formula example
+## Remarks
+ - Only the first character is inspected.
+ - Empty text returns `#VALUE!`.
+ - Text-like coercion is applied to non-text scalar inputs.
+ - Known Unicode characters in the Windows-1252 extension map back to their Excel codes.
 
-```text
-=CODE(A1)
-```
+## Examples
+
+<Tabs items={[
+  'ASCII code',
+  'Extended mapping',
+]}>
+<Tab value="ASCII code">
+<FunctionSandbox
+  title="ASCII code"
+  formula={`=CODE("A")`}
+  grid={{}}
+  expected={"65"}
+/>
+</Tab>
+
+<Tab value="Extended mapping">
+<FunctionSandbox
+  title="Extended mapping"
+  formula={`=CODE(CHAR(128))`}
+  grid={{}}
+  expected={"128"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

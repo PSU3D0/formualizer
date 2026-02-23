@@ -1,17 +1,43 @@
 ---
 title: "XOR"
-description: "Reference for the XOR function."
+description: "Returns TRUE when an odd number of arguments evaluate to TRUE."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`XOR` aggregates all values and checks parity of truthy inputs.
 
-## Formula example
+## Remarks
+ - Booleans and numbers are accepted (`0` is FALSE, non-zero is TRUE).
+ - Blank values are ignored.
+ - Text and other non-coercible values produce `#VALUE!`.
+ - If no coercion error occurs first, encountered formula errors are propagated.
 
-```text
-=XOR(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Odd count of TRUE values',
+  'Text input triggers VALUE error',
+]}>
+<Tab value="Odd count of TRUE values">
+<FunctionSandbox
+  title="Odd count of TRUE values"
+  formula={`=XOR(TRUE, FALSE, TRUE, TRUE)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Text input triggers VALUE error">
+<FunctionSandbox
+  title="Text input triggers VALUE error"
+  formula={`=XOR(1, "x")`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

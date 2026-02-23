@@ -1,17 +1,43 @@
 ---
 title: "ROW"
-description: "Reference for the ROW function."
+description: "Returns the row number of a reference, or of the current cell when omitted."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`ROW` returns a 1-based row index.
 
-## Formula example
+## Remarks
+ - With a range argument, `ROW` returns the first row in that reference.
+ - Without arguments, it uses the row of the formula cell.
+ - Full-column references such as `A:A` return `1`.
+ - Invalid references return an error (`#REF!`/`#VALUE!` depending on context).
 
-```text
-=ROW()
-```
+## Examples
+
+<Tabs items={[
+  'Row of a single-cell reference',
+  'Row of a multi-cell range',
+]}>
+<Tab value="Row of a single-cell reference">
+<FunctionSandbox
+  title="Row of a single-cell reference"
+  formula={`=ROW(B5)`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+<Tab value="Row of a multi-cell range">
+<FunctionSandbox
+  title="Row of a multi-cell range"
+  formula={`=ROW(C3:E9)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,43 @@
 ---
 title: "FIND"
-description: "Reference for the FIND function."
+description: "Returns the 1-based position of one text string inside another."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`FIND` is case-sensitive and does not interpret wildcard characters.
 
-## Formula example
+## Remarks
+ - Search is case-sensitive (`"A"` and `"a"` are different).
+ - `start_num` is 1-based and must be greater than `0`.
+ - If no match is found, returns `#VALUE!`.
+ - Errors in either argument are propagated.
 
-```text
-=FIND(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Case-sensitive match',
+  'Case mismatch fails',
+]}>
+<Tab value="Case-sensitive match">
+<FunctionSandbox
+  title="Case-sensitive match"
+  formula={`=FIND("World", "Hello World")`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+<Tab value="Case mismatch fails">
+<FunctionSandbox
+  title="Case mismatch fails"
+  formula={`=FIND("world", "Hello World")`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

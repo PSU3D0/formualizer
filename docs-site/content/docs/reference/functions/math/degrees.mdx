@@ -1,17 +1,41 @@
 ---
 title: "DEGREES"
-description: "Reference for the DEGREES function."
+description: "Converts an angle from radians to degrees."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Useful when converting the output of inverse trig functions.
+ - Output is `radians * 180 / PI()`.
 
-```text
-=DEGREES(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Convert PI radians',
+  'Convert PI/2 radians',
+]}>
+<Tab value="Convert PI radians">
+<FunctionSandbox
+  title="Convert PI radians"
+  formula={`=DEGREES(PI())`}
+  grid={{}}
+  expected={"180"}
+/>
+</Tab>
+
+<Tab value="Convert PI/2 radians">
+<FunctionSandbox
+  title="Convert PI/2 radians"
+  formula={`=DEGREES(PI()/2)`}
+  grid={{}}
+  expected={"90"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

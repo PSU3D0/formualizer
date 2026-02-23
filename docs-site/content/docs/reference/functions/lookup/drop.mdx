@@ -1,17 +1,43 @@
 ---
 title: "DROP"
-description: "Reference for the DROP function."
+description: "Removes rows and optional columns from the start or end of an array."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`DROP` is the complement of `TAKE` and returns the remaining spilled subset.
 
-## Formula example
+## Remarks
+ - Positive counts drop from the start; negative counts drop from the end.
+ - `rows` is required; `columns` is optional.
+ - Dropping all rows or columns yields an empty spill.
+ - Invalid source references propagate errors.
 
-```text
-=DROP(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Drop header row',
+  'Drop last column',
+]}>
+<Tab value="Drop header row">
+<FunctionSandbox
+  title="Drop header row"
+  formula={`=DROP(A1:A3,1)`}
+  grid={{"A1":"Month","A2":"Jan","A3":"Feb"}}
+  expected={"[[\"Jan\"],[\"Feb\"]]"}
+/>
+</Tab>
+
+<Tab value="Drop last column">
+<FunctionSandbox
+  title="Drop last column"
+  formula={`=DROP(A1:C1,0,-1)`}
+  grid={{"A1":"10","B1":"20","C1":"30"}}
+  expected={"[[10,20]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

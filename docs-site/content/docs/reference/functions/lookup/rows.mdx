@@ -1,17 +1,43 @@
 ---
 title: "ROWS"
-description: "Reference for the ROWS function."
+description: "Returns the number of rows in a reference or array."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`ROWS` reports height, not data density.
 
-## Formula example
+## Remarks
+ - For a single cell reference, returns `1`.
+ - For full-column references (for example `A:A`), returns `1048576`.
+ - For array literals, returns the outer array length.
+ - Invalid references return an error.
 
-```text
-=ROWS(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Count rows in a contiguous range',
+  'Count rows in a full column reference',
+]}>
+<Tab value="Count rows in a contiguous range">
+<FunctionSandbox
+  title="Count rows in a contiguous range"
+  formula={`=ROWS(B2:D10)`}
+  grid={{}}
+  expected={"9"}
+/>
+</Tab>
+
+<Tab value="Count rows in a full column reference">
+<FunctionSandbox
+  title="Count rows in a full column reference"
+  formula={`=ROWS(A:A)`}
+  grid={{}}
+  expected={"1048576"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

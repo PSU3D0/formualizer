@@ -1,17 +1,43 @@
 ---
 title: "PROPER"
-description: "Reference for the PROPER function."
+description: "Capitalizes the first letter of each alphanumeric word."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Word boundaries are reset by non-alphanumeric characters.
+ - Internal letters in each word are lowercased.
+ - Non-text inputs are coerced to text.
+ - Errors are propagated unchanged.
 
-```text
-=PROPER(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Title case simple phrase',
+  'Hyphen-separated words',
+]}>
+<Tab value="Title case simple phrase">
+<FunctionSandbox
+  title="Title case simple phrase"
+  formula={`=PROPER("hello world")`}
+  grid={{}}
+  expected={"Hello World"}
+/>
+</Tab>
+
+<Tab value="Hyphen-separated words">
+<FunctionSandbox
+  title="Hyphen-separated words"
+  formula={`=PROPER("north-east REGION")`}
+  grid={{}}
+  expected={"North-East Region"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

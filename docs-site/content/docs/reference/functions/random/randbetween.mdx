@@ -1,17 +1,52 @@
 ---
 title: "RANDBETWEEN"
-description: "Reference for the RANDBETWEEN function."
+description: "Returns a random integer between two inclusive bounds."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`RANDBETWEEN` evaluates both bounds, then samples an integer in `[low, high]`.
 
-## Formula example
+## Remarks
+ - Bounds are coerced to numbers and truncated to integers.
+ - If `high < low`, the function returns `#NUM!`.
+ - The function is volatile and may return a different integer each recalculation.
 
-```text
-=RANDBETWEEN(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Value always falls inside the requested interval',
+  'Equal bounds produce a fixed value',
+  'Upper bound below lower bound is invalid',
+]}>
+<Tab value="Value always falls inside the requested interval">
+<FunctionSandbox
+  title="Value always falls inside the requested interval"
+  formula={`=LET(n, RANDBETWEEN(1, 3), AND(n>=1, n<=3, INT(n)=n))`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Equal bounds produce a fixed value">
+<FunctionSandbox
+  title="Equal bounds produce a fixed value"
+  formula={`=RANDBETWEEN(7, 7)`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+<Tab value="Upper bound below lower bound is invalid">
+<FunctionSandbox
+  title="Upper bound below lower bound is invalid"
+  formula={`=RANDBETWEEN(5, 1)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

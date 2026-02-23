@@ -1,17 +1,42 @@
 ---
 title: "UPPER"
-description: "Reference for the UPPER function."
+description: "Converts text to uppercase."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Uses ASCII uppercasing semantics in this implementation.
+ - Numbers and booleans are first converted to text.
+ - Errors are propagated unchanged.
 
-```text
-=UPPER(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Uppercase letters',
+  'Number coerced to text',
+]}>
+<Tab value="Uppercase letters">
+<FunctionSandbox
+  title="Uppercase letters"
+  formula={`=UPPER("Quarterly report")`}
+  grid={{}}
+  expected={"QUARTERLY REPORT"}
+/>
+</Tab>
+
+<Tab value="Number coerced to text">
+<FunctionSandbox
+  title="Number coerced to text"
+  formula={`=UPPER(123)`}
+  grid={{}}
+  expected={"123"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

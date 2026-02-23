@@ -1,17 +1,43 @@
 ---
 title: "SEQUENCE"
-description: "Reference for the SEQUENCE function."
+description: "Generates a sequential numeric array with configurable size, start, and step."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`SEQUENCE` fills values row-by-row and returns a dynamic spill.
 
-## Formula example
+## Remarks
+ - Defaults: `columns=1`, `start=1`, `step=1`.
+ - `rows` and `columns` must be positive; otherwise returns `#VALUE!`.
+ - Values are emitted as integers when integral, otherwise as floating-point numbers.
+ - Result spills to the requested dimensions.
 
-```text
-=SEQUENCE(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Simple vertical sequence',
+  '2x3 sequence with custom start and step',
+]}>
+<Tab value="Simple vertical sequence">
+<FunctionSandbox
+  title="Simple vertical sequence"
+  formula={`=SEQUENCE(5)`}
+  grid={{}}
+  expected={"[[1],[2],[3],[4],[5]]"}
+/>
+</Tab>
+
+<Tab value="2x3 sequence with custom start and step">
+<FunctionSandbox
+  title="2x3 sequence with custom start and step"
+  formula={`=SEQUENCE(2,3,10,5)`}
+  grid={{}}
+  expected={"[[10,15,20],[25,30,35]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

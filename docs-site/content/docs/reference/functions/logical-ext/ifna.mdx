@@ -1,17 +1,43 @@
 ---
 title: "IFNA"
-description: "Reference for the IFNA function."
+description: "Returns a fallback only when the first expression is `#N/A`."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`IFNA(value, value_if_na)` is narrower than `IFERROR`.
 
-## Formula example
+## Remarks
+ - Only `#N/A` triggers fallback.
+ - Other error kinds are returned unchanged.
+ - Non-error results pass through unchanged.
+ - Exactly two arguments are required; other arities return `#VALUE!`.
 
-```text
-=IFNA(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Catch N/A',
+  'Do not catch other errors',
+]}>
+<Tab value="Catch N/A">
+<FunctionSandbox
+  title="Catch N/A"
+  formula={`=IFNA(NA(), "missing")`}
+  grid={{}}
+  expected={"missing"}
+/>
+</Tab>
+
+<Tab value="Do not catch other errors">
+<FunctionSandbox
+  title="Do not catch other errors"
+  formula={`=IFNA(1/0, "missing")`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

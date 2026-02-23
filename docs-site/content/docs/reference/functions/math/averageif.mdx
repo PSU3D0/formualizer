@@ -1,17 +1,53 @@
 ---
 title: "AVERAGEIF"
-description: "Reference for the AVERAGEIF function."
+description: "Returns the average of cells that satisfy a single criterion."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`AVERAGEIF` tests each cell in `range`, then averages matching values from `average_range`
+ (or from `range` when `average_range` is omitted).
 
-## Formula example
+## Remarks
+ - Criteria support comparison operators and wildcard text patterns.
+ - Non-numeric values in the averaged cells are ignored.
+ - If no cells match, `AVERAGEIF` returns `#DIV/0!`.
 
-```text
-=AVERAGEIF(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Average values greater than a threshold',
+  'Average one range using criteria from another',
+  'No matches returns divide-by-zero',
+]}>
+<Tab value="Average values greater than a threshold">
+<FunctionSandbox
+  title="Average values greater than a threshold"
+  formula={`=AVERAGEIF(A1:A3, ">20")`}
+  grid={{"A1":"10","A2":"25","A3":"40"}}
+  expected={"32.5"}
+/>
+</Tab>
+
+<Tab value="Average one range using criteria from another">
+<FunctionSandbox
+  title="Average one range using criteria from another"
+  formula={`=AVERAGEIF(A1:A3, "East", B1:B3)`}
+  grid={{"A1":"East","A2":"West","A3":"East","B1":"10","B2":"40","B3":"20"}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="No matches returns divide-by-zero">
+<FunctionSandbox
+  title="No matches returns divide-by-zero"
+  formula={`=AVERAGEIF({1,2,3}, ">5")`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

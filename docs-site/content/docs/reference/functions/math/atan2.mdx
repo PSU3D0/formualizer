@@ -1,17 +1,41 @@
 ---
 title: "ATAN2"
-description: "Reference for the ATAN2 function."
+description: "Returns the arctangent of `y/x`, preserving quadrant information."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Formualizer uses Excel-style argument order: `ATAN2(x_num, y_num)`.
+ - Returns `#DIV/0!` when both arguments are zero.
 
-```text
-=ATAN2(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'First quadrant angle',
+  'Undefined angle at origin',
+]}>
+<Tab value="First quadrant angle">
+<FunctionSandbox
+  title="First quadrant angle"
+  formula={`=ATAN2(1,1)`}
+  grid={{}}
+  expected={"0.7853981633974483"}
+/>
+</Tab>
+
+<Tab value="Undefined angle at origin">
+<FunctionSandbox
+  title="Undefined angle at origin"
+  formula={`=ATAN2(0,0)`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,43 @@
 ---
 title: "DOLLAR"
-description: "Reference for the DOLLAR function."
+description: "Formats a number as currency text."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Default decimal places is `2` when omitted.
+ - Negative values are rendered in parentheses, such as `($1,234.00)`.
+ - Uses comma group separators and dollar symbol.
+ - Input coercion failures or propagated errors return an error.
 
-```text
-=DOLLAR(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Default currency formatting',
+  'Negative value with zero decimals',
+]}>
+<Tab value="Default currency formatting">
+<FunctionSandbox
+  title="Default currency formatting"
+  formula={`=DOLLAR(1234.5)`}
+  grid={{}}
+  expected={"$1,234.50"}
+/>
+</Tab>
+
+<Tab value="Negative value with zero decimals">
+<FunctionSandbox
+  title="Negative value with zero decimals"
+  formula={`=DOLLAR(-999.4, 0)`}
+  grid={{}}
+  expected={"($999)"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

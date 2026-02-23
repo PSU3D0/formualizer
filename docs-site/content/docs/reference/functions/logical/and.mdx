@@ -1,17 +1,43 @@
 ---
 title: "AND"
-description: "Reference for the AND function."
+description: "Returns TRUE only when all supplied values evaluate to TRUE."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`AND` evaluates arguments left to right and short-circuits on a decisive `FALSE`.
 
-## Formula example
+## Remarks
+ - Booleans and numbers are accepted (`0` is FALSE, non-zero is TRUE).
+ - Blank values are treated as FALSE.
+ - Text and other non-coercible values yield `#VALUE!` unless a prior FALSE short-circuits.
+ - If no decisive FALSE is found, the first encountered error is returned.
 
-```text
-=AND(A1)
-```
+## Examples
+
+<Tabs items={[
+  'All truthy inputs',
+  'Text input causes VALUE error',
+]}>
+<Tab value="All truthy inputs">
+<FunctionSandbox
+  title="All truthy inputs"
+  formula={`=AND(TRUE, 1, 5)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Text input causes VALUE error">
+<FunctionSandbox
+  title="Text input causes VALUE error"
+  formula={`=AND(TRUE, "x")`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

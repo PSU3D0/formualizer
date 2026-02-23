@@ -1,17 +1,44 @@
 ---
 title: "INDIRECT"
-description: "Reference for the INDIRECT function."
+description: "Converts text into a reference and returns the referenced value or range."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`INDIRECT` lets formulas build references dynamically from strings such as `"A1"` or
+ `"Sheet2!B3:C5"`.
 
-## Formula example
+## Remarks
+ - `a1_style` defaults to `TRUE` (A1 style parsing).
+ - `a1_style=FALSE` (R1C1 parsing) is currently not implemented and returns `#N/IMPL!`.
+ - Invalid or unresolved references return `#REF!`.
+ - The function is volatile because target references can change without direct dependency links.
 
-```text
-=INDIRECT(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Resolve a direct cell reference',
+  'Resolve a range and aggregate it',
+]}>
+<Tab value="Resolve a direct cell reference">
+<FunctionSandbox
+  title="Resolve a direct cell reference"
+  formula={`=INDIRECT("A1")`}
+  grid={{"A1":"99"}}
+  expected={"99"}
+/>
+</Tab>
+
+<Tab value="Resolve a range and aggregate it">
+<FunctionSandbox
+  title="Resolve a range and aggregate it"
+  formula={`=SUM(INDIRECT("A1:A3"))`}
+  grid={{"A1":"5","A2":"7","A3":"9"}}
+  expected={"21"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

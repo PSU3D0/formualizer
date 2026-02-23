@@ -1,17 +1,42 @@
 ---
 title: "POWER"
-description: "Reference for the POWER function."
+description: "Raises a base number to a specified power."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Equivalent to exponentiation (`base^exponent`).
+ - Negative bases with fractional exponents return `#NUM!`.
+ - Errors are propagated.
 
-```text
-=POWER(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Integer exponent',
+  'Fractional exponent',
+]}>
+<Tab value="Integer exponent">
+<FunctionSandbox
+  title="Integer exponent"
+  formula={`=POWER(2,10)`}
+  grid={{}}
+  expected={"1024"}
+/>
+</Tab>
+
+<Tab value="Fractional exponent">
+<FunctionSandbox
+  title="Fractional exponent"
+  formula={`=POWER(9,0.5)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

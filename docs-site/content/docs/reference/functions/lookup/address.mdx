@@ -1,17 +1,45 @@
 ---
 title: "ADDRESS"
-description: "Reference for the ADDRESS function."
+description: "Returns a cell reference as text from row and column numbers."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`ADDRESS` can emit either A1 or R1C1 notation and optionally prefix the address with a
+ sheet name.
 
-## Formula example
+## Remarks
+ - `abs_num` defaults to `1` (`$A$1`) and supports values `1..4`.
+ - `a1` defaults to `TRUE`; `FALSE` returns R1C1-style text.
+ - Valid row range is `1..1048576`; valid column range is `1..16384`.
+ - Out-of-range row/column values or invalid `abs_num` return `#VALUE!`.
+ - If `sheet_text` contains spaces or special characters, it is quoted.
 
-```text
-=ADDRESS(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Absolute A1 reference',
+  'Relative R1C1 reference with sheet',
+]}>
+<Tab value="Absolute A1 reference">
+<FunctionSandbox
+  title="Absolute A1 reference"
+  formula={`=ADDRESS(2,3)`}
+  grid={{}}
+  expected={"$C$2"}
+/>
+</Tab>
+
+<Tab value="Relative R1C1 reference with sheet">
+<FunctionSandbox
+  title="Relative R1C1 reference with sheet"
+  formula={`=ADDRESS(5,3,4,FALSE,"Data Sheet")`}
+  grid={{}}
+  expected={"'Data Sheet'!R[5]C[3]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,53 @@
 ---
 title: "MIN"
-description: "Reference for the MIN function."
+description: "Returns the smallest numeric value from one or more arguments."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`MIN` scans scalar values and ranges, considering only values that can be treated as numbers.
 
-## Formula example
+## Remarks
+ - Errors in any scalar argument or range cell propagate immediately.
+ - In ranges, non-numeric cells are ignored.
+ - Scalar text is included only when it can be coerced to a number.
+ - If no numeric value is found, `MIN` returns `0`.
 
-```text
-=MIN(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Minimum in a numeric range',
+  'Coercible scalar text participates',
+  'No numeric values returns zero',
+]}>
+<Tab value="Minimum in a numeric range">
+<FunctionSandbox
+  title="Minimum in a numeric range"
+  formula={`=MIN(A1:A3)`}
+  grid={{"A1":"8","A2":"-2","A3":"5"}}
+  expected={"-2"}
+/>
+</Tab>
+
+<Tab value="Coercible scalar text participates">
+<FunctionSandbox
+  title="Coercible scalar text participates"
+  formula={`=MIN(10, "3", 7)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="No numeric values returns zero">
+<FunctionSandbox
+  title="No numeric values returns zero"
+  formula={`=MIN("x")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

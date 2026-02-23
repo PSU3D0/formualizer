@@ -1,17 +1,43 @@
 ---
 title: "TAKE"
-description: "Reference for the TAKE function."
+description: "Returns a subset from the start or end of rows and optional columns."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`TAKE` extracts leading or trailing portions of an array based on signed counts.
 
-## Formula example
+## Remarks
+ - Positive counts take from the start; negative counts take from the end.
+ - `rows` is required; `columns` is optional.
+ - Absolute counts larger than the source dimension return `#VALUE!`.
+ - Empty selections return an empty spill.
 
-```text
-=TAKE(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Take top two rows',
+  'Take last row and last two columns',
+]}>
+<Tab value="Take top two rows">
+<FunctionSandbox
+  title="Take top two rows"
+  formula={`=TAKE(A1:A3,2)`}
+  grid={{"A1":"10","A2":"20","A3":"30"}}
+  expected={"[[10],[20]]"}
+/>
+</Tab>
+
+<Tab value="Take last row and last two columns">
+<FunctionSandbox
+  title="Take last row and last two columns"
+  formula={`=TAKE(A1:C2,-1,-2)`}
+  grid={{"A1":"1","A2":"4","B1":"2","B2":"5","C1":"3","C2":"6"}}
+  expected={"[[5,6]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

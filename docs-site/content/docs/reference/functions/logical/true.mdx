@@ -1,17 +1,41 @@
 ---
 title: "TRUE"
-description: "Reference for the TRUE function."
+description: "Returns the logical constant TRUE."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Use `TRUE()` when you want an explicit boolean value in formulas.
 
-## Formula example
+## Remarks
+ - `TRUE` takes no arguments and always returns the boolean value `TRUE`.
+ - No coercion or evaluation side effects are involved.
 
-```text
-=TRUE()
-```
+## Examples
+
+<Tabs items={[
+  'Return TRUE directly',
+  'Use TRUE in branching',
+]}>
+<Tab value="Return TRUE directly">
+<FunctionSandbox
+  title="Return TRUE directly"
+  formula={`=TRUE()`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Use TRUE in branching">
+<FunctionSandbox
+  title="Use TRUE in branching"
+  formula={`=IF(TRUE(), "yes", "no")`}
+  grid={{}}
+  expected={"yes"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

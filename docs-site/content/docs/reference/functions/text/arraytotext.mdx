@@ -1,17 +1,43 @@
 ---
 title: "ARRAYTOTEXT"
-description: "Reference for the ARRAYTOTEXT function."
+description: "Converts an array or range into a text representation."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`ARRAYTOTEXT(array, [format])` supports concise (`0`) and strict (`1`) output styles.
 
-## Formula example
+## Remarks
+ - Strict mode returns brace-delimited array syntax with row/column separators.
+ - Concise mode flattens all values into a comma-space list.
+ - Cells are converted using the same scalar text rules used by `VALUETOTEXT`.
+ - Errors in scalar-only input propagate immediately.
 
-```text
-=ARRAYTOTEXT(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Concise flattened output',
+  'Strict 2D representation',
+]}>
+<Tab value="Concise flattened output">
+<FunctionSandbox
+  title="Concise flattened output"
+  formula={`=ARRAYTOTEXT({1,2,3})`}
+  grid={{}}
+  expected={"1, 2, 3"}
+/>
+</Tab>
+
+<Tab value="Strict 2D representation">
+<FunctionSandbox
+  title="Strict 2D representation"
+  formula={`=ARRAYTOTEXT({1,2;3,4}, 1)`}
+  grid={{}}
+  expected={"{1,2;3,4}"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

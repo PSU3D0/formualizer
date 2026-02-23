@@ -1,17 +1,42 @@
 ---
 title: "ISERROR"
-description: "Reference for the ISERROR function."
+description: "Returns TRUE for any error value."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Matches all error kinds, including `#N/A`.
+ - Non-error values always return FALSE.
+ - Arity mismatch returns `#VALUE!`.
 
-```text
-=ISERROR(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Division error',
+  'Normal value',
+]}>
+<Tab value="Division error">
+<FunctionSandbox
+  title="Division error"
+  formula={`=ISERROR(1/0)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Normal value">
+<FunctionSandbox
+  title="Normal value"
+  formula={`=ISERROR(123)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

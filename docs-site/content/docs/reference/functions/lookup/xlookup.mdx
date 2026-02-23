@@ -1,17 +1,45 @@
 ---
 title: "XLOOKUP"
-description: "Reference for the XLOOKUP function."
+description: "Looks up a value in one array and returns the aligned value from another array."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`XLOOKUP` supports exact, approximate, and wildcard matching with forward or reverse search.
 
-## Formula example
+## Remarks
+ - Defaults: `match_mode=0` (exact), `search_mode=1` (first-to-last).
+ - `if_not_found` is optional; if omitted and no match exists, returns `#N/A`.
+ - `match_mode`: `0` exact, `-1` exact-or-next-smaller, `1` exact-or-next-larger, `2` wildcard.
+ - `search_mode`: `1` forward, `-1` reverse. Other modes are accepted with current fallback behavior.
+ - `lookup_array` must be 1D. Invalid shape returns `#VALUE!`.
+ - If `return_array` is multi-column or multi-row, the matched row/column is returned as a spill.
 
-```text
-=XLOOKUP(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Exact key lookup with fallback',
+  'Return a full row from a matched key',
+]}>
+<Tab value="Exact key lookup with fallback">
+<FunctionSandbox
+  title="Exact key lookup with fallback"
+  formula={`=XLOOKUP(102,A2:A3,B2:B3,"Missing")`}
+  grid={{"A1":"id","A2":"101","A3":"102","B1":"name","B2":"Ana","B3":"Bo"}}
+  expected={"Bo"}
+/>
+</Tab>
+
+<Tab value="Return a full row from a matched key">
+<FunctionSandbox
+  title="Return a full row from a matched key"
+  formula={`=XLOOKUP(2,A1:A2,B1:C2)`}
+  grid={{"A1":"1","A2":"2","B1":"East","B2":"West","C1":"120","C2":"140"}}
+  expected={"[[\"West\",140]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

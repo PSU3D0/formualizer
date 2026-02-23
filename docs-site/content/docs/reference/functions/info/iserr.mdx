@@ -1,17 +1,42 @@
 ---
 title: "ISERR"
-description: "Reference for the ISERR function."
+description: "Returns TRUE for any error except `#N/A`."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - `#N/A` specifically returns FALSE.
+ - Other errors such as `#DIV/0!` or `#VALUE!` return TRUE.
+ - Non-error values return FALSE.
 
-```text
-=ISERR(A1)
-```
+## Examples
+
+<Tabs items={[
+  'DIV/0 is an error excluding N/A',
+  'N/A is excluded',
+]}>
+<Tab value="DIV/0 is an error excluding N/A">
+<FunctionSandbox
+  title="DIV/0 is an error excluding N/A"
+  formula={`=ISERR(1/0)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="N/A is excluded">
+<FunctionSandbox
+  title="N/A is excluded"
+  formula={`=ISERR(NA())`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

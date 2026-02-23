@@ -1,17 +1,43 @@
 ---
 title: "LEFT"
-description: "Reference for the LEFT function."
+description: "Returns the leftmost characters from a text value."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - `num_chars` defaults to `1` when omitted.
+ - Negative `num_chars` returns `#VALUE!`.
+ - If `num_chars` exceeds length, the full text is returned.
+ - Non-text values are coerced to text before slicing.
 
-```text
-=LEFT(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Take first two characters',
+  'Default count is one',
+]}>
+<Tab value="Take first two characters">
+<FunctionSandbox
+  title="Take first two characters"
+  formula={`=LEFT("Formualizer", 2)`}
+  grid={{}}
+  expected={"Fo"}
+/>
+</Tab>
+
+<Tab value="Default count is one">
+<FunctionSandbox
+  title="Default count is one"
+  formula={`=LEFT("Data")`}
+  grid={{}}
+  expected={"D"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,43 @@
 ---
 title: "CLEAN"
-description: "Reference for the CLEAN function."
+description: "Removes non-printable ASCII control characters from text."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Characters with codes `0..31` are removed.
+ - Printable whitespace like regular spaces is preserved.
+ - Non-text inputs are coerced to text before cleaning.
+ - Errors are propagated unchanged.
 
-```text
-=CLEAN(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Strip control characters',
+  'Printable spaces remain',
+]}>
+<Tab value="Strip control characters">
+<FunctionSandbox
+  title="Strip control characters"
+  formula={`=CLEAN("A"&CHAR(10)&"B")`}
+  grid={{}}
+  expected={"AB"}
+/>
+</Tab>
+
+<Tab value="Printable spaces remain">
+<FunctionSandbox
+  title="Printable spaces remain"
+  formula={`=CLEAN("A B")`}
+  grid={{}}
+  expected={"A B"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

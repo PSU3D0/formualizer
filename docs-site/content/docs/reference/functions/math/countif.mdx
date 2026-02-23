@@ -1,17 +1,52 @@
 ---
 title: "COUNTIF"
-description: "Reference for the COUNTIF function."
+description: "Counts cells in a range that satisfy a single criterion."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`COUNTIF` evaluates each candidate cell against one criteria expression.
 
-## Formula example
+## Remarks
+ - Criteria support numeric comparisons and wildcard text matching.
+ - Matching is case-insensitive for text criteria.
+ - Non-matching or blank cells are not counted.
 
-```text
-=COUNTIF(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Count numbers greater than 10',
+  'Count text with wildcard',
+  'Exact-match criterion',
+]}>
+<Tab value="Count numbers greater than 10">
+<FunctionSandbox
+  title="Count numbers greater than 10"
+  formula={`=COUNTIF(A1:A3, ">10")`}
+  grid={{"A1":"5","A2":"15","A3":"22"}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Count text with wildcard">
+<FunctionSandbox
+  title="Count text with wildcard"
+  formula={`=COUNTIF({"alpha","beta","alphabet"}, "al*")`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Exact-match criterion">
+<FunctionSandbox
+  title="Exact-match criterion"
+  formula={`=COUNTIF({1,2,2,3}, "=2")`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

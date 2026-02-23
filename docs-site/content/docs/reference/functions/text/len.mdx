@@ -1,17 +1,43 @@
 ---
 title: "LEN"
-description: "Reference for the LEN function."
+description: "Returns the number of characters in a text value."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Counts Unicode scalar characters, not bytes.
+ - Empty values return `0`.
+ - Non-text values are converted to their text form before counting.
+ - Errors are propagated unchanged.
 
-```text
-=LEN(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Basic text length',
+  'Whitespace is counted',
+]}>
+<Tab value="Basic text length">
+<FunctionSandbox
+  title="Basic text length"
+  formula={`=LEN("hello")`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+<Tab value="Whitespace is counted">
+<FunctionSandbox
+  title="Whitespace is counted"
+  formula={`=LEN("a b")`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

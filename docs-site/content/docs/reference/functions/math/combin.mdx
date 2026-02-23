@@ -1,17 +1,52 @@
 ---
 title: "COMBIN"
-description: "Reference for the COMBIN function."
+description: "Returns the number of combinations for selecting `k` items from `n`."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`COMBIN` evaluates `n` choose `k` using truncated integer inputs.
 
-## Formula example
+## Remarks
+ - Fractional inputs are truncated toward zero before evaluation.
+ - If `n < 0`, `k < 0`, or `k > n`, the function returns `#NUM!`.
+ - Argument errors propagate directly.
 
-```text
-=COMBIN(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Basic combinations',
+  'Fractional arguments are truncated',
+  'Invalid k returns numeric error',
+]}>
+<Tab value="Basic combinations">
+<FunctionSandbox
+  title="Basic combinations"
+  formula={`=COMBIN(5, 2)`}
+  grid={{}}
+  expected={"10"}
+/>
+</Tab>
+
+<Tab value="Fractional arguments are truncated">
+<FunctionSandbox
+  title="Fractional arguments are truncated"
+  formula={`=COMBIN(6.9, 3.2)`}
+  grid={{}}
+  expected={"20"}
+/>
+</Tab>
+
+<Tab value="Invalid k returns numeric error">
+<FunctionSandbox
+  title="Invalid k returns numeric error"
+  formula={`=COMBIN(3, 5)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

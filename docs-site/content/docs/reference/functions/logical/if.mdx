@@ -1,17 +1,43 @@
 ---
 title: "IF"
-description: "Reference for the IF function."
+description: "Returns one value when a condition is TRUE and another when FALSE."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`IF(condition, value_if_true, [value_if_false])` supports two or three arguments.
 
-## Formula example
+## Remarks
+ - Condition coercion: booleans are used directly, numbers use `0` as FALSE and non-zero as TRUE.
+ - A blank condition is treated as FALSE.
+ - Text or other non-numeric/non-boolean conditions return `#VALUE!`.
+ - With only two arguments, the FALSE branch defaults to logical `FALSE`.
 
-```text
-=IF(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Numeric condition',
+  'Two-argument IF defaults false branch',
+]}>
+<Tab value="Numeric condition">
+<FunctionSandbox
+  title="Numeric condition"
+  formula={`=IF(2, "yes", "no")`}
+  grid={{}}
+  expected={"yes"}
+/>
+</Tab>
+
+<Tab value="Two-argument IF defaults false branch">
+<FunctionSandbox
+  title="Two-argument IF defaults false branch"
+  formula={`=IF(0, 10)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

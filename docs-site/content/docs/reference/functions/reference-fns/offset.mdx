@@ -1,17 +1,45 @@
 ---
 title: "OFFSET"
-description: "Reference for the OFFSET function."
+description: "Returns a reference shifted from a starting reference by rows and columns."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`OFFSET` is volatile and returns a reference that can point to a single cell or a resized
+ range, depending on the optional `height` and `width` arguments.
 
-## Formula example
+## Remarks
+ - `rows` and `cols` shift from the top-left of `reference`.
+ - If omitted, `height` and `width` default to the original reference size.
+ - Non-positive target coordinates or dimensions return `#REF!`.
+ - Non-numeric offset/size inputs return `#VALUE!`.
+ - In value context, a 1x1 result returns a scalar; larger results spill as an array.
 
-```text
-=OFFSET(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'Move one row down and one column right',
+  'Offset and resize a range',
+]}>
+<Tab value="Move one row down and one column right">
+<FunctionSandbox
+  title="Move one row down and one column right"
+  formula={`=OFFSET(A1,1,1)`}
+  grid={{"A1":"10","B2":"42"}}
+  expected={"42"}
+/>
+</Tab>
+
+<Tab value="Offset and resize a range">
+<FunctionSandbox
+  title="Offset and resize a range"
+  formula={`=SUM(OFFSET(A1,1,0,2,2))`}
+  grid={{"A1":"1","A2":"2","A3":"3","B1":"4","B2":"5","B3":"6"}}
+  expected={"16"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

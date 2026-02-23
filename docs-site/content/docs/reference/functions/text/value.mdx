@@ -1,17 +1,43 @@
 ---
 title: "VALUE"
-description: "Reference for the VALUE function."
+description: "Converts text that represents a number into a numeric value."
 ---
 
 ## Summary
 
 > TODO: Add a concise human summary.
 
-## Formula example
+## Remarks
+ - Parsing uses locale-aware invariant number parsing from the function context.
+ - Non-numeric text returns `#VALUE!`.
+ - Booleans and numbers are first coerced to text, then parsed.
+ - Errors are propagated unchanged.
 
-```text
-=VALUE(A1)
-```
+## Examples
+
+<Tabs items={[
+  'Parse decimal text',
+  'Invalid numeric text',
+]}>
+<Tab value="Parse decimal text">
+<FunctionSandbox
+  title="Parse decimal text"
+  formula={`=VALUE("12.5")`}
+  grid={{}}
+  expected={"12.5"}
+/>
+</Tab>
+
+<Tab value="Invalid numeric text">
+<FunctionSandbox
+  title="Invalid numeric text"
+  formula={`=VALUE("abc")`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

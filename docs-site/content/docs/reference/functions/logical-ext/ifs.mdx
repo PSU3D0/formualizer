@@ -1,17 +1,43 @@
 ---
 title: "IFS"
-description: "Reference for the IFS function."
+description: "Returns the value for the first TRUE condition in condition-value pairs."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`IFS(cond1, value1, cond2, value2, ...)` evaluates left to right and short-circuits.
 
-## Formula example
+## Remarks
+ - Arguments must be provided as pairs; odd argument counts return `#VALUE!`.
+ - Conditions accept booleans and numbers (`0` FALSE, non-zero TRUE); blank is FALSE.
+ - Text conditions return `#VALUE!`; error conditions propagate.
+ - If no condition is TRUE, returns `#N/A`.
 
-```text
-=IFS(A1, B1)
-```
+## Examples
+
+<Tabs items={[
+  'First matching condition wins',
+  'No conditions matched',
+]}>
+<Tab value="First matching condition wins">
+<FunctionSandbox
+  title="First matching condition wins"
+  formula={`=IFS(2<1, "a", 3>2, "b", TRUE, "c")`}
+  grid={{}}
+  expected={"b"}
+/>
+</Tab>
+
+<Tab value="No conditions matched">
+<FunctionSandbox
+  title="No conditions matched"
+  formula={`=IFS(FALSE, 1, 0, 2)`}
+  grid={{}}
+  expected={"#N/A"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 
