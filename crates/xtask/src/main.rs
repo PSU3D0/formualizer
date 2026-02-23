@@ -16,6 +16,10 @@ use syn::{Expr, ExprCall, ImplItem, Item, ItemImpl, ItemStruct, Lit, Meta, Type}
 const BUILTINS_DIR: &str = "crates/formualizer-eval/src/builtins";
 const DOCGEN_SCHEMA_START: &str = "[formualizer-docgen:schema:start]";
 const DOCGEN_SCHEMA_END: &str = "[formualizer-docgen:schema:end]";
+const DOCGEN_FUNC_META_START: &str = "{/* [formualizer-docgen:function-meta:start] */}";
+const DOCGEN_FUNC_META_END: &str = "{/* [formualizer-docgen:function-meta:end] */}";
+const DOCGEN_FUNC_META_START_LEGACY: &str = "<!-- [formualizer-docgen:function-meta:start] -->";
+const DOCGEN_FUNC_META_END_LEGACY: &str = "<!-- [formualizer-docgen:function-meta:end] -->";
 
 #[derive(Parser, Debug)]
 #[command(name = "xtask", about = "Workspace developer tasks")]
@@ -30,6 +34,8 @@ enum Command {
     DocsAudit(DocsAuditArgs),
     /// Generate/apply schema metadata blocks in builtin doc comments.
     DocsSchema(DocsSchemaArgs),
+    /// Generate function reference MDX pages from runtime registry metadata.
+    DocsRef(DocsRefArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -62,6 +68,32 @@ struct DocsSchemaArgs {
     functions: Vec<String>,
 
     /// Apply generated schema sections in-place.
+    #[arg(long)]
+    apply: bool,
+
+    /// Allow apply while git working tree is dirty.
+    #[arg(long)]
+    allow_dirty: bool,
+}
+
+#[derive(Parser, Debug)]
+struct DocsRefArgs {
+    /// Glob filter(s) applied to builtin source files (relative to repo root).
+    #[arg(long = "paths")]
+    paths: Vec<String>,
+
+    /// Function name filter(s), case-insensitive. May be repeated or comma-separated.
+    #[arg(long = "functions", value_delimiter = ',')]
+    functions: Vec<String>,
+
+    /// Output directory for generated function pages.
+    #[arg(
+        long = "out-dir",
+        default_value = "docs-site/content/docs/reference/functions"
+    )]
+    out_dir: PathBuf,
+
+    /// Apply generated reference pages in-place.
     #[arg(long)]
     apply: bool,
 
@@ -116,6 +148,23 @@ struct RuntimeFunctionMeta {
 }
 
 #[derive(Debug, Clone)]
+struct FunctionRefEntry {
+    function_name: String,
+    function_slug: String,
+    category: String,
+    category_slug: String,
+    type_name: String,
+    registration_file: String,
+    impl_file: String,
+    min_args: Option<usize>,
+    max_args: Option<usize>,
+    variadic: Option<bool>,
+    signature: Option<String>,
+    arg_schema: Option<String>,
+    caps: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 struct ImplInfo {
     file: String,
     function_name: Option<String>,
@@ -157,6 +206,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::DocsAudit(args) => run_docs_audit(args),
         Command::DocsSchema(args) => run_docs_schema(args),
+        Command::DocsRef(args) => run_docs_ref(args),
     }
 }
 
@@ -447,6 +497,513 @@ fn run_docs_schema(args: DocsSchemaArgs) -> Result<()> {
             "docs-schema check failed: {} file(s) have stale or missing schema blocks",
             stale_count
         );
+    }
+
+    Ok(())
+}
+
+fn run_docs_ref(args: DocsRefArgs) -> Result<()> {
+    if args.apply && !args.allow_dirty {
+        ensure_git_clean()?;
+    }
+
+    let entries = collect_function_ref_entries(&args.paths, &args.functions)?;
+    if entries.is_empty() {
+        println!("docs-ref summary");
+        println!("  functions: 0");
+        println!("  stale files: 0");
+        return Ok(());
+    }
+
+    let mut by_category: BTreeMap<String, Vec<FunctionRefEntry>> = BTreeMap::new();
+    for entry in entries {
+        by_category
+            .entry(entry.category_slug.clone())
+            .or_default()
+            .push(entry);
+    }
+
+    let all_entries = by_category
+        .values()
+        .flat_map(|items| items.iter().cloned())
+        .collect::<Vec<_>>();
+
+    for values in by_category.values_mut() {
+        values.sort_by(|a, b| a.function_name.cmp(&b.function_name));
+    }
+
+    let mut stale_files = Vec::new();
+    let mut changed_files = 0usize;
+    let mut generated_pages = 0usize;
+
+    for (category_slug, category_entries) in &by_category {
+        let category_dir = args.out_dir.join(category_slug);
+        let category_index_path = category_dir.join("index.mdx");
+        let category_meta_path = category_dir.join("meta.json");
+
+        let category_name = category_entries
+            .first()
+            .map(|entry| entry.category.clone())
+            .unwrap_or_else(|| category_slug.clone());
+
+        let category_index = render_category_index_page(&category_name, category_entries);
+        apply_or_check_file(
+            &category_index_path,
+            &category_index,
+            args.apply,
+            &mut stale_files,
+            &mut changed_files,
+        )?;
+
+        let mut category_pages = vec!["index".to_string()];
+        category_pages.extend(
+            category_entries
+                .iter()
+                .map(|entry| entry.function_slug.clone())
+                .collect::<Vec<_>>(),
+        );
+
+        let category_meta = serde_json::to_string_pretty(&serde_json::json!({
+            "title": format!("{} Functions", category_name),
+            "pages": category_pages,
+        }))?;
+        apply_or_check_file(
+            &category_meta_path,
+            &(category_meta + "\n"),
+            args.apply,
+            &mut stale_files,
+            &mut changed_files,
+        )?;
+
+        let mut expected_mdx_files: BTreeSet<String> = BTreeSet::new();
+        expected_mdx_files.insert("index.mdx".to_string());
+
+        for entry in category_entries {
+            let filename = format!("{}.mdx", entry.function_slug);
+            expected_mdx_files.insert(filename.clone());
+
+            let page_path = category_dir.join(&filename);
+            let updated = if page_path.exists() {
+                let existing = fs::read_to_string(&page_path)
+                    .with_context(|| format!("failed to read {}", page_path.display()))?;
+                upsert_function_page_generated_block(&existing, entry)
+            } else {
+                render_new_function_page(entry)
+            };
+
+            apply_or_check_file(
+                &page_path,
+                &updated,
+                args.apply,
+                &mut stale_files,
+                &mut changed_files,
+            )?;
+            generated_pages += 1;
+        }
+
+        prune_generated_function_pages(
+            &category_dir,
+            &expected_mdx_files,
+            args.apply,
+            &mut stale_files,
+            &mut changed_files,
+        )?;
+    }
+
+    let mut top_pages = vec!["index".to_string()];
+    top_pages.extend(by_category.keys().cloned());
+
+    let top_meta = serde_json::to_string_pretty(&serde_json::json!({
+        "title": "Functions",
+        "pages": top_pages,
+    }))?;
+    apply_or_check_file(
+        &args.out_dir.join("meta.json"),
+        &(top_meta + "\n"),
+        args.apply,
+        &mut stale_files,
+        &mut changed_files,
+    )?;
+
+    let functions_meta_json = render_functions_meta_json(&all_entries)?;
+    apply_or_check_file(
+        Path::new("docs-site/src/generated/functions-meta.json"),
+        &(functions_meta_json + "\n"),
+        args.apply,
+        &mut stale_files,
+        &mut changed_files,
+    )?;
+
+    stale_files.sort();
+    stale_files.dedup();
+
+    println!("docs-ref summary");
+    println!("  functions: {generated_pages}");
+    println!("  categories: {}", by_category.len());
+    println!("  stale files: {}", stale_files.len());
+
+    if args.apply {
+        println!("  files updated: {changed_files}");
+    } else if !stale_files.is_empty() {
+        println!("\nFiles requiring docs-ref update:");
+        for file in stale_files.iter().take(40) {
+            println!("  - {file}");
+        }
+        if stale_files.len() > 40 {
+            println!("  ... and {} more", stale_files.len() - 40);
+        }
+
+        bail!(
+            "docs-ref check failed: {} file(s) have stale or missing generated content",
+            stale_files.len()
+        );
+    }
+
+    Ok(())
+}
+
+fn collect_function_ref_entries(
+    paths: &[String],
+    functions: &[String],
+) -> Result<Vec<FunctionRefEntry>> {
+    let builtins_files = collect_builtin_files(Path::new(BUILTINS_DIR))?;
+    let file_filter = build_glob_filter(paths)?;
+    let function_filter: Option<BTreeSet<String>> = if functions.is_empty() {
+        None
+    } else {
+        Some(
+            functions
+                .iter()
+                .map(|name| name.trim().to_uppercase())
+                .filter(|name| !name.is_empty())
+                .collect(),
+        )
+    };
+
+    let mut impls_by_type: BTreeMap<String, Vec<ImplInfo>> = BTreeMap::new();
+    let mut registrations: Vec<(String, String)> = Vec::new();
+
+    for file in &builtins_files {
+        let file_rel = path_to_repo_string(file)?;
+        let facts = parse_file_facts(file, &file_rel)
+            .with_context(|| format!("failed to parse builtin file: {file_rel}"))?;
+
+        for (type_name, impl_info) in facts.impls {
+            impls_by_type.entry(type_name).or_default().push(impl_info);
+        }
+
+        for type_name in facts.registrations {
+            registrations.push((file_rel.clone(), type_name));
+        }
+    }
+
+    let runtime_meta = collect_runtime_function_meta()?;
+    let mut entries = Vec::new();
+
+    for (registration_file, type_name) in registrations {
+        if let Some(filter) = &file_filter
+            && !filter.is_match(&registration_file)
+        {
+            continue;
+        }
+
+        let Some(impl_info) =
+            select_impl_for_registration(&impls_by_type, &type_name, &registration_file)
+        else {
+            continue;
+        };
+
+        let function_name = impl_info
+            .function_name
+            .clone()
+            .unwrap_or_else(|| type_name.clone());
+
+        if let Some(filter) = &function_filter
+            && !filter.contains(&function_name.to_uppercase())
+        {
+            continue;
+        }
+
+        let category = derive_category(&registration_file);
+        let category_slug = slugify_for_docs(&category);
+        let function_slug = slugify_for_docs(&function_name);
+        let runtime = runtime_meta.get(&function_name.to_uppercase());
+
+        entries.push(FunctionRefEntry {
+            function_name,
+            function_slug,
+            category,
+            category_slug,
+            type_name,
+            registration_file,
+            impl_file: impl_info.file.clone(),
+            min_args: runtime.map(|meta| meta.min_args).or(impl_info.min_args),
+            max_args: runtime
+                .and_then(|meta| meta.max_args)
+                .or(impl_info.max_args),
+            variadic: runtime.map(|meta| meta.variadic).or(impl_info.variadic),
+            signature: runtime.map(|meta| meta.signature.clone()),
+            arg_schema: runtime
+                .map(|meta| meta.arg_schema.clone())
+                .or(impl_info.arg_schema.clone()),
+            caps: runtime
+                .map(|meta| meta.caps.clone())
+                .unwrap_or_else(|| impl_info.caps.clone()),
+        });
+    }
+
+    entries.sort_by(|a, b| {
+        a.category_slug
+            .cmp(&b.category_slug)
+            .then_with(|| a.function_name.cmp(&b.function_name))
+    });
+
+    let mut deduped = Vec::with_capacity(entries.len());
+    let mut seen_function_keys: BTreeSet<(String, String)> = BTreeSet::new();
+    for entry in entries {
+        let key = (
+            entry.category_slug.clone(),
+            entry.function_name.to_uppercase(),
+        );
+        if seen_function_keys.insert(key) {
+            deduped.push(entry);
+        }
+    }
+
+    let mut used_slugs_by_category: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for entry in &mut deduped {
+        let used = used_slugs_by_category
+            .entry(entry.category_slug.clone())
+            .or_default();
+
+        let base = entry.function_slug.clone();
+        let mut candidate = base.clone();
+        let mut suffix = 2usize;
+
+        while used.contains(&candidate) {
+            candidate = format!("{base}-{suffix}");
+            suffix += 1;
+        }
+
+        used.insert(candidate.clone());
+        entry.function_slug = candidate;
+    }
+
+    Ok(deduped)
+}
+
+fn slugify_for_docs(input: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+
+    for ch in input.chars() {
+        let c = ch.to_ascii_lowercase();
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        "function".to_string()
+    } else {
+        out
+    }
+}
+
+fn render_category_index_page(category_name: &str, entries: &[FunctionRefEntry]) -> String {
+    let mut lines = vec![
+        "---".to_string(),
+        format!("title: {} Functions", category_name),
+        format!(
+            "description: Generated reference pages for {} functions.",
+            category_name
+        ),
+        "---".to_string(),
+        "".to_string(),
+        format!(
+            "This section contains {} generated function reference pages.",
+            entries.len()
+        ),
+        "".to_string(),
+        "## Functions".to_string(),
+        "".to_string(),
+    ];
+
+    for entry in entries {
+        lines.push(format!(
+            "- [{}](/docs/reference/functions/{}/{})",
+            entry.function_name, entry.category_slug, entry.function_slug
+        ));
+    }
+
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn render_new_function_page(entry: &FunctionRefEntry) -> String {
+    let example_formula = match entry.min_args.unwrap_or(1) {
+        0 => format!("={}()", entry.function_name),
+        1 => format!("={}({})", entry.function_name, "A1"),
+        _ => format!("={}({}, {})", entry.function_name, "A1", "B1"),
+    };
+
+    format!(
+        "---\ntitle: \"{name}\"\ndescription: \"Reference for the {name} function.\"\n---\n\n## Summary\n\n> TODO: Add a concise human summary for `{name}`.\n\n## Formula example\n\n```text\n{example}\n```\n\n## Runtime metadata\n\n{meta}\n",
+        name = entry.function_name,
+        example = example_formula,
+        meta = render_function_meta_block(entry),
+    )
+}
+
+fn function_meta_id(entry: &FunctionRefEntry) -> String {
+    format!("{}/{}", entry.category_slug, entry.function_slug)
+}
+
+fn render_function_meta_block(entry: &FunctionRefEntry) -> String {
+    [
+        DOCGEN_FUNC_META_START.to_string(),
+        format!("<FunctionMeta id=\"{}\" />", function_meta_id(entry)),
+        DOCGEN_FUNC_META_END.to_string(),
+    ]
+    .join("\n")
+}
+
+fn render_functions_meta_json(entries: &[FunctionRefEntry]) -> Result<String> {
+    let mut map = serde_json::Map::new();
+
+    for entry in entries {
+        map.insert(
+            function_meta_id(entry),
+            serde_json::json!({
+                "name": entry.function_name,
+                "category": entry.category,
+                "typeName": entry.type_name,
+                "minArgs": entry.min_args,
+                "maxArgs": entry.max_args,
+                "variadic": entry.variadic,
+                "signature": entry.signature,
+                "argSchema": entry.arg_schema,
+                "caps": entry.caps,
+                "registrationSource": entry.registration_file,
+                "implementationSource": entry.impl_file,
+            }),
+        );
+    }
+
+    Ok(serde_json::to_string_pretty(&serde_json::Value::Object(
+        map,
+    ))?)
+}
+
+fn upsert_function_page_generated_block(existing: &str, entry: &FunctionRefEntry) -> String {
+    let generated = render_function_meta_block(entry);
+
+    let ranges = [
+        (DOCGEN_FUNC_META_START, DOCGEN_FUNC_META_END),
+        (DOCGEN_FUNC_META_START_LEGACY, DOCGEN_FUNC_META_END_LEGACY),
+    ];
+
+    for (start_marker, end_marker) in ranges {
+        let start = existing.find(start_marker);
+        let end = existing.find(end_marker);
+
+        if let (Some(start_idx), Some(end_idx)) = (start, end)
+            && start_idx <= end_idx
+        {
+            let end_inclusive = end_idx + end_marker.len();
+            let mut out = String::new();
+            out.push_str(&existing[..start_idx]);
+            out.push_str(&generated);
+            out.push_str(&existing[end_inclusive..]);
+            return normalize_generated_page(out);
+        }
+    }
+
+    let mut out = existing.trim_end().to_string();
+    out.push_str("\n\n## Runtime metadata\n\n");
+    out.push_str(&generated);
+    out.push('\n');
+    normalize_generated_page(out)
+}
+
+fn normalize_generated_page(input: String) -> String {
+    let output = input.replace(
+        "## Formula example\n\n```excel",
+        "## Formula example\n\n```text",
+    );
+
+    let title_re = Regex::new(r"(?m)^title:\s*(TRUE|FALSE)\s*$").expect("valid regex");
+    title_re.replace_all(&output, "title: \"$1\"").to_string()
+}
+
+fn apply_or_check_file(
+    path: &Path,
+    content: &str,
+    apply: bool,
+    stale_files: &mut Vec<String>,
+    changed_files: &mut usize,
+) -> Result<()> {
+    let current = fs::read_to_string(path).ok();
+    let needs_update = current.as_deref() != Some(content);
+    if !needs_update {
+        return Ok(());
+    }
+
+    stale_files.push(path_to_repo_string(path)?);
+
+    if apply {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create dir {}", parent.display()))?;
+        }
+        fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))?;
+        *changed_files += 1;
+    }
+
+    Ok(())
+}
+
+fn prune_generated_function_pages(
+    category_dir: &Path,
+    expected_mdx_files: &BTreeSet<String>,
+    apply: bool,
+    stale_files: &mut Vec<String>,
+    changed_files: &mut usize,
+) -> Result<()> {
+    if !category_dir.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(category_dir)
+        .with_context(|| format!("failed to read dir {}", category_dir.display()))?
+    {
+        let path = entry
+            .with_context(|| format!("failed to read entry in {}", category_dir.display()))?
+            .path();
+
+        if path.extension().and_then(|ext| ext.to_str()) != Some("mdx") {
+            continue;
+        }
+
+        let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+
+        if expected_mdx_files.contains(filename) {
+            continue;
+        }
+
+        stale_files.push(path_to_repo_string(&path)?);
+        if apply {
+            fs::remove_file(&path)
+                .with_context(|| format!("failed to remove {}", path.display()))?;
+            *changed_files += 1;
+        }
     }
 
     Ok(())
