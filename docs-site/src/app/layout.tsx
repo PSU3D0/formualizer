@@ -31,6 +31,15 @@ export const metadata: Metadata = {
   alternates: {
     canonical: '/',
   },
+  icons: {
+    icon: [
+      { url: '/favicon.ico' },
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/icon.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [{ url: '/apple-icon.png', sizes: '180x180', type: 'image/png' }],
+  },
+  manifest: '/site.webmanifest',
   openGraph: {
     type: 'website',
     url: siteUrl,
@@ -38,12 +47,14 @@ export const metadata: Metadata = {
     description:
       'Documentation and interactive tools for parsing and evaluating Excel-style formulas.',
     siteName: 'Formualizer',
+    images: [{ url: '/opengraph-image.png', width: 1200, height: 630 }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Formualizer Docs',
     description:
       'Interactive formula parser and docs for Formualizer workbook and evaluation engine.',
+    images: ['/twitter-image.png'],
   },
 };
 

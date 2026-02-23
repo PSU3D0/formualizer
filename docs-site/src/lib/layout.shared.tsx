@@ -9,7 +9,18 @@ export const gitConfig = {
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
-      title: 'Formualizer Docs',
+      title: (
+        <span className="inline-flex items-center gap-2">
+          <img
+            src="/icon.svg"
+            alt=""
+            width={24}
+            height={24}
+            className="h-6 w-6"
+          />
+          <span>Formualizer Docs</span>
+        </span>
+      ),
     },
     themeSwitch: {
       enabled: true,
