@@ -51,7 +51,7 @@ function dialectLabel(dialect: Dialect): string {
 function normalizedTokenType(token: Token): string {
   const value = token.value.trim();
   const lowerType = token.tokenType.toLowerCase();
-  const lowerSubtype = (token.subtype ?? '').toLowerCase();
+  const lowerSubtype = ((token as any).subtype ?? '').toLowerCase();
 
   if (lowerType === 'func' && lowerSubtype === 'close') return 'Paren';
   if (lowerType === 'func' && value.endsWith('(')) return 'FunctionCall';
@@ -62,7 +62,7 @@ function normalizedTokenType(token: Token): string {
 function tokenRole(token: Token): string {
   const value = token.value.trim();
   const lowerType = token.tokenType.toLowerCase();
-  const lowerSubtype = (token.subtype ?? '').toLowerCase();
+  const lowerSubtype = ((token as any).subtype ?? '').toLowerCase();
 
   if (lowerType === 'func' && value.endsWith('(')) return 'function-open';
   if (lowerType === 'func' && lowerSubtype === 'close') return 'function-close';
@@ -217,8 +217,9 @@ function buildEvaluationPlan(ast: ASTNodeData | null): {
   type Span = { start: number; end: number } | null;
 
   const nodeOwnSpan = (node: ASTNodeData): Span => {
-    if (typeof node.sourceStart === 'number' && typeof node.sourceEnd === 'number') {
-      return { start: node.sourceStart, end: node.sourceEnd };
+    const nodeAny = node as any;
+    if (typeof nodeAny.sourceStart === 'number' && typeof nodeAny.sourceEnd === 'number') {
+      return { start: nodeAny.sourceStart, end: nodeAny.sourceEnd };
     }
     return null;
   };
