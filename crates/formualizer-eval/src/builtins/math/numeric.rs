@@ -9,6 +9,27 @@ use formualizer_macros::func_caps;
 
 #[derive(Debug)]
 pub struct AbsFn;
+/// Returns the absolute value of a number.
+///
+/// # Remarks
+/// - Negative numbers are returned as positive values.
+/// - Zero and positive numbers are unchanged.
+/// - Errors are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Absolute value of a negative number"
+/// formula: "=ABS(-12.5)"
+/// expected: 12.5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Absolute value from a cell reference"
+/// grid:
+///   A1: -42
+/// formula: "=ABS(A1)"
+/// expected: 42
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ABS
 /// Type: AbsFn
@@ -47,6 +68,25 @@ impl Function for AbsFn {
 
 #[derive(Debug)]
 pub struct SignFn;
+/// Returns the sign of a number as -1, 0, or 1.
+///
+/// # Remarks
+/// - Returns `1` for positive numbers.
+/// - Returns `-1` for negative numbers.
+/// - Returns `0` when input is zero.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Positive input"
+/// formula: "=SIGN(12)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative input"
+/// formula: "=SIGN(-12)"
+/// expected: -1
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SIGN
 /// Type: SignFn
@@ -195,6 +235,25 @@ impl Function for TruncFn {
 
 #[derive(Debug)]
 pub struct RoundFn; // ROUND(number, digits)
+/// Rounds a number to a specified number of digits.
+///
+/// # Remarks
+/// - Positive `digits` rounds to the right of the decimal point.
+/// - Negative `digits` rounds to the left of the decimal point.
+/// - Uses standard half-up style rounding from Rust's `round` behavior.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Round to two decimals"
+/// formula: "=ROUND(3.14159,2)"
+/// expected: 3.14
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Round to nearest hundred"
+/// formula: "=ROUND(1234,-2)"
+/// expected: 1200
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROUND
 /// Type: RoundFn
@@ -347,6 +406,25 @@ impl Function for RoundUpFn {
 
 #[derive(Debug)]
 pub struct ModFn; // MOD(a,b)
+/// Returns the remainder after division, with the sign of the divisor.
+///
+/// # Remarks
+/// - If divisor is `0`, returns `#DIV/0!`.
+/// - Result sign follows Excel-style MOD semantics (sign of divisor).
+/// - Errors in either argument are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Positive divisor"
+/// formula: "=MOD(10,3)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative dividend"
+/// formula: "=MOD(-3,2)"
+/// expected: 1
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: MOD
 /// Type: ModFn
@@ -699,6 +777,26 @@ impl Function for FloorMathFn {
 
 #[derive(Debug)]
 pub struct SqrtFn; // SQRT(number)
+/// Returns the positive square root of a number.
+///
+/// # Remarks
+/// - Input must be greater than or equal to zero.
+/// - Negative input returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Square root of a perfect square"
+/// formula: "=SQRT(144)"
+/// expected: 12
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Square root from a reference"
+/// grid:
+///   A1: 2
+/// formula: "=SQRT(A1)"
+/// expected: 1.4142135623730951
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SQRT
 /// Type: SqrtFn
@@ -744,6 +842,25 @@ impl Function for SqrtFn {
 
 #[derive(Debug)]
 pub struct PowerFn; // POWER(number, power)
+/// Raises a base number to a specified power.
+///
+/// # Remarks
+/// - Equivalent to exponentiation (`base^exponent`).
+/// - Negative bases with fractional exponents return `#NUM!`.
+/// - Errors are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Integer exponent"
+/// formula: "=POWER(2,10)"
+/// expected: 1024
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional exponent"
+/// formula: "=POWER(9,0.5)"
+/// expected: 3
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: POWER
 /// Type: PowerFn
@@ -880,6 +997,26 @@ impl Function for LnFn {
 
 #[derive(Debug)]
 pub struct LogFn; // LOG(number,[base]) default base 10
+/// Returns the logarithm of a number for a specified base.
+///
+/// # Remarks
+/// - If `base` is omitted, base 10 is used.
+/// - `number` must be positive.
+/// - `base` must be positive and not equal to 1.
+/// - Invalid domains return `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Base-10 logarithm"
+/// formula: "=LOG(1000)"
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Base-2 logarithm"
+/// formula: "=LOG(8,2)"
+/// expected: 3
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LOG
 /// Type: LogFn
@@ -1446,6 +1583,25 @@ impl Function for SumsqFn {
 
 #[derive(Debug)]
 pub struct MroundFn;
+/// Rounds a number to the nearest multiple.
+///
+/// # Remarks
+/// - Returns `0` when `multiple` is `0`.
+/// - If `number` and `multiple` have different signs, returns `#NUM!`.
+/// - Midpoints are rounded away from zero.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Round to nearest 5"
+/// formula: "=MROUND(17,5)"
+/// expected: 15
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Round negative value"
+/// formula: "=MROUND(-17,-5)"
+/// expected: -15
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: MROUND
 /// Type: MroundFn

@@ -208,27 +208,36 @@ pub struct AverageFn;
 
 /// Returns the arithmetic mean of numeric values across scalars and ranges.
 ///
-/// # Formula example
-/// ```excel
-/// # returns: 2
-/// =AVERAGE(1,2,3)
+/// `AVERAGE` sums numeric inputs and divides by the count of numeric values that participated.
+///
+/// # Remarks
+/// - Errors in any scalar argument or referenced range propagate immediately.
+/// - In ranges, only numeric/date-time serial values are included; text and blanks are ignored.
+/// - Scalar arguments use lenient number coercion with locale support.
+/// - If no numeric values are found, `AVERAGE` returns `#DIV/0!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Average of scalar values"
+/// formula: "=AVERAGE(10, 20, 5)"
+/// expected: 11.666666666666666
 /// ```
 ///
-/// # Rust example
-/// ```rust,no_run
-/// use formualizer_common::LiteralValue;
-/// use formualizer_eval::engine::{Engine, EvalConfig};
-/// use formualizer_eval::test_workbook::TestWorkbook;
-/// use formualizer_parse::parser::parse;
+/// ```yaml,sandbox
+/// title: "Average over a mixed range"
+/// grid:
+///   A1: 10
+///   A2: "x"
+///   A3: 20
+/// formula: "=AVERAGE(A1:A3)"
+/// expected: 15
+/// ```
 ///
-/// let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
-/// let ast = parse("=AVERAGE(1,2,3)")?;
-/// engine.set_cell_formula("Sheet1", 1, 1, ast)?;
-/// let value = engine
-///     .evaluate_cell("Sheet1", 1, 1)?
-///     .unwrap_or(LiteralValue::Empty);
-/// assert_eq!(value, LiteralValue::Number(2.0));
-/// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+/// ```yaml,sandbox
+/// title: "No numeric values returns divide-by-zero"
+/// formula: "=AVERAGE(\"x\", \"\")"
+/// expected: "#DIV/0!"
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -318,6 +327,43 @@ impl Function for AverageFn {
 #[derive(Debug)]
 pub struct SumProductFn;
 
+/// Multiplies aligned values across arrays and returns the sum of those products.
+///
+/// `SUMPRODUCT` supports scalar or range inputs, applies broadcast semantics, and accumulates
+/// the product for each aligned cell position.
+///
+/// # Remarks
+/// - Input shapes must be broadcast-compatible; otherwise `SUMPRODUCT` returns `#VALUE!`.
+/// - Non-numeric values are treated as `0` during multiplication.
+/// - Any explicit error value in the inputs propagates immediately.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Pairwise sum of products"
+/// formula: "=SUMPRODUCT({1,2,3}, {4,5,6})"
+/// expected: 32
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Range-based sumproduct"
+/// grid:
+///   A1: 2
+///   A2: 3
+///   A3: 4
+///   B1: 10
+///   B2: 20
+///   B3: 30
+/// formula: "=SUMPRODUCT(A1:A3, B1:B3)"
+/// expected: 200
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text entries contribute zero"
+/// formula: "=SUMPRODUCT({1,\"x\",3}, {1,1,1})"
+/// expected: 4
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: SUMPRODUCT
 /// Type: SumProductFn

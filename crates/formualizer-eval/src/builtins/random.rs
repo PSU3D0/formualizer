@@ -9,6 +9,29 @@ use rand::Rng;
 #[derive(Debug)]
 pub struct RandFn;
 
+/// Returns a uniformly distributed pseudo-random number in the interval `[0, 1)`.
+///
+/// `RAND` is volatile and recalculates whenever dependent formulas recalculate.
+///
+/// # Remarks
+/// - The result is always greater than or equal to `0` and strictly less than `1`.
+/// - Because the function is volatile, repeated evaluations can return different values.
+/// - The engine seeds randomness per evaluation context for reproducible execution flows.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "RAND stays within bounds"
+/// formula: "=LET(n, RAND(), AND(n>=0, n<1))"
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Derived integer bucket from RAND"
+/// formula: "=LET(n, INT(RAND()*10), AND(n>=0, n<=9))"
+/// expected: true
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: RAND
 /// Type: RandFn
@@ -113,6 +136,35 @@ mod tests {
 #[derive(Debug)]
 pub struct RandBetweenFn;
 
+/// Returns a random integer between two inclusive bounds.
+///
+/// `RANDBETWEEN` evaluates both bounds, then samples an integer in `[low, high]`.
+///
+/// # Remarks
+/// - Bounds are coerced to numbers and truncated to integers.
+/// - If `high < low`, the function returns `#NUM!`.
+/// - The function is volatile and may return a different integer each recalculation.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Value always falls inside the requested interval"
+/// formula: "=LET(n, RANDBETWEEN(1, 3), AND(n>=1, n<=3, INT(n)=n))"
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Equal bounds produce a fixed value"
+/// formula: "=RANDBETWEEN(7, 7)"
+/// expected: 7
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Upper bound below lower bound is invalid"
+/// formula: "=RANDBETWEEN(5, 1)"
+/// expected: "#NUM!"
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: RANDBETWEEN
 /// Type: RandBetweenFn

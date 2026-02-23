@@ -8,6 +8,40 @@ use formualizer_macros::func_caps;
 
 #[derive(Debug)]
 pub struct MinFn; // MIN(...)
+/// Returns the smallest numeric value from one or more arguments.
+///
+/// `MIN` scans scalar values and ranges, considering only values that can be treated as numbers.
+///
+/// # Remarks
+/// - Errors in any scalar argument or range cell propagate immediately.
+/// - In ranges, non-numeric cells are ignored.
+/// - Scalar text is included only when it can be coerced to a number.
+/// - If no numeric value is found, `MIN` returns `0`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Minimum in a numeric range"
+/// grid:
+///   A1: 8
+///   A2: -2
+///   A3: 5
+/// formula: "=MIN(A1:A3)"
+/// expected: -2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Coercible scalar text participates"
+/// formula: "=MIN(10, \"3\", 7)"
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "No numeric values returns zero"
+/// formula: "=MIN(\"x\")"
+/// expected: 0
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: MIN
 /// Type: MinFn
@@ -88,6 +122,40 @@ impl Function for MinFn {
 
 #[derive(Debug)]
 pub struct MaxFn; // MAX(...)
+/// Returns the largest numeric value from one or more arguments.
+///
+/// `MAX` scans scalar values and ranges, considering only values that can be treated as numbers.
+///
+/// # Remarks
+/// - Errors in any scalar argument or range cell propagate immediately.
+/// - In ranges, non-numeric cells are ignored.
+/// - Scalar text is included only when it can be coerced to a number.
+/// - If no numeric value is found, `MAX` returns `0`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Maximum in a numeric range"
+/// grid:
+///   A1: 5
+///   A2: 9
+///   A3: 1
+/// formula: "=MAX(A1:A3)"
+/// expected: 9
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Scalar text can be coerced"
+/// formula: "=MAX(2, \"11\", 4)"
+/// expected: 11
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "No numeric values returns zero"
+/// formula: "=MAX(\"x\")"
+/// expected: 0
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: MAX
 /// Type: MaxFn

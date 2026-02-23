@@ -5,9 +5,37 @@ use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
-/// FACT(number) - Returns the factorial of a number
 #[derive(Debug)]
 pub struct FactFn;
+/// Returns the factorial of a non-negative integer.
+///
+/// `FACT` truncates fractional inputs toward zero before computing the factorial.
+///
+/// # Remarks
+/// - Non-numeric values that cannot be coerced return `#VALUE!`.
+/// - Negative inputs return `#NUM!`.
+/// - Results above `170!` overflow Excel-compatible limits and return `#NUM!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Basic factorial"
+/// formula: "=FACT(5)"
+/// expected: 120
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional input is truncated"
+/// formula: "=FACT(5.9)"
+/// expected: 120
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative input returns numeric error"
+/// formula: "=FACT(-1)"
+/// expected: "#NUM!"
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: FACT
 /// Type: FactFn
@@ -65,9 +93,37 @@ impl Function for FactFn {
     }
 }
 
-/// GCD(number1, [number2], ...) - Returns the greatest common divisor
 #[derive(Debug)]
 pub struct GcdFn;
+/// Returns the greatest common divisor of one or more integers.
+///
+/// `GCD` truncates each argument toward zero before calculating the divisor.
+///
+/// # Remarks
+/// - Inputs must be between `0` and `9.99999999e9` after truncation, or `#NUM!` is returned.
+/// - Negative values return `#NUM!`.
+/// - Any argument error propagates immediately.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Greatest common divisor of two numbers"
+/// formula: "=GCD(24, 36)"
+/// expected: 12
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Variadic and fractional arguments"
+/// formula: "=GCD(18.9, 6, 30)"
+/// expected: 6
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative values are invalid"
+/// formula: "=GCD(-2, 4)"
+/// expected: "#NUM!"
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: GCD
 /// Type: GcdFn
@@ -131,9 +187,37 @@ impl Function for GcdFn {
     }
 }
 
-/// LCM(number1, [number2], ...) - Returns the least common multiple
 #[derive(Debug)]
 pub struct LcmFn;
+/// Returns the least common multiple of one or more integers.
+///
+/// `LCM` truncates fractional arguments toward zero and combines values iteratively.
+///
+/// # Remarks
+/// - Inputs must be non-negative and within the supported Excel-compatible range.
+/// - If any input is `0`, the resulting least common multiple is `0`.
+/// - Any argument error propagates immediately.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Least common multiple for two integers"
+/// formula: "=LCM(4, 6)"
+/// expected: 12
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional values are truncated"
+/// formula: "=LCM(6.8, 8.2)"
+/// expected: 24
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative values return numeric error"
+/// formula: "=LCM(-3, 6)"
+/// expected: "#NUM!"
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: LCM
 /// Type: LcmFn
@@ -203,9 +287,37 @@ impl Function for LcmFn {
     }
 }
 
-/// COMBIN(n, k) - Returns the number of combinations
 #[derive(Debug)]
 pub struct CombinFn;
+/// Returns the number of combinations for selecting `k` items from `n`.
+///
+/// `COMBIN` evaluates `n` choose `k` using truncated integer inputs.
+///
+/// # Remarks
+/// - Fractional inputs are truncated toward zero before evaluation.
+/// - If `n < 0`, `k < 0`, or `k > n`, the function returns `#NUM!`.
+/// - Argument errors propagate directly.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Basic combinations"
+/// formula: "=COMBIN(5, 2)"
+/// expected: 10
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional arguments are truncated"
+/// formula: "=COMBIN(6.9, 3.2)"
+/// expected: 20
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Invalid k returns numeric error"
+/// formula: "=COMBIN(3, 5)"
+/// expected: "#NUM!"
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: COMBIN
 /// Type: CombinFn
@@ -274,9 +386,37 @@ impl Function for CombinFn {
     }
 }
 
-/// PERMUT(n, k) - Returns the number of permutations
 #[derive(Debug)]
 pub struct PermutFn;
+/// Returns the number of permutations for selecting and ordering `k` items from `n`.
+///
+/// `PERMUT` computes `n!/(n-k)!` after truncating both inputs toward zero.
+///
+/// # Remarks
+/// - Fractional inputs are truncated to integers.
+/// - If `n < 0`, `k < 0`, or `k > n`, the function returns `#NUM!`.
+/// - Argument errors propagate directly.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Basic permutations"
+/// formula: "=PERMUT(5, 2)"
+/// expected: 20
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional arguments are truncated"
+/// formula: "=PERMUT(7.9, 3.1)"
+/// expected: 210
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Out-of-range k returns numeric error"
+/// formula: "=PERMUT(4, 6)"
+/// expected: "#NUM!"
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: PERMUT
 /// Type: PermutFn

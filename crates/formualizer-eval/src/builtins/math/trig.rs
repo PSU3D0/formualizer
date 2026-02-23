@@ -13,6 +13,26 @@ use std::f64::consts::PI;
 
 #[derive(Debug)]
 pub struct SinFn;
+/// Returns the sine of an angle in radians.
+///
+/// # Remarks
+/// - Input is interpreted as radians, not degrees.
+/// - Supports scalar and array-style elementwise evaluation.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Sine of PI/2"
+/// formula: "=SIN(PI()/2)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sine from a cell value"
+/// grid:
+///   A1: 0
+/// formula: "=SIN(A1)"
+/// expected: 0
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SIN
 /// Type: SinFn
@@ -120,6 +140,24 @@ mod tests_sin {
 
 #[derive(Debug)]
 pub struct CosFn;
+/// Returns the cosine of an angle in radians.
+///
+/// # Remarks
+/// - Input must be in radians.
+/// - Supports elementwise evaluation for array inputs.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Cosine at zero"
+/// formula: "=COS(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Cosine at PI"
+/// formula: "=COS(PI())"
+/// expected: -1
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COS
 /// Type: CosFn
@@ -188,6 +226,24 @@ mod tests_cos {
 
 #[derive(Debug)]
 pub struct TanFn;
+/// Returns the tangent of an angle in radians.
+///
+/// # Remarks
+/// - Input is interpreted as radians.
+/// - Near odd multiples of `PI()/2`, results can become very large.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Tangent at PI/4"
+/// formula: "=TAN(PI()/4)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Tangent at zero"
+/// formula: "=TAN(0)"
+/// expected: 0
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TAN
 /// Type: TanFn
@@ -501,6 +557,24 @@ mod tests_atan {
 
 #[derive(Debug)]
 pub struct Atan2Fn;
+/// Returns the arctangent of `y/x`, preserving quadrant information.
+///
+/// # Remarks
+/// - Formualizer uses Excel-style argument order: `ATAN2(x_num, y_num)`.
+/// - Returns `#DIV/0!` when both arguments are zero.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "First quadrant angle"
+/// formula: "=ATAN2(1,1)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Undefined angle at origin"
+/// formula: "=ATAN2(0,0)"
+/// expected: "#DIV/0!"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ATAN2
 /// Type: Atan2Fn
@@ -1664,6 +1738,24 @@ mod tests_coth {
 
 #[derive(Debug)]
 pub struct RadiansFn;
+/// Converts an angle from degrees to radians.
+///
+/// # Remarks
+/// - Use this before trigonometric functions when your source angle is in degrees.
+/// - Output is `degrees * PI() / 180`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert 180°"
+/// formula: "=RADIANS(180)"
+/// expected: 3.141592653589793
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert 45°"
+/// formula: "=RADIANS(45)"
+/// expected: 0.7853981633974483
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: RADIANS
 /// Type: RadiansFn
@@ -1735,6 +1827,24 @@ mod tests_radians {
 
 #[derive(Debug)]
 pub struct DegreesFn;
+/// Converts an angle from radians to degrees.
+///
+/// # Remarks
+/// - Useful when converting the output of inverse trig functions.
+/// - Output is `radians * 180 / PI()`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert PI radians"
+/// formula: "=DEGREES(PI())"
+/// expected: 180
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert PI/2 radians"
+/// formula: "=DEGREES(PI()/2)"
+/// expected: 90
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: DEGREES
 /// Type: DegreesFn
@@ -1806,6 +1916,24 @@ mod tests_degrees {
 
 #[derive(Debug)]
 pub struct PiFn;
+/// Returns the mathematical constant π.
+///
+/// # Remarks
+/// - `PI()` takes no arguments.
+/// - Commonly used with trig and geometry formulas.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Pi constant"
+/// formula: "=PI()"
+/// expected: 3.141592653589793
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Circle circumference with radius 2"
+/// formula: "=2*PI()*2"
+/// expected: 12.566370614359172
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: PI
 /// Type: PiFn
