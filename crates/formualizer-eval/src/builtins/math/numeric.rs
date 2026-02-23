@@ -135,6 +135,26 @@ impl Function for SignFn {
 #[derive(Debug)]
 pub struct IntFn; // floor toward -inf
 /// Rounds a number down to the nearest integer.
+///
+/// `INT` uses floor semantics, so negative values move farther from zero.
+///
+/// # Remarks
+/// - Equivalent to mathematical floor (`floor(x)`).
+/// - Coercion is lenient for numeric-like inputs; invalid values return an error.
+/// - Input errors are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Drop decimal digits from a positive number"
+/// formula: "=INT(8.9)"
+/// expected: 8
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Floor a negative number"
+/// formula: "=INT(-8.9)"
+/// expected: -9
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: INT
 /// Type: IntFn
@@ -173,7 +193,25 @@ impl Function for IntFn {
 
 #[derive(Debug)]
 pub struct TruncFn; // truncate toward zero
-/// Truncates a number to an integer or a specified precision toward zero.
+/// Truncates a number toward zero, optionally at a specified digit position.
+///
+/// # Remarks
+/// - If `num_digits` is omitted, truncation is to an integer.
+/// - Positive `num_digits` keeps decimal places; negative values zero places to the left.
+/// - Passing more than two arguments returns `#VALUE!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Truncate to two decimal places"
+/// formula: "=TRUNC(12.3456,2)"
+/// expected: 12.34
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Truncate toward zero at the hundreds place"
+/// formula: "=TRUNC(-987.65,-2)"
+/// expected: -900
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TRUNC
 /// Type: TruncFn
@@ -307,6 +345,24 @@ impl Function for RoundFn {
 #[derive(Debug)]
 pub struct RoundDownFn; // toward zero
 /// Rounds a number toward zero to a specified number of digits.
+///
+/// # Remarks
+/// - Positive `num_digits` affects decimals; negative values affect digits left of the decimal.
+/// - Always reduces magnitude toward zero (unlike `INT` for negatives).
+/// - Input errors are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Trim decimals without rounding up"
+/// formula: "=ROUNDDOWN(3.14159,3)"
+/// expected: 3.141
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Round down a negative value at the hundreds place"
+/// formula: "=ROUNDDOWN(-987.65,-2)"
+/// expected: -900
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROUNDDOWN
 /// Type: RoundDownFn
@@ -358,6 +414,24 @@ impl Function for RoundDownFn {
 #[derive(Debug)]
 pub struct RoundUpFn; // away from zero
 /// Rounds a number away from zero to a specified number of digits.
+///
+/// # Remarks
+/// - Positive `num_digits` affects decimals; negative values affect digits left of the decimal.
+/// - Any discarded non-zero part increases the magnitude of the result.
+/// - Input errors are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Round up decimals away from zero"
+/// formula: "=ROUNDUP(3.14159,3)"
+/// expected: 3.142
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Round up a negative value at the hundreds place"
+/// formula: "=ROUNDUP(-987.65,-2)"
+/// expected: -1000
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROUNDUP
 /// Type: RoundUpFn
@@ -491,7 +565,27 @@ impl Function for ModFn {
 
 #[derive(Debug)]
 pub struct CeilingFn; // CEILING(number, [significance]) legacy semantics simplified
-/// Rounds a number up to the nearest multiple of a given significance.
+/// Rounds a number up to the nearest multiple of a significance.
+///
+/// This implementation defaults significance to `1` and normalizes negative significance to positive.
+///
+/// # Remarks
+/// - If `significance` is omitted, `1` is used.
+/// - `significance = 0` returns `#DIV/0!`.
+/// - Negative significance is treated as its absolute value in this fallback behavior.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Round up to the nearest multiple"
+/// formula: "=CEILING(5.1,2)"
+/// expected: 6
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Round a negative number toward positive infinity"
+/// formula: "=CEILING(-5.1,2)"
+/// expected: -4
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CEILING
 /// Type: CeilingFn
@@ -559,7 +653,25 @@ impl Function for CeilingFn {
 
 #[derive(Debug)]
 pub struct CeilingMathFn; // CEILING.MATH(number,[significance],[mode])
-/// Rounds a number up with `CEILING.MATH` semantics for sign and mode.
+/// Rounds a number up to the nearest integer or multiple using `CEILING.MATH` rules.
+///
+/// # Remarks
+/// - If `significance` is omitted (or passed as `0`), the function uses `1`.
+/// - `significance` is treated as a positive magnitude.
+/// - For negative numbers, non-zero `mode` rounds away from zero; otherwise it rounds toward positive infinity.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Default behavior for a positive number"
+/// formula: "=CEILING.MATH(24.3,5)"
+/// expected: 25
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Use mode to round a negative number away from zero"
+/// formula: "=CEILING.MATH(-24.3,5,1)"
+/// expected: -25
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CEILING.MATH
 /// Type: CeilingMathFn
@@ -638,7 +750,27 @@ impl Function for CeilingMathFn {
 
 #[derive(Debug)]
 pub struct FloorFn; // FLOOR(number,[significance])
-/// Rounds a number down to the nearest multiple of significance.
+/// Rounds a number down to the nearest multiple of a significance.
+///
+/// This implementation defaults significance to `1` and normalizes negative significance to positive.
+///
+/// # Remarks
+/// - If `significance` is omitted, `1` is used.
+/// - `significance = 0` returns `#DIV/0!`.
+/// - Negative significance is treated as its absolute value in this fallback behavior.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Round down to the nearest multiple"
+/// formula: "=FLOOR(5.9,2)"
+/// expected: 4
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Round a negative number to a lower multiple"
+/// formula: "=FLOOR(-5.9,2)"
+/// expected: -6
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: FLOOR
 /// Type: FloorFn
@@ -706,7 +838,25 @@ impl Function for FloorFn {
 
 #[derive(Debug)]
 pub struct FloorMathFn; // FLOOR.MATH(number,[significance],[mode])
-/// Rounds a number down with `FLOOR.MATH` semantics.
+/// Rounds a number down to the nearest integer or multiple using `FLOOR.MATH` rules.
+///
+/// # Remarks
+/// - If `significance` is omitted (or passed as `0`), the function uses `1`.
+/// - `significance` is treated as a positive magnitude.
+/// - For negative numbers, non-zero `mode` rounds toward zero; otherwise it rounds away from zero.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Default behavior for a positive number"
+/// formula: "=FLOOR.MATH(24.3,5)"
+/// expected: 20
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Use mode to round a negative number toward zero"
+/// formula: "=FLOOR.MATH(-24.3,5,1)"
+/// expected: -20
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: FLOOR.MATH
 /// Type: FloorMathFn
@@ -920,7 +1070,27 @@ impl Function for PowerFn {
 
 #[derive(Debug)]
 pub struct ExpFn; // EXP(number)
-/// Returns Euler's number `e` raised to a power.
+/// Returns Euler's number `e` raised to the given power.
+///
+/// `EXP` is the inverse of `LN` for positive-domain values.
+///
+/// # Remarks
+/// - Computes `e^x` using floating-point math.
+/// - Very large positive inputs may overflow to infinity.
+/// - Input errors are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Compute e to the first power"
+/// formula: "=EXP(1)"
+/// expected: 2.718281828459045
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Invert LN"
+/// formula: "=EXP(LN(5))"
+/// expected: 5
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: EXP
 /// Type: ExpFn
@@ -962,6 +1132,24 @@ impl Function for ExpFn {
 #[derive(Debug)]
 pub struct LnFn; // LN(number)
 /// Returns the natural logarithm of a positive number.
+///
+/// # Remarks
+/// - `number` must be greater than `0`; otherwise the function returns `#NUM!`.
+/// - `LN(EXP(x))` returns `x` up to floating-point precision.
+/// - Input errors are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Natural log of e cubed"
+/// formula: "=LN(EXP(3))"
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Natural log of a fraction"
+/// formula: "=LN(0.5)"
+/// expected: -0.6931471805599453
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LN
 /// Type: LnFn
@@ -1091,6 +1279,24 @@ impl Function for LogFn {
 #[derive(Debug)]
 pub struct Log10Fn; // LOG10(number)
 /// Returns the base-10 logarithm of a positive number.
+///
+/// # Remarks
+/// - `number` must be greater than `0`; otherwise the function returns `#NUM!`.
+/// - `LOG10(POWER(10,x))` returns `x` up to floating-point precision.
+/// - Input errors are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Power of ten to exponent"
+/// formula: "=LOG10(1000)"
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Log base 10 of a decimal"
+/// formula: "=LOG10(0.01)"
+/// expected: -2
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LOG10
 /// Type: Log10Fn
@@ -1147,7 +1353,25 @@ fn factorial_checked(n: i64) -> Option<f64> {
 
 #[derive(Debug)]
 pub struct QuotientFn;
-/// Returns the integer portion of a division result.
+/// Returns the integer portion of a division result, truncated toward zero.
+///
+/// # Remarks
+/// - Fractional remainder is discarded without rounding.
+/// - Dividing by `0` returns `#DIV/0!`.
+/// - Input errors are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Positive quotient"
+/// formula: "=QUOTIENT(10,3)"
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative quotient truncates toward zero"
+/// formula: "=QUOTIENT(-10,3)"
+/// expected: -3
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: QUOTIENT
 /// Type: QuotientFn
@@ -1200,6 +1424,24 @@ impl Function for QuotientFn {
 #[derive(Debug)]
 pub struct EvenFn;
 /// Rounds a number away from zero to the nearest even integer.
+///
+/// # Remarks
+/// - Values already equal to an even integer stay unchanged.
+/// - Positive and negative values both move away from zero.
+/// - `0` returns `0`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Round a positive number to even"
+/// formula: "=EVEN(3)"
+/// expected: 4
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Round a negative number away from zero"
+/// formula: "=EVEN(-1.1)"
+/// expected: -2
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: EVEN
 /// Type: EvenFn
@@ -1250,6 +1492,24 @@ impl Function for EvenFn {
 #[derive(Debug)]
 pub struct OddFn;
 /// Rounds a number away from zero to the nearest odd integer.
+///
+/// # Remarks
+/// - Values already equal to an odd integer stay unchanged.
+/// - Positive and negative values both move away from zero.
+/// - `0` returns `1`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Round a positive number to odd"
+/// formula: "=ODD(2)"
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Round a negative number away from zero"
+/// formula: "=ODD(-1.1)"
+/// expected: -3
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ODD
 /// Type: OddFn
@@ -1296,7 +1556,25 @@ impl Function for OddFn {
 
 #[derive(Debug)]
 pub struct SqrtPiFn;
-/// Returns the square root of a number multiplied by π.
+/// Returns the square root of a number multiplied by pi.
+///
+/// # Remarks
+/// - Computes `SQRT(number * PI())`.
+/// - `number` must be greater than or equal to `0`; otherwise returns `#NUM!`.
+/// - Input errors are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Square root of pi"
+/// formula: "=SQRTPI(1)"
+/// expected: 1.772453850905516
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Scale before taking square root"
+/// formula: "=SQRTPI(4)"
+/// expected: 3.544907701811032
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SQRTPI
 /// Type: SqrtPiFn
@@ -1342,7 +1620,25 @@ impl Function for SqrtPiFn {
 
 #[derive(Debug)]
 pub struct MultinomialFn;
-/// Returns the multinomial coefficient for one or more integer values.
+/// Returns the multinomial coefficient for one or more values.
+///
+/// # Remarks
+/// - Each input is truncated toward zero before factorial is applied.
+/// - Any negative term returns `#NUM!`.
+/// - Values that require factorials outside `0..=170` return `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Compute a standard multinomial coefficient"
+/// formula: "=MULTINOMIAL(2,3,4)"
+/// expected: 1260
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Non-integers are truncated first"
+/// formula: "=MULTINOMIAL(1.9,2.2)"
+/// expected: 3
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: MULTINOMIAL
 /// Type: MultinomialFn
@@ -1421,7 +1717,29 @@ impl Function for MultinomialFn {
 
 #[derive(Debug)]
 pub struct SeriesSumFn;
-/// Evaluates a power series using supplied coefficients.
+/// Evaluates a power series from coefficients, start power, and step.
+///
+/// # Remarks
+/// - Computes `sum(c_i * x^(n + i*m))` in coefficient order.
+/// - Coefficients may be supplied as a scalar, array literal, or range.
+/// - Errors in `x`, `n`, `m`, or coefficient values are propagated.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Series from an array literal"
+/// formula: "=SERIESSUM(2,0,1,{1,2,3})"
+/// expected: 17
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Series from worksheet coefficients"
+/// grid:
+///   A1: 1
+///   A2: -1
+///   A3: 0.5
+/// formula: "=SERIESSUM(0.5,1,2,A1:A3)"
+/// expected: 0.390625
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SERIESSUM
 /// Type: SeriesSumFn
@@ -1520,6 +1838,28 @@ impl Function for SeriesSumFn {
 #[derive(Debug)]
 pub struct SumsqFn;
 /// Returns the sum of squares of supplied numbers.
+///
+/// # Remarks
+/// - Accepts one or more scalar values, arrays, or ranges.
+/// - For ranges, non-numeric cells are ignored while errors are propagated.
+/// - Date/time-like values in ranges are converted to numeric serial values before squaring.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Sum squares of scalar arguments"
+/// formula: "=SUMSQ(3,4)"
+/// expected: 25
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Ignore text cells in a range"
+/// grid:
+///   A1: 1
+///   A2: "x"
+///   A3: 2
+/// formula: "=SUMSQ(A1:A3)"
+/// expected: 5
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SUMSQ
 /// Type: SumsqFn
