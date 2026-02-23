@@ -1,20 +1,25 @@
-![Formualizer banner](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png)
+<h1 align="center">Formualizer</h1>
 
-# Formualizer
+<p align="center">
+  <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
+  <a href="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg" /></a>
+  <img alt="Python Coverage" src="https://raw.githubusercontent.com/psu3d0/formualizer/badges/coverage.svg" />
+  <img alt="Rust Core Coverage" src="https://raw.githubusercontent.com/psu3d0/formualizer/badges/rust-core-coverage.svg" />
+  <a href="https://crates.io/crates/formualizer"><img alt="crates.io" src="https://img.shields.io/crates/v/formualizer.svg" /></a>
+  <a href="https://pypi.org/project/formualizer/"><img alt="PyPI" src="https://img.shields.io/pypi/v/formualizer.svg" /></a>
+  <a href="https://www.npmjs.com/package/formualizer"><img alt="npm" src="https://img.shields.io/npm/v/formualizer.svg" /></a>
+  <a href="#license"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
+</p>
 
-![Arrow Powered](https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white)
+<p align="center">
+  <img alt="Formualizer banner" src="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png" />
+</p>
+
+<br />
 
 **The spreadsheet engine that actually evaluates formulas.** Parse, evaluate, and mutate Excel workbooks from Rust, Python, or the browser.
 
 A permissively-licensed, production-grade spreadsheet engine with 320+ Excel-compatible functions, Apache Arrow storage, incremental dependency tracking, undo/redo, and dynamic array support. One Rust core, three language targets, MIT/Apache-2.0.
-
-[![CI](https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg)](https://github.com/psu3d0/formualizer/actions/workflows/ci.yml)
-![Python Coverage](https://raw.githubusercontent.com/psu3d0/formualizer/badges/coverage.svg)
-![Rust Core Coverage](https://raw.githubusercontent.com/psu3d0/formualizer/badges/rust-core-coverage.svg)
-[![crates.io](https://img.shields.io/crates/v/formualizer.svg)](https://crates.io/crates/formualizer)
-[![PyPI](https://img.shields.io/pypi/v/formualizer.svg)](https://pypi.org/project/formualizer/)
-[![npm](https://img.shields.io/npm/v/formualizer.svg)](https://www.npmjs.com/package/formualizer)
-[![License: MIT/Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](#license)
 
 ---
 
