@@ -1,17 +1,40 @@
 ---
 title: "COVARIANCE.P"
-description: "Population covariance."
+description: "Returns population covariance for two paired numeric data sets."
 ---
 
 ## Summary
 
-Population covariance.
+`COVARIANCE.P` measures joint variability using `n` in the denominator.
 
-## Formula example
+## Remarks
+ - Arrays must resolve to the same number of numeric points.
+ - Uses population scaling (`/ n`) rather than sample scaling.
+ - Positive output indicates same-direction movement; negative output indicates opposite movement.
+ - Pairing and shape mismatches return spreadsheet errors from paired-array validation.
 
-```text
-=COVARIANCE.P(A1, B1)
-```
+## Examples
+
+<Tabs items={["Positive population covariance", "Negative population covariance"]}>
+<Tab value="Positive population covariance">
+<FunctionSandbox
+  title="Positive population covariance"
+  formula={`=COVARIANCE.P({1,3,5},{2,4,6})`}
+  grid={{}}
+  expected={"2.6666666666666665"}
+/>
+</Tab>
+
+<Tab value="Negative population covariance">
+<FunctionSandbox
+  title="Negative population covariance"
+  formula={`=COVARIANCE.P({1,2,3},{3,2,1})`}
+  grid={{}}
+  expected={"-0.6666666666666666"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

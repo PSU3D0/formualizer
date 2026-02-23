@@ -5,13 +5,35 @@ description: "Rounds a number down to the nearest integer."
 
 ## Summary
 
-Rounds a number down to the nearest integer.
+`INT` uses floor semantics, so negative values move farther from zero.
 
-## Formula example
+## Remarks
+ - Equivalent to mathematical floor (`floor(x)`).
+ - Coercion is lenient for numeric-like inputs; invalid values return an error.
+ - Input errors are propagated.
 
-```text
-=INT(A1)
-```
+## Examples
+
+<Tabs items={["Drop decimal digits from a positive number", "Floor a negative number"]}>
+<Tab value="Drop decimal digits from a positive number">
+<FunctionSandbox
+  title="Drop decimal digits from a positive number"
+  formula={`=INT(8.9)`}
+  grid={{}}
+  expected={"8"}
+/>
+</Tab>
+
+<Tab value="Floor a negative number">
+<FunctionSandbox
+  title="Floor a negative number"
+  formula={`=INT(-8.9)`}
+  grid={{}}
+  expected={"-9"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

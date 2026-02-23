@@ -1,17 +1,39 @@
 ---
 title: "TRUNC"
-description: "Truncates a number to an integer or a specified precision toward zero."
+description: "Truncates a number toward zero, optionally at a specified digit position."
 ---
 
 ## Summary
 
-Truncates a number to an integer or a specified precision toward zero.
+Truncates a number toward zero, optionally at a specified digit position.
 
-## Formula example
+## Remarks
+ - If `num_digits` is omitted, truncation is to an integer.
+ - Positive `num_digits` keeps decimal places; negative values zero places to the left.
+ - Passing more than two arguments returns `#VALUE!`.
 
-```text
-=TRUNC(A1)
-```
+## Examples
+
+<Tabs items={["Truncate to two decimal places", "Truncate toward zero at the hundreds place"]}>
+<Tab value="Truncate to two decimal places">
+<FunctionSandbox
+  title="Truncate to two decimal places"
+  formula={`=TRUNC(12.3456,2)`}
+  grid={{}}
+  expected={"12.34"}
+/>
+</Tab>
+
+<Tab value="Truncate toward zero at the hundreds place">
+<FunctionSandbox
+  title="Truncate toward zero at the hundreds place"
+  formula={`=TRUNC(-987.65,-2)`}
+  grid={{}}
+  expected={"-900"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

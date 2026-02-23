@@ -1,17 +1,39 @@
 ---
 title: "CSC"
-description: "Returns the cosecant of an angle in radians."
+description: "Returns the cosecant of an angle, defined as `1 / SIN(angle)`."
 ---
 
 ## Summary
 
-Returns the cosecant of an angle in radians.
+Use `CSC` for reciprocal-sine calculations in radian-based formulas.
 
-## Formula example
+## Remarks
+ - Domain: valid for all real angles except where `SIN(angle) = 0`.
+ - Radians: input is interpreted in radians.
+ - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
 
-```text
-=CSC(A1)
-```
+## Examples
+
+<Tabs items={["Cosecant at PI over 2", "Zero sine denominator"]}>
+<Tab value="Cosecant at PI over 2">
+<FunctionSandbox
+  title="Cosecant at PI over 2"
+  formula={`=CSC(PI()/2)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Zero sine denominator">
+<FunctionSandbox
+  title="Zero sine denominator"
+  formula={`=CSC(0)`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

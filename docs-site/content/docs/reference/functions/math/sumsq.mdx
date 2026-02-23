@@ -7,11 +7,33 @@ description: "Returns the sum of squares of supplied numbers."
 
 Returns the sum of squares of supplied numbers.
 
-## Formula example
+## Remarks
+ - Accepts one or more scalar values, arrays, or ranges.
+ - For ranges, non-numeric cells are ignored while errors are propagated.
+ - Date/time-like values in ranges are converted to numeric serial values before squaring.
 
-```text
-=SUMSQ(A1)
-```
+## Examples
+
+<Tabs items={["Sum squares of scalar arguments", "Ignore text cells in a range"]}>
+<Tab value="Sum squares of scalar arguments">
+<FunctionSandbox
+  title="Sum squares of scalar arguments"
+  formula={`=SUMSQ(3,4)`}
+  grid={{}}
+  expected={"25"}
+/>
+</Tab>
+
+<Tab value="Ignore text cells in a range">
+<FunctionSandbox
+  title="Ignore text cells in a range"
+  formula={`=SUMSQ(A1:A3)`}
+  grid={{"A1":"1","A2":"x","A3":"2"}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

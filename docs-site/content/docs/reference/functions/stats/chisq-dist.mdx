@@ -1,17 +1,40 @@
 ---
 title: "CHISQ.DIST"
-description: "Chi-squared distribution."
+description: "Returns the chi-square probability for `x` with the specified degrees of freedom."
 ---
 
 ## Summary
 
-Chi-squared distribution.
+Use `CHISQ.DIST` in cumulative mode for left-tail probability or density mode for the PDF.
 
-## Formula example
+## Remarks
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
+ - Requires `x &gt;= 0` and `deg_freedom &gt;= 1`.
+ - Returns `#NUM!` for negative `x` or invalid degrees of freedom.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=CHISQ.DIST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Chi-square CDF at zero", "Chi-square PDF example"]}>
+<Tab value="Chi-square CDF at zero">
+<FunctionSandbox
+  title="Chi-square CDF at zero"
+  formula={`=CHISQ.DIST(0,4,TRUE)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Chi-square PDF example">
+<FunctionSandbox
+  title="Chi-square PDF example"
+  formula={`=CHISQ.DIST(2,2,FALSE)`}
+  grid={{}}
+  expected={"0.18393972058572117"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

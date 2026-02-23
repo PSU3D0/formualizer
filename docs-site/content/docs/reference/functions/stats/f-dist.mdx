@@ -1,17 +1,40 @@
 ---
 title: "F.DIST"
-description: "F distribution."
+description: "Returns the F-distribution probability for `x` with numerator and denominator degrees of freedom."
 ---
 
 ## Summary
 
-F distribution.
+Use `F.DIST` for left-tail cumulative probabilities or density values in variance-ratio tests.
 
-## Formula example
+## Remarks
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
+ - Requires `x &gt;= 0`, `deg_freedom1 &gt;= 1`, and `deg_freedom2 &gt;= 1`.
+ - Returns `#NUM!` when any domain constraint is violated.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=F.DIST(A1, B1)
-```
+## Examples
+
+<Tabs items={["F CDF with symmetric 2 and 2 degrees of freedom", "F PDF with symmetric 2 and 2 degrees of freedom"]}>
+<Tab value="F CDF with symmetric 2 and 2 degrees of freedom">
+<FunctionSandbox
+  title="F CDF with symmetric 2 and 2 degrees of freedom"
+  formula={`=F.DIST(1,2,2,TRUE)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+<Tab value="F PDF with symmetric 2 and 2 degrees of freedom">
+<FunctionSandbox
+  title="F PDF with symmetric 2 and 2 degrees of freedom"
+  formula={`=F.DIST(1,2,2,FALSE)`}
+  grid={{}}
+  expected={"0.25"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

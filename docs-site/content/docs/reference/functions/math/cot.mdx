@@ -1,17 +1,39 @@
 ---
 title: "COT"
-description: "Returns the cotangent of an angle in radians."
+description: "Returns the cotangent of an angle, defined as `1 / TAN(angle)`."
 ---
 
 ## Summary
 
-Returns the cotangent of an angle in radians.
+`COT` is useful when working with reciprocal tangent relationships.
 
-## Formula example
+## Remarks
+ - Domain: valid for all real angles except where `TAN(angle) = 0`.
+ - Radians: input is interpreted in radians.
+ - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
 
-```text
-=COT(A1)
-```
+## Examples
+
+<Tabs items={["Cotangent at PI over 4", "Undefined cotangent at zero"]}>
+<Tab value="Cotangent at PI over 4">
+<FunctionSandbox
+  title="Cotangent at PI over 4"
+  formula={`=COT(PI()/4)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Undefined cotangent at zero">
+<FunctionSandbox
+  title="Undefined cotangent at zero"
+  formula={`=COT(0)`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

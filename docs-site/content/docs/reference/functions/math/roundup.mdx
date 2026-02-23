@@ -7,11 +7,33 @@ description: "Rounds a number away from zero to a specified number of digits."
 
 Rounds a number away from zero to a specified number of digits.
 
-## Formula example
+## Remarks
+ - Positive `num_digits` affects decimals; negative values affect digits left of the decimal.
+ - Any discarded non-zero part increases the magnitude of the result.
+ - Input errors are propagated.
 
-```text
-=ROUNDUP(A1, B1)
-```
+## Examples
+
+<Tabs items={["Round up decimals away from zero", "Round up a negative value at the hundreds place"]}>
+<Tab value="Round up decimals away from zero">
+<FunctionSandbox
+  title="Round up decimals away from zero"
+  formula={`=ROUNDUP(3.14159,3)`}
+  grid={{}}
+  expected={"3.142"}
+/>
+</Tab>
+
+<Tab value="Round up a negative value at the hundreds place">
+<FunctionSandbox
+  title="Round up a negative value at the hundreds place"
+  formula={`=ROUNDUP(-987.65,-2)`}
+  grid={{}}
+  expected={"-1000"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

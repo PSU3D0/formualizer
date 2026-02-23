@@ -7,11 +7,33 @@ description: "Rounds a number away from zero to the nearest odd integer."
 
 Rounds a number away from zero to the nearest odd integer.
 
-## Formula example
+## Remarks
+ - Values already equal to an odd integer stay unchanged.
+ - Positive and negative values both move away from zero.
+ - `0` returns `1`.
 
-```text
-=ODD(A1)
-```
+## Examples
+
+<Tabs items={["Round a positive number to odd", "Round a negative number away from zero"]}>
+<Tab value="Round a positive number to odd">
+<FunctionSandbox
+  title="Round a positive number to odd"
+  formula={`=ODD(2)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Round a negative number away from zero">
+<FunctionSandbox
+  title="Round a negative number away from zero"
+  formula={`=ODD(-1.1)`}
+  grid={{}}
+  expected={"-3"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

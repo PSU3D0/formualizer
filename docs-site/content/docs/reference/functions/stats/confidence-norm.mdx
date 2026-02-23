@@ -1,17 +1,40 @@
 ---
 title: "CONFIDENCE.NORM"
-description: "Returns the confidence interval for a population mean using a normal distribution. Formula: z_crit * standard_dev / sqrt(size), where z_crit = NORM.S.INV(1 - alpha/2)"
+description: "Returns the half-width of a confidence interval using a normal critical value."
 ---
 
 ## Summary
 
-Returns the confidence interval for a population mean using a normal distribution. Formula: z_crit * standard_dev / sqrt(size), where z_crit = NORM.S.INV(1 - alpha/2)
+`CONFIDENCE.NORM` computes `z_crit * standard_dev / sqrt(size)` for two-sided intervals.
 
-## Formula example
+## Remarks
+ - `alpha` must satisfy `0 &lt; alpha &lt; 1`.
+ - `standard_dev` must be greater than `0`.
+ - `size` must be at least `1`.
+ - Returns `#NUM!` when any input is outside valid bounds.
 
-```text
-=CONFIDENCE.NORM(A1, B1)
-```
+## Examples
+
+<Tabs items={["95% confidence half-width", "90% confidence half-width"]}>
+<Tab value="95% confidence half-width">
+<FunctionSandbox
+  title="95% confidence half-width"
+  formula={`=CONFIDENCE.NORM(0.05,2,100)`}
+  grid={{}}
+  expected={"0.3919927977622559"}
+/>
+</Tab>
+
+<Tab value="90% confidence half-width">
+<FunctionSandbox
+  title="90% confidence half-width"
+  formula={`=CONFIDENCE.NORM(0.1,5,25)`}
+  grid={{}}
+  expected={"1.644853625133699"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

@@ -1,17 +1,40 @@
 ---
 title: "PERCENTRANK.INC"
-description: "Returns percentage rank (inclusive). Returns rank of x in array as percentage (0 to 1 inclusive) Uses interpolation for values between data points significance: number of signi…"
+description: "Returns the inclusive percentile rank of `x` within a numeric data array."
 ---
 
 ## Summary
 
-Returns percentage rank (inclusive). Returns rank of x in array as percentage (0 to 1 inclusive) Uses interpolation for values between data points significance: number of signi…
+`PERCENTRANK.INC` maps values to `[0, 1]` and interpolates linearly between data points.
 
-## Formula example
+## Remarks
+ - `x` must be within the observed min/max range; otherwise returns `#N/A`.
+ - Optional `significance` controls decimal truncation and defaults to `3`.
+ - `significance` must be at least `1`.
+ - Returns `#NUM!` for invalid setup such as empty numeric input.
 
-```text
-=PERCENTRANK.INC(A1, B1)
-```
+## Examples
+
+<Tabs items={["Exact inclusive percentile rank", "Interpolated inclusive percentile rank"]}>
+<Tab value="Exact inclusive percentile rank">
+<FunctionSandbox
+  title="Exact inclusive percentile rank"
+  formula={`=PERCENTRANK.INC({1,2,3,4,5},3)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+<Tab value="Interpolated inclusive percentile rank">
+<FunctionSandbox
+  title="Interpolated inclusive percentile rank"
+  formula={`=PERCENTRANK.INC({1,2,3,4,5},2.5)`}
+  grid={{}}
+  expected={"0.375"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

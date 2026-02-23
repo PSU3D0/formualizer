@@ -1,17 +1,41 @@
 ---
 title: "CONFIDENCE.T"
-description: "Returns the confidence interval for a population mean using a Student's t-distribution. Formula: t_crit * standard_dev / sqrt(size), where t_crit = T.INV(1 - alpha/2, size - 1)"
+description: "Returns the half-width of a confidence interval using a t critical value."
 ---
 
 ## Summary
 
-Returns the confidence interval for a population mean using a Student's t-distribution. Formula: t_crit * standard_dev / sqrt(size), where t_crit = T.INV(1 - alpha/2, size - 1)
+`CONFIDENCE.T` is typically used when population standard deviation is unknown and sample size
+ is limited.
 
-## Formula example
+## Remarks
+ - `alpha` must satisfy `0 &lt; alpha &lt; 1`.
+ - `standard_dev` must be greater than `0`.
+ - `size` must be at least `2` so that `df = size - 1` is valid.
+ - Returns `#NUM!` when inputs are outside valid bounds.
 
-```text
-=CONFIDENCE.T(A1, B1)
-```
+## Examples
+
+<Tabs items={["95% t-interval half-width", "90% t-interval half-width"]}>
+<Tab value="95% t-interval half-width">
+<FunctionSandbox
+  title="95% t-interval half-width"
+  formula={`=CONFIDENCE.T(0.05,2,25)`}
+  grid={{}}
+  expected={"0.8256636934020788"}
+/>
+</Tab>
+
+<Tab value="90% t-interval half-width">
+<FunctionSandbox
+  title="90% t-interval half-width"
+  formula={`=CONFIDENCE.T(0.1,5,10)`}
+  grid={{}}
+  expected={"2.9158049866307585"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

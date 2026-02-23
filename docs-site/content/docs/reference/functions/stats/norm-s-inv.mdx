@@ -1,17 +1,41 @@
 ---
 title: "NORM.S.INV"
-description: "Inverse standard normal distribution."
+description: "Returns the z-score whose standard normal cumulative probability matches `probability`."
 ---
 
 ## Summary
 
-Inverse standard normal distribution.
+This is the inverse of `NORM.S.DIST(z, TRUE)` and is commonly used for critical-value
+ thresholds.
 
-## Formula example
+## Remarks
+ - `probability` must be strictly between `0` and `1`.
+ - Returns `#NUM!` when `probability &lt;= 0` or `probability &gt;= 1`.
+ - Output can be negative, zero, or positive depending on which side of `0.5` you query.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=NORM.S.INV(A1)
-```
+## Examples
+
+<Tabs items={["Median probability maps to zero", "Upper-tail critical z-score"]}>
+<Tab value="Median probability maps to zero">
+<FunctionSandbox
+  title="Median probability maps to zero"
+  formula={`=NORM.S.INV(0.5)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Upper-tail critical z-score">
+<FunctionSandbox
+  title="Upper-tail critical z-score"
+  formula={`=NORM.S.INV(0.975)`}
+  grid={{}}
+  expected={"1.959963986120195"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

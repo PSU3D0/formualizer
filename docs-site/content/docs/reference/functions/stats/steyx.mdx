@@ -1,17 +1,40 @@
 ---
 title: "STEYX"
-description: "Standard error of the predicted y-value."
+description: "Returns the standard error of y-estimates from a simple linear regression."
 ---
 
 ## Summary
 
-Standard error of the predicted y-value.
+`STEYX` measures the typical residual size around the fitted regression line.
 
-## Formula example
+## Remarks
+ - Requires paired x/y inputs with matching numeric lengths.
+ - Requires at least three paired points.
+ - Returns `#DIV/0!` when `n &lt; 3` or x-values have zero variance.
+ - Pairing and shape mismatches return spreadsheet errors from paired-array validation.
 
-```text
-=STEYX(A1, B1)
-```
+## Examples
+
+<Tabs items={["Perfect linear fit has zero standard error", "Non-zero regression standard error"]}>
+<Tab value="Perfect linear fit has zero standard error">
+<FunctionSandbox
+  title="Perfect linear fit has zero standard error"
+  formula={`=STEYX({2,4,6},{1,2,3})`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Non-zero regression standard error">
+<FunctionSandbox
+  title="Non-zero regression standard error"
+  formula={`=STEYX({2,5,7},{1,2,3})`}
+  grid={{}}
+  expected={"0.408248290463863"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

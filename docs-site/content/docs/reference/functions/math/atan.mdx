@@ -1,17 +1,39 @@
 ---
 title: "ATAN"
-description: "Returns the arctangent of a number, in radians."
+description: "Returns the angle in radians whose tangent is the input value."
 ---
 
 ## Summary
 
-Returns the arctangent of a number, in radians.
+`ATAN` is useful for recovering a slope angle from a ratio.
 
-## Formula example
+## Remarks
+ - Domain: accepts any real number.
+ - Radians: output is in the range `(-PI()/2, PI()/2)`.
+ - Errors: no function-specific domain errors are produced.
 
-```text
-=ATAN(A1)
-```
+## Examples
+
+<Tabs items={["Arctangent of one", "Negative slope angle"]}>
+<Tab value="Arctangent of one">
+<FunctionSandbox
+  title="Arctangent of one"
+  formula={`=ATAN(1)`}
+  grid={{}}
+  expected={"0.7853981633974483"}
+/>
+</Tab>
+
+<Tab value="Negative slope angle">
+<FunctionSandbox
+  title="Negative slope angle"
+  formula={`=ATAN(-1)`}
+  grid={{}}
+  expected={"-0.7853981633974483"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

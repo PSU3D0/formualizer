@@ -1,17 +1,41 @@
 ---
 title: "BETA.DIST"
-description: "Beta distribution A and B are optional bounds, defaults to 0 and 1."
+description: "Returns the beta-distribution probability for `x`, with optional lower/upper bounds."
 ---
 
 ## Summary
 
-Beta distribution A and B are optional bounds, defaults to 0 and 1.
+`BETA.DIST` can evaluate either the cumulative probability or density on `[A, B]` (default
+ `[0, 1]`).
 
-## Formula example
+## Remarks
+ - Requires `alpha &gt; 0`, `beta &gt; 0`, and `A &lt; B`.
+ - `x` must lie within the inclusive interval `[A, B]`.
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
+ - Returns `#NUM!` for invalid bounds, parameters, or out-of-range `x`.
 
-```text
-=BETA.DIST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Uniform beta CDF on [0,1]", "Uniform beta PDF on [0,1]"]}>
+<Tab value="Uniform beta CDF on [0,1]">
+<FunctionSandbox
+  title="Uniform beta CDF on [0,1]"
+  formula={`=BETA.DIST(0.3,1,1,TRUE)`}
+  grid={{}}
+  expected={"0.3"}
+/>
+</Tab>
+
+<Tab value="Uniform beta PDF on [0,1]">
+<FunctionSandbox
+  title="Uniform beta PDF on [0,1]"
+  formula={`=BETA.DIST(0.3,1,1,FALSE)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

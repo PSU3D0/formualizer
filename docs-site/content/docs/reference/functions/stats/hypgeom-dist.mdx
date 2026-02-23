@@ -1,17 +1,40 @@
 ---
 title: "HYPGEOM.DIST"
-description: "Hypergeometric distribution sample_s = number of successes in sample number_sample = sample size population_s = number of successes in population number_pop = population size"
+description: "Returns hypergeometric probabilities for successes drawn without replacement."
 ---
 
 ## Summary
 
-Hypergeometric distribution sample_s = number of successes in sample number_sample = sample size population_s = number of successes in population number_pop = population size
+Use `HYPGEOM.DIST` for finite-population sampling where each draw changes remaining odds.
 
-## Formula example
+## Remarks
+ - Count inputs are truncated to integers.
+ - Requires valid population/sample bounds and feasible success counts.
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PMF mode.
+ - Returns `#NUM!` for invalid population setup; out-of-support PMF values return `0`.
 
-```text
-=HYPGEOM.DIST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Hypergeometric PMF", "Hypergeometric CDF"]}>
+<Tab value="Hypergeometric PMF">
+<FunctionSandbox
+  title="Hypergeometric PMF"
+  formula={`=HYPGEOM.DIST(1,3,4,10,FALSE)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+<Tab value="Hypergeometric CDF">
+<FunctionSandbox
+  title="Hypergeometric CDF"
+  formula={`=HYPGEOM.DIST(1,3,4,10,TRUE)`}
+  grid={{}}
+  expected={"0.6666666666666666"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

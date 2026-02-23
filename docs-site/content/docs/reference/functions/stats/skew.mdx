@@ -1,17 +1,41 @@
 ---
 title: "SKEW"
-description: "Skewness of a distribution."
+description: "Returns the sample skewness of a numeric distribution."
 ---
 
 ## Summary
 
-Skewness of a distribution.
+`SKEW` quantifies asymmetry: positive values indicate a longer right tail, negative values a
+ longer left tail.
 
-## Formula example
+## Remarks
+ - Requires at least three numeric values.
+ - Returns `#DIV/0!` when there are fewer than three numbers or zero sample standard deviation.
+ - Non-numeric values in ranges are ignored by statistical-collection rules.
+ - Uses the Excel-style sample skewness correction factor.
 
-```text
-=SKEW(A1)
-```
+## Examples
+
+<Tabs items={["Symmetric sample", "Right-skewed sample"]}>
+<Tab value="Symmetric sample">
+<FunctionSandbox
+  title="Symmetric sample"
+  formula={`=SKEW({1,2,3})`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Right-skewed sample">
+<FunctionSandbox
+  title="Right-skewed sample"
+  formula={`=SKEW({1,1,2,10})`}
+  grid={{}}
+  expected={"1.9683567600862015"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

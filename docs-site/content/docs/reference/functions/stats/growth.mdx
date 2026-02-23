@@ -1,17 +1,40 @@
 ---
 title: "GROWTH"
-description: "Returns values along exponential growth trend Uses exponential regression y = b * m^x - Similar parameters to TREND but for exponential growth - const=TRUE: calculate b normall…"
+description: "Returns fitted values from an exponential trend model."
 ---
 
 ## Summary
 
-Returns values along exponential growth trend Uses exponential regression y = b * m^x - Similar parameters to TREND but for exponential growth - const=TRUE: calculate b normall…
+`GROWTH` fits `y = b * m^x` by linearizing in log space, then returns predictions for `new_x`.
 
-## Formula example
+## Remarks
+ - All known y-values must be strictly greater than `0`.
+ - `known_x` defaults to `1..n`; `new_x` defaults to `known_x`.
+ - `const` defaults to `TRUE`; set to `FALSE` to force `b = 1`.
+ - Returns spreadsheet errors for invalid domains, mismatched lengths, or degenerate x-variance.
 
-```text
-=GROWTH(A1)
-```
+## Examples
+
+<Tabs items={["Exponential growth forecast", "Default x-values with perfect doubling pattern"]}>
+<Tab value="Exponential growth forecast">
+<FunctionSandbox
+  title="Exponential growth forecast"
+  formula={`=GROWTH({2,4,8},{1,2,3},{4,5})`}
+  grid={{}}
+  expected={"[[16,32]]"}
+/>
+</Tab>
+
+<Tab value="Default x-values with perfect doubling pattern">
+<FunctionSandbox
+  title="Default x-values with perfect doubling pattern"
+  formula={`=GROWTH({3,6,12})`}
+  grid={{}}
+  expected={"[[3,6,12]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

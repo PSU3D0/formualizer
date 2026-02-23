@@ -7,11 +7,33 @@ description: "Returns the base-10 logarithm of a positive number."
 
 Returns the base-10 logarithm of a positive number.
 
-## Formula example
+## Remarks
+ - `number` must be greater than `0`; otherwise the function returns `#NUM!`.
+ - `LOG10(POWER(10,x))` returns `x` up to floating-point precision.
+ - Input errors are propagated.
 
-```text
-=LOG10(A1)
-```
+## Examples
+
+<Tabs items={["Power of ten to exponent", "Log base 10 of a decimal"]}>
+<Tab value="Power of ten to exponent">
+<FunctionSandbox
+  title="Power of ten to exponent"
+  formula={`=LOG10(1000)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Log base 10 of a decimal">
+<FunctionSandbox
+  title="Log base 10 of a decimal"
+  formula={`=LOG10(0.01)`}
+  grid={{}}
+  expected={"-2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

@@ -1,17 +1,41 @@
 ---
 title: "LINEST"
-description: "Returns statistics describing the linear trend With stats=FALSE (default): returns 1x2 array [slope, intercept] With stats=TRUE: returns 5x2 array with regression statistics"
+description: "Returns linear-regression coefficients and optional fit statistics."
 ---
 
 ## Summary
 
-Returns statistics describing the linear trend With stats=FALSE (default): returns 1x2 array [slope, intercept] With stats=TRUE: returns 5x2 array with regression statistics
+`LINEST` fits a straight line to known y/x pairs and returns either `[slope, intercept]` or a
+ larger statistics matrix.
 
-## Formula example
+## Remarks
+ - `known_y` is required; `known_x` defaults to `1..n` when omitted.
+ - `const` controls whether an intercept is fitted (`TRUE` by default).
+ - `stats=TRUE` returns a `5x2` result block; otherwise it returns `1x2`.
+ - Returns spreadsheet errors for mismatched lengths, empty data, or degenerate x-values.
 
-```text
-=LINEST(A1)
-```
+## Examples
+
+<Tabs items={["Slope and intercept only", "Linear fit with non-zero intercept"]}>
+<Tab value="Slope and intercept only">
+<FunctionSandbox
+  title="Slope and intercept only"
+  formula={`=LINEST({2,4,6},{1,2,3})`}
+  grid={{}}
+  expected={"[[2,0]]"}
+/>
+</Tab>
+
+<Tab value="Linear fit with non-zero intercept">
+<FunctionSandbox
+  title="Linear fit with non-zero intercept"
+  formula={`=LINEST({3,5,7},{1,2,3})`}
+  grid={{}}
+  expected={"[[2,1]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

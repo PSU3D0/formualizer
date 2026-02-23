@@ -1,17 +1,40 @@
 ---
 title: "FISHER"
-description: "Fisher transformation."
+description: "Returns the Fisher z-transformation of a correlation-like value `x`."
 ---
 
 ## Summary
 
-Fisher transformation.
+`FISHER` maps `(-1, 1)` into `(-inf, +inf)` and is commonly used in correlation inference.
 
-## Formula example
+## Remarks
+ - Input must satisfy `-1 &lt; x &lt; 1`.
+ - Returns `#NUM!` when `x &lt;= -1` or `x &gt;= 1`.
+ - The transformation is `0.5 * ln((1 + x) / (1 - x))`.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=FISHER(A1)
-```
+## Examples
+
+<Tabs items={["Fisher transform at zero", "Fisher transform at x=0.5"]}>
+<Tab value="Fisher transform at zero">
+<FunctionSandbox
+  title="Fisher transform at zero"
+  formula={`=FISHER(0)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Fisher transform at x=0.5">
+<FunctionSandbox
+  title="Fisher transform at x=0.5"
+  formula={`=FISHER(0.5)`}
+  grid={{}}
+  expected={"0.5493061443340549"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

@@ -1,17 +1,39 @@
 ---
 title: "CSCH"
-description: "Returns the hyperbolic cosecant of a number."
+description: "Returns the hyperbolic cosecant of a number, defined as `1 / SINH(x)`."
 ---
 
 ## Summary
 
-Returns the hyperbolic cosecant of a number.
+`CSCH` is the reciprocal of `SINH` where defined.
 
-## Formula example
+## Remarks
+ - Domain: valid for all real numbers except `0`.
+ - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+ - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
 
-```text
-=CSCH(A1)
-```
+## Examples
+
+<Tabs items={["Hyperbolic cosecant at one", "Division by zero at origin"]}>
+<Tab value="Hyperbolic cosecant at one">
+<FunctionSandbox
+  title="Hyperbolic cosecant at one"
+  formula={`=CSCH(1)`}
+  grid={{}}
+  expected={"0.8509181282393216"}
+/>
+</Tab>
+
+<Tab value="Division by zero at origin">
+<FunctionSandbox
+  title="Division by zero at origin"
+  formula={`=CSCH(0)`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

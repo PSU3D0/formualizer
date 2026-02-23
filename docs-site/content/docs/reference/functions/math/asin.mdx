@@ -1,17 +1,39 @@
 ---
 title: "ASIN"
-description: "Returns the arcsine of a value, in radians."
+description: "Returns the angle in radians whose sine is the input value."
 ---
 
 ## Summary
 
-Returns the arcsine of a value, in radians.
+Use `ASIN` to recover an angle from a normalized ratio.
 
-## Formula example
+## Remarks
+ - Domain: input must be between `-1` and `1`, inclusive.
+ - Radians: output is in the range `[-PI()/2, PI()/2]`.
+ - Errors: returns `#NUM!` when the input is outside the valid domain.
 
-```text
-=ASIN(A1)
-```
+## Examples
+
+<Tabs items={["Arcsine of one half", "Lower boundary"]}>
+<Tab value="Arcsine of one half">
+<FunctionSandbox
+  title="Arcsine of one half"
+  formula={`=ASIN(0.5)`}
+  grid={{}}
+  expected={"0.5235987755982989"}
+/>
+</Tab>
+
+<Tab value="Lower boundary">
+<FunctionSandbox
+  title="Lower boundary"
+  formula={`=ASIN(-1)`}
+  grid={{}}
+  expected={"-1.5707963267948966"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

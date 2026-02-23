@@ -7,11 +7,33 @@ description: "Rounds a number away from zero to the nearest even integer."
 
 Rounds a number away from zero to the nearest even integer.
 
-## Formula example
+## Remarks
+ - Values already equal to an even integer stay unchanged.
+ - Positive and negative values both move away from zero.
+ - `0` returns `0`.
 
-```text
-=EVEN(A1)
-```
+## Examples
+
+<Tabs items={["Round a positive number to even", "Round a negative number away from zero"]}>
+<Tab value="Round a positive number to even">
+<FunctionSandbox
+  title="Round a positive number to even"
+  formula={`=EVEN(3)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Round a negative number away from zero">
+<FunctionSandbox
+  title="Round a negative number away from zero"
+  formula={`=EVEN(-1.1)`}
+  grid={{}}
+  expected={"-2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

@@ -1,17 +1,41 @@
 ---
 title: "FREQUENCY"
-description: "Returns frequency distribution. Returns vertical array of frequencies Counts values in each bin: &lt;= bin[0], (bin[0], bin[1]], ..., &gt; bin[n-1] Returns array with one more elemen…"
+description: "Returns a vertical frequency distribution for numeric data across bin cutoffs."
 ---
 
 ## Summary
 
-Returns frequency distribution. Returns vertical array of frequencies Counts values in each bin: &lt;= bin[0], (bin[0], bin[1]], ..., &gt; bin[n-1] Returns array with one more elemen…
+`FREQUENCY` counts values into `&lt;= first bin`, intermediate right-closed bins, and an overflow
+ bucket above the final bin.
 
-## Formula example
+## Remarks
+ - Returns an array with `bins + 1` rows.
+ - Bins are sorted before counting.
+ - If `bins_array` has no numeric values, result is a single count of all data points.
+ - Non-numeric values in input ranges are ignored by statistical-collection rules.
 
-```text
-=FREQUENCY(A1, B1)
-```
+## Examples
+
+<Tabs items={["Frequency buckets with two bins", "Frequency with repeated values"]}>
+<Tab value="Frequency buckets with two bins">
+<FunctionSandbox
+  title="Frequency buckets with two bins"
+  formula={`=FREQUENCY({1,2,3,4,5},{2,4})`}
+  grid={{}}
+  expected={"[[2],[2],[1]]"}
+/>
+</Tab>
+
+<Tab value="Frequency with repeated values">
+<FunctionSandbox
+  title="Frequency with repeated values"
+  formula={`=FREQUENCY({1,1,2,2,3},{1,2})`}
+  grid={{}}
+  expected={"[[2],[2],[1]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

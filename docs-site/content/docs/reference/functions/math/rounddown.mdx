@@ -7,11 +7,33 @@ description: "Rounds a number toward zero to a specified number of digits."
 
 Rounds a number toward zero to a specified number of digits.
 
-## Formula example
+## Remarks
+ - Positive `num_digits` affects decimals; negative values affect digits left of the decimal.
+ - Always reduces magnitude toward zero (unlike `INT` for negatives).
+ - Input errors are propagated.
 
-```text
-=ROUNDDOWN(A1, B1)
-```
+## Examples
+
+<Tabs items={["Trim decimals without rounding up", "Round down a negative value at the hundreds place"]}>
+<Tab value="Trim decimals without rounding up">
+<FunctionSandbox
+  title="Trim decimals without rounding up"
+  formula={`=ROUNDDOWN(3.14159,3)`}
+  grid={{}}
+  expected={"3.141"}
+/>
+</Tab>
+
+<Tab value="Round down a negative value at the hundreds place">
+<FunctionSandbox
+  title="Round down a negative value at the hundreds place"
+  formula={`=ROUNDDOWN(-987.65,-2)`}
+  grid={{}}
+  expected={"-900"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

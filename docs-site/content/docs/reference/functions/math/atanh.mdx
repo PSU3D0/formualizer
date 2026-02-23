@@ -5,13 +5,35 @@ description: "Returns the inverse hyperbolic tangent of a number."
 
 ## Summary
 
-Returns the inverse hyperbolic tangent of a number.
+`ATANH` is the inverse of `TANH` on the open interval `(-1, 1)`.
 
-## Formula example
+## Remarks
+ - Domain: input must be strictly between `-1` and `1`.
+ - Radians: this function is hyperbolic, so the output is not an angle in radians.
+ - Errors: returns `#NUM!` when the input is `&lt;= -1` or `&gt;= 1`.
 
-```text
-=ATANH(A1)
-```
+## Examples
+
+<Tabs items={["Inverse hyperbolic tangent of one half", "Domain boundary error"]}>
+<Tab value="Inverse hyperbolic tangent of one half">
+<FunctionSandbox
+  title="Inverse hyperbolic tangent of one half"
+  formula={`=ATANH(0.5)`}
+  grid={{}}
+  expected={"0.5493061443340548"}
+/>
+</Tab>
+
+<Tab value="Domain boundary error">
+<FunctionSandbox
+  title="Domain boundary error"
+  formula={`=ATANH(1)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

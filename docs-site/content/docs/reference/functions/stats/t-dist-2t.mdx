@@ -1,17 +1,40 @@
 ---
 title: "T.DIST.2T"
-description: "Returns the two-tailed Student's t-distribution. Returns P(|T| &gt; x) = 2 * (1 - t_cdf(|x|, df))."
+description: "Returns the two-tailed Student's t probability beyond `x`."
 ---
 
 ## Summary
 
-Returns the two-tailed Student's t-distribution. Returns P(|T| &gt; x) = 2 * (1 - t_cdf(|x|, df)).
+`T.DIST.2T` computes `P(|T| &gt; x)` for the specified degrees of freedom.
 
-## Formula example
+## Remarks
+ - Requires `x &gt;= 0` and `deg_freedom &gt;= 1`.
+ - Represents a two-sided tail area.
+ - Returns `#NUM!` when arguments are outside valid ranges.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=T.DIST.2T(A1, B1)
-```
+## Examples
+
+<Tabs items={["Two-tailed t probability at zero", "Two-tailed t probability at x=2"]}>
+<Tab value="Two-tailed t probability at zero">
+<FunctionSandbox
+  title="Two-tailed t probability at zero"
+  formula={`=T.DIST.2T(0,10)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Two-tailed t probability at x=2">
+<FunctionSandbox
+  title="Two-tailed t probability at x=2"
+  formula={`=T.DIST.2T(2,10)`}
+  grid={{}}
+  expected={"0.0733880342639167"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

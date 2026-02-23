@@ -1,17 +1,39 @@
 ---
 title: "SECH"
-description: "Returns the hyperbolic secant of a number."
+description: "Returns the hyperbolic secant of a number, defined as `1 / COSH(x)`."
 ---
 
 ## Summary
 
-Returns the hyperbolic secant of a number.
+`SECH` produces values in `(0, 1]` for real inputs.
 
-## Formula example
+## Remarks
+ - Domain: accepts any real number.
+ - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+ - Errors: no function-specific domain errors are produced.
 
-```text
-=SECH(A1)
-```
+## Examples
+
+<Tabs items={["Hyperbolic secant at zero", "Hyperbolic secant at two"]}>
+<Tab value="Hyperbolic secant at zero">
+<FunctionSandbox
+  title="Hyperbolic secant at zero"
+  formula={`=SECH(0)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Hyperbolic secant at two">
+<FunctionSandbox
+  title="Hyperbolic secant at two"
+  formula={`=SECH(2)`}
+  grid={{}}
+  expected={"0.2658022288340797"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

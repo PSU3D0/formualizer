@@ -1,17 +1,39 @@
 ---
 title: "CEILING"
-description: "Rounds a number up to the nearest multiple of a given significance."
+description: "Rounds a number up to the nearest multiple of a significance."
 ---
 
 ## Summary
 
-Rounds a number up to the nearest multiple of a given significance.
+This implementation defaults significance to `1` and normalizes negative significance to positive.
 
-## Formula example
+## Remarks
+ - If `significance` is omitted, `1` is used.
+ - `significance = 0` returns `#DIV/0!`.
+ - Negative significance is treated as its absolute value in this fallback behavior.
 
-```text
-=CEILING(A1)
-```
+## Examples
+
+<Tabs items={["Round up to the nearest multiple", "Round a negative number toward positive infinity"]}>
+<Tab value="Round up to the nearest multiple">
+<FunctionSandbox
+  title="Round up to the nearest multiple"
+  formula={`=CEILING(5.1,2)`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+<Tab value="Round a negative number toward positive infinity">
+<FunctionSandbox
+  title="Round a negative number toward positive infinity"
+  formula={`=CEILING(-5.1,2)`}
+  grid={{}}
+  expected={"-4"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

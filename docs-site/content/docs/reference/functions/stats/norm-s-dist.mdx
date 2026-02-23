@@ -1,17 +1,41 @@
 ---
 title: "NORM.S.DIST"
-description: "Standard normal distribution."
+description: "Returns the standard normal probability for a z-score as either a CDF or PDF value."
 ---
 
 ## Summary
 
-Standard normal distribution.
+Use `NORM.S.DIST` for z-based probability lookups when the distribution has mean `0` and
+ standard deviation `1`.
 
-## Formula example
+## Remarks
+ - Set `cumulative` to a non-zero value for the cumulative distribution `P(Z &lt;= z)`.
+ - Set `cumulative` to `0` for the probability density at exactly `z`.
+ - Accepts any real-valued `z`; no domain clipping is applied.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=NORM.S.DIST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Standard normal CDF at zero", "Standard normal PDF at zero"]}>
+<Tab value="Standard normal CDF at zero">
+<FunctionSandbox
+  title="Standard normal CDF at zero"
+  formula={`=NORM.S.DIST(0,TRUE)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+<Tab value="Standard normal PDF at zero">
+<FunctionSandbox
+  title="Standard normal PDF at zero"
+  formula={`=NORM.S.DIST(0,FALSE)`}
+  grid={{}}
+  expected={"0.3989422804014327"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

@@ -1,17 +1,39 @@
 ---
 title: "SQRTPI"
-description: "Returns the square root of a number multiplied by π."
+description: "Returns the square root of a number multiplied by pi."
 ---
 
 ## Summary
 
-Returns the square root of a number multiplied by π.
+Returns the square root of a number multiplied by pi.
 
-## Formula example
+## Remarks
+ - Computes `SQRT(number * PI())`.
+ - `number` must be greater than or equal to `0`; otherwise returns `#NUM!`.
+ - Input errors are propagated.
 
-```text
-=SQRTPI(A1)
-```
+## Examples
+
+<Tabs items={["Square root of pi", "Scale before taking square root"]}>
+<Tab value="Square root of pi">
+<FunctionSandbox
+  title="Square root of pi"
+  formula={`=SQRTPI(1)`}
+  grid={{}}
+  expected={"1.772453850905516"}
+/>
+</Tab>
+
+<Tab value="Scale before taking square root">
+<FunctionSandbox
+  title="Scale before taking square root"
+  formula={`=SQRTPI(4)`}
+  grid={{}}
+  expected={"3.544907701811032"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

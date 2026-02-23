@@ -1,17 +1,41 @@
 ---
 title: "BINOM.DIST"
-description: "Binomial distribution."
+description: "Returns the binomial probability for a count of successes across independent trials."
 ---
 
 ## Summary
 
-Binomial distribution.
+Use `BINOM.DIST` to evaluate either exact-success probability (PMF) or cumulative probability
+ up to a success count (CDF).
 
-## Formula example
+## Remarks
+ - `number_s` and `trials` are truncated to integers.
+ - Requires `0 &lt;= number_s &lt;= trials`, `trials &gt;= 0`, and `0 &lt;= probability_s &lt;= 1`.
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PMF mode.
+ - Returns `#NUM!` for invalid count or probability ranges.
 
-```text
-=BINOM.DIST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Binomial PMF for exactly 3 successes", "Binomial CDF for at most 3 successes"]}>
+<Tab value="Binomial PMF for exactly 3 successes">
+<FunctionSandbox
+  title="Binomial PMF for exactly 3 successes"
+  formula={`=BINOM.DIST(3,10,0.5,FALSE)`}
+  grid={{}}
+  expected={"0.1171875"}
+/>
+</Tab>
+
+<Tab value="Binomial CDF for at most 3 successes">
+<FunctionSandbox
+  title="Binomial CDF for at most 3 successes"
+  formula={`=BINOM.DIST(3,10,0.5,TRUE)`}
+  grid={{}}
+  expected={"0.171875"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

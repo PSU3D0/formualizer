@@ -1,17 +1,40 @@
 ---
 title: "F.INV"
-description: "Inverse of F distribution."
+description: "Returns the F value whose left-tail probability equals `probability`."
 ---
 
 ## Summary
 
-Inverse of F distribution.
+`F.INV` inverts `F.DIST(x, deg_freedom1, deg_freedom2, TRUE)`.
 
-## Formula example
+## Remarks
+ - `probability` must be strictly between `0` and `1`.
+ - `deg_freedom1` and `deg_freedom2` must each be at least `1`.
+ - Returns `#NUM!` for invalid probability or degree-of-freedom arguments.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=F.INV(A1, B1)
-```
+## Examples
+
+<Tabs items={["Median F quantile with symmetric 2 and 2 degrees of freedom", "Upper-tail F critical value"]}>
+<Tab value="Median F quantile with symmetric 2 and 2 degrees of freedom">
+<FunctionSandbox
+  title="Median F quantile with symmetric 2 and 2 degrees of freedom"
+  formula={`=F.INV(0.5,2,2)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Upper-tail F critical value">
+<FunctionSandbox
+  title="Upper-tail F critical value"
+  formula={`=F.INV(0.95,5,10)`}
+  grid={{}}
+  expected={"3.3258345304130112"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

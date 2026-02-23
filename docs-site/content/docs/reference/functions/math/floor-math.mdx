@@ -1,17 +1,39 @@
 ---
 title: "FLOOR.MATH"
-description: "Rounds a number down with `FLOOR.MATH` semantics."
+description: "Rounds a number down to the nearest integer or multiple using `FLOOR.MATH` rules."
 ---
 
 ## Summary
 
-Rounds a number down with `FLOOR.MATH` semantics.
+Rounds a number down to the nearest integer or multiple using `FLOOR.MATH` rules.
 
-## Formula example
+## Remarks
+ - If `significance` is omitted (or passed as `0`), the function uses `1`.
+ - `significance` is treated as a positive magnitude.
+ - For negative numbers, non-zero `mode` rounds toward zero; otherwise it rounds away from zero.
 
-```text
-=FLOOR.MATH(A1)
-```
+## Examples
+
+<Tabs items={["Default behavior for a positive number", "Use mode to round a negative number toward zero"]}>
+<Tab value="Default behavior for a positive number">
+<FunctionSandbox
+  title="Default behavior for a positive number"
+  formula={`=FLOOR.MATH(24.3,5)`}
+  grid={{}}
+  expected={"20"}
+/>
+</Tab>
+
+<Tab value="Use mode to round a negative number toward zero">
+<FunctionSandbox
+  title="Use mode to round a negative number toward zero"
+  formula={`=FLOOR.MATH(-24.3,5,1)`}
+  grid={{}}
+  expected={"-20"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

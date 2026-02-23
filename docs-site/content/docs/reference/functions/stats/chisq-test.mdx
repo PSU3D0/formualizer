@@ -1,17 +1,40 @@
 ---
 title: "CHISQ.TEST"
-description: "Returns chi-squared test for independence. Returns p-value from chi-squared distribution."
+description: "Returns the right-tail p-value from a chi-square goodness-of-fit style comparison."
 ---
 
 ## Summary
 
-Returns chi-squared test for independence. Returns p-value from chi-squared distribution.
+`CHISQ.TEST` compares observed and expected values and computes `1 - CHISQ.DIST(...)`.
 
-## Formula example
+## Remarks
+ - `actual_range` and `expected_range` must contain the same number of numeric points.
+ - Expected values must be strictly greater than `0`.
+ - Requires at least two categories (`df &gt;= 1`).
+ - Returns `#N/A` for length mismatches or empty inputs, and `#NUM!` for invalid expected values.
 
-```text
-=CHISQ.TEST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Perfect match between observed and expected", "Two-category chi-square test"]}>
+<Tab value="Perfect match between observed and expected">
+<FunctionSandbox
+  title="Perfect match between observed and expected"
+  formula={`=CHISQ.TEST({20,30,50},{20,30,50})`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Two-category chi-square test">
+<FunctionSandbox
+  title="Two-category chi-square test"
+  formula={`=CHISQ.TEST({18,22},{20,20})`}
+  grid={{}}
+  expected={"0.5270892568655381"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

@@ -1,17 +1,40 @@
 ---
 title: "GAUSS"
-description: "Returns the probability that a member of a standard normal population will fall between the mean and z standard deviations from the mean."
+description: "Returns the standard normal area between `0` and `z`."
 ---
 
 ## Summary
 
-Returns the probability that a member of a standard normal population will fall between the mean and z standard deviations from the mean.
+`GAUSS` computes `NORM.S.DIST(z, TRUE) - 0.5`, preserving the sign of `z`.
 
-## Formula example
+## Remarks
+ - Positive `z` returns a positive area; negative `z` returns a negative area.
+ - `GAUSS(0)` returns `0`.
+ - Output magnitude is always less than `0.5`.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=GAUSS(A1)
-```
+## Examples
+
+<Tabs items={["Area from mean to z = 1", "Symmetric negative z-value"]}>
+<Tab value="Area from mean to z = 1">
+<FunctionSandbox
+  title="Area from mean to z = 1"
+  formula={`=GAUSS(1)`}
+  grid={{}}
+  expected={"0.3413447460685429"}
+/>
+</Tab>
+
+<Tab value="Symmetric negative z-value">
+<FunctionSandbox
+  title="Symmetric negative z-value"
+  formula={`=GAUSS(-1)`}
+  grid={{}}
+  expected={"-0.3413447460685429"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

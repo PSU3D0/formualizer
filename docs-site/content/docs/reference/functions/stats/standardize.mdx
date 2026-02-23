@@ -1,17 +1,40 @@
 ---
 title: "STANDARDIZE"
-description: "Returns the normalized value."
+description: "Returns the z-score of `x` relative to a mean and standard deviation."
 ---
 
 ## Summary
 
-Returns the normalized value.
+`STANDARDIZE` computes `(x - mean) / standard_dev`.
 
-## Formula example
+## Remarks
+ - `standard_dev` must be strictly greater than `0`.
+ - Returns `#NUM!` when `standard_dev &lt;= 0`.
+ - Positive output means `x` is above the mean; negative output means below.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=STANDARDIZE(A1, B1)
-```
+## Examples
+
+<Tabs items={["One standard deviation above the mean", "Exactly at the mean"]}>
+<Tab value="One standard deviation above the mean">
+<FunctionSandbox
+  title="One standard deviation above the mean"
+  formula={`=STANDARDIZE(42,40,2)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Exactly at the mean">
+<FunctionSandbox
+  title="Exactly at the mean"
+  formula={`=STANDARDIZE(100,100,10)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

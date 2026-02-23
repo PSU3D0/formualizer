@@ -1,17 +1,39 @@
 ---
 title: "ACOS"
-description: "Returns the arccosine of a value, in radians."
+description: "Returns the angle in radians whose cosine is the input value."
 ---
 
 ## Summary
 
-Returns the arccosine of a value, in radians.
+Use `ACOS` when you need an angle from a normalized adjacent/hypotenuse ratio.
 
-## Formula example
+## Remarks
+ - Domain: input must be between `-1` and `1`, inclusive.
+ - Radians: output is in the range `[0, PI()]`.
+ - Errors: returns `#NUM!` when the input is outside the valid domain.
 
-```text
-=ACOS(A1)
-```
+## Examples
+
+<Tabs items={["Arccosine of one half", "Upper-angle boundary"]}>
+<Tab value="Arccosine of one half">
+<FunctionSandbox
+  title="Arccosine of one half"
+  formula={`=ACOS(0.5)`}
+  grid={{}}
+  expected={"1.0471975511965979"}
+/>
+</Tab>
+
+<Tab value="Upper-angle boundary">
+<FunctionSandbox
+  title="Upper-angle boundary"
+  formula={`=ACOS(-1)`}
+  grid={{}}
+  expected={"3.141592653589793"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

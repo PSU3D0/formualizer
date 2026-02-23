@@ -1,17 +1,39 @@
 ---
 title: "QUOTIENT"
-description: "Returns the integer portion of a division result."
+description: "Returns the integer portion of a division result, truncated toward zero."
 ---
 
 ## Summary
 
-Returns the integer portion of a division result.
+Returns the integer portion of a division result, truncated toward zero.
 
-## Formula example
+## Remarks
+ - Fractional remainder is discarded without rounding.
+ - Dividing by `0` returns `#DIV/0!`.
+ - Input errors are propagated.
 
-```text
-=QUOTIENT(A1, B1)
-```
+## Examples
+
+<Tabs items={["Positive quotient", "Negative quotient truncates toward zero"]}>
+<Tab value="Positive quotient">
+<FunctionSandbox
+  title="Positive quotient"
+  formula={`=QUOTIENT(10,3)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Negative quotient truncates toward zero">
+<FunctionSandbox
+  title="Negative quotient truncates toward zero"
+  formula={`=QUOTIENT(-10,3)`}
+  grid={{}}
+  expected={"-3"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

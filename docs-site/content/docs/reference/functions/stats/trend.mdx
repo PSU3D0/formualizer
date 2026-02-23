@@ -1,17 +1,40 @@
 ---
 title: "TREND"
-description: "Returns y values along a linear trend Uses linear regression y = mx + b - If new_x's provided, calculates trend values for those x's - If new_x's omitted, uses known_x's - cons…"
+description: "Returns fitted y-values along a linear trend derived from known data."
 ---
 
 ## Summary
 
-Returns y values along a linear trend Uses linear regression y = mx + b - If new_x's provided, calculates trend values for those x's - If new_x's omitted, uses known_x's - cons…
+`TREND` performs simple linear regression and returns predictions for `new_x` (or defaults).
 
-## Formula example
+## Remarks
+ - `known_y` is required; `known_x` defaults to `1..n` when omitted.
+ - `new_x` defaults to `known_x` when omitted.
+ - `const` defaults to `TRUE`; set to `FALSE` to force a zero intercept.
+ - Returns spreadsheet errors for empty data, mismatched lengths, or degenerate x-variance.
 
-```text
-=TREND(A1)
-```
+## Examples
+
+<Tabs items={["Predict two future points on a line", "Default x-values with fitted trend"]}>
+<Tab value="Predict two future points on a line">
+<FunctionSandbox
+  title="Predict two future points on a line"
+  formula={`=TREND({2,4,6},{1,2,3},{4,5})`}
+  grid={{}}
+  expected={"[[8,10]]"}
+/>
+</Tab>
+
+<Tab value="Default x-values with fitted trend">
+<FunctionSandbox
+  title="Default x-values with fitted trend"
+  formula={`=TREND({3,5,7})`}
+  grid={{}}
+  expected={"[[3,5,7]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

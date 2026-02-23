@@ -1,17 +1,41 @@
 ---
 title: "PHI"
-description: "Standard normal distribution density function (alias for NORM.S.DIST PDF)."
+description: "Returns the standard normal probability density at `x`."
 ---
 
 ## Summary
 
-Standard normal distribution density function (alias for NORM.S.DIST PDF).
+`PHI` is equivalent to `NORM.S.DIST(x, FALSE)` and is useful in continuous-probability
+ calculations.
 
-## Formula example
+## Remarks
+ - Evaluates the density of a standard normal variable centered at `0`.
+ - The result is always non-negative and symmetric around `x = 0`.
+ - Works for any real input value.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=PHI(A1)
-```
+## Examples
+
+<Tabs items={["Standard normal density at zero", "Standard normal density at one"]}>
+<Tab value="Standard normal density at zero">
+<FunctionSandbox
+  title="Standard normal density at zero"
+  formula={`=PHI(0)`}
+  grid={{}}
+  expected={"0.3989422804014327"}
+/>
+</Tab>
+
+<Tab value="Standard normal density at one">
+<FunctionSandbox
+  title="Standard normal density at one"
+  formula={`=PHI(1)`}
+  grid={{}}
+  expected={"0.24197072451914337"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

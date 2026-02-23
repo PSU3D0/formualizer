@@ -1,17 +1,40 @@
 ---
 title: "LOGEST"
-description: "Returns parameters of exponential curve. Returns array: [[m, b]] when stats=FALSE Returns 5x2 array with statistics when stats=TRUE (like LINEST) The exponential curve is y = b…"
+description: "Returns parameters for an exponential model fitted to known data."
 ---
 
 ## Summary
 
-Returns parameters of exponential curve. Returns array: [[m, b]] when stats=FALSE Returns 5x2 array with statistics when stats=TRUE (like LINEST) The exponential curve is y = b…
+`LOGEST` fits `y = b * m^x` and returns either `[m, b]` or an expanded statistics matrix.
 
-## Formula example
+## Remarks
+ - All known y-values must be strictly greater than `0`.
+ - `known_x` defaults to `1..n` when omitted.
+ - `const` controls whether `b` is fitted (`TRUE` by default).
+ - `stats=TRUE` returns a `5x2` statistics block; otherwise returns `1x2`.
 
-```text
-=LOGEST(A1)
-```
+## Examples
+
+<Tabs items={["Exponential base and intercept", "Alternative growth series"]}>
+<Tab value="Exponential base and intercept">
+<FunctionSandbox
+  title="Exponential base and intercept"
+  formula={`=LOGEST({2,4,8},{1,2,3})`}
+  grid={{}}
+  expected={"[[2,1]]"}
+/>
+</Tab>
+
+<Tab value="Alternative growth series">
+<FunctionSandbox
+  title="Alternative growth series"
+  formula={`=LOGEST({3,6,12},{1,2,3})`}
+  grid={{}}
+  expected={"[[2,1.5]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

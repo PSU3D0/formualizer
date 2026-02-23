@@ -5,13 +5,35 @@ description: "Returns the inverse hyperbolic sine of a number."
 
 ## Summary
 
-Returns the inverse hyperbolic sine of a number.
+`ASINH` is the inverse of `SINH` over all real inputs.
 
-## Formula example
+## Remarks
+ - Domain: accepts any real number.
+ - Radians: this function is hyperbolic, so the output is not an angle in radians.
+ - Errors: no function-specific domain errors are produced.
 
-```text
-=ASINH(A1)
-```
+## Examples
+
+<Tabs items={["Inverse hyperbolic sine of one", "Inverse hyperbolic sine of negative two"]}>
+<Tab value="Inverse hyperbolic sine of one">
+<FunctionSandbox
+  title="Inverse hyperbolic sine of one"
+  formula={`=ASINH(1)`}
+  grid={{}}
+  expected={"0.881373587019543"}
+/>
+</Tab>
+
+<Tab value="Inverse hyperbolic sine of negative two">
+<FunctionSandbox
+  title="Inverse hyperbolic sine of negative two"
+  formula={`=ASINH(-2)`}
+  grid={{}}
+  expected={"-1.4436354751788103"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

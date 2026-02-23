@@ -1,17 +1,39 @@
 ---
 title: "SERIESSUM"
-description: "Evaluates a power series using supplied coefficients."
+description: "Evaluates a power series from coefficients, start power, and step."
 ---
 
 ## Summary
 
-Evaluates a power series using supplied coefficients.
+Evaluates a power series from coefficients, start power, and step.
 
-## Formula example
+## Remarks
+ - Computes `sum(c_i * x^(n + i*m))` in coefficient order.
+ - Coefficients may be supplied as a scalar, array literal, or range.
+ - Errors in `x`, `n`, `m`, or coefficient values are propagated.
 
-```text
-=SERIESSUM(A1, B1)
-```
+## Examples
+
+<Tabs items={["Series from an array literal", "Series from worksheet coefficients"]}>
+<Tab value="Series from an array literal">
+<FunctionSandbox
+  title="Series from an array literal"
+  formula={`=SERIESSUM(2,0,1,{1,2,3})`}
+  grid={{}}
+  expected={"17"}
+/>
+</Tab>
+
+<Tab value="Series from worksheet coefficients">
+<FunctionSandbox
+  title="Series from worksheet coefficients"
+  formula={`=SERIESSUM(0.5,1,2,A1:A3)`}
+  grid={{"A1":"1","A2":"-1","A3":"0.5"}}
+  expected={"0.390625"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

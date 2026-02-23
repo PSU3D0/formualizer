@@ -1,17 +1,40 @@
 ---
 title: "Z.TEST"
-description: "Returns the one-tailed P-value of a z-test. z = (mean(array) - x) / (sigma / sqrt(n)). Returns 1 - NORM.S.DIST(z, TRUE) If sigma is omitted, uses the population standard deviat…"
+description: "Returns the one-tailed p-value of a z-test against hypothesized mean `x`."
 ---
 
 ## Summary
 
-Returns the one-tailed P-value of a z-test. z = (mean(array) - x) / (sigma / sqrt(n)). Returns 1 - NORM.S.DIST(z, TRUE) If sigma is omitted, uses the population standard deviat…
+`Z.TEST` evaluates whether the sample mean is significantly greater than the target value.
 
-## Formula example
+## Remarks
+ - Uses provided `sigma` when supplied; otherwise computes population standard deviation.
+ - Returns `#NUM!` when `sigma &lt;= 0`.
+ - Returns `#DIV/0!` when implied standard deviation is zero.
+ - Returns `#N/A` when the data array has no numeric values.
 
-```text
-=Z.TEST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Z-test with provided sigma", "Z-test with sigma estimated from sample"]}>
+<Tab value="Z-test with provided sigma">
+<FunctionSandbox
+  title="Z-test with provided sigma"
+  formula={`=Z.TEST({1,2,3,4,5},2,1)`}
+  grid={{}}
+  expected={"0.012673659338734137"}
+/>
+</Tab>
+
+<Tab value="Z-test with sigma estimated from sample">
+<FunctionSandbox
+  title="Z-test with sigma estimated from sample"
+  formula={`=Z.TEST({1,2,3,4,5},2)`}
+  grid={{}}
+  expected={"0.056923149003329065"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

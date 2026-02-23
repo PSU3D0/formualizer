@@ -1,17 +1,40 @@
 ---
 title: "RSQ"
-description: "R-squared value (square of correlation)."
+description: "Returns the coefficient of determination (`R^2`) for paired x/y data."
 ---
 
 ## Summary
 
-R-squared value (square of correlation).
+`RSQ` is the square of Pearson correlation and indicates explained linear variance.
 
-## Formula example
+## Remarks
+ - Arrays must contain the same number of numeric observations.
+ - Result is in `[0, 1]` for valid numeric inputs.
+ - Returns `#DIV/0!` when either input array has zero variance.
+ - Pairing and shape mismatches return spreadsheet errors from paired-array validation.
 
-```text
-=RSQ(A1, B1)
-```
+## Examples
+
+<Tabs items={["Perfect linear fit", "Strong but imperfect linear relationship"]}>
+<Tab value="Perfect linear fit">
+<FunctionSandbox
+  title="Perfect linear fit"
+  formula={`=RSQ({1,2,3},{2,4,6})`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Strong but imperfect linear relationship">
+<FunctionSandbox
+  title="Strong but imperfect linear relationship"
+  formula={`=RSQ({1,2,3},{1,2,4})`}
+  grid={{}}
+  expected={"0.9642857142857143"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

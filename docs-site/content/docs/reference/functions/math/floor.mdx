@@ -1,17 +1,39 @@
 ---
 title: "FLOOR"
-description: "Rounds a number down to the nearest multiple of significance."
+description: "Rounds a number down to the nearest multiple of a significance."
 ---
 
 ## Summary
 
-Rounds a number down to the nearest multiple of significance.
+This implementation defaults significance to `1` and normalizes negative significance to positive.
 
-## Formula example
+## Remarks
+ - If `significance` is omitted, `1` is used.
+ - `significance = 0` returns `#DIV/0!`.
+ - Negative significance is treated as its absolute value in this fallback behavior.
 
-```text
-=FLOOR(A1)
-```
+## Examples
+
+<Tabs items={["Round down to the nearest multiple", "Round a negative number to a lower multiple"]}>
+<Tab value="Round down to the nearest multiple">
+<FunctionSandbox
+  title="Round down to the nearest multiple"
+  formula={`=FLOOR(5.9,2)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Round a negative number to a lower multiple">
+<FunctionSandbox
+  title="Round a negative number to a lower multiple"
+  formula={`=FLOOR(-5.9,2)`}
+  grid={{}}
+  expected={"-6"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

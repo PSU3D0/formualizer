@@ -5,13 +5,35 @@ description: "Returns the hyperbolic cosine of a number."
 
 ## Summary
 
-Returns the hyperbolic cosine of a number.
+`COSH` computes `(e^x + e^-x) / 2`.
 
-## Formula example
+## Remarks
+ - Domain: accepts any real number.
+ - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+ - Errors: no function-specific domain errors are produced.
 
-```text
-=COSH(A1)
-```
+## Examples
+
+<Tabs items={["Hyperbolic cosine at zero", "Hyperbolic cosine at one"]}>
+<Tab value="Hyperbolic cosine at zero">
+<FunctionSandbox
+  title="Hyperbolic cosine at zero"
+  formula={`=COSH(0)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Hyperbolic cosine at one">
+<FunctionSandbox
+  title="Hyperbolic cosine at one"
+  formula={`=COSH(1)`}
+  grid={{}}
+  expected={"1.5430806348152437"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

@@ -1,17 +1,40 @@
 ---
 title: "F.TEST"
-description: "Returns result of F-test for comparing variances. Returns the two-tailed probability that variances are not significantly different."
+description: "Returns the two-tailed p-value from an F-test comparing sample variances."
 ---
 
 ## Summary
 
-Returns result of F-test for comparing variances. Returns the two-tailed probability that variances are not significantly different.
+`F.TEST` evaluates whether two samples have significantly different variances.
 
-## Formula example
+## Remarks
+ - Each array must contain at least two numeric values.
+ - Uses sample variances and computes a two-tailed probability.
+ - Returns `#DIV/0!` when either sample variance is zero.
+ - Alias `FTEST` is supported.
 
-```text
-=F.TEST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Identical samples yield p-value 1", "Different variances example"]}>
+<Tab value="Identical samples yield p-value 1">
+<FunctionSandbox
+  title="Identical samples yield p-value 1"
+  formula={`=F.TEST({1,2,3,4},{1,2,3,4})`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Different variances example">
+<FunctionSandbox
+  title="Different variances example"
+  formula={`=F.TEST({1,2,3,4},{1,1,1,5})`}
+  grid={{}}
+  expected={"0.5466810975407987"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

@@ -1,17 +1,39 @@
 ---
 title: "ACOT"
-description: "Returns the arccotangent of a number, in radians."
+description: "Returns the angle in radians whose cotangent is the input value."
 ---
 
 ## Summary
 
-Returns the arccotangent of a number, in radians.
+`ACOT` maps real inputs to principal angles in `(0, PI())`.
 
-## Formula example
+## Remarks
+ - Domain: accepts any real number, including `0`.
+ - Radians: output is in `(0, PI())`, with `ACOT(0) = PI()/2`.
+ - Errors: no function-specific domain errors are produced.
 
-```text
-=ACOT(A1)
-```
+## Examples
+
+<Tabs items={["Arccotangent of one", "Arccotangent of negative one"]}>
+<Tab value="Arccotangent of one">
+<FunctionSandbox
+  title="Arccotangent of one"
+  formula={`=ACOT(1)`}
+  grid={{}}
+  expected={"0.7853981633974483"}
+/>
+</Tab>
+
+<Tab value="Arccotangent of negative one">
+<FunctionSandbox
+  title="Arccotangent of negative one"
+  formula={`=ACOT(-1)`}
+  grid={{}}
+  expected={"2.356194490192345"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

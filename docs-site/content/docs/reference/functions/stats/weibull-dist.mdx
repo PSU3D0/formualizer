@@ -1,17 +1,40 @@
 ---
 title: "WEIBULL.DIST"
-description: "Weibull distribution alpha = shape parameter, beta = scale parameter."
+description: "Returns the Weibull-distribution probability at `x` for shape `alpha` and scale `beta`."
 ---
 
 ## Summary
 
-Weibull distribution alpha = shape parameter, beta = scale parameter.
+`WEIBULL.DIST` is commonly used for reliability and time-to-failure analysis.
 
-## Formula example
+## Remarks
+ - Requires `x &gt;= 0`, `alpha &gt; 0`, and `beta &gt; 0`.
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
+ - Returns `#NUM!` when parameters fall outside valid ranges.
+ - In PDF mode at `x = 0`, behavior follows the Weibull shape-specific limit.
 
-```text
-=WEIBULL.DIST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Weibull CDF with alpha=1 and beta=2", "Weibull PDF with alpha=1 and beta=2"]}>
+<Tab value="Weibull CDF with alpha=1 and beta=2">
+<FunctionSandbox
+  title="Weibull CDF with alpha=1 and beta=2"
+  formula={`=WEIBULL.DIST(2,1,2,TRUE)`}
+  grid={{}}
+  expected={"0.6321205588285577"}
+/>
+</Tab>
+
+<Tab value="Weibull PDF with alpha=1 and beta=2">
+<FunctionSandbox
+  title="Weibull PDF with alpha=1 and beta=2"
+  formula={`=WEIBULL.DIST(2,1,2,FALSE)`}
+  grid={{}}
+  expected={"0.18393972058572117"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

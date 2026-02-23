@@ -1,17 +1,40 @@
 ---
 title: "NEGBINOM.DIST"
-description: "Negative binomial distribution number_f = number of failures, number_s = threshold number of successes, probability_s = probability of success"
+description: "Returns negative-binomial probabilities for failures observed before a target success count."
 ---
 
 ## Summary
 
-Negative binomial distribution number_f = number of failures, number_s = threshold number of successes, probability_s = probability of success
+`NEGBINOM.DIST` supports exact-failure mode (PMF) and cumulative mode (CDF).
 
-## Formula example
+## Remarks
+ - `number_f` is truncated and must be `&gt;= 0`.
+ - `number_s` is truncated and must be `&gt;= 1`.
+ - `probability_s` must satisfy `0 &lt; p &lt; 1`.
+ - Returns `#NUM!` when counts or probability are outside valid ranges.
 
-```text
-=NEGBINOM.DIST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Negative binomial PMF", "Negative binomial CDF"]}>
+<Tab value="Negative binomial PMF">
+<FunctionSandbox
+  title="Negative binomial PMF"
+  formula={`=NEGBINOM.DIST(2,1,0.5,FALSE)`}
+  grid={{}}
+  expected={"0.125"}
+/>
+</Tab>
+
+<Tab value="Negative binomial CDF">
+<FunctionSandbox
+  title="Negative binomial CDF"
+  formula={`=NEGBINOM.DIST(2,1,0.5,TRUE)`}
+  grid={{}}
+  expected={"0.875"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

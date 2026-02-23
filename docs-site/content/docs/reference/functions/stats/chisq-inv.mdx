@@ -1,17 +1,40 @@
 ---
 title: "CHISQ.INV"
-description: "Inverse of chi-squared distribution."
+description: "Returns the chi-square value whose left-tail probability is `probability`."
 ---
 
 ## Summary
 
-Inverse of chi-squared distribution.
+`CHISQ.INV` inverts `CHISQ.DIST(x, deg_freedom, TRUE)`.
 
-## Formula example
+## Remarks
+ - `probability` must be strictly between `0` and `1`.
+ - `deg_freedom` must be at least `1`.
+ - Returns `#NUM!` when arguments are outside valid ranges.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=CHISQ.INV(A1, B1)
-```
+## Examples
+
+<Tabs items={["Median chi-square quantile for df=2", "Upper quantile for df=10"]}>
+<Tab value="Median chi-square quantile for df=2">
+<FunctionSandbox
+  title="Median chi-square quantile for df=2"
+  formula={`=CHISQ.INV(0.5,2)`}
+  grid={{}}
+  expected={"1.3862943611198906"}
+/>
+</Tab>
+
+<Tab value="Upper quantile for df=10">
+<FunctionSandbox
+  title="Upper quantile for df=10"
+  formula={`=CHISQ.INV(0.95,10)`}
+  grid={{}}
+  expected={"18.307038053275146"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

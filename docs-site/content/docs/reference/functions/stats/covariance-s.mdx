@@ -1,17 +1,40 @@
 ---
 title: "COVARIANCE.S"
-description: "Sample covariance."
+description: "Returns sample covariance for two paired numeric data sets."
 ---
 
 ## Summary
 
-Sample covariance.
+`COVARIANCE.S` measures joint variability using `n - 1` in the denominator.
 
-## Formula example
+## Remarks
+ - Arrays must contain paired numeric values with matching lengths.
+ - Requires at least two paired points.
+ - Returns `#DIV/0!` when fewer than two numeric pairs are available.
+ - Pairing and shape mismatches return spreadsheet errors from paired-array validation.
 
-```text
-=COVARIANCE.S(A1, B1)
-```
+## Examples
+
+<Tabs items={["Positive sample covariance", "Negative sample covariance"]}>
+<Tab value="Positive sample covariance">
+<FunctionSandbox
+  title="Positive sample covariance"
+  formula={`=COVARIANCE.S({1,3,5},{2,4,6})`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Negative sample covariance">
+<FunctionSandbox
+  title="Negative sample covariance"
+  formula={`=COVARIANCE.S({1,2,3},{3,2,1})`}
+  grid={{}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

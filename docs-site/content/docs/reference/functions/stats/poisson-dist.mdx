@@ -1,17 +1,40 @@
 ---
 title: "POISSON.DIST"
-description: "Poisson distribution."
+description: "Returns the Poisson probability for event count `x` at average rate `mean`."
 ---
 
 ## Summary
 
-Poisson distribution.
+`POISSON.DIST` supports exact-count mode (PMF) and cumulative mode (CDF).
 
-## Formula example
+## Remarks
+ - `x` is truncated to an integer and must be at least `0`.
+ - `mean` must be non-negative.
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PMF mode.
+ - Returns `#NUM!` for negative counts or negative mean values.
 
-```text
-=POISSON.DIST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Poisson PMF for zero events", "Poisson CDF up to two events"]}>
+<Tab value="Poisson PMF for zero events">
+<FunctionSandbox
+  title="Poisson PMF for zero events"
+  formula={`=POISSON.DIST(0,2,FALSE)`}
+  grid={{}}
+  expected={"0.1353352832366127"}
+/>
+</Tab>
+
+<Tab value="Poisson CDF up to two events">
+<FunctionSandbox
+  title="Poisson CDF up to two events"
+  formula={`=POISSON.DIST(2,2,TRUE)`}
+  grid={{}}
+  expected={"0.6766764161830634"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

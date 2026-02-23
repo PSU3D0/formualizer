@@ -1,17 +1,40 @@
 ---
 title: "LOGNORM.INV"
-description: "Inverse log-normal distribution."
+description: "Returns the positive value `x` whose log-normal cumulative probability is `probability`."
 ---
 
 ## Summary
 
-Inverse log-normal distribution.
+This function inverts `LOGNORM.DIST(x, mean, standard_dev, TRUE)`.
 
-## Formula example
+## Remarks
+ - `probability` must be strictly between `0` and `1`.
+ - `standard_dev` must be strictly greater than `0`.
+ - Returns `#NUM!` when inputs violate probability or scale constraints.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=LOGNORM.INV(A1, B1)
-```
+## Examples
+
+<Tabs items={["Median log-normal quantile", "Upper quantile for mean 0 and stdev 1"]}>
+<Tab value="Median log-normal quantile">
+<FunctionSandbox
+  title="Median log-normal quantile"
+  formula={`=LOGNORM.INV(0.5,0,1)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Upper quantile for mean 0 and stdev 1">
+<FunctionSandbox
+  title="Upper quantile for mean 0 and stdev 1"
+  formula={`=LOGNORM.INV(0.841344746068543,0,1)`}
+  grid={{}}
+  expected={"2.718281828459045"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

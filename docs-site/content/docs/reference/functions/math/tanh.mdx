@@ -5,13 +5,35 @@ description: "Returns the hyperbolic tangent of a number."
 
 ## Summary
 
-Returns the hyperbolic tangent of a number.
+`TANH` computes `SINH(x) / COSH(x)`.
 
-## Formula example
+## Remarks
+ - Domain: accepts any real number.
+ - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+ - Errors: no function-specific domain errors are produced.
 
-```text
-=TANH(A1)
-```
+## Examples
+
+<Tabs items={["Hyperbolic tangent at zero", "Hyperbolic tangent at two"]}>
+<Tab value="Hyperbolic tangent at zero">
+<FunctionSandbox
+  title="Hyperbolic tangent at zero"
+  formula={`=TANH(0)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Hyperbolic tangent at two">
+<FunctionSandbox
+  title="Hyperbolic tangent at two"
+  formula={`=TANH(2)`}
+  grid={{}}
+  expected={"0.9640275800758169"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

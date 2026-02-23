@@ -1,17 +1,40 @@
 ---
 title: "FORECAST.LINEAR"
-description: "Returns predicted y value for x using linear regression The formula is: y = intercept + slope * x where slope = sum((xi - mean_x)(yi - mean_y)) / sum((xi - mean_x)^2) and inter…"
+description: "Returns a predicted y-value at `x` from simple linear regression over known data."
 ---
 
 ## Summary
 
-Returns predicted y value for x using linear regression The formula is: y = intercept + slope * x where slope = sum((xi - mean_x)(yi - mean_y)) / sum((xi - mean_x)^2) and inter…
+`FORECAST.LINEAR` fits `y = intercept + slope * x` and evaluates that line at the requested x.
 
-## Formula example
+## Remarks
+ - Requires `known_y` and `known_x` arrays with the same numeric length.
+ - Returns `#N/A` when arrays are empty or lengths do not match.
+ - Returns `#DIV/0!` when `known_x` has zero variance.
+ - Alias `FORECAST` is supported.
 
-```text
-=FORECAST.LINEAR(A1, B1)
-```
+## Examples
+
+<Tabs items={["Predict next point on a perfect line", "Forecast with non-zero intercept"]}>
+<Tab value="Predict next point on a perfect line">
+<FunctionSandbox
+  title="Predict next point on a perfect line"
+  formula={`=FORECAST.LINEAR(4,{2,4,6},{1,2,3})`}
+  grid={{}}
+  expected={"8"}
+/>
+</Tab>
+
+<Tab value="Forecast with non-zero intercept">
+<FunctionSandbox
+  title="Forecast with non-zero intercept"
+  formula={`=FORECAST.LINEAR(5,{3,5,7},{1,2,3})`}
+  grid={{}}
+  expected={"11"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

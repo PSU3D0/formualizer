@@ -1,17 +1,40 @@
 ---
 title: "LOGNORM.DIST"
-description: "Log-normal distribution."
+description: "Returns the log-normal probability at `x` as either a cumulative value or density."
 ---
 
 ## Summary
 
-Log-normal distribution.
+`LOGNORM.DIST` models positive-valued variables where `ln(X)` follows a normal distribution.
 
-## Formula example
+## Remarks
+ - Set `cumulative` to non-zero for CDF mode; set it to `0` for PDF mode.
+ - Requires `x &gt; 0` and `standard_dev &gt; 0`.
+ - Returns `#NUM!` when `x &lt;= 0` or `standard_dev &lt;= 0`.
+ - Invalid numeric coercions propagate as spreadsheet errors.
 
-```text
-=LOGNORM.DIST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Log-normal CDF at x = 1", "Log-normal PDF at x = 1"]}>
+<Tab value="Log-normal CDF at x = 1">
+<FunctionSandbox
+  title="Log-normal CDF at x = 1"
+  formula={`=LOGNORM.DIST(1,0,1,TRUE)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+<Tab value="Log-normal PDF at x = 1">
+<FunctionSandbox
+  title="Log-normal PDF at x = 1"
+  formula={`=LOGNORM.DIST(1,0,1,FALSE)`}
+  grid={{}}
+  expected={"0.3989422804014327"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

@@ -1,17 +1,41 @@
 ---
 title: "KURT"
-description: "Kurtosis of a distribution."
+description: "Returns the sample excess kurtosis of a numeric distribution."
 ---
 
 ## Summary
 
-Kurtosis of a distribution.
+`KURT` indicates tail heaviness relative to a normal distribution after Excel-style sample
+ correction.
 
-## Formula example
+## Remarks
+ - Requires at least four numeric values.
+ - Returns `#DIV/0!` when there are fewer than four numbers or zero sample standard deviation.
+ - Positive values suggest heavier tails; negative values suggest lighter tails.
+ - Non-numeric values in ranges are ignored by statistical-collection rules.
 
-```text
-=KURT(A1)
-```
+## Examples
+
+<Tabs items={["Uniformly spaced values", "Heavier-tail sample"]}>
+<Tab value="Uniformly spaced values">
+<FunctionSandbox
+  title="Uniformly spaced values"
+  formula={`=KURT({1,2,3,4})`}
+  grid={{}}
+  expected={"-1.2"}
+/>
+</Tab>
+
+<Tab value="Heavier-tail sample">
+<FunctionSandbox
+  title="Heavier-tail sample"
+  formula={`=KURT({1,1,1,2,10,10,10,10})`}
+  grid={{}}
+  expected={"-2.3069755007920767"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

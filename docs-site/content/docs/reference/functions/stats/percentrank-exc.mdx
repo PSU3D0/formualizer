@@ -1,17 +1,40 @@
 ---
 title: "PERCENTRANK.EXC"
-description: "Returns percentage rank (exclusive) Same as PERCENTRANK.INC but excludes 0 and 1 from range Range is 1/(n+1) to n/(n+1)."
+description: "Returns the exclusive percentile rank of `x` within a numeric data array."
 ---
 
 ## Summary
 
-Returns percentage rank (exclusive) Same as PERCENTRANK.INC but excludes 0 and 1 from range Range is 1/(n+1) to n/(n+1).
+`PERCENTRANK.EXC` uses an open ranking scale that excludes exact `0` and `1` endpoints.
 
-## Formula example
+## Remarks
+ - `x` must lie within the observed min/max range; otherwise returns `#N/A`.
+ - Output is based on position divided by `n + 1`, with interpolation between points.
+ - Optional `significance` defaults to `3` and must be at least `1`.
+ - Returns `#NUM!` for invalid setup such as empty numeric input.
 
-```text
-=PERCENTRANK.EXC(A1, B1)
-```
+## Examples
+
+<Tabs items={["Exact exclusive percentile rank", "Interpolated exclusive percentile rank"]}>
+<Tab value="Exact exclusive percentile rank">
+<FunctionSandbox
+  title="Exact exclusive percentile rank"
+  formula={`=PERCENTRANK.EXC({1,2,3,4,5},3)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+<Tab value="Interpolated exclusive percentile rank">
+<FunctionSandbox
+  title="Interpolated exclusive percentile rank"
+  formula={`=PERCENTRANK.EXC({1,2,3,4,5},2.5)`}
+  grid={{}}
+  expected={"0.416"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

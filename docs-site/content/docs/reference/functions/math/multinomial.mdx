@@ -1,17 +1,39 @@
 ---
 title: "MULTINOMIAL"
-description: "Returns the multinomial coefficient for one or more integer values."
+description: "Returns the multinomial coefficient for one or more values."
 ---
 
 ## Summary
 
-Returns the multinomial coefficient for one or more integer values.
+Returns the multinomial coefficient for one or more values.
 
-## Formula example
+## Remarks
+ - Each input is truncated toward zero before factorial is applied.
+ - Any negative term returns `#NUM!`.
+ - Values that require factorials outside `0..=170` return `#NUM!`.
 
-```text
-=MULTINOMIAL(A1)
-```
+## Examples
+
+<Tabs items={["Compute a standard multinomial coefficient", "Non-integers are truncated first"]}>
+<Tab value="Compute a standard multinomial coefficient">
+<FunctionSandbox
+  title="Compute a standard multinomial coefficient"
+  formula={`=MULTINOMIAL(2,3,4)`}
+  grid={{}}
+  expected={"1260"}
+/>
+</Tab>
+
+<Tab value="Non-integers are truncated first">
+<FunctionSandbox
+  title="Non-integers are truncated first"
+  formula={`=MULTINOMIAL(1.9,2.2)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

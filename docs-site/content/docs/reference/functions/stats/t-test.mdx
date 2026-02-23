@@ -1,17 +1,40 @@
 ---
 title: "T.TEST"
-description: "Returns probability for Student's t-test tails: 1 for one-tailed, 2 for two-tailed type: 1=paired, 2=two-sample equal variance, 3=two-sample unequal variance (Welch's)"
+description: "Returns the p-value from a Student t-test comparing two numeric samples."
 ---
 
 ## Summary
 
-Returns probability for Student's t-test tails: 1 for one-tailed, 2 for two-tailed type: 1=paired, 2=two-sample equal variance, 3=two-sample unequal variance (Welch's)
+`T.TEST` supports paired, equal-variance two-sample, and unequal-variance (Welch) modes.
 
-## Formula example
+## Remarks
+ - `tails` must be `1` (one-tailed) or `2` (two-tailed).
+ - `type` must be `1` (paired), `2` (two-sample equal variance), or `3` (Welch).
+ - Returns `#N/A` when paired mode arrays have different lengths.
+ - Returns `#NUM!` or `#DIV/0!` for invalid setup or degenerate variance conditions.
 
-```text
-=T.TEST(A1, B1)
-```
+## Examples
+
+<Tabs items={["Two-tailed equal-variance test with identical samples", "One-tailed Welch test with identical samples"]}>
+<Tab value="Two-tailed equal-variance test with identical samples">
+<FunctionSandbox
+  title="Two-tailed equal-variance test with identical samples"
+  formula={`=T.TEST({1,2,3},{1,2,3},2,2)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="One-tailed Welch test with identical samples">
+<FunctionSandbox
+  title="One-tailed Welch test with identical samples"
+  formula={`=T.TEST({1,2,3},{1,2,3},1,3)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

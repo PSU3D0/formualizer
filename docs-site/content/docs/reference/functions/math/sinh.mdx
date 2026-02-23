@@ -5,13 +5,35 @@ description: "Returns the hyperbolic sine of a number."
 
 ## Summary
 
-Returns the hyperbolic sine of a number.
+`SINH` computes `(e^x - e^-x) / 2`.
 
-## Formula example
+## Remarks
+ - Domain: accepts any real number.
+ - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+ - Errors: no function-specific domain errors are produced.
 
-```text
-=SINH(A1)
-```
+## Examples
+
+<Tabs items={["Hyperbolic sine at zero", "Hyperbolic sine at one"]}>
+<Tab value="Hyperbolic sine at zero">
+<FunctionSandbox
+  title="Hyperbolic sine at zero"
+  formula={`=SINH(0)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Hyperbolic sine at one">
+<FunctionSandbox
+  title="Hyperbolic sine at one"
+  formula={`=SINH(1)`}
+  grid={{}}
+  expected={"1.1752011936438014"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 

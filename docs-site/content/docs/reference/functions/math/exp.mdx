@@ -1,17 +1,39 @@
 ---
 title: "EXP"
-description: "Returns Euler's number `e` raised to a power."
+description: "Returns Euler's number `e` raised to the given power."
 ---
 
 ## Summary
 
-Returns Euler's number `e` raised to a power.
+`EXP` is the inverse of `LN` for positive-domain values.
 
-## Formula example
+## Remarks
+ - Computes `e^x` using floating-point math.
+ - Very large positive inputs may overflow to infinity.
+ - Input errors are propagated.
 
-```text
-=EXP(A1)
-```
+## Examples
+
+<Tabs items={["Compute e to the first power", "Invert LN"]}>
+<Tab value="Compute e to the first power">
+<FunctionSandbox
+  title="Compute e to the first power"
+  formula={`=EXP(1)`}
+  grid={{}}
+  expected={"2.718281828459045"}
+/>
+</Tab>
+
+<Tab value="Invert LN">
+<FunctionSandbox
+  title="Invert LN"
+  formula={`=EXP(LN(5))`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Related functions
 
