@@ -1,0 +1,57 @@
+---
+title: Sessions and Evaluation
+description: How SheetPortSession manages state, evaluation options, and batch execution.
+---
+
+The `SheetPortSession` is the primary interface for interacting with a workbook through a SheetPort manifest. It manages the lifecycle of input writing, recalculation, and output reading.
+
+## Session Lifecycle
+
+### Creation
+A session is created by binding a `Manifest` to a `Workbook`. During creation, the session validates that the workbook satisfies the requirements of the manifest (e.g., sheets and cells referenced in the manifest exist).
+
+### State Management
+A session is stateful. When you write inputs, those values are buffered and then committed to the underlying workbook before evaluation. You can reuse the same session object for multiple evaluations, which is more efficient than recreating it for every run.
+
+## Reading and Writing
+
+### Writing Inputs
+Use `write_inputs()` to provide new data for input ports.
+- **Validation**: Values are validated against the manifest's schema and constraints (e.g., `min`, `max`, `pattern`) before being written.
+- **Partial Updates**: You can update a subset of inputs; values from previous writes persist until overwritten.
+
+### Reading Current State
+- **`read_inputs()`**: Inspect the current values of all input ports as they exist in the workbook.
+- **`read_outputs()`**: Read the current values of all output ports. This is often used after an evaluation, but can be called at any time.
+
+## Evaluation
+
+### `evaluate_once(options)`
+This method triggers the calculation engine. It ensures all pending input writes are applied, recalculates the workbook formulas, and returns the resulting output port values.
+
+#### EvalOptions
+You can control the evaluation behavior using `EvalOptions`:
+- **`freeze_volatile`**: Treat volatile functions (like `NOW()` or `RAND()`) as constants based on their last known value.
+- **`rng_seed`**: Provide a seed for random number generation to ensure deterministic results across runs.
+- **`deterministic_mode`**: Enable strict determinism, which may disable certain non-deterministic engine features.
+
+## Batch Execution
+
+For high-throughput scenarios, the `BatchExecutor` (available in some bindings) allows you to run multiple sets of inputs through the same session efficiently. This is ideal for Monte Carlo simulations, sensitivity analysis, or processing large datasets.
+
+## Error Handling
+
+SheetPort uses structured error types to help you diagnose issues:
+
+- **`InvalidManifest`**: The YAML manifest is syntactically incorrect or violates the FIO spec.
+- **`BindingError`**: The manifest references sheets, cells, or ranges that do not exist in the provided workbook.
+- **`ConstraintViolation`**: Data provided in `write_inputs()` failed a schema constraint (e.g., out of range, regex mismatch).
+- **`InvariantViolation`**: An internal consistency check failed during evaluation.
+- **`EvaluationError`**: A formula evaluation resulted in a spreadsheet error (e.g., `#DIV/0!`, `#REF!`) that was not handled.
+
+## Related Links
+
+- [What Is SheetPort?](./what-is-sheetport)
+- [Manifest Format (FIO Spec)](./manifest-format)
+- [Quickstart](./quickstart)
+- [Deterministic Testing Guide](../guides/deterministic-testing)

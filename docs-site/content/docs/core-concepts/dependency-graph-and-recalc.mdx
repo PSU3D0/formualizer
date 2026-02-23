@@ -39,7 +39,10 @@ Recalc order: B1 then C1
 - [Workbook Edits and Batching](../guides/workbook-edits-and-batching)
 - [Deterministic Testing](../guides/deterministic-testing)
 
-## TODO: Deep dive follow-ups
+## Cycle handling
 
-- Add section on cycle handling policy and diagnostics format.
-- Add examples of partial recalculation in large sheets.
+Cycles are detected during graph construction. When a circular dependency is found, the anchor cell receives a `#CIRC!` error. The dependency graph uses topological sorting; if sorting fails (cycle detected), the involved cells are marked with the circular reference error. Downstream dependents of a cycle cell also receive errors.
+
+## Partial recalculation
+
+For a 10,000-row sheet where only one input cell changes, the engine marks only the dependent subgraph dirty. If only 50 cells depend on that input (directly or transitively), only those 50 are re-evaluated rather than all 10,000 rows. The `evaluate_cells` API allows targeting specific cells for even more precise control.

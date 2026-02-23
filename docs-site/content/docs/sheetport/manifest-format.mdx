@@ -1,0 +1,236 @@
+---
+title: Manifest Format (FIO Spec)
+description: Complete reference for the SheetPort YAML manifest format.
+---
+
+The SheetPort manifest (FIO) is a YAML-based specification that defines the I/O interface for a workbook. It allows you to map structured data to spreadsheet cells and ranges with strong typing and validation.
+
+## Top-Level Fields
+
+- `spec`: Must be set to `fio`.
+- `spec_version`: Currently `0.3.0`.
+- `capabilities`: An array of required engine features (e.g., `core-v0`).
+- `manifest`: Metadata about the manifest itself.
+  - `id`: A unique identifier for the manifest.
+  - `name`: Human-readable name.
+  - `description`: Optional documentation.
+  - `workbook`: Context about the target workbook (URI, locale, date system).
+- `ports`: An array of port definitions (inputs and outputs).
+
+## Port Definitions
+
+Each port in the `ports` list contains:
+- `id`: The unique ID used to reference the port in code.
+- `dir`: Either `in` (input) or `out` (output).
+- `shape`: The structural shape of the data: `scalar`, `record`, `range`, or `table`.
+- `location`: A selector defining where the data lives in the workbook.
+- `schema`: Type definitions and constraints.
+
+### Shapes and Selectors
+
+#### Scalar
+A single cell.
+```yaml
+- id: warehouse_code
+  dir: in
+  shape: scalar
+  location:
+    a1: Inputs!B2
+  schema:
+    type: string
+```
+
+#### Record
+A set of fields mapped to specific cells.
+```yaml
+- id: planning_horizon
+  dir: in
+  shape: record
+  schema:
+    kind: record
+    fields:
+      month:
+        type: integer
+        location:
+          a1: Inputs!B1
+      year:
+        type: integer
+        location:
+          a1: Inputs!C1
+```
+
+#### Range
+A homogeneous block of data.
+```yaml
+- id: raw_data
+  dir: in
+  shape: range
+  location:
+    a1: Data!A1:Z100
+  schema:
+    type: number
+```
+
+#### Table
+A dynamic set of rows with defined columns.
+```yaml
+- id: sku_inventory
+  dir: in
+  shape: table
+  location:
+    layout:
+      sheet: Inventory
+      header_row: 1
+      anchor_col: A
+      terminate: first_blank_row
+  schema:
+    kind: table
+    columns:
+      - name: sku
+        type: string
+        col: A
+      - name: stock
+        type: integer
+        col: C
+```
+
+## Schema Types and Constraints
+
+SheetPort supports several base types:
+- `string`: UTF-8 text.
+- `number`: Floating-point numbers.
+- `integer`: Whole numbers.
+- `boolean`: True/False.
+- `date`: ISO-8601 date.
+- `datetime`: ISO-8601 date and time.
+
+### Constraints
+You can add validation rules to any schema:
+- `min` / `max`: For numbers and integers.
+- `pattern`: A regex for strings.
+- `enum`: A list of allowed values.
+
+## Table Layouts
+
+Tables use a `layout` selector to handle dynamic data sizes.
+- `sheet`: Name of the worksheet.
+- `header_row`: The row number containing column headers.
+- `anchor_col`: The column used to detect the table's extent.
+- `terminate`: How to find the end of the table:
+  - `first_blank_row`: Stop at the first empty cell in the anchor column.
+  - `until_marker`: Stop when a specific string is encountered.
+  - `sheet_end`: Read until the end of the worksheet.
+
+## Supply Planning Example
+
+This example demonstrates a complete manifest for a supply planning workbook.
+
+```yaml
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: supply-planning-io
+  name: Supply Planning I/O
+  description: Expose the workbook as a function that ingests inventory data and produces restock recommendations.
+  workbook:
+    uri: file://Samples/SupplyPlan.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: warehouse_code
+    dir: in
+    shape: scalar
+    description: Warehouse identifier used for restock planning.
+    location:
+      a1: Inputs!B2
+    schema:
+      type: string
+    constraints:
+      pattern: "^[A-Z]{2}-\\d{3}$"
+
+  - id: planning_window
+    dir: in
+    shape: record
+    description: Planning horizon (month and year).
+    location:
+      a1: Inputs!B1:C1
+    schema:
+      kind: record
+      fields:
+        month:
+          type: integer
+          location:
+            a1: Inputs!B1
+          constraints:
+            min: 1
+            max: 12
+        year:
+          type: integer
+          location:
+            a1: Inputs!C1
+
+  - id: sku_inventory
+    dir: in
+    shape: table
+    description: Current inventory snapshot by SKU.
+    location:
+      layout:
+        sheet: Inventory
+        header_row: 1
+        anchor_col: A
+        terminate: first_blank_row
+    schema:
+      kind: table
+      columns:
+        - name: sku
+          type: string
+          col: A
+        - name: description
+          type: string
+          col: B
+        - name: on_hand
+          type: integer
+          col: C
+        - name: safety_stock
+          type: integer
+          col: D
+        - name: lead_time_days
+          type: integer
+          col: E
+      keys:
+        - sku
+
+  - id: restock_summary
+    dir: out
+    shape: record
+    description: High-level metrics summarizing the recommended restock.
+    location:
+      a1: Outputs!B2:B6
+    schema:
+      kind: record
+      fields:
+        total_skus:
+          type: integer
+          location:
+            a1: Outputs!B2
+        units_to_order:
+          type: integer
+          location:
+            a1: Outputs!B3
+        estimated_cost:
+          type: number
+          location:
+            a1: Outputs!B4
+          units:
+            currency: USD
+        next_restock_date:
+          type: date
+          location:
+            a1: Outputs!B5
+```
+
+## Related Links
+
+- [What Is SheetPort?](./what-is-sheetport)
+- [Quickstart](./quickstart)
+- [Sessions and Evaluation](./sessions-and-evaluation)

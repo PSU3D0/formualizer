@@ -42,7 +42,6 @@ pub struct TrueFn;
 ///   - q: "Can TRUE accept arguments?"
 ///     a: "No. TRUE takes zero arguments and always returns the boolean constant TRUE."
 /// ```
-
 /// [formualizer-docgen:schema:start]
 /// Name: TRUE
 /// Type: TrueFn
@@ -109,7 +108,6 @@ pub struct FalseFn;
 ///   - q: "Can FALSE accept arguments?"
 ///     a: "No. FALSE takes zero arguments and always returns the boolean constant FALSE."
 /// ```
-
 /// [formualizer-docgen:schema:start]
 /// Name: FALSE
 /// Type: FalseFn
@@ -178,7 +176,6 @@ pub struct AndFn;
 ///   - q: "What happens with blanks and text in AND?"
 ///     a: "Blank values evaluate as FALSE; non-coercible text yields #VALUE! unless a prior FALSE short-circuits."
 /// ```
-
 /// [formualizer-docgen:schema:start]
 /// Name: AND
 /// Type: AndFn
@@ -304,7 +301,6 @@ pub struct OrFn;
 ///   - q: "How does OR treat blanks and text?"
 ///     a: "Blanks are ignored; non-coercible text returns #VALUE! unless a prior TRUE already short-circuits."
 /// ```
-
 /// [formualizer-docgen:schema:start]
 /// Name: OR
 /// Type: OrFn
@@ -428,7 +424,6 @@ pub struct IfFn;
 ///   - q: "What is returned when IF has only two arguments and condition is FALSE?"
 ///     a: "The false branch defaults to logical FALSE when value_if_false is omitted."
 /// ```
-
 /// [formualizer-docgen:schema:start]
 /// Name: IF
 /// Type: IfFn

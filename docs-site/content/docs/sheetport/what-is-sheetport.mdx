@@ -1,0 +1,62 @@
+---
+title: What Is SheetPort?
+description: Understand the core concepts of the SheetPort I/O layer.
+---
+
+SheetPort is a powerful I/O abstraction layer for Formualizer. It treats any spreadsheet as a deterministic, typed function, allowing you to build reliable applications on top of spreadsheet logic.
+
+The core idea is to decouple your code from the spreadsheet's internal layout using a YAML manifest.
+
+## The Formualizer I/O (FIO) Manifest
+
+The FIO manifest is the heart of SheetPort. It's a structured YAML file that declares:
+
+- **Manifest Metadata**: ID, name, description, and workbook requirements.
+- **Ports**: A set of typed inputs and outputs that map to specific workbook locations.
+- **Schemas**: The expected data types (scalar, record, range, table) and constraints.
+- **Selectors**: How those ports find their data (A1 references, named ranges, or header-based layout discovery).
+
+## Key Concepts
+
+### Ports: Typed Inputs and Outputs
+SheetPort defines two types of ports:
+- **`in`**: Input ports where your application writes data.
+- **`out`**: Output ports where your application reads the results of recalculations.
+
+Ports can have different shapes:
+- **`scalar`**: A single cell value.
+- **`record`**: A key-value set of fields, often spanning multiple cells.
+- **`range`**: A raw block of cells (homogeneous data).
+- **`table`**: A dynamic set of rows with typed columns, often discovered using layout selectors.
+
+### Selectors: Decoupling Data from Layout
+Instead of hardcoding cell addresses in your application code, you use selectors in the manifest:
+- **`a1`**: Direct cell or range reference (e.g., `Inputs!B2`).
+- **`name`**: References a workbook named range.
+- **`layout`**: Dynamically discovers data based on headers and anchors (e.g., find a table starting at "Inventory" sheet column A, row 1).
+
+### Evaluation Cycle
+The typical interaction with SheetPort follows a consistent cycle:
+1. **Bind**: A `SheetPortSession` is created from a manifest and a workbook.
+2. **Write**: Inputs are written to the session using their manifest IDs.
+3. **Recalculate**: Formualizer's engine recalculates all affected formulas in the workbook.
+4. **Read**: The resulting data is read from output ports, validated against the schema, and returned to your application.
+
+## Use Cases
+
+- **Expose Spreadsheets as APIs**: Use a spreadsheet as the backend for a REST API without manual mapping.
+- **Batch Scenarios**: Run thousands of scenarios through a single model with different input sets.
+- **AI Agents**: Give LLM agents a typed interface to read from and write to spreadsheets, ensuring they only touch valid locations.
+- **Constraint Enforcement**: Enforce business rules at the I/O layer (e.g., "discount cannot exceed 20%") using schema constraints.
+
+## Profiles
+
+SheetPort supports different capability profiles:
+- **`core-v0`**: The default profile, optimized for high-performance deterministic evaluation.
+- **`full-v0`**: (Reserved) For features requiring broader workbook compatibility or advanced Excel-specific features.
+
+## Next Steps
+
+- Learn about the [Manifest Format (FIO Spec)](./manifest-format)
+- Try the [Quickstart](./quickstart)
+- Explore [Sessions and Evaluation](./sessions-and-evaluation)

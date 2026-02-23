@@ -38,7 +38,29 @@ Workbook: cell B1 stores value 42 and dependency edge B1 -> A1:A3
 - [Values, Coercion, and Errors](./values-coercion-and-errors)
 - [Workbook Edits and Batching](../guides/workbook-edits-and-batching)
 
-## TODO: Deep dive follow-ups
+## Real AST example
+For `=IF(A1>10, A1*2, 0)`:
+```json
+{
+  "type": "function",
+  "name": "IF",
+  "args": [
+    {
+      "type": "binaryOp",
+      "op": ">",
+      "left": { "type": "reference", "reference": { "rowStart": 1, "colStart": 1, "rowEnd": 1, "colEnd": 1 } },
+      "right": { "type": "number", "value": 10 }
+    },
+    {
+      "type": "binaryOp",
+      "op": "*",
+      "left": { "type": "reference", "reference": { "rowStart": 1, "colStart": 1, "rowEnd": 1, "colEnd": 1 } },
+      "right": { "type": "number", "value": 2 }
+    },
+    { "type": "number", "value": 0 }
+  ]
+}
+```
 
-- Add real AST node examples from parser snapshots.
-- Add section on immutable context propagation during evaluation.
+## Context propagation during evaluation
+Each evaluation call receives an immutable context containing the workbook state, current cell coordinates, and configuration (date system, volatile level, etc.). Functions read from context but never mutate it directly — mutations flow back through the workbook's value store after evaluation completes.

@@ -31,7 +31,17 @@ Formualizer operations work over a compact set of runtime values (number, text, 
 - [LET/LAMBDA and Callables](../guides/let-lambda-and-callables)
 - [Deterministic Testing](../guides/deterministic-testing)
 
-## TODO: Deep dive follow-ups
+## Coercion matrix
 
-- Document exact coercion matrix by operand type.
-- Add function-by-function notes for error behavior differences.
+| Source \\ Target | Number | Text | Boolean |
+|---|---|---|---|
+| Number | identity | `"42"` | nonzero → TRUE |
+| Text (numeric) | parse → number | identity | #VALUE! |
+| Text (non-numeric) | #VALUE! | identity | #VALUE! |
+| Boolean TRUE | 1 | `"TRUE"` | identity |
+| Boolean FALSE | 0 | `"FALSE"` | identity |
+| Empty | 0 | `""` | FALSE |
+| Error | propagate | propagate | propagate |
+
+## Function-specific error behavior
+Most arithmetic functions propagate errors immediately. Aggregation functions like SUM and AVERAGE skip error values in ranges by default. IFERROR and IFNA explicitly trap errors. ISERROR, ISERR, and ISNA test for errors without propagating them.

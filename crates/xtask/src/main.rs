@@ -18,8 +18,6 @@ const DOCGEN_SCHEMA_START: &str = "[formualizer-docgen:schema:start]";
 const DOCGEN_SCHEMA_END: &str = "[formualizer-docgen:schema:end]";
 const DOCGEN_FUNC_META_START: &str = "{/* [formualizer-docgen:function-meta:start] */}";
 const DOCGEN_FUNC_META_END: &str = "{/* [formualizer-docgen:function-meta:end] */}";
-const DOCGEN_FUNC_META_START_LEGACY: &str = "<!-- [formualizer-docgen:function-meta:start] -->";
-const DOCGEN_FUNC_META_END_LEGACY: &str = "<!-- [formualizer-docgen:function-meta:end] -->";
 
 #[derive(Parser, Debug)]
 #[command(name = "xtask", about = "Workspace developer tasks")]
@@ -31,11 +29,11 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Audit builtin function documentation coverage and example quality.
-    DocsAudit(DocsAuditArgs),
+    Audit(DocsAuditArgs),
     /// Generate/apply schema metadata blocks in builtin doc comments.
-    DocsSchema(DocsSchemaArgs),
+    Schema(DocsSchemaArgs),
     /// Generate function reference MDX pages from runtime registry metadata.
-    DocsRef(DocsRefArgs),
+    Ref(DocsRefArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -247,9 +245,9 @@ impl<'ast> Visit<'ast> for RegistrationVisitor {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::DocsAudit(args) => run_docs_audit(args),
-        Command::DocsSchema(args) => run_docs_schema(args),
-        Command::DocsRef(args) => run_docs_ref(args),
+        Command::Audit(args) => run_docs_audit(args),
+        Command::Schema(args) => run_docs_schema(args),
+        Command::Ref(args) => run_docs_ref(args),
     }
 }
 
@@ -1137,33 +1135,33 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> ParsedDocContent {
     let fenced_blocks = parse_fenced_blocks(&clean_doc);
 
     for block in fenced_blocks {
-        if block.raw_fence.contains("yaml,sandbox") {
-            if let Ok(spec) = serde_yaml::from_str::<SandboxYamlSpec>(&block.content) {
-                let expected = spec.expected.map(|v| match v {
+        if block.raw_fence.contains("yaml,sandbox")
+            && let Ok(spec) = serde_yaml::from_str::<SandboxYamlSpec>(&block.content)
+        {
+            let expected = spec.expected.map(|v| match v {
+                serde_yaml::Value::String(s) => s,
+                serde_yaml::Value::Number(n) => n.to_string(),
+                serde_yaml::Value::Bool(b) => b.to_string(),
+                _ => serde_json::to_string(&v).unwrap_or_default(),
+            });
+
+            let mut grid = std::collections::BTreeMap::new();
+            for (k, v) in spec.grid {
+                let val_str = match v {
                     serde_yaml::Value::String(s) => s,
                     serde_yaml::Value::Number(n) => n.to_string(),
                     serde_yaml::Value::Bool(b) => b.to_string(),
                     _ => serde_json::to_string(&v).unwrap_or_default(),
-                });
-
-                let mut grid = std::collections::BTreeMap::new();
-                for (k, v) in spec.grid {
-                    let val_str = match v {
-                        serde_yaml::Value::String(s) => s,
-                        serde_yaml::Value::Number(n) => n.to_string(),
-                        serde_yaml::Value::Bool(b) => b.to_string(),
-                        _ => serde_json::to_string(&v).unwrap_or_default(),
-                    };
-                    grid.insert(k, val_str);
-                }
-
-                sandboxes.push(SandboxExample {
-                    title: spec.title,
-                    formula: spec.formula,
-                    expected,
-                    grid,
-                });
+                };
+                grid.insert(k, val_str);
             }
+
+            sandboxes.push(SandboxExample {
+                title: spec.title,
+                formula: spec.formula,
+                expected,
+                grid,
+            });
         }
 
         if block.raw_fence.contains("yaml,docs")
@@ -1201,7 +1199,7 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> ParsedDocContent {
     let mut remarks_lines = Vec::new();
 
     // First paragraph is short summary
-    while let Some(line) = lines.next() {
+    for line in lines.by_ref() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             if !short_summary.is_empty() {
@@ -1321,11 +1319,10 @@ fn normalize_short_summary(raw: &str, fn_name: &str) -> String {
 }
 
 fn normalize_overview_text(raw: &str) -> String {
-    let cleaned = Regex::new(r"\n{3,}")
+    Regex::new(r"\n{3,}")
         .expect("valid regex")
         .replace_all(raw.trim(), "\n\n")
-        .to_string();
-    cleaned
+        .to_string()
 }
 
 fn slugify_for_docs(input: &str) -> String {
@@ -1550,7 +1547,7 @@ fn build_frontmatter_description(entry: &FunctionRefEntry) -> String {
     if desc.chars().count() > MAX_DESC {
         let mut cut = 0usize;
         for (i, _) in desc.char_indices() {
-            if i <= MAX_DESC - 1 {
+            if i < MAX_DESC {
                 cut = i;
             } else {
                 break;

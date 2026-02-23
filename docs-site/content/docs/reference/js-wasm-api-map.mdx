@@ -1,25 +1,114 @@
 ---
-title: JS/WASM API Map
-description: Planned JavaScript/WASM wrapper surfaces and their relationship to core engine APIs.
+title: 'JS/WASM API Reference'
+description: Comprehensive documentation for the Formualizer JavaScript and WebAssembly bindings.
 ---
 
-> **v1 scaffold:** This map describes the target structure for browser and Node-facing APIs.
+The `formualizer` npm package provides high-performance formula parsing and evaluation by leveraging a WebAssembly core compiled from Rust.
 
-## Planned Surface Areas
+## Initialization
 
-- **Parser API:** Parse formulas and inspect AST/diagnostics in JavaScript.
-- **Evaluator API:** Evaluate formulas with explicit input context.
-- **Type bridges:** Map JS values to engine values and back.
-- **Error bridges:** Return stable, structured error payloads.
+Before using the library, you must initialize the WebAssembly module.
 
-## Mapping Notes
+```javascript
+import init, { initializeWasm } from 'formualizer';
 
-- JS/WASM APIs are thin wrappers over the same Rust parser/evaluator core.
-- Function behavior should align with [Function Reference](/docs/reference/functions).
-- Diagnostic shape should align with [Errors and Types](/docs/reference/errors-and-types).
+// Initialize the module
+await init();
+// or
+await initializeWasm();
+```
 
-Related docs:
+## Tokenizer
 
-- [Rust API Map](/docs/reference/rust-api-map)
+The `Tokenizer` class allows you to break a formula into its constituent parts without parsing the full structure.
+
+- `constructor(formula: string, dialect?: FormulaDialect)`
+- `tokens`: Read-only array of `Token` objects.
+- `render()`: Returns the formula string reconstructed from tokens.
+- `length`: Returns the number of tokens.
+- `getToken(index: number)`: Returns the `Token` at the specified index.
+
+## Parser
+
+The `Parser` class handles the conversion of a formula string into an Abstract Syntax Tree (AST).
+
+- `constructor(formula: string, dialect?: FormulaDialect)`
+- `parse()`: Returns `ASTNodeData` representing the root of the AST.
+
+## Convenience Functions
+
+For quick operations, use these standalone functions:
+
+- `tokenize(formula: string, dialect?: FormulaDialect)`: Returns an array of tokens.
+- `parse(formula: string, dialect?: FormulaDialect)`: Returns the root `ASTNodeData`.
+
+## Workbook API
+
+The `Workbook` class manages stateful evaluation across multiple sheets and cells.
+
+- `constructor()`: Create a new empty workbook.
+- `fromJson(json: string)`: Load workbook state from a JSON string.
+- `addSheet(name: string)`: Add a new sheet to the workbook.
+- `setValue(sheet: string, row: number, col: number, value: any)`: Set a literal value.
+- `setFormula(sheet: string, row: number, col: number, formula: string)`: Set a formula.
+- `evaluateCell(sheet: string, row: number, col: number)`: Evaluate a specific cell.
+- `evaluateAll()`: Re-evaluate all dirty cells in the workbook.
+- `sheet(name: string)`: Returns a sheet facade with helper methods like `setValues` and `setFormulas`.
+
+## Custom Functions
+
+Extend the engine with your own logic:
+
+- `registerFunction(name: string, callback: Function, options?)`: Add a custom function.
+- `unregisterFunction(name: string)`: Remove a custom function.
+- `listFunctions()`: Get a list of all registered functions.
+
+## SheetPort
+
+`SheetPortSession` provides a high-level API for interacting with workbooks via defined inputs and outputs (ports).
+
+- `fromManifestYaml(yaml: string, workbook: Workbook)`: Create a session from a YAML manifest.
+- `readInputs()`: Get current values for all input ports.
+- `readOutputs()`: Get current values for all output ports.
+- `writeInputs(update: object)`: Update input port values.
+- `evaluateOnce(options?)`: Run a single evaluation cycle.
+
+## Interfaces and Types
+
+### Token
+```typescript
+interface Token {
+  tokenType: string;
+  subtype: string;
+  value: string;
+  pos: number;
+  end: number;
+}
+```
+
+### ASTNodeData
+```typescript
+interface ASTNodeData {
+  type: string;
+  value?: any;
+  reference?: ReferenceData;
+  name?: string;
+  args?: ASTNodeData[];
+  op?: string;
+  left?: ASTNodeData;
+  right?: ASTNodeData;
+  operand?: ASTNodeData;
+  elements?: ASTNodeData[];
+  message?: string;
+}
+```
+
+### FormulaDialect
+- `Excel`: Standard Excel formula syntax.
+- `OpenFormula`: OpenDocument formula syntax.
+
+## See Also
+
 - [Python API Map](/docs/reference/python-api-map)
+- [Rust API Map](/docs/reference/rust-api-map)
 - [Playground](/docs/playground)

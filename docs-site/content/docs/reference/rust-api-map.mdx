@@ -1,19 +1,64 @@
 ---
-title: Rust API Map
-description: High-level map of the Rust workspace crates and the surfaces they expose.
+title: 'Rust API Map'
+description: Detailed overview of the Rust crates and core types in the Formualizer workspace.
 ---
 
-> **v1 scaffold:** This map is intentionally concise and will gain deeper per-module links over time.
+Formualizer is organized as a modular Rust workspace, allowing users to depend only on the components they need.
 
-| Crate | Responsibility | Start Here |
-| --- | --- | --- |
-| `formualizer-parse` | Tokenization, parser, and AST construction | [Parser + AST Inspector](/docs/playground/parser-ast-inspector) |
-| `formualizer-eval` | Formula evaluation engine and built-in function execution | [Function Reference](/docs/reference/functions) |
-| `formualizer-common` | Shared value, error, and utility types | [Errors and Types](/docs/reference/errors-and-types) |
-| `formualizer-io` | Workbook/file I/O and backend adapters | [Errors and Types](/docs/reference/errors-and-types) |
-| `formualizer-macros` | Procedural macros used by internal crates | [Reference Index](/docs/reference) |
+## Crate Overview
 
-Cross-binding views:
+| Crate | Responsibility |
+|---|---|
+| `formualizer-parse` | Tokenization, parser, and AST construction. |
+| `formualizer-eval` | Formula evaluation engine, built-in functions, and recalc planning. |
+| `formualizer-common` | Shared types: `LiteralValue`, `ExcelError`, `RangeAddress`. |
+| `formualizer-workbook` | Workbook state management, sheet orchestration, and evaluation. |
+| `formualizer-sheetport` | SheetPort runtime: sessions, batch execution, and typed I/O. |
+| `sheetport-spec` | FIO manifest parsing, validation, and JSON Schema generation. |
+| `formualizer-macros` | Procedural macros for internal crate optimizations. |
+
+## Feature Flags
+
+- `wasm_plugins`: Enables loading custom functions via WebAssembly modules.
+- `wasm_runtime_wasmtime`: Uses Wasmtime as the backend for WASM plugins.
+- `umya_integration`: Provides helpers for integrating with the `umya-spreadsheet` crate.
+- `serde`: Enables Serde serialization/deserialization for core types.
+
+## Key Types and Methods
+
+### Core Values: `LiteralValue`
+The `LiteralValue` enum represents any value that can exist in a cell or as an intermediate result.
+
+- `Int(i64)` / `Number(f64)`
+- `Text(String)`
+- `Boolean(bool)`
+- `Array(Vec<Vec<LiteralValue>>)`
+- `Date(NaiveDate)` / `DateTime(NaiveDateTime)` / `Time(NaiveTime)`
+- `Duration(Duration)`
+- `Empty` / `Pending`
+- `Error(ExcelError)`
+
+### Error Handling: `ExcelErrorKind`
+Used within `ExcelError` to categorize calculation failures.
+
+- `Null`, `Ref`, `Name`, `Value`, `Div`, `Na`, `Num`, `Error`, `NImpl`, `Spill`, `Calc`, `Circ`, `Cancelled`
+
+### Workbook Management
+The `Workbook` type in `formualizer-workbook` is the central coordinator.
+
+- `add_sheet(name)`: Create a new sheet.
+- `set_value(address, value)`: Update a cell with a literal.
+- `set_formula(address, formula)`: Update a cell with a formula string.
+- `evaluate(address)`: Trigger evaluation for a specific cell and its dependencies.
+
+### SheetPort Runtime
+`SheetPort` and `SheetPortSession` in `formualizer-sheetport` provide structured I/O.
+
+- `SheetPortSession::new(manifest, workbook)`: Initialize a session.
+- `session.write_inputs(map)`: Update multiple inputs at once.
+- `session.read_outputs()`: Extract computed results based on the manifest.
+
+## See Also
 
 - [Python API Map](/docs/reference/python-api-map)
 - [JS/WASM API Map](/docs/reference/js-wasm-api-map)

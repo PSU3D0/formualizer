@@ -1,25 +1,66 @@
 ---
-title: Python API Map
-description: Planned public Python binding surfaces and how they map to core Rust behavior.
+title: 'Python API Reference'
+description: Comprehensive documentation for the Formualizer Python bindings.
 ---
 
-> **v1 scaffold:** This page tracks the intended Python-facing API shape while bindings continue to evolve.
+The `formualizer` Python package provides a high-performance interface to the Rust formula engine, supporting both simple evaluation and complex workbook management.
 
-## Planned Surface Areas
+## Workbook API
 
-- **Parser access:** Parse a formula string and inspect AST/diagnostics.
-- **Evaluator access:** Evaluate formulas against provided context data.
-- **Value conversion:** Convert between Python-native values and Formualizer values.
-- **Error translation:** Preserve structured engine errors with Python-friendly exceptions.
+The `Workbook` class is the primary entry point for managing spreadsheet state and evaluation.
 
-## Mapping Notes
+- `Workbook(mode='shared', config=None)`: Initialize a new workbook.
+- `load_path(path: str)`: Load a workbook from a file path.
+- `from_path(path: str)`: (Alias) Load a workbook from a file path.
+- `add_sheet(name: str)`: Add a new sheet.
+- `sheet(name: str)`: Get a handle to a specific sheet.
+- `set_value(sheet: str, row: int, col: int, value: Any)`: Set a literal value at a coordinate.
+- `set_formula(sheet: str, row: int, col: int, formula: str)`: Set a formula at a coordinate.
+- `evaluate_cell(sheet: str, row: int, col: int) -> Any`: Evaluate and return a cell value.
+- `evaluate_all()`: Re-evaluate all dirty cells in the workbook.
+- `evaluate_cells(targets: List[Tuple[str, int, int]])`: Evaluate a specific list of target cells.
+- `set_values_batch(row: int, col: int, grid: List[List[Any]])`: Efficiently set a block of values.
+- `set_formulas_batch(row: int, col: int, grid: List[List[str]])`: Efficiently set a block of formulas.
 
-- Python parser/evaluator endpoints map onto Rust parser and eval crates.
-- Function behavior should stay aligned with the shared function registry.
-- Error payloads should remain compatible with [Errors and Types](/docs/reference/errors-and-types).
+## Custom Functions
 
-Related docs:
+- `register_function(name: str, callback: Callable, options: dict)`: Register a Python function for use in formulas.
+- `unregister_function(name: str)`: Remove a registered function.
+- `list_functions() -> List[str]`: List all available functions.
 
-- [Rust API Map](/docs/reference/rust-api-map)
+## History and Undo
+
+- `set_changelog_enabled(enabled: bool)`: Enable or disable tracking of changes.
+- `begin_action(description: str)`: Group following changes into a single undoable action.
+- `end_action()`: Close the current action group.
+- `undo()`: Revert the last action.
+- `redo()`: Re-apply the last undone action.
+
+## SheetPort
+
+`SheetPortSession` manages high-level data exchange using a manifest to define input/output mappings.
+
+- `from_manifest_path(path: str, wb: Workbook)`: Create a session from a manifest file.
+- `from_manifest_yaml(yaml: str, wb: Workbook)`: Create a session from a YAML string.
+- `read_inputs() -> dict`: Read current values of all defined input ports.
+- `read_outputs() -> dict`: Read current values of all defined output ports.
+- `write_inputs(data: dict)`: Update workbook values via input ports.
+- `evaluate_once(options: dict = None)`: Perform a single evaluation pass.
+- `manifest() -> dict`: Get the parsed manifest structure.
+- `describe_ports() -> dict`: Get metadata about defined ports.
+
+## Parser and Tokenizer
+
+- `formualizer.Tokenizer(formula: str)`: Tokenize a formula.
+- `formualizer.Parser(formula: str)`: Parse a formula into an AST.
+
+## Exceptions
+
+- `SheetPortError`: Base class for SheetPort-related errors.
+- `SheetPortManifestError`: Raised when a manifest is invalid or cannot be parsed.
+- `SheetPortConstraintError`: Raised when an input value violates a manifest constraint.
+
+## See Also
+
 - [JS/WASM API Map](/docs/reference/js-wasm-api-map)
-- [Function Reference](/docs/reference/functions)
+- [Rust API Map](/docs/reference/rust-api-map)

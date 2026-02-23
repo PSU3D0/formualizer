@@ -260,7 +260,6 @@ pub struct TextSplitFn;
 ///   - q: "Is delimiter matching case-sensitive?"
 ///     a: "Yes by default; set match_mode to 1 for case-insensitive delimiter matching."
 /// ```
-
 /// [formualizer-docgen:schema:start]
 /// Name: TEXTSPLIT
 /// Type: TextSplitFn
@@ -513,7 +512,6 @@ pub struct ValueToTextFn;
 ///   - q: "How are errors handled in concise vs strict mode?"
 ///     a: "Concise mode returns the error, while strict mode converts the error to its text form."
 /// ```
-
 /// [formualizer-docgen:schema:start]
 /// Name: VALUETOTEXT
 /// Type: ValueToTextFn
@@ -645,7 +643,6 @@ pub struct ArrayToTextFn;
 ///   - q: "What changes when format is 1?"
 ///     a: "Format 1 returns brace-delimited array syntax; format 0 flattens values into a comma-space list."
 /// ```
-
 /// [formualizer-docgen:schema:start]
 /// Name: ARRAYTOTEXT
 /// Type: ArrayToTextFn

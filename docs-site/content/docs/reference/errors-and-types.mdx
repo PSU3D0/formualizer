@@ -1,25 +1,65 @@
 ---
-title: Errors and Types
-description: Shared type and error model guidance across Rust core and language bindings.
+title: 'Errors and Types'
+description: Detailed guide on value types, coercion rules, and error handling in Formualizer.
 ---
 
-> **v1 scaffold:** This page captures the common model used to keep behavior consistent across targets.
+Formualizer maintains a strict type system to ensure compatibility with Excel and other spreadsheet engines while providing clear feedback for developers.
 
-## Core Type Model
+## Value Types
 
-- Formula values should preserve explicit kinds (number, text, boolean, blank, error, arrays/ranges where applicable).
-- Bindings should avoid lossy coercions unless explicitly documented.
-- Cross-language conversion should keep semantics aligned with engine expectations.
+The core of the system is the `LiteralValue` model, which maps to native types across different language bindings.
 
-## Error Model
+| Type | Description | Python Mapping | JS Mapping |
+|---|---|---|---|
+| `Number` | 64-bit floating point | `float` | `number` |
+| `Int` | 64-bit integer | `int` | `number` / `bigint` |
+| `Text` | UTF-8 string | `str` | `string` |
+| `Boolean` | Logical true/false | `bool` | `boolean` |
+| `Array` | 2D grid of values | `List[List]` | `Array<Array>` |
+| `Date` | Calendar date | `datetime.date` | `Date` |
+| `Empty` | Blank cell | `None` | `null` |
+| `Error` | Spreadsheet error | `ExcelError` | `Error` object |
 
-- Parse, evaluation, and binding-layer errors should remain distinguishable.
-- Error payloads should include machine-readable codes plus user-readable messages.
-- Binding adapters should preserve source context when available.
+## Excel Error Codes
 
-## Where to Go Next
+When an evaluation fails, it returns a specific error code.
 
-- [Rust API Map](/docs/reference/rust-api-map)
-- [Python API Map](/docs/reference/python-api-map)
-- [JS/WASM API Map](/docs/reference/js-wasm-api-map)
+| Error | Meaning | Common Cause |
+|---|---|---|
+| `#NULL!` | Null intersection | Space operator between non-overlapping ranges |
+| `#REF!` | Invalid reference | Deleted row/column or out-of-bounds access |
+| `#NAME?` | Unrecognized name | Misspelled function or undefined name |
+| `#VALUE!` | Wrong value type | Text provided where a number was expected |
+| `#DIV/0!` | Division by zero | Denominator is 0 or an empty cell |
+| `#N/A` | Not available | `VLOOKUP` or `MATCH` found no match |
+| `#NUM!` | Invalid number | Out-of-range numeric result (e.g., `SQRT(-1)`) |
+| `#SPILL!` | Spill blocked | Target range for an array formula has existing content |
+| `#CALC!` | Calculation error | Engine-level calculation failure or nested array error |
+| `#CIRC!` | Circular reference | A formula references its own cell, directly or indirectly |
+| `#N/IMPL!` | Not implemented | The function exists but the implementation is missing |
+| `#CANCELLED!`| Evaluation cancelled | The evaluation was manually aborted via API |
+
+## Coercion Rules
+
+Formualizer performs automatic type conversion depending on the context of the operation:
+
+- **Numeric Context**:
+    - Text is converted to a number if it represents a valid numeric string.
+    - Boolean `TRUE` becomes `1`, `FALSE` becomes `0`.
+    - `Empty` cells are treated as `0`.
+- **Text Context**:
+    - Numbers and Booleans are converted to their string representations (`"123"`, `"TRUE"`).
+    - `Empty` cells become an empty string (`""`).
+- **Logical Context**:
+    - Non-zero numbers are `TRUE`, `0` is `FALSE`.
+    - Text results in a `#VALUE!` error if used in a logical test.
+
+## Error Propagation
+
+In most cases, errors "short-circuit" expressions. If any argument to a function is an error, the function itself returns that error. Exceptions include error-handling functions like `IFERROR`, `IFNA`, and `ISERROR`, which can trap and handle these values.
+
+## See Also
+
 - [Function Reference](/docs/reference/functions)
+- [Rust API Map](/docs/reference/rust-api-map)
+- [JS/WASM API Map](/docs/reference/js-wasm-api-map)

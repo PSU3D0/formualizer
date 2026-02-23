@@ -32,7 +32,8 @@ If C2 already has a literal value, B2 evaluates to a spill-related error.
 - [Named Ranges and Tables](./named-ranges-and-tables)
 - [Workbook Edits and Batching](../guides/workbook-edits-and-batching)
 
-## TODO: Deep dive follow-ups
+## Conflict resolution
+When a spill range overlaps existing content, the anchor cell receives a `#SPILL!` error instead of writing partial results. The engine does not overwrite or shift existing data. Clear the blocking cells or move the formula to resolve the conflict.
 
-- Add conflict resolution rules and overwrite policies.
-- Add examples for resize and shrink scenarios.
+## Resize and shrink behavior
+If a formula's result array changes dimensions (e.g., FILTER returns fewer rows after an input change), the spill range shrinks. Previously occupied cells outside the new bounds are cleared automatically. When the result grows, the engine checks the expanded target for conflicts before writing.

@@ -1,22 +1,29 @@
 ---
-title: Mini Grid Sandbox
-description: Validate formula behavior in a lightweight spreadsheet-like grid context.
+title: 'Mini Grid Sandbox'
+description: A lightweight spreadsheet-like environment for testing formulas.
 ---
 
-> **v1 scaffold:** This page describes a compact grid experience for end-to-end behavior checks.
+The Mini Grid Sandbox is a planned feature designed to provide a compact, spreadsheet-like interface for validating complex formula behaviors and inter-cell dependencies.
 
-## Intended v1 Capabilities
+## What is the Mini Grid?
 
-- Edit a small set of cells with literals and formulas.
-- Recompute dependent cells and show dependency-driven updates.
-- Surface cell-level errors with references back to formula inputs.
+While the [Formula Sandbox](/docs/playground/formula-sandbox) focuses on individual expressions, the Mini Grid will allow you to:
 
-## Planned Follow-ups
+- Edit a small grid of cells containing both literals and formulas.
+- Visualize dependency chains between cells.
+- Test "what-if" scenarios by updating input values and watching results propagate.
+- Debug cell-level errors with full reference tracking.
 
-- Seed templates for common scenarios (totals, lookups, date arithmetic).
-- Import/export lightweight grid states for reproducible tests.
+## Status: Coming Soon
 
-Related docs:
+This feature is currently under development. In the meantime, you can use the following tools to explore the engine:
+
+- **Function Reference**: Most pages in the [Function Reference](/docs/reference/functions) include a `FunctionSandbox` component where you can try out specific functions live.
+- **Formula Parser**: Use the [Parser & AST Inspector](/docs/playground/parser-ast-inspector) to see how your formulas are being tokenized and structured by the engine.
+
+Stay tuned for updates as we finalize the grid runtime and its integration with the documentation site.
+
+## See Also
 
 - [Formula Sandbox](/docs/playground/formula-sandbox)
 - [Function Reference](/docs/reference/functions)

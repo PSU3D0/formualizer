@@ -30,7 +30,8 @@ A2 formula: =A1 * TaxRate
 - [Custom Functions (Rust, Python, JS)](../guides/custom-functions-rust-python-js)
 - [WASM Plugins: Inspect, Attach, Bind](../guides/wasm-plugins-inspect-attach-bind)
 
-## TODO: Deep dive follow-ups
+## Scope rules
+Named ranges can be workbook-scoped (visible everywhere) or sheet-scoped (visible only within that sheet). When both exist with the same name, sheet-scoped names take precedence within their sheet. The engine resolves names during reference binding, before evaluation.
 
-- Document scope rules (workbook vs sheet) and precedence.
-- Add examples for structured table references.
+## Structured table references
+Structured table references (e.g., `Table1[Column]`, `Table1[@Column]`) are recognized by the parser. The `full-v0` SheetPort profile reserves native table selector support. Currently, layout-based selectors provide equivalent functionality for SheetPort manifests.

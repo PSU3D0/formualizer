@@ -1,0 +1,121 @@
+---
+title: SheetPort Quickstart
+description: End-to-end example of using SheetPort in Rust, Python, and JS/WASM.
+---
+
+This quickstart shows how to use SheetPort to turn a simple loan calculator spreadsheet into a typed function using Rust, Python, and JavaScript/WASM.
+
+## 1. The Manifest
+
+We'll start with a manifest (`manifest.fio.yaml`) that defines two scalar inputs (principal and interest rate) and one scalar output (monthly payment).
+
+```yaml
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: loan-calculator
+  name: Loan Calculator
+ports:
+  - id: principal
+    dir: in
+    shape: scalar
+    location: { a1: "Calculator!B1" }
+    schema: { type: number }
+  - id: rate
+    dir: in
+    shape: scalar
+    location: { a1: "Calculator!B2" }
+    schema: { type: number }
+  - id: monthly_payment
+    dir: out
+    shape: scalar
+    location: { a1: "Calculator!B4" }
+    schema: { type: number }
+```
+
+## 2. Implementation
+
+### Rust
+
+Using the `formualizer` crate:
+
+```rust
+use formualizer::Workbook;
+use formualizer::sheetport::{SheetPortSession, EvalOptions, InputUpdate};
+use formualizer::sheetport_spec::Manifest;
+use formualizer::common::LiteralValue;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let yaml = std::fs::read_to_string("manifest.fio.yaml")?;
+    let manifest = Manifest::from_yaml_str(&yaml)?;
+    manifest.validate()?;
+
+    let wb = Workbook::from_path("model.xlsx")?;
+    let mut session = SheetPortSession::new(wb, manifest)?;
+
+    // Write inputs
+    let mut update = InputUpdate::default();
+    update.set_scalar("principal", LiteralValue::Number(250000.0));
+    update.set_scalar("rate", LiteralValue::Number(0.065));
+    session.write_inputs(update)?;
+
+    // Evaluate and read outputs
+    let outputs = session.evaluate_once(EvalOptions::default())?;
+    println!("Monthly payment: {:?}", outputs.get("monthly_payment"));
+
+    Ok(())
+}
+```
+
+### Python
+
+Using the `formualizer` Python package:
+
+```python
+import formualizer as fz
+
+# Load workbook and manifest
+wb = fz.Workbook.load_path("model.xlsx")
+session = fz.SheetPortSession.from_manifest_path("manifest.fio.yaml", wb)
+
+# Write inputs (accepts a dict for convenience)
+session.write_inputs({
+    "principal": 250000.0,
+    "rate": 0.065
+})
+
+# Evaluate and get outputs
+outputs = session.evaluate_once()
+print("Monthly payment:", outputs["monthly_payment"])
+```
+
+### JavaScript / WASM
+
+Using the `formualizer` WASM bindings:
+
+```ts
+import init, { Workbook, SheetPortSession } from 'formualizer';
+
+async function run() {
+    await init();
+    
+    const wb = Workbook.fromBytes(new Uint8Array(modelBuffer));
+    const session = SheetPortSession.fromManifestYaml(manifestYaml, wb);
+
+    // Write inputs
+    session.writeInputs({
+        principal: 250000,
+        rate: 0.065
+    });
+
+    // Evaluate and read outputs
+    const outputs = session.evaluateOnce();
+    console.log('Monthly payment:', outputs.monthly_payment);
+}
+```
+
+## Related Links
+
+- [What Is SheetPort?](./what-is-sheetport)
+- [Manifest Format (FIO Spec)](./manifest-format)
+- [Sessions and Evaluation](./sessions-and-evaluation)
