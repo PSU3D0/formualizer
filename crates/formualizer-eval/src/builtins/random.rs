@@ -32,6 +32,20 @@ pub struct RandFn;
 /// expected: true
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - RANDBETWEEN
+///   - LET
+///   - INT
+/// faq:
+///   - q: "Can RAND return the same value on every recalculation?"
+///     a: "Not by default. RAND is volatile, so recalculation can produce a different sample each time."
+///   - q: "If RAND is used twice in one formula, do both uses share one sample?"
+///     a: "Only if you bind it once (for example with LET). Two separate RAND calls are two separate draws."
+///   - q: "Why does RAND look deterministic in some engine runs?"
+///     a: "Randomness is seeded per evaluation context, which keeps a run reproducible while still treating RAND as volatile across recalculations."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: RAND
 /// Type: RandFn
@@ -163,6 +177,20 @@ pub struct RandBetweenFn;
 /// title: "Upper bound below lower bound is invalid"
 /// formula: "=RANDBETWEEN(5, 1)"
 /// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RAND
+///   - INT
+///   - LET
+/// faq:
+///   - q: "Are both bounds included in RANDBETWEEN?"
+///     a: "Yes. RANDBETWEEN samples an integer in the closed interval [low, high]."
+///   - q: "What happens with decimal bounds like RANDBETWEEN(1.9, 4.2)?"
+///     a: "Bounds are truncated to integers before sampling, so this behaves like RANDBETWEEN(1, 4)."
+///   - q: "Is RANDBETWEEN deterministic?"
+///     a: "It is volatile, so results can change on recalculation, though a single evaluation context uses seeded randomness for reproducible execution."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]

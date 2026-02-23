@@ -76,6 +76,21 @@ pub struct LetFn;
 /// expected: 7
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - LAMBDA
+///   - IF
+///   - SUM
+///   - INDEX
+/// faq:
+///   - q: "Can a LET binding reference a name defined later in the same LET?"
+///     a: "No. LET evaluates name/value pairs left-to-right, so each binding can only use earlier bindings."
+///   - q: "Does LET overwrite workbook or worksheet names permanently?"
+///     a: "No. LET names are lexical and local to that formula evaluation; they only shadow outer names inside the LET expression."
+///   - q: "Is LET itself volatile?"
+///     a: "No. LET is deterministic unless one of its bound expressions calls a volatile function such as RAND."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: LET
 /// Type: LetFn
@@ -206,6 +221,20 @@ pub struct LambdaFn;
 /// title: "Duplicate parameter names are invalid"
 /// formula: "=LAMBDA(x,x,x+1)"
 /// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LET
+///   - IF
+///   - SUM
+/// faq:
+///   - q: "Why does =LAMBDA(x,x+1) return #CALC! instead of a number?"
+///     a: "LAMBDA returns a callable value. In a cell result position, it must be invoked, for example =LAMBDA(x,x+1)(1)."
+///   - q: "Does a LAMBDA read outer LET variables at call time or definition time?"
+///     a: "Definition time. The closure captures its lexical environment when created."
+///   - q: "Can I call a LAMBDA with fewer or extra arguments?"
+///     a: "No. Invocation arity must match the declared parameter count exactly, or #VALUE! is returned."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
