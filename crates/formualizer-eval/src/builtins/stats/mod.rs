@@ -131,10 +131,36 @@ fn percentile_exc(sorted: &[f64], p: f64) -> Result<f64, ExcelError> {
     Ok(sorted[lo_idx] + (sorted[hi_idx] - sorted[lo_idx]) * frac)
 }
 
-/// RANK.EQ(number, ref, [order]) Excel semantics:
-/// - order omitted or 0 => descending (largest value rank 1)
-/// - order non-zero => ascending (smallest value rank 1)
-/// - ties return same rank (position of first in ordering)
+/// Returns the rank position of a number within a data set, with ties sharing the same rank.
+///
+/// `RANK.EQ` defaults to descending order (largest value is rank 1), and can switch to ascending
+/// order when `order` is non-zero.
+///
+/// # Remarks
+/// - Omitting `order`, or setting `order` to `0`, ranks values in descending order.
+/// - Any non-zero `order` ranks values in ascending order.
+/// - Tied values receive the same rank (the first matching position in the sorted list).
+/// - Returns `#N/A` if `number` is not found in `ref`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Descending rank with direct values"
+/// formula: "=RANK.EQ(7,{10,7,4,2})"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Ascending rank with ties in a range"
+/// grid:
+///   A1: 50
+///   A2: 20
+///   A3: 20
+///   A4: 10
+///   A5: 5
+/// formula: "=RANK.EQ(A2,A1:A5,1)"
+/// expected: 3
+/// ```
 #[derive(Debug)]
 pub struct RankEqFn;
 /// [formualizer-docgen:schema:start]
@@ -215,7 +241,35 @@ impl Function for RankEqFn {
     }
 }
 
-/// RANK.AVG(number, ref, [order]) ties return average of ranks
+/// Returns the rank position of a number, averaging the rank positions for ties.
+///
+/// Use `RANK.AVG` when tied values should share the average of their occupied rank positions.
+///
+/// # Remarks
+/// - Omitting `order`, or setting `order` to `0`, ranks values in descending order.
+/// - Any non-zero `order` ranks values in ascending order.
+/// - If `number` appears multiple times, the function returns the mean of those rank positions.
+/// - Returns `#N/A` if `number` is not found in `ref`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Average rank for tied values"
+/// formula: "=RANK.AVG(20,{30,20,20,10})"
+/// expected: 2.5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Ascending average rank from a range"
+/// grid:
+///   A1: 50
+///   A2: 20
+///   A3: 20
+///   A4: 10
+///   A5: 5
+/// formula: "=RANK.AVG(A2,A1:A5,1)"
+/// expected: 3.5
+/// ```
 #[derive(Debug)]
 pub struct RankAvgFn;
 /// [formualizer-docgen:schema:start]
@@ -295,6 +349,34 @@ impl Function for RankAvgFn {
     }
 }
 
+/// Returns the k-th largest value in a data set.
+///
+/// `LARGE` is useful for top-N analysis, such as highest score, second-highest sale, or third-best
+/// result.
+///
+/// # Remarks
+/// - `k` must be at least `1`.
+/// - Returns `#NUM!` if `k` is greater than the count of numeric values.
+/// - Non-numeric values in referenced ranges are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Second-largest from direct values"
+/// formula: "=LARGE({4,9,1,7},2)"
+/// expected: 7
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Third-largest from a range"
+/// grid:
+///   A1: 3
+///   A2: 12
+///   A3: 8
+///   A4: 5
+/// formula: "=LARGE(A1:A4,3)"
+/// expected: 5
+/// ```
 #[derive(Debug)]
 pub struct LARGE;
 /// [formualizer-docgen:schema:start]
@@ -358,6 +440,33 @@ impl Function for LARGE {
     }
 }
 
+/// Returns the k-th smallest value in a data set.
+///
+/// `SMALL` is often used to find low outliers, minimum thresholds, or bottom-N values.
+///
+/// # Remarks
+/// - `k` must be at least `1`.
+/// - Returns `#NUM!` if `k` is greater than the count of numeric values.
+/// - Non-numeric values in referenced ranges are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Second-smallest from direct values"
+/// formula: "=SMALL({4,9,1,7},2)"
+/// expected: 4
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Third-smallest from a range"
+/// grid:
+///   A1: 3
+///   A2: 12
+///   A3: 8
+///   A4: 5
+/// formula: "=SMALL(A1:A4,3)"
+/// expected: 8
+/// ```
 #[derive(Debug)]
 pub struct SMALL;
 /// [formualizer-docgen:schema:start]
@@ -421,6 +530,33 @@ impl Function for SMALL {
     }
 }
 
+/// Returns the middle value of a numeric data set.
+///
+/// For an even number of values, `MEDIAN` returns the average of the two center values.
+///
+/// # Remarks
+/// - Ignores non-numeric values in referenced ranges.
+/// - Returns `#NUM!` when no numeric values are available.
+/// - Supports both scalar arguments and range inputs.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Median of an odd-sized set"
+/// formula: "=MEDIAN(1,3,8)"
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Median of an even-sized range"
+/// grid:
+///   A1: 1
+///   A2: 2
+///   A3: 10
+///   A4: 12
+/// formula: "=MEDIAN(A1:A4)"
+/// expected: 6
+/// ```
 #[derive(Debug)]
 pub struct MEDIAN;
 /// [formualizer-docgen:schema:start]
@@ -470,6 +606,32 @@ impl Function for MEDIAN {
     }
 }
 
+/// Estimates sample standard deviation using `n-1` in the denominator.
+///
+/// `STDEV.S` measures spread when your values represent a sample of a larger population.
+///
+/// # Remarks
+/// - Requires at least two numeric values.
+/// - Returns `#DIV/0!` when fewer than two numeric values are provided.
+/// - Non-numeric values in referenced ranges are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Sample standard deviation from scalar arguments"
+/// formula: "=STDEV.S(2,4,6)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sample standard deviation from a range"
+/// grid:
+///   A1: 5
+///   A2: 7
+///   A3: 9
+/// formula: "=STDEV.S(A1:A3)"
+/// expected: 2
+/// ```
 #[derive(Debug)]
 pub struct StdevSample; // sample
 /// [formualizer-docgen:schema:start]
@@ -523,6 +685,32 @@ impl Function for StdevSample {
     }
 }
 
+/// Returns population standard deviation using `n` in the denominator.
+///
+/// Use `STDEV.P` when your values represent the entire population, not a sample.
+///
+/// # Remarks
+/// - Requires at least one numeric value.
+/// - Returns `#DIV/0!` when no numeric values are provided.
+/// - Non-numeric values in referenced ranges are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Population standard deviation from scalar arguments"
+/// formula: "=STDEV.P(2,4,6)"
+/// expected: 1.632993161855452
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Population standard deviation from a range"
+/// grid:
+///   A1: 1
+///   A2: 2
+///   A3: 3
+/// formula: "=STDEV.P(A1:A3)"
+/// expected: 0.816496580927726
+/// ```
 #[derive(Debug)]
 pub struct StdevPop; // population
 /// [formualizer-docgen:schema:start]
@@ -576,6 +764,32 @@ impl Function for StdevPop {
     }
 }
 
+/// Estimates sample variance using `n-1` in the denominator.
+///
+/// `VAR.S` is the squared counterpart of `STDEV.S` for sample-based variability.
+///
+/// # Remarks
+/// - Requires at least two numeric values.
+/// - Returns `#DIV/0!` when fewer than two numeric values are provided.
+/// - Non-numeric values in referenced ranges are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Sample variance from scalar arguments"
+/// formula: "=VAR.S(2,4,6)"
+/// expected: 4
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sample variance from a range"
+/// grid:
+///   A1: 1
+///   A2: 2
+///   A3: 3
+/// formula: "=VAR.S(A1:A3)"
+/// expected: 1
+/// ```
 #[derive(Debug)]
 pub struct VarSample; // sample variance
 /// [formualizer-docgen:schema:start]
@@ -629,6 +843,32 @@ impl Function for VarSample {
     }
 }
 
+/// Returns population variance using `n` in the denominator.
+///
+/// `VAR.P` describes dispersion for a complete population of numeric values.
+///
+/// # Remarks
+/// - Requires at least one numeric value.
+/// - Returns `#DIV/0!` when no numeric values are provided.
+/// - Non-numeric values in referenced ranges are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Population variance from scalar arguments"
+/// formula: "=VAR.P(2,4,6)"
+/// expected: 2.6666666666666665
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Population variance from a range"
+/// grid:
+///   A1: 1
+///   A2: 2
+///   A3: 3
+/// formula: "=VAR.P(A1:A3)"
+/// expected: 0.6666666666666666
+/// ```
 #[derive(Debug)]
 pub struct VarPop; // population variance
 /// [formualizer-docgen:schema:start]
@@ -683,6 +923,34 @@ impl Function for VarPop {
 }
 
 // MODE.SNGL (alias MODE) and MODE.MULT
+/// Returns the most frequently occurring value in a data set.
+///
+/// `MODE.SNGL` returns a single mode value and reports `#N/A` if no value repeats.
+///
+/// # Remarks
+/// - Returns the first mode encountered after sorting when frequencies tie.
+/// - Returns `#N/A` when every numeric value appears only once.
+/// - Alias `MODE` is supported.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Single mode from scalar arguments"
+/// formula: "=MODE.SNGL(1,2,2,3)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Single mode from a range"
+/// grid:
+///   A1: 4
+///   A2: 4
+///   A3: 6
+///   A4: 6
+///   A5: 6
+/// formula: "=MODE.SNGL(A1:A5)"
+/// expected: 6
+/// ```
 #[derive(Debug)]
 pub struct ModeSingleFn;
 /// [formualizer-docgen:schema:start]
@@ -756,6 +1024,36 @@ impl Function for ModeSingleFn {
     }
 }
 
+/// Returns all modal values as a vertical array.
+///
+/// Use `MODE.MULT` when a data set can have multiple values with the same highest frequency.
+///
+/// # Remarks
+/// - Returns each tied mode as a separate row in the result array.
+/// - Returns `#N/A` when every numeric value appears only once.
+/// - Non-numeric values in referenced ranges are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Multiple modes from direct values"
+/// formula: "=MODE.MULT({1,2,2,3,3,4})"
+/// expected:
+///   - [2]
+///   - [3]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Single repeated mode still returns an array"
+/// grid:
+///   A1: 5
+///   A2: 5
+///   A3: 2
+///   A4: 1
+/// formula: "=MODE.MULT(A1:A4)"
+/// expected:
+///   - [5]
+/// ```
 #[derive(Debug)]
 pub struct ModeMultiFn;
 /// [formualizer-docgen:schema:start]
@@ -822,6 +1120,34 @@ impl Function for ModeMultiFn {
     }
 }
 
+/// Returns the k-th percentile of a data set using inclusive interpolation.
+///
+/// `PERCENTILE.INC` accepts percentile values from `0` through `1` and interpolates between
+/// sorted values as needed.
+///
+/// # Remarks
+/// - `k` must be in the inclusive range `[0, 1]`.
+/// - Returns `#NUM!` for empty numeric input or invalid percentile arguments.
+/// - Alias `PERCENTILE` is supported.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Inclusive 25th percentile from direct values"
+/// formula: "=PERCENTILE.INC({1,2,3,4,5},0.25)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Inclusive median-style interpolation from a range"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   A3: 30
+///   A4: 40
+/// formula: "=PERCENTILE.INC(A1:A4,0.5)"
+/// expected: 25
+/// ```
 #[derive(Debug)]
 pub struct PercentileInc; // inclusive
 /// [formualizer-docgen:schema:start]
@@ -884,6 +1210,34 @@ impl Function for PercentileInc {
     }
 }
 
+/// Returns the k-th percentile of a data set using exclusive interpolation.
+///
+/// `PERCENTILE.EXC` uses the `n+1` rank basis and excludes the exact endpoints `0` and `1`.
+///
+/// # Remarks
+/// - `k` must satisfy `0 < k < 1`.
+/// - Returns `#NUM!` when the percentile falls outside the valid rank range for the data size.
+/// - Returns `#NUM!` for empty numeric input.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Exclusive 25th percentile from direct values"
+/// formula: "=PERCENTILE.EXC({1,2,3,4,5},0.25)"
+/// expected: 1.5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Exclusive percentile from a range"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   A3: 30
+///   A4: 40
+///   A5: 50
+/// formula: "=PERCENTILE.EXC(A1:A5,0.6)"
+/// expected: 36
+/// ```
 #[derive(Debug)]
 pub struct PercentileExc; // exclusive
 /// [formualizer-docgen:schema:start]
@@ -943,6 +1297,34 @@ impl Function for PercentileExc {
     }
 }
 
+/// Returns an inclusive quartile value for a data set.
+///
+/// `QUARTILE.INC` maps quartile index `0..4` onto minimum, quartiles, median, and maximum.
+///
+/// # Remarks
+/// - Valid quartile index values are `0`, `1`, `2`, `3`, and `4`.
+/// - Uses inclusive percentile logic for quartiles `1` through `3`.
+/// - Returns `#NUM!` for invalid quartile index values or empty numeric input.
+/// - Alias `QUARTILE` is supported.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "First quartile from direct values"
+/// formula: "=QUARTILE.INC({1,2,3,4,5},1)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Third quartile from a range"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   A3: 30
+///   A4: 40
+/// formula: "=QUARTILE.INC(A1:A4,3)"
+/// expected: 32.5
+/// ```
 #[derive(Debug)]
 pub struct QuartileInc; // quartile inclusive
 /// [formualizer-docgen:schema:start]
@@ -1031,6 +1413,38 @@ impl Function for QuartileInc {
     }
 }
 
+/// Returns an exclusive quartile value for a data set.
+///
+/// `QUARTILE.EXC` applies exclusive percentile interpolation and supports quartiles `1` through
+/// `3`.
+///
+/// # Remarks
+/// - Valid quartile index values are `1`, `2`, and `3`.
+/// - Returns `#NUM!` for invalid quartile index values.
+/// - Returns `#NUM!` when the input is too small for exclusive quartile interpolation.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "First exclusive quartile from direct values"
+/// formula: "=QUARTILE.EXC({1,2,3,4,5,6,7,8},1)"
+/// expected: 2.25
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Third exclusive quartile from a range"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   A3: 30
+///   A4: 40
+///   A5: 50
+///   A6: 60
+///   A7: 70
+///   A8: 80
+/// formula: "=QUARTILE.EXC(A1:A8,3)"
+/// expected: 67.5
+/// ```
 #[derive(Debug)]
 pub struct QuartileExc; // quartile exclusive
 /// [formualizer-docgen:schema:start]
@@ -1106,7 +1520,32 @@ impl Function for QuartileExc {
     }
 }
 
-/// PRODUCT(number1, [number2], ...) - Multiplies all arguments
+/// Multiplies all numeric arguments and returns their product.
+///
+/// `PRODUCT` is useful for chained growth factors, scaling ratios, and compound multipliers.
+///
+/// # Remarks
+/// - Non-numeric values in referenced ranges are ignored.
+/// - Returns `0` when no numeric values are found.
+/// - Direct scalar arguments still attempt numeric coercion.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Product of scalar values"
+/// formula: "=PRODUCT(2,3,4)"
+/// expected: 24
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Product from a range"
+/// grid:
+///   A1: 1
+///   A2: 5
+///   A3: 10
+/// formula: "=PRODUCT(A1:A3)"
+/// expected: 50
+/// ```
 #[derive(Debug)]
 pub struct ProductFn;
 /// [formualizer-docgen:schema:start]
@@ -1149,7 +1588,32 @@ impl Function for ProductFn {
     }
 }
 
-/// GEOMEAN(number1, [number2], ...) - Returns the geometric mean
+/// Returns the geometric mean of positive numeric values.
+///
+/// `GEOMEAN` is commonly used for rates of change and multiplicative growth comparisons.
+///
+/// # Remarks
+/// - All numeric inputs must be strictly greater than `0`.
+/// - Returns `#NUM!` if any value is `<= 0`, or if no numeric values are provided.
+/// - Non-numeric values in referenced ranges are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Geometric mean from scalar values"
+/// formula: "=GEOMEAN(4,16)"
+/// expected: 8
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Geometric mean from a range"
+/// grid:
+///   A1: 1
+///   A2: 3
+///   A3: 9
+/// formula: "=GEOMEAN(A1:A3)"
+/// expected: 3
+/// ```
 #[derive(Debug)]
 pub struct GeomeanFn;
 /// [formualizer-docgen:schema:start]
@@ -1203,7 +1667,32 @@ impl Function for GeomeanFn {
     }
 }
 
-/// HARMEAN(number1, [number2], ...) - Returns the harmonic mean
+/// Returns the harmonic mean of positive numeric values.
+///
+/// `HARMEAN` emphasizes smaller values and is useful for averaging rates and ratios.
+///
+/// # Remarks
+/// - All numeric inputs must be strictly greater than `0`.
+/// - Returns `#NUM!` if any value is `<= 0`, or if no numeric values are provided.
+/// - Non-numeric values in referenced ranges are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Harmonic mean from scalar values"
+/// formula: "=HARMEAN(1,2,4)"
+/// expected: 1.7142857142857142
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Harmonic mean from a range"
+/// grid:
+///   A1: 2
+///   A2: 3
+///   A3: 6
+/// formula: "=HARMEAN(A1:A3)"
+/// expected: 3
+/// ```
 #[derive(Debug)]
 pub struct HarmeanFn;
 /// [formualizer-docgen:schema:start]
@@ -1256,7 +1745,34 @@ impl Function for HarmeanFn {
     }
 }
 
-/// AVEDEV(number1, [number2], ...) - Returns the average of absolute deviations from mean
+/// Returns the average of absolute deviations from the mean.
+///
+/// `AVEDEV` provides a robust spread measure that is less sensitive to outliers than squared-error
+/// metrics.
+///
+/// # Remarks
+/// - Returns `#NUM!` when no numeric values are available.
+/// - Non-numeric values in referenced ranges are ignored.
+/// - Uses the arithmetic mean as the center point.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Average absolute deviation from scalar values"
+/// formula: "=AVEDEV(2,4,6)"
+/// expected: 1.3333333333333333
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Average absolute deviation from a range"
+/// grid:
+///   A1: 1
+///   A2: 1
+///   A3: 3
+///   A4: 5
+/// formula: "=AVEDEV(A1:A4)"
+/// expected: 1.5
+/// ```
 #[derive(Debug)]
 pub struct AvedevFn;
 /// [formualizer-docgen:schema:start]
@@ -1302,7 +1818,33 @@ impl Function for AvedevFn {
     }
 }
 
-/// DEVSQ(number1, [number2], ...) - Returns the sum of squared deviations from mean
+/// Returns the sum of squared deviations from the mean.
+///
+/// `DEVSQ` is useful for variance-related calculations and diagnostics of spread.
+///
+/// # Remarks
+/// - Returns `#NUM!` when no numeric values are available.
+/// - Non-numeric values in referenced ranges are ignored.
+/// - Uses the arithmetic mean of included values.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Sum of squared deviations from scalar values"
+/// formula: "=DEVSQ(2,4,6)"
+/// expected: 8
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sum of squared deviations from a range"
+/// grid:
+///   A1: 1
+///   A2: 2
+///   A3: 3
+///   A4: 4
+/// formula: "=DEVSQ(A1:A4)"
+/// expected: 5
+/// ```
 #[derive(Debug)]
 pub struct DevsqFn;
 
@@ -1310,8 +1852,50 @@ pub struct DevsqFn;
 
 use super::utils::{ARG_ANY_ONE, criteria_match};
 
-/// MAXIFS(max_range, criteria_range1, criteria1, [criteria_range2, criteria2], ...)
-/// Returns the maximum value among cells specified by given conditions.
+/// Returns the maximum numeric value in a range that meets all criteria.
+///
+/// `MAXIFS` applies one or more `(criteria_range, criteria)` pairs and returns the largest
+/// matching numeric value.
+///
+/// # Remarks
+/// - Arguments must be `target_range` plus one or more criteria pairs.
+/// - Criteria are combined with logical AND.
+/// - Returns `0` when no cells satisfy all criteria.
+/// - Non-numeric cells in `target_range` are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Maximum value for one condition"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   A3: 15
+///   B1: "East"
+///   B2: "West"
+///   B3: "East"
+/// formula: "=MAXIFS(A1:A3,B1:B3,\"East\")"
+/// expected: 15
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Maximum value with two criteria"
+/// grid:
+///   A1: 100
+///   A2: 80
+///   A3: 90
+///   A4: 70
+///   B1: "A"
+///   B2: "A"
+///   B3: "B"
+///   B4: "B"
+///   C1: "Q1"
+///   C2: "Q2"
+///   C3: "Q1"
+///   C4: "Q1"
+/// formula: "=MAXIFS(A1:A4,B1:B4,\"B\",C1:C4,\"Q1\")"
+/// expected: 90
+/// ```
 #[derive(Debug)]
 pub struct MaxIfsFn;
 /// [formualizer-docgen:schema:start]
@@ -1347,8 +1931,50 @@ impl Function for MaxIfsFn {
     }
 }
 
-/// MINIFS(min_range, criteria_range1, criteria1, [criteria_range2, criteria2], ...)
-/// Returns the minimum value among cells specified by given conditions.
+/// Returns the minimum numeric value in a range that meets all criteria.
+///
+/// `MINIFS` evaluates one or more `(criteria_range, criteria)` pairs and returns the smallest
+/// matching numeric value.
+///
+/// # Remarks
+/// - Arguments must be `target_range` plus one or more criteria pairs.
+/// - Criteria are combined with logical AND.
+/// - Returns `0` when no cells satisfy all criteria.
+/// - Non-numeric cells in `target_range` are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Minimum value for one condition"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   A3: 15
+///   B1: "East"
+///   B2: "West"
+///   B3: "East"
+/// formula: "=MINIFS(A1:A3,B1:B3,\"East\")"
+/// expected: 10
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Minimum value with two criteria"
+/// grid:
+///   A1: 100
+///   A2: 80
+///   A3: 90
+///   A4: 70
+///   B1: "A"
+///   B2: "A"
+///   B3: "B"
+///   B4: "B"
+///   C1: "Q1"
+///   C2: "Q2"
+///   C3: "Q1"
+///   C4: "Q1"
+/// formula: "=MINIFS(A1:A4,B1:B4,\"B\",C1:C4,\"Q1\")"
+/// expected: 70
+/// ```
 #[derive(Debug)]
 pub struct MinIfsFn;
 /// [formualizer-docgen:schema:start]
@@ -1510,8 +2136,36 @@ fn eval_maxminifs<'a, 'b>(
 
 /* ─────────────────────────── TRIMMEAN ──────────────────────────── */
 
-/// TRIMMEAN(array, percent) - Returns the mean of the interior of a data set
-/// Excludes a percentage of data points from both ends
+/// Returns the mean after trimming a percentage of values from both tails.
+///
+/// `TRIMMEAN` sorts numeric data, removes an equal count from low and high ends, then averages the
+/// remaining interior values.
+///
+/// # Remarks
+/// - `percent` must satisfy `0 <= percent < 1`.
+/// - The trimmed count per side is `floor(n * percent / 2)`.
+/// - Returns `#NUM!` for invalid percent values or when no numeric values are available.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Trimmed mean from direct values"
+/// formula: "=TRIMMEAN({1,2,3,4,5,6},0.3333333333333333)"
+/// expected: 3.5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Trimmed mean from a range"
+/// grid:
+///   A1: 10
+///   A2: 12
+///   A3: 13
+///   A4: 20
+///   A5: 21
+///   A6: 30
+/// formula: "=TRIMMEAN(A1:A6,0.4)"
+/// expected: 16.5
+/// ```
 #[derive(Debug)]
 pub struct TrimmeanFn;
 /// [formualizer-docgen:schema:start]
@@ -1600,7 +2254,36 @@ fn collect_paired_arrays(args: &[ArgumentHandle]) -> Result<(Vec<f64>, Vec<f64>)
     Ok((y_nums, x_nums))
 }
 
-/// CORREL(array1, array2) - Returns the correlation coefficient between two data sets
+/// Returns the Pearson correlation coefficient between two numeric arrays.
+///
+/// `CORREL` measures linear relationship strength from `-1` (perfect inverse) to `1` (perfect
+/// direct).
+///
+/// # Remarks
+/// - Both arrays must produce the same number of numeric values.
+/// - Returns `#N/A` when array lengths differ.
+/// - Returns `#DIV/0!` when either series has zero variance.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Perfect positive linear correlation"
+/// formula: "=CORREL({2,4,6},{1,2,3})"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Perfect negative linear correlation"
+/// grid:
+///   A1: 10
+///   A2: 8
+///   A3: 6
+///   B1: 1
+///   B2: 2
+///   B3: 3
+/// formula: "=CORREL(A1:A3,B1:B3)"
+/// expected: -1
+/// ```
 #[derive(Debug)]
 pub struct CorrelFn;
 /// [formualizer-docgen:schema:start]
@@ -1666,7 +2349,35 @@ impl Function for CorrelFn {
 
 /* ─────────────────────────── SLOPE ──────────────────────────── */
 
-/// SLOPE(known_y's, known_x's) - Returns the slope of the linear regression line
+/// Returns the slope of the linear regression line for paired data.
+///
+/// `SLOPE` fits `y = m*x + b` and returns `m`, the rate of change in `y` per unit of `x`.
+///
+/// # Remarks
+/// - `known_y` and `known_x` must have the same numeric length.
+/// - Returns `#N/A` for mismatched lengths.
+/// - Returns `#DIV/0!` if all `x` values are identical.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Positive slope from direct arrays"
+/// formula: "=SLOPE({2,4,6},{1,2,3})"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative slope from ranges"
+/// grid:
+///   A1: 10
+///   A2: 8
+///   A3: 6
+///   B1: 1
+///   B2: 2
+///   B3: 3
+/// formula: "=SLOPE(A1:A3,B1:B3)"
+/// expected: -2
+/// ```
 #[derive(Debug)]
 pub struct SlopeFn;
 /// [formualizer-docgen:schema:start]
@@ -1729,7 +2440,35 @@ impl Function for SlopeFn {
 
 /* ─────────────────────────── INTERCEPT ──────────────────────────── */
 
-/// INTERCEPT(known_y's, known_x's) - Returns the y-intercept of the linear regression line
+/// Returns the y-intercept of the linear regression line for paired data.
+///
+/// `INTERCEPT` fits `y = m*x + b` and returns `b`, the predicted `y` when `x = 0`.
+///
+/// # Remarks
+/// - `known_y` and `known_x` must have the same numeric length.
+/// - Returns `#N/A` for mismatched lengths.
+/// - Returns `#DIV/0!` if all `x` values are identical.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Positive intercept from direct arrays"
+/// formula: "=INTERCEPT({3,5,7},{1,2,3})"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Intercept from range-based linear trend"
+/// grid:
+///   A1: 10
+///   A2: 8
+///   A3: 6
+///   B1: 1
+///   B2: 2
+///   B3: 3
+/// formula: "=INTERCEPT(A1:A3,B1:B3)"
+/// expected: 12
+/// ```
 #[derive(Debug)]
 pub struct InterceptFn;
 /// [formualizer-docgen:schema:start]
