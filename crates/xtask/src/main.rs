@@ -863,12 +863,107 @@ fn collect_function_ref_entries(
     Ok(deduped)
 }
 
+fn known_related_pairs(name: &str) -> &'static [&'static str] {
+    match name {
+        "SUM" => &["SUMIF", "SUMIFS", "SUMPRODUCT", "AVERAGE"],
+        "COUNT" => &["COUNTA", "COUNTIF", "COUNTIFS", "COUNTBLANK"],
+        "AVERAGE" => &["AVERAGEIF", "AVERAGEIFS", "SUM", "MEDIAN"],
+        "MAX" => &["MAXIFS", "MIN"],
+        "MIN" => &["MINIFS", "MAX"],
+        "IF" => &["IFS", "IFERROR", "IFNA"],
+        "AND" => &["OR", "NOT", "XOR"],
+        "OR" => &["AND", "NOT", "XOR"],
+        "XLOOKUP" => &["XMATCH", "VLOOKUP", "HLOOKUP", "MATCH"],
+        "XMATCH" => &["XLOOKUP", "MATCH", "VLOOKUP"],
+        "VLOOKUP" => &["HLOOKUP", "XLOOKUP", "MATCH"],
+        "HLOOKUP" => &["VLOOKUP", "XLOOKUP", "MATCH"],
+        "NORM.DIST" => &["NORM.INV", "NORM.S.DIST", "NORM.S.INV"],
+        "NORM.S.DIST" => &["NORM.S.INV", "NORM.DIST", "NORM.INV"],
+        "NORM.INV" => &["NORM.DIST", "NORM.S.INV", "NORM.S.DIST"],
+        "CHISQ.DIST" => &["CHISQ.INV", "CHISQ.TEST"],
+        "F.DIST" => &["F.INV", "F.TEST"],
+        "T.DIST" => &["T.INV", "T.TEST", "T.DIST.2T", "T.INV.2T"],
+        "LOGNORM.DIST" => &["LOGNORM.INV", "NORM.DIST"],
+        "DATE" => &["YEAR", "MONTH", "DAY", "DATEVALUE"],
+        "TODAY" => &["NOW", "DATE"],
+        "NOW" => &["TODAY", "DATE"],
+        "RAND" => &["RANDBETWEEN"],
+        "RANDBETWEEN" => &["RAND"],
+        "LET" => &["LAMBDA"],
+        "LAMBDA" => &["LET"],
+        "INDIRECT" => &["OFFSET", "ADDRESS"],
+        "OFFSET" => &["INDIRECT", "ADDRESS"],
+        _ => &[],
+    }
+}
+
+fn function_family(name: &str) -> String {
+    name.split('.').next().unwrap_or(name).to_string()
+}
+
+fn function_kinds(entry: &FunctionRefEntry) -> BTreeSet<String> {
+    let mut kinds = BTreeSet::new();
+    for arg in &entry.args {
+        for kind in &arg.kinds {
+            kinds.insert(kind.to_ascii_lowercase());
+        }
+    }
+    kinds
+}
+
+fn related_similarity_score(a: &FunctionRefEntry, b: &FunctionRefEntry) -> i32 {
+    let mut score = 0i32;
+
+    if a.category_slug == b.category_slug {
+        score += 60;
+    }
+
+    let shared_caps = a
+        .caps
+        .iter()
+        .filter(|cap| b.caps.iter().any(|other| other == *cap))
+        .count() as i32;
+    score += (shared_caps * 6).min(24);
+
+    let a_kinds = function_kinds(a);
+    let b_kinds = function_kinds(b);
+    let shared_kinds = a_kinds.intersection(&b_kinds).count() as i32;
+    score += (shared_kinds * 4).min(16);
+
+    if a.variadic == b.variadic {
+        score += 4;
+    }
+    if a.min_args == b.min_args {
+        score += 4;
+    }
+    if a.max_args == b.max_args {
+        score += 3;
+    }
+
+    let a_family = function_family(&a.function_name.to_uppercase());
+    let b_family = function_family(&b.function_name.to_uppercase());
+    if a_family == b_family {
+        score += 18;
+
+        let a_upper = a.function_name.to_uppercase();
+        let b_upper = b.function_name.to_uppercase();
+        let inv_dist_pair = (a_upper.contains("INV") && b_upper.contains("DIST"))
+            || (a_upper.contains("DIST") && b_upper.contains("INV"));
+        if inv_dist_pair {
+            score += 8;
+        }
+    }
+
+    score
+}
+
 fn populate_related_functions(entries: &mut [FunctionRefEntry]) {
     let mut by_name: BTreeMap<String, RelatedFunctionRef> = BTreeMap::new();
 
     for entry in entries.iter() {
+        let key = entry.function_name.to_uppercase();
         by_name.insert(
-            entry.function_name.to_uppercase(),
+            key.clone(),
             RelatedFunctionRef {
                 name: entry.function_name.clone(),
                 category_slug: entry.category_slug.clone(),
@@ -877,24 +972,21 @@ fn populate_related_functions(entries: &mut [FunctionRefEntry]) {
         );
     }
 
-    let all = entries
+    let links_by_idx = entries
         .iter()
-        .map(|entry| {
-            (
-                entry.function_name.to_uppercase(),
-                entry.category_slug.clone(),
-                entry.function_name.clone(),
-                entry.function_slug.clone(),
-            )
+        .map(|entry| RelatedFunctionRef {
+            name: entry.function_name.clone(),
+            category_slug: entry.category_slug.clone(),
+            function_slug: entry.function_slug.clone(),
         })
         .collect::<Vec<_>>();
 
-    for entry in entries.iter_mut() {
-        let self_key = entry.function_name.to_uppercase();
+    for idx in 0..entries.len() {
+        let self_key = entries[idx].function_name.to_uppercase();
         let mut seen: BTreeSet<String> = BTreeSet::new();
         let mut related = Vec::new();
 
-        for hint in &entry.related_hints {
+        for hint in &entries[idx].related_hints {
             let key = hint.trim().to_uppercase();
             if key.is_empty() || key == self_key {
                 continue;
@@ -906,25 +998,85 @@ fn populate_related_functions(entries: &mut [FunctionRefEntry]) {
             }
         }
 
+        for known in known_related_pairs(&self_key) {
+            if related.len() >= 6 {
+                break;
+            }
+            let key = known.to_uppercase();
+            if key == self_key {
+                continue;
+            }
+            if let Some(link) = by_name.get(&key)
+                && seen.insert(link.name.clone())
+            {
+                related.push(link.clone());
+            }
+        }
+
         if related.len() < 6 {
-            for (key, category_slug, function_name, function_slug) in &all {
-                if key == &self_key || category_slug != &entry.category_slug {
+            let current = &entries[idx];
+            let mut scored = Vec::new();
+
+            for (cand_idx, candidate) in entries.iter().enumerate() {
+                if cand_idx == idx {
                     continue;
                 }
-                if seen.insert(function_name.clone()) {
-                    related.push(RelatedFunctionRef {
-                        name: function_name.clone(),
-                        category_slug: category_slug.clone(),
-                        function_slug: function_slug.clone(),
-                    });
+                if seen.contains(&candidate.function_name) {
+                    continue;
                 }
+
+                let score = related_similarity_score(current, candidate);
+                if score <= 0 {
+                    continue;
+                }
+
+                scored.push((
+                    score,
+                    current.category_slug == candidate.category_slug,
+                    candidate.function_name.clone(),
+                    cand_idx,
+                ));
+            }
+
+            scored.sort_by(|a, b| {
+                b.0.cmp(&a.0)
+                    .then_with(|| b.1.cmp(&a.1))
+                    .then_with(|| a.2.cmp(&b.2))
+            });
+
+            for (_score, _same_category, name, cand_idx) in scored {
                 if related.len() >= 6 {
                     break;
+                }
+                if seen.insert(name) {
+                    related.push(links_by_idx[cand_idx].clone());
                 }
             }
         }
 
-        entry.related_functions = related;
+        if related.len() < 6 {
+            let self_category = entries[idx].category_slug.clone();
+            for candidate in entries.iter() {
+                if related.len() >= 6 {
+                    break;
+                }
+                if candidate.function_name.to_uppercase() == self_key {
+                    continue;
+                }
+                if candidate.category_slug != self_category {
+                    continue;
+                }
+                if seen.insert(candidate.function_name.clone()) {
+                    related.push(RelatedFunctionRef {
+                        name: candidate.function_name.clone(),
+                        category_slug: candidate.category_slug.clone(),
+                        function_slug: candidate.function_slug.clone(),
+                    });
+                }
+            }
+        }
+
+        entries[idx].related_functions = related;
     }
 }
 
