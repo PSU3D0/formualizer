@@ -170,6 +170,19 @@ struct SandboxExample {
 }
 
 #[derive(Debug, Clone)]
+struct FaqEntry {
+    question: String,
+    answer: String,
+}
+
+#[derive(Debug, Clone)]
+struct RelatedFunctionRef {
+    name: String,
+    category_slug: String,
+    function_slug: String,
+}
+
+#[derive(Debug, Clone)]
 struct FunctionRefEntry {
     function_name: String,
     function_slug: String,
@@ -189,6 +202,9 @@ struct FunctionRefEntry {
     overview: String,
     remarks: String,
     sandboxes: Vec<SandboxExample>,
+    related_hints: Vec<String>,
+    faq_entries: Vec<FaqEntry>,
+    related_functions: Vec<RelatedFunctionRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -770,8 +786,7 @@ fn collect_function_ref_entries(
         let function_slug = sanitize_function_slug(slugify_for_docs(&function_name));
         let runtime = runtime_meta.get(&function_name.to_uppercase());
 
-        let (short_summary, overview, remarks, sandboxes) =
-            parse_docstring_for_ref(&combined_doc, &function_name);
+        let parsed_doc = parse_docstring_for_ref(&combined_doc, &function_name);
 
         entries.push(FunctionRefEntry {
             function_name,
@@ -794,10 +809,13 @@ fn collect_function_ref_entries(
             caps: runtime
                 .map(|meta| meta.caps.clone())
                 .unwrap_or_else(|| impl_info.caps.clone()),
-            short_summary,
-            overview,
-            remarks,
-            sandboxes,
+            short_summary: parsed_doc.short_summary,
+            overview: parsed_doc.overview,
+            remarks: parsed_doc.remarks,
+            sandboxes: parsed_doc.sandboxes,
+            related_hints: parsed_doc.related_hints,
+            faq_entries: parsed_doc.faq_entries,
+            related_functions: Vec::new(),
         });
     }
 
@@ -838,7 +856,74 @@ fn collect_function_ref_entries(
         entry.function_slug = candidate;
     }
 
+    populate_related_functions(&mut deduped);
+
     Ok(deduped)
+}
+
+fn populate_related_functions(entries: &mut [FunctionRefEntry]) {
+    let mut by_name: BTreeMap<String, RelatedFunctionRef> = BTreeMap::new();
+
+    for entry in entries.iter() {
+        by_name.insert(
+            entry.function_name.to_uppercase(),
+            RelatedFunctionRef {
+                name: entry.function_name.clone(),
+                category_slug: entry.category_slug.clone(),
+                function_slug: entry.function_slug.clone(),
+            },
+        );
+    }
+
+    let all = entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.function_name.to_uppercase(),
+                entry.category_slug.clone(),
+                entry.function_name.clone(),
+                entry.function_slug.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    for entry in entries.iter_mut() {
+        let self_key = entry.function_name.to_uppercase();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut related = Vec::new();
+
+        for hint in &entry.related_hints {
+            let key = hint.trim().to_uppercase();
+            if key.is_empty() || key == self_key {
+                continue;
+            }
+            if let Some(link) = by_name.get(&key)
+                && seen.insert(link.name.clone())
+            {
+                related.push(link.clone());
+            }
+        }
+
+        if related.len() < 6 {
+            for (key, category_slug, function_name, function_slug) in &all {
+                if key == &self_key || category_slug != &entry.category_slug {
+                    continue;
+                }
+                if seen.insert(function_name.clone()) {
+                    related.push(RelatedFunctionRef {
+                        name: function_name.clone(),
+                        category_slug: category_slug.clone(),
+                        function_slug: function_slug.clone(),
+                    });
+                }
+                if related.len() >= 6 {
+                    break;
+                }
+            }
+        }
+
+        entry.related_functions = related;
+    }
 }
 
 fn sanitize_function_slug(slug: String) -> String {
@@ -859,15 +944,41 @@ struct SandboxYamlSpec {
     grid: std::collections::BTreeMap<String, serde_yaml::Value>,
 }
 
-fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> (String, String, String, Vec<SandboxExample>) {
+#[derive(Debug, Deserialize)]
+struct FaqYamlSpec {
+    q: String,
+    a: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct DocsYamlSpec {
+    #[serde(default)]
+    related: Vec<String>,
+    #[serde(default)]
+    faq: Vec<FaqYamlSpec>,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedDocContent {
+    short_summary: String,
+    overview: String,
+    remarks: String,
+    sandboxes: Vec<SandboxExample>,
+    related_hints: Vec<String>,
+    faq_entries: Vec<FaqEntry>,
+}
+
+fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> ParsedDocContent {
     let re_schema = Regex::new(r"(?s)\[formualizer-docgen:schema:start\].*?\[formualizer-docgen:schema:end\]").unwrap();
     let clean_doc = re_schema.replace_all(doc_text, "").to_string();
 
     let mut sandboxes = Vec::new();
+    let mut related_hints: Vec<String> = Vec::new();
+    let mut faq_entries: Vec<FaqEntry> = Vec::new();
     let fenced_blocks = parse_fenced_blocks(&clean_doc);
 
     for block in fenced_blocks {
-        if block.raw_fence.contains("sandbox") {
+        if block.raw_fence.contains("yaml,sandbox") {
             if let Ok(spec) = serde_yaml::from_str::<SandboxYamlSpec>(&block.content) {
                 let expected = spec.expected.map(|v| match v {
                     serde_yaml::Value::String(s) => s,
@@ -895,11 +1006,35 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> (String, String, St
                 });
             }
         }
+
+        if block.raw_fence.contains("yaml,docs")
+            && let Ok(spec) = serde_yaml::from_str::<DocsYamlSpec>(&block.content)
+        {
+            for related in spec.related {
+                let normalized = related.trim().to_uppercase();
+                if !normalized.is_empty() {
+                    related_hints.push(normalized);
+                }
+            }
+
+            for faq in spec.faq {
+                let q = faq.q.trim().to_string();
+                let a = faq.a.trim().to_string();
+                if !q.is_empty() && !a.is_empty() {
+                    faq_entries.push(FaqEntry {
+                        question: q,
+                        answer: a,
+                    });
+                }
+            }
+        }
     }
 
-    // Remove yaml,sandbox blocks from text to avoid duplication in remarks
+    // Remove machine-readable fenced blocks from prose extraction.
     let re_sandbox = Regex::new(r"(?s)```yaml,sandbox.*?```").unwrap();
-    let text_no_sandboxes = re_sandbox.replace_all(&clean_doc, "").to_string();
+    let without_sandbox = re_sandbox.replace_all(&clean_doc, "").to_string();
+    let re_docs = Regex::new(r"(?s)```yaml,docs.*?```").unwrap();
+    let text_no_sandboxes = re_docs.replace_all(&without_sandbox, "").to_string();
 
     let mut lines = text_no_sandboxes.lines();
     let mut short_summary = String::new();
@@ -952,12 +1087,14 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> (String, String, St
         overview_lines.push(short_summary.clone());
     }
 
-    (
+    ParsedDocContent {
         short_summary,
-        overview_lines.join("\n").trim().to_string(),
-        remarks_lines.join("\n").trim().to_string(),
+        overview: overview_lines.join("\n").trim().to_string(),
+        remarks: remarks_lines.join("\n").trim().to_string(),
         sandboxes,
-    )
+        related_hints,
+        faq_entries,
+    }
 }
 
 fn slugify_for_docs(input: &str) -> String {
@@ -1123,6 +1260,28 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
         lines.push(example_formula);
         lines.push("```".to_string());
         lines.push("".to_string());
+    }
+
+    if !entry.related_functions.is_empty() {
+        lines.push("## Related functions".to_string());
+        lines.push("".to_string());
+        for related in &entry.related_functions {
+            lines.push(format!(
+                "- [{}](/docs/reference/functions/{}/{})",
+                related.name, related.category_slug, related.function_slug
+            ));
+        }
+        lines.push("".to_string());
+    }
+
+    if !entry.faq_entries.is_empty() {
+        lines.push("## FAQ".to_string());
+        lines.push("".to_string());
+        for faq in &entry.faq_entries {
+            lines.push(format!("### {}", sanitize_mdx_text(&faq.question)));
+            lines.push(sanitize_mdx_text(&faq.answer));
+            lines.push("".to_string());
+        }
     }
     
     // Runtime metadata
