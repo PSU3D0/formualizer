@@ -165,7 +165,7 @@ jobs:
         path: bindings/python/dist
 
   coverage-badge:
-    needs: test-python
+    needs: [test-python, test-rust]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -176,7 +176,7 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Download coverage artifact
+    - name: Download Python coverage artifact
       uses: actions/download-artifact@v4
       with:
         name: python-coverage
@@ -187,7 +187,7 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: Generate coverage badge
+    - name: Generate Python coverage badge
       shell: bash
       run: |
         set -euo pipefail
@@ -217,8 +217,6 @@ jobs:
         left = 'Python Coverage (3.12)'
         right = f'{pct_rounded}%'
 
-        # Simple, dependency-free badge.
-        # Widths are approximate character-based sizing.
         char_px = 6
         left_w = max(140, len(left) * char_px + 20)
         right_w = max(50, len(right) * char_px + 20)
@@ -248,10 +246,99 @@ jobs:
         </svg>'''
 
         Path('coverage.svg').write_text(svg, encoding='utf-8')
-        print(f'Coverage: {pct:.2f}% -> {pct_rounded}%')
+        print(f'Python coverage: {pct:.2f}% -> {pct_rounded}%')
         PY
 
-    - name: Publish badge to badges branch
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
+
+    - name: Install cargo-llvm-cov
+      shell: bash
+      run: cargo install cargo-llvm-cov --locked --force
+
+    - name: Compute Rust core coverage
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        cargo llvm-cov --all-features --summary-only \
+          -p formualizer-common \
+          -p formualizer-parse \
+          -p formualizer-eval \
+          -p formualizer-workbook \
+          -p formualizer-sheetport \
+          -p sheetport-spec \
+          -p formualizer-macros \
+          | tee rust-coverage-summary.txt
+
+    - name: Generate Rust core coverage badge
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        python - <<'PY'
+        import math
+        from pathlib import Path
+
+        lines = Path('rust-coverage-summary.txt').read_text(encoding='utf-8').splitlines()
+        total_line = next((line for line in lines if line.startswith('TOTAL')), None)
+        if total_line is None:
+          raise SystemExit('TOTAL line not found in rust coverage summary')
+
+        percentages = [float(tok.rstrip('%')) for tok in total_line.split() if tok.endswith('%')]
+        if len(percentages) < 3:
+          raise SystemExit(f'Unable to parse coverage percentages from: {total_line}')
+
+        pct = percentages[2]  # line coverage
+        pct_rounded = int(math.floor(pct + 0.5))
+
+        if pct_rounded >= 90:
+          color = '#4c1'
+        elif pct_rounded >= 80:
+          color = '#dfb317'
+        elif pct_rounded >= 70:
+          color = '#fe7d37'
+        else:
+          color = '#e05d44'
+
+        left = 'Rust Core Coverage'
+        right = f'{pct_rounded}%'
+
+        char_px = 6
+        left_w = max(130, len(left) * char_px + 20)
+        right_w = max(50, len(right) * char_px + 20)
+        total_w = left_w + right_w
+        left_x = left_w / 2
+        right_x = left_w + (right_w / 2)
+
+        svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{total_w}" height="20" role="img" aria-label="{left}: {right}">
+          <linearGradient id="s" x2="0" y2="100%">
+            <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
+            <stop offset="1" stop-opacity=".1"/>
+          </linearGradient>
+          <clipPath id="r">
+            <rect width="{total_w}" height="20" rx="3" fill="#fff"/>
+          </clipPath>
+          <g clip-path="url(#r)">
+            <rect width="{left_w}" height="20" fill="#555"/>
+            <rect x="{left_w}" width="{right_w}" height="20" fill="{color}"/>
+            <rect width="{total_w}" height="20" fill="url(#s)"/>
+          </g>
+          <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
+            <text x="{left_x}" y="15" fill="#010101" fill-opacity=".3">{left}</text>
+            <text x="{left_x}" y="14">{left}</text>
+            <text x="{right_x}" y="15" fill="#010101" fill-opacity=".3">{right}</text>
+            <text x="{right_x}" y="14">{right}</text>
+          </g>
+        </svg>'''
+
+        Path('rust-core-coverage.svg').write_text(svg, encoding='utf-8')
+        print(f'Rust core line coverage: {pct:.2f}% -> {pct_rounded}%')
+        PY
+
+    - name: Publish badges to badges branch
       shell: bash
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -264,6 +351,7 @@ jobs:
 
         mkdir -p /tmp/fz-badges
         cp coverage.svg /tmp/fz-badges/coverage.svg
+        cp rust-core-coverage.svg /tmp/fz-badges/rust-core-coverage.svg
 
         # actions/checkout does not fetch origin/badges, so detect via ls-remote.
         if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
@@ -273,11 +361,12 @@ jobs:
           git checkout --orphan badges
         fi
 
-        # Keep the branch as a single-file badge branch.
+        # Keep the branch as generated badge artifacts only.
         git rm -rf . >/dev/null 2>&1 || true
         git clean -fdx
 
         cp /tmp/fz-badges/coverage.svg ./coverage.svg
-        git add coverage.svg
-        git commit -m "ci: update coverage badge" || exit 0
+        cp /tmp/fz-badges/rust-core-coverage.svg ./rust-core-coverage.svg
+        git add coverage.svg rust-core-coverage.svg
+        git commit -m "ci: update coverage badges" || exit 0
         git push origin badges --force-with-lease
