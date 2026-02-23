@@ -42,6 +42,19 @@ pub struct MinFn; // MIN(...)
 /// expected: 0
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - MAX
+///   - SMALL
+///   - LARGE
+///   - MINIFS
+/// faq:
+///   - q: "Why can MIN return 0 even when no numbers are present?"
+///     a: "If nothing numeric is found after coercion/scan, MIN falls back to 0."
+///   - q: "Do errors in referenced ranges get ignored?"
+///     a: "No. Any encountered range or scalar error is propagated."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: MIN
 /// Type: MinFn
@@ -154,6 +167,19 @@ pub struct MaxFn; // MAX(...)
 /// title: "No numeric values returns zero"
 /// formula: "=MAX(\"x\")"
 /// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MIN
+///   - LARGE
+///   - SMALL
+///   - MAXIFS
+/// faq:
+///   - q: "Why can MAX return 0 for non-numeric input sets?"
+///     a: "When no numeric values are found, MAX returns 0 by design."
+///   - q: "Does MAX evaluate scalar text arguments?"
+///     a: "Yes, but only when scalar text can be coerced to a numeric value."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]

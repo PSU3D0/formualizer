@@ -36,6 +36,18 @@ pub struct FactFn;
 /// expected: "#NUM!"
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - FACTDOUBLE
+///   - GAMMALN
+///   - COMBIN
+/// faq:
+///   - q: "Why does FACT(171) return #NUM!?"
+///     a: "Excel-compatible factorial support is capped at 170!; larger values overflow and return #NUM!."
+///   - q: "Does FACT round fractional inputs?"
+///     a: "No. It truncates toward zero before computing the factorial."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: FACT
 /// Type: FactFn
@@ -122,6 +134,18 @@ pub struct GcdFn;
 /// title: "Negative values are invalid"
 /// formula: "=GCD(-2, 4)"
 /// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LCM
+///   - MOD
+///   - QUOTIENT
+/// faq:
+///   - q: "What happens to decimal inputs in GCD?"
+///     a: "Each argument is truncated toward zero before the divisor is computed."
+///   - q: "When does GCD return #NUM!?"
+///     a: "Negative values or values outside the supported bound return #NUM!."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -216,6 +240,18 @@ pub struct LcmFn;
 /// title: "Negative values return numeric error"
 /// formula: "=LCM(-3, 6)"
 /// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - GCD
+///   - MOD
+///   - MROUND
+/// faq:
+///   - q: "Why does LCM return 0 when one argument is 0?"
+///     a: "LCM is defined as 0 if any truncated input is 0 in this implementation."
+///   - q: "Are fractional inputs accepted?"
+///     a: "Yes, but they are truncated toward zero before the LCM calculation."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -318,6 +354,18 @@ pub struct CombinFn;
 /// expected: "#NUM!"
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - COMBINA
+///   - PERMUT
+///   - FACT
+/// faq:
+///   - q: "When does COMBIN return #NUM!?"
+///     a: "It returns #NUM! if n or k is negative, or if k is greater than n after truncation."
+///   - q: "Can COMBIN take non-integer values?"
+///     a: "Yes, but both inputs are truncated toward zero before evaluation."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: COMBIN
 /// Type: CombinFn
@@ -415,6 +463,18 @@ pub struct PermutFn;
 /// title: "Out-of-range k returns numeric error"
 /// formula: "=PERMUT(4, 6)"
 /// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COMBIN
+///   - FACT
+///   - MULTINOMIAL
+/// faq:
+///   - q: "Why does PERMUT fail when k is larger than n?"
+///     a: "Permutations require choosing at most n items, so k > n returns #NUM!."
+///   - q: "How are decimal inputs handled?"
+///     a: "PERMUT truncates n and k toward zero before computing n!/(n-k)!."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]

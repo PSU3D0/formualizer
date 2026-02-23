@@ -30,6 +30,16 @@ pub struct AbsFn;
 /// formula: "=ABS(A1)"
 /// expected: 42
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIGN
+///   - INT
+///   - MOD
+/// faq:
+///   - q: "How does ABS handle errors or non-numeric text?"
+///     a: "Input errors propagate, and non-coercible text returns a coercion error."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ABS
 /// Type: AbsFn
@@ -86,6 +96,16 @@ pub struct SignFn;
 /// title: "Negative input"
 /// formula: "=SIGN(-12)"
 /// expected: -1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ABS
+///   - INT
+///   - IF
+/// faq:
+///   - q: "Can SIGN return anything other than -1, 0, or 1?"
+///     a: "No. After numeric coercion, the output is always exactly -1, 0, or 1."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SIGN
@@ -155,6 +175,16 @@ pub struct IntFn; // floor toward -inf
 /// formula: "=INT(-8.9)"
 /// expected: -9
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TRUNC
+///   - ROUNDDOWN
+///   - FLOOR
+/// faq:
+///   - q: "Why is INT(-8.9) equal to -9 instead of -8?"
+///     a: "INT uses floor semantics, so negative values round toward negative infinity."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: INT
 /// Type: IntFn
@@ -211,6 +241,16 @@ pub struct TruncFn; // truncate toward zero
 /// title: "Truncate toward zero at the hundreds place"
 /// formula: "=TRUNC(-987.65,-2)"
 /// expected: -900
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - INT
+///   - ROUND
+///   - ROUNDDOWN
+/// faq:
+///   - q: "How does TRUNC differ from INT for negative numbers?"
+///     a: "TRUNC removes digits toward zero, while INT floors toward negative infinity."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TRUNC
@@ -294,6 +334,16 @@ pub struct RoundFn; // ROUND(number, digits)
 /// formula: "=ROUND(1234,-2)"
 /// expected: 1200
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ROUNDUP
+///   - ROUNDDOWN
+///   - MROUND
+/// faq:
+///   - q: "What does a negative digits argument do in ROUND?"
+///     a: "It rounds digits to the left of the decimal point (for example, tens or hundreds)."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROUND
 /// Type: RoundFn
@@ -363,6 +413,16 @@ pub struct RoundDownFn; // toward zero
 /// formula: "=ROUNDDOWN(-987.65,-2)"
 /// expected: -900
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ROUND
+///   - ROUNDUP
+///   - TRUNC
+/// faq:
+///   - q: "Does ROUNDDOWN always move toward negative infinity?"
+///     a: "No. It moves toward zero, which is different from FLOOR-style behavior on negatives."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROUNDDOWN
 /// Type: RoundDownFn
@@ -431,6 +491,16 @@ pub struct RoundUpFn; // away from zero
 /// title: "Round up a negative value at the hundreds place"
 /// formula: "=ROUNDUP(-987.65,-2)"
 /// expected: -1000
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ROUND
+///   - ROUNDDOWN
+///   - CEILING
+/// faq:
+///   - q: "What does ROUNDUP do when discarded digits are already zero?"
+///     a: "It leaves the value unchanged because no non-zero discarded part remains."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROUNDUP
@@ -502,6 +572,16 @@ pub struct ModFn; // MOD(a,b)
 /// title: "Negative dividend"
 /// formula: "=MOD(-3,2)"
 /// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - QUOTIENT
+///   - INT
+///   - GCD
+/// faq:
+///   - q: "Why can MOD return a positive value for a negative dividend?"
+///     a: "MOD follows the sign of the divisor, matching Excel's modulo semantics."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: MOD
@@ -585,6 +665,16 @@ pub struct CeilingFn; // CEILING(number, [significance]) legacy semantics simpli
 /// title: "Round a negative number toward positive infinity"
 /// formula: "=CEILING(-5.1,2)"
 /// expected: -4
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CEILING.MATH
+///   - FLOOR
+///   - ROUNDUP
+/// faq:
+///   - q: "What happens if CEILING significance is 0?"
+///     a: "It returns #DIV/0! because a zero multiple is invalid."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CEILING
@@ -671,6 +761,16 @@ pub struct CeilingMathFn; // CEILING.MATH(number,[significance],[mode])
 /// title: "Use mode to round a negative number away from zero"
 /// formula: "=CEILING.MATH(-24.3,5,1)"
 /// expected: -25
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CEILING
+///   - FLOOR.MATH
+///   - ROUNDUP
+/// faq:
+///   - q: "How does mode affect negative numbers in CEILING.MATH?"
+///     a: "With non-zero mode, negatives round away from zero; otherwise they round toward +infinity."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CEILING.MATH
@@ -771,6 +871,16 @@ pub struct FloorFn; // FLOOR(number,[significance])
 /// formula: "=FLOOR(-5.9,2)"
 /// expected: -6
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FLOOR.MATH
+///   - CEILING
+///   - ROUNDDOWN
+/// faq:
+///   - q: "Why does FLOOR move negative values farther from zero?"
+///     a: "FLOOR rounds down to a lower multiple, which is more negative for negative inputs."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: FLOOR
 /// Type: FloorFn
@@ -856,6 +966,16 @@ pub struct FloorMathFn; // FLOOR.MATH(number,[significance],[mode])
 /// title: "Use mode to round a negative number toward zero"
 /// formula: "=FLOOR.MATH(-24.3,5,1)"
 /// expected: -20
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FLOOR
+///   - CEILING.MATH
+///   - ROUNDDOWN
+/// faq:
+///   - q: "How does mode affect negative numbers in FLOOR.MATH?"
+///     a: "With non-zero mode, negatives round toward zero; otherwise they round away from zero."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: FLOOR.MATH
@@ -955,6 +1075,16 @@ pub struct SqrtFn; // SQRT(number)
 /// formula: "=SQRT(A1)"
 /// expected: 1.4142135623730951
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - POWER
+///   - SQRTPI
+///   - EXP
+/// faq:
+///   - q: "When does SQRT return #NUM!?"
+///     a: "It returns #NUM! for negative inputs because real square roots are undefined there."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SQRT
 /// Type: SqrtFn
@@ -1018,6 +1148,16 @@ pub struct PowerFn; // POWER(number, power)
 /// title: "Fractional exponent"
 /// formula: "=POWER(9,0.5)"
 /// expected: 3
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SQRT
+///   - EXP
+///   - LN
+/// faq:
+///   - q: "Why can POWER return #NUM! for negative bases?"
+///     a: "Negative bases with fractional exponents are rejected to avoid complex-number results."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: POWER
@@ -1091,6 +1231,16 @@ pub struct ExpFn; // EXP(number)
 /// formula: "=EXP(LN(5))"
 /// expected: 5
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LN
+///   - LOG
+///   - LOG10
+/// faq:
+///   - q: "Can EXP overflow?"
+///     a: "Yes. Very large positive inputs can overflow floating-point range."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: EXP
 /// Type: ExpFn
@@ -1149,6 +1299,16 @@ pub struct LnFn; // LN(number)
 /// title: "Natural log of a fraction"
 /// formula: "=LN(0.5)"
 /// expected: -0.6931471805599453
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - EXP
+///   - LOG
+///   - LOG10
+/// faq:
+///   - q: "Why does LN return #NUM! for 0 or negatives?"
+///     a: "Natural logarithm is only defined for strictly positive inputs."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LN
@@ -1214,6 +1374,16 @@ pub struct LogFn; // LOG(number,[base]) default base 10
 /// title: "Base-2 logarithm"
 /// formula: "=LOG(8,2)"
 /// expected: 3
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LN
+///   - LOG10
+///   - EXP
+/// faq:
+///   - q: "Which base values are invalid for LOG?"
+///     a: "Base must be positive and not equal to 1; otherwise LOG returns #NUM!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LOG
@@ -1297,6 +1467,16 @@ pub struct Log10Fn; // LOG10(number)
 /// formula: "=LOG10(0.01)"
 /// expected: -2
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LOG
+///   - LN
+///   - EXP
+/// faq:
+///   - q: "When does LOG10 return #NUM!?"
+///     a: "It returns #NUM! for non-positive input values."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LOG10
 /// Type: Log10Fn
@@ -1372,6 +1552,16 @@ pub struct QuotientFn;
 /// formula: "=QUOTIENT(-10,3)"
 /// expected: -3
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MOD
+///   - INT
+///   - TRUNC
+/// faq:
+///   - q: "How is QUOTIENT different from regular division?"
+///     a: "It truncates the fractional part toward zero instead of returning a decimal result."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: QUOTIENT
 /// Type: QuotientFn
@@ -1442,6 +1632,16 @@ pub struct EvenFn;
 /// formula: "=EVEN(-1.1)"
 /// expected: -2
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ODD
+///   - ROUNDUP
+///   - MROUND
+/// faq:
+///   - q: "Does EVEN ever round toward zero?"
+///     a: "No. It always rounds away from zero to the nearest even integer."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: EVEN
 /// Type: EvenFn
@@ -1510,6 +1710,16 @@ pub struct OddFn;
 /// formula: "=ODD(-1.1)"
 /// expected: -3
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - EVEN
+///   - ROUNDUP
+///   - INT
+/// faq:
+///   - q: "Why does ODD(0) return 1?"
+///     a: "ODD rounds away from zero to the nearest odd integer, so zero maps to positive one."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ODD
 /// Type: OddFn
@@ -1575,6 +1785,16 @@ pub struct SqrtPiFn;
 /// formula: "=SQRTPI(4)"
 /// expected: 3.544907701811032
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SQRT
+///   - PI
+///   - POWER
+/// faq:
+///   - q: "When does SQRTPI return #NUM!?"
+///     a: "It returns #NUM! when the input is negative, because number*PI must be non-negative."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SQRTPI
 /// Type: SqrtPiFn
@@ -1638,6 +1858,16 @@ pub struct MultinomialFn;
 /// title: "Non-integers are truncated first"
 /// formula: "=MULTINOMIAL(1.9,2.2)"
 /// expected: 3
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FACT
+///   - COMBIN
+///   - PERMUT
+/// faq:
+///   - q: "Why does MULTINOMIAL return #NUM! for large terms?"
+///     a: "If any required factorial falls outside 0..=170, the function returns #NUM!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: MULTINOMIAL
@@ -1739,6 +1969,16 @@ pub struct SeriesSumFn;
 ///   A3: 0.5
 /// formula: "=SERIESSUM(0.5,1,2,A1:A3)"
 /// expected: 0.390625
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUMPRODUCT
+///   - POWER
+///   - EXP
+/// faq:
+///   - q: "In what order are SERIESSUM coefficients applied?"
+///     a: "Coefficients are consumed in input order as c_i*x^(n+i*m)."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SERIESSUM
@@ -1860,6 +2100,16 @@ pub struct SumsqFn;
 /// formula: "=SUMSQ(A1:A3)"
 /// expected: 5
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUM
+///   - PRODUCT
+///   - SUMPRODUCT
+/// faq:
+///   - q: "How does SUMSQ treat text cells in ranges?"
+///     a: "Non-numeric range cells are ignored, while explicit errors are propagated."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SUMSQ
 /// Type: SumsqFn
@@ -1959,6 +2209,16 @@ pub struct MroundFn;
 /// title: "Round negative value"
 /// formula: "=MROUND(-17,-5)"
 /// expected: -15
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ROUND
+///   - CEILING
+///   - FLOOR
+/// faq:
+///   - q: "Why does MROUND return #NUM! for mixed signs?"
+///     a: "If number and multiple have different signs (excluding zero), MROUND returns #NUM!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: MROUND
@@ -2089,6 +2349,15 @@ pub struct RomanFn;
 /// formula: "=ROMAN(44)"
 /// expected: "XLIV"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ARABIC
+///   - TEXT
+/// faq:
+///   - q: "What input range does ROMAN support?"
+///     a: "ROMAN accepts truncated integers from 0 through 3999; outside that range it returns #VALUE!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROMAN
 /// Type: RomanFn
@@ -2213,6 +2482,15 @@ pub struct ArabicFn;
 /// title: "Trimmed input"
 /// formula: "=ARABIC(\"  XLIV  \")"
 /// expected: 44
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ROMAN
+///   - VALUE
+/// faq:
+///   - q: "What causes ARABIC to return #VALUE!?"
+///     a: "Invalid Roman symbols/syntax, non-text input, or overlength text produce #VALUE!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ARABIC

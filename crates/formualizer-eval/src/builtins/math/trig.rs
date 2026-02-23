@@ -33,6 +33,16 @@ pub struct SinFn;
 /// formula: "=SIN(A1)"
 /// expected: 0
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COS
+///   - TAN
+///   - RADIANS
+/// faq:
+///   - q: "Does SIN expect degrees or radians?"
+///     a: "SIN expects radians; convert degree inputs first with RADIANS."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SIN
 /// Type: SinFn
@@ -158,6 +168,16 @@ pub struct CosFn;
 /// formula: "=COS(PI())"
 /// expected: -1
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - TAN
+///   - PI
+/// faq:
+///   - q: "Why can COS look wrong for degree values like 60?"
+///     a: "COS interprets 60 as radians, not degrees; use COS(RADIANS(60))."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COS
 /// Type: CosFn
@@ -243,6 +263,16 @@ pub struct TanFn;
 /// title: "Tangent at zero"
 /// formula: "=TAN(0)"
 /// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - COS
+///   - ATAN
+/// faq:
+///   - q: "Why does TAN explode near PI()/2?"
+///     a: "Because COS approaches zero there, TAN can become extremely large in magnitude."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TAN
@@ -332,6 +362,16 @@ pub struct AsinFn;
 /// title: "Lower boundary"
 /// formula: "=ASIN(-1)"
 /// expected: -1.5707963267948966
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - ACOS
+///   - ATAN
+/// faq:
+///   - q: "When does ASIN return #NUM!?"
+///     a: "ASIN returns #NUM! when the input is outside the closed interval [-1, 1]."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ASIN
@@ -442,6 +482,16 @@ pub struct AcosFn;
 /// formula: "=ACOS(-1)"
 /// expected: 3.141592653589793
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COS
+///   - ASIN
+///   - ATAN2
+/// faq:
+///   - q: "Why does ACOS reject values like 1.0001?"
+///     a: "ACOS is only defined on [-1, 1], so out-of-range inputs return #NUM!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ACOS
 /// Type: AcosFn
@@ -549,6 +599,16 @@ pub struct AtanFn;
 /// formula: "=ATAN(-1)"
 /// expected: -0.7853981633974483
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TAN
+///   - ATAN2
+///   - ACOT
+/// faq:
+///   - q: "Does ATAN ever return #NUM! for large values?"
+///     a: "No. ATAN accepts any real input and asymptotically approaches +/-PI()/2."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ATAN
 /// Type: AtanFn
@@ -637,6 +697,16 @@ pub struct Atan2Fn;
 /// title: "Undefined angle at origin"
 /// formula: "=ATAN2(0,0)"
 /// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATAN
+///   - ACOT
+///   - RADIANS
+/// faq:
+///   - q: "Why does ATAN2 return #DIV/0! at (0,0)?"
+///     a: "The origin has no defined direction angle, so ATAN2 reports #DIV/0!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ATAN2
@@ -796,6 +866,16 @@ pub struct SecFn;
 /// formula: "=SEC(PI()/2)"
 /// expected: "#DIV/0!"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COS
+///   - COT
+///   - CSC
+/// faq:
+///   - q: "When does SEC return #DIV/0!?"
+///     a: "SEC returns #DIV/0! when COS(angle) is effectively zero."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SEC
 /// Type: SecFn
@@ -905,6 +985,16 @@ pub struct CscFn;
 /// formula: "=CSC(0)"
 /// expected: "#DIV/0!"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - COT
+///   - SEC
+/// faq:
+///   - q: "When does CSC return #DIV/0!?"
+///     a: "CSC returns #DIV/0! when SIN(angle) is effectively zero."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CSC
 /// Type: CscFn
@@ -1012,6 +1102,16 @@ pub struct CotFn;
 /// title: "Undefined cotangent at zero"
 /// formula: "=COT(0)"
 /// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TAN
+///   - SEC
+///   - CSC
+/// faq:
+///   - q: "Why is COT undefined at integer multiples of PI()?"
+///     a: "At those points TAN is zero, so 1/TAN triggers a #DIV/0! condition."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COT
@@ -1121,6 +1221,16 @@ pub struct AcotFn;
 /// formula: "=ACOT(-1)"
 /// expected: 2.356194490192345
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATAN
+///   - ATAN2
+///   - COT
+/// faq:
+///   - q: "What is ACOT(0)?"
+///     a: "ACOT(0) is PI()/2 in the principal-value branch used here."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ACOT
 /// Type: AcotFn
@@ -1222,6 +1332,16 @@ pub struct SinhFn;
 /// formula: "=SINH(1)"
 /// expected: 1.1752011936438014
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ASINH
+///   - COSH
+///   - TANH
+/// faq:
+///   - q: "Is SINH expecting radians like SIN?"
+///     a: "No. SINH is hyperbolic and treats input as a pure numeric value, not an angle unit."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SINH
 /// Type: SinhFn
@@ -1310,6 +1430,16 @@ pub struct CoshFn;
 /// title: "Hyperbolic cosine at one"
 /// formula: "=COSH(1)"
 /// expected: 1.5430806348152437
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ACOSH
+///   - SINH
+///   - TANH
+/// faq:
+///   - q: "Can COSH produce #NUM! domain errors?"
+///     a: "No function-specific domain errors are enforced for real inputs."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COSH
@@ -1403,6 +1533,16 @@ pub struct TanhFn;
 /// formula: "=TANH(2)"
 /// expected: 0.9640275800758169
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATANH
+///   - SINH
+///   - COSH
+/// faq:
+///   - q: "What output range should TANH produce?"
+///     a: "For real inputs, TANH stays strictly between -1 and 1."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TANH
 /// Type: TanhFn
@@ -1495,6 +1635,16 @@ pub struct AsinhFn;
 /// formula: "=ASINH(-2)"
 /// expected: -1.4436354751788103
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SINH
+///   - ACOSH
+///   - ATANH
+/// faq:
+///   - q: "Does ASINH have restricted input domain?"
+///     a: "No. ASINH accepts any real-valued input."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ASINH
 /// Type: AsinhFn
@@ -1586,6 +1736,16 @@ pub struct AcoshFn;
 /// title: "Inverse hyperbolic cosine of ten"
 /// formula: "=ACOSH(10)"
 /// expected: 2.993222846126381
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COSH
+///   - ASINH
+///   - ATANH
+/// faq:
+///   - q: "When does ACOSH return #NUM!?"
+///     a: "ACOSH requires input >= 1; values below 1 return #NUM!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ACOSH
@@ -1688,6 +1848,16 @@ pub struct AtanhFn;
 /// title: "Domain boundary error"
 /// formula: "=ATANH(1)"
 /// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TANH
+///   - ATAN
+///   - ASINH
+/// faq:
+///   - q: "Which inputs are invalid for ATANH?"
+///     a: "ATANH is only defined on (-1, 1); endpoints and outside values return #NUM!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ATANH
@@ -1796,6 +1966,16 @@ pub struct SechFn;
 /// formula: "=SECH(2)"
 /// expected: 0.2658022288340797
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COSH
+///   - CSCH
+///   - COTH
+/// faq:
+///   - q: "Can SECH be negative for real inputs?"
+///     a: "No. For real numbers, SECH = 1/COSH is always positive."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SECH
 /// Type: SechFn
@@ -1887,6 +2067,16 @@ pub struct CschFn;
 /// title: "Division by zero at origin"
 /// formula: "=CSCH(0)"
 /// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SINH
+///   - COTH
+///   - SECH
+/// faq:
+///   - q: "When does CSCH return #DIV/0!?"
+///     a: "CSCH returns #DIV/0! when SINH(x) is zero, which occurs at x = 0."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CSCH
@@ -1998,6 +2188,16 @@ pub struct CothFn;
 /// formula: "=COTH(0)"
 /// expected: "#DIV/0!"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TANH
+///   - CSCH
+///   - SECH
+/// faq:
+///   - q: "Why is COTH undefined at zero?"
+///     a: "COTH divides by SINH(x), and SINH(0) is zero, so #DIV/0! is returned."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COTH
 /// Type: CothFn
@@ -2092,6 +2292,16 @@ pub struct RadiansFn;
 /// formula: "=RADIANS(45)"
 /// expected: 0.7853981633974483
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DEGREES
+///   - SIN
+///   - COS
+/// faq:
+///   - q: "When should I wrap angles with RADIANS?"
+///     a: "Use it whenever your source angle is in degrees and the downstream trig function expects radians."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: RADIANS
 /// Type: RadiansFn
@@ -2181,6 +2391,16 @@ pub struct DegreesFn;
 /// formula: "=DEGREES(PI()/2)"
 /// expected: 90
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RADIANS
+///   - ATAN
+///   - ACOS
+/// faq:
+///   - q: "Does DEGREES change the angle value or just units?"
+///     a: "It converts units only, multiplying radians by 180/PI()."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: DEGREES
 /// Type: DegreesFn
@@ -2269,6 +2489,16 @@ pub struct PiFn;
 /// title: "Circle circumference with radius 2"
 /// formula: "=2*PI()*2"
 /// expected: 12.566370614359172
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RADIANS
+///   - DEGREES
+///   - SIN
+/// faq:
+///   - q: "Can PI take arguments?"
+///     a: "No. PI() has arity zero and always returns the same constant."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: PI

@@ -38,6 +38,19 @@ pub struct SumFn;
 /// expected: 30
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - SUMIF
+///   - SUMIFS
+///   - SUMPRODUCT
+///   - AVERAGE
+/// faq:
+///   - q: "Why does SUM return #VALUE! for some text arguments?"
+///     a: "Direct scalar text that cannot be parsed as a number raises #VALUE! during coercion."
+///   - q: "Do text and logical values inside ranges get added?"
+///     a: "No. In ranged inputs, only numeric cells contribute to the total."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: SUM
 /// Type: SumFn
@@ -145,6 +158,19 @@ pub struct CountFn;
 /// expected: 2
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - COUNTA
+///   - COUNTBLANK
+///   - COUNTIF
+///   - COUNTIFS
+/// faq:
+///   - q: "Why doesn't COUNT include text in a range?"
+///     a: "COUNT only counts numeric values; text cells in ranges are ignored."
+///   - q: "Can direct text like \"12\" be counted?"
+///     a: "Yes. Direct scalar arguments are coerced and counted when they parse as numbers."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: COUNT
 /// Type: CountFn
@@ -238,6 +264,19 @@ pub struct AverageFn;
 /// title: "No numeric values returns divide-by-zero"
 /// formula: "=AVERAGE(\"x\", \"\")"
 /// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUM
+///   - COUNT
+///   - AVERAGEIF
+///   - AVERAGEIFS
+/// faq:
+///   - q: "When does AVERAGE return #DIV/0!?"
+///     a: "It returns #DIV/0! when no numeric values are found after filtering/coercion."
+///   - q: "Do text cells in ranges affect the denominator?"
+///     a: "No. Only numeric values are counted toward the divisor."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -362,6 +401,19 @@ pub struct SumProductFn;
 /// title: "Text entries contribute zero"
 /// formula: "=SUMPRODUCT({1,\"x\",3}, {1,1,1})"
 /// expected: 4
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUM
+///   - PRODUCT
+///   - MMULT
+///   - SUMIFS
+/// faq:
+///   - q: "Why does SUMPRODUCT return #VALUE! with some array shapes?"
+///     a: "The argument arrays must be broadcast-compatible; incompatible shapes raise #VALUE!."
+///   - q: "How are text values handled in multiplication?"
+///     a: "Non-numeric values are treated as 0, unless an explicit error is present."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]

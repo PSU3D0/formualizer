@@ -161,6 +161,16 @@ fn percentile_exc(sorted: &[f64], p: f64) -> Result<f64, ExcelError> {
 /// formula: "=RANK.EQ(A2,A1:A5,1)"
 /// expected: 3
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RANK.AVG
+///   - LARGE
+///   - SMALL
+/// faq:
+///   - q: "When does RANK.EQ return #N/A?"
+///     a: "It returns #N/A when the target number does not appear in the reference set."
+/// ```
 #[derive(Debug)]
 pub struct RankEqFn;
 /// [formualizer-docgen:schema:start]
@@ -270,6 +280,16 @@ impl Function for RankEqFn {
 /// formula: "=RANK.AVG(A2,A1:A5,1)"
 /// expected: 3.5
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RANK.EQ
+///   - LARGE
+///   - SMALL
+/// faq:
+///   - q: "How are ties handled by RANK.AVG?"
+///     a: "All tied occurrences share the average of their rank positions."
+/// ```
 #[derive(Debug)]
 pub struct RankAvgFn;
 /// [formualizer-docgen:schema:start]
@@ -377,6 +397,16 @@ impl Function for RankAvgFn {
 /// formula: "=LARGE(A1:A4,3)"
 /// expected: 5
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SMALL
+///   - MAX
+///   - RANK.EQ
+/// faq:
+///   - q: "When does LARGE return #NUM!?"
+///     a: "It returns #NUM! when k < 1, k exceeds numeric count, or no numeric values exist."
+/// ```
 #[derive(Debug)]
 pub struct LARGE;
 /// [formualizer-docgen:schema:start]
@@ -466,6 +496,16 @@ impl Function for LARGE {
 ///   A4: 5
 /// formula: "=SMALL(A1:A4,3)"
 /// expected: 8
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LARGE
+///   - MIN
+///   - RANK.EQ
+/// faq:
+///   - q: "Does SMALL include text in referenced ranges?"
+///     a: "No. Non-numeric range values are ignored when selecting the k-th smallest value."
 /// ```
 #[derive(Debug)]
 pub struct SMALL;
@@ -557,6 +597,16 @@ impl Function for SMALL {
 /// formula: "=MEDIAN(A1:A4)"
 /// expected: 6
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - AVERAGE
+///   - MODE.SNGL
+///   - QUARTILE.INC
+/// faq:
+///   - q: "When does MEDIAN return #NUM!?"
+///     a: "MEDIAN returns #NUM! when no numeric values are available after filtering/coercion."
+/// ```
 #[derive(Debug)]
 pub struct MEDIAN;
 /// [formualizer-docgen:schema:start]
@@ -631,6 +681,16 @@ impl Function for MEDIAN {
 ///   A3: 9
 /// formula: "=STDEV.S(A1:A3)"
 /// expected: 2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - STDEV.P
+///   - VAR.S
+///   - VAR.P
+/// faq:
+///   - q: "Why does STDEV.S return #DIV/0!?"
+///     a: "Sample standard deviation needs at least two numeric values."
 /// ```
 #[derive(Debug)]
 pub struct StdevSample; // sample
@@ -711,6 +771,16 @@ impl Function for StdevSample {
 /// formula: "=STDEV.P(A1:A3)"
 /// expected: 0.816496580927726
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - STDEV.S
+///   - VAR.P
+///   - VAR.S
+/// faq:
+///   - q: "When does STDEV.P return #DIV/0!?"
+///     a: "It returns #DIV/0! when no numeric values are provided."
+/// ```
 #[derive(Debug)]
 pub struct StdevPop; // population
 /// [formualizer-docgen:schema:start]
@@ -790,6 +860,16 @@ impl Function for StdevPop {
 /// formula: "=VAR.S(A1:A3)"
 /// expected: 1
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VAR.P
+///   - STDEV.S
+///   - STDEV.P
+/// faq:
+///   - q: "Why does VAR.S return #DIV/0!?"
+///     a: "Sample variance requires at least two numeric observations."
+/// ```
 #[derive(Debug)]
 pub struct VarSample; // sample variance
 /// [formualizer-docgen:schema:start]
@@ -868,6 +948,16 @@ impl Function for VarSample {
 ///   A3: 3
 /// formula: "=VAR.P(A1:A3)"
 /// expected: 0.6666666666666666
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VAR.S
+///   - STDEV.P
+///   - STDEV.S
+/// faq:
+///   - q: "What is the denominator difference vs VAR.S?"
+///     a: "VAR.P divides by n, while VAR.S divides by n-1."
 /// ```
 #[derive(Debug)]
 pub struct VarPop; // population variance
@@ -950,6 +1040,16 @@ impl Function for VarPop {
 ///   A5: 6
 /// formula: "=MODE.SNGL(A1:A5)"
 /// expected: 6
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MODE.MULT
+///   - MEDIAN
+///   - AVERAGE
+/// faq:
+///   - q: "When does MODE.SNGL return #N/A?"
+///     a: "It returns #N/A when no value repeats in the numeric dataset."
 /// ```
 #[derive(Debug)]
 pub struct ModeSingleFn;
@@ -1054,6 +1154,16 @@ impl Function for ModeSingleFn {
 /// expected:
 ///   - [5]
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MODE.SNGL
+///   - FREQUENCY
+///   - MEDIAN
+/// faq:
+///   - q: "Why can MODE.MULT return an array result?"
+///     a: "It emits every value tied for highest frequency as separate rows."
+/// ```
 #[derive(Debug)]
 pub struct ModeMultiFn;
 /// [formualizer-docgen:schema:start]
@@ -1148,6 +1258,16 @@ impl Function for ModeMultiFn {
 /// formula: "=PERCENTILE.INC(A1:A4,0.5)"
 /// expected: 25
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - PERCENTILE.EXC
+///   - QUARTILE.INC
+///   - PERCENTRANK.INC
+/// faq:
+///   - q: "What k range is valid for PERCENTILE.INC?"
+///     a: "k must be between 0 and 1 inclusive; outside that range returns #NUM!."
+/// ```
 #[derive(Debug)]
 pub struct PercentileInc; // inclusive
 /// [formualizer-docgen:schema:start]
@@ -1238,6 +1358,16 @@ impl Function for PercentileInc {
 /// formula: "=PERCENTILE.EXC(A1:A5,0.6)"
 /// expected: 36
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - PERCENTILE.INC
+///   - QUARTILE.EXC
+///   - PERCENTRANK.EXC
+/// faq:
+///   - q: "Why does PERCENTILE.EXC reject k=0 or k=1?"
+///     a: "Exclusive percentile uses the n+1 basis and requires strictly 0 < k < 1."
+/// ```
 #[derive(Debug)]
 pub struct PercentileExc; // exclusive
 /// [formualizer-docgen:schema:start]
@@ -1324,6 +1454,16 @@ impl Function for PercentileExc {
 ///   A4: 40
 /// formula: "=QUARTILE.INC(A1:A4,3)"
 /// expected: 32.5
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - QUARTILE.EXC
+///   - PERCENTILE.INC
+///   - MEDIAN
+/// faq:
+///   - q: "Which quartile numbers are valid for QUARTILE.INC?"
+///     a: "Only 0 through 4 are valid; other quartile indices return #NUM!."
 /// ```
 #[derive(Debug)]
 pub struct QuartileInc; // quartile inclusive
@@ -1445,6 +1585,16 @@ impl Function for QuartileInc {
 /// formula: "=QUARTILE.EXC(A1:A8,3)"
 /// expected: 67.5
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - QUARTILE.INC
+///   - PERCENTILE.EXC
+///   - MEDIAN
+/// faq:
+///   - q: "Why can QUARTILE.EXC return #NUM! on small datasets?"
+///     a: "Exclusive quartiles need enough data for valid interior rank interpolation."
+/// ```
 #[derive(Debug)]
 pub struct QuartileExc; // quartile exclusive
 /// [formualizer-docgen:schema:start]
@@ -1546,6 +1696,16 @@ impl Function for QuartileExc {
 /// formula: "=PRODUCT(A1:A3)"
 /// expected: 50
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUM
+///   - GEOMEAN
+///   - SUMPRODUCT
+/// faq:
+///   - q: "Why does PRODUCT return 0 when no numeric inputs are found?"
+///     a: "This implementation returns 0 for an empty numeric set after filtering."
+/// ```
 #[derive(Debug)]
 pub struct ProductFn;
 /// [formualizer-docgen:schema:start]
@@ -1613,6 +1773,16 @@ impl Function for ProductFn {
 ///   A3: 9
 /// formula: "=GEOMEAN(A1:A3)"
 /// expected: 3
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - HARMEAN
+///   - PRODUCT
+///   - AVERAGE
+/// faq:
+///   - q: "When does GEOMEAN return #NUM!?"
+///     a: "GEOMEAN returns #NUM! if any numeric value is <= 0 or if no numeric values exist."
 /// ```
 #[derive(Debug)]
 pub struct GeomeanFn;
@@ -1693,6 +1863,16 @@ impl Function for GeomeanFn {
 /// formula: "=HARMEAN(A1:A3)"
 /// expected: 3
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - GEOMEAN
+///   - AVERAGE
+///   - PRODUCT
+/// faq:
+///   - q: "Why does HARMEAN fail on zeros?"
+///     a: "Harmonic mean uses reciprocals, so inputs must be strictly positive."
+/// ```
 #[derive(Debug)]
 pub struct HarmeanFn;
 /// [formualizer-docgen:schema:start]
@@ -1772,6 +1952,16 @@ impl Function for HarmeanFn {
 ///   A4: 5
 /// formula: "=AVEDEV(A1:A4)"
 /// expected: 1.5
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DEVSQ
+///   - STDEV.S
+///   - VAR.S
+/// faq:
+///   - q: "What center does AVEDEV use for deviations?"
+///     a: "It computes absolute deviations around the arithmetic mean of included values."
 /// ```
 #[derive(Debug)]
 pub struct AvedevFn;
@@ -1896,6 +2086,16 @@ use super::utils::{ARG_ANY_ONE, criteria_match};
 /// formula: "=MAXIFS(A1:A4,B1:B4,\"B\",C1:C4,\"Q1\")"
 /// expected: 90
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MINIFS
+///   - MAX
+///   - SUMIFS
+/// faq:
+///   - q: "What does MAXIFS return when no rows match all criteria?"
+///     a: "It returns 0 when no numeric target cells satisfy every criterion."
+/// ```
 #[derive(Debug)]
 pub struct MaxIfsFn;
 /// [formualizer-docgen:schema:start]
@@ -1974,6 +2174,16 @@ impl Function for MaxIfsFn {
 ///   C4: "Q1"
 /// formula: "=MINIFS(A1:A4,B1:B4,\"B\",C1:C4,\"Q1\")"
 /// expected: 70
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MAXIFS
+///   - MIN
+///   - SUMIFS
+/// faq:
+///   - q: "How does MINIFS treat non-numeric target cells?"
+///     a: "Non-numeric target cells are ignored; only numeric matches are eligible."
 /// ```
 #[derive(Debug)]
 pub struct MinIfsFn;

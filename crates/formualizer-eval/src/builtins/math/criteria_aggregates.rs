@@ -719,6 +719,19 @@ pub struct AverageIfFn;
 /// expected: "#DIV/0!"
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - AVERAGE
+///   - AVERAGEIFS
+///   - SUMIF
+///   - COUNTIF
+/// faq:
+///   - q: "When does AVERAGEIF return #DIV/0!?"
+///     a: "It returns #DIV/0! when no matching cells contribute numeric values."
+///   - q: "If average_range is omitted, what gets averaged?"
+///     a: "The function averages matching numeric cells from the criteria range itself."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: AVERAGEIF
 /// Type: AverageIfFn
@@ -802,6 +815,19 @@ pub struct SumIfFn;
 /// expected: 7
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - SUM
+///   - SUMIFS
+///   - COUNTIF
+///   - AVERAGEIF
+/// faq:
+///   - q: "What happens when matching cells are non-numeric in SUMIF?"
+///     a: "They contribute 0 to the sum target after coercion logic."
+///   - q: "Can SUMIF use wildcard criteria like * and ??"
+///     a: "Yes. Text criteria support wildcard matching semantics."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: SUMIF
 /// Type: SumIfFn
@@ -876,6 +902,19 @@ pub struct CountIfFn;
 /// title: "Exact-match criterion"
 /// formula: "=COUNTIF({1,2,2,3}, \"=2\")"
 /// expected: 2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COUNTIFS
+///   - COUNTA
+///   - COUNTBLANK
+///   - SUMIF
+/// faq:
+///   - q: "Is COUNTIF text matching case-sensitive?"
+///     a: "No. Text criteria matching is case-insensitive."
+///   - q: "Can COUNTIF evaluate wildcard criteria?"
+///     a: "Yes. Criteria expressions support wildcard patterns for text."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -960,6 +999,19 @@ pub struct SumIfsFn; // SUMIFS(sum_range, criteria_range1, criteria1, ...)
 /// expected: 0
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - SUMIF
+///   - COUNTIFS
+///   - AVERAGEIFS
+///   - SUMPRODUCT
+/// faq:
+///   - q: "How are multiple SUMIFS criteria combined?"
+///     a: "All criteria pairs are applied with logical AND; every condition must match."
+///   - q: "What if criteria range sizes differ?"
+///     a: "Ranges are broadcast/padded under engine rules instead of strict Excel-size rejection."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: SUMIFS
 /// Type: SumIfsFn
@@ -1037,6 +1089,19 @@ pub struct CountIfsFn; // COUNTIFS(criteria_range1, criteria1, ...)
 /// title: "No rows meeting all criteria"
 /// formula: "=COUNTIFS({1,2,3}, \">5\", {\"a\",\"b\",\"c\"}, \"a\")"
 /// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COUNTIF
+///   - SUMIFS
+///   - AVERAGEIFS
+///   - FILTER
+/// faq:
+///   - q: "Why can COUNTIFS return 0 even when one criterion matches rows?"
+///     a: "Each row must satisfy every criterion pair; partial matches are excluded."
+///   - q: "Does COUNTIFS require at least one criteria pair?"
+///     a: "Yes. It expects arguments in (range, criteria) pairs."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -1121,6 +1186,19 @@ pub struct AverageIfsFn;
 /// expected: "#DIV/0!"
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - AVERAGEIF
+///   - AVERAGE
+///   - SUMIFS
+///   - COUNTIFS
+/// faq:
+///   - q: "When does AVERAGEIFS return #DIV/0!?"
+///     a: "It returns #DIV/0! when no matching numeric cells are available to average."
+///   - q: "Do non-numeric matched cells count in the average?"
+///     a: "No. Only numeric target cells contribute to sum and count."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: AVERAGEIFS
 /// Type: AverageIfsFn
@@ -1194,6 +1272,18 @@ pub struct CountAFn; // counts non-empty (including empty text "")
 /// title: "Errors are counted"
 /// formula: "=COUNTA(1/0, 5)"
 /// expected: 2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COUNT
+///   - COUNTBLANK
+///   - COUNTIF
+/// faq:
+///   - q: "Does COUNTA count empty-string results like \"\"?"
+///     a: "Yes. Empty text is counted as non-empty by COUNTA."
+///   - q: "Are error values counted?"
+///     a: "Yes. Errors are considered populated values and increase the count."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -1284,6 +1374,18 @@ pub struct CountBlankFn; // counts truly empty cells and empty text
 /// title: "Non-empty values are excluded"
 /// formula: "=COUNTBLANK(1, \"x\", TRUE)"
 /// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COUNTA
+///   - COUNT
+///   - COUNTIF
+/// faq:
+///   - q: "Does COUNTBLANK include cells that contain \"\"?"
+///     a: "Yes. Empty-string text values are treated as blank for COUNTBLANK."
+///   - q: "Are numeric zeros considered blank?"
+///     a: "No. Zero is a numeric value, so it is not counted as blank."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
