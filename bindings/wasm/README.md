@@ -1,15 +1,20 @@
-![Formualizer banner](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png)
+<h1 align="center">Formualizer for WASM</h1>
 
-# Formualizer for WASM
+<p align="center">
+  <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
+  <a href="https://www.npmjs.com/package/formualizer"><img alt="npm" src="https://img.shields.io/npm/v/formualizer.svg" /></a>
+  <a href="../../LICENSE-MIT"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
+</p>
 
-![Arrow Powered](https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white)
+<p align="center">
+  <img alt="Formualizer banner" src="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png" />
+</p>
+
+<br />
 
 **Parse, evaluate, and mutate Excel workbooks in the browser or Node.js.**
 
 A Rust-powered spreadsheet engine compiled to WebAssembly with 320+ Excel-compatible functions, Arrow-powered storage, and a clean TypeScript API.
-
-[![npm](https://img.shields.io/npm/v/formualizer.svg)](https://www.npmjs.com/package/formualizer)
-[![License: MIT/Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](../../LICENSE-MIT)
 
 ## Installation
 
