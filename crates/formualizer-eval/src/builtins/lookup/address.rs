@@ -22,6 +22,30 @@ fn column_to_letters(col: u32) -> String {
 #[derive(Debug)]
 pub struct AddressFn;
 
+/// Returns a cell reference as text from row and column numbers.
+///
+/// `ADDRESS` can emit either A1 or R1C1 notation and optionally prefix the address with a
+/// sheet name.
+///
+/// # Remarks
+/// - `abs_num` defaults to `1` (`$A$1`) and supports values `1..4`.
+/// - `a1` defaults to `TRUE`; `FALSE` returns R1C1-style text.
+/// - Valid row range is `1..1048576`; valid column range is `1..16384`.
+/// - Out-of-range row/column values or invalid `abs_num` return `#VALUE!`.
+/// - If `sheet_text` contains spaces or special characters, it is quoted.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Absolute A1 reference"
+/// formula: '=ADDRESS(2,3)'
+/// expected: "$C$2"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Relative R1C1 reference with sheet"
+/// formula: '=ADDRESS(5,3,4,FALSE,"Data Sheet")'
+/// expected: "'Data Sheet'!R[5]C[3]"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ADDRESS
 /// Type: AddressFn

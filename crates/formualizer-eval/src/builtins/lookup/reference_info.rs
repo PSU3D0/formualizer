@@ -18,6 +18,28 @@ use formualizer_parse::parser::ReferenceType;
 #[derive(Debug)]
 pub struct RowFn;
 
+/// Returns the row number of a reference, or of the current cell when omitted.
+///
+/// `ROW` returns a 1-based row index.
+///
+/// # Remarks
+/// - With a range argument, `ROW` returns the first row in that reference.
+/// - Without arguments, it uses the row of the formula cell.
+/// - Full-column references such as `A:A` return `1`.
+/// - Invalid references return an error (`#REF!`/`#VALUE!` depending on context).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Row of a single-cell reference"
+/// formula: '=ROW(B5)'
+/// expected: 5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Row of a multi-cell range"
+/// formula: '=ROW(C3:E9)'
+/// expected: 3
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROW
 /// Type: RowFn
@@ -120,6 +142,28 @@ impl Function for RowFn {
 #[derive(Debug)]
 pub struct RowsFn;
 
+/// Returns the number of rows in a reference or array.
+///
+/// `ROWS` reports height, not data density.
+///
+/// # Remarks
+/// - For a single cell reference, returns `1`.
+/// - For full-column references (for example `A:A`), returns `1048576`.
+/// - For array literals, returns the outer array length.
+/// - Invalid references return an error.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Count rows in a contiguous range"
+/// formula: '=ROWS(B2:D10)'
+/// expected: 9
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Count rows in a full column reference"
+/// formula: '=ROWS(A:A)'
+/// expected: 1048576
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROWS
 /// Type: RowsFn
@@ -232,6 +276,28 @@ impl Function for RowsFn {
 #[derive(Debug)]
 pub struct ColumnFn;
 
+/// Returns the column number of a reference, or of the current cell when omitted.
+///
+/// `COLUMN` returns a 1-based column index (`A` = 1).
+///
+/// # Remarks
+/// - With a range argument, `COLUMN` returns the first column in that reference.
+/// - Without arguments, it uses the column of the formula cell.
+/// - Full-row references such as `5:5` return `1`.
+/// - Invalid references return an error (`#REF!`/`#VALUE!` depending on context).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Column of a single-cell reference"
+/// formula: '=COLUMN(C5)'
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Column of a range"
+/// formula: '=COLUMN(B2:D4)'
+/// expected: 2
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COLUMN
 /// Type: ColumnFn
@@ -334,6 +400,28 @@ impl Function for ColumnFn {
 #[derive(Debug)]
 pub struct ColumnsFn;
 
+/// Returns the number of columns in a reference or array.
+///
+/// `COLUMNS` reports width, not data density.
+///
+/// # Remarks
+/// - For a single cell reference, returns `1`.
+/// - For full-row references (for example `1:1`), returns `16384`.
+/// - For array literals, returns the first row width.
+/// - Invalid references return an error.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Count columns in a rectangular range"
+/// formula: '=COLUMNS(B2:D10)'
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Count columns in a full row reference"
+/// formula: '=COLUMNS(1:1)'
+/// expected: 16384
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COLUMNS
 /// Type: ColumnsFn

@@ -86,6 +86,42 @@ fn arg_byref_reference() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct IndexFn;
+
+/// Returns the value or reference at a 1-based row and column within an array or range.
+///
+/// `INDEX` can operate on both references and array literals. When the first argument is
+/// a reference, this implementation resolves a referenced cell and materializes its value in
+/// value context.
+///
+/// # Remarks
+/// - Indexing is 1-based for both `row_num` and `column_num`.
+/// - If `column_num` is omitted for a 1D array, `row_num` selects the position in that vector.
+/// - `row_num <= 0`, `column_num <= 0`, or out-of-bounds indexes return `#REF!`.
+/// - Non-numeric index arguments return `#VALUE!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Pick a value from a 2D table"
+/// grid:
+///   A1: "Item"
+///   B1: "Price"
+///   A2: "Pen"
+///   B2: 2.5
+///   A3: "Book"
+///   B3: 8
+/// formula: '=INDEX(A1:B3,3,2)'
+/// expected: 8
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Index into a 1D vector"
+/// grid:
+///   A1: "Q1"
+///   A2: "Q2"
+///   A3: "Q3"
+/// formula: '=INDEX(A1:A3,2)'
+/// expected: "Q2"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: INDEX
 /// Type: IndexFn
@@ -286,6 +322,41 @@ impl Function for IndexFn {
 
 #[derive(Debug)]
 pub struct OffsetFn;
+
+/// Returns a reference shifted from a starting reference by rows and columns.
+///
+/// `OFFSET` is volatile and returns a reference that can point to a single cell or a resized
+/// range, depending on the optional `height` and `width` arguments.
+///
+/// # Remarks
+/// - `rows` and `cols` shift from the top-left of `reference`.
+/// - If omitted, `height` and `width` default to the original reference size.
+/// - Non-positive target coordinates or dimensions return `#REF!`.
+/// - Non-numeric offset/size inputs return `#VALUE!`.
+/// - In value context, a 1x1 result returns a scalar; larger results spill as an array.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Move one row down and one column right"
+/// grid:
+///   A1: 10
+///   B2: 42
+/// formula: '=OFFSET(A1,1,1)'
+/// expected: 42
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Offset and resize a range"
+/// grid:
+///   A1: 1
+///   A2: 2
+///   A3: 3
+///   B1: 4
+///   B2: 5
+///   B3: 6
+/// formula: '=SUM(OFFSET(A1,1,0,2,2))'
+/// expected: 16
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: OFFSET
 /// Type: OffsetFn
@@ -461,6 +532,36 @@ fn arg_indirect() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct IndirectFn;
+
+/// Converts text into a reference and returns the referenced value or range.
+///
+/// `INDIRECT` lets formulas build references dynamically from strings such as `"A1"` or
+/// `"Sheet2!B3:C5"`.
+///
+/// # Remarks
+/// - `a1_style` defaults to `TRUE` (A1 style parsing).
+/// - `a1_style=FALSE` (R1C1 parsing) is currently not implemented and returns `#N/IMPL!`.
+/// - Invalid or unresolved references return `#REF!`.
+/// - The function is volatile because target references can change without direct dependency links.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Resolve a direct cell reference"
+/// grid:
+///   A1: 99
+/// formula: '=INDIRECT("A1")'
+/// expected: 99
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Resolve a range and aggregate it"
+/// grid:
+///   A1: 5
+///   A2: 7
+///   A3: 9
+/// formula: '=SUM(INDIRECT("A1:A3"))'
+/// expected: 21
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: INDIRECT
 /// Type: IndirectFn

@@ -61,6 +61,39 @@ fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32)
 
 #[derive(Debug)]
 pub struct MatchFn;
+/// Returns the relative position of a lookup value in a one-dimensional array.
+///
+/// `MATCH` supports exact and approximate modes and returns a 1-based position.
+///
+/// # Remarks
+/// - `match_type` defaults to `1` (approximate, ascending).
+/// - `match_type=0` performs exact matching and supports `*`, `?`, and `~` wildcards for text.
+/// - `match_type=1` looks for the largest value less than or equal to the lookup value.
+/// - `match_type=-1` looks for the smallest value greater than or equal to the lookup value.
+/// - Approximate modes require sorted data; unsorted data returns `#N/A`.
+/// - If no match is found, returns `#N/A`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Exact text match"
+/// grid:
+///   A1: "A"
+///   A2: "B"
+///   A3: "C"
+/// formula: '=MATCH("B",A1:A3,0)'
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Approximate numeric match"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   A3: 30
+///   A4: 40
+/// formula: '=MATCH(27,A1:A4,1)'
+/// expected: 2
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: MATCH
 /// Type: MatchFn
@@ -282,6 +315,42 @@ impl Function for MatchFn {
 
 #[derive(Debug)]
 pub struct VLookupFn;
+/// Looks up a value in the first column of a table and returns a value from another column.
+///
+/// `VLOOKUP` searches vertically and returns the matching row's value from `col_index_num`.
+///
+/// # Remarks
+/// - `col_index_num` is 1-based and must be within the table width.
+/// - `range_lookup` defaults to `FALSE` in this engine (exact match by default).
+/// - When `range_lookup=TRUE`, approximate match logic is used against the first column.
+/// - If the lookup value is not found, returns `#N/A`.
+/// - If `col_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
+/// - A matched empty target cell is materialized as numeric `0`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Exact match in a key/value table"
+/// grid:
+///   A1: "SKU-1"
+///   B1: 12.5
+///   A2: "SKU-2"
+///   B2: 18
+/// formula: '=VLOOKUP("SKU-2",A1:B2,2,FALSE)'
+/// expected: 18
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Approximate tier lookup"
+/// grid:
+///   A1: 0
+///   B1: "Bronze"
+///   A2: 1000
+///   B2: "Silver"
+///   A3: 5000
+///   B3: "Gold"
+/// formula: '=VLOOKUP(3200,A1:B3,2,TRUE)'
+/// expected: "Silver"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: VLOOKUP
 /// Type: VLookupFn
@@ -491,6 +560,42 @@ impl Function for VLookupFn {
 
 #[derive(Debug)]
 pub struct HLookupFn;
+/// Looks up a value in the first row of a table and returns a value from another row.
+///
+/// `HLOOKUP` searches horizontally and returns the matching column's value from `row_index_num`.
+///
+/// # Remarks
+/// - `row_index_num` is 1-based and must be within the table height.
+/// - `range_lookup` defaults to `FALSE` in this engine (exact match by default).
+/// - When `range_lookup=TRUE`, approximate match logic is used against the first row.
+/// - If the lookup value is not found, returns `#N/A`.
+/// - If `row_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
+/// - A matched empty target cell is materialized as numeric `0`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Exact match across header row"
+/// grid:
+///   A1: "Jan"
+///   B1: "Feb"
+///   A2: 120
+///   B2: 150
+/// formula: '=HLOOKUP("Feb",A1:B2,2,FALSE)'
+/// expected: 150
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Approximate threshold lookup"
+/// grid:
+///   A1: 0
+///   B1: 50
+///   C1: 80
+///   A2: "F"
+///   B2: "C"
+///   C2: "A"
+/// formula: '=HLOOKUP(72,A1:C2,2,TRUE)'
+/// expected: "C"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: HLOOKUP
 /// Type: HLookupFn
