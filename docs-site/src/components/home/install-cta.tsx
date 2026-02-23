@@ -86,7 +86,10 @@ const xlsxBytes = new Uint8Array(
   await fetch("/model.xlsx").then((r) => r.arrayBuffer()),
 );
 
-const wb = Workbook.fromXlsxBytes(xlsxBytes);
+// Convert bytes using your preferred loader bridge/service,
+// then hydrate workbook state into WASM.
+const workbookJson = await convertXlsxBytesToWorkbookJson(xlsxBytes);
+const wb = Workbook.fromJson(workbookJson);
 
 const before = wb.evaluateCell("Inputs", 2, 2);
 

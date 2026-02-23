@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "address",
@@ -28,5 +30,5 @@
     "xlookup",
     "xmatch"
   ],
-  "title": "lookup Functions"
+  "title": "Lookup Functions"
 }

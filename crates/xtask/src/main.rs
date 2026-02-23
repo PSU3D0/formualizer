@@ -137,6 +137,19 @@ struct DocsSchemaEntry {
     caps: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeArgMeta {
+    name: String,
+    kinds: Vec<String>,
+    required: bool,
+    shape: String,
+    by_ref: bool,
+    coercion: String,
+    max: Option<String>,
+    repeating: Option<String>,
+    has_default: bool,
+}
+
 #[derive(Debug, Clone)]
 struct RuntimeFunctionMeta {
     min_args: usize,
@@ -144,6 +157,7 @@ struct RuntimeFunctionMeta {
     variadic: bool,
     arg_schema: String,
     signature: String,
+    args: Vec<RuntimeArgMeta>,
     caps: Vec<String>,
 }
 
@@ -161,6 +175,7 @@ struct FunctionRefEntry {
     variadic: Option<bool>,
     signature: Option<String>,
     arg_schema: Option<String>,
+    args: Vec<RuntimeArgMeta>,
     caps: Vec<String>,
 }
 
@@ -543,8 +558,8 @@ fn run_docs_ref(args: DocsRefArgs) -> Result<()> {
 
         let category_name = category_entries
             .first()
-            .map(|entry| entry.category.clone())
-            .unwrap_or_else(|| category_slug.clone());
+            .map(|entry| display_category_name(&entry.category))
+            .unwrap_or_else(|| display_category_name(category_slug));
 
         let category_index = render_category_index_page(&category_name, category_entries);
         apply_or_check_file(
@@ -566,6 +581,8 @@ fn run_docs_ref(args: DocsRefArgs) -> Result<()> {
         let category_meta = serde_json::to_string_pretty(&serde_json::json!({
             "title": format!("{} Functions", category_name),
             "pages": category_pages,
+            "defaultOpen": false,
+            "collapsible": true,
         }))?;
         apply_or_check_file(
             &category_meta_path,
@@ -726,7 +743,7 @@ fn collect_function_ref_entries(
 
         let category = derive_category(&registration_file);
         let category_slug = slugify_for_docs(&category);
-        let function_slug = slugify_for_docs(&function_name);
+        let function_slug = sanitize_function_slug(slugify_for_docs(&function_name));
         let runtime = runtime_meta.get(&function_name.to_uppercase());
 
         entries.push(FunctionRefEntry {
@@ -746,6 +763,7 @@ fn collect_function_ref_entries(
             arg_schema: runtime
                 .map(|meta| meta.arg_schema.clone())
                 .or(impl_info.arg_schema.clone()),
+            args: runtime.map(|meta| meta.args.clone()).unwrap_or_default(),
             caps: runtime
                 .map(|meta| meta.caps.clone())
                 .unwrap_or_else(|| impl_info.caps.clone()),
@@ -792,6 +810,14 @@ fn collect_function_ref_entries(
     Ok(deduped)
 }
 
+fn sanitize_function_slug(slug: String) -> String {
+    match slug.as_str() {
+        "index" => "index-fn".to_string(),
+        "meta" => "meta-fn".to_string(),
+        _ => slug,
+    }
+}
+
 fn slugify_for_docs(input: &str) -> String {
     let mut out = String::new();
     let mut prev_dash = false;
@@ -812,6 +838,29 @@ fn slugify_for_docs(input: &str) -> String {
         "function".to_string()
     } else {
         out
+    }
+}
+
+fn display_category_name(raw: &str) -> String {
+    match raw {
+        "datetime" => "Date & Time".to_string(),
+        "logical-ext" | "logical_ext" => "Logical (Extended)".to_string(),
+        "reference-fns" | "reference_fns" => "Reference".to_string(),
+        "stats" => "Statistics".to_string(),
+        "info" => "Information".to_string(),
+        "lambda" => "LET / LAMBDA".to_string(),
+        _ => raw
+            .split(['-', '_'])
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
     }
 }
 
@@ -888,6 +937,7 @@ fn render_functions_meta_json(entries: &[FunctionRefEntry]) -> Result<String> {
                 "variadic": entry.variadic,
                 "signature": entry.signature,
                 "argSchema": entry.arg_schema,
+                "args": entry.args,
                 "caps": entry.caps,
                 "registrationSource": entry.registration_file,
                 "implementationSource": entry.impl_file,
@@ -1542,19 +1592,21 @@ fn collect_runtime_function_meta() -> Result<BTreeMap<String, RuntimeFunctionMet
 
         let schema_eval = catch_unwind_silent(|| function.arg_schema());
 
-        let (arg_schema, signature, max_args) = match schema_eval {
+        let (arg_schema, signature, max_args, args) = match schema_eval {
             Ok(schema) => {
                 let max_args = if variadic { None } else { Some(schema.len()) };
                 (
                     format_arg_schema(schema),
                     format_signature(function.name(), schema, variadic),
                     max_args,
+                    format_runtime_args(schema),
                 )
             }
             Err(_) => (
                 "<unavailable: arg_schema panicked>".to_string(),
                 format!("{}(<schema unavailable>)", function.name()),
                 None,
+                Vec::new(),
             ),
         };
 
@@ -1566,6 +1618,7 @@ fn collect_runtime_function_meta() -> Result<BTreeMap<String, RuntimeFunctionMet
                 variadic,
                 arg_schema,
                 signature,
+                args,
                 caps,
             },
         );
@@ -1598,6 +1651,39 @@ fn fn_caps_labels(caps: FnCaps) -> Vec<String> {
         .iter()
         .filter(|(flag, _)| caps.contains(*flag))
         .map(|(_, label)| (*label).to_string())
+        .collect()
+}
+
+fn format_runtime_args(schema: &[ArgSchema]) -> Vec<RuntimeArgMeta> {
+    schema
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| {
+            let kinds = spec
+                .kinds
+                .iter()
+                .map(|kind| format!("{kind:?}").to_lowercase())
+                .collect::<Vec<_>>();
+
+            let shape = match spec.shape {
+                ShapeKind::Scalar => "scalar",
+                ShapeKind::Range => "range",
+                ShapeKind::Array => "array",
+            }
+            .to_string();
+
+            RuntimeArgMeta {
+                name: format!("arg{}", index + 1),
+                kinds,
+                required: spec.required,
+                shape,
+                by_ref: spec.by_ref,
+                coercion: format!("{:?}", spec.coercion),
+                max: spec.max.map(|value| format!("{:?}", value)),
+                repeating: spec.repeating.map(|value| format!("{:?}", value)),
+                has_default: spec.default.is_some(),
+            }
+        })
         .collect()
 }
 

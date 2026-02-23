@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "bin2dec",
@@ -43,5 +45,5 @@
     "oct2dec",
     "oct2hex"
   ],
-  "title": "engineering Functions"
+  "title": "Engineering Functions"
 }

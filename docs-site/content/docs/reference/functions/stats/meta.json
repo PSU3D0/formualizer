@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "avedev",
@@ -76,5 +78,5 @@
     "weibull-dist",
     "z-test"
   ],
-  "title": "stats Functions"
+  "title": "Statistics Functions"
 }

@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "and",
@@ -7,5 +9,5 @@
     "or",
     "true"
   ],
-  "title": "logical Functions"
+  "title": "Logical Functions"
 }

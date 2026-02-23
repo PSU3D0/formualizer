@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "daverage",
@@ -14,5 +16,5 @@
     "dvar",
     "dvarp"
   ],
-  "title": "database Functions"
+  "title": "Database Functions"
 }

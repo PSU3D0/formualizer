@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "accrint",
@@ -28,5 +30,5 @@
     "xnpv",
     "yield"
   ],
-  "title": "financial Functions"
+  "title": "Financial Functions"
 }

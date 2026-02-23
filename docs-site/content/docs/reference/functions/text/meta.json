@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "arraytotext",
@@ -33,5 +35,5 @@
     "value",
     "valuetotext"
   ],
-  "title": "text Functions"
+  "title": "Text Functions"
 }

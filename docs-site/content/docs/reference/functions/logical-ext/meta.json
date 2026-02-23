@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "iferror",
@@ -7,5 +9,5 @@
     "not",
     "xor"
   ],
-  "title": "logical_ext Functions"
+  "title": "Logical (Extended) Functions"
 }

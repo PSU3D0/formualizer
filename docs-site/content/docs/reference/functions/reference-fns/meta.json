@@ -1,9 +1,11 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
-    "index",
+    "index-fn",
     "indirect",
     "offset"
   ],
-  "title": "reference_fns Functions"
+  "title": "Reference Functions"
 }

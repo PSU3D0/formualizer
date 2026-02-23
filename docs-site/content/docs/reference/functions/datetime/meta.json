@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "date",
@@ -25,5 +27,5 @@
     "year",
     "yearfrac"
   ],
-  "title": "datetime Functions"
+  "title": "Date & Time Functions"
 }

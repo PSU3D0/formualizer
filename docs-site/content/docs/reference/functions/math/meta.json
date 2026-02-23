@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "abs",
@@ -72,5 +74,5 @@
     "tanh",
     "trunc"
   ],
-  "title": "math Functions"
+  "title": "Math Functions"
 }

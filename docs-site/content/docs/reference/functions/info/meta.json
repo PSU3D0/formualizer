@@ -1,4 +1,6 @@
 {
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "error-type",
@@ -17,5 +19,5 @@
     "t",
     "type"
   ],
-  "title": "info Functions"
+  "title": "Information Functions"
 }
