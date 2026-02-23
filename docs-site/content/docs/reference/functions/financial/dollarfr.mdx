@@ -1,17 +1,41 @@
 ---
 title: "DOLLARFR"
-description: "Reference for the DOLLARFR function."
+description: "Converts a decimal dollar value into fractional-dollar notation."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+This is the inverse-style formatting helper used for quoted fractional price conventions.
 
-## Formula example
+## Remarks
+ - `fraction` is truncated to an integer denominator and must be `&gt;= 1`.
+ - Sign convention: sign is preserved (`-x` maps to `-result`).
+ - No periodic rate is involved in this conversion.
+ - Returns `#NUM!` when `fraction &lt; 1` after truncation.
+ - Fraction output is encoded by denominator digit width (`ceil(log10(fraction))`).
 
-```text
-=DOLLARFR(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=DOLLARFR(1.125, 16)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=DOLLARFR(-3.46875, 32)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

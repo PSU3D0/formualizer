@@ -1,17 +1,39 @@
 ---
 title: "BITRSHIFT"
-description: "Reference for the BITRSHIFT function."
+description: "Shifts a non-negative integer right or left by a given bit count."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Positive `shift_amount` shifts right; negative `shift_amount` shifts left.
 
-## Formula example
+## Remarks
+ - `number` must be a whole number in `[0, 2^48)`.
+ - Shift values are numerically coerced; large right shifts return `0`.
+ - Negative shifts that overflow the 48-bit limit return `#NUM!`.
 
-```text
-=BITRSHIFT(A1, B1)
-```
+## Examples
+
+<Tabs items={["Shift right by three bits", "Use negative shift to move left"]}>
+<Tab value="Shift right by three bits">
+<FunctionSandbox
+  title="Shift right by three bits"
+  formula={`=BITRSHIFT(32,3)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Use negative shift to move left">
+<FunctionSandbox
+  title="Use negative shift to move left"
+  formula={`=BITRSHIFT(5,-1)`}
+  grid={{}}
+  expected={"10"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

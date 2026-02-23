@@ -1,17 +1,39 @@
 ---
 title: "MINUTE"
-description: "Reference for the MINUTE function."
+description: "Extracts the minute component (`0` to `59`) from a time or datetime serial."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Extracts the minute component (`0` to `59`) from a time or datetime serial.
 
-## Formula example
+## Remarks
+ - The integer date portion is ignored for minute extraction.
+ - Conversion uses Excel 1900 serial interpretation for the date portion when present.
+ - Time is derived from the fractional serial component.
 
-```text
-=MINUTE(A1)
-```
+## Examples
+
+<Tabs items={["Extract minute from 15:30:45", "Extract minute from exact noon"]}>
+<Tab value="Extract minute from 15:30:45">
+<FunctionSandbox
+  title="Extract minute from 15:30:45"
+  formula={`=MINUTE(0.6463541667)`}
+  grid={{}}
+  expected={"30"}
+/>
+</Tab>
+
+<Tab value="Extract minute from exact noon">
+<FunctionSandbox
+  title="Extract minute from exact noon"
+  formula={`=MINUTE(0.5)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

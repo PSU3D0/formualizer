@@ -1,17 +1,39 @@
 ---
 title: "IMSUM"
-description: "Reference for the IMSUM function."
+description: "Returns the sum of one or more complex numbers."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Adds real parts together and imaginary parts together.
 
-## Formula example
+## Remarks
+ - Each argument is coerced to complex-number text before parsing.
+ - Accepts any number of arguments from one upward.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMSUM(A1)
-```
+## Examples
+
+<Tabs items={["Add multiple complex values", "Add j-suffix values"]}>
+<Tab value="Add multiple complex values">
+<FunctionSandbox
+  title="Add multiple complex values"
+  formula={`=IMSUM("3+4i","1-2i","5")`}
+  grid={{}}
+  expected={"9+2i"}
+/>
+</Tab>
+
+<Tab value="Add j-suffix values">
+<FunctionSandbox
+  title="Add j-suffix values"
+  formula={`=IMSUM("2j","-j")`}
+  grid={{}}
+  expected={"j"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

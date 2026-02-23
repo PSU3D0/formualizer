@@ -1,17 +1,42 @@
 ---
 title: "EFFECT"
-description: "Reference for the EFFECT function."
+description: "Converts a nominal annual rate into an effective annual rate."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+This is useful when nominal APR is quoted with periodic compounding and you need annualized
+ yield including compounding effects.
 
-## Formula example
+## Remarks
+ - `nominal_rate` is annual; `npery` is compounding periods per year.
+ - `npery` is truncated to an integer before computation.
+ - Sign convention is not cash-flow based; this function transforms rate conventions only.
+ - Returns `#NUM!` when `nominal_rate &lt;= 0` or `npery &lt; 1`.
+ - Result formula: `(1 + nominal_rate / npery)^npery - 1`.
 
-```text
-=EFFECT(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=EFFECT(0.12, 12)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=EFFECT(0.08, 4)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,39 @@
 ---
 title: "IMDIV"
-description: "Reference for the IMDIV function."
+description: "Returns the quotient of two complex numbers."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Divides the first complex value by the second.
 
-## Formula example
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Returns `#DIV/0!` when the divisor is `0+0i`.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMDIV(A1, B1)
-```
+## Examples
+
+<Tabs items={["Divide complex numbers", "Division by zero complex"]}>
+<Tab value="Divide complex numbers">
+<FunctionSandbox
+  title="Divide complex numbers"
+  formula={`=IMDIV("3+4i","1-i")`}
+  grid={{}}
+  expected={"-0.5+3.5i"}
+/>
+</Tab>
+
+<Tab value="Division by zero complex">
+<FunctionSandbox
+  title="Division by zero complex"
+  formula={`=IMDIV("2+i","0")`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

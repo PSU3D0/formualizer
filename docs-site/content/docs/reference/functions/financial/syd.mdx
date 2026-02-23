@@ -1,17 +1,40 @@
 ---
 title: "SYD"
-description: "Reference for the SYD function."
+description: "Returns sum-of-years'-digits depreciation for a requested period."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`SYD` applies accelerated depreciation by weighting earlier periods more heavily.
 
-## Formula example
+## Remarks
+ - Formula: `(cost - salvage) * (life - per + 1) / (life * (life + 1) / 2)`.
+ - `life` and `per` must satisfy: `life &gt; 0`, `per &gt; 0`, and `per &lt;= life`; otherwise returns `#NUM!`.
+ - The function uses the provided numeric values directly (no integer-only enforcement).
+ - Result sign follows `(cost - salvage)`: positive for typical depreciation expense, negative if `salvage &gt; cost`.
 
-```text
-=SYD(A1, B1)
-```
+## Examples
+
+<Tabs items={["First SYD period", "Final SYD period"]}>
+<Tab value="First SYD period">
+<FunctionSandbox
+  title="First SYD period"
+  formula={`=SYD(10000, 1000, 5, 1)`}
+  grid={{}}
+  expected={"3000"}
+/>
+</Tab>
+
+<Tab value="Final SYD period">
+<FunctionSandbox
+  title="Final SYD period"
+  formula={`=SYD(10000, 1000, 5, 5)`}
+  grid={{}}
+  expected={"600"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

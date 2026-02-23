@@ -1,17 +1,39 @@
 ---
 title: "MEDIAN"
-description: "Reference for the MEDIAN function."
+description: "Returns the middle value of a numeric data set."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+For an even number of values, `MEDIAN` returns the average of the two center values.
 
-## Formula example
+## Remarks
+ - Ignores non-numeric values in referenced ranges.
+ - Returns `#NUM!` when no numeric values are available.
+ - Supports both scalar arguments and range inputs.
 
-```text
-=MEDIAN(A1)
-```
+## Examples
+
+<Tabs items={["Median of an odd-sized set", "Median of an even-sized range"]}>
+<Tab value="Median of an odd-sized set">
+<FunctionSandbox
+  title="Median of an odd-sized set"
+  formula={`=MEDIAN(1,3,8)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Median of an even-sized range">
+<FunctionSandbox
+  title="Median of an even-sized range"
+  formula={`=MEDIAN(A1:A4)`}
+  grid={{"A1":"1","A2":"2","A3":"10","A4":"12"}}
+  expected={"6"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

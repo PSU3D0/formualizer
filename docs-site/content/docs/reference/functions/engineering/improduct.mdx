@@ -1,17 +1,39 @@
 ---
 title: "IMPRODUCT"
-description: "Reference for the IMPRODUCT function."
+description: "Returns the product of one or more complex numbers."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Multiplies values sequentially using complex multiplication rules.
 
-## Formula example
+## Remarks
+ - Each argument is coerced to complex-number text before parsing.
+ - Accepts any number of arguments from one upward.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMPRODUCT(A1)
-```
+## Examples
+
+<Tabs items={["Multiply conjugates", "Scale an imaginary value"]}>
+<Tab value="Multiply conjugates">
+<FunctionSandbox
+  title="Multiply conjugates"
+  formula={`=IMPRODUCT("1+i","1-i")`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Scale an imaginary value">
+<FunctionSandbox
+  title="Scale an imaginary value"
+  formula={`=IMPRODUCT("2i","3")`}
+  grid={{}}
+  expected={"6i"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

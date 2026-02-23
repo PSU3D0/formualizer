@@ -1,17 +1,39 @@
 ---
 title: "WEEKDAY"
-description: "Reference for the WEEKDAY function."
+description: "Returns the day-of-week index for a date serial with configurable numbering."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the day-of-week index for a date serial with configurable numbering.
 
-## Formula example
+## Remarks
+ - Default `return_type` is `1` (`Sunday=1` through `Saturday=7`).
+ - Supported `return_type` values are `1`, `2`, `3`, `11`-`17`; unsupported values return `#NUM!`.
+ - Input serials are interpreted with Excel 1900 date mapping, including its historical leap-year quirk.
 
-```text
-=WEEKDAY(A1)
-```
+## Examples
+
+<Tabs items={["Default numbering (Sunday-first)", "Monday-first numbering"]}>
+<Tab value="Default numbering (Sunday-first)">
+<FunctionSandbox
+  title="Default numbering (Sunday-first)"
+  formula={`=WEEKDAY(45292)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Monday-first numbering">
+<FunctionSandbox
+  title="Monday-first numbering"
+  formula={`=WEEKDAY(45292, 2)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

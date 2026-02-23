@@ -1,17 +1,39 @@
 ---
 title: "IMSQRT"
-description: "Reference for the IMSQRT function."
+description: "Returns the principal square root of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Computes the root in polar form and returns complex text.
 
-## Formula example
+## Remarks
+ - Input is coerced to complex-number text before parsing.
+ - Returns the principal branch of the square root.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMSQRT(A1)
-```
+## Examples
+
+<Tabs items={["Square root of a negative real", "Square root of a+bi"]}>
+<Tab value="Square root of a negative real">
+<FunctionSandbox
+  title="Square root of a negative real"
+  formula={`=IMSQRT("-4")`}
+  grid={{}}
+  expected={"2i"}
+/>
+</Tab>
+
+<Tab value="Square root of a+bi">
+<FunctionSandbox
+  title="Square root of a+bi"
+  formula={`=IMSQRT("3+4i")`}
+  grid={{}}
+  expected={"2+i"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

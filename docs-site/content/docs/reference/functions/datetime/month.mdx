@@ -1,17 +1,39 @@
 ---
 title: "MONTH"
-description: "Reference for the MONTH function."
+description: "Extracts the month number (`1` to `12`) from a date serial."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Extracts the month number (`1` to `12`) from a date serial.
 
-## Formula example
+## Remarks
+ - Fractional time is ignored; only the date portion contributes.
+ - Serials are interpreted with Excel 1900 date semantics.
+ - The result always uses January=`1` through December=`12`.
 
-```text
-=MONTH(A1)
-```
+## Examples
+
+<Tabs items={["Extract month from January date", "Extract month from leap-day serial"]}>
+<Tab value="Extract month from January date">
+<FunctionSandbox
+  title="Extract month from January date"
+  formula={`=MONTH(44927)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Extract month from leap-day serial">
+<FunctionSandbox
+  title="Extract month from leap-day serial"
+  formula={`=MONTH(45351)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

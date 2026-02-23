@@ -1,17 +1,39 @@
 ---
 title: "IMEXP"
-description: "Reference for the IMEXP function."
+description: "Returns the complex exponential of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Computes `e^(a+bi)` and returns the result as complex text.
 
-## Formula example
+## Remarks
+ - Input is coerced to complex-number text before parsing.
+ - Uses Euler's identity for the imaginary component.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMEXP(A1)
-```
+## Examples
+
+<Tabs items={["Exponential of zero", "Exponential of a real value"]}>
+<Tab value="Exponential of zero">
+<FunctionSandbox
+  title="Exponential of zero"
+  formula={`=IMEXP("0")`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Exponential of a real value">
+<FunctionSandbox
+  title="Exponential of a real value"
+  formula={`=IMEXP("1")`}
+  grid={{}}
+  expected={"2.718281828459045"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

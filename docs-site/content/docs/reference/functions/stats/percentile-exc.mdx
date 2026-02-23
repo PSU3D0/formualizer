@@ -1,17 +1,39 @@
 ---
 title: "PERCENTILE.EXC"
-description: "Reference for the PERCENTILE.EXC function."
+description: "Returns the k-th percentile of a data set using exclusive interpolation."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`PERCENTILE.EXC` uses the `n+1` rank basis and excludes the exact endpoints `0` and `1`.
 
-## Formula example
+## Remarks
+ - `k` must satisfy `0 &lt; k &lt; 1`.
+ - Returns `#NUM!` when the percentile falls outside the valid rank range for the data size.
+ - Returns `#NUM!` for empty numeric input.
 
-```text
-=PERCENTILE.EXC(A1, B1)
-```
+## Examples
+
+<Tabs items={["Exclusive 25th percentile from direct values", "Exclusive percentile from a range"]}>
+<Tab value="Exclusive 25th percentile from direct values">
+<FunctionSandbox
+  title="Exclusive 25th percentile from direct values"
+  formula={`=PERCENTILE.EXC({1,2,3,4,5},0.25)`}
+  grid={{}}
+  expected={"1.5"}
+/>
+</Tab>
+
+<Tab value="Exclusive percentile from a range">
+<FunctionSandbox
+  title="Exclusive percentile from a range"
+  formula={`=PERCENTILE.EXC(A1:A5,0.6)`}
+  grid={{"A1":"10","A2":"20","A3":"30","A4":"40","A5":"50"}}
+  expected={"36"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

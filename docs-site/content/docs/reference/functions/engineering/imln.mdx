@@ -1,17 +1,39 @@
 ---
 title: "IMLN"
-description: "Reference for the IMLN function."
+description: "Returns the natural logarithm of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Produces the principal complex logarithm as text.
 
-## Formula example
+## Remarks
+ - Input is coerced to complex-number text before parsing.
+ - Returns `#NUM!` for zero input because `ln(0)` is undefined.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMLN(A1)
-```
+## Examples
+
+<Tabs items={["Natural log of 1", "Natural log on imaginary axis"]}>
+<Tab value="Natural log of 1">
+<FunctionSandbox
+  title="Natural log of 1"
+  formula={`=IMLN("1")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Natural log on imaginary axis">
+<FunctionSandbox
+  title="Natural log on imaginary axis"
+  formula={`=IMLN("i")`}
+  grid={{}}
+  expected={"1.5707963267948966i"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

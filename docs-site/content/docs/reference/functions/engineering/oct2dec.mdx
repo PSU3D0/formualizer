@@ -1,17 +1,39 @@
 ---
 title: "OCT2DEC"
-description: "Reference for the OCT2DEC function."
+description: "Converts an octal text value to decimal."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Supports up to 10 octal digits, including signed two's-complement values.
 
-## Formula example
+## Remarks
+ - Input is coerced to text and must contain only digits `0` through `7`.
+ - 10-digit values beginning with `4`-`7` are interpreted as signed 30-bit numbers.
+ - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
 
-```text
-=OCT2DEC(A1)
-```
+## Examples
+
+<Tabs items={["Convert positive octal", "Interpret signed 30-bit octal"]}>
+<Tab value="Convert positive octal">
+<FunctionSandbox
+  title="Convert positive octal"
+  formula={`=OCT2DEC("17")`}
+  grid={{}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="Interpret signed 30-bit octal">
+<FunctionSandbox
+  title="Interpret signed 30-bit octal"
+  formula={`=OCT2DEC("7777777777")`}
+  grid={{}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

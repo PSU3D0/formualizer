@@ -1,17 +1,39 @@
 ---
 title: "ERF.PRECISE"
-description: "Reference for the ERF.PRECISE function."
+description: "Returns the error function of a number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+This is the one-argument precise variant of `ERF`.
 
-## Formula example
+## Remarks
+ - Input is numerically coerced.
+ - Equivalent to `ERF(x)` in single-argument mode.
+ - Results are approximate floating-point values.
 
-```text
-=ERF.PRECISE(A1)
-```
+## Examples
+
+<Tabs items={["Positive input", "Negative input"]}>
+<Tab value="Positive input">
+<FunctionSandbox
+  title="Positive input"
+  formula={`=ERF.PRECISE(1)`}
+  grid={{}}
+  expected={"0.8427007929497149"}
+/>
+</Tab>
+
+<Tab value="Negative input">
+<FunctionSandbox
+  title="Negative input"
+  formula={`=ERF.PRECISE(-1)`}
+  grid={{}}
+  expected={"-0.8427007929497149"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

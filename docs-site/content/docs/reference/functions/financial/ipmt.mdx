@@ -1,17 +1,41 @@
 ---
 title: "IPMT"
-description: "Reference for the IPMT function."
+description: "Returns the interest-only component of a payment for a specific period."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Use this with `PMT` or `PPMT` to break a fixed payment into interest and principal pieces.
 
-## Formula example
+## Remarks
+ - `rate` is the interest rate per payment period.
+ - `per` is 1-based and must satisfy `1 &lt;= per &lt;= nper`.
+ - Cash-flow sign convention: for a positive loan principal (`pv`), interest components are typically negative.
+ - `type = 1` yields zero interest in period 1 (annuity-due first payment).
+ - Returns `#NUM!` when `per` is outside valid bounds.
 
-```text
-=IPMT(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=IPMT(0.06/12, 1, 360, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=IPMT(0.06/12, 12, 360, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,39 @@
 ---
 title: "BIN2HEX"
-description: "Reference for the BIN2HEX function."
+description: "Converts a binary text value to hexadecimal text."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Optionally pads the output with leading zeros using `places`.
 
-## Formula example
+## Remarks
+ - Input must be a binary string up to 10 digits; 10-digit values may be signed.
+ - Signed binary values are converted using two's-complement semantics.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
 
-```text
-=BIN2HEX(A1)
-```
+## Examples
+
+<Tabs items={["Convert binary to hex", "Pad hexadecimal output"]}>
+<Tab value="Convert binary to hex">
+<FunctionSandbox
+  title="Convert binary to hex"
+  formula={`=BIN2HEX("1010")`}
+  grid={{}}
+  expected={"A"}
+/>
+</Tab>
+
+<Tab value="Pad hexadecimal output">
+<FunctionSandbox
+  title="Pad hexadecimal output"
+  formula={`=BIN2HEX("1010",4)`}
+  grid={{}}
+  expected={"000A"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

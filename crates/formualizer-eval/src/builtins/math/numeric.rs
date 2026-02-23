@@ -134,6 +134,7 @@ impl Function for SignFn {
 
 #[derive(Debug)]
 pub struct IntFn; // floor toward -inf
+/// Rounds a number down to the nearest integer.
 /// [formualizer-docgen:schema:start]
 /// Name: INT
 /// Type: IntFn
@@ -172,6 +173,7 @@ impl Function for IntFn {
 
 #[derive(Debug)]
 pub struct TruncFn; // truncate toward zero
+/// Truncates a number to an integer or a specified precision toward zero.
 /// [formualizer-docgen:schema:start]
 /// Name: TRUNC
 /// Type: TruncFn
@@ -304,6 +306,7 @@ impl Function for RoundFn {
 
 #[derive(Debug)]
 pub struct RoundDownFn; // toward zero
+/// Rounds a number toward zero to a specified number of digits.
 /// [formualizer-docgen:schema:start]
 /// Name: ROUNDDOWN
 /// Type: RoundDownFn
@@ -354,6 +357,7 @@ impl Function for RoundDownFn {
 
 #[derive(Debug)]
 pub struct RoundUpFn; // away from zero
+/// Rounds a number away from zero to a specified number of digits.
 /// [formualizer-docgen:schema:start]
 /// Name: ROUNDUP
 /// Type: RoundUpFn
@@ -487,6 +491,7 @@ impl Function for ModFn {
 
 #[derive(Debug)]
 pub struct CeilingFn; // CEILING(number, [significance]) legacy semantics simplified
+/// Rounds a number up to the nearest multiple of a given significance.
 /// [formualizer-docgen:schema:start]
 /// Name: CEILING
 /// Type: CeilingFn
@@ -554,6 +559,7 @@ impl Function for CeilingFn {
 
 #[derive(Debug)]
 pub struct CeilingMathFn; // CEILING.MATH(number,[significance],[mode])
+/// Rounds a number up with `CEILING.MATH` semantics for sign and mode.
 /// [formualizer-docgen:schema:start]
 /// Name: CEILING.MATH
 /// Type: CeilingMathFn
@@ -632,6 +638,7 @@ impl Function for CeilingMathFn {
 
 #[derive(Debug)]
 pub struct FloorFn; // FLOOR(number,[significance])
+/// Rounds a number down to the nearest multiple of significance.
 /// [formualizer-docgen:schema:start]
 /// Name: FLOOR
 /// Type: FloorFn
@@ -699,6 +706,7 @@ impl Function for FloorFn {
 
 #[derive(Debug)]
 pub struct FloorMathFn; // FLOOR.MATH(number,[significance],[mode])
+/// Rounds a number down with `FLOOR.MATH` semantics.
 /// [formualizer-docgen:schema:start]
 /// Name: FLOOR.MATH
 /// Type: FloorMathFn
@@ -912,6 +920,7 @@ impl Function for PowerFn {
 
 #[derive(Debug)]
 pub struct ExpFn; // EXP(number)
+/// Returns Euler's number `e` raised to a power.
 /// [formualizer-docgen:schema:start]
 /// Name: EXP
 /// Type: ExpFn
@@ -952,6 +961,7 @@ impl Function for ExpFn {
 
 #[derive(Debug)]
 pub struct LnFn; // LN(number)
+/// Returns the natural logarithm of a positive number.
 /// [formualizer-docgen:schema:start]
 /// Name: LN
 /// Type: LnFn
@@ -1080,6 +1090,7 @@ impl Function for LogFn {
 
 #[derive(Debug)]
 pub struct Log10Fn; // LOG10(number)
+/// Returns the base-10 logarithm of a positive number.
 /// [formualizer-docgen:schema:start]
 /// Name: LOG10
 /// Type: Log10Fn
@@ -1136,6 +1147,7 @@ fn factorial_checked(n: i64) -> Option<f64> {
 
 #[derive(Debug)]
 pub struct QuotientFn;
+/// Returns the integer portion of a division result.
 /// [formualizer-docgen:schema:start]
 /// Name: QUOTIENT
 /// Type: QuotientFn
@@ -1187,6 +1199,7 @@ impl Function for QuotientFn {
 
 #[derive(Debug)]
 pub struct EvenFn;
+/// Rounds a number away from zero to the nearest even integer.
 /// [formualizer-docgen:schema:start]
 /// Name: EVEN
 /// Type: EvenFn
@@ -1236,6 +1249,7 @@ impl Function for EvenFn {
 
 #[derive(Debug)]
 pub struct OddFn;
+/// Rounds a number away from zero to the nearest odd integer.
 /// [formualizer-docgen:schema:start]
 /// Name: ODD
 /// Type: OddFn
@@ -1282,6 +1296,7 @@ impl Function for OddFn {
 
 #[derive(Debug)]
 pub struct SqrtPiFn;
+/// Returns the square root of a number multiplied by π.
 /// [formualizer-docgen:schema:start]
 /// Name: SQRTPI
 /// Type: SqrtPiFn
@@ -1327,6 +1342,7 @@ impl Function for SqrtPiFn {
 
 #[derive(Debug)]
 pub struct MultinomialFn;
+/// Returns the multinomial coefficient for one or more integer values.
 /// [formualizer-docgen:schema:start]
 /// Name: MULTINOMIAL
 /// Type: MultinomialFn
@@ -1405,6 +1421,7 @@ impl Function for MultinomialFn {
 
 #[derive(Debug)]
 pub struct SeriesSumFn;
+/// Evaluates a power series using supplied coefficients.
 /// [formualizer-docgen:schema:start]
 /// Name: SERIESSUM
 /// Type: SeriesSumFn
@@ -1502,6 +1519,7 @@ impl Function for SeriesSumFn {
 
 #[derive(Debug)]
 pub struct SumsqFn;
+/// Returns the sum of squares of supplied numbers.
 /// [formualizer-docgen:schema:start]
 /// Name: SUMSQ
 /// Type: SumsqFn
@@ -1711,6 +1729,26 @@ fn roman_apply_form(classic: String, form: i64) -> String {
 
 #[derive(Debug)]
 pub struct RomanFn;
+/// Converts an Arabic number to a Roman numeral string.
+///
+/// # Remarks
+/// - Accepts integer values in the range `0..=3999`.
+/// - `0` returns an empty string.
+/// - Optional `form` controls output compactness (`0` classic through `4` simplified).
+/// - Out-of-range values return `#VALUE!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Classic Roman numeral"
+/// formula: "=ROMAN(1999)"
+/// expected: "MCMXCIX"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Another conversion"
+/// formula: "=ROMAN(44)"
+/// expected: "XLIV"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROMAN
 /// Type: RomanFn
@@ -1816,6 +1854,26 @@ fn roman_digit_value(ch: char) -> Option<i64> {
 
 #[derive(Debug)]
 pub struct ArabicFn;
+/// Converts a Roman numeral string to its Arabic numeric value.
+///
+/// # Remarks
+/// - Accepts text input containing Roman symbols (`I,V,X,L,C,D,M`).
+/// - Surrounding whitespace is trimmed.
+/// - Empty text returns `0`.
+/// - Invalid Roman syntax returns `#VALUE!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Roman to Arabic"
+/// formula: "=ARABIC(\"MCMXCIX\")"
+/// expected: 1999
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Trimmed input"
+/// formula: "=ARABIC(\"  XLIV  \")"
+/// expected: 44
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ARABIC
 /// Type: ArabicFn

@@ -1,17 +1,40 @@
 ---
 title: "WEEKNUM"
-description: "Reference for the WEEKNUM function."
+description: "Returns the week number of the year for a date serial."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the week number of the year for a date serial.
 
-## Formula example
+## Remarks
+ - Default `return_type` is `1` (week starts on Sunday).
+ - Supported `return_type` values are `1`, `2`, `11`-`17`, and `21` (ISO week numbering).
+ - Unsupported `return_type` values return `#NUM!`.
+ - Input serials are interpreted using Excel 1900 date mapping rather than workbook `1904` interpretation.
 
-```text
-=WEEKNUM(A1)
-```
+## Examples
+
+<Tabs items={["Default week numbering", "ISO week numbering"]}>
+<Tab value="Default week numbering">
+<FunctionSandbox
+  title="Default week numbering"
+  formula={`=WEEKNUM(45292)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="ISO week numbering">
+<FunctionSandbox
+  title="ISO week numbering"
+  formula={`=WEEKNUM(42370, 21)`}
+  grid={{}}
+  expected={"53"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

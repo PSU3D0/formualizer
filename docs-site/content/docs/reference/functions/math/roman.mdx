@@ -1,17 +1,40 @@
 ---
 title: "ROMAN"
-description: "Reference for the ROMAN function."
+description: "Converts an Arabic number to a Roman numeral string."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Converts an Arabic number to a Roman numeral string.
 
-## Formula example
+## Remarks
+ - Accepts integer values in the range `0..=3999`.
+ - `0` returns an empty string.
+ - Optional `form` controls output compactness (`0` classic through `4` simplified).
+ - Out-of-range values return `#VALUE!`.
 
-```text
-=ROMAN(A1)
-```
+## Examples
+
+<Tabs items={["Classic Roman numeral", "Another conversion"]}>
+<Tab value="Classic Roman numeral">
+<FunctionSandbox
+  title="Classic Roman numeral"
+  formula={`=ROMAN(1999)`}
+  grid={{}}
+  expected={"MCMXCIX"}
+/>
+</Tab>
+
+<Tab value="Another conversion">
+<FunctionSandbox
+  title="Another conversion"
+  formula={`=ROMAN(44)`}
+  grid={{}}
+  expected={"XLIV"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,41 @@
 ---
 title: "IRR"
-description: "Reference for the IRR function."
+description: "Calculates periodic internal rate of return for regularly spaced cash flows."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+The function iteratively finds the per-period rate where discounted cash flows sum to zero.
 
-## Formula example
+## Remarks
+ - Output is a rate per cash-flow period (not automatically annualized).
+ - Cash-flow sign convention: outflows are negative and inflows are positive.
+ - Non-numeric cells in arrays/ranges are ignored; direct scalar errors are propagated.
+ - A callable value input returns `#CALC!`.
+ - Returns `#NUM!` if fewer than two numeric cash flows are available, if derivative is near zero, or if iteration does not converge.
 
-```text
-=IRR(A1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=IRR({-10000,3000,4200,6800})`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=IRR({-5000,1200,1410,1875,1050}, 0.1)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

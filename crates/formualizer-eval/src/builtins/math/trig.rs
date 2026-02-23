@@ -312,6 +312,7 @@ mod tests_tan {
 
 #[derive(Debug)]
 pub struct AsinFn;
+/// Returns the arcsine of a value, in radians.
 /// [formualizer-docgen:schema:start]
 /// Name: ASIN
 /// Type: AsinFn
@@ -400,6 +401,7 @@ mod tests_asin {
 
 #[derive(Debug)]
 pub struct AcosFn;
+/// Returns the arccosine of a value, in radians.
 /// [formualizer-docgen:schema:start]
 /// Name: ACOS
 /// Type: AcosFn
@@ -486,6 +488,7 @@ mod tests_acos {
 
 #[derive(Debug)]
 pub struct AtanFn;
+/// Returns the arctangent of a number, in radians.
 /// [formualizer-docgen:schema:start]
 /// Name: ATAN
 /// Type: AtanFn
@@ -712,6 +715,7 @@ mod tests_atan2 {
 
 #[derive(Debug)]
 pub struct SecFn;
+/// Returns the secant of an angle in radians.
 /// [formualizer-docgen:schema:start]
 /// Name: SEC
 /// Type: SecFn
@@ -800,6 +804,7 @@ mod tests_sec {
 
 #[derive(Debug)]
 pub struct CscFn;
+/// Returns the cosecant of an angle in radians.
 /// [formualizer-docgen:schema:start]
 /// Name: CSC
 /// Type: CscFn
@@ -887,6 +892,7 @@ mod tests_csc {
 
 #[derive(Debug)]
 pub struct CotFn;
+/// Returns the cotangent of an angle in radians.
 /// [formualizer-docgen:schema:start]
 /// Name: COT
 /// Type: CotFn
@@ -974,6 +980,7 @@ mod tests_cot {
 
 #[derive(Debug)]
 pub struct AcotFn;
+/// Returns the arccotangent of a number, in radians.
 /// [formualizer-docgen:schema:start]
 /// Name: ACOT
 /// Type: AcotFn
@@ -1054,6 +1061,7 @@ mod tests_acot {
 
 #[derive(Debug)]
 pub struct SinhFn;
+/// Returns the hyperbolic sine of a number.
 /// [formualizer-docgen:schema:start]
 /// Name: SINH
 /// Type: SinhFn
@@ -1122,6 +1130,7 @@ mod tests_sinh {
 
 #[derive(Debug)]
 pub struct CoshFn;
+/// Returns the hyperbolic cosine of a number.
 /// [formualizer-docgen:schema:start]
 /// Name: COSH
 /// Type: CoshFn
@@ -1193,6 +1202,7 @@ mod tests_cosh {
 
 #[derive(Debug)]
 pub struct TanhFn;
+/// Returns the hyperbolic tangent of a number.
 /// [formualizer-docgen:schema:start]
 /// Name: TANH
 /// Type: TanhFn
@@ -1264,6 +1274,7 @@ mod tests_tanh {
 
 #[derive(Debug)]
 pub struct AsinhFn;
+/// Returns the inverse hyperbolic sine of a number.
 /// [formualizer-docgen:schema:start]
 /// Name: ASINH
 /// Type: AsinhFn
@@ -1335,6 +1346,7 @@ mod tests_asinh {
 
 #[derive(Debug)]
 pub struct AcoshFn;
+/// Returns the inverse hyperbolic cosine of a number.
 /// [formualizer-docgen:schema:start]
 /// Name: ACOSH
 /// Type: AcoshFn
@@ -1416,6 +1428,7 @@ mod tests_acosh {
 
 #[derive(Debug)]
 pub struct AtanhFn;
+/// Returns the inverse hyperbolic tangent of a number.
 /// [formualizer-docgen:schema:start]
 /// Name: ATANH
 /// Type: AtanhFn
@@ -1502,6 +1515,7 @@ mod tests_atanh {
 
 #[derive(Debug)]
 pub struct SechFn;
+/// Returns the hyperbolic secant of a number.
 /// [formualizer-docgen:schema:start]
 /// Name: SECH
 /// Type: SechFn
@@ -1573,6 +1587,7 @@ mod tests_sech {
 
 #[derive(Debug)]
 pub struct CschFn;
+/// Returns the hyperbolic cosecant of a number.
 /// [formualizer-docgen:schema:start]
 /// Name: CSCH
 /// Type: CschFn
@@ -1662,6 +1677,7 @@ mod tests_csch {
 
 #[derive(Debug)]
 pub struct CothFn;
+/// Returns the hyperbolic cotangent of a number.
 /// [formualizer-docgen:schema:start]
 /// Name: COTH
 /// Type: CothFn

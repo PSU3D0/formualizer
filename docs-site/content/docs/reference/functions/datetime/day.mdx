@@ -1,17 +1,39 @@
 ---
 title: "DAY"
-description: "Reference for the DAY function."
+description: "Extracts the day-of-month (`1` to `31`) from a date serial."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Extracts the day-of-month (`1` to `31`) from a date serial.
 
-## Formula example
+## Remarks
+ - Fractional time is ignored; only the integer serial portion is used.
+ - Serials are interpreted with Excel 1900 date semantics.
+ - Output is the day within the month, not day-of-year.
 
-```text
-=DAY(A1)
-```
+## Examples
+
+<Tabs items={["Extract day from first-of-month", "Extract day from leap date"]}>
+<Tab value="Extract day from first-of-month">
+<FunctionSandbox
+  title="Extract day from first-of-month"
+  formula={`=DAY(44927)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Extract day from leap date">
+<FunctionSandbox
+  title="Extract day from leap date"
+  formula={`=DAY(45351)`}
+  grid={{}}
+  expected={"29"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -9,16 +9,12 @@ description: "Returns the number of permutations for selecting and ordering `k` 
 
 ## Remarks
  - Fractional inputs are truncated to integers.
- - If `n < 0`, `k < 0`, or `k > n`, the function returns `#NUM!`.
+ - If `n &lt; 0`, `k &lt; 0`, or `k &gt; n`, the function returns `#NUM!`.
  - Argument errors propagate directly.
 
 ## Examples
 
-<Tabs items={[
-  'Basic permutations',
-  'Fractional arguments are truncated',
-  'Out-of-range k returns numeric error',
-]}>
+<Tabs items={["Basic permutations", "Fractional arguments are truncated", "Out-of-range k returns numeric error"]}>
 <Tab value="Basic permutations">
 <FunctionSandbox
   title="Basic permutations"

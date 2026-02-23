@@ -15,7 +15,36 @@ export const metadata: Metadata = {
     default: 'Formualizer Docs',
     template: '%s | Formualizer Docs',
   },
-  description: 'Documentation for Formualizer workbook, evaluation engine, and bindings.',
+  description:
+    'Formualizer documentation and utilities for Excel-style formula parsing, AST inspection, workbook evaluation, and bindings.',
+  keywords: [
+    'excel formula parser',
+    'formula AST',
+    'spreadsheet engine',
+    'workbook evaluator',
+    'formualizer',
+    'xlsx formulas',
+    'formula debugging',
+    'wasm spreadsheet',
+    'formula tokenizer',
+  ],
+  alternates: {
+    canonical: '/',
+  },
+  openGraph: {
+    type: 'website',
+    url: siteUrl,
+    title: 'Formualizer Docs',
+    description:
+      'Documentation and interactive tools for parsing and evaluating Excel-style formulas.',
+    siteName: 'Formualizer',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Formualizer Docs',
+    description:
+      'Interactive formula parser and docs for Formualizer workbook and evaluation engine.',
+  },
 };
 
 export default function Layout({ children }: LayoutProps<'/'>) {

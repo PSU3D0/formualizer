@@ -1,17 +1,39 @@
 ---
 title: "NOW"
-description: "Reference for the NOW function."
+description: "Returns the current date and time as a volatile datetime serial."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the current date and time as a volatile datetime serial.
 
-## Formula example
+## Remarks
+ - `NOW` is volatile and may produce a different value at each recalculation.
+ - The integer part is the current date serial; the fractional part is time of day.
+ - Serial output respects the active workbook date system (`1900` or `1904`).
 
-```text
-=NOW()
-```
+## Examples
+
+<Tabs items={["NOW includes today's date", "NOW is at or after TODAY"]}>
+<Tab value="NOW includes today's date">
+<FunctionSandbox
+  title="NOW includes today's date"
+  formula={`=INT(NOW())=TODAY()`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="NOW is at or after TODAY">
+<FunctionSandbox
+  title="NOW is at or after TODAY"
+  formula={`=NOW()>=TODAY()`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

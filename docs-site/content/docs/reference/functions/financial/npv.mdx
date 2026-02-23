@@ -1,17 +1,42 @@
 ---
 title: "NPV"
-description: "Reference for the NPV function."
+description: "Calculates net present value for equally spaced cash flows."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+The first cash-flow argument is discounted one period from the present, matching spreadsheet
+ `NPV` behavior for periodic series.
 
-## Formula example
+## Remarks
+ - `rate` is the discount rate per period.
+ - Cash-flow sign convention: investments/outflows are negative, returns/inflows are positive.
+ - Non-numeric values are ignored; numeric values in arrays/ranges are consumed left-to-right.
+ - Embedded error values inside provided cash-flow values are propagated as errors.
+ - Returns argument coercion errors for invalid `rate` or direct scalar failures.
 
-```text
-=NPV(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=NPV(0.08, 4000, 5000, 6000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=NPV(0.10, -5000, 2000, 2500, 3000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

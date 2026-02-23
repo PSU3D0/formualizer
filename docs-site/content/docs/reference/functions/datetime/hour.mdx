@@ -1,17 +1,39 @@
 ---
 title: "HOUR"
-description: "Reference for the HOUR function."
+description: "Extracts the hour component (`0` to `23`) from a time or datetime serial."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Extracts the hour component (`0` to `23`) from a time or datetime serial.
 
-## Formula example
+## Remarks
+ - For values `&gt;= 1`, only the fractional time part is used.
+ - For values `&lt; 1`, the value is treated directly as a time fraction.
+ - Date-system choice does not affect hour extraction because only the fractional part is used.
 
-```text
-=HOUR(A1)
-```
+## Examples
+
+<Tabs items={["Extract hour from noon", "Extract hour from datetime serial"]}>
+<Tab value="Extract hour from noon">
+<FunctionSandbox
+  title="Extract hour from noon"
+  formula={`=HOUR(0.5)`}
+  grid={{}}
+  expected={"12"}
+/>
+</Tab>
+
+<Tab value="Extract hour from datetime serial">
+<FunctionSandbox
+  title="Extract hour from datetime serial"
+  formula={`=HOUR(45351.75)`}
+  grid={{}}
+  expected={"18"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

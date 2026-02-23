@@ -1,17 +1,39 @@
 ---
 title: "VAR.S"
-description: "Reference for the VAR.S function."
+description: "Estimates sample variance using `n-1` in the denominator."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`VAR.S` is the squared counterpart of `STDEV.S` for sample-based variability.
 
-## Formula example
+## Remarks
+ - Requires at least two numeric values.
+ - Returns `#DIV/0!` when fewer than two numeric values are provided.
+ - Non-numeric values in referenced ranges are ignored.
 
-```text
-=VAR.S(A1)
-```
+## Examples
+
+<Tabs items={["Sample variance from scalar arguments", "Sample variance from a range"]}>
+<Tab value="Sample variance from scalar arguments">
+<FunctionSandbox
+  title="Sample variance from scalar arguments"
+  formula={`=VAR.S(2,4,6)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Sample variance from a range">
+<FunctionSandbox
+  title="Sample variance from a range"
+  formula={`=VAR.S(A1:A3)`}
+  grid={{"A1":"1","A2":"2","A3":"3"}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

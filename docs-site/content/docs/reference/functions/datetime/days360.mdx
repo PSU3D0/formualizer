@@ -1,17 +1,39 @@
 ---
 title: "DAYS360"
-description: "Reference for the DAYS360 function."
+description: "Returns the day count between two dates using a 30/360 convention."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the day count between two dates using a 30/360 convention.
 
-## Formula example
+## Remarks
+ - `method` omitted or `FALSE` uses U.S. (NASD) rules; `TRUE` uses the European 30E/360 method.
+ - Inputs are coerced to dates by truncating serials to integer days.
+ - Serials are interpreted with the Excel 1900 date mapping, not a workbook-specific date system.
 
-```text
-=DAYS360(A1, B1)
-```
+## Examples
+
+<Tabs items={["U.S. 30/360 method", "European 30E/360 method"]}>
+<Tab value="U.S. 30/360 method">
+<FunctionSandbox
+  title="U.S. 30/360 method"
+  formula={`=DAYS360(40574, 40602)`}
+  grid={{}}
+  expected={"30"}
+/>
+</Tab>
+
+<Tab value="European 30E/360 method">
+<FunctionSandbox
+  title="European 30E/360 method"
+  formula={`=DAYS360(40574, 40602, TRUE)`}
+  grid={{}}
+  expected={"28"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

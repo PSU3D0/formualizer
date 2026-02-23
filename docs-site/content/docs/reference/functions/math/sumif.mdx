@@ -9,16 +9,12 @@ description: "Adds values that satisfy a single criterion."
 
 ## Remarks
  - If `sum_range` is omitted, matching cells from `range` are summed.
- - Criteria support operators like `">10"` and wildcard text patterns.
+ - Criteria support operators like `"&gt;10"` and wildcard text patterns.
  - Cells that do not coerce to numbers in the sum target contribute `0`.
 
 ## Examples
 
-<Tabs items={[
-  'Sum values above a threshold',
-  'Use separate sum range',
-  'Wildcard criteria',
-]}>
+<Tabs items={["Sum values above a threshold", "Use separate sum range", "Wildcard criteria"]}>
 <Tab value="Sum values above a threshold">
 <FunctionSandbox
   title="Sum values above a threshold"

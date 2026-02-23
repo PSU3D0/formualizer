@@ -1,17 +1,42 @@
 ---
 title: "MIRR"
-description: "Reference for the MIRR function."
+description: "Calculates modified internal rate of return with separate finance and reinvest rates."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Negative cash flows are discounted at `finance_rate` and positive cash flows are compounded at
+ `reinvest_rate`, then combined into a single periodic return.
 
-## Formula example
+## Remarks
+ - `finance_rate` and `reinvest_rate` are both rates per cash-flow period.
+ - Cash-flow sign convention: at least one negative and one positive cash flow are required.
+ - Non-numeric cells in arrays/ranges are ignored; direct scalar errors are propagated.
+ - A callable value input returns `#CALC!`.
+ - Returns `#NUM!` for insufficient cash flows, and `#DIV/0!` when computed positive/negative legs are invalid.
 
-```text
-=MIRR(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=MIRR({-10000,3000,4200,6800}, 0.1, 0.12)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=MIRR({-120000,39000,30000,21000,37000,46000}, 0.1, 0.12)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,39 @@
 ---
 title: "DEC2BIN"
-description: "Reference for the DEC2BIN function."
+description: "Converts a decimal integer to binary text."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Optionally pads the result with leading zeros using `places`.
 
-## Formula example
+## Remarks
+ - `number` is coerced to an integer and must be in `[-512, 511]`.
+ - Negative values are returned as 10-bit two's-complement binary strings.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
 
-```text
-=DEC2BIN(A1)
-```
+## Examples
+
+<Tabs items={["Convert a positive integer", "Pad binary output"]}>
+<Tab value="Convert a positive integer">
+<FunctionSandbox
+  title="Convert a positive integer"
+  formula={`=DEC2BIN(42)`}
+  grid={{}}
+  expected={"101010"}
+/>
+</Tab>
+
+<Tab value="Pad binary output">
+<FunctionSandbox
+  title="Pad binary output"
+  formula={`=DEC2BIN(5,8)`}
+  grid={{}}
+  expected={"00000101"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

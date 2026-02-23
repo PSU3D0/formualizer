@@ -1,17 +1,39 @@
 ---
 title: "INTERCEPT"
-description: "Reference for the INTERCEPT function."
+description: "Returns the y-intercept of the linear regression line for paired data."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`INTERCEPT` fits `y = m*x + b` and returns `b`, the predicted `y` when `x = 0`.
 
-## Formula example
+## Remarks
+ - `known_y` and `known_x` must have the same numeric length.
+ - Returns `#N/A` for mismatched lengths.
+ - Returns `#DIV/0!` if all `x` values are identical.
 
-```text
-=INTERCEPT(A1, B1)
-```
+## Examples
+
+<Tabs items={["Positive intercept from direct arrays", "Intercept from range-based linear trend"]}>
+<Tab value="Positive intercept from direct arrays">
+<FunctionSandbox
+  title="Positive intercept from direct arrays"
+  formula={`=INTERCEPT({3,5,7},{1,2,3})`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Intercept from range-based linear trend">
+<FunctionSandbox
+  title="Intercept from range-based linear trend"
+  formula={`=INTERCEPT(A1:A3,B1:B3)`}
+  grid={{"A1":"10","A2":"8","A3":"6","B1":"1","B2":"2","B3":"3"}}
+  expected={"12"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

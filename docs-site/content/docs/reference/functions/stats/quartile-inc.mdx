@@ -1,17 +1,40 @@
 ---
 title: "QUARTILE.INC"
-description: "Reference for the QUARTILE.INC function."
+description: "Returns an inclusive quartile value for a data set."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`QUARTILE.INC` maps quartile index `0..4` onto minimum, quartiles, median, and maximum.
 
-## Formula example
+## Remarks
+ - Valid quartile index values are `0`, `1`, `2`, `3`, and `4`.
+ - Uses inclusive percentile logic for quartiles `1` through `3`.
+ - Returns `#NUM!` for invalid quartile index values or empty numeric input.
+ - Alias `QUARTILE` is supported.
 
-```text
-=QUARTILE.INC(A1, B1)
-```
+## Examples
+
+<Tabs items={["First quartile from direct values", "Third quartile from a range"]}>
+<Tab value="First quartile from direct values">
+<FunctionSandbox
+  title="First quartile from direct values"
+  formula={`=QUARTILE.INC({1,2,3,4,5},1)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Third quartile from a range">
+<FunctionSandbox
+  title="Third quartile from a range"
+  formula={`=QUARTILE.INC(A1:A4,3)`}
+  grid={{"A1":"10","A2":"20","A3":"30","A4":"40"}}
+  expected={"32.5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

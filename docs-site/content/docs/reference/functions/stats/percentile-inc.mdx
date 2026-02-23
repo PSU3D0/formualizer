@@ -1,17 +1,40 @@
 ---
 title: "PERCENTILE.INC"
-description: "Reference for the PERCENTILE.INC function."
+description: "Returns the k-th percentile of a data set using inclusive interpolation."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`PERCENTILE.INC` accepts percentile values from `0` through `1` and interpolates between
+ sorted values as needed.
 
-## Formula example
+## Remarks
+ - `k` must be in the inclusive range `[0, 1]`.
+ - Returns `#NUM!` for empty numeric input or invalid percentile arguments.
+ - Alias `PERCENTILE` is supported.
 
-```text
-=PERCENTILE.INC(A1, B1)
-```
+## Examples
+
+<Tabs items={["Inclusive 25th percentile from direct values", "Inclusive median-style interpolation from a range"]}>
+<Tab value="Inclusive 25th percentile from direct values">
+<FunctionSandbox
+  title="Inclusive 25th percentile from direct values"
+  formula={`=PERCENTILE.INC({1,2,3,4,5},0.25)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Inclusive median-style interpolation from a range">
+<FunctionSandbox
+  title="Inclusive median-style interpolation from a range"
+  formula={`=PERCENTILE.INC(A1:A4,0.5)`}
+  grid={{"A1":"10","A2":"20","A3":"30","A4":"40"}}
+  expected={"25"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

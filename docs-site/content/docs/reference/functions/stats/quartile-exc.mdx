@@ -1,17 +1,40 @@
 ---
 title: "QUARTILE.EXC"
-description: "Reference for the QUARTILE.EXC function."
+description: "Returns an exclusive quartile value for a data set."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`QUARTILE.EXC` applies exclusive percentile interpolation and supports quartiles `1` through
+ `3`.
 
-## Formula example
+## Remarks
+ - Valid quartile index values are `1`, `2`, and `3`.
+ - Returns `#NUM!` for invalid quartile index values.
+ - Returns `#NUM!` when the input is too small for exclusive quartile interpolation.
 
-```text
-=QUARTILE.EXC(A1, B1)
-```
+## Examples
+
+<Tabs items={["First exclusive quartile from direct values", "Third exclusive quartile from a range"]}>
+<Tab value="First exclusive quartile from direct values">
+<FunctionSandbox
+  title="First exclusive quartile from direct values"
+  formula={`=QUARTILE.EXC({1,2,3,4,5,6,7,8},1)`}
+  grid={{}}
+  expected={"2.25"}
+/>
+</Tab>
+
+<Tab value="Third exclusive quartile from a range">
+<FunctionSandbox
+  title="Third exclusive quartile from a range"
+  formula={`=QUARTILE.EXC(A1:A8,3)`}
+  grid={{"A1":"10","A2":"20","A3":"30","A4":"40","A5":"50","A6":"60","A7":"70","A8":"80"}}
+  expected={"67.5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

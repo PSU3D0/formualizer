@@ -1,17 +1,40 @@
 ---
 title: "DAYS"
-description: "Reference for the DAYS function."
+description: "Returns the number of whole days between two date serial values."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the number of whole days between two date serial values.
 
-## Formula example
+## Remarks
+ - Result is `end_date - start_date`; negative results are allowed.
+ - Fractional serial inputs are truncated to their date portion.
+ - Serials are interpreted with the Excel 1900 mapping (including the 1900 leap-year bug behavior).
+ - This function currently does not switch interpretation based on workbook `1900`/`1904` mode.
 
-```text
-=DAYS(A1, B1)
-```
+## Examples
+
+<Tabs items={["Positive day difference", "Negative day difference"]}>
+<Tab value="Positive day difference">
+<FunctionSandbox
+  title="Positive day difference"
+  formula={`=DAYS(45366, 45323)`}
+  grid={{}}
+  expected={"43"}
+/>
+</Tab>
+
+<Tab value="Negative day difference">
+<FunctionSandbox
+  title="Negative day difference"
+  formula={`=DAYS(45323, 45366)`}
+  grid={{}}
+  expected={"-43"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

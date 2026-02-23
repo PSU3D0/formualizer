@@ -1,17 +1,39 @@
 ---
 title: "EOMONTH"
-description: "Reference for the EOMONTH function."
+description: "Returns the serial for the last day of the month at a month offset from a start date."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the serial for the last day of the month at a month offset from a start date.
 
-## Formula example
+## Remarks
+ - `months` is truncated to an integer before offset calculation.
+ - The returned date is always the month-end date for the target month.
+ - Serials are interpreted and returned using Excel 1900 mapping rather than workbook `1904` mode.
 
-```text
-=EOMONTH(A1, B1)
-```
+## Examples
+
+<Tabs items={["Get end of current month", "Get end of month two months ahead"]}>
+<Tab value="Get end of current month">
+<FunctionSandbox
+  title="Get end of current month"
+  formula={`=EOMONTH(44927, 0)`}
+  grid={{}}
+  expected={"44957"}
+/>
+</Tab>
+
+<Tab value="Get end of month two months ahead">
+<FunctionSandbox
+  title="Get end of month two months ahead"
+  formula={`=EOMONTH(45322, 2)`}
+  grid={{}}
+  expected={"45382"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

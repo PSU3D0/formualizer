@@ -1,17 +1,39 @@
 ---
 title: "GEOMEAN"
-description: "Reference for the GEOMEAN function."
+description: "Returns the geometric mean of positive numeric values."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`GEOMEAN` is commonly used for rates of change and multiplicative growth comparisons.
 
-## Formula example
+## Remarks
+ - All numeric inputs must be strictly greater than `0`.
+ - Returns `#NUM!` if any value is `&lt;= 0`, or if no numeric values are provided.
+ - Non-numeric values in referenced ranges are ignored.
 
-```text
-=GEOMEAN(A1)
-```
+## Examples
+
+<Tabs items={["Geometric mean from scalar values", "Geometric mean from a range"]}>
+<Tab value="Geometric mean from scalar values">
+<FunctionSandbox
+  title="Geometric mean from scalar values"
+  formula={`=GEOMEAN(4,16)`}
+  grid={{}}
+  expected={"8"}
+/>
+</Tab>
+
+<Tab value="Geometric mean from a range">
+<FunctionSandbox
+  title="Geometric mean from a range"
+  formula={`=GEOMEAN(A1:A3)`}
+  grid={{"A1":"1","A2":"3","A3":"9"}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

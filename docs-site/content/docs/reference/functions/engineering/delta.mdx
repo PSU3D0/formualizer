@@ -1,17 +1,39 @@
 ---
 title: "DELTA"
-description: "Reference for the DELTA function."
+description: "Tests whether two numbers are equal."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns `1` when values match and `0` otherwise.
 
-## Formula example
+## Remarks
+ - If `number2` is omitted, it defaults to `0`.
+ - Inputs are numerically coerced.
+ - Uses a small numeric tolerance for floating-point comparison.
 
-```text
-=DELTA(A1)
-```
+## Examples
+
+<Tabs items={["Equal values", "Default second argument"]}>
+<Tab value="Equal values">
+<FunctionSandbox
+  title="Equal values"
+  formula={`=DELTA(5,5)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Default second argument">
+<FunctionSandbox
+  title="Default second argument"
+  formula={`=DELTA(2.5)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

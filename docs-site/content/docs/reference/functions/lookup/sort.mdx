@@ -10,16 +10,13 @@ description: "Sorts an array by a selected row or column and returns a spilled r
 ## Remarks
  - Defaults: `sort_index=1`, `sort_order=1` (ascending), `by_col=FALSE`.
  - `sort_index` is 1-based in the active sort axis.
- - `sort_order < 0` sorts descending; otherwise ascending.
+ - `sort_order &lt; 0` sorts descending; otherwise ascending.
  - Invalid sort indexes return `#VALUE!`.
  - Empty input returns an empty spill.
 
 ## Examples
 
-<Tabs items={[
-  'Sort rows by second column',
-  'Sort columns by first row descending',
-]}>
+<Tabs items={["Sort rows by second column", "Sort columns by first row descending"]}>
 <Tab value="Sort rows by second column">
 <FunctionSandbox
   title="Sort rows by second column"

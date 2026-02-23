@@ -1,17 +1,40 @@
 ---
 title: "ARABIC"
-description: "Reference for the ARABIC function."
+description: "Converts a Roman numeral string to its Arabic numeric value."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Converts a Roman numeral string to its Arabic numeric value.
 
-## Formula example
+## Remarks
+ - Accepts text input containing Roman symbols (`I,V,X,L,C,D,M`).
+ - Surrounding whitespace is trimmed.
+ - Empty text returns `0`.
+ - Invalid Roman syntax returns `#VALUE!`.
 
-```text
-=ARABIC(A1)
-```
+## Examples
+
+<Tabs items={["Roman to Arabic", "Trimmed input"]}>
+<Tab value="Roman to Arabic">
+<FunctionSandbox
+  title="Roman to Arabic"
+  formula={`=ARABIC("MCMXCIX")`}
+  grid={{}}
+  expected={"1999"}
+/>
+</Tab>
+
+<Tab value="Trimmed input">
+<FunctionSandbox
+  title="Trimmed input"
+  formula={`=ARABIC("  XLIV  ")`}
+  grid={{}}
+  expected={"44"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

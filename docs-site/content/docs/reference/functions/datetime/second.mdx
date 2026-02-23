@@ -1,17 +1,39 @@
 ---
 title: "SECOND"
-description: "Reference for the SECOND function."
+description: "Extracts the second component (`0` to `59`) from a time or datetime serial."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Extracts the second component (`0` to `59`) from a time or datetime serial.
 
-## Formula example
+## Remarks
+ - The integer date portion is ignored for second extraction.
+ - Conversion uses Excel 1900 serial interpretation when resolving datetime values.
+ - Time is computed from the serial fraction and rounded to whole seconds.
 
-```text
-=SECOND(A1)
-```
+## Examples
+
+<Tabs items={["Extract second from 15:30:45", "Extract second from exact noon"]}>
+<Tab value="Extract second from 15:30:45">
+<FunctionSandbox
+  title="Extract second from 15:30:45"
+  formula={`=SECOND(0.6463541667)`}
+  grid={{}}
+  expected={"45"}
+/>
+</Tab>
+
+<Tab value="Extract second from exact noon">
+<FunctionSandbox
+  title="Extract second from exact noon"
+  formula={`=SECOND(0.5)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

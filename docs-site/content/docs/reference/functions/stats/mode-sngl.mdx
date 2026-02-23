@@ -1,17 +1,39 @@
 ---
 title: "MODE.SNGL"
-description: "Reference for the MODE.SNGL function."
+description: "Returns the most frequently occurring value in a data set."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`MODE.SNGL` returns a single mode value and reports `#N/A` if no value repeats.
 
-## Formula example
+## Remarks
+ - Returns the first mode encountered after sorting when frequencies tie.
+ - Returns `#N/A` when every numeric value appears only once.
+ - Alias `MODE` is supported.
 
-```text
-=MODE.SNGL(A1)
-```
+## Examples
+
+<Tabs items={["Single mode from scalar arguments", "Single mode from a range"]}>
+<Tab value="Single mode from scalar arguments">
+<FunctionSandbox
+  title="Single mode from scalar arguments"
+  formula={`=MODE.SNGL(1,2,2,3)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Single mode from a range">
+<FunctionSandbox
+  title="Single mode from a range"
+  formula={`=MODE.SNGL(A1:A5)`}
+  grid={{"A1":"4","A2":"4","A3":"6","A4":"6","A5":"6"}}
+  expected={"6"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

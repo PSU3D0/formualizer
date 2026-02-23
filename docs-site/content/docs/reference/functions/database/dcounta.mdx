@@ -1,17 +1,39 @@
 ---
 title: "DCOUNTA"
-description: "Reference for the DCOUNTA function."
+description: "Counts non-blank values in a database field for records matching criteria."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Counts non-blank values in a database field for records matching criteria.
 
-## Formula example
+## Remarks
+ - `DCOUNTA` counts both text and numeric non-empty values.
+ - Criteria rows are OR-ed; criteria columns in the same row are AND-ed.
+ - Blank cells are excluded from the count.
 
-```text
-=DCOUNTA(A1, B1)
-```
+## Examples
+
+<Tabs items={["Count non-blank names where score > 80", "Count all non-blank values in a field"]}>
+<Tab value="Count non-blank names where score &gt; 80">
+<FunctionSandbox
+  title="Count non-blank names where score &gt; 80"
+  formula={`=DCOUNTA(A1:B4,"Name",D1:D2)`}
+  grid={{"A1":"Name","A2":"Ana","A3":"Bo","A4":"Cy","B1":"Score","B2":"92","B3":"75","B4":"88","D1":"Score","D2":">80"}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Count all non-blank values in a field">
+<FunctionSandbox
+  title="Count all non-blank values in a field"
+  formula={`=DCOUNTA(A1:A4,"Item",C1:C1)`}
+  grid={{"A1":"Item","A2":"X","A3":"Y","A4":"","C1":"Item"}}
+  expected={"2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

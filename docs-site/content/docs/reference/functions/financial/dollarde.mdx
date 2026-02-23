@@ -1,17 +1,41 @@
 ---
 title: "DOLLARDE"
-description: "Reference for the DOLLARDE function."
+description: "Converts fractional-dollar notation into a decimal dollar value."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+This is commonly used for security price formats such as thirty-seconds (`fraction = 32`).
 
-## Formula example
+## Remarks
+ - `fraction` is truncated to an integer denominator and must be `&gt;= 1`.
+ - Sign convention: sign is preserved (`-x` maps to `-result`).
+ - No periodic rate is involved in this conversion.
+ - Returns `#NUM!` when `fraction &lt; 1` after truncation.
+ - Fractional parsing uses denominator digit width (`ceil(log10(fraction))`).
 
-```text
-=DOLLARDE(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=DOLLARDE(1.02, 16)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=DOLLARDE(-3.15, 32)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

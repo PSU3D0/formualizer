@@ -1,17 +1,41 @@
 ---
 title: "XIRR"
-description: "Reference for the XIRR function."
+description: "Calculates annualized internal rate of return for irregularly dated cash flows."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+The solver uses Newton-Raphson on `XNPV(rate, values, dates) = 0` with day-count basis 365.
 
-## Formula example
+## Remarks
+ - Output is an annualized rate.
+ - Cash-flow sign convention requires at least one negative and one positive value.
+ - `guess` defaults to `0.1` and can materially affect convergence.
+ - Non-numeric entries in value/date arrays are ignored; callable inputs return `#CALC!`.
+ - Returns `#NUM!` for mismatched lengths, insufficient valid points, missing sign change, derivative failure, or non-convergence.
 
-```text
-=XIRR(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=XIRR({-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=XIRR({-5000,1200,1800,2400}, {0,180,365,730}, 0.1)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

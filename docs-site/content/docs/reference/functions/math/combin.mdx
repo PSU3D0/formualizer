@@ -9,16 +9,12 @@ description: "Returns the number of combinations for selecting `k` items from `n
 
 ## Remarks
  - Fractional inputs are truncated toward zero before evaluation.
- - If `n < 0`, `k < 0`, or `k > n`, the function returns `#NUM!`.
+ - If `n &lt; 0`, `k &lt; 0`, or `k &gt; n`, the function returns `#NUM!`.
  - Argument errors propagate directly.
 
 ## Examples
 
-<Tabs items={[
-  'Basic combinations',
-  'Fractional arguments are truncated',
-  'Invalid k returns numeric error',
-]}>
+<Tabs items={["Basic combinations", "Fractional arguments are truncated", "Invalid k returns numeric error"]}>
 <Tab value="Basic combinations">
 <FunctionSandbox
   title="Basic combinations"

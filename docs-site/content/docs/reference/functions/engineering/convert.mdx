@@ -1,17 +1,39 @@
 ---
 title: "CONVERT"
-description: "Reference for the CONVERT function."
+description: "Converts a numeric value from one supported unit to another."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Supports a focused set of length, mass, and temperature units.
 
-## Formula example
+## Remarks
+ - `number` is numerically coerced; unit arguments must be text.
+ - Returns `#N/A` for unknown units or incompatible unit categories.
+ - Temperature conversions support `C/cel`, `F/fah`, and `K/kel`.
 
-```text
-=CONVERT(A1, B1)
-```
+## Examples
+
+<Tabs items={["Length conversion", "Temperature conversion"]}>
+<Tab value="Length conversion">
+<FunctionSandbox
+  title="Length conversion"
+  formula={`=CONVERT(1,"km","m")`}
+  grid={{}}
+  expected={"1000"}
+/>
+</Tab>
+
+<Tab value="Temperature conversion">
+<FunctionSandbox
+  title="Temperature conversion"
+  formula={`=CONVERT(32,"F","C")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

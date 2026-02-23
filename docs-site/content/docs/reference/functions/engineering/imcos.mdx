@@ -1,17 +1,39 @@
 ---
 title: "IMCOS"
-description: "Reference for the IMCOS function."
+description: "Returns the cosine of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Evaluates complex cosine and returns the result as complex text.
 
-## Formula example
+## Remarks
+ - Input is coerced to complex-number text before parsing.
+ - Uses hyperbolic components for the imaginary part.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMCOS(A1)
-```
+## Examples
+
+<Tabs items={["Cosine of zero", "Cosine on imaginary axis"]}>
+<Tab value="Cosine of zero">
+<FunctionSandbox
+  title="Cosine of zero"
+  formula={`=IMCOS("0")`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Cosine on imaginary axis">
+<FunctionSandbox
+  title="Cosine on imaginary axis"
+  formula={`=IMCOS("i")`}
+  grid={{}}
+  expected={"1.5430806348152437"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

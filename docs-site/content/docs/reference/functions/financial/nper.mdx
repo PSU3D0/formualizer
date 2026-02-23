@@ -1,17 +1,41 @@
 ---
 title: "NPER"
-description: "Reference for the NPER function."
+description: "Calculates the number of periods needed to satisfy a cash-flow target."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Use this to solve term length when periodic rate, payment, and value constraints are known.
 
-## Formula example
+## Remarks
+ - `rate` is the interest rate per period.
+ - Cash-flow sign convention: at least one of `pmt`, `pv`, or `fv` should usually have opposite sign.
+ - `type = 0` means payments at period end; `type != 0` means period start.
+ - Returns `#NUM!` when inputs imply no finite solution (for example, invalid logarithm domain).
+ - Returns `#NUM!` when both `rate = 0` and `pmt = 0`.
 
-```text
-=NPER(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=NPER(0.06/12, -1798.65157545827, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=NPER(0, -250, 5000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

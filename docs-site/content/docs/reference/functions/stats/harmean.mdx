@@ -1,17 +1,39 @@
 ---
 title: "HARMEAN"
-description: "Reference for the HARMEAN function."
+description: "Returns the harmonic mean of positive numeric values."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`HARMEAN` emphasizes smaller values and is useful for averaging rates and ratios.
 
-## Formula example
+## Remarks
+ - All numeric inputs must be strictly greater than `0`.
+ - Returns `#NUM!` if any value is `&lt;= 0`, or if no numeric values are provided.
+ - Non-numeric values in referenced ranges are ignored.
 
-```text
-=HARMEAN(A1)
-```
+## Examples
+
+<Tabs items={["Harmonic mean from scalar values", "Harmonic mean from a range"]}>
+<Tab value="Harmonic mean from scalar values">
+<FunctionSandbox
+  title="Harmonic mean from scalar values"
+  formula={`=HARMEAN(1,2,4)`}
+  grid={{}}
+  expected={"1.7142857142857142"}
+/>
+</Tab>
+
+<Tab value="Harmonic mean from a range">
+<FunctionSandbox
+  title="Harmonic mean from a range"
+  formula={`=HARMEAN(A1:A3)`}
+  grid={{"A1":"2","A2":"3","A3":"6"}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

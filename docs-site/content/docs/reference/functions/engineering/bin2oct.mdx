@@ -1,17 +1,39 @@
 ---
 title: "BIN2OCT"
-description: "Reference for the BIN2OCT function."
+description: "Converts a binary text value to octal text."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Supports optional left-padding through the `places` argument.
 
-## Formula example
+## Remarks
+ - Input must be binary text up to 10 digits and may be signed two's-complement.
+ - Signed values are preserved through conversion to octal.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
 
-```text
-=BIN2OCT(A1)
-```
+## Examples
+
+<Tabs items={["Convert binary to octal", "Pad octal output"]}>
+<Tab value="Convert binary to octal">
+<FunctionSandbox
+  title="Convert binary to octal"
+  formula={`=BIN2OCT("111111")`}
+  grid={{}}
+  expected={"77"}
+/>
+</Tab>
+
+<Tab value="Pad octal output">
+<FunctionSandbox
+  title="Pad octal output"
+  formula={`=BIN2OCT("111111",4)`}
+  grid={{}}
+  expected={"0077"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

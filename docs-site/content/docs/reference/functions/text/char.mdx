@@ -1,11 +1,13 @@
 ---
 title: "CHAR"
-description: "Returns the character represented by a numeric code."
+description: "CHAR(number) - Returns the character specified by a number Excel uses Windows-1252 encoding for codes 1-255"
 ---
 
 ## Summary
 
-`CHAR` follows Excel-style Windows-1252 behavior for codes `1..255`.
+Returns the character represented by a numeric code.
+
+ `CHAR` follows Excel-style Windows-1252 behavior for codes `1..255`.
 
 ## Remarks
  - Input is truncated to an integer code.
@@ -15,10 +17,7 @@ description: "Returns the character represented by a numeric code."
 
 ## Examples
 
-<Tabs items={[
-  'ASCII character',
-  'Out-of-range code',
-]}>
+<Tabs items={["ASCII character", "Out-of-range code"]}>
 <Tab value="ASCII character">
 <FunctionSandbox
   title="ASCII character"

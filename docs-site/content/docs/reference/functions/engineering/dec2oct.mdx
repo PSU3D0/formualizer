@@ -1,17 +1,39 @@
 ---
 title: "DEC2OCT"
-description: "Reference for the DEC2OCT function."
+description: "Converts a decimal integer to octal text."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Optionally pads the result with leading zeros using `places`.
 
-## Formula example
+## Remarks
+ - `number` is coerced to an integer and must be in `[-2^29, 2^29 - 1]`.
+ - Negative values are returned as 10-digit two's-complement octal strings.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
 
-```text
-=DEC2OCT(A1)
-```
+## Examples
+
+<Tabs items={["Convert decimal to octal", "Two's-complement negative output"]}>
+<Tab value="Convert decimal to octal">
+<FunctionSandbox
+  title="Convert decimal to octal"
+  formula={`=DEC2OCT(64)`}
+  grid={{}}
+  expected={"100"}
+/>
+</Tab>
+
+<Tab value="Two's-complement negative output">
+<FunctionSandbox
+  title="Two's-complement negative output"
+  formula={`=DEC2OCT(-1)`}
+  grid={{}}
+  expected={"7777777777"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

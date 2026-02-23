@@ -1,17 +1,39 @@
 ---
 title: "YEAR"
-description: "Reference for the YEAR function."
+description: "Extracts the calendar year from a date serial."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Extracts the calendar year from a date serial.
 
-## Formula example
+## Remarks
+ - Fractional time is ignored; only the integer date portion is used.
+ - Input serials are interpreted with Excel 1900 date semantics.
+ - Results are Gregorian calendar years.
 
-```text
-=YEAR(A1)
-```
+## Examples
+
+<Tabs items={["Extract year from date serial", "Extract year from datetime serial"]}>
+<Tab value="Extract year from date serial">
+<FunctionSandbox
+  title="Extract year from date serial"
+  formula={`=YEAR(44927)`}
+  grid={{}}
+  expected={"2023"}
+/>
+</Tab>
+
+<Tab value="Extract year from datetime serial">
+<FunctionSandbox
+  title="Extract year from datetime serial"
+  formula={`=YEAR(45351.75)`}
+  grid={{}}
+  expected={"2024"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

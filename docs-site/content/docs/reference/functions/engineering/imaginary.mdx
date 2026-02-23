@@ -1,17 +1,39 @@
 ---
 title: "IMAGINARY"
-description: "Reference for the IMAGINARY function."
+description: "Returns the imaginary coefficient of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Accepts complex text (for example `a+bi`) or numeric values.
 
-## Formula example
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Purely real values return `0`.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMAGINARY(A1)
-```
+## Examples
+
+<Tabs items={["Imaginary part from a+bi", "Imaginary part with j suffix"]}>
+<Tab value="Imaginary part from a+bi">
+<FunctionSandbox
+  title="Imaginary part from a+bi"
+  formula={`=IMAGINARY("3+4i")`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Imaginary part with j suffix">
+<FunctionSandbox
+  title="Imaginary part with j suffix"
+  formula={`=IMAGINARY("-2j")`}
+  grid={{}}
+  expected={"-2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

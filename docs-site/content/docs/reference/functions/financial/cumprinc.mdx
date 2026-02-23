@@ -1,17 +1,41 @@
 ---
 title: "CUMPRINC"
-description: "Reference for the CUMPRINC function."
+description: "Returns cumulative principal paid between two inclusive payment periods."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Use this to measure principal reduction over a selected amortization window.
 
-## Formula example
+## Remarks
+ - `rate` is the interest rate per payment period.
+ - `start_period` and `end_period` are 1-based, inclusive integer periods.
+ - `type` must be `0` (end-of-period) or `1` (beginning-of-period).
+ - Sign convention follows payment direction; with positive `pv`, cumulative principal is typically negative.
+ - Returns `#NUM!` for invalid domain values (non-positive rate, invalid ranges, invalid type, or non-positive `pv`).
 
-```text
-=CUMPRINC(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=CUMPRINC(0.06/12, 360, 300000, 1, 12, 0)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=CUMPRINC(0.06/12, 360, 300000, 13, 24, 0)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

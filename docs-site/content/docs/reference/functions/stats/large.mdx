@@ -1,17 +1,40 @@
 ---
 title: "LARGE"
-description: "Reference for the LARGE function."
+description: "Returns the k-th largest value in a data set."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`LARGE` is useful for top-N analysis, such as highest score, second-highest sale, or third-best
+ result.
 
-## Formula example
+## Remarks
+ - `k` must be at least `1`.
+ - Returns `#NUM!` if `k` is greater than the count of numeric values.
+ - Non-numeric values in referenced ranges are ignored.
 
-```text
-=LARGE(A1, B1)
-```
+## Examples
+
+<Tabs items={["Second-largest from direct values", "Third-largest from a range"]}>
+<Tab value="Second-largest from direct values">
+<FunctionSandbox
+  title="Second-largest from direct values"
+  formula={`=LARGE({4,9,1,7},2)`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+<Tab value="Third-largest from a range">
+<FunctionSandbox
+  title="Third-largest from a range"
+  formula={`=LARGE(A1:A4,3)`}
+  grid={{"A1":"3","A2":"12","A3":"8","A4":"5"}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

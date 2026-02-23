@@ -1,17 +1,39 @@
 ---
 title: "DEVSQ"
-description: "Reference for the DEVSQ function."
+description: "Returns the sum of squared deviations from the mean."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`DEVSQ` is useful for variance-related calculations and diagnostics of spread.
 
-## Formula example
+## Remarks
+ - Returns `#NUM!` when no numeric values are available.
+ - Non-numeric values in referenced ranges are ignored.
+ - Uses the arithmetic mean of included values.
 
-```text
-=DEVSQ(A1)
-```
+## Examples
+
+<Tabs items={["Sum of squared deviations from scalar values", "Sum of squared deviations from a range"]}>
+<Tab value="Sum of squared deviations from scalar values">
+<FunctionSandbox
+  title="Sum of squared deviations from scalar values"
+  formula={`=DEVSQ(2,4,6)`}
+  grid={{}}
+  expected={"8"}
+/>
+</Tab>
+
+<Tab value="Sum of squared deviations from a range">
+<FunctionSandbox
+  title="Sum of squared deviations from a range"
+  formula={`=DEVSQ(A1:A4)`}
+  grid={{"A1":"1","A2":"2","A3":"3","A4":"4"}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

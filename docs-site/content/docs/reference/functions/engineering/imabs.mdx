@@ -1,17 +1,39 @@
 ---
 title: "IMABS"
-description: "Reference for the IMABS function."
+description: "Returns the modulus (absolute value) of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Computes `sqrt(real^2 + imaginary^2)`.
 
-## Formula example
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Returns a non-negative real number.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMABS(A1)
-```
+## Examples
+
+<Tabs items={["3-4-5 triangle modulus", "Purely real input"]}>
+<Tab value="3-4-5 triangle modulus">
+<FunctionSandbox
+  title="3-4-5 triangle modulus"
+  formula={`=IMABS("3+4i")`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+<Tab value="Purely real input">
+<FunctionSandbox
+  title="Purely real input"
+  formula={`=IMABS("5")`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

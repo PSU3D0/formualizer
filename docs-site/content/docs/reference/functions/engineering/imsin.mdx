@@ -1,17 +1,39 @@
 ---
 title: "IMSIN"
-description: "Reference for the IMSIN function."
+description: "Returns the sine of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Evaluates complex sine and returns the result as complex text.
 
-## Formula example
+## Remarks
+ - Input is coerced to complex-number text before parsing.
+ - Uses hyperbolic components for the imaginary part.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMSIN(A1)
-```
+## Examples
+
+<Tabs items={["Sine of zero", "Sine on imaginary axis"]}>
+<Tab value="Sine of zero">
+<FunctionSandbox
+  title="Sine of zero"
+  formula={`=IMSIN("0")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Sine on imaginary axis">
+<FunctionSandbox
+  title="Sine on imaginary axis"
+  formula={`=IMSIN("i")`}
+  grid={{}}
+  expected={"1.1752011936438014i"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

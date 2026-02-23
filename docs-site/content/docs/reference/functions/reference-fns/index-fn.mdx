@@ -12,15 +12,12 @@ description: "Returns the value or reference at a 1-based row and column within 
 ## Remarks
  - Indexing is 1-based for both `row_num` and `column_num`.
  - If `column_num` is omitted for a 1D array, `row_num` selects the position in that vector.
- - `row_num <= 0`, `column_num <= 0`, or out-of-bounds indexes return `#REF!`.
+ - `row_num &lt;= 0`, `column_num &lt;= 0`, or out-of-bounds indexes return `#REF!`.
  - Non-numeric index arguments return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={[
-  'Pick a value from a 2D table',
-  'Index into a 1D vector',
-]}>
+<Tabs items={["Pick a value from a 2D table", "Index into a 1D vector"]}>
 <Tab value="Pick a value from a 2D table">
 <FunctionSandbox
   title="Pick a value from a 2D table"

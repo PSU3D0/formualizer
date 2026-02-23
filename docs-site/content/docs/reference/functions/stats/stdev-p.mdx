@@ -1,17 +1,39 @@
 ---
 title: "STDEV.P"
-description: "Reference for the STDEV.P function."
+description: "Returns population standard deviation using `n` in the denominator."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Use `STDEV.P` when your values represent the entire population, not a sample.
 
-## Formula example
+## Remarks
+ - Requires at least one numeric value.
+ - Returns `#DIV/0!` when no numeric values are provided.
+ - Non-numeric values in referenced ranges are ignored.
 
-```text
-=STDEV.P(A1)
-```
+## Examples
+
+<Tabs items={["Population standard deviation from scalar arguments", "Population standard deviation from a range"]}>
+<Tab value="Population standard deviation from scalar arguments">
+<FunctionSandbox
+  title="Population standard deviation from scalar arguments"
+  formula={`=STDEV.P(2,4,6)`}
+  grid={{}}
+  expected={"1.632993161855452"}
+/>
+</Tab>
+
+<Tab value="Population standard deviation from a range">
+<FunctionSandbox
+  title="Population standard deviation from a range"
+  formula={`=STDEV.P(A1:A3)`}
+  grid={{"A1":"1","A2":"2","A3":"3"}}
+  expected={"0.816496580927726"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

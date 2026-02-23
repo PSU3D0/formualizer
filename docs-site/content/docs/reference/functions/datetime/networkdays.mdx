@@ -1,17 +1,40 @@
 ---
 title: "NETWORKDAYS"
-description: "Reference for the NETWORKDAYS function."
+description: "Returns the number of weekday business days between two dates, inclusive."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the number of weekday business days between two dates, inclusive.
 
-## Formula example
+## Remarks
+ - Weekends are fixed to Saturday and Sunday.
+ - If `start_date &gt; end_date`, the result is negative.
+ - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+ - Input serials are interpreted with Excel 1900 date mapping.
 
-```text
-=NETWORKDAYS(A1, B1)
-```
+## Examples
+
+<Tabs items={["Count weekdays in a range", "Holiday argument currently has no effect"]}>
+<Tab value="Count weekdays in a range">
+<FunctionSandbox
+  title="Count weekdays in a range"
+  formula={`=NETWORKDAYS(45292, 45299)`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+<Tab value="Holiday argument currently has no effect">
+<FunctionSandbox
+  title="Holiday argument currently has no effect"
+  formula={`=NETWORKDAYS(45292, 45299, 45293)`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

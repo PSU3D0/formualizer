@@ -1,17 +1,39 @@
 ---
 title: "TIMEVALUE"
-description: "Reference for the TIMEVALUE function."
+description: "Parses a time string and returns its fractional-day serial value."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Parses a time string and returns its fractional-day serial value.
 
-## Formula example
+## Remarks
+ - Supported formats include 24-hour and AM/PM text forms with optional seconds.
+ - Result is a fraction in the range `0.0..1.0` and does not include a date component.
+ - Because only a time fraction is returned, workbook date-system choice does not affect output.
 
-```text
-=TIMEVALUE(A1)
-```
+## Examples
+
+<Tabs items={["Parse 24-hour time", "Parse 12-hour AM/PM time"]}>
+<Tab value="Parse 24-hour time">
+<FunctionSandbox
+  title="Parse 24-hour time"
+  formula={`=TIMEVALUE("14:30")`}
+  grid={{}}
+  expected={"0.6041666667"}
+/>
+</Tab>
+
+<Tab value="Parse 12-hour AM/PM time">
+<FunctionSandbox
+  title="Parse 12-hour AM/PM time"
+  formula={`=TIMEVALUE("02:30 PM")`}
+  grid={{}}
+  expected={"0.6041666667"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

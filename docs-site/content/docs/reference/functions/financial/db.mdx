@@ -1,17 +1,42 @@
 ---
 title: "DB"
-description: "Reference for the DB function."
+description: "Returns fixed-declining-balance depreciation for a specified period."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`DB` computes per-period depreciation using a declining-balance rate and an optional
+ first-year month proration.
 
-## Formula example
+## Remarks
+ - Parameters: `cost`, `salvage`, `life`, `period`, and optional `month` (default `12`).
+ - `month` must be in `1..=12`; `life` and `period` must be positive; invalid values return `#NUM!`.
+ - `life` and `period` are truncated to integers for period checks and iteration.
+ - The declining rate is rounded to three decimals; if `cost &lt;= 0` or `salvage &lt;= 0`, this implementation uses a rate of `1.0`.
+ - Returned value is the period depreciation amount (generally positive expense, but sign follows provided inputs).
 
-```text
-=DB(A1, B1)
-```
+## Examples
+
+<Tabs items={["First full-year DB period", "Fractional period input is truncated"]}>
+<Tab value="First full-year DB period">
+<FunctionSandbox
+  title="First full-year DB period"
+  formula={`=DB(10000, 1000, 5, 1)`}
+  grid={{}}
+  expected={"3690"}
+/>
+</Tab>
+
+<Tab value="Fractional period input is truncated">
+<FunctionSandbox
+  title="Fractional period input is truncated"
+  formula={`=DB(10000, 1000, 5, 2.9)`}
+  grid={{}}
+  expected={"2328.39"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

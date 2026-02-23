@@ -1,17 +1,39 @@
 ---
 title: "BITOR"
-description: "Reference for the BITOR function."
+description: "Returns the bitwise OR of two non-negative integers."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Combines matching bits from both inputs and keeps bits set in either number.
 
-## Formula example
+## Remarks
+ - Arguments are coerced to numbers and must be whole numbers in the range `[0, 2^48)`.
+ - Returns `#NUM!` for negative values, fractional values, or out-of-range values.
+ - Propagates input errors.
 
-```text
-=BITOR(A1, B1)
-```
+## Examples
+
+<Tabs items={["Merge bit flags", "Set an additional bit"]}>
+<Tab value="Merge bit flags">
+<FunctionSandbox
+  title="Merge bit flags"
+  formula={`=BITOR(13,10)`}
+  grid={{}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="Set an additional bit">
+<FunctionSandbox
+  title="Set an additional bit"
+  formula={`=BITOR(8,1)`}
+  grid={{}}
+  expected={"9"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

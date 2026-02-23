@@ -1,17 +1,39 @@
 ---
 title: "IMCONJUGATE"
-description: "Reference for the IMCONJUGATE function."
+description: "Returns the complex conjugate of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Negates the imaginary coefficient and keeps the real coefficient unchanged.
 
-## Formula example
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Preserves the original suffix style (`i` or `j`) when possible.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMCONJUGATE(A1)
-```
+## Examples
+
+<Tabs items={["Conjugate with i suffix", "Conjugate with j suffix"]}>
+<Tab value="Conjugate with i suffix">
+<FunctionSandbox
+  title="Conjugate with i suffix"
+  formula={`=IMCONJUGATE("3+4i")`}
+  grid={{}}
+  expected={"3-4i"}
+/>
+</Tab>
+
+<Tab value="Conjugate with j suffix">
+<FunctionSandbox
+  title="Conjugate with j suffix"
+  formula={`=IMCONJUGATE("-2j")`}
+  grid={{}}
+  expected={"2j"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

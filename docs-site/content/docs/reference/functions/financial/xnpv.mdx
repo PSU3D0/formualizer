@@ -1,17 +1,41 @@
 ---
 title: "XNPV"
-description: "Reference for the XNPV function."
+description: "Calculates annualized net present value for irregularly dated cash flows."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Discounting uses an actual-day offset divided by 365 from the first provided date.
 
-## Formula example
+## Remarks
+ - `rate` is an annual discount rate.
+ - Cash-flow sign convention: outflows are negative and inflows are positive.
+ - `values` and `dates` are flattened to numeric entries; non-numeric entries are ignored.
+ - Scalar error inputs are propagated; callable inputs return `#CALC!`.
+ - Returns `#NUM!` when `values` and `dates` lengths differ or no numeric pair exists.
 
-```text
-=XNPV(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=XNPV(0.10, {-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=XNPV(0.08, {-5000,1200,1800,2400}, {0,180,365,730})`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

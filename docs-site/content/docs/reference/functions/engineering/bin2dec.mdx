@@ -1,17 +1,39 @@
 ---
 title: "BIN2DEC"
-description: "Reference for the BIN2DEC function."
+description: "Converts a binary text value to decimal."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Supports up to 10 binary digits, including two's-complement negative values.
 
-## Formula example
+## Remarks
+ - Input is coerced to text and must contain only `0` and `1`.
+ - 10-digit values starting with `1` are interpreted as signed two's-complement numbers.
+ - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
 
-```text
-=BIN2DEC(A1)
-```
+## Examples
+
+<Tabs items={["Convert an unsigned binary value", "Interpret signed 10-bit binary"]}>
+<Tab value="Convert an unsigned binary value">
+<FunctionSandbox
+  title="Convert an unsigned binary value"
+  formula={`=BIN2DEC("101010")`}
+  grid={{}}
+  expected={"42"}
+/>
+</Tab>
+
+<Tab value="Interpret signed 10-bit binary">
+<FunctionSandbox
+  title="Interpret signed 10-bit binary"
+  formula={`=BIN2DEC("1111111111")`}
+  grid={{}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

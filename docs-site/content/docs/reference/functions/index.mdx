@@ -1,30 +1,31 @@
 ---
 title: Function Reference
-description: Strategy for generated function documentation and the upcoming function index/search experience.
+description: Generated function documentation backed by Rust source metadata and examples.
 ---
 
-> **v1 scaffold:** Function docs are planned as generated pages backed by registry metadata.
+Function docs in this section are generated from Rust builtin definitions and docstrings.
 
 ## Generation Strategy
 
-- The Rust function registry remains the source of truth for function metadata.
-- A docs generation step will emit normalized function records (name, category, arity, signatures, notes).
-- MDX pages under this section will be generated from those records to avoid drift.
+- The Rust function registry is the source of truth for arity, signatures, and capability metadata.
+- Rust doc comments are the source of truth for summaries, remarks, and sandbox examples.
+- Generated MDX pages keep runtime metadata and narrative docs synchronized.
 
 ## URL and Page Structure
 
-- Canonical pages will live under `/docs/reference/functions/...`.
-- Each function page will include signatures, parameter notes, examples, and related functions.
-- Category pages may be introduced once enough functions are documented.
+- Canonical pages live under `/docs/reference/functions/...`.
+- Each function page includes runtime metadata, behavior notes, and interactive examples.
+- Category pages provide organized entry points by function family.
 
-## Upcoming Index/Search Behavior
+## Search and Discovery
 
-- v1 index: precomputed list grouped by category and alpha order.
-- v1 search: client-side filter by function name and aliases.
-- follow-up filters: category, argument count, and volatility/behavior flags.
+- Docs search indexes this section through the site search API.
+- Function pages include stable slugs for deep linking and external references.
+- Follow-up enhancements can add richer filters (category, arg count, volatility).
 
 Related docs:
 
+- [Formula Parser](/formula-parser)
 - [Reference Index](/docs/reference)
 - [Errors and Types](/docs/reference/errors-and-types)
 - [Formula Sandbox](/docs/playground/formula-sandbox)

@@ -1,17 +1,40 @@
 ---
 title: "TRIMMEAN"
-description: "Reference for the TRIMMEAN function."
+description: "Returns the mean after trimming a percentage of values from both tails."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`TRIMMEAN` sorts numeric data, removes an equal count from low and high ends, then averages the
+ remaining interior values.
 
-## Formula example
+## Remarks
+ - `percent` must satisfy `0 &lt;= percent &lt; 1`.
+ - The trimmed count per side is `floor(n * percent / 2)`.
+ - Returns `#NUM!` for invalid percent values or when no numeric values are available.
 
-```text
-=TRIMMEAN(A1, B1)
-```
+## Examples
+
+<Tabs items={["Trimmed mean from direct values", "Trimmed mean from a range"]}>
+<Tab value="Trimmed mean from direct values">
+<FunctionSandbox
+  title="Trimmed mean from direct values"
+  formula={`=TRIMMEAN({1,2,3,4,5,6},0.3333333333333333)`}
+  grid={{}}
+  expected={"3.5"}
+/>
+</Tab>
+
+<Tab value="Trimmed mean from a range">
+<FunctionSandbox
+  title="Trimmed mean from a range"
+  formula={`=TRIMMEAN(A1:A6,0.4)`}
+  grid={{"A1":"10","A2":"12","A3":"13","A4":"20","A5":"21","A6":"30"}}
+  expected={"16.5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

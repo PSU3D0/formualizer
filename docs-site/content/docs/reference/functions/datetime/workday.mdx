@@ -1,17 +1,40 @@
 ---
 title: "WORKDAY"
-description: "Reference for the WORKDAY function."
+description: "Returns the date serial that is a given number of weekdays from a start date."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the date serial that is a given number of weekdays from a start date.
 
-## Formula example
+## Remarks
+ - Positive `days` moves forward; negative `days` moves backward.
+ - Weekends are fixed to Saturday and Sunday.
+ - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+ - Input and output serials use Excel 1900 date mapping.
 
-```text
-=WORKDAY(A1, B1)
-```
+## Examples
+
+<Tabs items={["Move forward by five workdays", "Holiday argument currently has no effect"]}>
+<Tab value="Move forward by five workdays">
+<FunctionSandbox
+  title="Move forward by five workdays"
+  formula={`=WORKDAY(45292, 5)`}
+  grid={{}}
+  expected={"45299"}
+/>
+</Tab>
+
+<Tab value="Holiday argument currently has no effect">
+<FunctionSandbox
+  title="Holiday argument currently has no effect"
+  formula={`=WORKDAY(45292, 5, 45293)`}
+  grid={{}}
+  expected={"45299"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

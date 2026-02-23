@@ -1,17 +1,42 @@
 ---
 title: "DDB"
-description: "Reference for the DDB function."
+description: "Returns declining-balance depreciation for a period using a configurable acceleration factor."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`DDB` defaults to the double-declining method (`factor = 2`) and applies a salvage floor so
+ book value does not fall below `salvage`.
 
-## Formula example
+## Remarks
+ - Parameters: `cost`, `salvage`, `life`, `period`, and optional `factor` (default `2`).
+ - Input constraints: `cost &gt;= 0`, `salvage &gt;= 0`, `life &gt; 0`, `period &gt; 0`, `factor &gt; 0`, and `period &lt;= life`; violations return `#NUM!`.
+ - Per-period rate is `factor / life`.
+ - This implementation processes the integer part of `period` and then blends with the next period for a fractional remainder.
+ - Result is the period depreciation amount; with valid inputs above it is non-negative.
 
-```text
-=DDB(A1, B1)
-```
+## Examples
+
+<Tabs items={["Default double-declining first period", "Using a custom factor"]}>
+<Tab value="Default double-declining first period">
+<FunctionSandbox
+  title="Default double-declining first period"
+  formula={`=DDB(10000, 1000, 5, 1)`}
+  grid={{}}
+  expected={"4000"}
+/>
+</Tab>
+
+<Tab value="Using a custom factor">
+<FunctionSandbox
+  title="Using a custom factor"
+  formula={`=DDB(10000, 1000, 5, 1, 1.5)`}
+  grid={{}}
+  expected={"3000"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

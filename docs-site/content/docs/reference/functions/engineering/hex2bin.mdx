@@ -1,17 +1,39 @@
 ---
 title: "HEX2BIN"
-description: "Reference for the HEX2BIN function."
+description: "Converts a hexadecimal text value to binary text."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Supports optional left-padding through the `places` argument.
 
-## Formula example
+## Remarks
+ - Input must be hexadecimal text up to 10 characters and may be signed two's-complement.
+ - The converted decimal value must be in `[-512, 511]`, or the function returns `#NUM!`.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
 
-```text
-=HEX2BIN(A1)
-```
+## Examples
+
+<Tabs items={["Convert positive hex to binary", "Convert signed hex"]}>
+<Tab value="Convert positive hex to binary">
+<FunctionSandbox
+  title="Convert positive hex to binary"
+  formula={`=HEX2BIN("1F")`}
+  grid={{}}
+  expected={"11111"}
+/>
+</Tab>
+
+<Tab value="Convert signed hex">
+<FunctionSandbox
+  title="Convert signed hex"
+  formula={`=HEX2BIN("FFFFFFFFFF")`}
+  grid={{}}
+  expected={"1111111111"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

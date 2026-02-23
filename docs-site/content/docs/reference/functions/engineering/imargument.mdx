@@ -1,17 +1,39 @@
 ---
 title: "IMARGUMENT"
-description: "Reference for the IMARGUMENT function."
+description: "Returns the argument (angle in radians) of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+The angle is measured from the positive real axis.
 
-## Formula example
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Returns `#DIV/0!` for `0+0i`, where the angle is undefined.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMARGUMENT(A1)
-```
+## Examples
+
+<Tabs items={["First-quadrant angle", "Negative real axis"]}>
+<Tab value="First-quadrant angle">
+<FunctionSandbox
+  title="First-quadrant angle"
+  formula={`=IMARGUMENT("1+i")`}
+  grid={{}}
+  expected={"0.7853981633974483"}
+/>
+</Tab>
+
+<Tab value="Negative real axis">
+<FunctionSandbox
+  title="Negative real axis"
+  formula={`=IMARGUMENT("-1")`}
+  grid={{}}
+  expected={"3.141592653589793"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,39 @@
 ---
 title: "PRODUCT"
-description: "Reference for the PRODUCT function."
+description: "Multiplies all numeric arguments and returns their product."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`PRODUCT` is useful for chained growth factors, scaling ratios, and compound multipliers.
 
-## Formula example
+## Remarks
+ - Non-numeric values in referenced ranges are ignored.
+ - Returns `0` when no numeric values are found.
+ - Direct scalar arguments still attempt numeric coercion.
 
-```text
-=PRODUCT(A1)
-```
+## Examples
+
+<Tabs items={["Product of scalar values", "Product from a range"]}>
+<Tab value="Product of scalar values">
+<FunctionSandbox
+  title="Product of scalar values"
+  formula={`=PRODUCT(2,3,4)`}
+  grid={{}}
+  expected={"24"}
+/>
+</Tab>
+
+<Tab value="Product from a range">
+<FunctionSandbox
+  title="Product from a range"
+  formula={`=PRODUCT(A1:A3)`}
+  grid={{"A1":"1","A2":"5","A3":"10"}}
+  expected={"50"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

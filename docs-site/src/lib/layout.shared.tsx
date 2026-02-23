@@ -11,6 +11,10 @@ export function baseOptions(): BaseLayoutProps {
     nav: {
       title: 'Formualizer Docs',
     },
+    themeSwitch: {
+      enabled: true,
+      mode: 'light-dark-system',
+    },
     links: [
       {
         type: 'main',

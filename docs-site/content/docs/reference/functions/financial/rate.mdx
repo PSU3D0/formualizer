@@ -1,17 +1,42 @@
 ---
 title: "RATE"
-description: "Reference for the RATE function."
+description: "Solves for the periodic interest rate implied by annuity cash flows."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+This function uses Newton-Raphson iteration and returns the per-period rate that satisfies
+ the TVM equation.
 
-## Formula example
+## Remarks
+ - Output is a rate per period; convert to annual terms externally if needed.
+ - Cash-flow sign convention matters for convergence: use opposite signs for borrow/repay sides.
+ - `guess` defaults to `0.1` and influences convergence speed and branch selection.
+ - `type = 0` means end-of-period payments; `type != 0` means beginning-of-period payments.
+ - Returns `#NUM!` on non-convergence, near-zero derivative, or unsatisfied numeric conditions.
 
-```text
-=RATE(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=RATE(360, -1798.65157545827, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=RATE(12, -88.84878867834166, 1000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

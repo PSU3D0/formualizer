@@ -1,17 +1,41 @@
 ---
 title: "DATEDIF"
-description: "Reference for the DATEDIF function."
+description: "Returns the difference between two dates in a requested unit."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the difference between two dates in a requested unit.
 
-## Formula example
+## Remarks
+ - Supported units are `"Y"`, `"M"`, `"D"`, `"MD"`, `"YM"`, and `"YD"`.
+ - If `start_date &gt; end_date`, the function returns `#NUM!`.
+ - Unit matching is case-insensitive.
+ - `"YD"` uses a Feb-29 normalization strategy that can differ slightly from Excel in edge cases.
+ - Input serials are interpreted with Excel 1900 date mapping.
 
-```text
-=DATEDIF(A1, B1)
-```
+## Examples
+
+<Tabs items={["Difference in days", "Complete months difference"]}>
+<Tab value="Difference in days">
+<FunctionSandbox
+  title="Difference in days"
+  formula={`=DATEDIF(44197, 44378, "D")`}
+  grid={{}}
+  expected={"181"}
+/>
+</Tab>
+
+<Tab value="Complete months difference">
+<FunctionSandbox
+  title="Complete months difference"
+  formula={`=DATEDIF(44197, 44378, "M")`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

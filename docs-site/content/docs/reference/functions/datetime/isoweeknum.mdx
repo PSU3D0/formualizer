@@ -1,17 +1,39 @@
 ---
 title: "ISOWEEKNUM"
-description: "Reference for the ISOWEEKNUM function."
+description: "Returns the ISO 8601 week number (`1` to `53`) for a date serial."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the ISO 8601 week number (`1` to `53`) for a date serial.
 
-## Formula example
+## Remarks
+ - Weeks start on Monday and week 1 is the week containing the first Thursday of the year.
+ - Input serials are truncated to whole dates before evaluation.
+ - Serials are read using the Excel 1900 date mapping.
 
-```text
-=ISOWEEKNUM(A1)
-```
+## Examples
+
+<Tabs items={["ISO week at year start", "ISO week crossing year boundary"]}>
+<Tab value="ISO week at year start">
+<FunctionSandbox
+  title="ISO week at year start"
+  formula={`=ISOWEEKNUM(45292)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="ISO week crossing year boundary">
+<FunctionSandbox
+  title="ISO week crossing year boundary"
+  formula={`=ISOWEEKNUM(42370)`}
+  grid={{}}
+  expected={"53"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

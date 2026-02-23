@@ -1,17 +1,39 @@
 ---
 title: "BITAND"
-description: "Reference for the BITAND function."
+description: "Returns the bitwise AND of two non-negative integers."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Combines matching bits from both inputs and keeps only bits set in both numbers.
 
-## Formula example
+## Remarks
+ - Arguments are coerced to numbers and must be whole numbers in the range `[0, 2^48)`.
+ - Returns `#NUM!` for negative values, fractional values, or values outside the supported range.
+ - Propagates input errors.
 
-```text
-=BITAND(A1, B1)
-```
+## Examples
+
+<Tabs items={["Mask selected bits", "Check least-significant bit"]}>
+<Tab value="Mask selected bits">
+<FunctionSandbox
+  title="Mask selected bits"
+  formula={`=BITAND(13,10)`}
+  grid={{}}
+  expected={"8"}
+/>
+</Tab>
+
+<Tab value="Check least-significant bit">
+<FunctionSandbox
+  title="Check least-significant bit"
+  formula={`=BITAND(7,1)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

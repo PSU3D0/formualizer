@@ -1,17 +1,40 @@
 ---
 title: "AVEDEV"
-description: "Reference for the AVEDEV function."
+description: "Returns the average of absolute deviations from the mean."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`AVEDEV` provides a robust spread measure that is less sensitive to outliers than squared-error
+ metrics.
 
-## Formula example
+## Remarks
+ - Returns `#NUM!` when no numeric values are available.
+ - Non-numeric values in referenced ranges are ignored.
+ - Uses the arithmetic mean as the center point.
 
-```text
-=AVEDEV(A1)
-```
+## Examples
+
+<Tabs items={["Average absolute deviation from scalar values", "Average absolute deviation from a range"]}>
+<Tab value="Average absolute deviation from scalar values">
+<FunctionSandbox
+  title="Average absolute deviation from scalar values"
+  formula={`=AVEDEV(2,4,6)`}
+  grid={{}}
+  expected={"1.3333333333333333"}
+/>
+</Tab>
+
+<Tab value="Average absolute deviation from a range">
+<FunctionSandbox
+  title="Average absolute deviation from a range"
+  formula={`=AVEDEV(A1:A4)`}
+  grid={{"A1":"1","A2":"1","A3":"3","A4":"5"}}
+  expected={"1.5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

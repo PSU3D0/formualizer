@@ -1,17 +1,39 @@
 ---
 title: "IMPOWER"
-description: "Reference for the IMPOWER function."
+description: "Raises a complex number to a real power."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Uses polar form and returns the principal-value result as complex text.
 
-## Formula example
+## Remarks
+ - `inumber` is coerced to complex-number text; `n` is numerically coerced.
+ - Returns `#NUM!` for undefined zero-power cases such as `0^0` or `0^-1`.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMPOWER(A1, B1)
-```
+## Examples
+
+<Tabs items={["Square a complex value", "Negative real exponent"]}>
+<Tab value="Square a complex value">
+<FunctionSandbox
+  title="Square a complex value"
+  formula={`=IMPOWER("1+i",2)`}
+  grid={{}}
+  expected={"2i"}
+/>
+</Tab>
+
+<Tab value="Negative real exponent">
+<FunctionSandbox
+  title="Negative real exponent"
+  formula={`=IMPOWER("2",-1)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

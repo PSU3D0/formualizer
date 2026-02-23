@@ -1,17 +1,43 @@
 ---
 title: "PRICE"
-description: "Reference for the PRICE function."
+description: "Returns clean price per 100 face value for a coupon-paying security."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`PRICE` discounts remaining coupons and redemption to settlement and subtracts accrued
+ coupon interest according to the chosen day-count basis.
 
-## Formula example
+## Remarks
+ - Date inputs are spreadsheet serial dates and must satisfy `maturity &gt; settlement`.
+ - `rate` (coupon) and `yld` (yield) are annual decimal rates; `redemption` is amount paid per 100 face value at maturity.
+ - `frequency` must be `1` (annual), `2` (semiannual), or `4` (quarterly).
+ - `basis` codes: `0=US(NASD)30/360`, `1=Actual/Actual`, `2=Actual/360`, `3=Actual/365`, `4=European30/360`.
+ - Return value is quoted per 100 face value; positive inputs usually produce a positive price.
+ - Coupon schedule is derived by stepping backward from `maturity`, with end-of-month adjustment behavior in month arithmetic.
 
-```text
-=PRICE(A1, B1)
-```
+## Examples
+
+<Tabs items={["Single remaining coupon period", "Par bond when coupon rate equals yield"]}>
+<Tab value="Single remaining coupon period">
+<FunctionSandbox
+  title="Single remaining coupon period"
+  formula={`=PRICE(DATE(2024,4,1), DATE(2024,7,1), 0.06, 0.05, 100, 2, 0)`}
+  grid={{}}
+  expected={"100.2283950617284"}
+/>
+</Tab>
+
+<Tab value="Par bond when coupon rate equals yield">
+<FunctionSandbox
+  title="Par bond when coupon rate equals yield"
+  formula={`=PRICE(DATE(2024,3,1), DATE(2026,3,1), 0.05, 0.05, 100, 2, 0)`}
+  grid={{}}
+  expected={"100"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

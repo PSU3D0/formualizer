@@ -1,17 +1,39 @@
 ---
 title: "TODAY"
-description: "Reference for the TODAY function."
+description: "Returns the current date as a volatile serial value."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the current date as a volatile serial value.
 
-## Formula example
+## Remarks
+ - `TODAY` is volatile and recalculates each time the workbook recalculates.
+ - The result is an integer date serial with no time fraction.
+ - Serial output respects the active workbook date system (`1900` or `1904`).
 
-```text
-=TODAY()
-```
+## Examples
+
+<Tabs items={["TODAY has no time fraction", "Date arithmetic with TODAY"]}>
+<Tab value="TODAY has no time fraction">
+<FunctionSandbox
+  title="TODAY has no time fraction"
+  formula={`=TODAY()=INT(TODAY())`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Date arithmetic with TODAY">
+<FunctionSandbox
+  title="Date arithmetic with TODAY"
+  formula={`=TODAY()+7-TODAY()`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

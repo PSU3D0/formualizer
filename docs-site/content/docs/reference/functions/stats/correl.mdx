@@ -1,17 +1,40 @@
 ---
 title: "CORREL"
-description: "Reference for the CORREL function."
+description: "Returns the Pearson correlation coefficient between two numeric arrays."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`CORREL` measures linear relationship strength from `-1` (perfect inverse) to `1` (perfect
+ direct).
 
-## Formula example
+## Remarks
+ - Both arrays must produce the same number of numeric values.
+ - Returns `#N/A` when array lengths differ.
+ - Returns `#DIV/0!` when either series has zero variance.
 
-```text
-=CORREL(A1, B1)
-```
+## Examples
+
+<Tabs items={["Perfect positive linear correlation", "Perfect negative linear correlation"]}>
+<Tab value="Perfect positive linear correlation">
+<FunctionSandbox
+  title="Perfect positive linear correlation"
+  formula={`=CORREL({2,4,6},{1,2,3})`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Perfect negative linear correlation">
+<FunctionSandbox
+  title="Perfect negative linear correlation"
+  formula={`=CORREL(A1:A3,B1:B3)`}
+  grid={{"A1":"10","A2":"8","A3":"6","B1":"1","B2":"2","B3":"3"}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

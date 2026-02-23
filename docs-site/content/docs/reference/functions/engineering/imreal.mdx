@@ -1,17 +1,39 @@
 ---
 title: "IMREAL"
-description: "Reference for the IMREAL function."
+description: "Returns the real coefficient of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Accepts complex text (for example `a+bi`) or numeric values.
 
-## Formula example
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Purely imaginary values return `0`.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMREAL(A1)
-```
+## Examples
+
+<Tabs items={["Real part from a+bi", "Real part of pure imaginary"]}>
+<Tab value="Real part from a+bi">
+<FunctionSandbox
+  title="Real part from a+bi"
+  formula={`=IMREAL("3+4i")`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Real part of pure imaginary">
+<FunctionSandbox
+  title="Real part of pure imaginary"
+  formula={`=IMREAL("5j")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

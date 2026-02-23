@@ -37,3 +37,10 @@ impl Function for FunctionType {
 - Use `formualizer::doc_examples::eval_scalar` to avoid verbose workbook setup.
 - If a snippet should not run in doctests yet, keep `no_run`.
 - Formula comments can use either `# ...` or `// ...`.
+
+## Structured docs metadata (optional)
+
+For related links and FAQ content, use a `yaml,docs` block in the docstring.
+
+See full spec:
+- [`builtin-docs-structured-metadata.md`](./builtin-docs-structured-metadata.md)

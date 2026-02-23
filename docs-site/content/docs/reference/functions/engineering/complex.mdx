@@ -1,17 +1,39 @@
 ---
 title: "COMPLEX"
-description: "Reference for the COMPLEX function."
+description: "Builds a complex number text value from real and imaginary coefficients."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns canonical text such as `3+4i` or `-2j`.
 
-## Formula example
+## Remarks
+ - `real_num` and `i_num` are numerically coerced.
+ - `suffix` may be `"i"`, `"j"`, empty text, or omitted; empty/omitted defaults to `i`.
+ - Any other suffix returns `#VALUE!`.
 
-```text
-=COMPLEX(A1, B1)
-```
+## Examples
+
+<Tabs items={["Build with default suffix", "Build with j suffix"]}>
+<Tab value="Build with default suffix">
+<FunctionSandbox
+  title="Build with default suffix"
+  formula={`=COMPLEX(3,4)`}
+  grid={{}}
+  expected={"3+4i"}
+/>
+</Tab>
+
+<Tab value="Build with j suffix">
+<FunctionSandbox
+  title="Build with j suffix"
+  formula={`=COMPLEX(0,-1,"j")`}
+  grid={{}}
+  expected={"-j"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

@@ -1,17 +1,42 @@
 ---
 title: "PMT"
-description: "Reference for the PMT function."
+description: "Calculates the constant payment amount for a fixed-rate annuity or loan."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Use this to solve for periodic payment size when rate, term, and present/future value
+ targets are known.
 
-## Formula example
+## Remarks
+ - `rate` is the interest rate per payment period (for example, annual rate / 12 for monthly payments).
+ - Cash-flow sign convention: cash paid out is negative and cash received is positive.
+ - `type = 0` means end-of-period payments; `type != 0` means beginning-of-period payments.
+ - Returns `#NUM!` when `nper` is zero.
+ - Propagates argument conversion and underlying value errors.
 
-```text
-=PMT(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=PMT(0.06/12, 360, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=PMT(0.05/4, 20, -10000, 0, 1)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

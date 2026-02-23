@@ -1,17 +1,41 @@
 ---
 title: "NOMINAL"
-description: "Reference for the NOMINAL function."
+description: "Converts an effective annual rate into a nominal annual rate."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+This is the inverse-style transformation of `EFFECT` for a chosen compounding frequency.
 
-## Formula example
+## Remarks
+ - `effect_rate` is annual effective yield; `npery` is periods per year.
+ - `npery` is truncated to an integer before computation.
+ - Sign convention is not cash-flow based; this function converts annual rate representation.
+ - Returns `#NUM!` when `effect_rate &lt;= 0` or `npery &lt; 1`.
+ - Result formula: `npery * ((1 + effect_rate)^(1/npery) - 1)`.
 
-```text
-=NOMINAL(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=NOMINAL(0.12682503013196977, 12)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=NOMINAL(0.08243216, 4)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

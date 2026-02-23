@@ -1,17 +1,41 @@
 ---
 title: "ACCRINTM"
-description: "Reference for the ACCRINTM function."
+description: "Returns accrued interest for a security that pays interest at maturity."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`ACCRINTM` accrues from `issue` to `settlement` with no periodic coupon schedule.
 
-## Formula example
+## Remarks
+ - Date inputs are spreadsheet serial dates and must satisfy `settlement &gt; issue`.
+ - `rate` is an annual decimal rate (for example, `0.05` for 5%), and `par` must be positive.
+ - `basis` codes: `0=US(NASD)30/360`, `1=Actual/Actual`, `2=Actual/360`, `3=Actual/365`, `4=European30/360`.
+ - Return value is accrued interest amount in the same currency units as `par`.
+ - With positive `rate` and `par`, the result is positive.
 
-```text
-=ACCRINTM(A1, B1)
-```
+## Examples
+
+<Tabs items={["One full 30/360 year", "European 30/360 half-year accrual"]}>
+<Tab value="One full 30/360 year">
+<FunctionSandbox
+  title="One full 30/360 year"
+  formula={`=ACCRINTM(DATE(2024,1,1), DATE(2025,1,1), 0.05, 1000, 0)`}
+  grid={{}}
+  expected={"50"}
+/>
+</Tab>
+
+<Tab value="European 30/360 half-year accrual">
+<FunctionSandbox
+  title="European 30/360 half-year accrual"
+  formula={`=ACCRINTM(DATE(2024,2,28), DATE(2024,8,28), 0.04, 1000, 4)`}
+  grid={{}}
+  expected={"20"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

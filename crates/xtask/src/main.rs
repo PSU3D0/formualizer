@@ -703,6 +703,7 @@ fn collect_function_ref_entries(
         )
     };
 
+    let mut struct_docs_by_type: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     let mut impls_by_type: BTreeMap<String, Vec<ImplInfo>> = BTreeMap::new();
     let mut registrations: Vec<(String, String)> = Vec::new();
 
@@ -710,6 +711,13 @@ fn collect_function_ref_entries(
         let file_rel = path_to_repo_string(file)?;
         let facts = parse_file_facts(file, &file_rel)
             .with_context(|| format!("failed to parse builtin file: {file_rel}"))?;
+
+        for (type_name, doc) in facts.struct_docs {
+            struct_docs_by_type
+                .entry(type_name)
+                .or_default()
+                .push((file_rel.clone(), doc));
+        }
 
         for (type_name, impl_info) in facts.impls {
             impls_by_type.entry(type_name).or_default().push(impl_info);
@@ -747,12 +755,23 @@ fn collect_function_ref_entries(
             continue;
         }
 
+        let struct_doc =
+            select_struct_doc_for_registration(&struct_docs_by_type, &type_name, &registration_file)
+                .unwrap_or_default();
+        let combined_doc = [struct_doc.trim(), impl_info.doc_text.trim()]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
         let category = derive_category(&registration_file);
         let category_slug = slugify_for_docs(&category);
         let function_slug = sanitize_function_slug(slugify_for_docs(&function_name));
         let runtime = runtime_meta.get(&function_name.to_uppercase());
 
-        let (short_summary, overview, remarks, sandboxes) = parse_docstring_for_ref(&impl_info.doc_text, &function_name);
+        let (short_summary, overview, remarks, sandboxes) =
+            parse_docstring_for_ref(&combined_doc, &function_name);
 
         entries.push(FunctionRefEntry {
             function_name,
@@ -930,7 +949,7 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> (String, String, St
         short_summary = format!("Reference for the {} function.", fn_name);
     }
     if overview_lines.is_empty() {
-        overview_lines.push("> TODO: Add a concise human summary.".to_string());
+        overview_lines.push(short_summary.clone());
     }
 
     (
@@ -1019,26 +1038,27 @@ fn render_category_index_page(category_name: &str, entries: &[FunctionRefEntry])
 
 fn render_function_page(entry: &FunctionRefEntry) -> String {
     let mut lines = Vec::new();
-    
+
     // Frontmatter
     lines.push("---".to_string());
     lines.push(format!("title: \"{}\"", entry.function_name));
-    
-    // Description (escape quotes)
-    let escaped_desc = entry.short_summary.replace("\"", "\\\"");
+
+    // Description (escape quotes + keep on one line)
+    let desc = sanitize_mdx_text(&entry.short_summary).replace('\n', " ");
+    let escaped_desc = desc.replace("\"", "\\\"");
     lines.push(format!("description: \"{}\"", escaped_desc));
     lines.push("---".to_string());
     lines.push("".to_string());
-    
+
     // Overview
     lines.push("## Summary".to_string());
     lines.push("".to_string());
-    lines.push(entry.overview.clone());
+    lines.push(sanitize_mdx_text(&entry.overview));
     lines.push("".to_string());
-    
+
     // Remarks
     if !entry.remarks.is_empty() {
-        lines.push(entry.remarks.clone());
+        lines.push(sanitize_mdx_text(&entry.remarks));
         lines.push("".to_string());
     }
     
@@ -1048,27 +1068,32 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
         lines.push("".to_string());
 
         if entry.sandboxes.len() > 1 {
-            lines.push("<Tabs items={[".to_string());
-            for sandbox in &entry.sandboxes {
-                let title = sandbox.title.as_deref().unwrap_or("Example");
-                lines.push(format!("  '{}',", title));
-            }
-            lines.push("]}>".to_string());
+            let tab_items = entry
+                .sandboxes
+                .iter()
+                .map(|sandbox| {
+                    serde_json::to_string(sandbox.title.as_deref().unwrap_or("Example"))
+                        .unwrap_or_else(|_| "\"Example\"".to_string())
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!("<Tabs items={{[{}]}}>", tab_items));
         }
 
         for sandbox in &entry.sandboxes {
             let title = sandbox.title.as_deref().unwrap_or("Example");
+            let title_attr = escape_jsx_attr(title);
             let grid_json = serde_json::to_string(&sandbox.grid).unwrap_or_else(|_| "{}".to_string());
             let expected_json = sandbox.expected.as_deref().unwrap_or("null");
             let expected_json_escaped = serde_json::to_string(&expected_json).unwrap_or_else(|_| "\"\"".to_string());
-            
+
             if entry.sandboxes.len() > 1 {
-                lines.push(format!("<Tab value=\"{}\">", title));
+                lines.push(format!("<Tab value=\"{}\">", title_attr));
             }
 
             lines.push(format!(
                 "<FunctionSandbox\n  title=\"{}\"\n  formula={{`{}`}}\n  grid={{{}}}\n  expected={{{}}}\n/>",
-                title,
+                title_attr,
                 sandbox.formula.replace("`", "\\`"),
                 grid_json,
                 expected_json_escaped
@@ -1107,6 +1132,21 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
     lines.push("".to_string());
     
     lines.join("\n")
+}
+
+fn sanitize_mdx_text(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn escape_jsx_attr(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn function_meta_id(entry: &FunctionRefEntry) -> String {

@@ -8,17 +8,14 @@ description: "Reverses the logical value of its argument."
 `NOT` converts the input to a logical value, then flips it.
 
 ## Remarks
- - Numbers are coerced (`0` -> TRUE after inversion, non-zero -> FALSE after inversion).
+ - Numbers are coerced (`0` -&gt; TRUE after inversion, non-zero -&gt; FALSE after inversion).
  - Blank values are treated as FALSE, so `NOT(blank)` returns TRUE.
  - Text and other non-coercible values return `#VALUE!`.
  - Errors are propagated unchanged.
 
 ## Examples
 
-<Tabs items={[
-  'Invert boolean',
-  'Invert numeric truthiness',
-]}>
+<Tabs items={["Invert boolean", "Invert numeric truthiness"]}>
 <Tab value="Invert boolean">
 <FunctionSandbox
   title="Invert boolean"

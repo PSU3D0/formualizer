@@ -1,17 +1,41 @@
 ---
 title: "PV"
-description: "Reference for the PV function."
+description: "Calculates present value from periodic cash flows at a fixed rate."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Use this to discount a regular payment stream and optional terminal value back to time zero.
 
-## Formula example
+## Remarks
+ - `rate` is the discount rate per period.
+ - Cash-flow sign convention: inflows are positive and outflows are negative.
+ - `type = 0` assumes payments at period end; `type != 0` assumes period start.
+ - When `rate` is zero, present value is computed with simple arithmetic (no discounting).
+ - Returns argument-related errors if coercion fails or an input is an error value.
 
-```text
-=PV(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=PV(0.06/12, 360, -1798.65157545827)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=PV(0, 10, -500)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

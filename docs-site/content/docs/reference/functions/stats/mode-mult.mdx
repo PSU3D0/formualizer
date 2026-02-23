@@ -1,17 +1,39 @@
 ---
 title: "MODE.MULT"
-description: "Reference for the MODE.MULT function."
+description: "Returns all modal values as a vertical array."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Use `MODE.MULT` when a data set can have multiple values with the same highest frequency.
 
-## Formula example
+## Remarks
+ - Returns each tied mode as a separate row in the result array.
+ - Returns `#N/A` when every numeric value appears only once.
+ - Non-numeric values in referenced ranges are ignored.
 
-```text
-=MODE.MULT(A1)
-```
+## Examples
+
+<Tabs items={["Multiple modes from direct values", "Single repeated mode still returns an array"]}>
+<Tab value="Multiple modes from direct values">
+<FunctionSandbox
+  title="Multiple modes from direct values"
+  formula={`=MODE.MULT({1,2,2,3,3,4})`}
+  grid={{}}
+  expected={"[[2],[3]]"}
+/>
+</Tab>
+
+<Tab value="Single repeated mode still returns an array">
+<FunctionSandbox
+  title="Single repeated mode still returns an array"
+  formula={`=MODE.MULT(A1:A4)`}
+  grid={{"A1":"5","A2":"5","A3":"2","A4":"1"}}
+  expected={"[[5]]"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

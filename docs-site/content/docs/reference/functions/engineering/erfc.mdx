@@ -1,17 +1,39 @@
 ---
 title: "ERFC"
-description: "Reference for the ERFC function."
+description: "Returns the complementary error function of a number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`ERFC(x)` is equivalent to `1 - ERF(x)`.
 
-## Formula example
+## Remarks
+ - Input is numerically coerced.
+ - Results are approximate floating-point values.
+ - Propagates input errors.
 
-```text
-=ERFC(A1)
-```
+## Examples
+
+<Tabs items={["Complement at one", "Complement at zero"]}>
+<Tab value="Complement at one">
+<FunctionSandbox
+  title="Complement at one"
+  formula={`=ERFC(1)`}
+  grid={{}}
+  expected={"0.1572992070502851"}
+/>
+</Tab>
+
+<Tab value="Complement at zero">
+<FunctionSandbox
+  title="Complement at zero"
+  formula={`=ERFC(0)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

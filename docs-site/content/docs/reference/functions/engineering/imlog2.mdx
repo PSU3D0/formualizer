@@ -1,17 +1,39 @@
 ---
 title: "IMLOG2"
-description: "Reference for the IMLOG2 function."
+description: "Returns the base-2 logarithm of a complex number."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Produces the principal complex logarithm in base 2.
 
-## Formula example
+## Remarks
+ - Input is coerced to complex-number text before parsing.
+ - Returns `#NUM!` for zero input.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMLOG2(A1)
-```
+## Examples
+
+<Tabs items={["Base-2 log of a real value", "Base-2 log on imaginary axis"]}>
+<Tab value="Base-2 log of a real value">
+<FunctionSandbox
+  title="Base-2 log of a real value"
+  formula={`=IMLOG2("8")`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Base-2 log on imaginary axis">
+<FunctionSandbox
+  title="Base-2 log on imaginary axis"
+  formula={`=IMLOG2("i")`}
+  grid={{}}
+  expected={"2.266180070913597i"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

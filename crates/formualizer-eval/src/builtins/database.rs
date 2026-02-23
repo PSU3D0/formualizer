@@ -2233,7 +2233,42 @@ impl Function for DGetFn {
 /* ─────────────────────────── DCOUNTA ──────────────────────────── */
 #[derive(Debug)]
 pub struct DCountAFn;
-
+/// Counts non-blank values in a database field for records matching criteria.
+///
+/// # Remarks
+/// - `DCOUNTA` counts both text and numeric non-empty values.
+/// - Criteria rows are OR-ed; criteria columns in the same row are AND-ed.
+/// - Blank cells are excluded from the count.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Count non-blank names where score > 80"
+/// grid:
+///   A1: "Name"
+///   B1: "Score"
+///   A2: "Ana"
+///   B2: 92
+///   A3: "Bo"
+///   B3: 75
+///   A4: "Cy"
+///   B4: 88
+///   D1: "Score"
+///   D2: ">80"
+/// formula: "=DCOUNTA(A1:B4,\"Name\",D1:D2)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Count all non-blank values in a field"
+/// grid:
+///   A1: "Item"
+///   A2: "X"
+///   A3: "Y"
+///   A4: ""
+///   C1: "Item"
+/// formula: "=DCOUNTA(A1:A4,\"Item\",C1:C1)"
+/// expected: 2
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: DCOUNTA
 /// Type: DCountAFn

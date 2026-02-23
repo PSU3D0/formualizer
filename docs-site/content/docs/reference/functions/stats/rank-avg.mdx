@@ -1,17 +1,40 @@
 ---
 title: "RANK.AVG"
-description: "Reference for the RANK.AVG function."
+description: "Returns the rank position of a number, averaging the rank positions for ties."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Use `RANK.AVG` when tied values should share the average of their occupied rank positions.
 
-## Formula example
+## Remarks
+ - Omitting `order`, or setting `order` to `0`, ranks values in descending order.
+ - Any non-zero `order` ranks values in ascending order.
+ - If `number` appears multiple times, the function returns the mean of those rank positions.
+ - Returns `#N/A` if `number` is not found in `ref`.
 
-```text
-=RANK.AVG(A1, B1)
-```
+## Examples
+
+<Tabs items={["Average rank for tied values", "Ascending average rank from a range"]}>
+<Tab value="Average rank for tied values">
+<FunctionSandbox
+  title="Average rank for tied values"
+  formula={`=RANK.AVG(20,{30,20,20,10})`}
+  grid={{}}
+  expected={"2.5"}
+/>
+</Tab>
+
+<Tab value="Ascending average rank from a range">
+<FunctionSandbox
+  title="Ascending average rank from a range"
+  formula={`=RANK.AVG(A2,A1:A5,1)`}
+  grid={{"A1":"50","A2":"20","A3":"20","A4":"10","A5":"5"}}
+  expected={"3.5"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

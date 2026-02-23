@@ -1,17 +1,39 @@
 ---
 title: "OCT2HEX"
-description: "Reference for the OCT2HEX function."
+description: "Converts an octal text value to hexadecimal text."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Supports optional left-padding through the `places` argument.
 
-## Formula example
+## Remarks
+ - Input must be octal text up to 10 digits and may be signed two's-complement.
+ - Signed values are converted through their decimal representation.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
 
-```text
-=OCT2HEX(A1)
-```
+## Examples
+
+<Tabs items={["Convert octal to hex", "Convert signed octal"]}>
+<Tab value="Convert octal to hex">
+<FunctionSandbox
+  title="Convert octal to hex"
+  formula={`=OCT2HEX("77")`}
+  grid={{}}
+  expected={"3F"}
+/>
+</Tab>
+
+<Tab value="Convert signed octal">
+<FunctionSandbox
+  title="Convert signed octal"
+  formula={`=OCT2HEX("7777777777")`}
+  grid={{}}
+  expected={"FFFFFFFFFF"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

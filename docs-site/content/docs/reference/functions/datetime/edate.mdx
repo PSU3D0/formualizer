@@ -1,17 +1,39 @@
 ---
 title: "EDATE"
-description: "Reference for the EDATE function."
+description: "Returns the serial date offset by a whole number of months from a start date."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns the serial date offset by a whole number of months from a start date.
 
-## Formula example
+## Remarks
+ - `months` is truncated to an integer before calculation.
+ - If the target month has fewer days, the day is clamped to that month's last valid day.
+ - Serials are interpreted and emitted with Excel 1900 date mapping (not workbook-specific `1904` mode).
 
-```text
-=EDATE(A1, B1)
-```
+## Examples
+
+<Tabs items={["Add months to first-of-month date", "Clamp month-end overflow"]}>
+<Tab value="Add months to first-of-month date">
+<FunctionSandbox
+  title="Add months to first-of-month date"
+  formula={`=EDATE(44927, 3)`}
+  grid={{}}
+  expected={"45017"}
+/>
+</Tab>
+
+<Tab value="Clamp month-end overflow">
+<FunctionSandbox
+  title="Clamp month-end overflow"
+  formula={`=EDATE(45322, 1)`}
+  grid={{}}
+  expected={"45351"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

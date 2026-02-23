@@ -1,17 +1,39 @@
 ---
 title: "GESTEP"
-description: "Reference for the GESTEP function."
+description: "Returns `1` when a number is greater than or equal to a step value."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns `0` when the number is below the step.
 
-## Formula example
+## Remarks
+ - If `step` is omitted, it defaults to `0`.
+ - Inputs are numerically coerced.
+ - Propagates input errors.
 
-```text
-=GESTEP(A1)
-```
+## Examples
+
+<Tabs items={["Value meets threshold", "Default threshold of zero"]}>
+<Tab value="Value meets threshold">
+<FunctionSandbox
+  title="Value meets threshold"
+  formula={`=GESTEP(5,3)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Default threshold of zero">
+<FunctionSandbox
+  title="Default threshold of zero"
+  formula={`=GESTEP(-2)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

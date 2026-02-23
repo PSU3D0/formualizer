@@ -1,17 +1,43 @@
 ---
 title: "ACCRINT"
-description: "Reference for the ACCRINT function."
+description: "Returns accrued interest for a coupon-bearing security."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`ACCRINT` calculates interest from either `issue` or the previous coupon date up to
+ `settlement`, depending on `calc_method`.
 
-## Formula example
+## Remarks
+ - Date inputs are spreadsheet serial dates; `settlement` must be after `issue`.
+ - `rate` is the annual coupon rate as a decimal (for example, `0.06` for 6%), and `par` is principal amount; both must be positive.
+ - `frequency` must be `1` (annual), `2` (semiannual), or `4` (quarterly).
+ - `basis` codes: `0=US(NASD)30/360`, `1=Actual/Actual`, `2=Actual/360`, `3=Actual/365`, `4=European30/360`.
+ - `calc_method`: non-zero accrues from `issue`; `0` accrues from the previous coupon date.
+ - Return value is in the same currency units as `par` and is positive for valid positive inputs.
 
-```text
-=ACCRINT(A1, B1)
-```
+## Examples
+
+<Tabs items={["Accrue from issue date (default calc_method)", "Accrue from previous coupon (calc_method = 0)"]}>
+<Tab value="Accrue from issue date (default calc_method)">
+<FunctionSandbox
+  title="Accrue from issue date (default calc_method)"
+  formula={`=ACCRINT(DATE(2024,1,1), DATE(2024,7,1), DATE(2024,7,1), 0.06, 1000, 2, 0)`}
+  grid={{}}
+  expected={"30"}
+/>
+</Tab>
+
+<Tab value="Accrue from previous coupon (calc_method = 0)">
+<FunctionSandbox
+  title="Accrue from previous coupon (calc_method = 0)"
+  formula={`=ACCRINT(DATE(2024,1,1), DATE(2024,7,1), DATE(2024,10,1), 0.08, 1000, 2, 0, 0)`}
+  grid={{}}
+  expected={"20"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

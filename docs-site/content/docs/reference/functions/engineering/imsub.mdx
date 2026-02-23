@@ -1,17 +1,39 @@
 ---
 title: "IMSUB"
-description: "Reference for the IMSUB function."
+description: "Returns the difference between two complex numbers."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Subtracts the second complex value from the first.
 
-## Formula example
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Output keeps the suffix style from the parsed inputs.
+ - Invalid complex text returns `#NUM!`.
 
-```text
-=IMSUB(A1, B1)
-```
+## Examples
+
+<Tabs items={["Subtract a+bi values", "Subtract pure imaginary from real"]}>
+<Tab value="Subtract a+bi values">
+<FunctionSandbox
+  title="Subtract a+bi values"
+  formula={`=IMSUB("5+3i","2+i")`}
+  grid={{}}
+  expected={"3+2i"}
+/>
+</Tab>
+
+<Tab value="Subtract pure imaginary from real">
+<FunctionSandbox
+  title="Subtract pure imaginary from real"
+  formula={`=IMSUB("4","7j")`}
+  grid={{}}
+  expected={"4-7j"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

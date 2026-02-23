@@ -1,17 +1,41 @@
 ---
 title: "PPMT"
-description: "Reference for the PPMT function."
+description: "Returns the principal component of a payment for a specific period."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`PPMT` is computed as `PMT - IPMT` using the same rate, timing, and sign convention.
 
-## Formula example
+## Remarks
+ - `rate` is the interest rate per payment period.
+ - `per` is 1-based and must satisfy `1 &lt;= per &lt;= nper`.
+ - Cash-flow sign convention: with a positive borrowed `pv`, principal components are usually negative.
+ - `type = 1` means beginning-of-period payments.
+ - Returns `#NUM!` when `per` is outside valid bounds.
 
-```text
-=PPMT(A1, B1)
-```
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=PPMT(0.06/12, 1, 360, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=PPMT(0.06/12, 12, 360, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

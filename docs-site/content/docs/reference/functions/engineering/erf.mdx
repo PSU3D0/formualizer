@@ -1,17 +1,39 @@
 ---
 title: "ERF"
-description: "Reference for the ERF function."
+description: "Returns the Gaussian error function over one bound or between two bounds."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+With one argument it returns `erf(x)`; with two it returns `erf(upper) - erf(lower)`.
 
-## Formula example
+## Remarks
+ - Inputs are numerically coerced.
+ - A second argument switches the function to interval mode.
+ - Results are approximate floating-point values.
 
-```text
-=ERF(A1)
-```
+## Examples
+
+<Tabs items={["Single-bound ERF", "Interval ERF"]}>
+<Tab value="Single-bound ERF">
+<FunctionSandbox
+  title="Single-bound ERF"
+  formula={`=ERF(1)`}
+  grid={{}}
+  expected={"0.8427007929497149"}
+/>
+</Tab>
+
+<Tab value="Interval ERF">
+<FunctionSandbox
+  title="Interval ERF"
+  formula={`=ERF(0,1)`}
+  grid={{}}
+  expected={"0.8427007929497149"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

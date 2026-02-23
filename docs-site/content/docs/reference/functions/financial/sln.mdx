@@ -1,17 +1,40 @@
 ---
 title: "SLN"
-description: "Reference for the SLN function."
+description: "Returns straight-line depreciation for a single period."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+`SLN` spreads the depreciable amount (`cost - salvage`) evenly across `life` periods.
 
-## Formula example
+## Remarks
+ - Formula: `(cost - salvage) / life`.
+ - `life` must be non-zero; `life = 0` returns `#DIV/0!`.
+ - This function returns the algebraic result: if `salvage &gt; cost`, depreciation is negative.
+ - Inputs are interpreted as scalar numeric values in matching currency/period units.
 
-```text
-=SLN(A1, B1)
-```
+## Examples
+
+<Tabs items={["Straight-line yearly depreciation", "Negative depreciation when salvage exceeds cost"]}>
+<Tab value="Straight-line yearly depreciation">
+<FunctionSandbox
+  title="Straight-line yearly depreciation"
+  formula={`=SLN(10000, 1000, 9)`}
+  grid={{}}
+  expected={"1000"}
+/>
+</Tab>
+
+<Tab value="Negative depreciation when salvage exceeds cost">
+<FunctionSandbox
+  title="Negative depreciation when salvage exceeds cost"
+  formula={`=SLN(1000, 1200, 2)`}
+  grid={{}}
+  expected={"-100"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

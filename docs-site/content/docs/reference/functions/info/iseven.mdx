@@ -1,24 +1,21 @@
 ---
 title: "ISEVEN"
-description: "Returns TRUE when a number is even."
+description: "ISEVEN(number) - Returns TRUE if number is even"
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary.
+Returns TRUE when a number is even.
 
 ## Remarks
  - Numeric input is truncated toward zero before parity is checked.
- - Booleans are coerced (`TRUE` -> 1, `FALSE` -> 0).
+ - Booleans are coerced (`TRUE` -&gt; 1, `FALSE` -&gt; 0).
  - Non-numeric text returns `#VALUE!`.
  - Errors propagate unchanged.
 
 ## Examples
 
-<Tabs items={[
-  'Even integer',
-  'Decimal truncation before parity',
-]}>
+<Tabs items={["Even integer", "Decimal truncation before parity"]}>
 <Tab value="Even integer">
 <FunctionSandbox
   title="Even integer"
