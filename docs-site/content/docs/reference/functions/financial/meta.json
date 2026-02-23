@@ -1,0 +1,32 @@
+{
+  "pages": [
+    "index",
+    "accrint",
+    "accrintm",
+    "cumipmt",
+    "cumprinc",
+    "db",
+    "ddb",
+    "dollarde",
+    "dollarfr",
+    "effect",
+    "fv",
+    "ipmt",
+    "irr",
+    "mirr",
+    "nominal",
+    "nper",
+    "npv",
+    "pmt",
+    "ppmt",
+    "price",
+    "pv",
+    "rate",
+    "sln",
+    "syd",
+    "xirr",
+    "xnpv",
+    "yield"
+  ],
+  "title": "financial Functions"
+}

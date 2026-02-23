@@ -1,0 +1,29 @@
+{
+  "pages": [
+    "index",
+    "date",
+    "datedif",
+    "datevalue",
+    "day",
+    "days",
+    "days360",
+    "edate",
+    "eomonth",
+    "hour",
+    "isoweeknum",
+    "minute",
+    "month",
+    "networkdays",
+    "now",
+    "second",
+    "time",
+    "timevalue",
+    "today",
+    "weekday",
+    "weeknum",
+    "workday",
+    "year",
+    "yearfrac"
+  ],
+  "title": "datetime Functions"
+}

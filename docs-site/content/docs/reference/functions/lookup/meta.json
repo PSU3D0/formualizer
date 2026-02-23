@@ -1,0 +1,32 @@
+{
+  "pages": [
+    "index",
+    "address",
+    "choose",
+    "choosecols",
+    "chooserows",
+    "column",
+    "columns",
+    "drop",
+    "filter",
+    "groupby",
+    "hlookup",
+    "hstack",
+    "match",
+    "pivotby",
+    "randarray",
+    "row",
+    "rows",
+    "sequence",
+    "sort",
+    "sortby",
+    "take",
+    "transpose",
+    "unique",
+    "vlookup",
+    "vstack",
+    "xlookup",
+    "xmatch"
+  ],
+  "title": "lookup Functions"
+}

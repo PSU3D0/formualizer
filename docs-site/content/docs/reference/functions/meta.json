@@ -1,4 +1,20 @@
 {
-  "title": "Functions",
-  "pages": ["index"]
+  "pages": [
+    "index",
+    "database",
+    "datetime",
+    "engineering",
+    "financial",
+    "info",
+    "lambda",
+    "logical",
+    "logical-ext",
+    "lookup",
+    "math",
+    "random",
+    "reference-fns",
+    "stats",
+    "text"
+  ],
+  "title": "Functions"
 }

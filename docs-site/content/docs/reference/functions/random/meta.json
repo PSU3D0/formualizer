@@ -1,0 +1,8 @@
+{
+  "pages": [
+    "index",
+    "rand",
+    "randbetween"
+  ],
+  "title": "random Functions"
+}

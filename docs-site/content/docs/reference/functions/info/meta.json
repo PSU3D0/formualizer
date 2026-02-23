@@ -1,0 +1,21 @@
+{
+  "pages": [
+    "index",
+    "error-type",
+    "isblank",
+    "iserr",
+    "iserror",
+    "iseven",
+    "isformula",
+    "islogical",
+    "isna",
+    "isnumber",
+    "isodd",
+    "istext",
+    "n",
+    "na",
+    "t",
+    "type"
+  ],
+  "title": "info Functions"
+}

@@ -1,0 +1,11 @@
+{
+  "pages": [
+    "index",
+    "iferror",
+    "ifna",
+    "ifs",
+    "not",
+    "xor"
+  ],
+  "title": "logical_ext Functions"
+}
