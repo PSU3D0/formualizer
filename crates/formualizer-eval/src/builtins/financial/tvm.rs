@@ -43,6 +43,16 @@ fn coerce_literal_num(v: &LiteralValue) -> Result<f64, ExcelError> {
 /// formula: =PMT(0.05/4, 20, -10000, 0, 1)
 /// result: 561.1890334005388
 /// ```
+/// ```yaml,docs
+/// related:
+///   - PV
+///   - FV
+///   - NPER
+///   - RATE
+/// faq:
+///   - q: "Why is `PMT` usually negative for a loan?"
+///     a: "TVM sign convention treats cash you pay as negative; with positive `pv`, payment outputs are typically negative."
+/// ```
 #[derive(Debug)]
 pub struct PmtFn;
 /// [formualizer-docgen:schema:start]
@@ -139,6 +149,16 @@ impl Function for PmtFn {
 /// formula: =PV(0, 10, -500)
 /// result: 5000
 /// ```
+/// ```yaml,docs
+/// related:
+///   - PMT
+///   - FV
+///   - NPER
+///   - RATE
+/// faq:
+///   - q: "How does `type` change `PV`?"
+///     a: "`type=0` discounts end-of-period payments, while non-zero `type` treats payments as beginning-of-period (annuity due)."
+/// ```
 #[derive(Debug)]
 pub struct PvFn;
 /// [formualizer-docgen:schema:start]
@@ -225,6 +245,16 @@ impl Function for PvFn {
 /// ```yaml,sandbox
 /// formula: =FV(0, 24, -150, 1000)
 /// result: 2600
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PV
+///   - PMT
+///   - NPER
+///   - RATE
+/// faq:
+///   - q: "What happens when `rate` is zero in `FV`?"
+///     a: "It falls back to linear accumulation: `-pv - pmt * nper` with no compounding."
 /// ```
 #[derive(Debug)]
 pub struct FvFn;
@@ -313,6 +343,15 @@ impl Function for FvFn {
 /// ```yaml,sandbox
 /// formula: =NPV(0.10, -5000, 2000, 2500, 3000)
 /// result: 1034.7653848780812
+/// ```
+/// ```yaml,docs
+/// related:
+///   - XNPV
+///   - IRR
+///   - MIRR
+/// faq:
+///   - q: "Is the first cash flow discounted at period 0 or period 1?"
+///     a: "`NPV` discounts the first supplied cash flow one full period, matching spreadsheet `NPV` behavior."
 /// ```
 #[derive(Debug)]
 pub struct NpvFn;
@@ -415,6 +454,15 @@ impl Function for NpvFn {
 /// formula: =NPER(0, -250, 5000)
 /// result: 20
 /// ```
+/// ```yaml,docs
+/// related:
+///   - PMT
+///   - PV
+///   - RATE
+/// faq:
+///   - q: "Why does `NPER` return `#NUM!` for some sign combinations?"
+///     a: "If the logarithm domain is non-positive (or `rate=0` with `pmt=0`), there is no finite solution and `#NUM!` is returned."
+/// ```
 #[derive(Debug)]
 pub struct NperFn;
 /// [formualizer-docgen:schema:start]
@@ -514,6 +562,15 @@ impl Function for NperFn {
 /// ```yaml,sandbox
 /// formula: =RATE(12, -88.84878867834166, 1000)
 /// result: 0.010000000000005125
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PMT
+///   - NPER
+///   - IRR
+/// faq:
+///   - q: "How important is `guess` for `RATE`?"
+///     a: "`RATE` uses Newton-Raphson from `guess` (default `0.1`); a poor starting point can lead to non-convergence and `#NUM!`."
 /// ```
 #[derive(Debug)]
 pub struct RateFn;
@@ -647,6 +704,15 @@ impl Function for RateFn {
 /// formula: =IPMT(0.06/12, 12, 360, 300000)
 /// result: -1483.1572957145672
 /// ```
+/// ```yaml,docs
+/// related:
+///   - PMT
+///   - PPMT
+///   - CUMIPMT
+/// faq:
+///   - q: "Why is `IPMT` period 1 equal to zero for `type=1`?"
+///     a: "With beginning-of-period payments, the first payment occurs before interest accrues, so period-1 interest is zero."
+/// ```
 #[derive(Debug)]
 pub struct IpmtFn;
 /// [formualizer-docgen:schema:start]
@@ -759,6 +825,15 @@ impl Function for IpmtFn {
 /// ```yaml,sandbox
 /// formula: =PPMT(0.06/12, 12, 360, 300000)
 /// result: -315.4942797437036
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PMT
+///   - IPMT
+///   - CUMPRINC
+/// faq:
+///   - q: "How is `PPMT` computed?"
+///     a: "`PPMT` is computed as `PMT - IPMT` for the same `rate`, `per`, `nper`, `pv`, `fv`, and `type`."
 /// ```
 #[derive(Debug)]
 pub struct PpmtFn;
@@ -875,6 +950,14 @@ impl Function for PpmtFn {
 /// formula: =EFFECT(0.08, 4)
 /// result: 0.08243215999999998
 /// ```
+/// ```yaml,docs
+/// related:
+///   - NOMINAL
+///   - RATE
+/// faq:
+///   - q: "Does `EFFECT` accept fractional compounding periods?"
+///     a: "`npery` is truncated to an integer first; values less than 1 (or non-positive `nominal_rate`) return `#NUM!`."
+/// ```
 #[derive(Debug)]
 pub struct EffectFn;
 /// [formualizer-docgen:schema:start]
@@ -946,6 +1029,14 @@ impl Function for EffectFn {
 /// formula: =NOMINAL(0.08243216, 4)
 /// result: 0.08000000000000007
 /// ```
+/// ```yaml,docs
+/// related:
+///   - EFFECT
+///   - RATE
+/// faq:
+///   - q: "Is `NOMINAL` an exact inverse of `EFFECT`?"
+///     a: "It is the corresponding transformation for the same integer `npery`; both functions require positive rates and `npery >= 1`."
+/// ```
 #[derive(Debug)]
 pub struct NominalFn;
 /// [formualizer-docgen:schema:start]
@@ -1016,6 +1107,15 @@ impl Function for NominalFn {
 /// ```yaml,sandbox
 /// formula: =IRR({-5000,1200,1410,1875,1050}, 0.1)
 /// result: 0.041848876015677466
+/// ```
+/// ```yaml,docs
+/// related:
+///   - MIRR
+///   - NPV
+///   - XIRR
+/// faq:
+///   - q: "Why can `IRR` return `#NUM!` even with numeric cash flows?"
+///     a: "The Newton solve can fail if derivative terms become unstable or no convergent root is reached from the chosen guess."
 /// ```
 #[derive(Debug)]
 pub struct IrrFn;
@@ -1157,6 +1257,15 @@ impl Function for IrrFn {
 /// formula: =MIRR({-120000,39000,30000,21000,37000,46000}, 0.1, 0.12)
 /// result: 0.1260941303659051
 /// ```
+/// ```yaml,docs
+/// related:
+///   - IRR
+///   - NPV
+///   - XNPV
+/// faq:
+///   - q: "Why does `MIRR` return `#DIV/0!` for some cash-flow sets?"
+///     a: "`MIRR` needs both a negative leg and a positive leg; if discounted negatives or compounded positives are invalid, it returns `#DIV/0!`."
+/// ```
 #[derive(Debug)]
 pub struct MirrFn;
 /// [formualizer-docgen:schema:start]
@@ -1285,6 +1394,15 @@ impl Function for MirrFn {
 /// formula: =CUMIPMT(0.06/12, 360, 300000, 13, 24, 0)
 /// result: 14681.09233746059
 /// ```
+/// ```yaml,docs
+/// related:
+///   - IPMT
+///   - PMT
+///   - CUMPRINC
+/// faq:
+///   - q: "Are `start_period` and `end_period` inclusive in `CUMIPMT`?"
+///     a: "Yes. Both bounds are inclusive and interpreted as 1-based periods after truncation to integers."
+/// ```
 #[derive(Debug)]
 pub struct CumipmtFn;
 /// [formualizer-docgen:schema:start]
@@ -1394,6 +1512,15 @@ impl Function for CumipmtFn {
 /// ```yaml,sandbox
 /// formula: =CUMPRINC(0.06/12, 360, 300000, 13, 24, 0)
 /// result: -36264.91124295984
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PPMT
+///   - PMT
+///   - CUMIPMT
+/// faq:
+///   - q: "Why is `CUMPRINC` often negative for loans?"
+///     a: "With positive `pv`, payment cash outflows are negative in this convention, so cumulative principal is typically negative."
 /// ```
 #[derive(Debug)]
 pub struct CumprincFn;
@@ -1505,6 +1632,15 @@ impl Function for CumprincFn {
 /// ```yaml,sandbox
 /// formula: =XNPV(0.08, {-5000,1200,1800,2400}, {0,180,365,730})
 /// result: -120.41078799700836
+/// ```
+/// ```yaml,docs
+/// related:
+///   - NPV
+///   - XIRR
+///   - MIRR
+/// faq:
+///   - q: "How are dates interpreted in `XNPV`?"
+///     a: "Each cash flow is discounted by `(date_i - first_date) / 365`, so dates must align one-to-one with values."
 /// ```
 #[derive(Debug)]
 pub struct XnpvFn;
@@ -1687,6 +1823,15 @@ fn calculate_xnpv_derivative(rate: f64, values: &[f64], dates: &[f64]) -> f64 {
 /// ```yaml,sandbox
 /// formula: =XIRR({-5000,1200,1800,2400}, {0,180,365,730}, 0.1)
 /// result: 0.06001829492127762
+/// ```
+/// ```yaml,docs
+/// related:
+///   - XNPV
+///   - IRR
+///   - NPV
+/// faq:
+///   - q: "What data shape does `XIRR` require?"
+///     a: "`values` and `dates` must have equal numeric length with at least one positive and one negative cash flow, or `#NUM!` is returned."
 /// ```
 #[derive(Debug)]
 pub struct XirrFn;
@@ -1877,6 +2022,13 @@ impl Function for XirrFn {
 /// formula: =DOLLARDE(-3.15, 32)
 /// result: -3.46875
 /// ```
+/// ```yaml,docs
+/// related:
+///   - DOLLARFR
+/// faq:
+///   - q: "Why does `DOLLARDE` truncate `fraction`?"
+///     a: "The denominator is treated as an integer quote base; values below `1` after truncation return `#NUM!`."
+/// ```
 #[derive(Debug)]
 pub struct DollardeFn;
 /// [formualizer-docgen:schema:start]
@@ -1961,6 +2113,13 @@ impl Function for DollardeFn {
 /// ```yaml,sandbox
 /// formula: =DOLLARFR(-3.46875, 32)
 /// result: -3.15
+/// ```
+/// ```yaml,docs
+/// related:
+///   - DOLLARDE
+/// faq:
+///   - q: "How does `DOLLARFR` encode the fractional part?"
+///     a: "It scales the numerator into decimal digits based on `ceil(log10(fraction))`, preserving the input sign."
 /// ```
 #[derive(Debug)]
 pub struct DollarfrFn;

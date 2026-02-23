@@ -41,6 +41,17 @@ fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
 /// formula: "=SLN(1000, 1200, 2)"
 /// expected: -100
 /// ```
+/// ```yaml,docs
+/// related:
+///   - SYD
+///   - DB
+///   - DDB
+/// faq:
+///   - q: "Can `SLN` return a negative value?"
+///     a: "Yes. If `salvage > cost`, `(cost - salvage) / life` is negative."
+///   - q: "What happens when `life` is zero?"
+///     a: "`SLN` returns `#DIV/0!`."
+/// ```
 #[derive(Debug)]
 pub struct SlnFn;
 /// [formualizer-docgen:schema:start]
@@ -114,6 +125,17 @@ impl Function for SlnFn {
 /// title: "Final SYD period"
 /// formula: "=SYD(10000, 1000, 5, 5)"
 /// expected: 600
+/// ```
+/// ```yaml,docs
+/// related:
+///   - SLN
+///   - DB
+///   - DDB
+/// faq:
+///   - q: "Does `SYD` require integer `life` and `per`?"
+///     a: "No strict integer check is enforced; it uses provided numeric values directly after domain validation."
+///   - q: "Which period values are valid?"
+///     a: "`per` must satisfy `0 < per <= life`, and `life` must be positive; otherwise `#NUM!` is returned."
 /// ```
 #[derive(Debug)]
 pub struct SydFn;
@@ -197,6 +219,17 @@ impl Function for SydFn {
 /// title: "Fractional period input is truncated"
 /// formula: "=DB(10000, 1000, 5, 2.9)"
 /// expected: 2328.39
+/// ```
+/// ```yaml,docs
+/// related:
+///   - DDB
+///   - SYD
+///   - SLN
+/// faq:
+///   - q: "How is `month` used in `DB`?"
+///     a: "`month` prorates the first-year depreciation; if omitted it defaults to `12`."
+///   - q: "Why can fractional `period` inputs behave like integers?"
+///     a: "`DB` truncates `life` and `period` to integers for iteration and period bounds."
 /// ```
 #[derive(Debug)]
 pub struct DbFn;
@@ -323,6 +356,17 @@ impl Function for DbFn {
 /// title: "Using a custom factor"
 /// formula: "=DDB(10000, 1000, 5, 1, 1.5)"
 /// expected: 3000
+/// ```
+/// ```yaml,docs
+/// related:
+///   - DB
+///   - SYD
+///   - SLN
+/// faq:
+///   - q: "What does the optional `factor` control?"
+///     a: "It sets the per-period declining rate as `factor / life`; `2` gives double-declining balance."
+///   - q: "When does `DDB` return `#NUM!`?"
+///     a: "Invalid non-positive inputs (`life`, `period`, `factor`), negative `cost`/`salvage`, or `period > life`."
 /// ```
 #[derive(Debug)]
 pub struct DdbFn;

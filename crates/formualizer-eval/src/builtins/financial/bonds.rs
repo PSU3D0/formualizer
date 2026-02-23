@@ -231,6 +231,17 @@ fn coupons_remaining(settlement: &NaiveDate, maturity: &NaiveDate, frequency: i3
 /// formula: "=ACCRINT(DATE(2024,1,1), DATE(2024,7,1), DATE(2024,10,1), 0.08, 1000, 2, 0, 0)"
 /// expected: 20
 /// ```
+/// ```yaml,docs
+/// related:
+///   - ACCRINTM
+///   - PRICE
+///   - YIELD
+/// faq:
+///   - q: "When does `calc_method` change the result?"
+///     a: "`calc_method=0` accrues from the previous coupon date; any non-zero value accrues from `issue`."
+///   - q: "Which inputs return `#NUM!`?"
+///     a: "Invalid `basis`, non-positive `rate`/`par`, unsupported `frequency`, or `settlement <= issue` return `#NUM!`."
+/// ```
 #[derive(Debug)]
 pub struct AccrintFn;
 
@@ -373,6 +384,17 @@ impl Function for AccrintFn {
 /// formula: "=ACCRINTM(DATE(2024,2,28), DATE(2024,8,28), 0.04, 1000, 4)"
 /// expected: 20
 /// ```
+/// ```yaml,docs
+/// related:
+///   - ACCRINT
+///   - PRICE
+///   - YIELD
+/// faq:
+///   - q: "Does `ACCRINTM` use coupon frequency?"
+///     a: "No. It accrues directly from `issue` to `settlement` with no periodic coupon schedule."
+///   - q: "What causes `#NUM!`?"
+///     a: "Invalid `basis`, non-positive `rate`/`par`, or `settlement <= issue`."
+/// ```
 #[derive(Debug)]
 pub struct AccrintmFn;
 
@@ -484,6 +506,17 @@ impl Function for AccrintmFn {
 /// title: "Par bond when coupon rate equals yield"
 /// formula: "=PRICE(DATE(2024,3,1), DATE(2026,3,1), 0.05, 0.05, 100, 2, 0)"
 /// expected: 100
+/// ```
+/// ```yaml,docs
+/// related:
+///   - YIELD
+///   - ACCRINT
+///   - ACCRINTM
+/// faq:
+///   - q: "Why is `PRICE` quoted per 100 even if my bond face value differs?"
+///     a: "This implementation follows Excel quoting conventions and returns clean price per 100 face value."
+///   - q: "Which domain checks return `#NUM!`?"
+///     a: "`maturity <= settlement`, invalid `basis`, unsupported `frequency`, negative `rate`/`yld`, or non-positive `redemption`."
 /// ```
 #[derive(Debug)]
 pub struct PriceFn;
@@ -667,6 +700,17 @@ fn calculate_price(
 /// title: "Yield recovered from a discounted price"
 /// formula: "=YIELD(DATE(2024,2,15), DATE(2027,2,15), 0.05, 97.2914042780609, 100, 2, 0)"
 /// expected: 0.06
+/// ```
+/// ```yaml,docs
+/// related:
+///   - PRICE
+///   - ACCRINT
+///   - ACCRINTM
+/// faq:
+///   - q: "What does the returned `YIELD` represent?"
+///     a: "It is an annualized decimal yield (for example, `0.06` means 6% per year)."
+///   - q: "When does `YIELD` return `#NUM!` besides invalid inputs?"
+///     a: "The Newton-Raphson solve can fail to converge or hit an unstable derivative; in those cases it returns `#NUM!`."
 /// ```
 #[derive(Debug)]
 pub struct YieldFn;

@@ -42,6 +42,15 @@ fn to_bitwise_int(v: &LiteralValue) -> Result<i64, ExcelError> {
 /// formula: "=BITAND(7,1)"
 /// expected: 1
 /// ```
+/// ```yaml,docs
+/// related:
+///   - BITOR
+///   - BITXOR
+///   - BITLSHIFT
+/// faq:
+///   - q: "When does `BITAND` return `#NUM!`?"
+///     a: "Inputs must be whole numbers in `[0, 2^48)`; negatives, fractions, and out-of-range values return `#NUM!`."
+/// ```
 #[derive(Debug)]
 pub struct BitAndFn;
 /// [formualizer-docgen:schema:start]
@@ -116,6 +125,15 @@ impl Function for BitAndFn {
 /// title: "Set an additional bit"
 /// formula: "=BITOR(8,1)"
 /// expected: 9
+/// ```
+/// ```yaml,docs
+/// related:
+///   - BITAND
+///   - BITXOR
+///   - BITRSHIFT
+/// faq:
+///   - q: "Does `BITOR` accept decimal-looking values like `3.0`?"
+///     a: "Yes if they coerce to whole integers; non-integer values still return `#NUM!`."
 /// ```
 #[derive(Debug)]
 pub struct BitOrFn;
@@ -192,6 +210,15 @@ impl Function for BitOrFn {
 /// formula: "=BITXOR(5,5)"
 /// expected: 0
 /// ```
+/// ```yaml,docs
+/// related:
+///   - BITAND
+///   - BITOR
+///   - BITLSHIFT
+/// faq:
+///   - q: "Why does `BITXOR(x, x)` return `0`?"
+///     a: "XOR keeps only differing bits; identical operands cancel every bit position."
+/// ```
 #[derive(Debug)]
 pub struct BitXorFn;
 /// [formualizer-docgen:schema:start]
@@ -266,6 +293,15 @@ impl Function for BitXorFn {
 /// title: "Use negative shift to move right"
 /// formula: "=BITLSHIFT(32,-3)"
 /// expected: 4
+/// ```
+/// ```yaml,docs
+/// related:
+///   - BITRSHIFT
+///   - BITAND
+///   - BITOR
+/// faq:
+///   - q: "What does a negative `shift_amount` do in `BITLSHIFT`?"
+///     a: "Negative shifts are interpreted as right shifts, while positive shifts move bits left."
 /// ```
 #[derive(Debug)]
 pub struct BitLShiftFn;
@@ -359,6 +395,15 @@ impl Function for BitLShiftFn {
 /// title: "Use negative shift to move left"
 /// formula: "=BITRSHIFT(5,-1)"
 /// expected: 10
+/// ```
+/// ```yaml,docs
+/// related:
+///   - BITLSHIFT
+///   - BITAND
+///   - BITXOR
+/// faq:
+///   - q: "Why can negative shifts in `BITRSHIFT` return `#NUM!`?"
+///     a: "A negative shift means left-shift; if that left result exceeds the 48-bit limit, `#NUM!` is returned."
 /// ```
 #[derive(Debug)]
 pub struct BitRShiftFn;
@@ -466,6 +511,15 @@ fn coerce_base_text(v: &LiteralValue) -> Result<String, ExcelError> {
 /// formula: "=BIN2DEC(\"1111111111\")"
 /// expected: -1
 /// ```
+/// ```yaml,docs
+/// related:
+///   - DEC2BIN
+///   - BIN2HEX
+///   - BIN2OCT
+/// faq:
+///   - q: "How does `BIN2DEC` handle 10-bit values starting with `1`?"
+///     a: "They are interpreted as signed two's-complement values, so `1111111111` becomes `-1`."
+/// ```
 #[derive(Debug)]
 pub struct Bin2DecFn;
 /// [formualizer-docgen:schema:start]
@@ -546,6 +600,15 @@ impl Function for Bin2DecFn {
 /// title: "Pad binary output"
 /// formula: "=DEC2BIN(5,8)"
 /// expected: "00000101"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - BIN2DEC
+///   - DEC2HEX
+///   - DEC2OCT
+/// faq:
+///   - q: "What limits apply to `DEC2BIN`?"
+///     a: "`number` must be in `[-512, 511]`, and optional `places` must be between output width and `10`, else `#NUM!`."
 /// ```
 #[derive(Debug)]
 pub struct Dec2BinFn;
@@ -646,6 +709,15 @@ impl Function for Dec2BinFn {
 /// formula: "=HEX2DEC(\"FFFFFFFFFF\")"
 /// expected: -1
 /// ```
+/// ```yaml,docs
+/// related:
+///   - DEC2HEX
+///   - HEX2BIN
+///   - HEX2OCT
+/// faq:
+///   - q: "When is a 10-digit hex input treated as negative in `HEX2DEC`?"
+///     a: "If the first digit is `8` through `F`, it is decoded as signed 40-bit two's-complement."
+/// ```
 #[derive(Debug)]
 pub struct Hex2DecFn;
 /// [formualizer-docgen:schema:start]
@@ -725,6 +797,15 @@ impl Function for Hex2DecFn {
 /// title: "Pad hexadecimal output"
 /// formula: "=DEC2HEX(31,4)"
 /// expected: "001F"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - HEX2DEC
+///   - DEC2BIN
+///   - DEC2OCT
+/// faq:
+///   - q: "How are negative values formatted by `DEC2HEX`?"
+///     a: "Negative outputs use 10-digit two's-complement hexadecimal representation."
 /// ```
 #[derive(Debug)]
 pub struct Dec2HexFn;
@@ -825,6 +906,15 @@ impl Function for Dec2HexFn {
 /// formula: "=OCT2DEC(\"7777777777\")"
 /// expected: -1
 /// ```
+/// ```yaml,docs
+/// related:
+///   - DEC2OCT
+///   - OCT2BIN
+///   - OCT2HEX
+/// faq:
+///   - q: "How does `OCT2DEC` interpret 10-digit values starting with `4`-`7`?"
+///     a: "Those are treated as signed 30-bit two's-complement octal values."
+/// ```
 #[derive(Debug)]
 pub struct Oct2DecFn;
 /// [formualizer-docgen:schema:start]
@@ -904,6 +994,15 @@ impl Function for Oct2DecFn {
 /// title: "Two's-complement negative output"
 /// formula: "=DEC2OCT(-1)"
 /// expected: "7777777777"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - OCT2DEC
+///   - DEC2BIN
+///   - DEC2HEX
+/// faq:
+///   - q: "What range does `DEC2OCT` support?"
+///     a: "`number` must be in `[-2^29, 2^29 - 1]`; outside that range returns `#NUM!`."
 /// ```
 #[derive(Debug)]
 pub struct Dec2OctFn;
@@ -1005,6 +1104,15 @@ impl Function for Dec2OctFn {
 /// title: "Pad hexadecimal output"
 /// formula: "=BIN2HEX(\"1010\",4)"
 /// expected: "000A"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - HEX2BIN
+///   - BIN2DEC
+///   - DEC2HEX
+/// faq:
+///   - q: "Does `BIN2HEX` preserve signed binary meaning?"
+///     a: "Yes. A 10-bit binary with leading `1` is interpreted as signed and converted using two's-complement semantics."
 /// ```
 #[derive(Debug)]
 pub struct Bin2HexFn;
@@ -1113,6 +1221,15 @@ impl Function for Bin2HexFn {
 /// title: "Convert signed hex"
 /// formula: "=HEX2BIN(\"FFFFFFFFFF\")"
 /// expected: "1111111111"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - BIN2HEX
+///   - HEX2DEC
+///   - DEC2BIN
+/// faq:
+///   - q: "Why can valid hex text still produce `#NUM!` in `HEX2BIN`?"
+///     a: "After conversion, the decimal value must fit `[-512, 511]`; otherwise binary output is rejected."
 /// ```
 #[derive(Debug)]
 pub struct Hex2BinFn;
@@ -1229,6 +1346,15 @@ impl Function for Hex2BinFn {
 /// formula: "=BIN2OCT(\"111111\",4)"
 /// expected: "0077"
 /// ```
+/// ```yaml,docs
+/// related:
+///   - OCT2BIN
+///   - BIN2DEC
+///   - DEC2OCT
+/// faq:
+///   - q: "How are signed 10-bit binaries handled by `BIN2OCT`?"
+///     a: "They are first decoded as signed decimal and then re-encoded to octal with two's-complement output for negatives."
+/// ```
 #[derive(Debug)]
 pub struct Bin2OctFn;
 /// [formualizer-docgen:schema:start]
@@ -1335,6 +1461,15 @@ impl Function for Bin2OctFn {
 /// title: "Convert signed octal"
 /// formula: "=OCT2BIN(\"7777777777\")"
 /// expected: "1111111111"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - BIN2OCT
+///   - OCT2DEC
+///   - DEC2BIN
+/// faq:
+///   - q: "Why does `OCT2BIN` return `#NUM!` for some octal inputs?"
+///     a: "After decoding, the value must be within `[-512, 511]` to be representable in Excel-style binary output."
 /// ```
 #[derive(Debug)]
 pub struct Oct2BinFn;
@@ -1450,6 +1585,15 @@ impl Function for Oct2BinFn {
 /// formula: "=HEX2OCT(\"FFFFFFFFFF\")"
 /// expected: "7777777777"
 /// ```
+/// ```yaml,docs
+/// related:
+///   - OCT2HEX
+///   - HEX2DEC
+///   - DEC2OCT
+/// faq:
+///   - q: "What causes `HEX2OCT` to return `#NUM!`?"
+///     a: "The decoded value must fit octal output range `[-2^29, 2^29 - 1]`, and optional `places` must be valid."
+/// ```
 #[derive(Debug)]
 pub struct Hex2OctFn;
 /// [formualizer-docgen:schema:start]
@@ -1564,6 +1708,15 @@ impl Function for Hex2OctFn {
 /// formula: "=OCT2HEX(\"7777777777\")"
 /// expected: "FFFFFFFFFF"
 /// ```
+/// ```yaml,docs
+/// related:
+///   - HEX2OCT
+///   - OCT2DEC
+///   - DEC2HEX
+/// faq:
+///   - q: "How does `OCT2HEX` treat signed octal input?"
+///     a: "Signed 10-digit octal is decoded via two's-complement and then emitted as hex, preserving signed meaning."
+/// ```
 #[derive(Debug)]
 pub struct Oct2HexFn;
 /// [formualizer-docgen:schema:start]
@@ -1673,6 +1826,13 @@ impl Function for Oct2HexFn {
 /// formula: "=DELTA(2.5)"
 /// expected: 0
 /// ```
+/// ```yaml,docs
+/// related:
+///   - GESTEP
+/// faq:
+///   - q: "Does `DELTA` require exact floating-point equality?"
+///     a: "It uses a small tolerance (`1e-12`), so values that differ only by tiny floating noise compare as equal."
+/// ```
 #[derive(Debug)]
 pub struct DeltaFn;
 /// [formualizer-docgen:schema:start]
@@ -1748,6 +1908,13 @@ impl Function for DeltaFn {
 /// title: "Default threshold of zero"
 /// formula: "=GESTEP(-2)"
 /// expected: 0
+/// ```
+/// ```yaml,docs
+/// related:
+///   - DELTA
+/// faq:
+///   - q: "What default threshold does `GESTEP` use?"
+///     a: "If omitted, `step` defaults to `0`, so the function returns `1` for non-negative inputs."
 /// ```
 #[derive(Debug)]
 pub struct GestepFn;
@@ -1993,6 +2160,14 @@ fn erfc_direct(x: f64) -> f64 {
 /// formula: "=ERF(0,1)"
 /// expected: 0.8427007929497149
 /// ```
+/// ```yaml,docs
+/// related:
+///   - ERFC
+///   - ERF.PRECISE
+/// faq:
+///   - q: "How does two-argument `ERF` work?"
+///     a: "`ERF(lower, upper)` returns `erf(upper) - erf(lower)`, i.e., an interval difference rather than a single-bound value."
+/// ```
 #[derive(Debug)]
 pub struct ErfFn;
 /// [formualizer-docgen:schema:start]
@@ -2072,6 +2247,14 @@ impl Function for ErfFn {
 /// formula: "=ERFC(0)"
 /// expected: 1
 /// ```
+/// ```yaml,docs
+/// related:
+///   - ERF
+///   - ERF.PRECISE
+/// faq:
+///   - q: "Is `ERFC(x)` equivalent to `1-ERF(x)` here?"
+///     a: "Yes. It computes the complementary error function and matches `1 - erf(x)` behavior."
+/// ```
 #[derive(Debug)]
 pub struct ErfcFn;
 /// [formualizer-docgen:schema:start]
@@ -2134,6 +2317,14 @@ impl Function for ErfcFn {
 /// title: "Negative input"
 /// formula: "=ERF.PRECISE(-1)"
 /// expected: -0.8427007929497149
+/// ```
+/// ```yaml,docs
+/// related:
+///   - ERF
+///   - ERFC
+/// faq:
+///   - q: "How is `ERF.PRECISE` different from `ERF`?"
+///     a: "`ERF.PRECISE` is the one-argument form only; numerically it matches `ERF(x)` for single input mode."
 /// ```
 #[derive(Debug)]
 pub struct ErfPreciseFn;
@@ -2368,6 +2559,15 @@ static ARG_COMPLEX_THREE: std::sync::LazyLock<Vec<ArgSchema>> =
 /// formula: "=COMPLEX(0,-1,\"j\")"
 /// expected: "-j"
 /// ```
+/// ```yaml,docs
+/// related:
+///   - IMREAL
+///   - IMAGINARY
+///   - IMSUM
+/// faq:
+///   - q: "Which suffix values are valid in `COMPLEX`?"
+///     a: "Only suffixes i or j are accepted (empty or omitted defaults to i); other suffix strings return `#VALUE!`."
+/// ```
 #[derive(Debug)]
 pub struct ComplexFn;
 /// [formualizer-docgen:schema:start]
@@ -2469,6 +2669,15 @@ impl Function for ComplexFn {
 /// formula: "=IMREAL(\"5j\")"
 /// expected: 0
 /// ```
+/// ```yaml,docs
+/// related:
+///   - IMAGINARY
+///   - COMPLEX
+///   - IMABS
+/// faq:
+///   - q: "What does `IMREAL` return for a purely imaginary input?"
+///     a: "It returns `0` because the real coefficient is zero."
+/// ```
 #[derive(Debug)]
 pub struct ImRealFn;
 /// [formualizer-docgen:schema:start]
@@ -2536,6 +2745,15 @@ impl Function for ImRealFn {
 /// title: "Imaginary part with j suffix"
 /// formula: "=IMAGINARY(\"-2j\")"
 /// expected: -2
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IMREAL
+///   - COMPLEX
+///   - IMABS
+/// faq:
+///   - q: "What does `IMAGINARY` return for a real-only input?"
+///     a: "It returns `0` because there is no imaginary component."
 /// ```
 #[derive(Debug)]
 pub struct ImaginaryFn;
@@ -2605,6 +2823,15 @@ impl Function for ImaginaryFn {
 /// formula: "=IMABS(\"5\")"
 /// expected: 5
 /// ```
+/// ```yaml,docs
+/// related:
+///   - IMREAL
+///   - IMAGINARY
+///   - IMARGUMENT
+/// faq:
+///   - q: "Can `IMABS` return a negative result?"
+///     a: "No. It computes the modulus `sqrt(a^2+b^2)`, which is always non-negative."
+/// ```
 #[derive(Debug)]
 pub struct ImAbsFn;
 /// [formualizer-docgen:schema:start]
@@ -2673,6 +2900,15 @@ impl Function for ImAbsFn {
 /// title: "Negative real axis"
 /// formula: "=IMARGUMENT(\"-1\")"
 /// expected: 3.141592653589793
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IMABS
+///   - IMLN
+///   - IMSQRT
+/// faq:
+///   - q: "Why does `IMARGUMENT(0)` return `#DIV/0!`?"
+///     a: "The argument (angle) of `0+0i` is undefined, so the function returns `#DIV/0!`."
 /// ```
 #[derive(Debug)]
 pub struct ImArgumentFn;
@@ -2749,6 +2985,15 @@ impl Function for ImArgumentFn {
 /// title: "Conjugate with j suffix"
 /// formula: "=IMCONJUGATE(\"-2j\")"
 /// expected: "2j"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IMSUB
+///   - IMPRODUCT
+///   - IMDIV
+/// faq:
+///   - q: "Does `IMCONJUGATE` keep the `i`/`j` suffix style?"
+///     a: "Yes. It negates only the imaginary coefficient and preserves the parsed suffix form."
 /// ```
 #[derive(Debug)]
 pub struct ImConjugateFn;
@@ -2832,6 +3077,15 @@ fn check_suffix_compatibility(s1: char, s2: char) -> Result<char, ExcelError> {
 /// title: "Add j-suffix values"
 /// formula: "=IMSUM(\"2j\",\"-j\")"
 /// expected: "j"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IMSUB
+///   - IMPRODUCT
+///   - COMPLEX
+/// faq:
+///   - q: "Can `IMSUM` take more than two arguments?"
+///     a: "Yes. It is variadic and sums all provided complex arguments in sequence."
 /// ```
 #[derive(Debug)]
 pub struct ImSumFn;
@@ -2922,6 +3176,15 @@ impl Function for ImSumFn {
 /// formula: "=IMSUB(\"4\",\"7j\")"
 /// expected: "4-7j"
 /// ```
+/// ```yaml,docs
+/// related:
+///   - IMSUM
+///   - IMDIV
+///   - COMPLEX
+/// faq:
+///   - q: "How is subtraction ordered in `IMSUB`?"
+///     a: "It always computes `inumber1 - inumber2`; swapping arguments changes the sign of the result."
+/// ```
 #[derive(Debug)]
 pub struct ImSubFn;
 /// [formualizer-docgen:schema:start]
@@ -3006,6 +3269,15 @@ impl Function for ImSubFn {
 /// title: "Scale an imaginary value"
 /// formula: "=IMPRODUCT(\"2i\",\"3\")"
 /// expected: "6i"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IMDIV
+///   - IMSUM
+///   - IMPOWER
+/// faq:
+///   - q: "Can `IMPRODUCT` multiply a single argument?"
+///     a: "Yes. With one argument it returns that parsed complex value in canonical formatted form."
 /// ```
 #[derive(Debug)]
 pub struct ImProductFn;
@@ -3099,6 +3371,15 @@ impl Function for ImProductFn {
 /// title: "Division by zero complex"
 /// formula: "=IMDIV(\"2+i\",\"0\")"
 /// expected: "#DIV/0!"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IMPRODUCT
+///   - IMSUB
+///   - IMCONJUGATE
+/// faq:
+///   - q: "When does `IMDIV` return `#DIV/0!`?"
+///     a: "If the divisor is `0+0i` (denominator magnitude near zero), division is undefined and returns `#DIV/0!`."
 /// ```
 #[derive(Debug)]
 pub struct ImDivFn;
@@ -3198,6 +3479,16 @@ impl Function for ImDivFn {
 /// formula: "=IMEXP(\"1\")"
 /// expected: "2.718281828459045"
 /// ```
+/// ```yaml,docs
+/// related:
+///   - IMLN
+///   - IMPOWER
+///   - IMSIN
+///   - IMCOS
+/// faq:
+///   - q: "Does `IMEXP` return text or a numeric complex type?"
+///     a: "It returns a canonical complex text string, consistent with other `IM*` functions."
+/// ```
 #[derive(Debug)]
 pub struct ImExpFn;
 /// [formualizer-docgen:schema:start]
@@ -3271,6 +3562,15 @@ impl Function for ImExpFn {
 /// title: "Natural log on imaginary axis"
 /// formula: "=IMLN(\"i\")"
 /// expected: "1.5707963267948966i"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IMEXP
+///   - IMLOG10
+///   - IMLOG2
+/// faq:
+///   - q: "Why does `IMLN(0)` return `#NUM!`?"
+///     a: "The complex logarithm at zero is undefined, so this implementation returns `#NUM!`."
 /// ```
 #[derive(Debug)]
 pub struct ImLnFn;
@@ -3352,6 +3652,15 @@ impl Function for ImLnFn {
 /// title: "Base-10 log on imaginary axis"
 /// formula: "=IMLOG10(\"i\")"
 /// expected: "0.6821881769209206i"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IMLN
+///   - IMLOG2
+///   - IMEXP
+/// faq:
+///   - q: "What branch of the logarithm does `IMLOG10` use?"
+///     a: "It returns the principal complex logarithm (base 10), derived from principal argument `atan2(imag, real)`."
 /// ```
 #[derive(Debug)]
 pub struct ImLog10Fn;
@@ -3435,6 +3744,15 @@ impl Function for ImLog10Fn {
 /// formula: "=IMLOG2(\"i\")"
 /// expected: "2.266180070913597i"
 /// ```
+/// ```yaml,docs
+/// related:
+///   - IMLN
+///   - IMLOG10
+///   - IMEXP
+/// faq:
+///   - q: "When does `IMLOG2` return `#NUM!`?"
+///     a: "It returns `#NUM!` for invalid complex text or zero input, where logarithm is undefined."
+/// ```
 #[derive(Debug)]
 pub struct ImLog2Fn;
 /// [formualizer-docgen:schema:start]
@@ -3516,6 +3834,15 @@ impl Function for ImLog2Fn {
 /// title: "Negative real exponent"
 /// formula: "=IMPOWER(\"2\",-1)"
 /// expected: "0.5"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IMSQRT
+///   - IMEXP
+///   - IMLN
+/// faq:
+///   - q: "How does `IMPOWER` handle zero base with non-positive exponent?"
+///     a: "`0^0` and `0` raised to a negative exponent are treated as undefined and return `#NUM!`."
 /// ```
 #[derive(Debug)]
 pub struct ImPowerFn;
@@ -3616,6 +3943,15 @@ impl Function for ImPowerFn {
 /// formula: "=IMSQRT(\"3+4i\")"
 /// expected: "2+i"
 /// ```
+/// ```yaml,docs
+/// related:
+///   - IMPOWER
+///   - IMABS
+///   - IMARGUMENT
+/// faq:
+///   - q: "Which square root does `IMSQRT` return for complex inputs?"
+///     a: "It returns the principal branch (half-angle polar form), matching spreadsheet-style principal-value behavior."
+/// ```
 #[derive(Debug)]
 pub struct ImSqrtFn;
 /// [formualizer-docgen:schema:start]
@@ -3694,6 +4030,14 @@ impl Function for ImSqrtFn {
 /// formula: "=IMSIN(\"i\")"
 /// expected: "1.1752011936438014i"
 /// ```
+/// ```yaml,docs
+/// related:
+///   - IMCOS
+///   - IMEXP
+/// faq:
+///   - q: "Why can `IMSIN` return non-zero imaginary output for real-looking formulas?"
+///     a: "For complex inputs `a+bi`, sine uses hyperbolic terms (`cosh`, `sinh`), so imaginary components are expected."
+/// ```
 #[derive(Debug)]
 pub struct ImSinFn;
 /// [formualizer-docgen:schema:start]
@@ -3766,6 +4110,14 @@ impl Function for ImSinFn {
 /// title: "Cosine on imaginary axis"
 /// formula: "=IMCOS(\"i\")"
 /// expected: "1.5430806348152437"
+/// ```
+/// ```yaml,docs
+/// related:
+///   - IMSIN
+///   - IMEXP
+/// faq:
+///   - q: "Why is the imaginary part negated in `IMCOS`?"
+///     a: "Complex cosine uses `cos(a+bi)=cos(a)cosh(b)-i sin(a)sinh(b)`, so the imaginary term carries a minus sign."
 /// ```
 #[derive(Debug)]
 pub struct ImCosFn;
@@ -4004,6 +4356,15 @@ fn convert_units(value: f64, from: &str, to: &str) -> Result<f64, ExcelError> {
 /// title: "Temperature conversion"
 /// formula: "=CONVERT(32,\"F\",\"C\")"
 /// expected: 0
+/// ```
+/// ```yaml,docs
+/// related:
+///   - DEC2BIN
+///   - DEC2HEX
+///   - DEC2OCT
+/// faq:
+///   - q: "When does `CONVERT` return `#N/A`?"
+///     a: "Unknown unit tokens, non-text unit arguments, or mixing incompatible categories (for example length to mass) return `#N/A`."
 /// ```
 #[derive(Debug)]
 pub struct ConvertFn;
