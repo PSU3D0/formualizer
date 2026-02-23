@@ -39,12 +39,17 @@ description: "DMIN: Returns the smallest value in a database field for records m
 
 ## Related functions
 
+- [DMAX](/docs/reference/functions/database/dmax)
+- [DGET](/docs/reference/functions/database/dget)
+- [MINIFS](/docs/reference/functions/stats/minifs)
 - [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNT](/docs/reference/functions/database/dcount)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
-- [DGET](/docs/reference/functions/database/dget)
-- [DMAX](/docs/reference/functions/database/dmax)
-- [DPRODUCT](/docs/reference/functions/database/dproduct)
+
+## FAQ
+
+### How are mixed criteria (text plus numeric operators) handled in DMIN?
+Criteria are parsed per criteria cell, then applied as AND within row and OR across rows before the minimum is chosen.
 
 ## Runtime metadata
 

@@ -39,12 +39,17 @@ Combines matching bits from both inputs and keeps only bits set in both numbers.
 
 ## Related functions
 
-- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
 - [BITOR](/docs/reference/functions/engineering/bitor)
-- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
 - [BITXOR](/docs/reference/functions/engineering/bitxor)
+- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
+- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
 - [IMDIV](/docs/reference/functions/engineering/imdiv)
 - [IMPOWER](/docs/reference/functions/engineering/impower)
+
+## FAQ
+
+### When does `BITAND` return `#NUM!`?
+Inputs must be whole numbers in `[0, 2^48)`; negatives, fractions, and out-of-range values return `#NUM!`.
 
 ## Runtime metadata
 

@@ -42,12 +42,17 @@ Use this to solve for periodic payment size when rate, term, and present/future 
 
 ## Related functions
 
+- [PV](/docs/reference/functions/financial/pv)
 - [FV](/docs/reference/functions/financial/fv)
 - [NPER](/docs/reference/functions/financial/nper)
-- [PV](/docs/reference/functions/financial/pv)
 - [RATE](/docs/reference/functions/financial/rate)
 - [ACCRINT](/docs/reference/functions/financial/accrint)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
+
+## FAQ
+
+### Why is `PMT` usually negative for a loan?
+TVM sign convention treats cash you pay as negative; with positive `pv`, payment outputs are typically negative.
 
 ## Runtime metadata
 

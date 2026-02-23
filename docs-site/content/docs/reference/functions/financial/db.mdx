@@ -42,12 +42,20 @@ description: "DB: Returns fixed-declining-balance depreciation for a specified p
 
 ## Related functions
 
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [DDB](/docs/reference/functions/financial/ddb)
+- [SYD](/docs/reference/functions/financial/syd)
+- [SLN](/docs/reference/functions/financial/sln)
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [IPMT](/docs/reference/functions/financial/ipmt)
 - [PPMT](/docs/reference/functions/financial/ppmt)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [FV](/docs/reference/functions/financial/fv)
+
+## FAQ
+
+### How is `month` used in `DB`?
+`month` prorates the first-year depreciation; if omitted it defaults to `12`.
+
+### Why can fractional `period` inputs behave like integers?
+`DB` truncates `life` and `period` to integers for iteration and period bounds.
 
 ## Runtime metadata
 

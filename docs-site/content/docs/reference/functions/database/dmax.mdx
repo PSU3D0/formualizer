@@ -39,12 +39,17 @@ description: "DMAX: Returns the largest value in a database field for records ma
 
 ## Related functions
 
+- [DMIN](/docs/reference/functions/database/dmin)
+- [DGET](/docs/reference/functions/database/dget)
+- [MAXIFS](/docs/reference/functions/stats/maxifs)
 - [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNT](/docs/reference/functions/database/dcount)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
-- [DGET](/docs/reference/functions/database/dget)
-- [DMIN](/docs/reference/functions/database/dmin)
-- [DPRODUCT](/docs/reference/functions/database/dproduct)
+
+## FAQ
+
+### What does DMAX return when no numeric field values match criteria?
+This implementation returns 0 when the filtered set has no numeric values.
 
 ## Runtime metadata
 

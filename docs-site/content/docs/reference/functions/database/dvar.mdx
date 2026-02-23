@@ -39,12 +39,17 @@ description: "DVAR: Returns the sample variance of a database field for records 
 
 ## Related functions
 
+- [DVARP](/docs/reference/functions/database/dvarp)
+- [DSTDEV](/docs/reference/functions/database/dstdev)
+- [VAR.S](/docs/reference/functions/stats/var-s)
 - [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNT](/docs/reference/functions/database/dcount)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
-- [DGET](/docs/reference/functions/database/dget)
-- [DMAX](/docs/reference/functions/database/dmax)
-- [DMIN](/docs/reference/functions/database/dmin)
+
+## FAQ
+
+### Does DVAR use sample or population variance math?
+DVAR uses sample variance with an n-1 denominator and returns #DIV/0! when fewer than two numeric rows match.
 
 ## Runtime metadata
 

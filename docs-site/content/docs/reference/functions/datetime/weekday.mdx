@@ -40,11 +40,16 @@ Returns the day-of-week index for a date serial with configurable numbering.
 ## Related functions
 
 - [WEEKNUM](/docs/reference/functions/datetime/weeknum)
+- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
+- [WORKDAY](/docs/reference/functions/datetime/workday)
 - [DAYS360](/docs/reference/functions/datetime/days360)
 - [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
-- [WORKDAY](/docs/reference/functions/datetime/workday)
 - [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
-- [DAY](/docs/reference/functions/datetime/day)
+
+## FAQ
+
+### Why do I get #NUM! for some return_type values?
+WEEKDAY only accepts specific Excel return_type codes (1, 2, 3, 11-17); other codes return #NUM!.
 
 ## Runtime metadata
 

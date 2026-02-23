@@ -41,12 +41,17 @@ Use this to solve term length when periodic rate, payment, and value constraints
 
 ## Related functions
 
-- [FV](/docs/reference/functions/financial/fv)
 - [PMT](/docs/reference/functions/financial/pmt)
 - [PV](/docs/reference/functions/financial/pv)
 - [RATE](/docs/reference/functions/financial/rate)
+- [FV](/docs/reference/functions/financial/fv)
 - [ACCRINT](/docs/reference/functions/financial/accrint)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
+
+## FAQ
+
+### Why does `NPER` return `#NUM!` for some sign combinations?
+If the logarithm domain is non-positive (or `rate=0` with `pmt=0`), there is no finite solution and `#NUM!` is returned.
 
 ## Runtime metadata
 

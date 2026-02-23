@@ -43,12 +43,20 @@ description: "Returns clean price per 100 face value for a coupon-paying securit
 
 ## Related functions
 
-- [ACCRINT](/docs/reference/functions/financial/accrint)
 - [YIELD](/docs/reference/functions/financial/yield)
+- [ACCRINT](/docs/reference/functions/financial/accrint)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [DB](/docs/reference/functions/financial/db)
 - [DDB](/docs/reference/functions/financial/ddb)
 - [FV](/docs/reference/functions/financial/fv)
+
+## FAQ
+
+### Why is `PRICE` quoted per 100 even if my bond face value differs?
+This implementation follows Excel quoting conventions and returns clean price per 100 face value.
+
+### Which domain checks return `#NUM!`?
+`maturity &lt;= settlement`, invalid `basis`, unsupported `frequency`, negative `rate`/`yld`, or non-positive `redemption`.
 
 ## Runtime metadata
 

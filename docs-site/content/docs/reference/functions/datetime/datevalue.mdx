@@ -39,12 +39,17 @@ Parses a date string and returns its date serial number.
 
 ## Related functions
 
+- [DATE](/docs/reference/functions/datetime/date)
 - [TIMEVALUE](/docs/reference/functions/datetime/timevalue)
+- [VALUE](/docs/reference/functions/text/value)
 - [DAY](/docs/reference/functions/datetime/day)
 - [HOUR](/docs/reference/functions/datetime/hour)
 - [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
-- [MINUTE](/docs/reference/functions/datetime/minute)
-- [MONTH](/docs/reference/functions/datetime/month)
+
+## FAQ
+
+### Why can DATEVALUE disagree with locale-specific Excel parsing?
+This implementation uses a fixed set of accepted formats instead of workbook locale settings, so ambiguous text may parse differently.
 
 ## Runtime metadata
 

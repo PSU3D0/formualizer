@@ -39,12 +39,17 @@ Returns `1` when values match and `0` otherwise.
 
 ## Related functions
 
+- [GESTEP](/docs/reference/functions/engineering/gestep)
 - [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
 - [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
 - [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
-- [ERF](/docs/reference/functions/engineering/erf)
+
+## FAQ
+
+### Does `DELTA` require exact floating-point equality?
+It uses a small tolerance (`1e-12`), so values that differ only by tiny floating noise compare as equal.
 
 ## Runtime metadata
 

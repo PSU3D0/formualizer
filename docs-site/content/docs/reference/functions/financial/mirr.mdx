@@ -42,12 +42,17 @@ Negative cash flows are discounted at `finance_rate` and positive cash flows are
 
 ## Related functions
 
+- [IRR](/docs/reference/functions/financial/irr)
+- [NPV](/docs/reference/functions/financial/npv)
 - [XNPV](/docs/reference/functions/financial/xnpv)
 - [SLN](/docs/reference/functions/financial/sln)
 - [CUMIPMT](/docs/reference/functions/financial/cumipmt)
 - [CUMPRINC](/docs/reference/functions/financial/cumprinc)
-- [DOLLARDE](/docs/reference/functions/financial/dollarde)
-- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
+
+## FAQ
+
+### Why does `MIRR` return `#DIV/0!` for some cash-flow sets?
+`MIRR` needs both a negative leg and a positive leg; if discounted negatives or compounded positives are invalid, it returns `#DIV/0!`.
 
 ## Runtime metadata
 

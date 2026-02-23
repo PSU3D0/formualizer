@@ -39,12 +39,17 @@ Supports optional left-padding through the `places` argument.
 
 ## Related functions
 
+- [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
+- [OCT2DEC](/docs/reference/functions/engineering/oct2dec)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
 - [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
 - [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
-- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
-- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
-- [DELTA](/docs/reference/functions/engineering/delta)
+
+## FAQ
+
+### How does `OCT2HEX` treat signed octal input?
+Signed 10-digit octal is decoded via two's-complement and then emitted as hex, preserving signed meaning.
 
 ## Runtime metadata
 

@@ -39,12 +39,17 @@ Returns the ISO 8601 week number (`1` to `53`) for a date serial.
 
 ## Related functions
 
+- [WEEKNUM](/docs/reference/functions/datetime/weeknum)
+- [WEEKDAY](/docs/reference/functions/datetime/weekday)
+- [DATE](/docs/reference/functions/datetime/date)
 - [DAY](/docs/reference/functions/datetime/day)
 - [HOUR](/docs/reference/functions/datetime/hour)
 - [MINUTE](/docs/reference/functions/datetime/minute)
-- [MONTH](/docs/reference/functions/datetime/month)
-- [SECOND](/docs/reference/functions/datetime/second)
-- [YEAR](/docs/reference/functions/datetime/year)
+
+## FAQ
+
+### Can early-January dates return week 52 or 53?
+Yes. ISO week numbering can place dates near New Year in the prior ISO week-year.
 
 ## Runtime metadata
 

@@ -39,12 +39,17 @@ Evaluates complex sine and returns the result as complex text.
 
 ## Related functions
 
+- [IMCOS](/docs/reference/functions/engineering/imcos)
+- [IMEXP](/docs/reference/functions/engineering/imexp)
 - [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
 - [ERFC](/docs/reference/functions/engineering/erfc)
 - [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
-- [IMABS](/docs/reference/functions/engineering/imabs)
-- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+
+## FAQ
+
+### Why can `IMSIN` return non-zero imaginary output for real-looking formulas?
+For complex inputs `a+bi`, sine uses hyperbolic terms (`cosh`, `sinh`), so imaginary components are expected.
 
 ## Runtime metadata
 

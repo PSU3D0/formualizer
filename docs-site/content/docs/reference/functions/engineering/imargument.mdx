@@ -39,12 +39,17 @@ The angle is measured from the positive real axis.
 
 ## Related functions
 
+- [IMABS](/docs/reference/functions/engineering/imabs)
+- [IMLN](/docs/reference/functions/engineering/imln)
+- [IMSQRT](/docs/reference/functions/engineering/imsqrt)
 - [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
 - [ERFC](/docs/reference/functions/engineering/erfc)
-- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
-- [IMABS](/docs/reference/functions/engineering/imabs)
-- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+
+## FAQ
+
+### Why does `IMARGUMENT(0)` return `#DIV/0!`?
+The argument (angle) of `0+0i` is undefined, so the function returns `#DIV/0!`.
 
 ## Runtime metadata
 

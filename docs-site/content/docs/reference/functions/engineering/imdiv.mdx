@@ -39,12 +39,17 @@ Divides the first complex value by the second.
 
 ## Related functions
 
-- [IMPOWER](/docs/reference/functions/engineering/impower)
+- [IMPRODUCT](/docs/reference/functions/engineering/improduct)
 - [IMSUB](/docs/reference/functions/engineering/imsub)
+- [IMCONJUGATE](/docs/reference/functions/engineering/imconjugate)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
 - [BITAND](/docs/reference/functions/engineering/bitand)
 - [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
-- [BITOR](/docs/reference/functions/engineering/bitor)
-- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
+
+## FAQ
+
+### When does `IMDIV` return `#DIV/0!`?
+If the divisor is `0+0i` (denominator magnitude near zero), division is undefined and returns `#DIV/0!`.
 
 ## Runtime metadata
 

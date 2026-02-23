@@ -39,12 +39,17 @@ Returns the day count between two dates using a 30/360 convention.
 
 ## Related functions
 
+- [DAYS](/docs/reference/functions/datetime/days)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
 - [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
 - [WORKDAY](/docs/reference/functions/datetime/workday)
-- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
 - [WEEKDAY](/docs/reference/functions/datetime/weekday)
-- [WEEKNUM](/docs/reference/functions/datetime/weeknum)
-- [DATEDIF](/docs/reference/functions/datetime/datedif)
+
+## FAQ
+
+### Why does DAYS360 differ from actual day counts?
+DAYS360 applies 30/360 financial conventions, so month-end dates are adjusted by rule instead of using calendar day totals.
 
 ## Runtime metadata
 

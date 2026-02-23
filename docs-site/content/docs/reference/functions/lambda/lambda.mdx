@@ -50,11 +50,22 @@ description: "LAMBDA: Creates an anonymous callable that can be invoked with spr
 ## Related functions
 
 - [LET](/docs/reference/functions/lambda/let)
+- [IF](/docs/reference/functions/logical/if)
+- [SUM](/docs/reference/functions/math/sum)
 - [AND](/docs/reference/functions/logical/and)
 - [OR](/docs/reference/functions/logical/or)
-- [IF](/docs/reference/functions/logical/if)
 - [IFS](/docs/reference/functions/logical-ext/ifs)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
+
+## FAQ
+
+### Why does =LAMBDA(x,x+1) return #CALC! instead of a number?
+LAMBDA returns a callable value. In a cell result position, it must be invoked, for example =LAMBDA(x,x+1)(1).
+
+### Does a LAMBDA read outer LET variables at call time or definition time?
+Definition time. The closure captures its lexical environment when created.
+
+### Can I call a LAMBDA with fewer or extra arguments?
+No. Invocation arity must match the declared parameter count exactly, or #VALUE! is returned.
 
 ## Runtime metadata
 

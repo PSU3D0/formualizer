@@ -40,11 +40,22 @@ description: "Returns a uniformly distributed pseudo-random number in the interv
 ## Related functions
 
 - [RANDBETWEEN](/docs/reference/functions/random/randbetween)
+- [LET](/docs/reference/functions/lambda/let)
+- [INT](/docs/reference/functions/math/int)
 - [NOW](/docs/reference/functions/datetime/now)
 - [TODAY](/docs/reference/functions/datetime/today)
 - [FALSE](/docs/reference/functions/logical/false)
-- [NA](/docs/reference/functions/info/na)
-- [PI](/docs/reference/functions/math/pi)
+
+## FAQ
+
+### Can RAND return the same value on every recalculation?
+Not by default. RAND is volatile, so recalculation can produce a different sample each time.
+
+### If RAND is used twice in one formula, do both uses share one sample?
+Only if you bind it once (for example with LET). Two separate RAND calls are two separate draws.
+
+### Why does RAND look deterministic in some engine runs?
+Randomness is seeded per evaluation context, which keeps a run reproducible while still treating RAND as volatile across recalculations.
 
 ## Runtime metadata
 

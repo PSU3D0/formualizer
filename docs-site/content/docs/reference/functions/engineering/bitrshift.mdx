@@ -39,12 +39,17 @@ Positive `shift_amount` shifts right; negative `shift_amount` shifts left.
 
 ## Related functions
 
-- [BITAND](/docs/reference/functions/engineering/bitand)
 - [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
-- [BITOR](/docs/reference/functions/engineering/bitor)
+- [BITAND](/docs/reference/functions/engineering/bitand)
 - [BITXOR](/docs/reference/functions/engineering/bitxor)
+- [BITOR](/docs/reference/functions/engineering/bitor)
 - [IMDIV](/docs/reference/functions/engineering/imdiv)
 - [IMPOWER](/docs/reference/functions/engineering/impower)
+
+## FAQ
+
+### Why can negative shifts in `BITRSHIFT` return `#NUM!`?
+A negative shift means left-shift; if that left result exceeds the 48-bit limit, `#NUM!` is returned.
 
 ## Runtime metadata
 

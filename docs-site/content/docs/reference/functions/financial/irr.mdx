@@ -41,12 +41,17 @@ The function iteratively finds the per-period rate where discounted cash flows s
 
 ## Related functions
 
+- [MIRR](/docs/reference/functions/financial/mirr)
 - [NPV](/docs/reference/functions/financial/npv)
 - [XIRR](/docs/reference/functions/financial/xirr)
 - [ACCRINT](/docs/reference/functions/financial/accrint)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [DB](/docs/reference/functions/financial/db)
-- [DDB](/docs/reference/functions/financial/ddb)
+
+## FAQ
+
+### Why can `IRR` return `#NUM!` even with numeric cash flows?
+The Newton solve can fail if derivative terms become unstable or no convergent root is reached from the chosen guess.
 
 ## Runtime metadata
 

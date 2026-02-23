@@ -40,11 +40,16 @@ Keeps bits that differ between the two inputs.
 ## Related functions
 
 - [BITAND](/docs/reference/functions/engineering/bitand)
-- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
 - [BITOR](/docs/reference/functions/engineering/bitor)
+- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
 - [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
 - [IMDIV](/docs/reference/functions/engineering/imdiv)
 - [IMPOWER](/docs/reference/functions/engineering/impower)
+
+## FAQ
+
+### Why does `BITXOR(x, x)` return `0`?
+XOR keeps only differing bits; identical operands cancel every bit position.
 
 ## Runtime metadata
 

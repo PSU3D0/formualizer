@@ -41,12 +41,17 @@ Use this to measure principal reduction over a selected amortization window.
 
 ## Related functions
 
+- [PPMT](/docs/reference/functions/financial/ppmt)
+- [PMT](/docs/reference/functions/financial/pmt)
 - [CUMIPMT](/docs/reference/functions/financial/cumipmt)
 - [ACCRINT](/docs/reference/functions/financial/accrint)
 - [DOLLARDE](/docs/reference/functions/financial/dollarde)
 - [DOLLARFR](/docs/reference/functions/financial/dollarfr)
-- [EFFECT](/docs/reference/functions/financial/effect)
-- [MIRR](/docs/reference/functions/financial/mirr)
+
+## FAQ
+
+### Why is `CUMPRINC` often negative for loans?
+With positive `pv`, payment cash outflows are negative in this convention, so cumulative principal is typically negative.
 
 ## Runtime metadata
 

@@ -39,12 +39,17 @@ Produces the principal complex logarithm in base 10.
 
 ## Related functions
 
+- [IMLN](/docs/reference/functions/engineering/imln)
+- [IMLOG2](/docs/reference/functions/engineering/imlog2)
+- [IMEXP](/docs/reference/functions/engineering/imexp)
 - [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
 - [ERFC](/docs/reference/functions/engineering/erfc)
-- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
-- [IMABS](/docs/reference/functions/engineering/imabs)
-- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+
+## FAQ
+
+### What branch of the logarithm does `IMLOG10` use?
+It returns the principal complex logarithm (base 10), derived from principal argument `atan2(imag, real)`.
 
 ## Runtime metadata
 

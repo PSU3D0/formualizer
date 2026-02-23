@@ -39,12 +39,17 @@ Subtracts the second complex value from the first.
 
 ## Related functions
 
+- [IMSUM](/docs/reference/functions/engineering/imsum)
 - [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [COMPLEX](/docs/reference/functions/engineering/complex)
 - [IMPOWER](/docs/reference/functions/engineering/impower)
 - [BITAND](/docs/reference/functions/engineering/bitand)
 - [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
-- [BITOR](/docs/reference/functions/engineering/bitor)
-- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
+
+## FAQ
+
+### How is subtraction ordered in `IMSUB`?
+It always computes `inumber1 - inumber2`; swapping arguments changes the sign of the result.
 
 ## Runtime metadata
 

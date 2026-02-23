@@ -39,12 +39,17 @@ With one argument it returns `erf(x)`; with two it returns `erf(upper) - erf(low
 
 ## Related functions
 
+- [ERFC](/docs/reference/functions/engineering/erfc)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
 - [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
 - [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
-- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
+
+## FAQ
+
+### How does two-argument `ERF` work?
+`ERF(lower, upper)` returns `erf(upper) - erf(lower)`, i.e., an interval difference rather than a single-bound value.
 
 ## Runtime metadata
 

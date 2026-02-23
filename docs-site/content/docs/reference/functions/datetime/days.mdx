@@ -40,12 +40,17 @@ Returns the number of whole days between two date serial values.
 
 ## Related functions
 
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
 - [EDATE](/docs/reference/functions/datetime/edate)
 - [EOMONTH](/docs/reference/functions/datetime/eomonth)
 - [DATE](/docs/reference/functions/datetime/date)
-- [DATEDIF](/docs/reference/functions/datetime/datedif)
-- [DAY](/docs/reference/functions/datetime/day)
-- [DAYS360](/docs/reference/functions/datetime/days360)
+
+## FAQ
+
+### Does DAYS count partial-day time fractions?
+No. DAYS truncates both serial inputs to whole dates before subtracting end_date - start_date.
 
 ## Runtime metadata
 

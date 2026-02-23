@@ -39,12 +39,17 @@ Evaluates complex cosine and returns the result as complex text.
 
 ## Related functions
 
+- [IMSIN](/docs/reference/functions/engineering/imsin)
+- [IMEXP](/docs/reference/functions/engineering/imexp)
 - [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
 - [ERFC](/docs/reference/functions/engineering/erfc)
 - [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
-- [IMABS](/docs/reference/functions/engineering/imabs)
-- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+
+## FAQ
+
+### Why is the imaginary part negated in `IMCOS`?
+Complex cosine uses `cos(a+bi)=cos(a)cosh(b)-i sin(a)sinh(b)`, so the imaginary term carries a minus sign.
 
 ## Runtime metadata
 

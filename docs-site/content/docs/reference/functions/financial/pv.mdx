@@ -41,12 +41,17 @@ Use this to discount a regular payment stream and optional terminal value back t
 
 ## Related functions
 
+- [PMT](/docs/reference/functions/financial/pmt)
 - [FV](/docs/reference/functions/financial/fv)
 - [NPER](/docs/reference/functions/financial/nper)
-- [PMT](/docs/reference/functions/financial/pmt)
 - [RATE](/docs/reference/functions/financial/rate)
 - [ACCRINT](/docs/reference/functions/financial/accrint)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
+
+## FAQ
+
+### How does `type` change `PV`?
+`type=0` discounts end-of-period payments, while non-zero `type` treats payments as beginning-of-period (annuity due).
 
 ## Runtime metadata
 

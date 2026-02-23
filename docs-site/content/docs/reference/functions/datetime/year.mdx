@@ -39,12 +39,17 @@ Extracts the calendar year from a date serial.
 
 ## Related functions
 
+- [MONTH](/docs/reference/functions/datetime/month)
 - [DAY](/docs/reference/functions/datetime/day)
+- [DATE](/docs/reference/functions/datetime/date)
 - [HOUR](/docs/reference/functions/datetime/hour)
 - [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
 - [MINUTE](/docs/reference/functions/datetime/minute)
-- [MONTH](/docs/reference/functions/datetime/month)
-- [SECOND](/docs/reference/functions/datetime/second)
+
+## FAQ
+
+### Does YEAR use the fractional time part of a serial?
+No. YEAR resolves the calendar date and ignores time-of-day fractions.
 
 ## Runtime metadata
 

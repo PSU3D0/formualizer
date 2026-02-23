@@ -41,12 +41,17 @@ Returns the difference between two dates in a requested unit.
 
 ## Related functions
 
+- [DAYS](/docs/reference/functions/datetime/days)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
 - [DATE](/docs/reference/functions/datetime/date)
 - [TIME](/docs/reference/functions/datetime/time)
 - [DATEVALUE](/docs/reference/functions/datetime/datevalue)
 - [DAY](/docs/reference/functions/datetime/day)
-- [DAYS](/docs/reference/functions/datetime/days)
-- [DAYS360](/docs/reference/functions/datetime/days360)
+
+## FAQ
+
+### How are unit strings interpreted in DATEDIF?
+Unit text is case-insensitive, but only Y, M, D, MD, YM, and YD are supported; other units return #NUM!.
 
 ## Runtime metadata
 

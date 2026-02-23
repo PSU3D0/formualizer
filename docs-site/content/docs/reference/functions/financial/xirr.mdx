@@ -41,12 +41,17 @@ The solver uses Newton-Raphson on `XNPV(rate, values, dates) = 0` with day-count
 
 ## Related functions
 
-- [NPV](/docs/reference/functions/financial/npv)
+- [XNPV](/docs/reference/functions/financial/xnpv)
 - [IRR](/docs/reference/functions/financial/irr)
+- [NPV](/docs/reference/functions/financial/npv)
 - [ACCRINT](/docs/reference/functions/financial/accrint)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [DB](/docs/reference/functions/financial/db)
-- [DDB](/docs/reference/functions/financial/ddb)
+
+## FAQ
+
+### What data shape does `XIRR` require?
+`values` and `dates` must have equal numeric length with at least one positive and one negative cash flow, or `#NUM!` is returned.
 
 ## Runtime metadata
 

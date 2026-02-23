@@ -39,12 +39,17 @@ Supports a focused set of length, mass, and temperature units.
 
 ## Related functions
 
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
 - [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
 - [ERFC](/docs/reference/functions/engineering/erfc)
-- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
-- [IMABS](/docs/reference/functions/engineering/imabs)
-- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+
+## FAQ
+
+### When does `CONVERT` return `#N/A`?
+Unknown unit tokens, non-text unit arguments, or mixing incompatible categories (for example length to mass) return `#N/A`.
 
 ## Runtime metadata
 

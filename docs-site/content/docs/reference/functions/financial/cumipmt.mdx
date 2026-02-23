@@ -41,12 +41,17 @@ Use this to total the interest component over a slice of an amortization schedul
 
 ## Related functions
 
+- [IPMT](/docs/reference/functions/financial/ipmt)
+- [PMT](/docs/reference/functions/financial/pmt)
 - [CUMPRINC](/docs/reference/functions/financial/cumprinc)
 - [ACCRINT](/docs/reference/functions/financial/accrint)
 - [DOLLARDE](/docs/reference/functions/financial/dollarde)
 - [DOLLARFR](/docs/reference/functions/financial/dollarfr)
-- [EFFECT](/docs/reference/functions/financial/effect)
-- [MIRR](/docs/reference/functions/financial/mirr)
+
+## FAQ
+
+### Are `start_period` and `end_period` inclusive in `CUMIPMT`?
+Yes. Both bounds are inclusive and interpreted as 1-based periods after truncation to integers.
 
 ## Runtime metadata
 

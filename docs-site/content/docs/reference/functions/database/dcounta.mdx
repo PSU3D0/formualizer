@@ -39,12 +39,17 @@ Counts non-blank values in a database field for records matching criteria.
 
 ## Related functions
 
-- [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNT](/docs/reference/functions/database/dcount)
 - [DGET](/docs/reference/functions/database/dget)
+- [COUNTA](/docs/reference/functions/math/counta)
+- [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DMAX](/docs/reference/functions/database/dmax)
 - [DMIN](/docs/reference/functions/database/dmin)
-- [DPRODUCT](/docs/reference/functions/database/dproduct)
+
+## FAQ
+
+### What is treated as blank in DCOUNTA?
+Empty cells and empty strings are treated as blank; other value types are counted when their row matches criteria.
 
 ## Runtime metadata
 

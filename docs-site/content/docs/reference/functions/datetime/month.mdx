@@ -39,12 +39,17 @@ Extracts the month number (`1` to `12`) from a date serial.
 
 ## Related functions
 
+- [YEAR](/docs/reference/functions/datetime/year)
 - [DAY](/docs/reference/functions/datetime/day)
+- [EOMONTH](/docs/reference/functions/datetime/eomonth)
 - [HOUR](/docs/reference/functions/datetime/hour)
 - [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
 - [MINUTE](/docs/reference/functions/datetime/minute)
-- [SECOND](/docs/reference/functions/datetime/second)
-- [YEAR](/docs/reference/functions/datetime/year)
+
+## FAQ
+
+### Can MONTH return values outside 1 through 12?
+No. MONTH always returns an integer from 1 to 12 after serial-to-date conversion.
 
 ## Runtime metadata
 

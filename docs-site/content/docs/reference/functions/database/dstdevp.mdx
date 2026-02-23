@@ -39,12 +39,17 @@ description: "DSTDEVP: Returns the population standard deviation of a database f
 
 ## Related functions
 
+- [DSTDEV](/docs/reference/functions/database/dstdev)
+- [DVARP](/docs/reference/functions/database/dvarp)
+- [STDEV.P](/docs/reference/functions/stats/stdev-p)
 - [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNT](/docs/reference/functions/database/dcount)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
-- [DGET](/docs/reference/functions/database/dget)
-- [DMAX](/docs/reference/functions/database/dmax)
-- [DMIN](/docs/reference/functions/database/dmin)
+
+## FAQ
+
+### When should I prefer DSTDEVP over DSTDEV?
+Use DSTDEVP when matching rows represent the full population; DSTDEV is for samples.
 
 ## Runtime metadata
 

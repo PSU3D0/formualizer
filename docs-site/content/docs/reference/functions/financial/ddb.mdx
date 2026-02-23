@@ -42,12 +42,20 @@ description: "DDB: Returns declining-balance depreciation for a period using a c
 
 ## Related functions
 
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [DB](/docs/reference/functions/financial/db)
+- [SYD](/docs/reference/functions/financial/syd)
+- [SLN](/docs/reference/functions/financial/sln)
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [IPMT](/docs/reference/functions/financial/ipmt)
 - [PPMT](/docs/reference/functions/financial/ppmt)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [FV](/docs/reference/functions/financial/fv)
+
+## FAQ
+
+### What does the optional `factor` control?
+It sets the per-period declining rate as `factor / life`; `2` gives double-declining balance.
+
+### When does `DDB` return `#NUM!`?
+Invalid non-positive inputs (`life`, `period`, `factor`), negative `cost`/`salvage`, or `period &gt; life`.
 
 ## Runtime metadata
 

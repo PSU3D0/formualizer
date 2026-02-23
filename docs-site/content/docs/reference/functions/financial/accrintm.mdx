@@ -41,12 +41,20 @@ description: "ACCRINTM: Returns accrued interest for a security that pays intere
 
 ## Related functions
 
+- [ACCRINT](/docs/reference/functions/financial/accrint)
+- [PRICE](/docs/reference/functions/financial/price)
+- [YIELD](/docs/reference/functions/financial/yield)
 - [DB](/docs/reference/functions/financial/db)
 - [DDB](/docs/reference/functions/financial/ddb)
 - [IPMT](/docs/reference/functions/financial/ipmt)
-- [PPMT](/docs/reference/functions/financial/ppmt)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [FV](/docs/reference/functions/financial/fv)
+
+## FAQ
+
+### Does `ACCRINTM` use coupon frequency?
+No. It accrues directly from `issue` to `settlement` with no periodic coupon schedule.
+
+### What causes `#NUM!`?
+Invalid `basis`, non-positive `rate`/`par`, or `settlement &lt;= issue`.
 
 ## Runtime metadata
 

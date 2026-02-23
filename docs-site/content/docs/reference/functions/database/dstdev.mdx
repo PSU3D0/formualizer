@@ -39,12 +39,17 @@ description: "DSTDEV: Returns the sample standard deviation of a database field 
 
 ## Related functions
 
+- [DSTDEVP](/docs/reference/functions/database/dstdevp)
+- [DVAR](/docs/reference/functions/database/dvar)
+- [STDEV.S](/docs/reference/functions/stats/stdev-s)
 - [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNT](/docs/reference/functions/database/dcount)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
-- [DGET](/docs/reference/functions/database/dget)
-- [DMAX](/docs/reference/functions/database/dmax)
-- [DMIN](/docs/reference/functions/database/dmin)
+
+## FAQ
+
+### Why does DSTDEV return #DIV/0! with one matching row?
+DSTDEV uses sample statistics and needs at least two numeric matches for an n-1 denominator.
 
 ## Runtime metadata
 

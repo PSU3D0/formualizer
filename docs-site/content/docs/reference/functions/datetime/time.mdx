@@ -39,12 +39,17 @@ description: "Returns the fractional-day serial for a time built from hour, minu
 
 ## Related functions
 
+- [TIMEVALUE](/docs/reference/functions/datetime/timevalue)
+- [HOUR](/docs/reference/functions/datetime/hour)
+- [NOW](/docs/reference/functions/datetime/now)
 - [DATE](/docs/reference/functions/datetime/date)
 - [DATEDIF](/docs/reference/functions/datetime/datedif)
 - [DAY](/docs/reference/functions/datetime/day)
-- [DAYS](/docs/reference/functions/datetime/days)
-- [EDATE](/docs/reference/functions/datetime/edate)
-- [EOMONTH](/docs/reference/functions/datetime/eomonth)
+
+## FAQ
+
+### Can TIME return values greater than 1 day?
+No. TIME wraps overflow and always returns a fraction in [0,1), so extra days are discarded.
 
 ## Runtime metadata
 

@@ -42,12 +42,17 @@ The first cash-flow argument is discounted one period from the present, matching
 
 ## Related functions
 
-- [XIRR](/docs/reference/functions/financial/xirr)
+- [XNPV](/docs/reference/functions/financial/xnpv)
 - [IRR](/docs/reference/functions/financial/irr)
+- [MIRR](/docs/reference/functions/financial/mirr)
+- [XIRR](/docs/reference/functions/financial/xirr)
 - [ACCRINT](/docs/reference/functions/financial/accrint)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
-- [DB](/docs/reference/functions/financial/db)
-- [DDB](/docs/reference/functions/financial/ddb)
+
+## FAQ
+
+### Is the first cash flow discounted at period 0 or period 1?
+`NPV` discounts the first supplied cash flow one full period, matching spreadsheet `NPV` behavior.
 
 ## Runtime metadata
 

@@ -39,12 +39,17 @@ description: "DCOUNT: Counts numeric cells in a database field for records match
 
 ## Related functions
 
-- [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
+- [DSUM](/docs/reference/functions/database/dsum)
+- [COUNTIFS](/docs/reference/functions/math/countifs)
+- [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DGET](/docs/reference/functions/database/dget)
 - [DMAX](/docs/reference/functions/database/dmax)
-- [DMIN](/docs/reference/functions/database/dmin)
-- [DPRODUCT](/docs/reference/functions/database/dproduct)
+
+## FAQ
+
+### Does DCOUNT count text values that look like numbers?
+Only values resolved as numeric in the target field are counted; true non-numeric text is ignored.
 
 ## Runtime metadata
 

@@ -39,12 +39,17 @@ description: "DVARP: Returns the population variance of a database field for rec
 
 ## Related functions
 
+- [DVAR](/docs/reference/functions/database/dvar)
+- [DSTDEVP](/docs/reference/functions/database/dstdevp)
+- [VAR.P](/docs/reference/functions/stats/var-p)
 - [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNT](/docs/reference/functions/database/dcount)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
-- [DGET](/docs/reference/functions/database/dget)
-- [DMAX](/docs/reference/functions/database/dmax)
-- [DMIN](/docs/reference/functions/database/dmin)
+
+## FAQ
+
+### Why can DVARP return a value with only one matched row?
+Population variance divides by n, so one numeric match yields a defined result instead of #DIV/0!.
 
 ## Runtime metadata
 

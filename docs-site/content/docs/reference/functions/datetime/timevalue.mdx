@@ -39,12 +39,17 @@ Parses a time string and returns its fractional-day serial value.
 
 ## Related functions
 
+- [TIME](/docs/reference/functions/datetime/time)
 - [DATEVALUE](/docs/reference/functions/datetime/datevalue)
+- [SECOND](/docs/reference/functions/datetime/second)
 - [DAY](/docs/reference/functions/datetime/day)
 - [HOUR](/docs/reference/functions/datetime/hour)
 - [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
-- [MINUTE](/docs/reference/functions/datetime/minute)
-- [MONTH](/docs/reference/functions/datetime/month)
+
+## FAQ
+
+### Does TIMEVALUE depend on the 1900 vs 1904 date system?
+No. TIMEVALUE returns only a time fraction, so date-system selection does not change the result.
 
 ## Runtime metadata
 

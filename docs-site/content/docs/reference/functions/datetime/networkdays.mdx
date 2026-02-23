@@ -40,12 +40,17 @@ Returns the number of weekday business days between two dates, inclusive.
 
 ## Related functions
 
-- [DAYS360](/docs/reference/functions/datetime/days360)
 - [WORKDAY](/docs/reference/functions/datetime/workday)
-- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
 - [WEEKDAY](/docs/reference/functions/datetime/weekday)
+- [DAYS](/docs/reference/functions/datetime/days)
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
 - [WEEKNUM](/docs/reference/functions/datetime/weeknum)
-- [DATEDIF](/docs/reference/functions/datetime/datedif)
+
+## FAQ
+
+### Are custom holidays excluded in NETWORKDAYS right now?
+Not yet. The third argument is accepted but currently ignored, so only Saturday/Sunday weekends are excluded.
 
 ## Runtime metadata
 

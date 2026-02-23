@@ -39,12 +39,17 @@ Extracts the minute component (`0` to `59`) from a time or datetime serial.
 
 ## Related functions
 
-- [DAY](/docs/reference/functions/datetime/day)
 - [HOUR](/docs/reference/functions/datetime/hour)
+- [SECOND](/docs/reference/functions/datetime/second)
+- [TIMEVALUE](/docs/reference/functions/datetime/timevalue)
+- [DAY](/docs/reference/functions/datetime/day)
 - [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
 - [MONTH](/docs/reference/functions/datetime/month)
-- [SECOND](/docs/reference/functions/datetime/second)
-- [YEAR](/docs/reference/functions/datetime/year)
+
+## FAQ
+
+### Does MINUTE round to nearest minute?
+No. MINUTE extracts the minute component from the interpreted time value; it does not independently round to minute precision.
 
 ## Runtime metadata
 

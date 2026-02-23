@@ -39,12 +39,17 @@ Extracts the second component (`0` to `59`) from a time or datetime serial.
 
 ## Related functions
 
-- [DAY](/docs/reference/functions/datetime/day)
 - [HOUR](/docs/reference/functions/datetime/hour)
-- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
 - [MINUTE](/docs/reference/functions/datetime/minute)
+- [TIMEVALUE](/docs/reference/functions/datetime/timevalue)
+- [DAY](/docs/reference/functions/datetime/day)
+- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
 - [MONTH](/docs/reference/functions/datetime/month)
-- [YEAR](/docs/reference/functions/datetime/year)
+
+## FAQ
+
+### Can SECOND return 60 for leap seconds?
+No. SECOND returns values from 0 to 59 based on spreadsheet serial-time interpretation.
 
 ## Runtime metadata
 

@@ -39,12 +39,17 @@ Returns the serial for the last day of the month at a month offset from a start 
 
 ## Related functions
 
-- [DAYS](/docs/reference/functions/datetime/days)
 - [EDATE](/docs/reference/functions/datetime/edate)
 - [DATE](/docs/reference/functions/datetime/date)
-- [DATEDIF](/docs/reference/functions/datetime/datedif)
 - [DAY](/docs/reference/functions/datetime/day)
+- [DAYS](/docs/reference/functions/datetime/days)
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
 - [DAYS360](/docs/reference/functions/datetime/days360)
+
+## FAQ
+
+### Does EOMONTH always return a month-end date?
+Yes. Regardless of the start day, EOMONTH returns the final calendar day of the target month after offset.
 
 ## Runtime metadata
 

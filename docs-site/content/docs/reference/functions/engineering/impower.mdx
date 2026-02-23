@@ -39,12 +39,17 @@ Uses polar form and returns the principal-value result as complex text.
 
 ## Related functions
 
+- [IMSQRT](/docs/reference/functions/engineering/imsqrt)
+- [IMEXP](/docs/reference/functions/engineering/imexp)
+- [IMLN](/docs/reference/functions/engineering/imln)
 - [IMDIV](/docs/reference/functions/engineering/imdiv)
 - [IMSUB](/docs/reference/functions/engineering/imsub)
 - [BITAND](/docs/reference/functions/engineering/bitand)
-- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
-- [BITOR](/docs/reference/functions/engineering/bitor)
-- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
+
+## FAQ
+
+### How does `IMPOWER` handle zero base with non-positive exponent?
+`0^0` and `0` raised to a negative exponent are treated as undefined and return `#NUM!`.
 
 ## Runtime metadata
 

@@ -42,12 +42,17 @@ This function uses Newton-Raphson iteration and returns the per-period rate that
 
 ## Related functions
 
-- [FV](/docs/reference/functions/financial/fv)
-- [NPER](/docs/reference/functions/financial/nper)
 - [PMT](/docs/reference/functions/financial/pmt)
+- [NPER](/docs/reference/functions/financial/nper)
+- [IRR](/docs/reference/functions/financial/irr)
+- [FV](/docs/reference/functions/financial/fv)
 - [PV](/docs/reference/functions/financial/pv)
 - [ACCRINT](/docs/reference/functions/financial/accrint)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
+
+## FAQ
+
+### How important is `guess` for `RATE`?
+`RATE` uses Newton-Raphson from `guess` (default `0.1`); a poor starting point can lead to non-convergence and `#NUM!`.
 
 ## Runtime metadata
 

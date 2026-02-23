@@ -50,11 +50,22 @@ description: "LET: Binds local names to values and evaluates a final expression 
 ## Related functions
 
 - [LAMBDA](/docs/reference/functions/lambda/lambda)
-- [AND](/docs/reference/functions/logical/and)
 - [IF](/docs/reference/functions/logical/if)
+- [SUM](/docs/reference/functions/math/sum)
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
+- [AND](/docs/reference/functions/logical/and)
 - [IFS](/docs/reference/functions/logical-ext/ifs)
-- [OR](/docs/reference/functions/logical/or)
-- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
+
+## FAQ
+
+### Can a LET binding reference a name defined later in the same LET?
+No. LET evaluates name/value pairs left-to-right, so each binding can only use earlier bindings.
+
+### Does LET overwrite workbook or worksheet names permanently?
+No. LET names are lexical and local to that formula evaluation; they only shadow outer names inside the LET expression.
+
+### Is LET itself volatile?
+No. LET is deterministic unless one of its bound expressions calls a volatile function such as RAND.
 
 ## Runtime metadata
 

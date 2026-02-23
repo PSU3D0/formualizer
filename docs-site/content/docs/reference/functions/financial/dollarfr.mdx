@@ -48,6 +48,11 @@ This is the inverse-style formatting helper used for quoted fractional price con
 - [CUMPRINC](/docs/reference/functions/financial/cumprinc)
 - [MIRR](/docs/reference/functions/financial/mirr)
 
+## FAQ
+
+### How does `DOLLARFR` encode the fractional part?
+It scales the numerator into decimal digits based on `ceil(log10(fraction))`, preserving the input sign.
+
 ## Runtime metadata
 
 {/* [formualizer-docgen:function-meta:start] */}

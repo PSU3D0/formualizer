@@ -39,12 +39,17 @@ description: "Returns the serial number for a calendar date from year, month, an
 
 ## Related functions
 
+- [DATEVALUE](/docs/reference/functions/datetime/datevalue)
 - [YEAR](/docs/reference/functions/datetime/year)
+- [EDATE](/docs/reference/functions/datetime/edate)
 - [MONTH](/docs/reference/functions/datetime/month)
 - [DAY](/docs/reference/functions/datetime/day)
-- [DATEVALUE](/docs/reference/functions/datetime/datevalue)
 - [DATEDIF](/docs/reference/functions/datetime/datedif)
-- [TIME](/docs/reference/functions/datetime/time)
+
+## FAQ
+
+### Does DATE follow the workbook 1900/1904 date system?
+Yes. DATE emits a serial in the active workbook date system, so the same calendar date can map to different serials across 1900 vs 1904 mode.
 
 ## Runtime metadata
 

@@ -40,12 +40,17 @@ Returns the date serial that is a given number of weekdays from a start date.
 
 ## Related functions
 
-- [DAYS360](/docs/reference/functions/datetime/days360)
 - [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
-- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
 - [WEEKDAY](/docs/reference/functions/datetime/weekday)
+- [TODAY](/docs/reference/functions/datetime/today)
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
 - [WEEKNUM](/docs/reference/functions/datetime/weeknum)
-- [DATEDIF](/docs/reference/functions/datetime/datedif)
+
+## FAQ
+
+### Does WORKDAY include the start date when days=0?
+Yes. With zero offset, WORKDAY returns the start date serial unchanged; nonzero offsets skip weekend days while stepping.
 
 ## Runtime metadata
 

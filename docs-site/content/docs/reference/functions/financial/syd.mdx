@@ -40,12 +40,20 @@ description: "SYD: Returns sum-of-years'-digits depreciation for a requested per
 
 ## Related functions
 
+- [SLN](/docs/reference/functions/financial/sln)
+- [DB](/docs/reference/functions/financial/db)
+- [DDB](/docs/reference/functions/financial/ddb)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [CUMIPMT](/docs/reference/functions/financial/cumipmt)
 - [CUMPRINC](/docs/reference/functions/financial/cumprinc)
-- [DB](/docs/reference/functions/financial/db)
-- [DDB](/docs/reference/functions/financial/ddb)
-- [DOLLARDE](/docs/reference/functions/financial/dollarde)
+
+## FAQ
+
+### Does `SYD` require integer `life` and `per`?
+No strict integer check is enforced; it uses provided numeric values directly after domain validation.
+
+### Which period values are valid?
+`per` must satisfy `0 &lt; per &lt;= life`, and `life` must be positive; otherwise `#NUM!` is returned.
 
 ## Runtime metadata
 

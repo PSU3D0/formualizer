@@ -41,12 +41,17 @@ description: "PPMT: Returns the principal component of a payment for a specific 
 
 ## Related functions
 
+- [PMT](/docs/reference/functions/financial/pmt)
+- [IPMT](/docs/reference/functions/financial/ipmt)
+- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [DB](/docs/reference/functions/financial/db)
 - [DDB](/docs/reference/functions/financial/ddb)
-- [IPMT](/docs/reference/functions/financial/ipmt)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [FV](/docs/reference/functions/financial/fv)
+
+## FAQ
+
+### How is `PPMT` computed?
+`PPMT` is computed as `PMT - IPMT` for the same `rate`, `per`, `nper`, `pv`, `fv`, and `type`.
 
 ## Runtime metadata
 

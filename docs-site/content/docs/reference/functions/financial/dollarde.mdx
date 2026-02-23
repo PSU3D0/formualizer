@@ -48,6 +48,11 @@ This is commonly used for security price formats such as thirty-seconds (`fracti
 - [CUMPRINC](/docs/reference/functions/financial/cumprinc)
 - [MIRR](/docs/reference/functions/financial/mirr)
 
+## FAQ
+
+### Why does `DOLLARDE` truncate `fraction`?
+The denominator is treated as an integer quote base; values below `1` after truncation return `#NUM!`.
+
 ## Runtime metadata
 
 {/* [formualizer-docgen:function-meta:start] */}

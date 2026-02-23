@@ -39,12 +39,17 @@ Supports optional left-padding through the `places` argument.
 
 ## Related functions
 
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
 - [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
+- [OCT2DEC](/docs/reference/functions/engineering/oct2dec)
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
 - [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
-- [DELTA](/docs/reference/functions/engineering/delta)
+
+## FAQ
+
+### Why does `OCT2BIN` return `#NUM!` for some octal inputs?
+After decoding, the value must be within `[-512, 511]` to be representable in Excel-style binary output.
 
 ## Runtime metadata
 

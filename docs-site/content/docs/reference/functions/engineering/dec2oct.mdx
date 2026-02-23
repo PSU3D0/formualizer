@@ -39,12 +39,17 @@ Optionally pads the result with leading zeros using `places`.
 
 ## Related functions
 
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
-- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
+- [OCT2DEC](/docs/reference/functions/engineering/oct2dec)
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
 - [DELTA](/docs/reference/functions/engineering/delta)
-- [ERF](/docs/reference/functions/engineering/erf)
+
+## FAQ
+
+### What range does `DEC2OCT` support?
+`number` must be in `[-2^29, 2^29 - 1]`; outside that range returns `#NUM!`.
 
 ## Runtime metadata
 

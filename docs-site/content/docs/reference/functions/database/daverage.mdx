@@ -39,12 +39,17 @@ description: "DAVERAGE: Returns the arithmetic mean of values in a database fiel
 
 ## Related functions
 
+- [DSUM](/docs/reference/functions/database/dsum)
 - [DCOUNT](/docs/reference/functions/database/dcount)
+- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
 - [DGET](/docs/reference/functions/database/dget)
 - [DMAX](/docs/reference/functions/database/dmax)
-- [DMIN](/docs/reference/functions/database/dmin)
-- [DPRODUCT](/docs/reference/functions/database/dproduct)
+
+## FAQ
+
+### What happens if criteria match rows but field values are non-numeric?
+DAVERAGE skips non-numeric values and returns #DIV/0! if no numeric values remain after filtering.
 
 ## Runtime metadata
 

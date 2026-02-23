@@ -39,12 +39,17 @@ Optionally pads the output with leading zeros using `places`.
 
 ## Related functions
 
+- [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
 - [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
-- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
 - [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
-- [DELTA](/docs/reference/functions/engineering/delta)
-- [ERF](/docs/reference/functions/engineering/erf)
+
+## FAQ
+
+### Does `BIN2HEX` preserve signed binary meaning?
+Yes. A 10-bit binary with leading `1` is interpreted as signed and converted using two's-complement semantics.
 
 ## Runtime metadata
 

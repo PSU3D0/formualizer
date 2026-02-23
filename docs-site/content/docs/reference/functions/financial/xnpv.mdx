@@ -41,12 +41,17 @@ Discounting uses an actual-day offset divided by 365 from the first provided dat
 
 ## Related functions
 
+- [NPV](/docs/reference/functions/financial/npv)
+- [XIRR](/docs/reference/functions/financial/xirr)
 - [MIRR](/docs/reference/functions/financial/mirr)
 - [SLN](/docs/reference/functions/financial/sln)
 - [CUMIPMT](/docs/reference/functions/financial/cumipmt)
 - [CUMPRINC](/docs/reference/functions/financial/cumprinc)
-- [DOLLARDE](/docs/reference/functions/financial/dollarde)
-- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
+
+## FAQ
+
+### How are dates interpreted in `XNPV`?
+Each cash flow is discounted by `(date_i - first_date) / 365`, so dates must align one-to-one with values.
 
 ## Runtime metadata
 

@@ -40,12 +40,20 @@ description: "SLN: Returns straight-line depreciation for a single period."
 
 ## Related functions
 
+- [SYD](/docs/reference/functions/financial/syd)
+- [DB](/docs/reference/functions/financial/db)
+- [DDB](/docs/reference/functions/financial/ddb)
 - [MIRR](/docs/reference/functions/financial/mirr)
 - [XNPV](/docs/reference/functions/financial/xnpv)
 - [CUMIPMT](/docs/reference/functions/financial/cumipmt)
-- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
-- [DOLLARDE](/docs/reference/functions/financial/dollarde)
-- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
+
+## FAQ
+
+### Can `SLN` return a negative value?
+Yes. If `salvage &gt; cost`, `(cost - salvage) / life` is negative.
+
+### What happens when `life` is zero?
+`SLN` returns `#DIV/0!`.
 
 ## Runtime metadata
 

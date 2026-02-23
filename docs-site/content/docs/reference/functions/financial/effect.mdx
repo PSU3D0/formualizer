@@ -42,12 +42,17 @@ This is useful when nominal APR is quoted with periodic compounding and you need
 
 ## Related functions
 
+- [NOMINAL](/docs/reference/functions/financial/nominal)
+- [RATE](/docs/reference/functions/financial/rate)
 - [DOLLARDE](/docs/reference/functions/financial/dollarde)
 - [DOLLARFR](/docs/reference/functions/financial/dollarfr)
-- [NOMINAL](/docs/reference/functions/financial/nominal)
 - [CUMIPMT](/docs/reference/functions/financial/cumipmt)
 - [CUMPRINC](/docs/reference/functions/financial/cumprinc)
-- [MIRR](/docs/reference/functions/financial/mirr)
+
+## FAQ
+
+### Does `EFFECT` accept fractional compounding periods?
+`npery` is truncated to an integer first; values less than 1 (or non-positive `nominal_rate`) return `#NUM!`.
 
 ## Runtime metadata
 

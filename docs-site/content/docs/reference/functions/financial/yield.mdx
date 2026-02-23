@@ -42,12 +42,20 @@ description: "Returns annual yield for a coupon-paying security from its market 
 
 ## Related functions
 
-- [ACCRINT](/docs/reference/functions/financial/accrint)
 - [PRICE](/docs/reference/functions/financial/price)
+- [ACCRINT](/docs/reference/functions/financial/accrint)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [DB](/docs/reference/functions/financial/db)
 - [DDB](/docs/reference/functions/financial/ddb)
 - [FV](/docs/reference/functions/financial/fv)
+
+## FAQ
+
+### What does the returned `YIELD` represent?
+It is an annualized decimal yield (for example, `0.06` means 6% per year).
+
+### When does `YIELD` return `#NUM!` besides invalid inputs?
+The Newton-Raphson solve can fail to converge or hit an unstable derivative; in those cases it returns `#NUM!`.
 
 ## Runtime metadata
 

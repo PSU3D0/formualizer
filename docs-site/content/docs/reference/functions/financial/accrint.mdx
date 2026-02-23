@@ -43,12 +43,20 @@ description: "ACCRINT: Returns accrued interest for a coupon-bearing security."
 
 ## Related functions
 
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [PRICE](/docs/reference/functions/financial/price)
 - [YIELD](/docs/reference/functions/financial/yield)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [DB](/docs/reference/functions/financial/db)
 - [DDB](/docs/reference/functions/financial/ddb)
 - [FV](/docs/reference/functions/financial/fv)
+
+## FAQ
+
+### When does `calc_method` change the result?
+`calc_method=0` accrues from the previous coupon date; any non-zero value accrues from `issue`.
+
+### Which inputs return `#NUM!`?
+Invalid `basis`, non-positive `rate`/`par`, unsupported `frequency`, or `settlement &lt;= issue` return `#NUM!`.
 
 ## Runtime metadata
 

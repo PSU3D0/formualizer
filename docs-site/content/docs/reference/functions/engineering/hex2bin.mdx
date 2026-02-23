@@ -39,12 +39,17 @@ Supports optional left-padding through the `places` argument.
 
 ## Related functions
 
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
 - [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
 - [IMPRODUCT](/docs/reference/functions/engineering/improduct)
 - [IMSUM](/docs/reference/functions/engineering/imsum)
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
-- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
-- [COMPLEX](/docs/reference/functions/engineering/complex)
+
+## FAQ
+
+### Why can valid hex text still produce `#NUM!` in `HEX2BIN`?
+After conversion, the decimal value must fit `[-512, 511]`; otherwise binary output is rejected.
 
 ## Runtime metadata
 

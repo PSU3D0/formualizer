@@ -40,11 +40,16 @@ Combines matching bits from both inputs and keeps bits set in either number.
 ## Related functions
 
 - [BITAND](/docs/reference/functions/engineering/bitand)
-- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
-- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
 - [BITXOR](/docs/reference/functions/engineering/bitxor)
+- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
+- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
 - [IMDIV](/docs/reference/functions/engineering/imdiv)
 - [IMPOWER](/docs/reference/functions/engineering/impower)
+
+## FAQ
+
+### Does `BITOR` accept decimal-looking values like `3.0`?
+Yes if they coerce to whole integers; non-integer values still return `#NUM!`.
 
 ## Runtime metadata
 

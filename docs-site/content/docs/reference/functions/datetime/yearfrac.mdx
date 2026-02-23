@@ -41,11 +41,16 @@ Returns the fraction of a year between two dates for a selected day-count basis.
 ## Related functions
 
 - [DAYS360](/docs/reference/functions/datetime/days360)
+- [DAYS](/docs/reference/functions/datetime/days)
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
 - [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
 - [WORKDAY](/docs/reference/functions/datetime/workday)
 - [WEEKDAY](/docs/reference/functions/datetime/weekday)
-- [WEEKNUM](/docs/reference/functions/datetime/weeknum)
-- [DAYS](/docs/reference/functions/datetime/days)
+
+## FAQ
+
+### How does the basis argument change YEARFRAC?
+Basis selects the day-count convention (actual or 30/360 variants), so the same dates can yield different fractions.
 
 ## Runtime metadata
 

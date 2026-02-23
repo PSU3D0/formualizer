@@ -39,12 +39,17 @@ Extracts the day-of-month (`1` to `31`) from a date serial.
 
 ## Related functions
 
+- [DATE](/docs/reference/functions/datetime/date)
+- [MONTH](/docs/reference/functions/datetime/month)
+- [EOMONTH](/docs/reference/functions/datetime/eomonth)
 - [HOUR](/docs/reference/functions/datetime/hour)
 - [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
 - [MINUTE](/docs/reference/functions/datetime/minute)
-- [MONTH](/docs/reference/functions/datetime/month)
-- [SECOND](/docs/reference/functions/datetime/second)
-- [YEAR](/docs/reference/functions/datetime/year)
+
+## FAQ
+
+### Does DAY return day-of-year or day-of-month?
+DAY returns the day number within the month (1-31), not the ordinal day of the year.
 
 ## Runtime metadata
 

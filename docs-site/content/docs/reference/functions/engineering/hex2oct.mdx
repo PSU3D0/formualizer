@@ -39,12 +39,17 @@ Supports optional left-padding through the `places` argument.
 
 ## Related functions
 
+- [OCT2HEX](/docs/reference/functions/engineering/oct2hex)
+- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
 - [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
 - [IMPRODUCT](/docs/reference/functions/engineering/improduct)
 - [IMSUM](/docs/reference/functions/engineering/imsum)
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
-- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
-- [COMPLEX](/docs/reference/functions/engineering/complex)
+
+## FAQ
+
+### What causes `HEX2OCT` to return `#NUM!`?
+The decoded value must fit octal output range `[-2^29, 2^29 - 1]`, and optional `places` must be valid.
 
 ## Runtime metadata
 

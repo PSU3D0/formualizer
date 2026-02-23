@@ -39,12 +39,17 @@ Extracts the hour component (`0` to `23`) from a time or datetime serial.
 
 ## Related functions
 
+- [MINUTE](/docs/reference/functions/datetime/minute)
+- [SECOND](/docs/reference/functions/datetime/second)
+- [TIME](/docs/reference/functions/datetime/time)
 - [DAY](/docs/reference/functions/datetime/day)
 - [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
-- [MINUTE](/docs/reference/functions/datetime/minute)
 - [MONTH](/docs/reference/functions/datetime/month)
-- [SECOND](/docs/reference/functions/datetime/second)
-- [YEAR](/docs/reference/functions/datetime/year)
+
+## FAQ
+
+### Why is HOUR unchanged across 1900 and 1904 date systems?
+HOUR reads only the fractional time component of a serial, so date-system epoch differences do not affect it.
 
 ## Runtime metadata
 

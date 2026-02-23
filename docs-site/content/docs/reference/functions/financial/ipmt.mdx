@@ -41,12 +41,17 @@ Use this with `PMT` or `PPMT` to break a fixed payment into interest and princip
 
 ## Related functions
 
+- [PMT](/docs/reference/functions/financial/pmt)
+- [PPMT](/docs/reference/functions/financial/ppmt)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [DB](/docs/reference/functions/financial/db)
 - [DDB](/docs/reference/functions/financial/ddb)
-- [PPMT](/docs/reference/functions/financial/ppmt)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [FV](/docs/reference/functions/financial/fv)
+
+## FAQ
+
+### Why is `IPMT` period 1 equal to zero for `type=1`?
+With beginning-of-period payments, the first payment occurs before interest accrues, so period-1 interest is zero.
 
 ## Runtime metadata
 

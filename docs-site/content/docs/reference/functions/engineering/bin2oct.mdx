@@ -39,12 +39,17 @@ Supports optional left-padding through the `places` argument.
 
 ## Related functions
 
+- [OCT2BIN](/docs/reference/functions/engineering/oct2bin)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
 - [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
-- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
-- [DELTA](/docs/reference/functions/engineering/delta)
-- [ERF](/docs/reference/functions/engineering/erf)
+
+## FAQ
+
+### How are signed 10-bit binaries handled by `BIN2OCT`?
+They are first decoded as signed decimal and then re-encoded to octal with two's-complement output for negatives.
 
 ## Runtime metadata
 

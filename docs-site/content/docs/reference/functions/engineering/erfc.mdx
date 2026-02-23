@@ -39,12 +39,17 @@ description: "ERFC: Returns the complementary error function of a number."
 
 ## Related functions
 
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF](/docs/reference/functions/engineering/erf)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
 - [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
 - [IMABS](/docs/reference/functions/engineering/imabs)
 - [IMAGINARY](/docs/reference/functions/engineering/imaginary)
-- [IMARGUMENT](/docs/reference/functions/engineering/imargument)
+
+## FAQ
+
+### Is `ERFC(x)` equivalent to `1-ERF(x)` here?
+Yes. It computes the complementary error function and matches `1 - erf(x)` behavior.
 
 ## Runtime metadata
 

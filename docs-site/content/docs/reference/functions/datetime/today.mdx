@@ -41,10 +41,15 @@ Returns the current date as a volatile serial value.
 
 - [NOW](/docs/reference/functions/datetime/now)
 - [DATE](/docs/reference/functions/datetime/date)
+- [WORKDAY](/docs/reference/functions/datetime/workday)
 - [DATEDIF](/docs/reference/functions/datetime/datedif)
 - [DATEVALUE](/docs/reference/functions/datetime/datevalue)
 - [DAY](/docs/reference/functions/datetime/day)
-- [DAYS](/docs/reference/functions/datetime/days)
+
+## FAQ
+
+### Will TODAY include a time-of-day fraction?
+No. TODAY always returns an integer serial date, so its fractional part is always 0.
 
 ## Runtime metadata
 

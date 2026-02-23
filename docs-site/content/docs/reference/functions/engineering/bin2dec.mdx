@@ -39,12 +39,17 @@ Supports up to 10 binary digits, including two's-complement negative values.
 
 ## Related functions
 
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
 - [ERFC](/docs/reference/functions/engineering/erfc)
 - [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
-- [IMABS](/docs/reference/functions/engineering/imabs)
-- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
-- [IMARGUMENT](/docs/reference/functions/engineering/imargument)
+
+## FAQ
+
+### How does `BIN2DEC` handle 10-bit values starting with `1`?
+They are interpreted as signed two's-complement values, so `1111111111` becomes `-1`.
 
 ## Runtime metadata
 

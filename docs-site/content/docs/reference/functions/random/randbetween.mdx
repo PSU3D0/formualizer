@@ -49,11 +49,22 @@ description: "RANDBETWEEN: Returns a random integer between two inclusive bounds
 ## Related functions
 
 - [RAND](/docs/reference/functions/random/rand)
+- [INT](/docs/reference/functions/math/int)
+- [LET](/docs/reference/functions/lambda/let)
 - [INDIRECT](/docs/reference/functions/reference-fns/indirect)
 - [ATAN2](/docs/reference/functions/math/atan2)
 - [BITAND](/docs/reference/functions/engineering/bitand)
-- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
-- [BITOR](/docs/reference/functions/engineering/bitor)
+
+## FAQ
+
+### Are both bounds included in RANDBETWEEN?
+Yes. RANDBETWEEN samples an integer in the closed interval [low, high].
+
+### What happens with decimal bounds like RANDBETWEEN(1.9, 4.2)?
+Bounds are truncated to integers before sampling, so this behaves like RANDBETWEEN(1, 4).
+
+### Is RANDBETWEEN deterministic?
+It is volatile, so results can change on recalculation, though a single evaluation context uses seeded randomness for reproducible execution.
 
 ## Runtime metadata
 

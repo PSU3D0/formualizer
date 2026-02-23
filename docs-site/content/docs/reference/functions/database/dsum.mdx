@@ -41,10 +41,15 @@ description: "DSUM: Sums values in a database field for records that match crite
 
 - [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNT](/docs/reference/functions/database/dcount)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
 - [DGET](/docs/reference/functions/database/dget)
 - [DMAX](/docs/reference/functions/database/dmax)
-- [DMIN](/docs/reference/functions/database/dmin)
+
+## FAQ
+
+### How are multiple criteria rows interpreted in DSUM?
+Each criteria row is an OR branch, while multiple populated criteria columns in one row are combined with AND.
 
 ## Runtime metadata
 

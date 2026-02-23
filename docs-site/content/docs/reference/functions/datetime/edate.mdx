@@ -39,12 +39,17 @@ Returns the serial date offset by a whole number of months from a start date.
 
 ## Related functions
 
-- [DAYS](/docs/reference/functions/datetime/days)
 - [EOMONTH](/docs/reference/functions/datetime/eomonth)
 - [DATE](/docs/reference/functions/datetime/date)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
+- [DAYS](/docs/reference/functions/datetime/days)
 - [DATEDIF](/docs/reference/functions/datetime/datedif)
 - [DAY](/docs/reference/functions/datetime/day)
-- [DAYS360](/docs/reference/functions/datetime/days360)
+
+## FAQ
+
+### What happens when the start day does not exist in the target month?
+EDATE clamps to the last valid day of the target month (for example Jan 31 + 1 month becomes Feb month-end).
 
 ## Runtime metadata
 

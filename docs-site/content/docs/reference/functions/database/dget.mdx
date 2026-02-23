@@ -39,12 +39,17 @@ description: "DGET: Returns a single field value from the only record that match
 
 ## Related functions
 
-- [DAVERAGE](/docs/reference/functions/database/daverage)
+- [DSUM](/docs/reference/functions/database/dsum)
 - [DCOUNT](/docs/reference/functions/database/dcount)
+- [XLOOKUP](/docs/reference/functions/lookup/xlookup)
+- [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
 - [DMAX](/docs/reference/functions/database/dmax)
-- [DMIN](/docs/reference/functions/database/dmin)
-- [DPRODUCT](/docs/reference/functions/database/dproduct)
+
+## FAQ
+
+### Why does DGET fail when criteria match two rows?
+DGET requires exactly one matching record; multiple matches produce #NUM! and zero matches produce #VALUE!.
 
 ## Runtime metadata
 

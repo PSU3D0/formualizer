@@ -39,12 +39,17 @@ description: "DPRODUCT: Multiplies values in a database field for records that s
 
 ## Related functions
 
-- [DAVERAGE](/docs/reference/functions/database/daverage)
+- [DSUM](/docs/reference/functions/database/dsum)
 - [DCOUNT](/docs/reference/functions/database/dcount)
+- [PRODUCT](/docs/reference/functions/stats/product)
+- [DAVERAGE](/docs/reference/functions/database/daverage)
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
 - [DGET](/docs/reference/functions/database/dget)
-- [DMAX](/docs/reference/functions/database/dmax)
-- [DMIN](/docs/reference/functions/database/dmin)
+
+## FAQ
+
+### What result does DPRODUCT return if no numeric records match?
+This implementation returns 0 when no numeric field values remain after criteria filtering.
 
 ## Runtime metadata
 

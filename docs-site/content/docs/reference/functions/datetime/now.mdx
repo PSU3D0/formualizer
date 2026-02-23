@@ -40,11 +40,16 @@ Returns the current date and time as a volatile datetime serial.
 ## Related functions
 
 - [TODAY](/docs/reference/functions/datetime/today)
+- [TIME](/docs/reference/functions/datetime/time)
+- [SECOND](/docs/reference/functions/datetime/second)
 - [DATE](/docs/reference/functions/datetime/date)
 - [DATEDIF](/docs/reference/functions/datetime/datedif)
 - [DATEVALUE](/docs/reference/functions/datetime/datevalue)
-- [DAY](/docs/reference/functions/datetime/day)
-- [DAYS](/docs/reference/functions/datetime/days)
+
+## FAQ
+
+### How do I isolate only the time portion from NOW?
+Use NOW()-INT(NOW()); the integer part is date serial and the fractional part is time-of-day.
 
 ## Runtime metadata
 

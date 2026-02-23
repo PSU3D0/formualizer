@@ -39,12 +39,17 @@ Produces the principal complex logarithm as text.
 
 ## Related functions
 
+- [IMEXP](/docs/reference/functions/engineering/imexp)
+- [IMLOG10](/docs/reference/functions/engineering/imlog10)
+- [IMLOG2](/docs/reference/functions/engineering/imlog2)
 - [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
 - [ERFC](/docs/reference/functions/engineering/erfc)
-- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
-- [IMABS](/docs/reference/functions/engineering/imabs)
-- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+
+## FAQ
+
+### Why does `IMLN(0)` return `#NUM!`?
+The complex logarithm at zero is undefined, so this implementation returns `#NUM!`.
 
 ## Runtime metadata
 
