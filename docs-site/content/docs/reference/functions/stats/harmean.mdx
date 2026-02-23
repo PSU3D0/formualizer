@@ -1,0 +1,58 @@
+---
+title: "HARMEAN"
+description: "HARMEAN: Returns the harmonic mean of positive numeric values."
+---
+
+<FunctionPageSchema id="stats/harmean" />
+
+## Summary
+
+`HARMEAN` emphasizes smaller values and is useful for averaging rates and ratios.
+
+## Remarks
+ - All numeric inputs must be strictly greater than `0`.
+ - Returns `#NUM!` if any value is `&lt;= 0`, or if no numeric values are provided.
+ - Non-numeric values in referenced ranges are ignored.
+
+## Examples
+
+<Tabs items={["Harmonic mean from scalar values", "Harmonic mean from a range"]}>
+<Tab value="Harmonic mean from scalar values">
+<FunctionSandbox
+  title="Harmonic mean from scalar values"
+  formula={`=HARMEAN(1,2,4)`}
+  grid={{}}
+  expected={"1.7142857142857142"}
+/>
+</Tab>
+
+<Tab value="Harmonic mean from a range">
+<FunctionSandbox
+  title="Harmonic mean from a range"
+  formula={`=HARMEAN(A1:A3)`}
+  grid={{"A1":"2","A2":"3","A3":"6"}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [PRODUCT](/docs/reference/functions/stats/product)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [KURT](/docs/reference/functions/stats/kurt)
+
+## FAQ
+
+### Why does HARMEAN fail on zeros?
+Harmonic mean uses reciprocals, so inputs must be strictly positive.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/harmean" />
+{/* [formualizer-docgen:function-meta:end] */}

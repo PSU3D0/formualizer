@@ -1,0 +1,59 @@
+---
+title: "LEN"
+description: "LEN: Returns the number of characters in a text value."
+---
+
+<FunctionPageSchema id="text/len" />
+
+## Summary
+
+Returns the number of characters in a text value.
+
+## Remarks
+ - Counts Unicode scalar characters, not bytes.
+ - Empty values return `0`.
+ - Non-text values are converted to their text form before counting.
+ - Errors are propagated unchanged.
+
+## Examples
+
+<Tabs items={["Basic text length", "Whitespace is counted"]}>
+<Tab value="Basic text length">
+<FunctionSandbox
+  title="Basic text length"
+  formula={`=LEN("hello")`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+<Tab value="Whitespace is counted">
+<FunctionSandbox
+  title="Whitespace is counted"
+  formula={`=LEN("a b")`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LEFT](/docs/reference/functions/text/left)
+- [RIGHT](/docs/reference/functions/text/right)
+- [MID](/docs/reference/functions/text/mid)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [CODE](/docs/reference/functions/text/code)
+
+## FAQ
+
+### Does LEN ignore spaces?
+No. LEN counts spaces and other visible characters as part of the total length.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/len" />
+{/* [formualizer-docgen:function-meta:end] */}

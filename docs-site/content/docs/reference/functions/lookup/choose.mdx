@@ -1,0 +1,62 @@
+---
+title: "CHOOSE"
+description: "CHOOSE: Returns one value from a list using a 1-based index."
+---
+
+<FunctionPageSchema id="lookup/choose" />
+
+## Summary
+
+`CHOOSE` selects from `value1, value2, ...` based on `index_num`.
+
+## Remarks
+ - `index_num` is 1-based and is truncated to an integer.
+ - Indexes less than 1 or greater than the number of choices return `#VALUE!`.
+ - Errors in `index_num` are propagated.
+ - The selected argument is returned as-is, including non-text/non-numeric values.
+
+## Examples
+
+<Tabs items={["Select a label", "Use numeric choices"]}>
+<Tab value="Select a label">
+<FunctionSandbox
+  title="Select a label"
+  formula={`=CHOOSE(2,"Low","Medium","High")`}
+  grid={{}}
+  expected={"Medium"}
+/>
+</Tab>
+
+<Tab value="Use numeric choices">
+<FunctionSandbox
+  title="Use numeric choices"
+  formula={`=CHOOSE(3,10,20,30,40)`}
+  grid={{}}
+  expected={"30"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+- [MATCH](/docs/reference/functions/lookup/match)
+- [HLOOKUP](/docs/reference/functions/lookup/hlookup)
+- [VLOOKUP](/docs/reference/functions/lookup/vlookup)
+
+## FAQ
+
+### How are decimal index_num values handled?
+The index is truncated toward zero before selection, so CHOOSE(2.9,...) selects the second argument.
+
+### What error do I get for index_num 0 or too large?
+CHOOSE returns #VALUE! when index_num is less than 1 or greater than the number of provided choices.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/choose" />
+{/* [formualizer-docgen:function-meta:end] */}

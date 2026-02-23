@@ -1,0 +1,58 @@
+---
+title: "WEEKDAY"
+description: "WEEKDAY: Returns the day-of-week index for a date serial with configurable numbering."
+---
+
+<FunctionPageSchema id="datetime/weekday" />
+
+## Summary
+
+Returns the day-of-week index for a date serial with configurable numbering.
+
+## Remarks
+ - Default `return_type` is `1` (`Sunday=1` through `Saturday=7`).
+ - Supported `return_type` values are `1`, `2`, `3`, `11`-`17`; unsupported values return `#NUM!`.
+ - Input serials are interpreted with Excel 1900 date mapping, including its historical leap-year quirk.
+
+## Examples
+
+<Tabs items={["Default numbering (Sunday-first)", "Monday-first numbering"]}>
+<Tab value="Default numbering (Sunday-first)">
+<FunctionSandbox
+  title="Default numbering (Sunday-first)"
+  formula={`=WEEKDAY(45292)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Monday-first numbering">
+<FunctionSandbox
+  title="Monday-first numbering"
+  formula={`=WEEKDAY(45292, 2)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [WEEKNUM](/docs/reference/functions/datetime/weeknum)
+- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
+- [WORKDAY](/docs/reference/functions/datetime/workday)
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
+
+## FAQ
+
+### Why do I get #NUM! for some return_type values?
+WEEKDAY only accepts specific Excel return_type codes (1, 2, 3, 11-17); other codes return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/weekday" />
+{/* [formualizer-docgen:function-meta:end] */}

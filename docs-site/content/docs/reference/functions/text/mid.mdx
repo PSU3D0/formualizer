@@ -1,0 +1,59 @@
+---
+title: "MID"
+description: "MID: Returns a substring starting at a 1-based position."
+---
+
+<FunctionPageSchema id="text/mid" />
+
+## Summary
+
+Returns a substring starting at a 1-based position.
+
+## Remarks
+ - `start_num` is 1-based; values below `1` return `#VALUE!`.
+ - `num_chars` must be non-negative; negatives return `#VALUE!`.
+ - If start is beyond the end of the text, returns an empty string.
+ - Non-text inputs are coerced to text.
+
+## Examples
+
+<Tabs items={["Extract middle segment", "Start past end returns empty"]}>
+<Tab value="Extract middle segment">
+<FunctionSandbox
+  title="Extract middle segment"
+  formula={`=MID("spreadsheet", 3, 5)`}
+  grid={{}}
+  expected={"reads"}
+/>
+</Tab>
+
+<Tab value="Start past end returns empty">
+<FunctionSandbox
+  title="Start past end returns empty"
+  formula={`=MID("abc", 10, 2)`}
+  grid={{}}
+  expected={""}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LEFT](/docs/reference/functions/text/left)
+- [RIGHT](/docs/reference/functions/text/right)
+- [REPLACE](/docs/reference/functions/text/replace)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [CODE](/docs/reference/functions/text/code)
+
+## FAQ
+
+### How does MID handle out-of-range start positions?
+If start_num is beyond the text length, MID returns an empty string.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/mid" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,58 @@
+---
+title: "TIME"
+description: "Returns the fractional-day serial for a time built from hour, minute, and second."
+---
+
+<FunctionPageSchema id="datetime/time" />
+
+## Summary
+
+`TIME` normalizes overflowing and negative components by wrapping across day boundaries.
+
+## Remarks
+ - The result is always in the range `0.0..1.0` and represents only a time-of-day fraction.
+ - Values are normalized like Excel (for example, `25` hours becomes `01:00:00`).
+ - Time fractions are date-system independent because they do not include a date component.
+
+## Examples
+
+<Tabs items={["Create noon", "Wrap overflowing hour"]}>
+<Tab value="Create noon">
+<FunctionSandbox
+  title="Create noon"
+  formula={`=TIME(12, 0, 0)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+<Tab value="Wrap overflowing hour">
+<FunctionSandbox
+  title="Wrap overflowing hour"
+  formula={`=TIME(25, 0, 0)`}
+  grid={{}}
+  expected={"0.0416666667"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TIMEVALUE](/docs/reference/functions/datetime/timevalue)
+- [HOUR](/docs/reference/functions/datetime/hour)
+- [NOW](/docs/reference/functions/datetime/now)
+- [DATE](/docs/reference/functions/datetime/date)
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
+- [DAY](/docs/reference/functions/datetime/day)
+
+## FAQ
+
+### Can TIME return values greater than 1 day?
+No. TIME wraps overflow and always returns a fraction in [0,1), so extra days are discarded.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/time" />
+{/* [formualizer-docgen:function-meta:end] */}

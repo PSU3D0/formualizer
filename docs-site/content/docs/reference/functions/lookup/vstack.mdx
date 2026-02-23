@@ -1,0 +1,62 @@
+---
+title: "VSTACK"
+description: "VSTACK: Concatenates arrays vertically into a single spilled array."
+---
+
+<FunctionPageSchema id="lookup/vstack" />
+
+## Summary
+
+`VSTACK` appends rows from each argument top-to-bottom.
+
+## Remarks
+ - All non-empty range arguments must have the same column count.
+ - Scalar arguments are treated as 1x1 values.
+ - Mismatched column counts return `#VALUE!`.
+ - Empty inputs are skipped; if all inputs are empty, result is an empty spill.
+
+## Examples
+
+<Tabs items={["Join two 1-row ranges vertically", "Stack scalar values"]}>
+<Tab value="Join two 1-row ranges vertically">
+<FunctionSandbox
+  title="Join two 1-row ranges vertically"
+  formula={`=VSTACK(A1:B1,A2:B2)`}
+  grid={{"A1":"1","A2":"2","B1":"10","B2":"20"}}
+  expected={"[[1,10],[2,20]]"}
+/>
+</Tab>
+
+<Tab value="Stack scalar values">
+<FunctionSandbox
+  title="Stack scalar values"
+  formula={`=VSTACK(5,9)`}
+  grid={{}}
+  expected={"[[5],[9]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [HSTACK](/docs/reference/functions/lookup/hstack)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+- [DROP](/docs/reference/functions/lookup/drop)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [FILTER](/docs/reference/functions/lookup/filter)
+- [GROUPBY](/docs/reference/functions/lookup/groupby)
+
+## FAQ
+
+### When does VSTACK return #VALUE!?
+VSTACK requires matching column counts across non-empty range arguments; differing widths return #VALUE!.
+
+### What happens if all VSTACK inputs are empty ranges?
+Empty inputs are skipped, and if every argument is empty the function returns an empty spill.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/vstack" />
+{/* [formualizer-docgen:function-meta:end] */}

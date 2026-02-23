@@ -1,0 +1,57 @@
+---
+title: "SIN"
+description: "Returns the sine of an angle in radians."
+---
+
+<FunctionPageSchema id="math/sin" />
+
+## Summary
+
+Returns the sine of an angle in radians.
+
+## Remarks
+ - Input is interpreted as radians, not degrees.
+ - Supports scalar and array-style elementwise evaluation.
+
+## Examples
+
+<Tabs items={["Sine of PI/2", "Sine from a cell value"]}>
+<Tab value="Sine of PI/2">
+<FunctionSandbox
+  title="Sine of PI/2"
+  formula={`=SIN(PI()/2)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Sine from a cell value">
+<FunctionSandbox
+  title="Sine from a cell value"
+  formula={`=SIN(A1)`}
+  grid={{"A1":"0"}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [COS](/docs/reference/functions/math/cos)
+- [TAN](/docs/reference/functions/math/tan)
+- [RADIANS](/docs/reference/functions/math/radians)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASIN](/docs/reference/functions/math/asin)
+
+## FAQ
+
+### Does SIN expect degrees or radians?
+SIN expects radians; convert degree inputs first with RADIANS.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sin" />
+{/* [formualizer-docgen:function-meta:end] */}

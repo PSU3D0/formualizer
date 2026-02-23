@@ -1,0 +1,59 @@
+---
+title: "EXACT"
+description: "Compares two text values for exact equality."
+---
+
+<FunctionPageSchema id="text/exact" />
+
+## Summary
+
+Compares two text values for exact equality.
+
+## Remarks
+ - Comparison is case-sensitive.
+ - No wildcard semantics are applied.
+ - Non-text values are converted to text before comparison.
+ - Errors in either argument are propagated.
+
+## Examples
+
+<Tabs items={["Exact same text", "Case difference is not equal"]}>
+<Tab value="Exact same text">
+<FunctionSandbox
+  title="Exact same text"
+  formula={`=EXACT("Form", "Form")`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Case difference is not equal">
+<FunctionSandbox
+  title="Case difference is not equal"
+  formula={`=EXACT("Form", "form")`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [FIND](/docs/reference/functions/text/find)
+- [SEARCH](/docs/reference/functions/text/search)
+- [UPPER](/docs/reference/functions/text/upper)
+- [TEXT](/docs/reference/functions/text/text)
+- [REPT](/docs/reference/functions/text/rept)
+- [TEXTAFTER](/docs/reference/functions/text/textafter)
+
+## FAQ
+
+### Does EXACT perform case-sensitive comparison?
+Yes. EXACT compares the resulting text values with exact case and character equality.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/exact" />
+{/* [formualizer-docgen:function-meta:end] */}

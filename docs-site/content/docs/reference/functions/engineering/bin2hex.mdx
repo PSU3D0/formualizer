@@ -1,0 +1,58 @@
+---
+title: "BIN2HEX"
+description: "BIN2HEX: Converts a binary text value to hexadecimal text."
+---
+
+<FunctionPageSchema id="engineering/bin2hex" />
+
+## Summary
+
+Optionally pads the output with leading zeros using `places`.
+
+## Remarks
+ - Input must be a binary string up to 10 digits; 10-digit values may be signed.
+ - Signed binary values are converted using two's-complement semantics.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+
+## Examples
+
+<Tabs items={["Convert binary to hex", "Pad hexadecimal output"]}>
+<Tab value="Convert binary to hex">
+<FunctionSandbox
+  title="Convert binary to hex"
+  formula={`=BIN2HEX("1010")`}
+  grid={{}}
+  expected={"A"}
+/>
+</Tab>
+
+<Tab value="Pad hexadecimal output">
+<FunctionSandbox
+  title="Pad hexadecimal output"
+  formula={`=BIN2HEX("1010",4)`}
+  grid={{}}
+  expected={"000A"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
+
+## FAQ
+
+### Does `BIN2HEX` preserve signed binary meaning?
+Yes. A 10-bit binary with leading `1` is interpreted as signed and converted using two's-complement semantics.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/bin2hex" />
+{/* [formualizer-docgen:function-meta:end] */}

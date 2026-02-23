@@ -1,0 +1,38 @@
+---
+title: Versioning and Stability
+description: Practical upgrade guidance for Formualizer crates and bindings.
+---
+
+Formualizer is moving quickly. Treat upgrades as engineering changes, not just dependency bumps.
+
+## Safe upgrade workflow
+
+1. **Pin versions** in Cargo/Python/npm lockfiles.
+2. **Read release notes** and check changed APIs in Rust + bindings.
+3. **Run workbook regression tests** on your own critical models.
+4. **Validate cross-binding parity** if you ship more than one runtime.
+
+## Commands worth running during upgrades
+
+```bash
+# Rust core/workbook
+cargo test -p formualizer-eval
+cargo test -p formualizer-workbook
+
+# Python bindings
+./scripts/dev-test.sh
+
+# WASM bindings
+cd bindings/wasm && npm test
+```
+
+## Compatibility posture to assume
+
+- Behavior is strongest where there is explicit engine/binding test coverage.
+- New feature surfaces (for example plugin runtime seams) may still evolve.
+- Prefer additive integration patterns where possible (new functions/pages) over deep monkeypatching.
+
+## Next
+
+- [First Workbook in 5 Minutes](/docs/quickstarts/first-workbook-in-5-minutes)
+- [Deterministic Testing](/docs/guides/deterministic-testing)

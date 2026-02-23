@@ -1,0 +1,54 @@
+---
+title: "CHISQ.TEST"
+description: "CHISQ.TEST: Returns the right-tail p-value from a chi-square goodness-of-fit style comparison."
+---
+
+<FunctionPageSchema id="stats/chisq-test" />
+
+## Summary
+
+`CHISQ.TEST` compares observed and expected values and computes `1 - CHISQ.DIST(...)`.
+
+## Remarks
+ - `actual_range` and `expected_range` must contain the same number of numeric points.
+ - Expected values must be strictly greater than `0`.
+ - Requires at least two categories (`df &gt;= 1`).
+ - Returns `#N/A` for length mismatches or empty inputs, and `#NUM!` for invalid expected values.
+
+## Examples
+
+<Tabs items={["Perfect match between observed and expected", "Two-category chi-square test"]}>
+<Tab value="Perfect match between observed and expected">
+<FunctionSandbox
+  title="Perfect match between observed and expected"
+  formula={`=CHISQ.TEST({20,30,50},{20,30,50})`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Two-category chi-square test">
+<FunctionSandbox
+  title="Two-category chi-square test"
+  formula={`=CHISQ.TEST({18,22},{20,20})`}
+  grid={{}}
+  expected={"0.5270892568655381"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [F.TEST](/docs/reference/functions/stats/f-test)
+- [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
+- [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
+- [T.INV](/docs/reference/functions/stats/t-inv)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/chisq-test" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,45 @@
+---
+title: Rust Quickstart
+description: Create a workbook, set cells, evaluate a formula, and read the result in Rust.
+---
+
+## 1) Add dependencies
+
+```toml
+[dependencies]
+formualizer-workbook = "0.3"
+formualizer-common = "0.3"
+```
+
+## 2) Evaluate a simple formula
+
+```rust
+use formualizer_common::LiteralValue;
+use formualizer_workbook::Workbook;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut wb = Workbook::new();
+    wb.add_sheet("Sheet1")?;
+
+    wb.set_value("Sheet1", 1, 1, LiteralValue::Number(100.0))?; // A1
+    wb.set_value("Sheet1", 2, 1, LiteralValue::Number(20.0))?;  // A2
+    wb.set_formula("Sheet1", 1, 2, "=A1-A2")?;                // B1
+
+    let result = wb.evaluate_cell("Sheet1", 1, 2)?;
+    assert_eq!(result, LiteralValue::Number(80.0));
+    Ok(())
+}
+```
+
+## 3) Run
+
+```bash
+cargo run
+```
+
+## Next
+
+- [Formula Parser](/formula-parser)
+- [First Workbook in 5 Minutes](/docs/quickstarts/first-workbook-in-5-minutes)
+- [Workbook Edits and Batching](/docs/guides/workbook-edits-and-batching)
+- [Custom Functions (Rust, Python, JS)](/docs/guides/custom-functions-rust-python-js)

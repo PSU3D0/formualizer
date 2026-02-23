@@ -1,0 +1,59 @@
+---
+title: "DOLLAR"
+description: "DOLLAR: Formats a number as currency text."
+---
+
+<FunctionPageSchema id="text/dollar" />
+
+## Summary
+
+Formats a number as currency text.
+
+## Remarks
+ - Default decimal places is `2` when omitted.
+ - Negative values are rendered in parentheses, such as `($1,234.00)`.
+ - Uses comma group separators and dollar symbol.
+ - Input coercion failures or propagated errors return an error.
+
+## Examples
+
+<Tabs items={["Default currency formatting", "Negative value with zero decimals"]}>
+<Tab value="Default currency formatting">
+<FunctionSandbox
+  title="Default currency formatting"
+  formula={`=DOLLAR(1234.5)`}
+  grid={{}}
+  expected={"$1,234.50"}
+/>
+</Tab>
+
+<Tab value="Negative value with zero decimals">
+<FunctionSandbox
+  title="Negative value with zero decimals"
+  formula={`=DOLLAR(-999.4, 0)`}
+  grid={{}}
+  expected={"($999)"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [FIXED](/docs/reference/functions/text/fixed)
+- [TEXT](/docs/reference/functions/text/text)
+- [VALUE](/docs/reference/functions/text/value)
+- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
+- [VALUETOTEXT](/docs/reference/functions/text/valuetotext)
+- [CHAR](/docs/reference/functions/text/char)
+
+## FAQ
+
+### How are negative numbers displayed?
+Negative results are formatted in parentheses, for example ($1,234.00).
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/dollar" />
+{/* [formualizer-docgen:function-meta:end] */}

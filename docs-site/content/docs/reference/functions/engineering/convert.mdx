@@ -1,0 +1,58 @@
+---
+title: "CONVERT"
+description: "Converts a numeric value from one supported unit to another."
+---
+
+<FunctionPageSchema id="engineering/convert" />
+
+## Summary
+
+Supports a focused set of length, mass, and temperature units.
+
+## Remarks
+ - `number` is numerically coerced; unit arguments must be text.
+ - Returns `#N/A` for unknown units or incompatible unit categories.
+ - Temperature conversions support `C/cel`, `F/fah`, and `K/kel`.
+
+## Examples
+
+<Tabs items={["Length conversion", "Temperature conversion"]}>
+<Tab value="Length conversion">
+<FunctionSandbox
+  title="Length conversion"
+  formula={`=CONVERT(1,"km","m")`}
+  grid={{}}
+  expected={"1000"}
+/>
+</Tab>
+
+<Tab value="Temperature conversion">
+<FunctionSandbox
+  title="Temperature conversion"
+  formula={`=CONVERT(32,"F","C")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### When does `CONVERT` return `#N/A`?
+Unknown unit tokens, non-text unit arguments, or mixing incompatible categories (for example length to mass) return `#N/A`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/convert" />
+{/* [formualizer-docgen:function-meta:end] */}

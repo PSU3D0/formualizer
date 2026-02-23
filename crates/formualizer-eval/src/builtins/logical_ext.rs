@@ -9,6 +9,49 @@ use formualizer_macros::func_caps;
 
 #[derive(Debug)]
 pub struct NotFn;
+/// Reverses the logical value of its argument.
+///
+/// `NOT` converts the input to a logical value, then flips it.
+///
+/// # Remarks
+/// - Numbers are coerced (`0` -> TRUE after inversion, non-zero -> FALSE after inversion).
+/// - Blank values are treated as FALSE, so `NOT(blank)` returns TRUE.
+/// - Text and other non-coercible values return `#VALUE!`.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Invert boolean"
+/// formula: '=NOT(TRUE)'
+/// expected: false
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Invert numeric truthiness"
+/// formula: '=NOT(0)'
+/// expected: true
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - AND
+///   - OR
+///   - XOR
+/// faq:
+///   - q: "How does NOT treat blanks?"
+///     a: "Blank is treated as FALSE first, so NOT(blank) returns TRUE."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: NOT
+/// Type: NotFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: NOT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NotFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -51,6 +94,49 @@ impl Function for NotFn {
 
 #[derive(Debug)]
 pub struct XorFn;
+/// Returns TRUE when an odd number of arguments evaluate to TRUE.
+///
+/// `XOR` aggregates all values and checks parity of truthy inputs.
+///
+/// # Remarks
+/// - Booleans and numbers are accepted (`0` is FALSE, non-zero is TRUE).
+/// - Blank values are ignored.
+/// - Text and other non-coercible values produce `#VALUE!`.
+/// - If no coercion error occurs first, encountered formula errors are propagated.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Odd count of TRUE values"
+/// formula: '=XOR(TRUE, FALSE, TRUE, TRUE)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text input triggers VALUE error"
+/// formula: '=XOR(1, "x")'
+/// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - AND
+///   - OR
+///   - NOT
+/// faq:
+///   - q: "What determines XOR's final result?"
+///     a: "XOR returns TRUE when the count of truthy inputs is odd; blanks are ignored."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: XOR
+/// Type: XorFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: XOR(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, BOOL_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for XorFn {
     func_caps!(PURE, REDUCTION, BOOL_ONLY);
     fn name(&self) -> &'static str {
@@ -156,6 +242,49 @@ impl Function for XorFn {
 
 #[derive(Debug)]
 pub struct IfErrorFn; // IFERROR(value, fallback)
+/// Returns a fallback when the first expression evaluates to any error.
+///
+/// `IFERROR(value, value_if_error)` is useful for user-friendly error handling.
+///
+/// # Remarks
+/// - Any error kind in the first argument triggers the fallback branch.
+/// - Non-error results pass through unchanged.
+/// - Evaluation failures surfaced as interpreter errors are also caught.
+/// - Exactly two arguments are required; other arities return `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Replace division error"
+/// formula: '=IFERROR(1/0, "n/a")'
+/// expected: "n/a"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Pass through non-error"
+/// formula: '=IFERROR(42, 0)'
+/// expected: 42
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IFNA
+///   - IF
+///   - ISERROR
+/// faq:
+///   - q: "Does IFERROR catch all error types?"
+///     a: "Yes. Any error kind in the first argument triggers the fallback value."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: IFERROR
+/// Type: IfErrorFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: IFERROR(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IfErrorFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -196,6 +325,49 @@ impl Function for IfErrorFn {
 
 #[derive(Debug)]
 pub struct IfNaFn; // IFNA(value, fallback)
+/// Returns a fallback only when the first expression is `#N/A`.
+///
+/// `IFNA(value, value_if_na)` is narrower than `IFERROR`.
+///
+/// # Remarks
+/// - Only `#N/A` triggers fallback.
+/// - Other error kinds are returned unchanged.
+/// - Non-error results pass through unchanged.
+/// - Exactly two arguments are required; other arities return `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Catch N/A"
+/// formula: '=IFNA(NA(), "missing")'
+/// expected: "missing"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Do not catch other errors"
+/// formula: '=IFNA(1/0, "missing")'
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IFERROR
+///   - ISNA
+///   - NA
+/// faq:
+///   - q: "Which errors does IFNA intercept?"
+///     a: "Only #N/A is intercepted; all other errors pass through unchanged."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: IFNA
+/// Type: IfNaFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: IFNA(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IfNaFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -235,6 +407,49 @@ impl Function for IfNaFn {
 
 #[derive(Debug)]
 pub struct IfsFn; // IFS(cond1, val1, cond2, val2, ...)
+/// Returns the value for the first TRUE condition in condition-value pairs.
+///
+/// `IFS(cond1, value1, cond2, value2, ...)` evaluates left to right and short-circuits.
+///
+/// # Remarks
+/// - Arguments must be provided as pairs; odd argument counts return `#VALUE!`.
+/// - Conditions accept booleans and numbers (`0` FALSE, non-zero TRUE); blank is FALSE.
+/// - Text conditions return `#VALUE!`; error conditions propagate.
+/// - If no condition is TRUE, returns `#N/A`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "First matching condition wins"
+/// formula: '=IFS(2<1, "a", 3>2, "b", TRUE, "c")'
+/// expected: "b"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "No conditions matched"
+/// formula: '=IFS(FALSE, 1, 0, 2)'
+/// expected: "#N/A"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IF
+///   - AND
+///   - OR
+/// faq:
+///   - q: "What errors can IFS return on structure issues?"
+///     a: "Odd argument counts return #VALUE!, and no TRUE condition returns #N/A."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: IFS
+/// Type: IfsFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: IFS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for IfsFn {
     func_caps!(PURE, SHORT_CIRCUIT);
     fn name(&self) -> &'static str {

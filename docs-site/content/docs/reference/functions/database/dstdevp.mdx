@@ -1,0 +1,58 @@
+---
+title: "DSTDEVP"
+description: "DSTDEVP: Returns the population standard deviation of a database field for matching records."
+---
+
+<FunctionPageSchema id="database/dstdevp" />
+
+## Summary
+
+`DSTDEVP` computes standard deviation with the population denominator (`n`) after criteria filtering.
+
+## Remarks
+ - Criteria rows are OR branches, and each row's populated criteria columns are ANDed.
+ - `field` can be a case-insensitive header label or 1-based index; invalid lookup returns `#VALUE!`.
+ - At least one numeric value must match criteria, otherwise the result is `#DIV/0!`.
+
+## Examples
+
+<Tabs items={["Population stdev of units for East or West", "Population stdev of widget revenue"]}>
+<Tab value="Population stdev of units for East or West">
+<FunctionSandbox
+  title="Population stdev of units for East or West"
+  formula={`=DSTDEVP(A1:E7, "Units", G1:G3)`}
+  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Region","G2":"East","G3":"West"}}
+  expected={"6.796138609534093"}
+/>
+</Tab>
+
+<Tab value="Population stdev of widget revenue">
+<FunctionSandbox
+  title="Population stdev of widget revenue"
+  formula={`=DSTDEVP(A1:E7, 5, G1:G2)`}
+  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Product","G2":"Widget"}}
+  expected={"16131.404843417147"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DSTDEV](/docs/reference/functions/database/dstdev)
+- [DVARP](/docs/reference/functions/database/dvarp)
+- [STDEV.P](/docs/reference/functions/stats/stdev-p)
+- [DAVERAGE](/docs/reference/functions/database/daverage)
+- [DCOUNT](/docs/reference/functions/database/dcount)
+- [DCOUNTA](/docs/reference/functions/database/dcounta)
+
+## FAQ
+
+### When should I prefer DSTDEVP over DSTDEV?
+Use DSTDEVP when matching rows represent the full population; DSTDEV is for samples.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="database/dstdevp" />
+{/* [formualizer-docgen:function-meta:end] */}

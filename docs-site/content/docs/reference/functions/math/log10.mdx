@@ -1,0 +1,58 @@
+---
+title: "LOG10"
+description: "LOG10: Returns the base-10 logarithm of a positive number."
+---
+
+<FunctionPageSchema id="math/log10" />
+
+## Summary
+
+Returns the base-10 logarithm of a positive number.
+
+## Remarks
+ - `number` must be greater than `0`; otherwise the function returns `#NUM!`.
+ - `LOG10(POWER(10,x))` returns `x` up to floating-point precision.
+ - Input errors are propagated.
+
+## Examples
+
+<Tabs items={["Power of ten to exponent", "Log base 10 of a decimal"]}>
+<Tab value="Power of ten to exponent">
+<FunctionSandbox
+  title="Power of ten to exponent"
+  formula={`=LOG10(1000)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Log base 10 of a decimal">
+<FunctionSandbox
+  title="Log base 10 of a decimal"
+  formula={`=LOG10(0.01)`}
+  grid={{}}
+  expected={"-2"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LOG](/docs/reference/functions/math/log)
+- [LN](/docs/reference/functions/math/ln)
+- [EXP](/docs/reference/functions/math/exp)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+
+## FAQ
+
+### When does LOG10 return #NUM!?
+It returns #NUM! for non-positive input values.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/log10" />
+{/* [formualizer-docgen:function-meta:end] */}

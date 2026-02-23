@@ -1,0 +1,58 @@
+---
+title: "ISERROR"
+description: "ISERROR: Returns TRUE for any error value."
+---
+
+<FunctionPageSchema id="info/iserror" />
+
+## Summary
+
+Returns TRUE for any error value.
+
+## Remarks
+ - Matches all error kinds, including `#N/A`.
+ - Non-error values always return FALSE.
+ - Arity mismatch returns `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Division error", "Normal value"]}>
+<Tab value="Division error">
+<FunctionSandbox
+  title="Division error"
+  formula={`=ISERROR(1/0)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Normal value">
+<FunctionSandbox
+  title="Normal value"
+  formula={`=ISERROR(123)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ISERR](/docs/reference/functions/info/iserr)
+- [ISNA](/docs/reference/functions/info/isna)
+- [IFERROR](/docs/reference/functions/logical-ext/iferror)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISEVEN](/docs/reference/functions/info/iseven)
+
+## FAQ
+
+### Does ISERROR include #N/A?
+Yes. ISERROR returns TRUE for all error kinds, including #N/A.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/iserror" />
+{/* [formualizer-docgen:function-meta:end] */}

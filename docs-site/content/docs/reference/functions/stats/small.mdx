@@ -1,0 +1,58 @@
+---
+title: "SMALL"
+description: "Returns the k-th smallest value in a data set."
+---
+
+<FunctionPageSchema id="stats/small" />
+
+## Summary
+
+`SMALL` is often used to find low outliers, minimum thresholds, or bottom-N values.
+
+## Remarks
+ - `k` must be at least `1`.
+ - Returns `#NUM!` if `k` is greater than the count of numeric values.
+ - Non-numeric values in referenced ranges are ignored.
+
+## Examples
+
+<Tabs items={["Second-smallest from direct values", "Third-smallest from a range"]}>
+<Tab value="Second-smallest from direct values">
+<FunctionSandbox
+  title="Second-smallest from direct values"
+  formula={`=SMALL({4,9,1,7},2)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Third-smallest from a range">
+<FunctionSandbox
+  title="Third-smallest from a range"
+  formula={`=SMALL(A1:A4,3)`}
+  grid={{"A1":"3","A2":"12","A3":"8","A4":"5"}}
+  expected={"8"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LARGE](/docs/reference/functions/stats/large)
+- [MIN](/docs/reference/functions/math/min)
+- [RANK.EQ](/docs/reference/functions/stats/rank-eq)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### Does SMALL include text in referenced ranges?
+No. Non-numeric range values are ignored when selecting the k-th smallest value.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/small" />
+{/* [formualizer-docgen:function-meta:end] */}

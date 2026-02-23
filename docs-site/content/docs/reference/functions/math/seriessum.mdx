@@ -1,0 +1,58 @@
+---
+title: "SERIESSUM"
+description: "SERIESSUM: Evaluates a power series from coefficients, start power, and step."
+---
+
+<FunctionPageSchema id="math/seriessum" />
+
+## Summary
+
+Evaluates a power series from coefficients, start power, and step.
+
+## Remarks
+ - Computes `sum(c_i * x^(n + i*m))` in coefficient order.
+ - Coefficients may be supplied as a scalar, array literal, or range.
+ - Errors in `x`, `n`, `m`, or coefficient values are propagated.
+
+## Examples
+
+<Tabs items={["Series from an array literal", "Series from worksheet coefficients"]}>
+<Tab value="Series from an array literal">
+<FunctionSandbox
+  title="Series from an array literal"
+  formula={`=SERIESSUM(2,0,1,{1,2,3})`}
+  grid={{}}
+  expected={"17"}
+/>
+</Tab>
+
+<Tab value="Series from worksheet coefficients">
+<FunctionSandbox
+  title="Series from worksheet coefficients"
+  formula={`=SERIESSUM(0.5,1,2,A1:A3)`}
+  grid={{"A1":"1","A2":"-1","A3":"0.5"}}
+  expected={"0.390625"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SUMPRODUCT](/docs/reference/functions/math/sumproduct)
+- [POWER](/docs/reference/functions/math/power)
+- [EXP](/docs/reference/functions/math/exp)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOSH](/docs/reference/functions/math/acosh)
+
+## FAQ
+
+### In what order are SERIESSUM coefficients applied?
+Coefficients are consumed in input order as c_i*x^(n+i*m).
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/seriessum" />
+{/* [formualizer-docgen:function-meta:end] */}

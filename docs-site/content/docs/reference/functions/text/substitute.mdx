@@ -1,0 +1,59 @@
+---
+title: "SUBSTITUTE"
+description: "SUBSTITUTE: Replaces matching text within a string."
+---
+
+<FunctionPageSchema id="text/substitute" />
+
+## Summary
+
+`SUBSTITUTE` can replace all occurrences or only a specific instance.
+
+## Remarks
+ - Matching is case-sensitive.
+ - If `old_text` is empty, the original text is returned unchanged.
+ - With `instance_num`, only that 1-based occurrence is replaced.
+ - Non-positive `instance_num` returns `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Replace all matches", "Replace only second match"]}>
+<Tab value="Replace all matches">
+<FunctionSandbox
+  title="Replace all matches"
+  formula={`=SUBSTITUTE("a-b-a", "a", "x")`}
+  grid={{}}
+  expected={"x-b-x"}
+/>
+</Tab>
+
+<Tab value="Replace only second match">
+<FunctionSandbox
+  title="Replace only second match"
+  formula={`=SUBSTITUTE("2024-01-2024", "2024", "FY24", 2)`}
+  grid={{}}
+  expected={"2024-01-FY24"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [REPLACE](/docs/reference/functions/text/replace)
+- [TEXTBEFORE](/docs/reference/functions/text/textbefore)
+- [TEXTAFTER](/docs/reference/functions/text/textafter)
+- [TEXTJOIN](/docs/reference/functions/text/textjoin)
+- [CONCAT](/docs/reference/functions/text/concat)
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+
+## FAQ
+
+### Is SUBSTITUTE case-sensitive?
+Yes. It matches old_text with exact case and replaces either all or the requested instance.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/substitute" />
+{/* [formualizer-docgen:function-meta:end] */}

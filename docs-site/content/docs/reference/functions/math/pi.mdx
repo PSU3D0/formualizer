@@ -1,0 +1,57 @@
+---
+title: "PI"
+description: "PI: Returns the mathematical constant π."
+---
+
+<FunctionPageSchema id="math/pi" />
+
+## Summary
+
+Returns the mathematical constant π.
+
+## Remarks
+ - `PI()` takes no arguments.
+ - Commonly used with trig and geometry formulas.
+
+## Examples
+
+<Tabs items={["Pi constant", "Circle circumference with radius 2"]}>
+<Tab value="Pi constant">
+<FunctionSandbox
+  title="Pi constant"
+  formula={`=PI()`}
+  grid={{}}
+  expected={"3.141592653589793"}
+/>
+</Tab>
+
+<Tab value="Circle circumference with radius 2">
+<FunctionSandbox
+  title="Circle circumference with radius 2"
+  formula={`=2*PI()*2`}
+  grid={{}}
+  expected={"12.566370614359172"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [RADIANS](/docs/reference/functions/math/radians)
+- [DEGREES](/docs/reference/functions/math/degrees)
+- [SIN](/docs/reference/functions/math/sin)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOSH](/docs/reference/functions/math/acosh)
+
+## FAQ
+
+### Can PI take arguments?
+No. PI() has arity zero and always returns the same constant.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/pi" />
+{/* [formualizer-docgen:function-meta:end] */}

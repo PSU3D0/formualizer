@@ -1,0 +1,57 @@
+---
+title: "COS"
+description: "Returns the cosine of an angle in radians."
+---
+
+<FunctionPageSchema id="math/cos" />
+
+## Summary
+
+Returns the cosine of an angle in radians.
+
+## Remarks
+ - Input must be in radians.
+ - Supports elementwise evaluation for array inputs.
+
+## Examples
+
+<Tabs items={["Cosine at zero", "Cosine at PI"]}>
+<Tab value="Cosine at zero">
+<FunctionSandbox
+  title="Cosine at zero"
+  formula={`=COS(0)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Cosine at PI">
+<FunctionSandbox
+  title="Cosine at PI"
+  formula={`=COS(PI())`}
+  grid={{}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SIN](/docs/reference/functions/math/sin)
+- [TAN](/docs/reference/functions/math/tan)
+- [PI](/docs/reference/functions/math/pi)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASIN](/docs/reference/functions/math/asin)
+
+## FAQ
+
+### Why can COS look wrong for degree values like 60?
+COS interprets 60 as radians, not degrees; use COS(RADIANS(60)).
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/cos" />
+{/* [formualizer-docgen:function-meta:end] */}

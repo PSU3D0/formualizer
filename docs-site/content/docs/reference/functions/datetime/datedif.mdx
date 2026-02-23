@@ -1,0 +1,60 @@
+---
+title: "DATEDIF"
+description: "DATEDIF: Returns the difference between two dates in a requested unit."
+---
+
+<FunctionPageSchema id="datetime/datedif" />
+
+## Summary
+
+Returns the difference between two dates in a requested unit.
+
+## Remarks
+ - Supported units are `"Y"`, `"M"`, `"D"`, `"MD"`, `"YM"`, and `"YD"`.
+ - If `start_date &gt; end_date`, the function returns `#NUM!`.
+ - Unit matching is case-insensitive.
+ - `"YD"` uses a Feb-29 normalization strategy that can differ slightly from Excel in edge cases.
+ - Input serials are interpreted with Excel 1900 date mapping.
+
+## Examples
+
+<Tabs items={["Difference in days", "Complete months difference"]}>
+<Tab value="Difference in days">
+<FunctionSandbox
+  title="Difference in days"
+  formula={`=DATEDIF(44197, 44378, "D")`}
+  grid={{}}
+  expected={"181"}
+/>
+</Tab>
+
+<Tab value="Complete months difference">
+<FunctionSandbox
+  title="Complete months difference"
+  formula={`=DATEDIF(44197, 44378, "M")`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DAYS](/docs/reference/functions/datetime/days)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
+- [DATE](/docs/reference/functions/datetime/date)
+- [TIME](/docs/reference/functions/datetime/time)
+- [DATEVALUE](/docs/reference/functions/datetime/datevalue)
+- [DAY](/docs/reference/functions/datetime/day)
+
+## FAQ
+
+### How are unit strings interpreted in DATEDIF?
+Unit text is case-insensitive, but only Y, M, D, MD, YM, and YD are supported; other units return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/datedif" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,58 @@
+---
+title: "ISLOGICAL"
+description: "ISLOGICAL: Returns TRUE when the value is a boolean."
+---
+
+<FunctionPageSchema id="info/islogical" />
+
+## Summary
+
+Returns TRUE when the value is a boolean.
+
+## Remarks
+ - Only logical TRUE/FALSE values return TRUE.
+ - Numeric truthy/falsy values are not considered logical by this predicate.
+ - Errors return FALSE.
+
+## Examples
+
+<Tabs items={["Boolean input", "Numeric input"]}>
+<Tab value="Boolean input">
+<FunctionSandbox
+  title="Boolean input"
+  formula={`=ISLOGICAL(TRUE)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Numeric input">
+<FunctionSandbox
+  title="Numeric input"
+  formula={`=ISLOGICAL(1)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TRUE](/docs/reference/functions/logical/true)
+- [FALSE](/docs/reference/functions/logical/false)
+- [TYPE](/docs/reference/functions/info/type)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### Do truthy numbers count as logical values?
+No. ISLOGICAL returns TRUE only for actual boolean TRUE/FALSE values.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/islogical" />
+{/* [formualizer-docgen:function-meta:end] */}

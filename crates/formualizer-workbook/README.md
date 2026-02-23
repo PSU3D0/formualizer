@@ -1,4 +1,8 @@
+![Formualizer banner](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png)
+
 # formualizer-workbook
+
+![Arrow Powered](https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white)
 
 **Ergonomic workbook API with sheets, evaluation, undo/redo, and file I/O.**
 

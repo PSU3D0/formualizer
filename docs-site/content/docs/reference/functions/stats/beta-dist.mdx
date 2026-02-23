@@ -1,0 +1,55 @@
+---
+title: "BETA.DIST"
+description: "BETA.DIST: Returns the beta-distribution probability for `x`, with optional lower/upper bounds."
+---
+
+<FunctionPageSchema id="stats/beta-dist" />
+
+## Summary
+
+`BETA.DIST` can evaluate either the cumulative probability or density on `[A, B]` (default
+ `[0, 1]`).
+
+## Remarks
+ - Requires `alpha &gt; 0`, `beta &gt; 0`, and `A &lt; B`.
+ - `x` must lie within the inclusive interval `[A, B]`.
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
+ - Returns `#NUM!` for invalid bounds, parameters, or out-of-range `x`.
+
+## Examples
+
+<Tabs items={["Uniform beta CDF on [0,1]", "Uniform beta PDF on [0,1]"]}>
+<Tab value="Uniform beta CDF on [0,1]">
+<FunctionSandbox
+  title="Uniform beta CDF on [0,1]"
+  formula={`=BETA.DIST(0.3,1,1,TRUE)`}
+  grid={{}}
+  expected={"0.3"}
+/>
+</Tab>
+
+<Tab value="Uniform beta PDF on [0,1]">
+<FunctionSandbox
+  title="Uniform beta PDF on [0,1]"
+  formula={`=BETA.DIST(0.3,1,1,FALSE)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+- [GROWTH](/docs/reference/functions/stats/growth)
+- [HARMEAN](/docs/reference/functions/stats/harmean)
+- [KURT](/docs/reference/functions/stats/kurt)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/beta-dist" />
+{/* [formualizer-docgen:function-meta:end] */}

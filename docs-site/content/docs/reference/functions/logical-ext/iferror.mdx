@@ -1,0 +1,59 @@
+---
+title: "IFERROR"
+description: "IFERROR: Returns a fallback when the first expression evaluates to any error."
+---
+
+<FunctionPageSchema id="logical-ext/iferror" />
+
+## Summary
+
+`IFERROR(value, value_if_error)` is useful for user-friendly error handling.
+
+## Remarks
+ - Any error kind in the first argument triggers the fallback branch.
+ - Non-error results pass through unchanged.
+ - Evaluation failures surfaced as interpreter errors are also caught.
+ - Exactly two arguments are required; other arities return `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Replace division error", "Pass through non-error"]}>
+<Tab value="Replace division error">
+<FunctionSandbox
+  title="Replace division error"
+  formula={`=IFERROR(1/0, "n/a")`}
+  grid={{}}
+  expected={"n/a"}
+/>
+</Tab>
+
+<Tab value="Pass through non-error">
+<FunctionSandbox
+  title="Pass through non-error"
+  formula={`=IFERROR(42, 0)`}
+  grid={{}}
+  expected={"42"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IFNA](/docs/reference/functions/logical-ext/ifna)
+- [IF](/docs/reference/functions/logical/if)
+- [ISERROR](/docs/reference/functions/info/iserror)
+- [IFS](/docs/reference/functions/logical-ext/ifs)
+- [NOT](/docs/reference/functions/logical-ext/not)
+- [XOR](/docs/reference/functions/logical-ext/xor)
+
+## FAQ
+
+### Does IFERROR catch all error types?
+Yes. Any error kind in the first argument triggers the fallback value.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="logical-ext/iferror" />
+{/* [formualizer-docgen:function-meta:end] */}

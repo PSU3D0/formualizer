@@ -160,6 +160,68 @@ pub fn super_wildcard_match(pattern: &str, text: &str) -> bool {
 #[derive(Debug)]
 pub struct XLookupFn;
 
+/// Looks up a value in one array and returns the aligned value from another array.
+///
+/// `XLOOKUP` supports exact, approximate, and wildcard matching with forward or reverse search.
+///
+/// # Remarks
+/// - Defaults: `match_mode=0` (exact), `search_mode=1` (first-to-last).
+/// - `if_not_found` is optional; if omitted and no match exists, returns `#N/A`.
+/// - `match_mode`: `0` exact, `-1` exact-or-next-smaller, `1` exact-or-next-larger, `2` wildcard.
+/// - `search_mode`: `1` forward, `-1` reverse. Other modes are accepted with current fallback behavior.
+/// - `lookup_array` must be 1D. Invalid shape returns `#VALUE!`.
+/// - If `return_array` is multi-column or multi-row, the matched row/column is returned as a spill.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Exact key lookup with fallback"
+/// grid:
+///   A1: "id"
+///   A2: 101
+///   A3: 102
+///   B1: "name"
+///   B2: "Ana"
+///   B3: "Bo"
+/// formula: '=XLOOKUP(102,A2:A3,B2:B3,"Missing")'
+/// expected: "Bo"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Return a full row from a matched key"
+/// grid:
+///   A1: 1
+///   A2: 2
+///   B1: "East"
+///   C1: 120
+///   B2: "West"
+///   C2: 140
+/// formula: '=XLOOKUP(2,A1:A2,B1:C2)'
+/// expected: [["West",140]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - XMATCH
+///   - MATCH
+///   - FILTER
+/// faq:
+///   - q: "How do match_mode and search_mode interact?"
+///     a: "match_mode controls exact/approximate/wildcard behavior, while search_mode controls scan direction; reverse search (-1) returns the last matching position."
+///   - q: "What happens when no match is found?"
+///     a: "If if_not_found is provided, XLOOKUP returns that value; otherwise it returns #N/A."
+///   - q: "Why do I get #VALUE! from XLOOKUP on valid ranges?"
+///     a: "The lookup_array must be one-dimensional (single row or single column); multi-row-and-column lookup ranges return #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: XLOOKUP
+/// Type: XLookupFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: XLOOKUP(arg1: any@scalar, arg2: range@range, arg3: range@range, arg4?: any@scalar, arg5?: number@scalar, arg6?...: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg6{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for XLookupFn {
     func_caps!(PURE, LOOKUP);
     fn name(&self) -> &'static str {
@@ -469,6 +531,59 @@ impl Function for XLookupFn {
 
 #[derive(Debug)]
 pub struct XMatchFn;
+/// Returns the 1-based position of a value in a one-dimensional lookup array.
+///
+/// `XMATCH` extends `MATCH` with explicit search direction and wildcard mode.
+///
+/// # Remarks
+/// - Defaults: `match_mode=0` (exact), `search_mode=1` (first-to-last).
+/// - `match_mode`: `0` exact, `-1` exact-or-next-smaller, `1` exact-or-next-larger, `2` wildcard.
+/// - `search_mode`: `1` forward, `-1` reverse, `2` ascending binary intent, `-2` descending binary intent.
+/// - `lookup_array` must be a single row or single column, otherwise returns `#VALUE!`.
+/// - Not found returns `#N/A`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Exact match position"
+/// grid:
+///   A1: "alpha"
+///   A2: "beta"
+///   A3: "gamma"
+/// formula: '=XMATCH("beta",A1:A3)'
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Reverse search finds last duplicate"
+/// grid:
+///   A1: 7
+///   A2: 9
+///   A3: 7
+/// formula: '=XMATCH(7,A1:A3,0,-1)'
+/// expected: 3
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - XLOOKUP
+///   - MATCH
+///   - INDEX
+/// faq:
+///   - q: "How do search_mode values affect duplicate matches?"
+///     a: "search_mode=1 returns the first qualifying match, while search_mode=-1 scans from the end and returns the last qualifying match."
+///   - q: "When do binary-intent search modes (2 or -2) return #N/A?"
+///     a: "For approximate modes they require sorted data in the expected direction; unsorted arrays are treated as no valid match and return #N/A."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: XMATCH
+/// Type: XMatchFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: XMATCH(arg1: any@scalar, arg2: range@range, arg3?: number@scalar, arg4?...: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for XMatchFn {
     func_caps!(PURE, LOOKUP);
     fn name(&self) -> &'static str {
@@ -740,6 +855,65 @@ impl Function for XMatchFn {
 
 #[derive(Debug)]
 pub struct SortFn;
+/// Sorts an array by a selected row or column and returns a spilled result.
+///
+/// `SORT` can order rows (default) or columns.
+///
+/// # Remarks
+/// - Defaults: `sort_index=1`, `sort_order=1` (ascending), `by_col=FALSE`.
+/// - `sort_index` is 1-based in the active sort axis.
+/// - `sort_order < 0` sorts descending; otherwise ascending.
+/// - Invalid sort indexes return `#VALUE!`.
+/// - Empty input returns an empty spill.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Sort rows by second column"
+/// grid:
+///   A1: "C"
+///   B1: 30
+///   A2: "A"
+///   B2: 10
+///   A3: "B"
+///   B3: 20
+/// formula: '=SORT(A1:B3,2,1,FALSE)'
+/// expected: [["A",10],["B",20],["C",30]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sort columns by first row descending"
+/// grid:
+///   A1: 1
+///   B1: 3
+///   C1: 2
+///   A2: "A"
+///   B2: "C"
+///   C2: "B"
+/// formula: '=SORT(A1:C2,1,-1,TRUE)'
+/// expected: [[3,2,1],["C","B","A"]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SORTBY
+///   - TAKE
+///   - DROP
+/// faq:
+///   - q: "What changes when by_col is TRUE?"
+///     a: "SORT reorders columns instead of rows, and sort_index is interpreted as a row index used as the sort key."
+///   - q: "What causes #VALUE! in SORT?"
+///     a: "If sort_index is outside the active axis (row or column axis based on by_col), SORT returns #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SORT
+/// Type: SortFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SORT(arg1: range@range, arg2?: number@scalar, arg3?: number@scalar, arg4?...: logical@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg4{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SortFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -919,6 +1093,65 @@ impl Function for SortFn {
 
 #[derive(Debug)]
 pub struct SortByFn;
+/// Sorts an array based on one or more aligned sort-by arrays.
+///
+/// `SORTBY` separates what is returned (`array`) from what determines ordering (`by_array`).
+///
+/// # Remarks
+/// - Requires at least one `by_array` aligned to the row count of `array`.
+/// - `sort_order` defaults to ascending when omitted.
+/// - Additional `by_array`/`sort_order` criteria are processed left-to-right.
+/// - Shape mismatches or invalid criteria return `#VALUE!`.
+/// - Returns a spilled sorted array.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Sort names by score"
+/// grid:
+///   A1: "Charlie"
+///   A2: "Alice"
+///   A3: "Bob"
+///   B1: 3
+///   B2: 1
+///   B3: 2
+/// formula: '=SORTBY(A1:A3,B1:B3)'
+/// expected: [["Alice"],["Bob"],["Charlie"]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sort descending by key"
+/// grid:
+///   A1: "Q1"
+///   A2: "Q2"
+///   A3: "Q3"
+///   B1: 100
+///   B2: 300
+///   B3: 200
+/// formula: '=SORTBY(A1:A3,B1:B3,-1)'
+/// expected: [["Q2"],["Q3"],["Q1"]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SORT
+///   - UNIQUE
+///   - FILTER
+/// faq:
+///   - q: "How are multiple sort criteria applied?"
+///     a: "SORTBY evaluates criteria left-to-right, using later by_array values only when earlier criteria compare equal."
+///   - q: "Why do I get #VALUE! with SORTBY?"
+///     a: "Each by_array must be one-dimensional and aligned to the primary array row count; mismatched shapes return #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SORTBY
+/// Type: SortByFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SORTBY(arg1: range@range, arg2: range@range, arg3?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SortByFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1098,6 +1331,50 @@ impl Function for SortByFn {
 
 #[derive(Debug)]
 pub struct RandArrayFn;
+/// Generates a random spilled array of numbers.
+///
+/// `RANDARRAY` can return decimal values or whole numbers in a specified range.
+///
+/// # Remarks
+/// - Defaults: `rows=1`, `columns=1`, `min=0`, `max=1`, `whole_number=FALSE`.
+/// - The function is non-deterministic and recalculates to new values.
+/// - For whole numbers, values are generated in an inclusive integer range.
+/// - `rows <= 0`, `columns <= 0`, or invalid integer bounds return `#VALUE!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Generate a 2x3 decimal matrix"
+/// formula: '=RANDARRAY(2,3)'
+/// expected: "2x3 array of decimals in [0,1)"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Generate six integer dice rolls"
+/// formula: '=RANDARRAY(6,1,1,6,TRUE)'
+/// expected: "6x1 array of integers from 1 to 6"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SEQUENCE
+///   - SORT
+///   - UNIQUE
+/// faq:
+///   - q: "Are RANDARRAY bounds inclusive?"
+///     a: "In whole_number mode, min and max are inclusive integer bounds; in decimal mode values are generated over the numeric interval from min toward max."
+///   - q: "Why does RANDARRAY recalculate on every recalc pass?"
+///     a: "RANDARRAY is volatile and non-deterministic by design, so its spilled results are regenerated each evaluation."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: RANDARRAY
+/// Type: RandArrayFn
+/// Min args: 0
+/// Max args: variadic
+/// Variadic: true
+/// Signature: RANDARRAY(arg1?: number@scalar, arg2?: number@scalar, arg3?: number@scalar, arg4?: number@scalar, arg5?...: logical@scalar)
+/// Arg schema: arg1{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg5{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: none
+/// [formualizer-docgen:schema:end]
 impl Function for RandArrayFn {
     // Note: RANDARRAY is NOT pure - it returns different values on each evaluation
     fn caps(&self) -> crate::function::FnCaps {
@@ -1411,6 +1688,69 @@ fn literal_to_num_opt(v: &LiteralValue) -> Option<f64> {
 #[derive(Debug)]
 pub struct GroupByFn;
 
+/// Groups rows by key fields and returns aggregated values as a spilled table.
+///
+/// `GROUPBY` summarizes one or more value columns using a selected aggregation function.
+///
+/// # Remarks
+/// - `row_fields` and `values` must have the same row count.
+/// - Aggregation can be supplied as text (for example `"SUM"`) or numeric code.
+/// - Optional controls: `field_headers`, `total_depth`, `sort_order`.
+/// - Invalid aggregation names/codes return `#VALUE!`.
+/// - Output is dynamic-array shaped and may include generated headers or totals.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Sum sales by region"
+/// grid:
+///   A1: "Region"
+///   A2: "East"
+///   A3: "West"
+///   A4: "East"
+///   B1: "Sales"
+///   B2: 100
+///   B3: 80
+///   B4: 50
+/// formula: '=GROUPBY(A1:A4,B1:B4,"SUM",3,0,1)'
+/// expected: [["Region","Sales"],["East",150],["West",80]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Average with grand total"
+/// grid:
+///   A1: "Team"
+///   A2: "A"
+///   A3: "A"
+///   A4: "B"
+///   B1: "Score"
+///   B2: 90
+///   B3: 70
+///   B4: 80
+/// formula: '=GROUPBY(A1:A4,B1:B4,"AVERAGE",3,1,1)'
+/// expected: "Grouped table with team averages plus grand total row"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - PIVOTBY
+///   - SORTBY
+///   - UNIQUE
+/// faq:
+///   - q: "What shape constraints does GROUPBY enforce?"
+///     a: "row_fields and values must have the same number of rows; mismatched heights return #VALUE!."
+///   - q: "Can the aggregation function be numeric instead of text?"
+///     a: "Yes. GROUPBY accepts either function names (like \"SUM\") or numeric function codes, and invalid entries return #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: GROUPBY
+/// Type: GroupByFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: GROUPBY(arg1: range@range, arg2: range@range, arg3: any@scalar, arg4?: number@scalar, arg5?: number@scalar, arg6?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg6{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for GroupByFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1714,6 +2054,77 @@ impl Function for GroupByFn {
 #[derive(Debug)]
 pub struct PivotByFn;
 
+/// Builds a pivot-style summary matrix from row fields, column fields, and values.
+///
+/// `PIVOTBY` aggregates intersections of row keys and column keys into a dynamic result grid.
+///
+/// # Remarks
+/// - `row_fields`, `col_fields`, and `values` must have matching row counts.
+/// - Aggregation accepts text names (for example `"SUM"`) or numeric codes.
+/// - Optional controls include header handling, row/column totals, and sort order.
+/// - Current implementation uses the first column of `col_fields` and `values` for aggregation.
+/// - Invalid setup returns `#VALUE!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Pivot sales by region and quarter"
+/// grid:
+///   A1: "Region"
+///   A2: "East"
+///   A3: "East"
+///   A4: "West"
+///   B1: "Quarter"
+///   B2: "Q1"
+///   B3: "Q2"
+///   B4: "Q1"
+///   C1: "Sales"
+///   C2: 100
+///   C3: 150
+///   C4: 120
+/// formula: '=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,0,1,0,1)'
+/// expected: "Pivot table with regions as rows and quarters as columns"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Pivot with totals enabled"
+/// grid:
+///   A1: "Dept"
+///   A2: "Ops"
+///   A3: "Ops"
+///   A4: "Sales"
+///   B1: "Month"
+///   B2: "Jan"
+///   B3: "Feb"
+///   B4: "Jan"
+///   C1: "Cost"
+///   C2: 40
+///   C3: 35
+///   C4: 55
+/// formula: '=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,1,1,1,1)'
+/// expected: "Pivot table including row and column totals"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - GROUPBY
+///   - SORTBY
+///   - UNIQUE
+/// faq:
+///   - q: "What rows must align in PIVOTBY inputs?"
+///     a: "row_fields, col_fields, and values must share the same row count; otherwise PIVOTBY returns #VALUE!."
+///   - q: "What value range is currently aggregated?"
+///     a: "Current implementation aggregates using the first value column (and first col_fields column for keys), so extra columns are not yet summarized independently."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: PIVOTBY
+/// Type: PivotByFn
+/// Min args: 4
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PIVOTBY(arg1: range@range, arg2: range@range, arg3: range@range, arg4: any@scalar, arg5?: number@scalar, arg6?: number@scalar, arg7?: number@scalar, arg8?: number@scalar, arg9?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg6{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg7{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg8{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg9{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PivotByFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2128,6 +2539,63 @@ impl Function for PivotByFn {
 
 #[derive(Debug)]
 pub struct FilterFn;
+/// Filters rows from an array using a Boolean include mask.
+///
+/// `FILTER` returns only rows where the include condition evaluates to true.
+///
+/// # Remarks
+/// - `include` must have the same row count as `array`, or a single row used as broadcast.
+/// - A row is kept if any include cell for that row is truthy.
+/// - If no rows match, `if_empty` is returned when supplied; otherwise `#CALC!`.
+/// - Dimension mismatches return `#VALUE!`.
+/// - Results spill as dynamic arrays.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Filter active records"
+/// grid:
+///   A1: "Ana"
+///   B1: true
+///   A2: "Bo"
+///   B2: false
+///   A3: "Cy"
+///   B3: true
+/// formula: '=FILTER(A1:A3,B1:B3)'
+/// expected: [["Ana"],["Cy"]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Return fallback when no rows match"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   B1: false
+///   B2: false
+/// formula: '=FILTER(A1:A2,B1:B2,"No matches")'
+/// expected: "No matches"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - XLOOKUP
+///   - UNIQUE
+///   - SORT
+/// faq:
+///   - q: "What happens when include has no TRUE rows?"
+///     a: "FILTER returns if_empty when provided; otherwise it returns #CALC! to signal an empty result set."
+///   - q: "How strict is include shape matching?"
+///     a: "include must match array row count or be a single broadcast row; incompatible dimensions return #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: FILTER
+/// Type: FilterFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: FILTER(arg1: range@range, arg2: range@range, arg3?...: any@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FilterFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2246,6 +2714,61 @@ impl Function for FilterFn {
 
 #[derive(Debug)]
 pub struct UniqueFn;
+/// Returns distinct rows or columns from a range.
+///
+/// `UNIQUE` preserves first-occurrence order and can optionally return only values that appear once.
+///
+/// # Remarks
+/// - Defaults: `by_col=FALSE`, `exactly_once=FALSE`.
+/// - With `by_col=FALSE`, uniqueness is evaluated by full rows.
+/// - With `by_col=TRUE`, uniqueness is evaluated by full columns.
+/// - With `exactly_once=TRUE`, only entries with frequency 1 are returned.
+/// - Result spills as an array.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Unique values by row"
+/// grid:
+///   A1: "A"
+///   A2: "A"
+///   A3: "B"
+///   A4: "C"
+/// formula: '=UNIQUE(A1:A4)'
+/// expected: [["A"],["B"],["C"]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Only values that appear once"
+/// grid:
+///   A1: 1
+///   A2: 1
+///   A3: 2
+///   A4: 3
+/// formula: '=UNIQUE(A1:A4,FALSE,TRUE)'
+/// expected: [[2],[3]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FILTER
+///   - SORT
+///   - SORTBY
+/// faq:
+///   - q: "What does exactly_once=TRUE change?"
+///     a: "Instead of returning first occurrences, UNIQUE returns only rows or columns whose full key appears exactly one time."
+///   - q: "How does by_col affect uniqueness checks?"
+///     a: "by_col=FALSE compares entire rows, while by_col=TRUE compares entire columns and spills unique columns."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: UNIQUE
+/// Type: UniqueFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: UNIQUE(arg1: range@range, arg2?: logical@scalar, arg3?...: logical@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}; arg3{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for UniqueFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2381,6 +2904,50 @@ impl Function for UniqueFn {
 
 #[derive(Debug)]
 pub struct SequenceFn;
+/// Generates a sequential numeric array with configurable size, start, and step.
+///
+/// `SEQUENCE` fills values row-by-row and returns a dynamic spill.
+///
+/// # Remarks
+/// - Defaults: `columns=1`, `start=1`, `step=1`.
+/// - `rows` and `columns` must be positive; otherwise returns `#VALUE!`.
+/// - Values are emitted as integers when integral, otherwise as floating-point numbers.
+/// - Result spills to the requested dimensions.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Simple vertical sequence"
+/// formula: '=SEQUENCE(5)'
+/// expected: [[1],[2],[3],[4],[5]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "2x3 sequence with custom start and step"
+/// formula: '=SEQUENCE(2,3,10,5)'
+/// expected: [[10,15,20],[25,30,35]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RANDARRAY
+///   - TAKE
+///   - DROP
+/// faq:
+///   - q: "What input values are invalid for SEQUENCE?"
+///     a: "rows and columns must be positive numbers; zero or negative sizes return #VALUE!."
+///   - q: "Does SEQUENCE fill by rows or by columns first?"
+///     a: "SEQUENCE fills row-by-row across columns, then continues on the next row using the same step increment."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SEQUENCE
+/// Type: SequenceFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SEQUENCE(arg1: number@scalar, arg2?: number@scalar, arg3?: number@scalar, arg4?...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg4{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SequenceFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2499,6 +3066,58 @@ impl Function for SequenceFn {
 
 #[derive(Debug)]
 pub struct TransposeFn;
+/// Swaps rows and columns in an input range.
+///
+/// `TRANSPOSE` returns a spilled array whose shape is the inverse of the source shape.
+///
+/// # Remarks
+/// - Input with shape `R x C` returns output shape `C x R`.
+/// - Empty input returns an empty spill.
+/// - Errors in source cells are preserved in transposed positions.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Transpose a row into a column"
+/// grid:
+///   A1: 10
+///   B1: 20
+///   C1: 30
+/// formula: '=TRANSPOSE(A1:C1)'
+/// expected: [[10],[20],[30]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Transpose a 2x2 matrix"
+/// grid:
+///   A1: 1
+///   B1: 2
+///   A2: 3
+///   B2: 4
+/// formula: '=TRANSPOSE(A1:B2)'
+/// expected: [[1,3],[2,4]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TAKE
+///   - DROP
+///   - HSTACK
+/// faq:
+///   - q: "What happens to errors inside the source array?"
+///     a: "TRANSPOSE preserves error values and only changes their position in the output matrix."
+///   - q: "Does TRANSPOSE return a scalar for 1x1 inputs?"
+///     a: "Yes. After transposition, a 1x1 result collapses to a scalar in this engine."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TRANSPOSE
+/// Type: TransposeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TRANSPOSE(arg1: range@range)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TransposeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2556,6 +3175,61 @@ impl Function for TransposeFn {
 
 #[derive(Debug)]
 pub struct TakeFn;
+/// Returns a subset from the start or end of rows and optional columns.
+///
+/// `TAKE` extracts leading or trailing portions of an array based on signed counts.
+///
+/// # Remarks
+/// - Positive counts take from the start; negative counts take from the end.
+/// - `rows` is required; `columns` is optional.
+/// - Absolute counts larger than the source dimension return `#VALUE!`.
+/// - Empty selections return an empty spill.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Take top two rows"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   A3: 30
+/// formula: '=TAKE(A1:A3,2)'
+/// expected: [[10],[20]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Take last row and last two columns"
+/// grid:
+///   A1: 1
+///   B1: 2
+///   C1: 3
+///   A2: 4
+///   B2: 5
+///   C2: 6
+/// formula: '=TAKE(A1:C2,-1,-2)'
+/// expected: [[5,6]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DROP
+///   - CHOOSEROWS
+///   - CHOOSECOLS
+/// faq:
+///   - q: "How are negative rows or columns interpreted?"
+///     a: "Negative counts take from the end of the array, so TAKE(...,-1) returns the last row and TAKE(...,,-1) returns the last column."
+///   - q: "When does TAKE return #VALUE!?"
+///     a: "If the absolute requested row or column count exceeds source dimensions, TAKE returns #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TAKE
+/// Type: TakeFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: TAKE(arg1: range@range, arg2: number@scalar, arg3?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TakeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -2688,6 +3362,58 @@ impl Function for TakeFn {
 
 #[derive(Debug)]
 pub struct DropFn;
+/// Removes rows and optional columns from the start or end of an array.
+///
+/// `DROP` is the complement of `TAKE` and returns the remaining spilled subset.
+///
+/// # Remarks
+/// - Positive counts drop from the start; negative counts drop from the end.
+/// - `rows` is required; `columns` is optional.
+/// - Dropping all rows or columns yields an empty spill.
+/// - Invalid source references propagate errors.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Drop header row"
+/// grid:
+///   A1: "Month"
+///   A2: "Jan"
+///   A3: "Feb"
+/// formula: '=DROP(A1:A3,1)'
+/// expected: [["Jan"],["Feb"]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Drop last column"
+/// grid:
+///   A1: 10
+///   B1: 20
+///   C1: 30
+/// formula: '=DROP(A1:C1,0,-1)'
+/// expected: [[10,20]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TAKE
+///   - CHOOSEROWS
+///   - CHOOSECOLS
+/// faq:
+///   - q: "What does a negative drop count mean?"
+///     a: "Negative counts drop from the end, so DROP(array,0,-1) removes the last column and keeps the leading columns."
+///   - q: "What if DROP removes every row or column?"
+///     a: "The result is an empty spill rather than an error when all rows or all columns are removed."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: DROP
+/// Type: DropFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: DROP(arg1: range@range, arg2: number@scalar, arg3?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DropFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

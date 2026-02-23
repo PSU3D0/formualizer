@@ -1,0 +1,58 @@
+---
+title: "TODAY"
+description: "TODAY: Returns the current date as a volatile serial value."
+---
+
+<FunctionPageSchema id="datetime/today" />
+
+## Summary
+
+Returns the current date as a volatile serial value.
+
+## Remarks
+ - `TODAY` is volatile and recalculates each time the workbook recalculates.
+ - The result is an integer date serial with no time fraction.
+ - Serial output respects the active workbook date system (`1900` or `1904`).
+
+## Examples
+
+<Tabs items={["TODAY has no time fraction", "Date arithmetic with TODAY"]}>
+<Tab value="TODAY has no time fraction">
+<FunctionSandbox
+  title="TODAY has no time fraction"
+  formula={`=TODAY()=INT(TODAY())`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Date arithmetic with TODAY">
+<FunctionSandbox
+  title="Date arithmetic with TODAY"
+  formula={`=TODAY()+7-TODAY()`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [NOW](/docs/reference/functions/datetime/now)
+- [DATE](/docs/reference/functions/datetime/date)
+- [WORKDAY](/docs/reference/functions/datetime/workday)
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
+- [DATEVALUE](/docs/reference/functions/datetime/datevalue)
+- [DAY](/docs/reference/functions/datetime/day)
+
+## FAQ
+
+### Will TODAY include a time-of-day fraction?
+No. TODAY always returns an integer serial date, so its fractional part is always 0.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/today" />
+{/* [formualizer-docgen:function-meta:end] */}

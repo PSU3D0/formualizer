@@ -1,0 +1,58 @@
+---
+title: "SECOND"
+description: "Extracts the second component (`0` to `59`) from a time or datetime serial."
+---
+
+<FunctionPageSchema id="datetime/second" />
+
+## Summary
+
+Extracts the second component (`0` to `59`) from a time or datetime serial.
+
+## Remarks
+ - The integer date portion is ignored for second extraction.
+ - Conversion uses Excel 1900 serial interpretation when resolving datetime values.
+ - Time is computed from the serial fraction and rounded to whole seconds.
+
+## Examples
+
+<Tabs items={["Extract second from 15:30:45", "Extract second from exact noon"]}>
+<Tab value="Extract second from 15:30:45">
+<FunctionSandbox
+  title="Extract second from 15:30:45"
+  formula={`=SECOND(0.6463541667)`}
+  grid={{}}
+  expected={"45"}
+/>
+</Tab>
+
+<Tab value="Extract second from exact noon">
+<FunctionSandbox
+  title="Extract second from exact noon"
+  formula={`=SECOND(0.5)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [HOUR](/docs/reference/functions/datetime/hour)
+- [MINUTE](/docs/reference/functions/datetime/minute)
+- [TIMEVALUE](/docs/reference/functions/datetime/timevalue)
+- [DAY](/docs/reference/functions/datetime/day)
+- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
+- [MONTH](/docs/reference/functions/datetime/month)
+
+## FAQ
+
+### Can SECOND return 60 for leap seconds?
+No. SECOND returns values from 0 to 59 based on spreadsheet serial-time interpretation.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/second" />
+{/* [formualizer-docgen:function-meta:end] */}

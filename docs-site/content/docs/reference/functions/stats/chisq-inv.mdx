@@ -1,0 +1,54 @@
+---
+title: "CHISQ.INV"
+description: "CHISQ.INV: Returns the chi-square value whose left-tail probability is `probability`."
+---
+
+<FunctionPageSchema id="stats/chisq-inv" />
+
+## Summary
+
+`CHISQ.INV` inverts `CHISQ.DIST(x, deg_freedom, TRUE)`.
+
+## Remarks
+ - `probability` must be strictly between `0` and `1`.
+ - `deg_freedom` must be at least `1`.
+ - Returns `#NUM!` when arguments are outside valid ranges.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Median chi-square quantile for df=2", "Upper quantile for df=10"]}>
+<Tab value="Median chi-square quantile for df=2">
+<FunctionSandbox
+  title="Median chi-square quantile for df=2"
+  formula={`=CHISQ.INV(0.5,2)`}
+  grid={{}}
+  expected={"1.3862943611198906"}
+/>
+</Tab>
+
+<Tab value="Upper quantile for df=10">
+<FunctionSandbox
+  title="Upper quantile for df=10"
+  formula={`=CHISQ.INV(0.95,10)`}
+  grid={{}}
+  expected={"18.307038053275146"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [CHISQ.TEST](/docs/reference/functions/stats/chisq-test)
+- [F.TEST](/docs/reference/functions/stats/f-test)
+- [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
+- [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
+- [T.INV](/docs/reference/functions/stats/t-inv)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/chisq-inv" />
+{/* [formualizer-docgen:function-meta:end] */}

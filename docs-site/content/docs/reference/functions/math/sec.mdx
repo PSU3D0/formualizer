@@ -1,0 +1,58 @@
+---
+title: "SEC"
+description: "Returns the secant of an angle, defined as `1 / COS(angle)`."
+---
+
+<FunctionPageSchema id="math/sec" />
+
+## Summary
+
+Use `SEC` for reciprocal-cosine calculations in radian-based formulas.
+
+## Remarks
+ - Domain: valid for all real angles except where `COS(angle) = 0`.
+ - Radians: input is interpreted in radians.
+ - Errors: returns `#DIV/0!` near odd multiples of `PI()/2`.
+
+## Examples
+
+<Tabs items={["Secant at zero", "Singularity at PI over 2"]}>
+<Tab value="Secant at zero">
+<FunctionSandbox
+  title="Secant at zero"
+  formula={`=SEC(0)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Singularity at PI over 2">
+<FunctionSandbox
+  title="Singularity at PI over 2"
+  formula={`=SEC(PI()/2)`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [COS](/docs/reference/functions/math/cos)
+- [COT](/docs/reference/functions/math/cot)
+- [CSC](/docs/reference/functions/math/csc)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASIN](/docs/reference/functions/math/asin)
+
+## FAQ
+
+### When does SEC return #DIV/0!?
+SEC returns #DIV/0! when COS(angle) is effectively zero.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sec" />
+{/* [formualizer-docgen:function-meta:end] */}

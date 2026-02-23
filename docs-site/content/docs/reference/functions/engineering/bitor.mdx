@@ -1,0 +1,58 @@
+---
+title: "BITOR"
+description: "BITOR: Returns the bitwise OR of two non-negative integers."
+---
+
+<FunctionPageSchema id="engineering/bitor" />
+
+## Summary
+
+Combines matching bits from both inputs and keeps bits set in either number.
+
+## Remarks
+ - Arguments are coerced to numbers and must be whole numbers in the range `[0, 2^48)`.
+ - Returns `#NUM!` for negative values, fractional values, or out-of-range values.
+ - Propagates input errors.
+
+## Examples
+
+<Tabs items={["Merge bit flags", "Set an additional bit"]}>
+<Tab value="Merge bit flags">
+<FunctionSandbox
+  title="Merge bit flags"
+  formula={`=BITOR(13,10)`}
+  grid={{}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="Set an additional bit">
+<FunctionSandbox
+  title="Set an additional bit"
+  formula={`=BITOR(8,1)`}
+  grid={{}}
+  expected={"9"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BITAND](/docs/reference/functions/engineering/bitand)
+- [BITXOR](/docs/reference/functions/engineering/bitxor)
+- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
+- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+
+## FAQ
+
+### Does `BITOR` accept decimal-looking values like `3.0`?
+Yes if they coerce to whole integers; non-integer values still return `#NUM!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/bitor" />
+{/* [formualizer-docgen:function-meta:end] */}

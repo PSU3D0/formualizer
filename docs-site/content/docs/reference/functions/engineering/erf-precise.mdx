@@ -1,0 +1,58 @@
+---
+title: "ERF.PRECISE"
+description: "ERF.PRECISE: Returns the error function of a number."
+---
+
+<FunctionPageSchema id="engineering/erf-precise" />
+
+## Summary
+
+This is the one-argument precise variant of `ERF`.
+
+## Remarks
+ - Input is numerically coerced.
+ - Equivalent to `ERF(x)` in single-argument mode.
+ - Results are approximate floating-point values.
+
+## Examples
+
+<Tabs items={["Positive input", "Negative input"]}>
+<Tab value="Positive input">
+<FunctionSandbox
+  title="Positive input"
+  formula={`=ERF.PRECISE(1)`}
+  grid={{}}
+  expected={"0.8427007929497149"}
+/>
+</Tab>
+
+<Tab value="Negative input">
+<FunctionSandbox
+  title="Negative input"
+  formula={`=ERF.PRECISE(-1)`}
+  grid={{}}
+  expected={"-0.8427007929497149"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ERF](/docs/reference/functions/engineering/erf)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
+- [IMABS](/docs/reference/functions/engineering/imabs)
+- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+
+## FAQ
+
+### How is `ERF.PRECISE` different from `ERF`?
+`ERF.PRECISE` is the one-argument form only; numerically it matches `ERF(x)` for single input mode.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/erf-precise" />
+{/* [formualizer-docgen:function-meta:end] */}

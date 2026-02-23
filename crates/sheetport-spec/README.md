@@ -1,4 +1,8 @@
+![Formualizer banner](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png)
+
 # sheetport-spec (FIO / SheetPort)
+
+![Arrow Powered](https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white)
 
 `sheetport-spec` defines the Formualizer I/O (FIO) manifest format used by SheetPort.
 

@@ -1,0 +1,58 @@
+---
+title: "YEAR"
+description: "Extracts the calendar year from a date serial."
+---
+
+<FunctionPageSchema id="datetime/year" />
+
+## Summary
+
+Extracts the calendar year from a date serial.
+
+## Remarks
+ - Fractional time is ignored; only the integer date portion is used.
+ - Input serials are interpreted with Excel 1900 date semantics.
+ - Results are Gregorian calendar years.
+
+## Examples
+
+<Tabs items={["Extract year from date serial", "Extract year from datetime serial"]}>
+<Tab value="Extract year from date serial">
+<FunctionSandbox
+  title="Extract year from date serial"
+  formula={`=YEAR(44927)`}
+  grid={{}}
+  expected={"2023"}
+/>
+</Tab>
+
+<Tab value="Extract year from datetime serial">
+<FunctionSandbox
+  title="Extract year from datetime serial"
+  formula={`=YEAR(45351.75)`}
+  grid={{}}
+  expected={"2024"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [MONTH](/docs/reference/functions/datetime/month)
+- [DAY](/docs/reference/functions/datetime/day)
+- [DATE](/docs/reference/functions/datetime/date)
+- [HOUR](/docs/reference/functions/datetime/hour)
+- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
+- [MINUTE](/docs/reference/functions/datetime/minute)
+
+## FAQ
+
+### Does YEAR use the fractional time part of a serial?
+No. YEAR resolves the calendar date and ignores time-of-day fractions.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/year" />
+{/* [formualizer-docgen:function-meta:end] */}

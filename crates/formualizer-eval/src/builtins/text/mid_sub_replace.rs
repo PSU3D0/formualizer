@@ -18,6 +18,47 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 // MID(text, start_num, num_chars)
 #[derive(Debug)]
 pub struct MidFn;
+/// Returns a substring starting at a 1-based position.
+///
+/// # Remarks
+/// - `start_num` is 1-based; values below `1` return `#VALUE!`.
+/// - `num_chars` must be non-negative; negatives return `#VALUE!`.
+/// - If start is beyond the end of the text, returns an empty string.
+/// - Non-text inputs are coerced to text.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Extract middle segment"
+/// formula: '=MID("spreadsheet", 3, 5)'
+/// expected: "reads"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Start past end returns empty"
+/// formula: '=MID("abc", 10, 2)'
+/// expected: ""
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LEFT
+///   - RIGHT
+///   - REPLACE
+/// faq:
+///   - q: "How does MID handle out-of-range start positions?"
+///     a: "If start_num is beyond the text length, MID returns an empty string."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: MID
+/// Type: MidFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: MID(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for MidFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -64,6 +105,49 @@ impl Function for MidFn {
 // SUBSTITUTE(text, old_text, new_text, [instance_num]) - limited semantics
 #[derive(Debug)]
 pub struct SubstituteFn;
+/// Replaces matching text within a string.
+///
+/// `SUBSTITUTE` can replace all occurrences or only a specific instance.
+///
+/// # Remarks
+/// - Matching is case-sensitive.
+/// - If `old_text` is empty, the original text is returned unchanged.
+/// - With `instance_num`, only that 1-based occurrence is replaced.
+/// - Non-positive `instance_num` returns `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Replace all matches"
+/// formula: '=SUBSTITUTE("a-b-a", "a", "x")'
+/// expected: "x-b-x"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Replace only second match"
+/// formula: '=SUBSTITUTE("2024-01-2024", "2024", "FY24", 2)'
+/// expected: "2024-01-FY24"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - REPLACE
+///   - TEXTBEFORE
+///   - TEXTAFTER
+/// faq:
+///   - q: "Is SUBSTITUTE case-sensitive?"
+///     a: "Yes. It matches old_text with exact case and replaces either all or the requested instance."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SUBSTITUTE
+/// Type: SubstituteFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUBSTITUTE(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SubstituteFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -128,6 +212,49 @@ impl Function for SubstituteFn {
 // REPLACE(old_text, start_num, num_chars, new_text)
 #[derive(Debug)]
 pub struct ReplaceFn;
+/// Replaces part of a text string by position.
+///
+/// `REPLACE(old_text, start_num, num_chars, new_text)` works by character index.
+///
+/// # Remarks
+/// - `start_num` is 1-based and must be at least `1`.
+/// - `num_chars` must be non-negative.
+/// - If start is beyond the end, the original text is returned unchanged.
+/// - Non-text inputs are coerced to text.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Replace middle segment"
+/// formula: '=REPLACE("abcdef", 3, 2, "ZZ")'
+/// expected: "abZZef"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Insert at start"
+/// formula: '=REPLACE("report", 1, 0, "Q1-")'
+/// expected: "Q1-report"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUBSTITUTE
+///   - MID
+///   - LEFT
+/// faq:
+///   - q: "Does REPLACE match text patterns?"
+///     a: "No. REPLACE is position-based and replaces by start_num and num_chars, not by searching old text."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: REPLACE
+/// Type: ReplaceFn
+/// Min args: 4
+/// Max args: 1
+/// Variadic: false
+/// Signature: REPLACE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ReplaceFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

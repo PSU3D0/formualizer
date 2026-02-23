@@ -1,0 +1,70 @@
+---
+title: "COUNTIFS"
+description: "COUNTIFS: Counts cells that satisfy all supplied criteria pairs."
+---
+
+<FunctionPageSchema id="math/countifs" />
+
+## Summary
+
+`COUNTIFS` applies each `(criteria_range, criteria)` pair and counts rows where all tests pass.
+
+## Remarks
+ - Requires one or more criteria pairs.
+ - Criteria support operators and wildcard matching.
+ - A row contributes to the result only when every criterion evaluates true.
+
+## Examples
+
+<Tabs items={["Count rows matching two filters", "Wildcard text matching", "No rows meeting all criteria"]}>
+<Tab value="Count rows matching two filters">
+<FunctionSandbox
+  title="Count rows matching two filters"
+  formula={`=COUNTIFS(A1:A3, "East", B1:B3, ">=10")`}
+  grid={{"A1":"East","A2":"East","A3":"West","B1":"12","B2":"8","B3":"15"}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Wildcard text matching">
+<FunctionSandbox
+  title="Wildcard text matching"
+  formula={`=COUNTIFS({"apple","pear","apricot"}, "ap*")`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="No rows meeting all criteria">
+<FunctionSandbox
+  title="No rows meeting all criteria"
+  formula={`=COUNTIFS({1,2,3}, ">5", {"a","b","c"}, "a")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [COUNTIF](/docs/reference/functions/math/countif)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
+- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
+- [FILTER](/docs/reference/functions/lookup/filter)
+- [AVERAGEIF](/docs/reference/functions/math/averageif)
+- [SUMIF](/docs/reference/functions/math/sumif)
+
+## FAQ
+
+### Why can COUNTIFS return 0 even when one criterion matches rows?
+Each row must satisfy every criterion pair; partial matches are excluded.
+
+### Does COUNTIFS require at least one criteria pair?
+Yes. It expects arguments in (range, criteria) pairs.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/countifs" />
+{/* [formualizer-docgen:function-meta:end] */}

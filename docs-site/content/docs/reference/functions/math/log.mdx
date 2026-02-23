@@ -1,0 +1,59 @@
+---
+title: "LOG"
+description: "Returns the logarithm of a number for a specified base."
+---
+
+<FunctionPageSchema id="math/log" />
+
+## Summary
+
+Returns the logarithm of a number for a specified base.
+
+## Remarks
+ - If `base` is omitted, base 10 is used.
+ - `number` must be positive.
+ - `base` must be positive and not equal to 1.
+ - Invalid domains return `#NUM!`.
+
+## Examples
+
+<Tabs items={["Base-10 logarithm", "Base-2 logarithm"]}>
+<Tab value="Base-10 logarithm">
+<FunctionSandbox
+  title="Base-10 logarithm"
+  formula={`=LOG(1000)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Base-2 logarithm">
+<FunctionSandbox
+  title="Base-2 logarithm"
+  formula={`=LOG(8,2)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LN](/docs/reference/functions/math/ln)
+- [LOG10](/docs/reference/functions/math/log10)
+- [EXP](/docs/reference/functions/math/exp)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+
+## FAQ
+
+### Which base values are invalid for LOG?
+Base must be positive and not equal to 1; otherwise LOG returns #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/log" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,54 @@
+---
+title: "CHISQ.DIST"
+description: "CHISQ.DIST: Returns the chi-square probability for `x` with the specified degrees of freedom."
+---
+
+<FunctionPageSchema id="stats/chisq-dist" />
+
+## Summary
+
+Use `CHISQ.DIST` in cumulative mode for left-tail probability or density mode for the PDF.
+
+## Remarks
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
+ - Requires `x &gt;= 0` and `deg_freedom &gt;= 1`.
+ - Returns `#NUM!` for negative `x` or invalid degrees of freedom.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Chi-square CDF at zero", "Chi-square PDF example"]}>
+<Tab value="Chi-square CDF at zero">
+<FunctionSandbox
+  title="Chi-square CDF at zero"
+  formula={`=CHISQ.DIST(0,4,TRUE)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Chi-square PDF example">
+<FunctionSandbox
+  title="Chi-square PDF example"
+  formula={`=CHISQ.DIST(2,2,FALSE)`}
+  grid={{}}
+  expected={"0.18393972058572117"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
+- [CHISQ.TEST](/docs/reference/functions/stats/chisq-test)
+- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
+- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
+- [EXPON.DIST](/docs/reference/functions/stats/expon-dist)
+- [F.INV](/docs/reference/functions/stats/f-inv)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/chisq-dist" />
+{/* [formualizer-docgen:function-meta:end] */}

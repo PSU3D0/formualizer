@@ -1,0 +1,58 @@
+---
+title: "IMABS"
+description: "IMABS: Returns the modulus (absolute value) of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imabs" />
+
+## Summary
+
+Computes `sqrt(real^2 + imaginary^2)`.
+
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Returns a non-negative real number.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["3-4-5 triangle modulus", "Purely real input"]}>
+<Tab value="3-4-5 triangle modulus">
+<FunctionSandbox
+  title="3-4-5 triangle modulus"
+  formula={`=IMABS("3+4i")`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+<Tab value="Purely real input">
+<FunctionSandbox
+  title="Purely real input"
+  formula={`=IMABS("5")`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMREAL](/docs/reference/functions/engineering/imreal)
+- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+- [IMARGUMENT](/docs/reference/functions/engineering/imargument)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### Can `IMABS` return a negative result?
+No. It computes the modulus `sqrt(a^2+b^2)`, which is always non-negative.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imabs" />
+{/* [formualizer-docgen:function-meta:end] */}

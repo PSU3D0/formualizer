@@ -6,16 +6,20 @@ use wasm_bindgen::prelude::*;
 #[serde(rename_all = "camelCase")]
 pub struct Token {
     pub token_type: String,
+    pub subtype: String,
     pub value: String,
     pub pos: usize,
+    pub end: usize,
 }
 
 impl Token {
     pub fn from_core(core_token: CoreToken) -> Self {
         Token {
             token_type: format!("{:?}", core_token.token_type),
+            subtype: format!("{:?}", core_token.subtype),
             value: core_token.value,
             pos: core_token.start, // Use start position as pos
+            end: core_token.end,
         }
     }
 }
@@ -38,8 +42,18 @@ impl JsToken {
     }
 
     #[wasm_bindgen(getter)]
+    pub fn subtype(&self) -> String {
+        self.inner.subtype.clone()
+    }
+
+    #[wasm_bindgen(getter)]
     pub fn pos(&self) -> usize {
         self.inner.pos
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn end(&self) -> usize {
+        self.inner.end
     }
 
     #[wasm_bindgen(js_name = "toString")]
@@ -55,6 +69,6 @@ impl JsToken {
 
     #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> Result<JsValue, JsValue> {
-        serde_wasm_bindgen::to_value(&self.inner).map_err(|e| JsValue::from_str(&e.to_string()))
+        crate::utils::to_js_value(&self.inner)
     }
 }

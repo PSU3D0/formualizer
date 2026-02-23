@@ -1,0 +1,58 @@
+---
+title: "VAR.P"
+description: "VAR.P: Returns population variance using `n` in the denominator."
+---
+
+<FunctionPageSchema id="stats/var-p" />
+
+## Summary
+
+`VAR.P` describes dispersion for a complete population of numeric values.
+
+## Remarks
+ - Requires at least one numeric value.
+ - Returns `#DIV/0!` when no numeric values are provided.
+ - Non-numeric values in referenced ranges are ignored.
+
+## Examples
+
+<Tabs items={["Population variance from scalar arguments", "Population variance from a range"]}>
+<Tab value="Population variance from scalar arguments">
+<FunctionSandbox
+  title="Population variance from scalar arguments"
+  formula={`=VAR.P(2,4,6)`}
+  grid={{}}
+  expected={"2.6666666666666665"}
+/>
+</Tab>
+
+<Tab value="Population variance from a range">
+<FunctionSandbox
+  title="Population variance from a range"
+  formula={`=VAR.P(A1:A3)`}
+  grid={{"A1":"1","A2":"2","A3":"3"}}
+  expected={"0.6666666666666666"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [VAR.S](/docs/reference/functions/stats/var-s)
+- [STDEV.P](/docs/reference/functions/stats/stdev-p)
+- [STDEV.S](/docs/reference/functions/stats/stdev-s)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### What is the denominator difference vs VAR.S?
+VAR.P divides by n, while VAR.S divides by n-1.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/var-p" />
+{/* [formualizer-docgen:function-meta:end] */}

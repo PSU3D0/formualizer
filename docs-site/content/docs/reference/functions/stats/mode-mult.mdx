@@ -1,0 +1,58 @@
+---
+title: "MODE.MULT"
+description: "MODE.MULT: Returns all modal values as a vertical array."
+---
+
+<FunctionPageSchema id="stats/mode-mult" />
+
+## Summary
+
+Use `MODE.MULT` when a data set can have multiple values with the same highest frequency.
+
+## Remarks
+ - Returns each tied mode as a separate row in the result array.
+ - Returns `#N/A` when every numeric value appears only once.
+ - Non-numeric values in referenced ranges are ignored.
+
+## Examples
+
+<Tabs items={["Multiple modes from direct values", "Single repeated mode still returns an array"]}>
+<Tab value="Multiple modes from direct values">
+<FunctionSandbox
+  title="Multiple modes from direct values"
+  formula={`=MODE.MULT({1,2,2,3,3,4})`}
+  grid={{}}
+  expected={"[[2],[3]]"}
+/>
+</Tab>
+
+<Tab value="Single repeated mode still returns an array">
+<FunctionSandbox
+  title="Single repeated mode still returns an array"
+  formula={`=MODE.MULT(A1:A4)`}
+  grid={{"A1":"5","A2":"5","A3":"2","A4":"1"}}
+  expected={"[[5]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [MODE.SNGL](/docs/reference/functions/stats/mode-sngl)
+- [FREQUENCY](/docs/reference/functions/stats/frequency)
+- [MEDIAN](/docs/reference/functions/stats/median)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### Why can MODE.MULT return an array result?
+It emits every value tied for highest frequency as separate rows.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/mode-mult" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,63 @@
+---
+title: "CHOOSECOLS"
+description: "CHOOSECOLS: Returns selected columns from an array or range."
+---
+
+<FunctionPageSchema id="lookup/choosecols" />
+
+## Summary
+
+`CHOOSECOLS` builds a new spilled array containing only the requested columns, in the
+ order provided.
+
+## Remarks
+ - Column indexes are 1-based; negative indexes count from the end (`-1` is last column).
+ - Repeated indexes are allowed and duplicate columns in the output.
+ - Index `0` or out-of-bounds indexes return `#VALUE!`.
+ - The result spills as an array unless it collapses to a single cell.
+
+## Examples
+
+<Tabs items={["Select first and third columns", "Select the last column with a negative index"]}>
+<Tab value="Select first and third columns">
+<FunctionSandbox
+  title="Select first and third columns"
+  formula={`=CHOOSECOLS(A1:C2,1,3)`}
+  grid={{"A1":"Name","A2":"Ana","B1":"Dept","B2":"Ops","C1":"Score","C2":"91"}}
+  expected={"[[\"Name\",\"Score\"],[\"Ana\",91]]"}
+/>
+</Tab>
+
+<Tab value="Select the last column with a negative index">
+<FunctionSandbox
+  title="Select the last column with a negative index"
+  formula={`=CHOOSECOLS(A1:C1,-1)`}
+  grid={{"A1":"10","B1":"20","C1":"30"}}
+  expected={"30"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+- [TAKE](/docs/reference/functions/lookup/take)
+- [DROP](/docs/reference/functions/lookup/drop)
+- [XMATCH](/docs/reference/functions/lookup/xmatch)
+- [XLOOKUP](/docs/reference/functions/lookup/xlookup)
+- [FILTER](/docs/reference/functions/lookup/filter)
+
+## FAQ
+
+### How do negative column indexes work?
+Negative indexes count from the right edge of the array, so -1 selects the last column, -2 the second-to-last, and so on.
+
+### What triggers #VALUE! in CHOOSECOLS?
+Index 0 and any index whose absolute position falls outside the source width return #VALUE!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/choosecols" />
+{/* [formualizer-docgen:function-meta:end] */}

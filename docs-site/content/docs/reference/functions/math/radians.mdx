@@ -1,0 +1,57 @@
+---
+title: "RADIANS"
+description: "Converts an angle from degrees to radians."
+---
+
+<FunctionPageSchema id="math/radians" />
+
+## Summary
+
+Converts an angle from degrees to radians.
+
+## Remarks
+ - Use this before trigonometric functions when your source angle is in degrees.
+ - Output is `degrees * PI() / 180`.
+
+## Examples
+
+<Tabs items={["Convert 180°", "Convert 45°"]}>
+<Tab value="Convert 180°">
+<FunctionSandbox
+  title="Convert 180°"
+  formula={`=RADIANS(180)`}
+  grid={{}}
+  expected={"3.141592653589793"}
+/>
+</Tab>
+
+<Tab value="Convert 45°">
+<FunctionSandbox
+  title="Convert 45°"
+  formula={`=RADIANS(45)`}
+  grid={{}}
+  expected={"0.7853981633974483"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DEGREES](/docs/reference/functions/math/degrees)
+- [SIN](/docs/reference/functions/math/sin)
+- [COS](/docs/reference/functions/math/cos)
+- [ACOSH](/docs/reference/functions/math/acosh)
+- [ATANH](/docs/reference/functions/math/atanh)
+- [SECH](/docs/reference/functions/math/sech)
+
+## FAQ
+
+### When should I wrap angles with RADIANS?
+Use it whenever your source angle is in degrees and the downstream trig function expects radians.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/radians" />
+{/* [formualizer-docgen:function-meta:end] */}

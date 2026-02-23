@@ -1,0 +1,55 @@
+---
+title: "SKEW"
+description: "Returns the sample skewness of a numeric distribution."
+---
+
+<FunctionPageSchema id="stats/skew" />
+
+## Summary
+
+`SKEW` quantifies asymmetry: positive values indicate a longer right tail, negative values a
+ longer left tail.
+
+## Remarks
+ - Requires at least three numeric values.
+ - Returns `#DIV/0!` when there are fewer than three numbers or zero sample standard deviation.
+ - Non-numeric values in ranges are ignored by statistical-collection rules.
+ - Uses the Excel-style sample skewness correction factor.
+
+## Examples
+
+<Tabs items={["Symmetric sample", "Right-skewed sample"]}>
+<Tab value="Symmetric sample">
+<FunctionSandbox
+  title="Symmetric sample"
+  formula={`=SKEW({1,2,3})`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Right-skewed sample">
+<FunctionSandbox
+  title="Right-skewed sample"
+  formula={`=SKEW({1,1,2,10})`}
+  grid={{}}
+  expected={"1.9683567600862015"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+- [HARMEAN](/docs/reference/functions/stats/harmean)
+- [KURT](/docs/reference/functions/stats/kurt)
+- [MEDIAN](/docs/reference/functions/stats/median)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/skew" />
+{/* [formualizer-docgen:function-meta:end] */}

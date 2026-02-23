@@ -1,0 +1,58 @@
+---
+title: "DAY"
+description: "Extracts the day-of-month (`1` to `31`) from a date serial."
+---
+
+<FunctionPageSchema id="datetime/day" />
+
+## Summary
+
+Extracts the day-of-month (`1` to `31`) from a date serial.
+
+## Remarks
+ - Fractional time is ignored; only the integer serial portion is used.
+ - Serials are interpreted with Excel 1900 date semantics.
+ - Output is the day within the month, not day-of-year.
+
+## Examples
+
+<Tabs items={["Extract day from first-of-month", "Extract day from leap date"]}>
+<Tab value="Extract day from first-of-month">
+<FunctionSandbox
+  title="Extract day from first-of-month"
+  formula={`=DAY(44927)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Extract day from leap date">
+<FunctionSandbox
+  title="Extract day from leap date"
+  formula={`=DAY(45351)`}
+  grid={{}}
+  expected={"29"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DATE](/docs/reference/functions/datetime/date)
+- [MONTH](/docs/reference/functions/datetime/month)
+- [EOMONTH](/docs/reference/functions/datetime/eomonth)
+- [HOUR](/docs/reference/functions/datetime/hour)
+- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
+- [MINUTE](/docs/reference/functions/datetime/minute)
+
+## FAQ
+
+### Does DAY return day-of-year or day-of-month?
+DAY returns the day number within the month (1-31), not the ordinal day of the year.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/day" />
+{/* [formualizer-docgen:function-meta:end] */}

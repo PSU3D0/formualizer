@@ -1,0 +1,62 @@
+---
+title: "COLUMN"
+description: "Returns the column number of a reference, or of the current cell when omitted."
+---
+
+<FunctionPageSchema id="lookup/column" />
+
+## Summary
+
+`COLUMN` returns a 1-based column index (`A` = 1).
+
+## Remarks
+ - With a range argument, `COLUMN` returns the first column in that reference.
+ - Without arguments, it uses the column of the formula cell.
+ - Full-row references such as `5:5` return `1`.
+ - Invalid references return an error (`#REF!`/`#VALUE!` depending on context).
+
+## Examples
+
+<Tabs items={["Column of a single-cell reference", "Column of a range"]}>
+<Tab value="Column of a single-cell reference">
+<FunctionSandbox
+  title="Column of a single-cell reference"
+  formula={`=COLUMN(C5)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Column of a range">
+<FunctionSandbox
+  title="Column of a range"
+  formula={`=COLUMN(B2:D4)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [COLUMNS](/docs/reference/functions/lookup/columns)
+- [ROW](/docs/reference/functions/lookup/row)
+- [ADDRESS](/docs/reference/functions/lookup/address)
+- [TRANSPOSE](/docs/reference/functions/lookup/transpose)
+- [ROWS](/docs/reference/functions/lookup/rows)
+- [CHOOSE](/docs/reference/functions/lookup/choose)
+
+## FAQ
+
+### What does COLUMN return for a range like B2:D4?
+COLUMN returns the first column index of the reference (2 for column B).
+
+### What if COLUMN() is used without a reference?
+It returns the formula cell's column number, or #VALUE! if current-cell context is unavailable.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/column" />
+{/* [formualizer-docgen:function-meta:end] */}

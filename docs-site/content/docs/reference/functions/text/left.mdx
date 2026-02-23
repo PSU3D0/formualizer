@@ -1,0 +1,59 @@
+---
+title: "LEFT"
+description: "Returns the leftmost characters from a text value."
+---
+
+<FunctionPageSchema id="text/left" />
+
+## Summary
+
+Returns the leftmost characters from a text value.
+
+## Remarks
+ - `num_chars` defaults to `1` when omitted.
+ - Negative `num_chars` returns `#VALUE!`.
+ - If `num_chars` exceeds length, the full text is returned.
+ - Non-text values are coerced to text before slicing.
+
+## Examples
+
+<Tabs items={["Take first two characters", "Default count is one"]}>
+<Tab value="Take first two characters">
+<FunctionSandbox
+  title="Take first two characters"
+  formula={`=LEFT("Formualizer", 2)`}
+  grid={{}}
+  expected={"Fo"}
+/>
+</Tab>
+
+<Tab value="Default count is one">
+<FunctionSandbox
+  title="Default count is one"
+  formula={`=LEFT("Data")`}
+  grid={{}}
+  expected={"D"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [RIGHT](/docs/reference/functions/text/right)
+- [MID](/docs/reference/functions/text/mid)
+- [LEN](/docs/reference/functions/text/len)
+- [CONCAT](/docs/reference/functions/text/concat)
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+- [FIND](/docs/reference/functions/text/find)
+
+## FAQ
+
+### What if num_chars is negative?
+LEFT returns #VALUE! when num_chars is below zero.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/left" />
+{/* [formualizer-docgen:function-meta:end] */}

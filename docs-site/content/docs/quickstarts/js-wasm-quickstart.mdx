@@ -1,0 +1,42 @@
+---
+title: JavaScript/WASM Quickstart
+description: Initialize the WASM module and evaluate workbook formulas from JS.
+---
+
+## 1) Install
+
+```bash
+npm install formualizer
+```
+
+## 2) Initialize and evaluate
+
+```ts
+import init, { Workbook } from "formualizer";
+
+await init();
+
+const wb = new Workbook();
+wb.addSheet("Sheet1");
+
+wb.setValue("Sheet1", 1, 1, 100);
+wb.setValue("Sheet1", 2, 1, 20);
+wb.setFormula("Sheet1", 1, 2, "=A1-A2");
+
+console.log(wb.evaluateCell("Sheet1", 1, 2)); // 80
+```
+
+## 3) Run the repo example
+
+```bash
+cd bindings/wasm
+npm run build
+node examples/custom-function-registration.mjs
+```
+
+## Next
+
+- [Formula Parser](/formula-parser)
+- [First Workbook in 5 Minutes](/docs/quickstarts/first-workbook-in-5-minutes)
+- [Custom Functions (Rust, Python, JS)](/docs/guides/custom-functions-rust-python-js)
+- [WASM Plugins: Inspect, Attach, Bind](/docs/guides/wasm-plugins-inspect-attach-bind)

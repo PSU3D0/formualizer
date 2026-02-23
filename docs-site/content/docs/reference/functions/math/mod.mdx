@@ -1,0 +1,58 @@
+---
+title: "MOD"
+description: "MOD: Returns the remainder after division, with the sign of the divisor."
+---
+
+<FunctionPageSchema id="math/mod" />
+
+## Summary
+
+Returns the remainder after division, with the sign of the divisor.
+
+## Remarks
+ - If divisor is `0`, returns `#DIV/0!`.
+ - Result sign follows Excel-style MOD semantics (sign of divisor).
+ - Errors in either argument are propagated.
+
+## Examples
+
+<Tabs items={["Positive divisor", "Negative dividend"]}>
+<Tab value="Positive divisor">
+<FunctionSandbox
+  title="Positive divisor"
+  formula={`=MOD(10,3)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Negative dividend">
+<FunctionSandbox
+  title="Negative dividend"
+  formula={`=MOD(-3,2)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [QUOTIENT](/docs/reference/functions/math/quotient)
+- [INT](/docs/reference/functions/math/int)
+- [GCD](/docs/reference/functions/math/gcd)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [MROUND](/docs/reference/functions/math/mround)
+
+## FAQ
+
+### Why can MOD return a positive value for a negative dividend?
+MOD follows the sign of the divisor, matching Excel's modulo semantics.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/mod" />
+{/* [formualizer-docgen:function-meta:end] */}

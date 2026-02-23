@@ -13,6 +13,46 @@ use std::f64::consts::PI;
 
 #[derive(Debug)]
 pub struct SinFn;
+/// Returns the sine of an angle in radians.
+///
+/// # Remarks
+/// - Input is interpreted as radians, not degrees.
+/// - Supports scalar and array-style elementwise evaluation.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Sine of PI/2"
+/// formula: "=SIN(PI()/2)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sine from a cell value"
+/// grid:
+///   A1: 0
+/// formula: "=SIN(A1)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COS
+///   - TAN
+///   - RADIANS
+/// faq:
+///   - q: "Does SIN expect degrees or radians?"
+///     a: "SIN expects radians; convert degree inputs first with RADIANS."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SIN
+/// Type: SinFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SIN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SinFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -110,6 +150,44 @@ mod tests_sin {
 
 #[derive(Debug)]
 pub struct CosFn;
+/// Returns the cosine of an angle in radians.
+///
+/// # Remarks
+/// - Input must be in radians.
+/// - Supports elementwise evaluation for array inputs.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Cosine at zero"
+/// formula: "=COS(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Cosine at PI"
+/// formula: "=COS(PI())"
+/// expected: -1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - TAN
+///   - PI
+/// faq:
+///   - q: "Why can COS look wrong for degree values like 60?"
+///     a: "COS interprets 60 as radians, not degrees; use COS(RADIANS(60))."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: COS
+/// Type: CosFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COS(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CosFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -168,6 +246,44 @@ mod tests_cos {
 
 #[derive(Debug)]
 pub struct TanFn;
+/// Returns the tangent of an angle in radians.
+///
+/// # Remarks
+/// - Input is interpreted as radians.
+/// - Near odd multiples of `PI()/2`, results can become very large.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Tangent at PI/4"
+/// formula: "=TAN(PI()/4)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Tangent at zero"
+/// formula: "=TAN(0)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - COS
+///   - ATAN
+/// faq:
+///   - q: "Why does TAN explode near PI()/2?"
+///     a: "Because COS approaches zero there, TAN can become extremely large in magnitude."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TAN
+/// Type: TanFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TAN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for TanFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -226,6 +342,47 @@ mod tests_tan {
 
 #[derive(Debug)]
 pub struct AsinFn;
+/// Returns the angle in radians whose sine is the input value.
+///
+/// Use `ASIN` to recover an angle from a normalized ratio.
+///
+/// # Remarks
+/// - Domain: input must be between `-1` and `1`, inclusive.
+/// - Radians: output is in the range `[-PI()/2, PI()/2]`.
+/// - Errors: returns `#NUM!` when the input is outside the valid domain.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arcsine of one half"
+/// formula: "=ASIN(0.5)"
+/// expected: 0.5235987755982989
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Lower boundary"
+/// formula: "=ASIN(-1)"
+/// expected: -1.5707963267948966
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - ACOS
+///   - ATAN
+/// faq:
+///   - q: "When does ASIN return #NUM!?"
+///     a: "ASIN returns #NUM! when the input is outside the closed interval [-1, 1]."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ASIN
+/// Type: AsinFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ASIN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AsinFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -304,6 +461,47 @@ mod tests_asin {
 
 #[derive(Debug)]
 pub struct AcosFn;
+/// Returns the angle in radians whose cosine is the input value.
+///
+/// Use `ACOS` when you need an angle from a normalized adjacent/hypotenuse ratio.
+///
+/// # Remarks
+/// - Domain: input must be between `-1` and `1`, inclusive.
+/// - Radians: output is in the range `[0, PI()]`.
+/// - Errors: returns `#NUM!` when the input is outside the valid domain.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arccosine of one half"
+/// formula: "=ACOS(0.5)"
+/// expected: 1.0471975511965979
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Upper-angle boundary"
+/// formula: "=ACOS(-1)"
+/// expected: 3.141592653589793
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COS
+///   - ASIN
+///   - ATAN2
+/// faq:
+///   - q: "Why does ACOS reject values like 1.0001?"
+///     a: "ACOS is only defined on [-1, 1], so out-of-range inputs return #NUM!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ACOS
+/// Type: AcosFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOS(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AcosFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -380,6 +578,47 @@ mod tests_acos {
 
 #[derive(Debug)]
 pub struct AtanFn;
+/// Returns the angle in radians whose tangent is the input value.
+///
+/// `ATAN` is useful for recovering a slope angle from a ratio.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: output is in the range `(-PI()/2, PI()/2)`.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arctangent of one"
+/// formula: "=ATAN(1)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative slope angle"
+/// formula: "=ATAN(-1)"
+/// expected: -0.7853981633974483
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TAN
+///   - ATAN2
+///   - ACOT
+/// faq:
+///   - q: "Does ATAN ever return #NUM! for large values?"
+///     a: "No. ATAN accepts any real input and asymptotically approaches +/-PI()/2."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ATAN
+/// Type: AtanFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ATAN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AtanFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -441,6 +680,44 @@ mod tests_atan {
 
 #[derive(Debug)]
 pub struct Atan2Fn;
+/// Returns the arctangent of `y/x`, preserving quadrant information.
+///
+/// # Remarks
+/// - Formualizer uses Excel-style argument order: `ATAN2(x_num, y_num)`.
+/// - Returns `#DIV/0!` when both arguments are zero.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "First quadrant angle"
+/// formula: "=ATAN2(1,1)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Undefined angle at origin"
+/// formula: "=ATAN2(0,0)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATAN
+///   - ACOT
+///   - RADIANS
+/// faq:
+///   - q: "Why does ATAN2 return #DIV/0! at (0,0)?"
+///     a: "The origin has no defined direction angle, so ATAN2 reports #DIV/0!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ATAN2
+/// Type: Atan2Fn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: ATAN2(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for Atan2Fn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -568,6 +845,47 @@ mod tests_atan2 {
 
 #[derive(Debug)]
 pub struct SecFn;
+/// Returns the secant of an angle, defined as `1 / COS(angle)`.
+///
+/// Use `SEC` for reciprocal-cosine calculations in radian-based formulas.
+///
+/// # Remarks
+/// - Domain: valid for all real angles except where `COS(angle) = 0`.
+/// - Radians: input is interpreted in radians.
+/// - Errors: returns `#DIV/0!` near odd multiples of `PI()/2`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Secant at zero"
+/// formula: "=SEC(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Singularity at PI over 2"
+/// formula: "=SEC(PI()/2)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COS
+///   - COT
+///   - CSC
+/// faq:
+///   - q: "When does SEC return #DIV/0!?"
+///     a: "SEC returns #DIV/0! when COS(angle) is effectively zero."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SEC
+/// Type: SecFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SEC(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SecFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -646,6 +964,47 @@ mod tests_sec {
 
 #[derive(Debug)]
 pub struct CscFn;
+/// Returns the cosecant of an angle, defined as `1 / SIN(angle)`.
+///
+/// Use `CSC` for reciprocal-sine calculations in radian-based formulas.
+///
+/// # Remarks
+/// - Domain: valid for all real angles except where `SIN(angle) = 0`.
+/// - Radians: input is interpreted in radians.
+/// - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Cosecant at PI over 2"
+/// formula: "=CSC(PI()/2)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Zero sine denominator"
+/// formula: "=CSC(0)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SIN
+///   - COT
+///   - SEC
+/// faq:
+///   - q: "When does CSC return #DIV/0!?"
+///     a: "CSC returns #DIV/0! when SIN(angle) is effectively zero."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CSC
+/// Type: CscFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CSC(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CscFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -723,6 +1082,47 @@ mod tests_csc {
 
 #[derive(Debug)]
 pub struct CotFn;
+/// Returns the cotangent of an angle, defined as `1 / TAN(angle)`.
+///
+/// `COT` is useful when working with reciprocal tangent relationships.
+///
+/// # Remarks
+/// - Domain: valid for all real angles except where `TAN(angle) = 0`.
+/// - Radians: input is interpreted in radians.
+/// - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Cotangent at PI over 4"
+/// formula: "=COT(PI()/4)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Undefined cotangent at zero"
+/// formula: "=COT(0)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TAN
+///   - SEC
+///   - CSC
+/// faq:
+///   - q: "Why is COT undefined at integer multiples of PI()?"
+///     a: "At those points TAN is zero, so 1/TAN triggers a #DIV/0! condition."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: COT
+/// Type: CotFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COT(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CotFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -800,6 +1200,47 @@ mod tests_cot {
 
 #[derive(Debug)]
 pub struct AcotFn;
+/// Returns the angle in radians whose cotangent is the input value.
+///
+/// `ACOT` maps real inputs to principal angles in `(0, PI())`.
+///
+/// # Remarks
+/// - Domain: accepts any real number, including `0`.
+/// - Radians: output is in `(0, PI())`, with `ACOT(0) = PI()/2`.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arccotangent of one"
+/// formula: "=ACOT(1)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Arccotangent of negative one"
+/// formula: "=ACOT(-1)"
+/// expected: 2.356194490192345
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATAN
+///   - ATAN2
+///   - COT
+/// faq:
+///   - q: "What is ACOT(0)?"
+///     a: "ACOT(0) is PI()/2 in the principal-value branch used here."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ACOT
+/// Type: AcotFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOT(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AcotFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -870,6 +1311,47 @@ mod tests_acot {
 
 #[derive(Debug)]
 pub struct SinhFn;
+/// Returns the hyperbolic sine of a number.
+///
+/// `SINH` computes `(e^x - e^-x) / 2`.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic sine at zero"
+/// formula: "=SINH(0)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic sine at one"
+/// formula: "=SINH(1)"
+/// expected: 1.1752011936438014
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ASINH
+///   - COSH
+///   - TANH
+/// faq:
+///   - q: "Is SINH expecting radians like SIN?"
+///     a: "No. SINH is hyperbolic and treats input as a pure numeric value, not an angle unit."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SINH
+/// Type: SinhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SINH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SinhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -928,6 +1410,47 @@ mod tests_sinh {
 
 #[derive(Debug)]
 pub struct CoshFn;
+/// Returns the hyperbolic cosine of a number.
+///
+/// `COSH` computes `(e^x + e^-x) / 2`.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosine at zero"
+/// formula: "=COSH(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosine at one"
+/// formula: "=COSH(1)"
+/// expected: 1.5430806348152437
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ACOSH
+///   - SINH
+///   - TANH
+/// faq:
+///   - q: "Can COSH produce #NUM! domain errors?"
+///     a: "No function-specific domain errors are enforced for real inputs."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: COSH
+/// Type: CoshFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COSH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CoshFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -989,6 +1512,47 @@ mod tests_cosh {
 
 #[derive(Debug)]
 pub struct TanhFn;
+/// Returns the hyperbolic tangent of a number.
+///
+/// `TANH` computes `SINH(x) / COSH(x)`.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic tangent at zero"
+/// formula: "=TANH(0)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic tangent at two"
+/// formula: "=TANH(2)"
+/// expected: 0.9640275800758169
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATANH
+///   - SINH
+///   - COSH
+/// faq:
+///   - q: "What output range should TANH produce?"
+///     a: "For real inputs, TANH stays strictly between -1 and 1."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TANH
+/// Type: TanhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TANH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for TanhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1050,6 +1614,47 @@ mod tests_tanh {
 
 #[derive(Debug)]
 pub struct AsinhFn;
+/// Returns the inverse hyperbolic sine of a number.
+///
+/// `ASINH` is the inverse of `SINH` over all real inputs.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the output is not an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic sine of one"
+/// formula: "=ASINH(1)"
+/// expected: 0.881373587019543
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic sine of negative two"
+/// formula: "=ASINH(-2)"
+/// expected: -1.4436354751788103
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SINH
+///   - ACOSH
+///   - ATANH
+/// faq:
+///   - q: "Does ASINH have restricted input domain?"
+///     a: "No. ASINH accepts any real-valued input."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ASINH
+/// Type: AsinhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ASINH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AsinhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1111,6 +1716,47 @@ mod tests_asinh {
 
 #[derive(Debug)]
 pub struct AcoshFn;
+/// Returns the inverse hyperbolic cosine of a number.
+///
+/// `ACOSH` is the inverse of `COSH` for inputs at or above `1`.
+///
+/// # Remarks
+/// - Domain: input must be greater than or equal to `1`.
+/// - Radians: this function is hyperbolic, so the output is not an angle in radians.
+/// - Errors: returns `#NUM!` when the input is less than `1`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Boundary value"
+/// formula: "=ACOSH(1)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic cosine of ten"
+/// formula: "=ACOSH(10)"
+/// expected: 2.993222846126381
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COSH
+///   - ASINH
+///   - ATANH
+/// faq:
+///   - q: "When does ACOSH return #NUM!?"
+///     a: "ACOSH requires input >= 1; values below 1 return #NUM!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ACOSH
+/// Type: AcoshFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOSH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AcoshFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1182,6 +1828,47 @@ mod tests_acosh {
 
 #[derive(Debug)]
 pub struct AtanhFn;
+/// Returns the inverse hyperbolic tangent of a number.
+///
+/// `ATANH` is the inverse of `TANH` on the open interval `(-1, 1)`.
+///
+/// # Remarks
+/// - Domain: input must be strictly between `-1` and `1`.
+/// - Radians: this function is hyperbolic, so the output is not an angle in radians.
+/// - Errors: returns `#NUM!` when the input is `<= -1` or `>= 1`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic tangent of one half"
+/// formula: "=ATANH(0.5)"
+/// expected: 0.5493061443340548
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Domain boundary error"
+/// formula: "=ATANH(1)"
+/// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TANH
+///   - ATAN
+///   - ASINH
+/// faq:
+///   - q: "Which inputs are invalid for ATANH?"
+///     a: "ATANH is only defined on (-1, 1); endpoints and outside values return #NUM!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ATANH
+/// Type: AtanhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ATANH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for AtanhFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1258,6 +1945,47 @@ mod tests_atanh {
 
 #[derive(Debug)]
 pub struct SechFn;
+/// Returns the hyperbolic secant of a number, defined as `1 / COSH(x)`.
+///
+/// `SECH` produces values in `(0, 1]` for real inputs.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic secant at zero"
+/// formula: "=SECH(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic secant at two"
+/// formula: "=SECH(2)"
+/// expected: 0.2658022288340797
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COSH
+///   - CSCH
+///   - COTH
+/// faq:
+///   - q: "Can SECH be negative for real inputs?"
+///     a: "No. For real numbers, SECH = 1/COSH is always positive."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SECH
+/// Type: SechFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SECH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for SechFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1319,6 +2047,47 @@ mod tests_sech {
 
 #[derive(Debug)]
 pub struct CschFn;
+/// Returns the hyperbolic cosecant of a number, defined as `1 / SINH(x)`.
+///
+/// `CSCH` is the reciprocal of `SINH` where defined.
+///
+/// # Remarks
+/// - Domain: valid for all real numbers except `0`.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosecant at one"
+/// formula: "=CSCH(1)"
+/// expected: 0.8509181282393216
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Division by zero at origin"
+/// formula: "=CSCH(0)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SINH
+///   - COTH
+///   - SECH
+/// faq:
+///   - q: "When does CSCH return #DIV/0!?"
+///     a: "CSCH returns #DIV/0! when SINH(x) is zero, which occurs at x = 0."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CSCH
+/// Type: CschFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CSCH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CschFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1398,6 +2167,47 @@ mod tests_csch {
 
 #[derive(Debug)]
 pub struct CothFn;
+/// Returns the hyperbolic cotangent of a number, defined as `COSH(x) / SINH(x)`.
+///
+/// `COTH` is the reciprocal of `TANH` where defined.
+///
+/// # Remarks
+/// - Domain: valid for all real numbers except `0`.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic cotangent at one"
+/// formula: "=COTH(1)"
+/// expected: 1.3130352854993312
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Division by zero at origin"
+/// formula: "=COTH(0)"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TANH
+///   - CSCH
+///   - SECH
+/// faq:
+///   - q: "Why is COTH undefined at zero?"
+///     a: "COTH divides by SINH(x), and SINH(0) is zero, so #DIV/0! is returned."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: COTH
+/// Type: CothFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COTH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for CothFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1464,6 +2274,44 @@ mod tests_coth {
 
 #[derive(Debug)]
 pub struct RadiansFn;
+/// Converts an angle from degrees to radians.
+///
+/// # Remarks
+/// - Use this before trigonometric functions when your source angle is in degrees.
+/// - Output is `degrees * PI() / 180`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert 180°"
+/// formula: "=RADIANS(180)"
+/// expected: 3.141592653589793
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert 45°"
+/// formula: "=RADIANS(45)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DEGREES
+///   - SIN
+///   - COS
+/// faq:
+///   - q: "When should I wrap angles with RADIANS?"
+///     a: "Use it whenever your source angle is in degrees and the downstream trig function expects radians."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: RADIANS
+/// Type: RadiansFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: RADIANS(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for RadiansFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1525,6 +2373,44 @@ mod tests_radians {
 
 #[derive(Debug)]
 pub struct DegreesFn;
+/// Converts an angle from radians to degrees.
+///
+/// # Remarks
+/// - Useful when converting the output of inverse trig functions.
+/// - Output is `radians * 180 / PI()`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert PI radians"
+/// formula: "=DEGREES(PI())"
+/// expected: 180
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert PI/2 radians"
+/// formula: "=DEGREES(PI()/2)"
+/// expected: 90
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RADIANS
+///   - ATAN
+///   - ACOS
+/// faq:
+///   - q: "Does DEGREES change the angle value or just units?"
+///     a: "It converts units only, multiplying radians by 180/PI()."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: DEGREES
+/// Type: DegreesFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: DEGREES(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for DegreesFn {
     func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -1586,6 +2472,44 @@ mod tests_degrees {
 
 #[derive(Debug)]
 pub struct PiFn;
+/// Returns the mathematical constant π.
+///
+/// # Remarks
+/// - `PI()` takes no arguments.
+/// - Commonly used with trig and geometry formulas.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Pi constant"
+/// formula: "=PI()"
+/// expected: 3.141592653589793
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Circle circumference with radius 2"
+/// formula: "=2*PI()*2"
+/// expected: 12.566370614359172
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RADIANS
+///   - DEGREES
+///   - SIN
+/// faq:
+///   - q: "Can PI take arguments?"
+///     a: "No. PI() has arity zero and always returns the same constant."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: PI
+/// Type: PiFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: PI()
+/// Arg schema: []
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PiFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

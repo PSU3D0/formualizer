@@ -1,0 +1,58 @@
+---
+title: "IMSIN"
+description: "IMSIN: Returns the sine of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imsin" />
+
+## Summary
+
+Evaluates complex sine and returns the result as complex text.
+
+## Remarks
+ - Input is coerced to complex-number text before parsing.
+ - Uses hyperbolic components for the imaginary part.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Sine of zero", "Sine on imaginary axis"]}>
+<Tab value="Sine of zero">
+<FunctionSandbox
+  title="Sine of zero"
+  formula={`=IMSIN("0")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Sine on imaginary axis">
+<FunctionSandbox
+  title="Sine on imaginary axis"
+  formula={`=IMSIN("i")`}
+  grid={{}}
+  expected={"1.1752011936438014i"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMCOS](/docs/reference/functions/engineering/imcos)
+- [IMEXP](/docs/reference/functions/engineering/imexp)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
+
+## FAQ
+
+### Why can `IMSIN` return non-zero imaginary output for real-looking formulas?
+For complex inputs `a+bi`, sine uses hyperbolic terms (`cosh`, `sinh`), so imaginary components are expected.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imsin" />
+{/* [formualizer-docgen:function-meta:end] */}

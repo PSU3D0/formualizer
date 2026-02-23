@@ -42,6 +42,47 @@ fn coerce_text(v: &LiteralValue) -> String {
 
 #[derive(Debug)]
 pub struct CleanFn;
+/// Removes non-printable ASCII control characters from text.
+///
+/// # Remarks
+/// - Characters with codes `0..31` are removed.
+/// - Printable whitespace like regular spaces is preserved.
+/// - Non-text inputs are coerced to text before cleaning.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Strip control characters"
+/// formula: '=CLEAN("A"&CHAR(10)&"B")'
+/// expected: "AB"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Printable spaces remain"
+/// formula: '=CLEAN("A B")'
+/// expected: "A B"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TRIM
+///   - CHAR
+///   - SUBSTITUTE
+/// faq:
+///   - q: "Does CLEAN remove normal spaces or only control characters?"
+///     a: "It removes only ASCII control characters (0-31); regular printable spaces remain."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CLEAN
+/// Type: CleanFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CLEAN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CleanFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -76,6 +117,47 @@ impl Function for CleanFn {
 
 #[derive(Debug)]
 pub struct UnicharFn;
+/// Returns the Unicode character for a given code point.
+///
+/// # Remarks
+/// - Input is truncated to an integer code point.
+/// - Code point `0`, surrogate range, and values above `0x10FFFF` return `#VALUE!`.
+/// - Errors are propagated unchanged.
+/// - Non-numeric inputs are coerced with numeric coercion rules.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Basic Unicode code point"
+/// formula: '=UNICHAR(9731)'
+/// expected: "☃"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Invalid code point"
+/// formula: '=UNICHAR(0)'
+/// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - UNICODE
+///   - CHAR
+///   - CODE
+/// faq:
+///   - q: "Which code points are invalid?"
+///     a: "0, surrogate values, and anything above 0x10FFFF return #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: UNICHAR
+/// Type: UnicharFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: UNICHAR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for UnicharFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -122,6 +204,47 @@ impl Function for UnicharFn {
 
 #[derive(Debug)]
 pub struct UnicodeFn;
+/// Returns the Unicode code point of the first character in text.
+///
+/// # Remarks
+/// - Only the first character is evaluated.
+/// - Empty text returns `#VALUE!`.
+/// - Non-text inputs are coerced to text before inspection.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Code point for letter A"
+/// formula: '=UNICODE("A")'
+/// expected: 65
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Code point for emoji"
+/// formula: '=UNICODE("😀")'
+/// expected: 128512
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - UNICHAR
+///   - CODE
+///   - CHAR
+/// faq:
+///   - q: "If text has multiple characters, which one is used?"
+///     a: "UNICODE inspects only the first character and ignores the rest."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: UNICODE
+/// Type: UnicodeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: UNICODE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for UnicodeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -196,6 +319,47 @@ fn arg_textbefore() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct TextBeforeFn;
+/// Returns text that appears before a delimiter.
+///
+/// # Remarks
+/// - Delimiter matching is case-sensitive.
+/// - `instance_num` defaults to `1`; negative instances search from the end.
+/// - `instance_num=0` or empty delimiter returns `#VALUE!`.
+/// - If requested delimiter occurrence is not found, returns `#N/A`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Text before first delimiter"
+/// formula: '=TEXTBEFORE("a-b-c", "-")'
+/// expected: "a"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text before last delimiter"
+/// formula: '=TEXTBEFORE("a-b-c", "-", -1)'
+/// expected: "a-b"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TEXTAFTER
+///   - FIND
+///   - SEARCH
+/// faq:
+///   - q: "What happens when the delimiter is missing?"
+///     a: "TEXTBEFORE returns #N/A when the requested delimiter occurrence is not found."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TEXTBEFORE
+/// Type: TextBeforeFn
+/// Min args: 2
+/// Max args: 3
+/// Variadic: false
+/// Signature: TEXTBEFORE(arg1: any@scalar, arg2: any@scalar, arg3?: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TextBeforeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -286,6 +450,47 @@ impl Function for TextBeforeFn {
 
 #[derive(Debug)]
 pub struct TextAfterFn;
+/// Returns text that appears after a delimiter.
+///
+/// # Remarks
+/// - Delimiter matching is case-sensitive.
+/// - `instance_num` defaults to `1`; negative instances search from the end.
+/// - `instance_num=0` or empty delimiter returns `#VALUE!`.
+/// - If requested delimiter occurrence is not found, returns `#N/A`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Text after first delimiter"
+/// formula: '=TEXTAFTER("a-b-c", "-")'
+/// expected: "b-c"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text after last delimiter"
+/// formula: '=TEXTAFTER("a-b-c", "-", -1)'
+/// expected: "c"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TEXTBEFORE
+///   - FIND
+///   - SEARCH
+/// faq:
+///   - q: "Is matching case-sensitive?"
+///     a: "Yes. TEXTAFTER performs case-sensitive delimiter matching in this implementation."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TEXTAFTER
+/// Type: TextAfterFn
+/// Min args: 2
+/// Max args: 3
+/// Variadic: false
+/// Signature: TEXTAFTER(arg1: any@scalar, arg2: any@scalar, arg3?: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TextAfterFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -402,6 +607,47 @@ fn arg_dollar() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct DollarFn;
+/// Formats a number as currency text.
+///
+/// # Remarks
+/// - Default decimal places is `2` when omitted.
+/// - Negative values are rendered in parentheses, such as `($1,234.00)`.
+/// - Uses comma group separators and dollar symbol.
+/// - Input coercion failures or propagated errors return an error.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Default currency formatting"
+/// formula: '=DOLLAR(1234.5)'
+/// expected: "$1,234.50"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative value with zero decimals"
+/// formula: '=DOLLAR(-999.4, 0)'
+/// expected: "($999)"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FIXED
+///   - TEXT
+///   - VALUE
+/// faq:
+///   - q: "How are negative numbers displayed?"
+///     a: "Negative results are formatted in parentheses, for example ($1,234.00)."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: DOLLAR
+/// Type: DollarFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: DOLLAR(arg1: number@scalar, arg2?: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DollarFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -527,6 +773,47 @@ fn arg_fixed() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct FixedFn;
+/// Formats a number as text with fixed decimal places.
+///
+/// # Remarks
+/// - Default decimal places is `2` when omitted.
+/// - Third argument controls comma grouping (`TRUE` disables commas).
+/// - Values are rounded to the requested decimal precision.
+/// - Numeric coercion failures return `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Fixed with commas"
+/// formula: '=FIXED(12345.678, 1, FALSE)'
+/// expected: "12,345.7"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fixed without commas"
+/// formula: '=FIXED(12345.678, 1, TRUE)'
+/// expected: "12345.7"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DOLLAR
+///   - TEXT
+///   - VALUE
+/// faq:
+///   - q: "What does the third argument control?"
+///     a: "Set it to TRUE to suppress thousands separators; FALSE keeps comma grouping."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: FIXED
+/// Type: FixedFn
+/// Min args: 1
+/// Max args: 3
+/// Variadic: false
+/// Signature: FIXED(arg1: number@scalar, arg2?: number@scalar, arg3?: logical@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FixedFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

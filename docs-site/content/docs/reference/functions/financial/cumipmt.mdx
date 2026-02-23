@@ -1,0 +1,60 @@
+---
+title: "CUMIPMT"
+description: "CUMIPMT: Returns cumulative interest paid between two inclusive payment periods."
+---
+
+<FunctionPageSchema id="financial/cumipmt" />
+
+## Summary
+
+Use this to total the interest component over a slice of an amortization schedule.
+
+## Remarks
+ - `rate` is the interest rate per payment period.
+ - `start_period` and `end_period` are 1-based, inclusive integer periods.
+ - `type` must be `0` (end-of-period) or `1` (beginning-of-period).
+ - Sign convention follows this implementation's balance model; with positive `pv`, cumulative interest is typically positive.
+ - Returns `#NUM!` for invalid domain values (non-positive rate, invalid ranges, invalid type, or non-positive `pv`).
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=CUMIPMT(0.06/12, 360, 300000, 1, 12, 0)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=CUMIPMT(0.06/12, 360, 300000, 13, 24, 0)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IPMT](/docs/reference/functions/financial/ipmt)
+- [PMT](/docs/reference/functions/financial/pmt)
+- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
+- [ACCRINT](/docs/reference/functions/financial/accrint)
+- [DOLLARDE](/docs/reference/functions/financial/dollarde)
+- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
+
+## FAQ
+
+### Are `start_period` and `end_period` inclusive in `CUMIPMT`?
+Yes. Both bounds are inclusive and interpreted as 1-based periods after truncation to integers.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/cumipmt" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,59 @@
+---
+title: "REPLACE"
+description: "Replaces part of a text string by position."
+---
+
+<FunctionPageSchema id="text/replace" />
+
+## Summary
+
+`REPLACE(old_text, start_num, num_chars, new_text)` works by character index.
+
+## Remarks
+ - `start_num` is 1-based and must be at least `1`.
+ - `num_chars` must be non-negative.
+ - If start is beyond the end, the original text is returned unchanged.
+ - Non-text inputs are coerced to text.
+
+## Examples
+
+<Tabs items={["Replace middle segment", "Insert at start"]}>
+<Tab value="Replace middle segment">
+<FunctionSandbox
+  title="Replace middle segment"
+  formula={`=REPLACE("abcdef", 3, 2, "ZZ")`}
+  grid={{}}
+  expected={"abZZef"}
+/>
+</Tab>
+
+<Tab value="Insert at start">
+<FunctionSandbox
+  title="Insert at start"
+  formula={`=REPLACE("report", 1, 0, "Q1-")`}
+  grid={{}}
+  expected={"Q1-report"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SUBSTITUTE](/docs/reference/functions/text/substitute)
+- [MID](/docs/reference/functions/text/mid)
+- [LEFT](/docs/reference/functions/text/left)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [CODE](/docs/reference/functions/text/code)
+
+## FAQ
+
+### Does REPLACE match text patterns?
+No. REPLACE is position-based and replaces by start_num and num_chars, not by searching old text.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/replace" />
+{/* [formualizer-docgen:function-meta:end] */}

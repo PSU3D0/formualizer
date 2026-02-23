@@ -1,0 +1,59 @@
+---
+title: "TEXTAFTER"
+description: "TEXTAFTER: Returns text that appears after a delimiter."
+---
+
+<FunctionPageSchema id="text/textafter" />
+
+## Summary
+
+Returns text that appears after a delimiter.
+
+## Remarks
+ - Delimiter matching is case-sensitive.
+ - `instance_num` defaults to `1`; negative instances search from the end.
+ - `instance_num=0` or empty delimiter returns `#VALUE!`.
+ - If requested delimiter occurrence is not found, returns `#N/A`.
+
+## Examples
+
+<Tabs items={["Text after first delimiter", "Text after last delimiter"]}>
+<Tab value="Text after first delimiter">
+<FunctionSandbox
+  title="Text after first delimiter"
+  formula={`=TEXTAFTER("a-b-c", "-")`}
+  grid={{}}
+  expected={"b-c"}
+/>
+</Tab>
+
+<Tab value="Text after last delimiter">
+<FunctionSandbox
+  title="Text after last delimiter"
+  formula={`=TEXTAFTER("a-b-c", "-", -1)`}
+  grid={{}}
+  expected={"c"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TEXTBEFORE](/docs/reference/functions/text/textbefore)
+- [FIND](/docs/reference/functions/text/find)
+- [SEARCH](/docs/reference/functions/text/search)
+- [TEXTSPLIT](/docs/reference/functions/text/textsplit)
+- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
+- [EXACT](/docs/reference/functions/text/exact)
+
+## FAQ
+
+### Is matching case-sensitive?
+Yes. TEXTAFTER performs case-sensitive delimiter matching in this implementation.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/textafter" />
+{/* [formualizer-docgen:function-meta:end] */}

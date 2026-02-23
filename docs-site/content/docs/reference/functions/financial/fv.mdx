@@ -1,0 +1,60 @@
+---
+title: "FV"
+description: "FV: Calculates future value from a fixed periodic rate and payment stream."
+---
+
+<FunctionPageSchema id="financial/fv" />
+
+## Summary
+
+Use this to project an ending balance after compounding a present value and periodic payments.
+
+## Remarks
+ - `rate` is the interest rate per period.
+ - Cash-flow sign convention: payments you make are negative; receipts are positive.
+ - `type = 0` models end-of-period payments; `type != 0` models beginning-of-period payments.
+ - When `rate` is zero, result is linear (`-pv - pmt * nper`).
+ - Returns argument-related errors if coercion fails or an input is an error value.
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=FV(0.04/12, 120, -200)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=FV(0, 24, -150, 1000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [PV](/docs/reference/functions/financial/pv)
+- [PMT](/docs/reference/functions/financial/pmt)
+- [NPER](/docs/reference/functions/financial/nper)
+- [RATE](/docs/reference/functions/financial/rate)
+- [ACCRINT](/docs/reference/functions/financial/accrint)
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
+
+## FAQ
+
+### What happens when `rate` is zero in `FV`?
+It falls back to linear accumulation: `-pv - pmt * nper` with no compounding.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/fv" />
+{/* [formualizer-docgen:function-meta:end] */}

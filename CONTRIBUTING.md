@@ -21,6 +21,26 @@ cargo test -p formualizer-eval
 cargo test -p formualizer-workbook
 ```
 
+### Builtin docs audit and schema generation
+
+Use workspace tasks to keep builtin docs structured:
+
+```bash
+cargo run -p xtask -- docs-audit
+# strict CI-style mode:
+cargo run -p xtask -- docs-audit --strict
+
+# check generated schema sections are up to date:
+cargo run -p xtask -- docs-schema
+# apply updates in place:
+cargo run -p xtask -- docs-schema --apply --allow-dirty
+```
+
+For builtin doc comments:
+
+- Use template: `docs/architecture/builtin-doc-comment-template.md`
+- Prefer `formualizer::doc_examples::eval_scalar` in Rust snippets to keep examples concise.
+
 Full (environment permitting):
 
 ```bash

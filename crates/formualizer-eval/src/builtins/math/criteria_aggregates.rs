@@ -678,6 +678,70 @@ fn eval_if_family<'a, 'b>(
 /* ─────────────────────────── AVERAGEIF() ──────────────────────────── */
 #[derive(Debug)]
 pub struct AverageIfFn;
+/// Returns the average of cells that satisfy a single criterion.
+///
+/// `AVERAGEIF` tests each cell in `range`, then averages matching values from `average_range`
+/// (or from `range` when `average_range` is omitted).
+///
+/// # Remarks
+/// - Criteria support comparison operators and wildcard text patterns.
+/// - Non-numeric values in the averaged cells are ignored.
+/// - If no cells match, `AVERAGEIF` returns `#DIV/0!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Average values greater than a threshold"
+/// grid:
+///   A1: 10
+///   A2: 25
+///   A3: 40
+/// formula: "=AVERAGEIF(A1:A3, \">20\")"
+/// expected: 32.5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Average one range using criteria from another"
+/// grid:
+///   A1: "East"
+///   A2: "West"
+///   A3: "East"
+///   B1: 10
+///   B2: 40
+///   B3: 20
+/// formula: "=AVERAGEIF(A1:A3, \"East\", B1:B3)"
+/// expected: 15
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "No matches returns divide-by-zero"
+/// formula: "=AVERAGEIF({1,2,3}, \">5\")"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - AVERAGE
+///   - AVERAGEIFS
+///   - SUMIF
+///   - COUNTIF
+/// faq:
+///   - q: "When does AVERAGEIF return #DIV/0!?"
+///     a: "It returns #DIV/0! when no matching cells contribute numeric values."
+///   - q: "If average_range is omitted, what gets averaged?"
+///     a: "The function averages matching numeric cells from the criteria range itself."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: AVERAGEIF
+/// Type: AverageIfFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: AVERAGEIF(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for AverageIfFn {
     func_caps!(
         PURE,
@@ -711,6 +775,69 @@ impl Function for AverageIfFn {
 /* ─────────────────────────── SUMIF() ──────────────────────────── */
 #[derive(Debug)]
 pub struct SumIfFn;
+/// Adds values that satisfy a single criterion.
+///
+/// `SUMIF` evaluates each cell in `range` against `criteria`, then sums corresponding values.
+///
+/// # Remarks
+/// - If `sum_range` is omitted, matching cells from `range` are summed.
+/// - Criteria support operators like `">10"` and wildcard text patterns.
+/// - Cells that do not coerce to numbers in the sum target contribute `0`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Sum values above a threshold"
+/// grid:
+///   A1: 5
+///   A2: 15
+///   A3: 25
+/// formula: "=SUMIF(A1:A3, \">10\")"
+/// expected: 40
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Use separate sum range"
+/// grid:
+///   A1: "East"
+///   A2: "West"
+///   A3: "East"
+///   B1: 10
+///   B2: 40
+///   B3: 20
+/// formula: "=SUMIF(A1:A3, \"East\", B1:B3)"
+/// expected: 30
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Wildcard criteria"
+/// formula: "=SUMIF({\"apple\",\"pear\",\"apricot\"}, \"ap*\", {2,3,5})"
+/// expected: 7
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUM
+///   - SUMIFS
+///   - COUNTIF
+///   - AVERAGEIF
+/// faq:
+///   - q: "What happens when matching cells are non-numeric in SUMIF?"
+///     a: "They contribute 0 to the sum target after coercion logic."
+///   - q: "Can SUMIF use wildcard criteria like * and ??"
+///     a: "Yes. Text criteria support wildcard matching semantics."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SUMIF
+/// Type: SumIfFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUMIF(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for SumIfFn {
     func_caps!(
         PURE,
@@ -744,6 +871,62 @@ impl Function for SumIfFn {
 /* ─────────────────────────── COUNTIF() ──────────────────────────── */
 #[derive(Debug)]
 pub struct CountIfFn;
+/// Counts cells in a range that satisfy a single criterion.
+///
+/// `COUNTIF` evaluates each candidate cell against one criteria expression.
+///
+/// # Remarks
+/// - Criteria support numeric comparisons and wildcard text matching.
+/// - Matching is case-insensitive for text criteria.
+/// - Non-matching or blank cells are not counted.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Count numbers greater than 10"
+/// grid:
+///   A1: 5
+///   A2: 15
+///   A3: 22
+/// formula: "=COUNTIF(A1:A3, \">10\")"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Count text with wildcard"
+/// formula: "=COUNTIF({\"alpha\",\"beta\",\"alphabet\"}, \"al*\")"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Exact-match criterion"
+/// formula: "=COUNTIF({1,2,2,3}, \"=2\")"
+/// expected: 2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COUNTIFS
+///   - COUNTA
+///   - COUNTBLANK
+///   - SUMIF
+/// faq:
+///   - q: "Is COUNTIF text matching case-sensitive?"
+///     a: "No. Text criteria matching is case-insensitive."
+///   - q: "Can COUNTIF evaluate wildcard criteria?"
+///     a: "Yes. Criteria expressions support wildcard patterns for text."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: COUNTIF
+/// Type: CountIfFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: COUNTIF(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for CountIfFn {
     func_caps!(
         PURE,
@@ -777,6 +960,68 @@ impl Function for CountIfFn {
 /* ─────────────────────────── SUMIFS() ──────────────────────────── */
 #[derive(Debug)]
 pub struct SumIfsFn; // SUMIFS(sum_range, criteria_range1, criteria1, ...)
+/// Adds values that satisfy multiple criteria.
+///
+/// `SUMIFS` applies all criteria pairs with logical AND and sums the matching cells.
+///
+/// # Remarks
+/// - The first argument is always the sum target range.
+/// - Criteria are supplied in `(criteria_range, criteria)` pairs.
+/// - Criteria ranges are broadcast/padded according to engine matching rules.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Sum with two conditions"
+/// grid:
+///   A1: "East"
+///   A2: "East"
+///   A3: "West"
+///   B1: 2024
+///   B2: 2025
+///   B3: 2025
+///   C1: 10
+///   C2: 20
+///   C3: 30
+/// formula: "=SUMIFS(C1:C3, A1:A3, \"East\", B1:B3, \">=2025\")"
+/// expected: 20
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Numeric criteria on single range"
+/// formula: "=SUMIFS({5,10,20,30}, {1,2,3,4}, \">=2\", {1,2,3,4}, \"<=3\")"
+/// expected: 30
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "No matching rows yields zero"
+/// formula: "=SUMIFS({10,20}, {\"A\",\"B\"}, \"C\")"
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUMIF
+///   - COUNTIFS
+///   - AVERAGEIFS
+///   - SUMPRODUCT
+/// faq:
+///   - q: "How are multiple SUMIFS criteria combined?"
+///     a: "All criteria pairs are applied with logical AND; every condition must match."
+///   - q: "What if criteria range sizes differ?"
+///     a: "Ranges are broadcast/padded under engine rules instead of strict Excel-size rejection."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SUMIFS
+/// Type: SumIfsFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUMIFS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for SumIfsFn {
     func_caps!(
         PURE,
@@ -810,6 +1055,65 @@ impl Function for SumIfsFn {
 /* ─────────────────────────── COUNTIFS() ──────────────────────────── */
 #[derive(Debug)]
 pub struct CountIfsFn; // COUNTIFS(criteria_range1, criteria1, ...)
+/// Counts cells that satisfy all supplied criteria pairs.
+///
+/// `COUNTIFS` applies each `(criteria_range, criteria)` pair and counts rows where all tests pass.
+///
+/// # Remarks
+/// - Requires one or more criteria pairs.
+/// - Criteria support operators and wildcard matching.
+/// - A row contributes to the result only when every criterion evaluates true.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Count rows matching two filters"
+/// grid:
+///   A1: "East"
+///   A2: "East"
+///   A3: "West"
+///   B1: 12
+///   B2: 8
+///   B3: 15
+/// formula: "=COUNTIFS(A1:A3, \"East\", B1:B3, \">=10\")"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Wildcard text matching"
+/// formula: "=COUNTIFS({\"apple\",\"pear\",\"apricot\"}, \"ap*\")"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "No rows meeting all criteria"
+/// formula: "=COUNTIFS({1,2,3}, \">5\", {\"a\",\"b\",\"c\"}, \"a\")"
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COUNTIF
+///   - SUMIFS
+///   - AVERAGEIFS
+///   - FILTER
+/// faq:
+///   - q: "Why can COUNTIFS return 0 even when one criterion matches rows?"
+///     a: "Each row must satisfy every criterion pair; partial matches are excluded."
+///   - q: "Does COUNTIFS require at least one criteria pair?"
+///     a: "Yes. It expects arguments in (range, criteria) pairs."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: COUNTIFS
+/// Type: CountIfsFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: COUNTIFS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for CountIfsFn {
     func_caps!(
         PURE,
@@ -843,6 +1147,68 @@ impl Function for CountIfsFn {
 /* ─────────────────────────── AVERAGEIFS() (moved) ──────────────────────────── */
 #[derive(Debug)]
 pub struct AverageIfsFn;
+/// Returns the average of cells that satisfy multiple criteria.
+///
+/// `AVERAGEIFS` filters by all criteria pairs, then averages matching numeric values.
+///
+/// # Remarks
+/// - The first argument is the average target range.
+/// - Criteria are supplied in `(criteria_range, criteria)` pairs.
+/// - If no numeric cells match, the function returns `#DIV/0!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Average with two criteria"
+/// grid:
+///   A1: "East"
+///   A2: "East"
+///   A3: "West"
+///   B1: 2025
+///   B2: 2024
+///   B3: 2025
+///   C1: 10
+///   C2: 40
+///   C3: 30
+/// formula: "=AVERAGEIFS(C1:C3, A1:A3, \"East\", B1:B3, \">=2025\")"
+/// expected: 10
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Average over inline arrays"
+/// formula: "=AVERAGEIFS({10,20,30}, {1,2,3}, \">=2\")"
+/// expected: 25
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "No matches returns divide-by-zero"
+/// formula: "=AVERAGEIFS({10,20}, {\"A\",\"B\"}, \"C\")"
+/// expected: "#DIV/0!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - AVERAGEIF
+///   - AVERAGE
+///   - SUMIFS
+///   - COUNTIFS
+/// faq:
+///   - q: "When does AVERAGEIFS return #DIV/0!?"
+///     a: "It returns #DIV/0! when no matching numeric cells are available to average."
+///   - q: "Do non-numeric matched cells count in the average?"
+///     a: "No. Only numeric target cells contribute to sum and count."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: AVERAGEIFS
+/// Type: AverageIfsFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: AVERAGEIFS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, WINDOWED, STREAM_OK, PARALLEL_ARGS, PARALLEL_CHUNKS
+/// [formualizer-docgen:schema:end]
 impl Function for AverageIfsFn {
     func_caps!(
         PURE,
@@ -876,6 +1242,60 @@ impl Function for AverageIfsFn {
 /* ─────────────────────────── COUNTA() ──────────────────────────── */
 #[derive(Debug)]
 pub struct CountAFn; // counts non-empty (including empty text "")
+/// Counts non-empty cells and scalar arguments.
+///
+/// `COUNTA` counts any value except true empty cells.
+///
+/// # Remarks
+/// - Numbers, text, booleans, and errors all count.
+/// - Empty string values (`""`) are counted as non-empty.
+/// - Truly empty cells are the only values excluded.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Count mixed populated values"
+/// formula: "=COUNTA(1, \"x\", TRUE, \"\")"
+/// expected: 4
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Range count excludes only true blanks"
+/// grid:
+///   A1: 10
+///   A2: ""
+/// formula: "=COUNTA(A1:A3)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Errors are counted"
+/// formula: "=COUNTA(1/0, 5)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COUNT
+///   - COUNTBLANK
+///   - COUNTIF
+/// faq:
+///   - q: "Does COUNTA count empty-string results like \"\"?"
+///     a: "Yes. Empty text is counted as non-empty by COUNTA."
+///   - q: "Are error values counted?"
+///     a: "Yes. Errors are considered populated values and increase the count."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: COUNTA
+/// Type: CountAFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: COUNTA(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for CountAFn {
     func_caps!(PURE, REDUCTION);
     fn name(&self) -> &'static str {
@@ -924,6 +1344,60 @@ impl Function for CountAFn {
 /* ─────────────────────────── COUNTBLANK() ──────────────────────────── */
 #[derive(Debug)]
 pub struct CountBlankFn; // counts truly empty cells and empty text
+/// Counts blank cells, including empty-string text results.
+///
+/// `COUNTBLANK` treats both true empty cells and `""` text values as blank.
+///
+/// # Remarks
+/// - Empty-string text values are counted.
+/// - Numbers, booleans, and non-empty text are not counted.
+/// - Supports scalar arguments and ranges.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Count blanks in a range"
+/// grid:
+///   A1: 10
+///   A2: ""
+/// formula: "=COUNTBLANK(A1:A3)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Scalar empty-string counts as blank"
+/// formula: "=COUNTBLANK(\"\", 5)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Non-empty values are excluded"
+/// formula: "=COUNTBLANK(1, \"x\", TRUE)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COUNTA
+///   - COUNT
+///   - COUNTIF
+/// faq:
+///   - q: "Does COUNTBLANK include cells that contain \"\"?"
+///     a: "Yes. Empty-string text values are treated as blank for COUNTBLANK."
+///   - q: "Are numeric zeros considered blank?"
+///     a: "No. Zero is a numeric value, so it is not counted as blank."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: COUNTBLANK
+/// Type: CountBlankFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: COUNTBLANK(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for CountBlankFn {
     func_caps!(PURE, REDUCTION);
     fn name(&self) -> &'static str {

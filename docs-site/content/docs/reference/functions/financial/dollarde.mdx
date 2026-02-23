@@ -1,0 +1,60 @@
+---
+title: "DOLLARDE"
+description: "DOLLARDE: Converts fractional-dollar notation into a decimal dollar value."
+---
+
+<FunctionPageSchema id="financial/dollarde" />
+
+## Summary
+
+This is commonly used for security price formats such as thirty-seconds (`fraction = 32`).
+
+## Remarks
+ - `fraction` is truncated to an integer denominator and must be `&gt;= 1`.
+ - Sign convention: sign is preserved (`-x` maps to `-result`).
+ - No periodic rate is involved in this conversion.
+ - Returns `#NUM!` when `fraction &lt; 1` after truncation.
+ - Fractional parsing uses denominator digit width (`ceil(log10(fraction))`).
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=DOLLARDE(1.02, 16)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=DOLLARDE(-3.15, 32)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
+- [EFFECT](/docs/reference/functions/financial/effect)
+- [NOMINAL](/docs/reference/functions/financial/nominal)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
+- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
+- [MIRR](/docs/reference/functions/financial/mirr)
+
+## FAQ
+
+### Why does `DOLLARDE` truncate `fraction`?
+The denominator is treated as an integer quote base; values below `1` after truncation return `#NUM!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/dollarde" />
+{/* [formualizer-docgen:function-meta:end] */}

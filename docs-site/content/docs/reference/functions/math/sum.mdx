@@ -1,0 +1,61 @@
+---
+title: "SUM"
+description: "SUM: Adds numeric values across scalars and ranges."
+---
+
+<FunctionPageSchema id="math/sum" />
+
+## Summary
+
+`SUM` evaluates all arguments, coercing text to numbers where possible, 
+ and returns the total. Blank cells and logical values in ranges are ignored.
+
+## Remarks
+ - If any argument evaluates to an error, `SUM` propagates the first error it encounters.
+ - Unparseable text literals (e.g., `"foo"`) will result in a `#VALUE!` error.
+
+## Examples
+
+<Tabs items={["Basic scalar addition", "Summing a range"]}>
+<Tab value="Basic scalar addition">
+<FunctionSandbox
+  title="Basic scalar addition"
+  formula={`=SUM(10, 20, 5)`}
+  grid={{}}
+  expected={"35"}
+/>
+</Tab>
+
+<Tab value="Summing a range">
+<FunctionSandbox
+  title="Summing a range"
+  formula={`=SUM(A1:A3)`}
+  grid={{"A1":"10","A2":"20","A3":"N/A"}}
+  expected={"30"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SUMIF](/docs/reference/functions/math/sumif)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
+- [SUMPRODUCT](/docs/reference/functions/math/sumproduct)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [COUNT](/docs/reference/functions/math/count)
+- [AVERAGEIF](/docs/reference/functions/math/averageif)
+
+## FAQ
+
+### Why does SUM return #VALUE! for some text arguments?
+Direct scalar text that cannot be parsed as a number raises #VALUE! during coercion.
+
+### Do text and logical values inside ranges get added?
+No. In ranged inputs, only numeric cells contribute to the total.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sum" />
+{/* [formualizer-docgen:function-meta:end] */}

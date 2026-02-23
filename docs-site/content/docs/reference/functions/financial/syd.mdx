@@ -1,0 +1,62 @@
+---
+title: "SYD"
+description: "SYD: Returns sum-of-years'-digits depreciation for a requested period."
+---
+
+<FunctionPageSchema id="financial/syd" />
+
+## Summary
+
+`SYD` applies accelerated depreciation by weighting earlier periods more heavily.
+
+## Remarks
+ - Formula: `(cost - salvage) * (life - per + 1) / (life * (life + 1) / 2)`.
+ - `life` and `per` must satisfy: `life &gt; 0`, `per &gt; 0`, and `per &lt;= life`; otherwise returns `#NUM!`.
+ - The function uses the provided numeric values directly (no integer-only enforcement).
+ - Result sign follows `(cost - salvage)`: positive for typical depreciation expense, negative if `salvage &gt; cost`.
+
+## Examples
+
+<Tabs items={["First SYD period", "Final SYD period"]}>
+<Tab value="First SYD period">
+<FunctionSandbox
+  title="First SYD period"
+  formula={`=SYD(10000, 1000, 5, 1)`}
+  grid={{}}
+  expected={"3000"}
+/>
+</Tab>
+
+<Tab value="Final SYD period">
+<FunctionSandbox
+  title="Final SYD period"
+  formula={`=SYD(10000, 1000, 5, 5)`}
+  grid={{}}
+  expected={"600"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SLN](/docs/reference/functions/financial/sln)
+- [DB](/docs/reference/functions/financial/db)
+- [DDB](/docs/reference/functions/financial/ddb)
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
+- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
+
+## FAQ
+
+### Does `SYD` require integer `life` and `per`?
+No strict integer check is enforced; it uses provided numeric values directly after domain validation.
+
+### Which period values are valid?
+`per` must satisfy `0 &lt; per &lt;= life`, and `life` must be positive; otherwise `#NUM!` is returned.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/syd" />
+{/* [formualizer-docgen:function-meta:end] */}

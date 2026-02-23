@@ -1,0 +1,74 @@
+---
+title: "LET"
+description: "LET: Binds local names to values and evaluates a final expression with those bindings."
+---
+
+<FunctionPageSchema id="lambda/let" />
+
+## Summary
+
+`LET` introduces lexical variables using name/value pairs, then returns the last expression.
+
+## Remarks
+ - Arguments must be provided as `name, value` pairs followed by one final calculation expression.
+ - Names are resolved as local identifiers and can shadow workbook-level names.
+ - Bindings are evaluated left-to-right, so later values can reference earlier bindings.
+ - Invalid names or malformed arity return `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Bind intermediate values", "Use LET with range calculations", "Nested LET supports shadowing"]}>
+<Tab value="Bind intermediate values">
+<FunctionSandbox
+  title="Bind intermediate values"
+  formula={`=LET(rate,0.08,price,125,price*(1+rate))`}
+  grid={{}}
+  expected={"135"}
+/>
+</Tab>
+
+<Tab value="Use LET with range calculations">
+<FunctionSandbox
+  title="Use LET with range calculations"
+  formula={`=LET(total,SUM(A1:A2),total*2)`}
+  grid={{"A1":"10","A2":"4"}}
+  expected={"28"}
+/>
+</Tab>
+
+<Tab value="Nested LET supports shadowing">
+<FunctionSandbox
+  title="Nested LET supports shadowing"
+  formula={`=LET(x,2,LET(x,5,x)+x)`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LAMBDA](/docs/reference/functions/lambda/lambda)
+- [IF](/docs/reference/functions/logical/if)
+- [SUM](/docs/reference/functions/math/sum)
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
+- [AND](/docs/reference/functions/logical/and)
+- [IFS](/docs/reference/functions/logical-ext/ifs)
+
+## FAQ
+
+### Can a LET binding reference a name defined later in the same LET?
+No. LET evaluates name/value pairs left-to-right, so each binding can only use earlier bindings.
+
+### Does LET overwrite workbook or worksheet names permanently?
+No. LET names are lexical and local to that formula evaluation; they only shadow outer names inside the LET expression.
+
+### Is LET itself volatile?
+No. LET is deterministic unless one of its bound expressions calls a volatile function such as RAND.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lambda/let" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,13 @@
+{
+  "collapsible": true,
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "iferror",
+    "ifna",
+    "ifs",
+    "not",
+    "xor"
+  ],
+  "title": "Logical (Extended) Functions"
+}

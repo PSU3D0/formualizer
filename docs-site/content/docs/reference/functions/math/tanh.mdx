@@ -1,0 +1,58 @@
+---
+title: "TANH"
+description: "TANH: Returns the hyperbolic tangent of a number."
+---
+
+<FunctionPageSchema id="math/tanh" />
+
+## Summary
+
+`TANH` computes `SINH(x) / COSH(x)`.
+
+## Remarks
+ - Domain: accepts any real number.
+ - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+ - Errors: no function-specific domain errors are produced.
+
+## Examples
+
+<Tabs items={["Hyperbolic tangent at zero", "Hyperbolic tangent at two"]}>
+<Tab value="Hyperbolic tangent at zero">
+<FunctionSandbox
+  title="Hyperbolic tangent at zero"
+  formula={`=TANH(0)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Hyperbolic tangent at two">
+<FunctionSandbox
+  title="Hyperbolic tangent at two"
+  formula={`=TANH(2)`}
+  grid={{}}
+  expected={"0.9640275800758169"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ATANH](/docs/reference/functions/math/atanh)
+- [SINH](/docs/reference/functions/math/sinh)
+- [COSH](/docs/reference/functions/math/cosh)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASIN](/docs/reference/functions/math/asin)
+
+## FAQ
+
+### What output range should TANH produce?
+For real inputs, TANH stays strictly between -1 and 1.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/tanh" />
+{/* [formualizer-docgen:function-meta:end] */}

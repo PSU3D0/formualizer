@@ -227,7 +227,50 @@ fn split_by_delimiters(text: &str, delimiters: &[String], case_insensitive: bool
 
 #[derive(Debug)]
 pub struct TextSplitFn;
+/// Splits text into a dynamic 2D array by column and optional row delimiters.
+///
+/// `TEXTSPLIT` supports multiple delimiters, optional case-insensitive matching, and output padding.
+///
+/// # Remarks
+/// - Column delimiter is required; row delimiter is optional.
+/// - `match_mode=0` is case-sensitive, `match_mode=1` is case-insensitive.
+/// - `ignore_empty=TRUE` drops empty segments created by adjacent delimiters.
+/// - Rows are padded to equal width using `pad_with` (default `#N/A`).
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Split CSV row"
+/// formula: '=TEXTSPLIT("A,B,C", ",")'
+/// expected: "{A,B,C}"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Row and column split with padding"
+/// formula: '=TEXTSPLIT("A,B;C", ",", ";")'
+/// expected: "{A,B;C,#N/A}"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TEXTBEFORE
+///   - TEXTAFTER
+///   - TEXTJOIN
+/// faq:
+///   - q: "Is delimiter matching case-sensitive?"
+///     a: "Yes by default; set match_mode to 1 for case-insensitive delimiter matching."
+/// ```
 
+/// [formualizer-docgen:schema:start]
+/// Name: TEXTSPLIT
+/// Type: TextSplitFn
+/// Min args: 2
+/// Max args: 6
+/// Variadic: false
+/// Signature: TEXTSPLIT(arg1: any@scalar, arg2: any@scalar, arg3?: any@scalar, arg4?: logical@scalar, arg5?: number@scalar, arg6?: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg6{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TextSplitFn {
     func_caps!(PURE);
 
@@ -437,7 +480,50 @@ fn value_to_text_repr(v: &LiteralValue, strict: bool) -> String {
 
 #[derive(Debug)]
 pub struct ValueToTextFn;
+/// Converts a value to text representation.
+///
+/// `VALUETOTEXT(value, [format])` supports concise (`0`) and strict (`1`) modes.
+///
+/// # Remarks
+/// - Concise mode (`0`) returns natural text for scalars.
+/// - Strict mode (`1`) adds explicit quoting for text and serializes arrays with braces.
+/// - In concise mode, error values are propagated as errors.
+/// - In strict mode, error values are rendered as their error text.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Concise text conversion"
+/// formula: '=VALUETOTEXT(123)'
+/// expected: "123"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Strict quoting for text"
+/// formula: '=VALUETOTEXT("hello", 1)'
+/// expected: '"hello"'
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ARRAYTOTEXT
+///   - TEXT
+///   - VALUE
+/// faq:
+///   - q: "How are errors handled in concise vs strict mode?"
+///     a: "Concise mode returns the error, while strict mode converts the error to its text form."
+/// ```
 
+/// [formualizer-docgen:schema:start]
+/// Name: VALUETOTEXT
+/// Type: ValueToTextFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: VALUETOTEXT(arg1: any@scalar, arg2?: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ValueToTextFn {
     func_caps!(PURE);
 
@@ -526,7 +612,50 @@ fn arg_arraytotext() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct ArrayToTextFn;
+/// Converts an array or range into a text representation.
+///
+/// `ARRAYTOTEXT(array, [format])` supports concise (`0`) and strict (`1`) output styles.
+///
+/// # Remarks
+/// - Strict mode returns brace-delimited array syntax with row/column separators.
+/// - Concise mode flattens all values into a comma-space list.
+/// - Cells are converted using the same scalar text rules used by `VALUETOTEXT`.
+/// - Errors in scalar-only input propagate immediately.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Concise flattened output"
+/// formula: '=ARRAYTOTEXT({1,2,3})'
+/// expected: "1, 2, 3"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Strict 2D representation"
+/// formula: '=ARRAYTOTEXT({1,2;3,4}, 1)'
+/// expected: "{1,2;3,4}"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUETOTEXT
+///   - TEXTJOIN
+///   - TEXTSPLIT
+/// faq:
+///   - q: "What changes when format is 1?"
+///     a: "Format 1 returns brace-delimited array syntax; format 0 flattens values into a comma-space list."
+/// ```
 
+/// [formualizer-docgen:schema:start]
+/// Name: ARRAYTOTEXT
+/// Type: ArrayToTextFn
+/// Min args: 1
+/// Max args: 2
+/// Variadic: false
+/// Signature: ARRAYTOTEXT(arg1: any|range@range, arg2?: number@scalar)
+/// Arg schema: arg1{kinds=any|range,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ArrayToTextFn {
     func_caps!(PURE);
 

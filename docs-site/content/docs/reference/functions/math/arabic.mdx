@@ -1,0 +1,59 @@
+---
+title: "ARABIC"
+description: "Converts a Roman numeral string to its Arabic numeric value."
+---
+
+<FunctionPageSchema id="math/arabic" />
+
+## Summary
+
+Converts a Roman numeral string to its Arabic numeric value.
+
+## Remarks
+ - Accepts text input containing Roman symbols (`I,V,X,L,C,D,M`).
+ - Surrounding whitespace is trimmed.
+ - Empty text returns `0`.
+ - Invalid Roman syntax returns `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Roman to Arabic", "Trimmed input"]}>
+<Tab value="Roman to Arabic">
+<FunctionSandbox
+  title="Roman to Arabic"
+  formula={`=ARABIC("MCMXCIX")`}
+  grid={{}}
+  expected={"1999"}
+/>
+</Tab>
+
+<Tab value="Trimmed input">
+<FunctionSandbox
+  title="Trimmed input"
+  formula={`=ARABIC("  XLIV  ")`}
+  grid={{}}
+  expected={"44"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ROMAN](/docs/reference/functions/math/roman)
+- [VALUE](/docs/reference/functions/text/value)
+- [ACOSH](/docs/reference/functions/math/acosh)
+- [ATANH](/docs/reference/functions/math/atanh)
+- [DEGREES](/docs/reference/functions/math/degrees)
+- [RADIANS](/docs/reference/functions/math/radians)
+
+## FAQ
+
+### What causes ARABIC to return #VALUE!?
+Invalid Roman symbols/syntax, non-text input, or overlength text produce #VALUE!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/arabic" />
+{/* [formualizer-docgen:function-meta:end] */}

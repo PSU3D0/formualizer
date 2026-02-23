@@ -1,0 +1,58 @@
+---
+title: "ACOS"
+description: "ACOS: Returns the angle in radians whose cosine is the input value."
+---
+
+<FunctionPageSchema id="math/acos" />
+
+## Summary
+
+Use `ACOS` when you need an angle from a normalized adjacent/hypotenuse ratio.
+
+## Remarks
+ - Domain: input must be between `-1` and `1`, inclusive.
+ - Radians: output is in the range `[0, PI()]`.
+ - Errors: returns `#NUM!` when the input is outside the valid domain.
+
+## Examples
+
+<Tabs items={["Arccosine of one half", "Upper-angle boundary"]}>
+<Tab value="Arccosine of one half">
+<FunctionSandbox
+  title="Arccosine of one half"
+  formula={`=ACOS(0.5)`}
+  grid={{}}
+  expected={"1.0471975511965979"}
+/>
+</Tab>
+
+<Tab value="Upper-angle boundary">
+<FunctionSandbox
+  title="Upper-angle boundary"
+  formula={`=ACOS(-1)`}
+  grid={{}}
+  expected={"3.141592653589793"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [COS](/docs/reference/functions/math/cos)
+- [ASIN](/docs/reference/functions/math/asin)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASINH](/docs/reference/functions/math/asinh)
+- [ATAN](/docs/reference/functions/math/atan)
+
+## FAQ
+
+### Why does ACOS reject values like 1.0001?
+ACOS is only defined on [-1, 1], so out-of-range inputs return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/acos" />
+{/* [formualizer-docgen:function-meta:end] */}

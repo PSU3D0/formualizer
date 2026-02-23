@@ -1,0 +1,10 @@
+{
+  "collapsible": true,
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "lambda",
+    "let"
+  ],
+  "title": "LET / LAMBDA Functions"
+}

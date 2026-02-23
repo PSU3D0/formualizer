@@ -1,0 +1,58 @@
+---
+title: "ISNUMBER"
+description: "ISNUMBER: Returns TRUE when the value is numeric."
+---
+
+<FunctionPageSchema id="info/isnumber" />
+
+## Summary
+
+This includes integer, floating-point, and temporal serial-compatible values.
+
+## Remarks
+ - Returns TRUE for `Int`, `Number`, `Date`, `DateTime`, `Time`, and `Duration`.
+ - Text that looks numeric is still text and returns FALSE.
+ - Errors are treated as non-numeric and return FALSE.
+
+## Examples
+
+<Tabs items={["Number is numeric", "Numeric text is not numeric"]}>
+<Tab value="Number is numeric">
+<FunctionSandbox
+  title="Number is numeric"
+  formula={`=ISNUMBER(42)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Numeric text is not numeric">
+<FunctionSandbox
+  title="Numeric text is not numeric"
+  formula={`=ISNUMBER("42")`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [VALUE](/docs/reference/functions/text/value)
+- [N](/docs/reference/functions/info/n)
+- [TYPE](/docs/reference/functions/info/type)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### Does numeric-looking text count as a number?
+No. ISNUMBER checks the stored value type, so text like "42" returns FALSE.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/isnumber" />
+{/* [formualizer-docgen:function-meta:end] */}

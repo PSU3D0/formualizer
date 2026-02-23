@@ -1,0 +1,58 @@
+---
+title: "LN"
+description: "LN: Returns the natural logarithm of a positive number."
+---
+
+<FunctionPageSchema id="math/ln" />
+
+## Summary
+
+Returns the natural logarithm of a positive number.
+
+## Remarks
+ - `number` must be greater than `0`; otherwise the function returns `#NUM!`.
+ - `LN(EXP(x))` returns `x` up to floating-point precision.
+ - Input errors are propagated.
+
+## Examples
+
+<Tabs items={["Natural log of e cubed", "Natural log of a fraction"]}>
+<Tab value="Natural log of e cubed">
+<FunctionSandbox
+  title="Natural log of e cubed"
+  formula={`=LN(EXP(3))`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Natural log of a fraction">
+<FunctionSandbox
+  title="Natural log of a fraction"
+  formula={`=LN(0.5)`}
+  grid={{}}
+  expected={"-0.6931471805599453"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [EXP](/docs/reference/functions/math/exp)
+- [LOG](/docs/reference/functions/math/log)
+- [LOG10](/docs/reference/functions/math/log10)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+
+## FAQ
+
+### Why does LN return #NUM! for 0 or negatives?
+Natural logarithm is only defined for strictly positive inputs.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/ln" />
+{/* [formualizer-docgen:function-meta:end] */}

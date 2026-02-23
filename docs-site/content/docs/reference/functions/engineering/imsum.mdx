@@ -1,0 +1,58 @@
+---
+title: "IMSUM"
+description: "IMSUM: Returns the sum of one or more complex numbers."
+---
+
+<FunctionPageSchema id="engineering/imsum" />
+
+## Summary
+
+Adds real parts together and imaginary parts together.
+
+## Remarks
+ - Each argument is coerced to complex-number text before parsing.
+ - Accepts any number of arguments from one upward.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Add multiple complex values", "Add j-suffix values"]}>
+<Tab value="Add multiple complex values">
+<FunctionSandbox
+  title="Add multiple complex values"
+  formula={`=IMSUM("3+4i","1-2i","5")`}
+  grid={{}}
+  expected={"9+2i"}
+/>
+</Tab>
+
+<Tab value="Add j-suffix values">
+<FunctionSandbox
+  title="Add j-suffix values"
+  formula={`=IMSUM("2j","-j")`}
+  grid={{}}
+  expected={"j"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMSUB](/docs/reference/functions/engineering/imsub)
+- [IMPRODUCT](/docs/reference/functions/engineering/improduct)
+- [COMPLEX](/docs/reference/functions/engineering/complex)
+- [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
+- [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+
+## FAQ
+
+### Can `IMSUM` take more than two arguments?
+Yes. It is variadic and sums all provided complex arguments in sequence.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imsum" />
+{/* [formualizer-docgen:function-meta:end] */}

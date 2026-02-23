@@ -1,0 +1,59 @@
+---
+title: "QUARTILE.INC"
+description: "QUARTILE.INC: Returns an inclusive quartile value for a data set."
+---
+
+<FunctionPageSchema id="stats/quartile-inc" />
+
+## Summary
+
+`QUARTILE.INC` maps quartile index `0..4` onto minimum, quartiles, median, and maximum.
+
+## Remarks
+ - Valid quartile index values are `0`, `1`, `2`, `3`, and `4`.
+ - Uses inclusive percentile logic for quartiles `1` through `3`.
+ - Returns `#NUM!` for invalid quartile index values or empty numeric input.
+ - Alias `QUARTILE` is supported.
+
+## Examples
+
+<Tabs items={["First quartile from direct values", "Third quartile from a range"]}>
+<Tab value="First quartile from direct values">
+<FunctionSandbox
+  title="First quartile from direct values"
+  formula={`=QUARTILE.INC({1,2,3,4,5},1)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Third quartile from a range">
+<FunctionSandbox
+  title="Third quartile from a range"
+  formula={`=QUARTILE.INC(A1:A4,3)`}
+  grid={{"A1":"10","A2":"20","A3":"30","A4":"40"}}
+  expected={"32.5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [QUARTILE.EXC](/docs/reference/functions/stats/quartile-exc)
+- [PERCENTILE.INC](/docs/reference/functions/stats/percentile-inc)
+- [MEDIAN](/docs/reference/functions/stats/median)
+- [LARGE](/docs/reference/functions/stats/large)
+- [PERCENTILE.EXC](/docs/reference/functions/stats/percentile-exc)
+- [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
+
+## FAQ
+
+### Which quartile numbers are valid for QUARTILE.INC?
+Only 0 through 4 are valid; other quartile indices return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/quartile-inc" />
+{/* [formualizer-docgen:function-meta:end] */}

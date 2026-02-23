@@ -1,0 +1,60 @@
+---
+title: "PPMT"
+description: "PPMT: Returns the principal component of a payment for a specific period."
+---
+
+<FunctionPageSchema id="financial/ppmt" />
+
+## Summary
+
+`PPMT` is computed as `PMT - IPMT` using the same rate, timing, and sign convention.
+
+## Remarks
+ - `rate` is the interest rate per payment period.
+ - `per` is 1-based and must satisfy `1 &lt;= per &lt;= nper`.
+ - Cash-flow sign convention: with a positive borrowed `pv`, principal components are usually negative.
+ - `type = 1` means beginning-of-period payments.
+ - Returns `#NUM!` when `per` is outside valid bounds.
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=PPMT(0.06/12, 1, 360, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=PPMT(0.06/12, 12, 360, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [PMT](/docs/reference/functions/financial/pmt)
+- [IPMT](/docs/reference/functions/financial/ipmt)
+- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
+- [DB](/docs/reference/functions/financial/db)
+- [DDB](/docs/reference/functions/financial/ddb)
+
+## FAQ
+
+### How is `PPMT` computed?
+`PPMT` is computed as `PMT - IPMT` for the same `rate`, `per`, `nper`, `pv`, `fv`, and `type`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/ppmt" />
+{/* [formualizer-docgen:function-meta:end] */}

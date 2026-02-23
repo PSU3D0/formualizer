@@ -1,0 +1,61 @@
+---
+title: "COUNT"
+description: "Counts numeric values across scalars and ranges."
+---
+
+<FunctionPageSchema id="math/count" />
+
+## Summary
+
+`COUNT` evaluates all arguments and counts how many are numeric values.
+ Numbers, dates, and text representations of numbers (when supplied directly) are counted.
+
+## Remarks
+ - Text values inside ranges are ignored and not counted.
+ - Blank cells and logical values in ranges are ignored.
+
+## Examples
+
+<Tabs items={["Counting mixed scalar inputs", "Counting in a range"]}>
+<Tab value="Counting mixed scalar inputs">
+<FunctionSandbox
+  title="Counting mixed scalar inputs"
+  formula={`=COUNT(1, "x", 2, 3)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Counting in a range">
+<FunctionSandbox
+  title="Counting in a range"
+  formula={`=COUNT(A1:A3)`}
+  grid={{"A1":"10","A2":"foo","A3":"20"}}
+  expected={"2"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [COUNTA](/docs/reference/functions/math/counta)
+- [COUNTBLANK](/docs/reference/functions/math/countblank)
+- [COUNTIF](/docs/reference/functions/math/countif)
+- [COUNTIFS](/docs/reference/functions/math/countifs)
+- [SUM](/docs/reference/functions/math/sum)
+- [AVERAGE](/docs/reference/functions/math/average)
+
+## FAQ
+
+### Why doesn't COUNT include text in a range?
+COUNT only counts numeric values; text cells in ranges are ignored.
+
+### Can direct text like "12" be counted?
+Yes. Direct scalar arguments are coerced and counted when they parse as numbers.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/count" />
+{/* [formualizer-docgen:function-meta:end] */}

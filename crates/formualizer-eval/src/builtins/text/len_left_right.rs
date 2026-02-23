@@ -17,6 +17,47 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 
 #[derive(Debug)]
 pub struct LenFn;
+/// Returns the number of characters in a text value.
+///
+/// # Remarks
+/// - Counts Unicode scalar characters, not bytes.
+/// - Empty values return `0`.
+/// - Non-text values are converted to their text form before counting.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Basic text length"
+/// formula: '=LEN("hello")'
+/// expected: 5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Whitespace is counted"
+/// formula: '=LEN("a b")'
+/// expected: 3
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LEFT
+///   - RIGHT
+///   - MID
+/// faq:
+///   - q: "Does LEN ignore spaces?"
+///     a: "No. LEN counts spaces and other visible characters as part of the total length."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: LEN
+/// Type: LenFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: LEN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LenFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -48,6 +89,47 @@ impl Function for LenFn {
 
 #[derive(Debug)]
 pub struct LeftFn;
+/// Returns the leftmost characters from a text value.
+///
+/// # Remarks
+/// - `num_chars` defaults to `1` when omitted.
+/// - Negative `num_chars` returns `#VALUE!`.
+/// - If `num_chars` exceeds length, the full text is returned.
+/// - Non-text values are coerced to text before slicing.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Take first two characters"
+/// formula: '=LEFT("Formualizer", 2)'
+/// expected: "Fo"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Default count is one"
+/// formula: '=LEFT("Data")'
+/// expected: "D"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RIGHT
+///   - MID
+///   - LEN
+/// faq:
+///   - q: "What if num_chars is negative?"
+///     a: "LEFT returns #VALUE! when num_chars is below zero."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: LEFT
+/// Type: LeftFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LEFT(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LeftFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -101,6 +183,47 @@ impl Function for LeftFn {
 
 #[derive(Debug)]
 pub struct RightFn;
+/// Returns the rightmost characters from a text value.
+///
+/// # Remarks
+/// - `num_chars` defaults to `1` when omitted.
+/// - Negative `num_chars` returns `#VALUE!`.
+/// - If `num_chars` exceeds length, the full text is returned.
+/// - Non-text values are coerced to text before slicing.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Take last three characters"
+/// formula: '=RIGHT("engine", 3)'
+/// expected: "ine"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Default count is one"
+/// formula: '=RIGHT("abc")'
+/// expected: "c"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LEFT
+///   - MID
+///   - LEN
+/// faq:
+///   - q: "If num_chars is larger than the text length, what is returned?"
+///     a: "RIGHT returns the full text when the requested count exceeds available characters."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: RIGHT
+/// Type: RightFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: RIGHT(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RightFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

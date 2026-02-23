@@ -1,0 +1,57 @@
+---
+title: "TRUE"
+description: "Returns the logical constant TRUE."
+---
+
+<FunctionPageSchema id="logical/true" />
+
+## Summary
+
+Use `TRUE()` when you want an explicit boolean value in formulas.
+
+## Remarks
+ - `TRUE` takes no arguments and always returns the boolean value `TRUE`.
+ - No coercion or evaluation side effects are involved.
+
+## Examples
+
+<Tabs items={["Return TRUE directly", "Use TRUE in branching"]}>
+<Tab value="Return TRUE directly">
+<FunctionSandbox
+  title="Return TRUE directly"
+  formula={`=TRUE()`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Use TRUE in branching">
+<FunctionSandbox
+  title="Use TRUE in branching"
+  formula={`=IF(TRUE(), "yes", "no")`}
+  grid={{}}
+  expected={"yes"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [FALSE](/docs/reference/functions/logical/false)
+- [IF](/docs/reference/functions/logical/if)
+- [AND](/docs/reference/functions/logical/and)
+- [OR](/docs/reference/functions/logical/or)
+- [NA](/docs/reference/functions/info/na)
+- [PI](/docs/reference/functions/math/pi)
+
+## FAQ
+
+### Can TRUE accept arguments?
+No. TRUE takes zero arguments and always returns the boolean constant TRUE.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="logical/true" />
+{/* [formualizer-docgen:function-meta:end] */}

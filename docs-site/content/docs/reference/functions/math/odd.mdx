@@ -1,0 +1,58 @@
+---
+title: "ODD"
+description: "Rounds a number away from zero to the nearest odd integer."
+---
+
+<FunctionPageSchema id="math/odd" />
+
+## Summary
+
+Rounds a number away from zero to the nearest odd integer.
+
+## Remarks
+ - Values already equal to an odd integer stay unchanged.
+ - Positive and negative values both move away from zero.
+ - `0` returns `1`.
+
+## Examples
+
+<Tabs items={["Round a positive number to odd", "Round a negative number away from zero"]}>
+<Tab value="Round a positive number to odd">
+<FunctionSandbox
+  title="Round a positive number to odd"
+  formula={`=ODD(2)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Round a negative number away from zero">
+<FunctionSandbox
+  title="Round a negative number away from zero"
+  formula={`=ODD(-1.1)`}
+  grid={{}}
+  expected={"-3"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [EVEN](/docs/reference/functions/math/even)
+- [ROUNDUP](/docs/reference/functions/math/roundup)
+- [INT](/docs/reference/functions/math/int)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+
+## FAQ
+
+### Why does ODD(0) return 1?
+ODD rounds away from zero to the nearest odd integer, so zero maps to positive one.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/odd" />
+{/* [formualizer-docgen:function-meta:end] */}

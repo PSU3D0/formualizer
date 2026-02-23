@@ -1,0 +1,60 @@
+---
+title: "ERROR.TYPE"
+description: "ERROR.TYPE: Returns a number corresponding to an error type Returns: 1 = #NULL! 2 = #DIV/0! 3 = #VALUE! 4 = #REF! 5 = #NAME? 6 = #NUM! 7 = #N/A 8 = #GETTING_DATA (n…"
+---
+
+<FunctionPageSchema id="info/error-type" />
+
+## Summary
+
+NOTE: Error codes 9-13 are non-standard extensions for internal error types.
+
+Returns the numeric code for a specific error value.
+
+## Remarks
+ - Standard mappings include: `#NULL!`=1, `#DIV/0!`=2, `#VALUE!`=3, `#REF!`=4, `#NAME?`=5, `#NUM!`=6, `#N/A`=7.
+ - Non-error inputs return `#N/A`.
+ - Additional internal error kinds may map to extended non-standard codes.
+
+## Examples
+
+<Tabs items={["Map DIV/0 to code", "Non-error input returns N/A"]}>
+<Tab value="Map DIV/0 to code">
+<FunctionSandbox
+  title="Map DIV/0 to code"
+  formula={`=ERROR.TYPE(1/0)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Non-error input returns N/A">
+<FunctionSandbox
+  title="Non-error input returns N/A"
+  formula={`=ERROR.TYPE(10)`}
+  grid={{}}
+  expected={"#N/A"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ISERROR](/docs/reference/functions/info/iserror)
+- [ISNA](/docs/reference/functions/info/isna)
+- [IFERROR](/docs/reference/functions/logical-ext/iferror)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+- [ISEVEN](/docs/reference/functions/info/iseven)
+
+## FAQ
+
+### What if the input is not an error value?
+ERROR.TYPE returns #N/A when the input is not an error.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/error-type" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,29 @@
+---
+title: Core Concepts
+description: Mental models for how Formualizer parses formulas, tracks dependencies, and computes values.
+---
+
+Use this section to build a shared vocabulary before jumping into API-specific guides.
+
+## In this section
+
+- [Parse -> AST -> Evaluate -> Workbook](./parse-ast-evaluate-workbook)
+- [Dependency Graph and Recalculation](./dependency-graph-and-recalc)
+- [Values, Coercion, and Errors](./values-coercion-and-errors)
+- [Spill Behavior](./spill-behavior)
+- [Named Ranges and Tables](./named-ranges-and-tables)
+
+## How to read these pages
+
+- Start with the execution pipeline to understand where each subsystem fits.
+- Then learn recalculation + coercion to reason about correctness and performance.
+- Finish with spill and naming constructs, which shape real workbook behavior.
+
+## Related
+
+- [Guides](../guides)
+
+## TODO: Deep dive follow-ups
+
+- Add diagrams for parser and evaluator data flow.
+- Add cross-links to function reference examples once generated docs land.

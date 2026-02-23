@@ -1,0 +1,12 @@
+{
+  "title": "Formualizer Docs",
+  "pages": [
+    "index",
+    "introduction",
+    "quickstarts",
+    "core-concepts",
+    "guides",
+    "reference",
+    "playground"
+  ]
+}

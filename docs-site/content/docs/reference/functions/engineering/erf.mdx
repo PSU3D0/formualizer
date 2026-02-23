@@ -1,0 +1,58 @@
+---
+title: "ERF"
+description: "ERF: Returns the Gaussian error function over one bound or between two bounds."
+---
+
+<FunctionPageSchema id="engineering/erf" />
+
+## Summary
+
+With one argument it returns `erf(x)`; with two it returns `erf(upper) - erf(lower)`.
+
+## Remarks
+ - Inputs are numerically coerced.
+ - A second argument switches the function to interval mode.
+ - Results are approximate floating-point values.
+
+## Examples
+
+<Tabs items={["Single-bound ERF", "Interval ERF"]}>
+<Tab value="Single-bound ERF">
+<FunctionSandbox
+  title="Single-bound ERF"
+  formula={`=ERF(1)`}
+  grid={{}}
+  expected={"0.8427007929497149"}
+/>
+</Tab>
+
+<Tab value="Interval ERF">
+<FunctionSandbox
+  title="Interval ERF"
+  formula={`=ERF(0,1)`}
+  grid={{}}
+  expected={"0.8427007929497149"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ERFC](/docs/reference/functions/engineering/erfc)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+
+## FAQ
+
+### How does two-argument `ERF` work?
+`ERF(lower, upper)` returns `erf(upper) - erf(lower)`, i.e., an interval difference rather than a single-bound value.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/erf" />
+{/* [formualizer-docgen:function-meta:end] */}

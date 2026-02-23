@@ -1,0 +1,58 @@
+---
+title: "DATE"
+description: "Returns the serial number for a calendar date from year, month, and day."
+---
+
+<FunctionPageSchema id="datetime/date" />
+
+## Summary
+
+`DATE` normalizes out-of-range month and day values to produce a valid calendar date.
+
+## Remarks
+ - Years in the range `0..=1899` are interpreted as `1900..=3799` for Excel compatibility.
+ - The returned serial is date-system aware and depends on the active workbook system (`1900` vs `1904`).
+ - In the `1900` system, serial mapping preserves Excel's historical phantom `1900-02-29` behavior.
+
+## Examples
+
+<Tabs items={["Build a standard date", "Normalize overflowing month input"]}>
+<Tab value="Build a standard date">
+<FunctionSandbox
+  title="Build a standard date"
+  formula={`=DATE(2024, 1, 15)`}
+  grid={{}}
+  expected={"45306"}
+/>
+</Tab>
+
+<Tab value="Normalize overflowing month input">
+<FunctionSandbox
+  title="Normalize overflowing month input"
+  formula={`=DATE(2024, 13, 5)`}
+  grid={{}}
+  expected={"45662"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DATEVALUE](/docs/reference/functions/datetime/datevalue)
+- [YEAR](/docs/reference/functions/datetime/year)
+- [EDATE](/docs/reference/functions/datetime/edate)
+- [MONTH](/docs/reference/functions/datetime/month)
+- [DAY](/docs/reference/functions/datetime/day)
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
+
+## FAQ
+
+### Does DATE follow the workbook 1900/1904 date system?
+Yes. DATE emits a serial in the active workbook date system, so the same calendar date can map to different serials across 1900 vs 1904 mode.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/date" />
+{/* [formualizer-docgen:function-meta:end] */}

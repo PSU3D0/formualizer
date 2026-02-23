@@ -1,0 +1,62 @@
+---
+title: "ROW"
+description: "Returns the row number of a reference, or of the current cell when omitted."
+---
+
+<FunctionPageSchema id="lookup/row" />
+
+## Summary
+
+`ROW` returns a 1-based row index.
+
+## Remarks
+ - With a range argument, `ROW` returns the first row in that reference.
+ - Without arguments, it uses the row of the formula cell.
+ - Full-column references such as `A:A` return `1`.
+ - Invalid references return an error (`#REF!`/`#VALUE!` depending on context).
+
+## Examples
+
+<Tabs items={["Row of a single-cell reference", "Row of a multi-cell range"]}>
+<Tab value="Row of a single-cell reference">
+<FunctionSandbox
+  title="Row of a single-cell reference"
+  formula={`=ROW(B5)`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+<Tab value="Row of a multi-cell range">
+<FunctionSandbox
+  title="Row of a multi-cell range"
+  formula={`=ROW(C3:E9)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ROWS](/docs/reference/functions/lookup/rows)
+- [COLUMN](/docs/reference/functions/lookup/column)
+- [ADDRESS](/docs/reference/functions/lookup/address)
+- [TRANSPOSE](/docs/reference/functions/lookup/transpose)
+- [COLUMNS](/docs/reference/functions/lookup/columns)
+- [CHOOSE](/docs/reference/functions/lookup/choose)
+
+## FAQ
+
+### What does ROW return for a multi-cell reference?
+ROW returns the first row index of the reference, not an array of every row number.
+
+### What if ROW() is called without arguments?
+It uses the formula cell position; if no current cell context exists, it returns #VALUE!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/row" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,59 @@
+---
+title: "ARRAYTOTEXT"
+description: "ARRAYTOTEXT: Converts an array or range into a text representation."
+---
+
+<FunctionPageSchema id="text/arraytotext" />
+
+## Summary
+
+`ARRAYTOTEXT(array, [format])` supports concise (`0`) and strict (`1`) output styles.
+
+## Remarks
+ - Strict mode returns brace-delimited array syntax with row/column separators.
+ - Concise mode flattens all values into a comma-space list.
+ - Cells are converted using the same scalar text rules used by `VALUETOTEXT`.
+ - Errors in scalar-only input propagate immediately.
+
+## Examples
+
+<Tabs items={["Concise flattened output", "Strict 2D representation"]}>
+<Tab value="Concise flattened output">
+<FunctionSandbox
+  title="Concise flattened output"
+  formula={`=ARRAYTOTEXT({1,2,3})`}
+  grid={{}}
+  expected={"1, 2, 3"}
+/>
+</Tab>
+
+<Tab value="Strict 2D representation">
+<FunctionSandbox
+  title="Strict 2D representation"
+  formula={`=ARRAYTOTEXT({1,2;3,4}, 1)`}
+  grid={{}}
+  expected={"{1,2;3,4}"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [VALUETOTEXT](/docs/reference/functions/text/valuetotext)
+- [TEXTJOIN](/docs/reference/functions/text/textjoin)
+- [TEXTSPLIT](/docs/reference/functions/text/textsplit)
+- [DOLLAR](/docs/reference/functions/text/dollar)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+
+## FAQ
+
+### What changes when format is 1?
+Format 1 returns brace-delimited array syntax; format 0 flattens values into a comma-space list.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/arraytotext" />
+{/* [formualizer-docgen:function-meta:end] */}

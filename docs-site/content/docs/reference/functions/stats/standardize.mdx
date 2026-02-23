@@ -1,0 +1,54 @@
+---
+title: "STANDARDIZE"
+description: "STANDARDIZE: Returns the z-score of `x` relative to a mean and standard deviation."
+---
+
+<FunctionPageSchema id="stats/standardize" />
+
+## Summary
+
+`STANDARDIZE` computes `(x - mean) / standard_dev`.
+
+## Remarks
+ - `standard_dev` must be strictly greater than `0`.
+ - Returns `#NUM!` when `standard_dev &lt;= 0`.
+ - Positive output means `x` is above the mean; negative output means below.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["One standard deviation above the mean", "Exactly at the mean"]}>
+<Tab value="One standard deviation above the mean">
+<FunctionSandbox
+  title="One standard deviation above the mean"
+  formula={`=STANDARDIZE(42,40,2)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Exactly at the mean">
+<FunctionSandbox
+  title="Exactly at the mean"
+  formula={`=STANDARDIZE(100,100,10)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
+- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
+- [EXPON.DIST](/docs/reference/functions/stats/expon-dist)
+- [F.INV](/docs/reference/functions/stats/f-inv)
+- [LOGNORM.INV](/docs/reference/functions/stats/lognorm-inv)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/standardize" />
+{/* [formualizer-docgen:function-meta:end] */}

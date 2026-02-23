@@ -1,0 +1,54 @@
+---
+title: "NORM.INV"
+description: "NORM.INV: Returns the value `x` whose normal cumulative probability equals `probability`."
+---
+
+<FunctionPageSchema id="stats/norm-inv" />
+
+## Summary
+
+This function is the inverse of `NORM.DIST(x, mean, standard_dev, TRUE)`.
+
+## Remarks
+ - `probability` must be strictly between `0` and `1`.
+ - `standard_dev` must be strictly greater than `0`.
+ - Returns `#NUM!` for invalid probability bounds or non-positive standard deviation.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Median probability returns the mean", "One-standard-deviation quantile"]}>
+<Tab value="Median probability returns the mean">
+<FunctionSandbox
+  title="Median probability returns the mean"
+  formula={`=NORM.INV(0.5,10,2)`}
+  grid={{}}
+  expected={"10"}
+/>
+</Tab>
+
+<Tab value="One-standard-deviation quantile">
+<FunctionSandbox
+  title="One-standard-deviation quantile"
+  formula={`=NORM.INV(0.841344746068543,0,1)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [NORM.DIST](/docs/reference/functions/stats/norm-dist)
+- [NORM.S.INV](/docs/reference/functions/stats/norm-s-inv)
+- [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
+- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/norm-inv" />
+{/* [formualizer-docgen:function-meta:end] */}

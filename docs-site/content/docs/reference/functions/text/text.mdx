@@ -1,0 +1,59 @@
+---
+title: "TEXT"
+description: "Formats a value as text using a format pattern."
+---
+
+<FunctionPageSchema id="text/text" />
+
+## Summary
+
+This implementation supports common numeric, percent, grouping, and basic date tokens.
+
+## Remarks
+ - Requires exactly two arguments: value and format text.
+ - Numeric text is parsed before formatting; invalid numeric text returns `#VALUE!`.
+ - Error inputs are propagated unchanged.
+ - Supported patterns are intentionally limited compared with full Excel formatting.
+
+## Examples
+
+<Tabs items={["Fixed decimal formatting", "Percent formatting"]}>
+<Tab value="Fixed decimal formatting">
+<FunctionSandbox
+  title="Fixed decimal formatting"
+  formula={`=TEXT(12.3, "0.00")`}
+  grid={{}}
+  expected={"12.30"}
+/>
+</Tab>
+
+<Tab value="Percent formatting">
+<FunctionSandbox
+  title="Percent formatting"
+  formula={`=TEXT(0.256, "0%")`}
+  grid={{}}
+  expected={"26%"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [VALUE](/docs/reference/functions/text/value)
+- [FIXED](/docs/reference/functions/text/fixed)
+- [DOLLAR](/docs/reference/functions/text/dollar)
+- [EXACT](/docs/reference/functions/text/exact)
+- [REPT](/docs/reference/functions/text/rept)
+- [TEXTAFTER](/docs/reference/functions/text/textafter)
+
+## FAQ
+
+### How complete is format_text support?
+Only a limited subset of Excel-style numeric/date tokens is supported in this implementation.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/text" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,62 @@
+---
+title: "HSTACK"
+description: "HSTACK: Concatenates arrays horizontally into a single spilled array."
+---
+
+<FunctionPageSchema id="lookup/hstack" />
+
+## Summary
+
+`HSTACK` appends columns from each argument left-to-right.
+
+## Remarks
+ - All non-empty range arguments must have the same row count.
+ - Scalar arguments are treated as 1x1 values.
+ - Mismatched row counts return `#VALUE!`.
+ - Empty inputs are skipped; if all inputs are empty, result is an empty spill.
+
+## Examples
+
+<Tabs items={["Join two 2-row ranges side by side", "Append a scalar column"]}>
+<Tab value="Join two 2-row ranges side by side">
+<FunctionSandbox
+  title="Join two 2-row ranges side by side"
+  formula={`=HSTACK(A1:A2,B1:B2)`}
+  grid={{"A1":"1","A2":"2","B1":"10","B2":"20"}}
+  expected={"[[1,10],[2,20]]"}
+/>
+</Tab>
+
+<Tab value="Append a scalar column">
+<FunctionSandbox
+  title="Append a scalar column"
+  formula={`=HSTACK(A1,"OK")`}
+  grid={{"A1":"Item"}}
+  expected={"[[\"Item\",\"OK\"]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [VSTACK](/docs/reference/functions/lookup/vstack)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [TAKE](/docs/reference/functions/lookup/take)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+- [FILTER](/docs/reference/functions/lookup/filter)
+- [GROUPBY](/docs/reference/functions/lookup/groupby)
+
+## FAQ
+
+### Why does HSTACK return #VALUE! when combining ranges?
+All non-empty inputs must have identical row counts; mismatched heights produce #VALUE!.
+
+### How are scalar arguments treated in HSTACK?
+Each scalar is treated as a 1x1 block, so it only aligns with other arguments when the target row count is 1.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/hstack" />
+{/* [formualizer-docgen:function-meta:end] */}

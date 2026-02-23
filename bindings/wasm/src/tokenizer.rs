@@ -32,7 +32,7 @@ impl Tokenizer {
             .map(|token| Token::from_core(token.clone()))
             .collect();
 
-        serde_wasm_bindgen::to_value(&tokens).map_err(|e| JsValue::from_str(&e.to_string()))
+        crate::utils::to_js_value(&tokens)
     }
 
     #[wasm_bindgen(js_name = "render")]
@@ -52,7 +52,7 @@ impl Tokenizer {
         }
 
         let token = Token::from_core(self.inner.items[index].clone());
-        serde_wasm_bindgen::to_value(&token).map_err(|e| JsValue::from_str(&e.to_string()))
+        crate::utils::to_js_value(&token)
     }
 
     #[wasm_bindgen(js_name = "toString")]

@@ -1,0 +1,58 @@
+---
+title: "ERFC"
+description: "ERFC: Returns the complementary error function of a number."
+---
+
+<FunctionPageSchema id="engineering/erfc" />
+
+## Summary
+
+`ERFC(x)` is equivalent to `1 - ERF(x)`.
+
+## Remarks
+ - Input is numerically coerced.
+ - Results are approximate floating-point values.
+ - Propagates input errors.
+
+## Examples
+
+<Tabs items={["Complement at one", "Complement at zero"]}>
+<Tab value="Complement at one">
+<FunctionSandbox
+  title="Complement at one"
+  formula={`=ERFC(1)`}
+  grid={{}}
+  expected={"0.1572992070502851"}
+/>
+</Tab>
+
+<Tab value="Complement at zero">
+<FunctionSandbox
+  title="Complement at zero"
+  formula={`=ERFC(0)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ERF](/docs/reference/functions/engineering/erf)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
+- [IMABS](/docs/reference/functions/engineering/imabs)
+- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+
+## FAQ
+
+### Is `ERFC(x)` equivalent to `1-ERF(x)` here?
+Yes. It computes the complementary error function and matches `1 - erf(x)` behavior.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/erfc" />
+{/* [formualizer-docgen:function-meta:end] */}

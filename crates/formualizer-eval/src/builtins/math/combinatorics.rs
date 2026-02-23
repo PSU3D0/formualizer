@@ -5,9 +5,59 @@ use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
-/// FACT(number) - Returns the factorial of a number
 #[derive(Debug)]
 pub struct FactFn;
+/// Returns the factorial of a non-negative integer.
+///
+/// `FACT` truncates fractional inputs toward zero before computing the factorial.
+///
+/// # Remarks
+/// - Non-numeric values that cannot be coerced return `#VALUE!`.
+/// - Negative inputs return `#NUM!`.
+/// - Results above `170!` overflow Excel-compatible limits and return `#NUM!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Basic factorial"
+/// formula: "=FACT(5)"
+/// expected: 120
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional input is truncated"
+/// formula: "=FACT(5.9)"
+/// expected: 120
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative input returns numeric error"
+/// formula: "=FACT(-1)"
+/// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FACTDOUBLE
+///   - GAMMALN
+///   - COMBIN
+/// faq:
+///   - q: "Why does FACT(171) return #NUM!?"
+///     a: "Excel-compatible factorial support is capped at 170!; larger values overflow and return #NUM!."
+///   - q: "Does FACT round fractional inputs?"
+///     a: "No. It truncates toward zero before computing the factorial."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: FACT
+/// Type: FactFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: FACT(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FactFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -55,9 +105,59 @@ impl Function for FactFn {
     }
 }
 
-/// GCD(number1, [number2], ...) - Returns the greatest common divisor
 #[derive(Debug)]
 pub struct GcdFn;
+/// Returns the greatest common divisor of one or more integers.
+///
+/// `GCD` truncates each argument toward zero before calculating the divisor.
+///
+/// # Remarks
+/// - Inputs must be between `0` and `9.99999999e9` after truncation, or `#NUM!` is returned.
+/// - Negative values return `#NUM!`.
+/// - Any argument error propagates immediately.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Greatest common divisor of two numbers"
+/// formula: "=GCD(24, 36)"
+/// expected: 12
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Variadic and fractional arguments"
+/// formula: "=GCD(18.9, 6, 30)"
+/// expected: 6
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative values are invalid"
+/// formula: "=GCD(-2, 4)"
+/// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LCM
+///   - MOD
+///   - QUOTIENT
+/// faq:
+///   - q: "What happens to decimal inputs in GCD?"
+///     a: "Each argument is truncated toward zero before the divisor is computed."
+///   - q: "When does GCD return #NUM!?"
+///     a: "Negative values or values outside the supported bound return #NUM!."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: GCD
+/// Type: GcdFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: GCD(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for GcdFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -111,9 +211,59 @@ impl Function for GcdFn {
     }
 }
 
-/// LCM(number1, [number2], ...) - Returns the least common multiple
 #[derive(Debug)]
 pub struct LcmFn;
+/// Returns the least common multiple of one or more integers.
+///
+/// `LCM` truncates fractional arguments toward zero and combines values iteratively.
+///
+/// # Remarks
+/// - Inputs must be non-negative and within the supported Excel-compatible range.
+/// - If any input is `0`, the resulting least common multiple is `0`.
+/// - Any argument error propagates immediately.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Least common multiple for two integers"
+/// formula: "=LCM(4, 6)"
+/// expected: 12
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional values are truncated"
+/// formula: "=LCM(6.8, 8.2)"
+/// expected: 24
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative values return numeric error"
+/// formula: "=LCM(-3, 6)"
+/// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - GCD
+///   - MOD
+///   - MROUND
+/// faq:
+///   - q: "Why does LCM return 0 when one argument is 0?"
+///     a: "LCM is defined as 0 if any truncated input is 0 in this implementation."
+///   - q: "Are fractional inputs accepted?"
+///     a: "Yes, but they are truncated toward zero before the LCM calculation."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: LCM
+/// Type: LcmFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LCM(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LcmFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -173,9 +323,59 @@ impl Function for LcmFn {
     }
 }
 
-/// COMBIN(n, k) - Returns the number of combinations
 #[derive(Debug)]
 pub struct CombinFn;
+/// Returns the number of combinations for selecting `k` items from `n`.
+///
+/// `COMBIN` evaluates `n` choose `k` using truncated integer inputs.
+///
+/// # Remarks
+/// - Fractional inputs are truncated toward zero before evaluation.
+/// - If `n < 0`, `k < 0`, or `k > n`, the function returns `#NUM!`.
+/// - Argument errors propagate directly.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Basic combinations"
+/// formula: "=COMBIN(5, 2)"
+/// expected: 10
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional arguments are truncated"
+/// formula: "=COMBIN(6.9, 3.2)"
+/// expected: 20
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Invalid k returns numeric error"
+/// formula: "=COMBIN(3, 5)"
+/// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COMBINA
+///   - PERMUT
+///   - FACT
+/// faq:
+///   - q: "When does COMBIN return #NUM!?"
+///     a: "It returns #NUM! if n or k is negative, or if k is greater than n after truncation."
+///   - q: "Can COMBIN take non-integer values?"
+///     a: "Yes, but both inputs are truncated toward zero before evaluation."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: COMBIN
+/// Type: CombinFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: COMBIN(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CombinFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -234,9 +434,59 @@ impl Function for CombinFn {
     }
 }
 
-/// PERMUT(n, k) - Returns the number of permutations
 #[derive(Debug)]
 pub struct PermutFn;
+/// Returns the number of permutations for selecting and ordering `k` items from `n`.
+///
+/// `PERMUT` computes `n!/(n-k)!` after truncating both inputs toward zero.
+///
+/// # Remarks
+/// - Fractional inputs are truncated to integers.
+/// - If `n < 0`, `k < 0`, or `k > n`, the function returns `#NUM!`.
+/// - Argument errors propagate directly.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Basic permutations"
+/// formula: "=PERMUT(5, 2)"
+/// expected: 20
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional arguments are truncated"
+/// formula: "=PERMUT(7.9, 3.1)"
+/// expected: 210
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Out-of-range k returns numeric error"
+/// formula: "=PERMUT(4, 6)"
+/// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COMBIN
+///   - FACT
+///   - MULTINOMIAL
+/// faq:
+///   - q: "Why does PERMUT fail when k is larger than n?"
+///     a: "Permutations require choosing at most n items, so k > n returns #NUM!."
+///   - q: "How are decimal inputs handled?"
+///     a: "PERMUT truncates n and k toward zero before computing n!/(n-k)!."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: PERMUT
+/// Type: PermutFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: PERMUT(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PermutFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

@@ -43,6 +43,47 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
 
 #[derive(Debug)]
 pub struct TrimFn;
+/// Removes leading/trailing whitespace and collapses internal runs to single spaces.
+///
+/// # Remarks
+/// - Leading and trailing whitespace is removed.
+/// - Consecutive whitespace inside the text is collapsed to one ASCII space.
+/// - Non-text inputs are coerced to text before trimming.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Normalize spacing"
+/// formula: '=TRIM("  alpha   beta  ")'
+/// expected: "alpha beta"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Already clean text"
+/// formula: '=TRIM("report")'
+/// expected: "report"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CLEAN
+///   - TEXTJOIN
+///   - SUBSTITUTE
+/// faq:
+///   - q: "What whitespace does TRIM normalize?"
+///     a: "It trims edges and collapses internal whitespace runs to single spaces."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TRIM
+/// Type: TrimFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TRIM(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TrimFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -81,6 +122,46 @@ impl Function for TrimFn {
 
 #[derive(Debug)]
 pub struct UpperFn;
+/// Converts text to uppercase.
+///
+/// # Remarks
+/// - Uses ASCII uppercasing semantics in this implementation.
+/// - Numbers and booleans are first converted to text.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Uppercase letters"
+/// formula: '=UPPER("Quarterly report")'
+/// expected: "QUARTERLY REPORT"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Number coerced to text"
+/// formula: '=UPPER(123)'
+/// expected: "123"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LOWER
+///   - PROPER
+///   - EXACT
+/// faq:
+///   - q: "Is uppercasing fully Unicode-aware?"
+///     a: "This implementation uses ASCII uppercasing semantics, so non-ASCII case rules are limited."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: UPPER
+/// Type: UpperFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: UPPER(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for UpperFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -104,6 +185,46 @@ impl Function for UpperFn {
 }
 #[derive(Debug)]
 pub struct LowerFn;
+/// Converts text to lowercase.
+///
+/// # Remarks
+/// - Uses ASCII lowercasing semantics in this implementation.
+/// - Numbers and booleans are first converted to text.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Lowercase letters"
+/// formula: '=LOWER("Data PIPELINE")'
+/// expected: "data pipeline"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Boolean coerced to text"
+/// formula: '=LOWER(TRUE)'
+/// expected: "true"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - UPPER
+///   - PROPER
+///   - EXACT
+/// faq:
+///   - q: "How are booleans handled by LOWER?"
+///     a: "Inputs are coerced to text first, so TRUE/FALSE become lowercase string values."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: LOWER
+/// Type: LowerFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: LOWER(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for LowerFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -127,6 +248,47 @@ impl Function for LowerFn {
 }
 #[derive(Debug)]
 pub struct ProperFn;
+/// Capitalizes the first letter of each alphanumeric word.
+///
+/// # Remarks
+/// - Word boundaries are reset by non-alphanumeric characters.
+/// - Internal letters in each word are lowercased.
+/// - Non-text inputs are coerced to text.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Title case simple phrase"
+/// formula: '=PROPER("hello world")'
+/// expected: "Hello World"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyphen-separated words"
+/// formula: '=PROPER("north-east REGION")'
+/// expected: "North-East Region"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - UPPER
+///   - LOWER
+///   - TRIM
+/// faq:
+///   - q: "How are word boundaries determined?"
+///     a: "Any non-alphanumeric character starts a new word boundary for capitalization."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: PROPER
+/// Type: ProperFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: PROPER(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ProperFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -170,6 +332,47 @@ impl Function for ProperFn {
 // CONCAT(text1, text2, ...)
 #[derive(Debug)]
 pub struct ConcatFn;
+/// Concatenates multiple values into one text string.
+///
+/// # Remarks
+/// - Accepts one or more arguments.
+/// - Blank values contribute an empty string.
+/// - Numbers and booleans are coerced to text.
+/// - Errors are propagated as soon as encountered.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Join text pieces"
+/// formula: '=CONCAT("Q", 1, "-", "2026")'
+/// expected: "Q1-2026"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Concatenate with blanks"
+/// formula: '=CONCAT("A", "", "B")'
+/// expected: "AB"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CONCATENATE
+///   - TEXTJOIN
+///   - VALUE
+/// faq:
+///   - q: "Do blank arguments add separators or characters?"
+///     a: "No. CONCAT appends each value directly, and blanks contribute an empty string."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CONCAT
+/// Type: ConcatFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CONCAT(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ConcatFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -199,6 +402,47 @@ impl Function for ConcatFn {
 // CONCATENATE (alias semantics)
 #[derive(Debug)]
 pub struct ConcatenateFn;
+/// Legacy alias for `CONCAT` that joins multiple values as text.
+///
+/// # Remarks
+/// - Semantics match `CONCAT` in this implementation.
+/// - Blank values contribute an empty string.
+/// - Numbers and booleans are coerced to text.
+/// - Errors are propagated as soon as encountered.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Legacy concatenate behavior"
+/// formula: '=CONCATENATE("Jan", "-", 2026)'
+/// expected: "Jan-2026"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Boolean coercion"
+/// formula: '=CONCATENATE("Flag:", TRUE)'
+/// expected: "Flag:TRUE"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CONCAT
+///   - TEXTJOIN
+///   - VALUE
+/// faq:
+///   - q: "Is CONCATENATE behavior different from CONCAT here?"
+///     a: "No. In this engine CONCATENATE uses the same join semantics as CONCAT."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CONCATENATE
+/// Type: ConcatenateFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CONCATENATE(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ConcatenateFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -225,6 +469,49 @@ impl Function for ConcatenateFn {
 // TEXTJOIN(delimiter, ignore_empty, text1, [text2, ...])
 #[derive(Debug)]
 pub struct TextJoinFn;
+/// Joins text values using a delimiter, with optional empty-value filtering.
+///
+/// `TEXTJOIN(delimiter, ignore_empty, text1, ...)` is useful for building labels and lists.
+///
+/// # Remarks
+/// - `ignore_empty=TRUE` skips empty strings and empty cells.
+/// - `ignore_empty=FALSE` includes empty items, which can produce adjacent delimiters.
+/// - Delimiter and values are coerced to text.
+/// - Any error in inputs propagates immediately.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Ignore empty entries"
+/// formula: '=TEXTJOIN(",", TRUE, "a", "", "c")'
+/// expected: "a,c"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Keep empty entries"
+/// formula: '=TEXTJOIN("-", FALSE, "a", "", "c")'
+/// expected: "a--c"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CONCAT
+///   - CONCATENATE
+///   - TEXTSPLIT
+/// faq:
+///   - q: "What does ignore_empty change?"
+///     a: "TRUE skips empty values; FALSE keeps them, which can create adjacent delimiters."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TEXTJOIN
+/// Type: TextJoinFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: TEXTJOIN(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TextJoinFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

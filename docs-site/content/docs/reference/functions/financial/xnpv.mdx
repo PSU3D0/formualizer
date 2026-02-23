@@ -1,0 +1,60 @@
+---
+title: "XNPV"
+description: "XNPV: Calculates annualized net present value for irregularly dated cash flows."
+---
+
+<FunctionPageSchema id="financial/xnpv" />
+
+## Summary
+
+Discounting uses an actual-day offset divided by 365 from the first provided date.
+
+## Remarks
+ - `rate` is an annual discount rate.
+ - Cash-flow sign convention: outflows are negative and inflows are positive.
+ - `values` and `dates` are flattened to numeric entries; non-numeric entries are ignored.
+ - Scalar error inputs are propagated; callable inputs return `#CALC!`.
+ - Returns `#NUM!` when `values` and `dates` lengths differ or no numeric pair exists.
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=XNPV(0.10, {-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=XNPV(0.08, {-5000,1200,1800,2400}, {0,180,365,730})`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [NPV](/docs/reference/functions/financial/npv)
+- [XIRR](/docs/reference/functions/financial/xirr)
+- [MIRR](/docs/reference/functions/financial/mirr)
+- [SLN](/docs/reference/functions/financial/sln)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
+- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
+
+## FAQ
+
+### How are dates interpreted in `XNPV`?
+Each cash flow is discounted by `(date_i - first_date) / 365`, so dates must align one-to-one with values.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/xnpv" />
+{/* [formualizer-docgen:function-meta:end] */}

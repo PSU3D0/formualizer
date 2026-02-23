@@ -37,6 +37,49 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
 // FIND(find_text, within_text, [start_num]) - case sensitive
 #[derive(Debug)]
 pub struct FindFn;
+/// Returns the 1-based position of one text string inside another.
+///
+/// `FIND` is case-sensitive and does not interpret wildcard characters.
+///
+/// # Remarks
+/// - Search is case-sensitive (`"A"` and `"a"` are different).
+/// - `start_num` is 1-based and must be greater than `0`.
+/// - If no match is found, returns `#VALUE!`.
+/// - Errors in either argument are propagated.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Case-sensitive match"
+/// formula: '=FIND("World", "Hello World")'
+/// expected: 7
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Case mismatch fails"
+/// formula: '=FIND("world", "Hello World")'
+/// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SEARCH
+///   - EXACT
+///   - TEXTBEFORE
+/// faq:
+///   - q: "Do wildcard characters work in FIND?"
+///     a: "No. FIND treats * and ? as literal characters and matches case-sensitively."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: FIND
+/// Type: FindFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: FIND(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FindFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -97,6 +140,49 @@ impl Function for FindFn {
 // SEARCH(find_text, within_text, [start_num]) - case insensitive + simple wildcard * ?
 #[derive(Debug)]
 pub struct SearchFn;
+/// Returns the 1-based position of one text string inside another.
+///
+/// `SEARCH` is case-insensitive and supports `*` and `?` wildcards.
+///
+/// # Remarks
+/// - Search is case-insensitive.
+/// - `*` matches any sequence and `?` matches a single character.
+/// - `start_num` is 1-based and must be greater than `0`.
+/// - If no match is found, returns `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Case-insensitive search"
+/// formula: '=SEARCH("world", "Hello World")'
+/// expected: 7
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Wildcard pattern"
+/// formula: '=SEARCH("d?ta*", "Meta Data Lake")'
+/// expected: 6
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FIND
+///   - EXACT
+///   - SUBSTITUTE
+/// faq:
+///   - q: "How are case and wildcards handled?"
+///     a: "SEARCH is case-insensitive and supports * for any sequence plus ? for one character."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SEARCH
+/// Type: SearchFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SEARCH(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for SearchFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -207,6 +293,47 @@ fn wildcard_match(pat: &str, text: &str) -> bool {
 // EXACT(text1,text2)
 #[derive(Debug)]
 pub struct ExactFn;
+/// Compares two text values for exact equality.
+///
+/// # Remarks
+/// - Comparison is case-sensitive.
+/// - No wildcard semantics are applied.
+/// - Non-text values are converted to text before comparison.
+/// - Errors in either argument are propagated.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Exact same text"
+/// formula: '=EXACT("Form", "Form")'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Case difference is not equal"
+/// formula: '=EXACT("Form", "form")'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FIND
+///   - SEARCH
+///   - UPPER
+/// faq:
+///   - q: "Does EXACT perform case-sensitive comparison?"
+///     a: "Yes. EXACT compares the resulting text values with exact case and character equality."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: EXACT
+/// Type: ExactFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: EXACT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ExactFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

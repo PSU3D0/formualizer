@@ -1,0 +1,58 @@
+---
+title: "CEILING.MATH"
+description: "Rounds a number up to the nearest integer or multiple using `CEILING.MATH` rules."
+---
+
+<FunctionPageSchema id="math/ceiling-math" />
+
+## Summary
+
+Rounds a number up to the nearest integer or multiple using `CEILING.MATH` rules.
+
+## Remarks
+ - If `significance` is omitted (or passed as `0`), the function uses `1`.
+ - `significance` is treated as a positive magnitude.
+ - For negative numbers, non-zero `mode` rounds away from zero; otherwise it rounds toward positive infinity.
+
+## Examples
+
+<Tabs items={["Default behavior for a positive number", "Use mode to round a negative number away from zero"]}>
+<Tab value="Default behavior for a positive number">
+<FunctionSandbox
+  title="Default behavior for a positive number"
+  formula={`=CEILING.MATH(24.3,5)`}
+  grid={{}}
+  expected={"25"}
+/>
+</Tab>
+
+<Tab value="Use mode to round a negative number away from zero">
+<FunctionSandbox
+  title="Use mode to round a negative number away from zero"
+  formula={`=CEILING.MATH(-24.3,5,1)`}
+  grid={{}}
+  expected={"-25"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
+- [ROUNDUP](/docs/reference/functions/math/roundup)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [FLOOR](/docs/reference/functions/math/floor)
+- [GCD](/docs/reference/functions/math/gcd)
+
+## FAQ
+
+### How does mode affect negative numbers in CEILING.MATH?
+With non-zero mode, negatives round away from zero; otherwise they round toward +infinity.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/ceiling-math" />
+{/* [formualizer-docgen:function-meta:end] */}

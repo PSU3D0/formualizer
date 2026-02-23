@@ -1,0 +1,10 @@
+{
+  "title": "Quickstarts",
+  "pages": [
+    "index",
+    "rust-quickstart",
+    "python-quickstart",
+    "js-wasm-quickstart",
+    "first-workbook-in-5-minutes"
+  ]
+}

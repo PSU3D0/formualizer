@@ -1,0 +1,58 @@
+---
+title: "MEDIAN"
+description: "MEDIAN: Returns the middle value of a numeric data set."
+---
+
+<FunctionPageSchema id="stats/median" />
+
+## Summary
+
+For an even number of values, `MEDIAN` returns the average of the two center values.
+
+## Remarks
+ - Ignores non-numeric values in referenced ranges.
+ - Returns `#NUM!` when no numeric values are available.
+ - Supports both scalar arguments and range inputs.
+
+## Examples
+
+<Tabs items={["Median of an odd-sized set", "Median of an even-sized range"]}>
+<Tab value="Median of an odd-sized set">
+<FunctionSandbox
+  title="Median of an odd-sized set"
+  formula={`=MEDIAN(1,3,8)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Median of an even-sized range">
+<FunctionSandbox
+  title="Median of an even-sized range"
+  formula={`=MEDIAN(A1:A4)`}
+  grid={{"A1":"1","A2":"2","A3":"10","A4":"12"}}
+  expected={"6"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [AVERAGE](/docs/reference/functions/math/average)
+- [MODE.SNGL](/docs/reference/functions/stats/mode-sngl)
+- [QUARTILE.INC](/docs/reference/functions/stats/quartile-inc)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### When does MEDIAN return #NUM!?
+MEDIAN returns #NUM! when no numeric values are available after filtering/coercion.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/median" />
+{/* [formualizer-docgen:function-meta:end] */}

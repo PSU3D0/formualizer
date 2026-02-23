@@ -1,0 +1,58 @@
+---
+title: "ISFORMULA"
+description: "ISFORMULA: Returns whether a value originates from a formula."
+---
+
+<FunctionPageSchema id="info/isformula" />
+
+## Summary
+
+Current engine metadata does not track formula provenance at this call site.
+
+## Remarks
+ - This implementation currently returns FALSE for all inputs.
+ - Errors are not raised solely due to provenance unavailability.
+ - Arity mismatch returns `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Literal value", "Computed value in expression context"]}>
+<Tab value="Literal value">
+<FunctionSandbox
+  title="Literal value"
+  formula={`=ISFORMULA(10)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+<Tab value="Computed value in expression context">
+<FunctionSandbox
+  title="Computed value in expression context"
+  formula={`=ISFORMULA(1+1)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TYPE](/docs/reference/functions/info/type)
+- [ISNUMBER](/docs/reference/functions/info/isnumber)
+- [ISTEXT](/docs/reference/functions/info/istext)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### Can ISFORMULA currently detect formula provenance?
+Not yet. This implementation always returns FALSE because provenance metadata is not tracked here.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/isformula" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -8,10 +8,48 @@ use chrono::NaiveDate;
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
-/// DATEVALUE(date_text) - Converts a date string to serial number
+/// Parses a date string and returns its date serial number.
+///
+/// # Remarks
+/// - Accepted formats are a fixed supported subset (for example `YYYY-MM-DD`, `MM/DD/YYYY`, and month-name forms).
+/// - Parsing is not locale-driven; ambiguous text may parse differently than Excel locales.
+/// - Output uses Excel 1900 serial mapping and does not currently switch to workbook `1904` mode.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Parse ISO date"
+/// formula: '=DATEVALUE("2024-01-15")'
+/// expected: 45306
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Parse month-name date"
+/// formula: '=DATEVALUE("Jan 15, 2024")'
+/// expected: 45306
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DATE
+///   - TIMEVALUE
+///   - VALUE
+/// faq:
+///   - q: "Why can DATEVALUE disagree with locale-specific Excel parsing?"
+///     a: "This implementation uses a fixed set of accepted formats instead of workbook locale settings, so ambiguous text may parse differently."
+/// ```
 #[derive(Debug)]
 pub struct DateValueFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: DATEVALUE
+/// Type: DateValueFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: DATEVALUE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for DateValueFn {
     func_caps!(PURE);
 
@@ -72,10 +110,48 @@ impl Function for DateValueFn {
     }
 }
 
-/// TIMEVALUE(time_text) - Converts a time string to serial number fraction
+/// Parses a time string and returns its fractional-day serial value.
+///
+/// # Remarks
+/// - Supported formats include 24-hour and AM/PM text forms with optional seconds.
+/// - Result is a fraction in the range `0.0..1.0` and does not include a date component.
+/// - Because only a time fraction is returned, workbook date-system choice does not affect output.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Parse 24-hour time"
+/// formula: '=TIMEVALUE("14:30")'
+/// expected: 0.6041666667
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Parse 12-hour AM/PM time"
+/// formula: '=TIMEVALUE("02:30 PM")'
+/// expected: 0.6041666667
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TIME
+///   - DATEVALUE
+///   - SECOND
+/// faq:
+///   - q: "Does TIMEVALUE depend on the 1900 vs 1904 date system?"
+///     a: "No. TIMEVALUE returns only a time fraction, so date-system selection does not change the result."
+/// ```
 #[derive(Debug)]
 pub struct TimeValueFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: TIMEVALUE
+/// Type: TimeValueFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TIMEVALUE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TimeValueFn {
     func_caps!(PURE);
 

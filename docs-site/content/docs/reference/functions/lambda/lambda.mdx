@@ -1,0 +1,74 @@
+---
+title: "LAMBDA"
+description: "LAMBDA: Creates an anonymous callable that can be invoked with spreadsheet arguments."
+---
+
+<FunctionPageSchema id="lambda/lambda" />
+
+## Summary
+
+`LAMBDA` captures its defining local scope and returns a reusable function value.
+
+## Remarks
+ - All arguments except the last are parameter names; the last argument is the body expression.
+ - Parameter names must be unique (case-insensitive), or `#VALUE!` is returned.
+ - Invocation arity must exactly match the declared parameter count.
+ - Returning an uninvoked lambda as a final cell value yields a `#CALC!` in evaluation.
+
+## Examples
+
+<Tabs items={["Inline lambda invocation", "Lambda captures outer LET bindings", "Duplicate parameter names are invalid"]}>
+<Tab value="Inline lambda invocation">
+<FunctionSandbox
+  title="Inline lambda invocation"
+  formula={`=LAMBDA(x,x+1)(41)`}
+  grid={{}}
+  expected={"42"}
+/>
+</Tab>
+
+<Tab value="Lambda captures outer LET bindings">
+<FunctionSandbox
+  title="Lambda captures outer LET bindings"
+  formula={`=LET(k,10,addk,LAMBDA(n,n+k),addk(5))`}
+  grid={{}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="Duplicate parameter names are invalid">
+<FunctionSandbox
+  title="Duplicate parameter names are invalid"
+  formula={`=LAMBDA(x,x,x+1)`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LET](/docs/reference/functions/lambda/let)
+- [IF](/docs/reference/functions/logical/if)
+- [SUM](/docs/reference/functions/math/sum)
+- [AND](/docs/reference/functions/logical/and)
+- [OR](/docs/reference/functions/logical/or)
+- [IFS](/docs/reference/functions/logical-ext/ifs)
+
+## FAQ
+
+### Why does =LAMBDA(x,x+1) return #CALC! instead of a number?
+LAMBDA returns a callable value. In a cell result position, it must be invoked, for example =LAMBDA(x,x+1)(1).
+
+### Does a LAMBDA read outer LET variables at call time or definition time?
+Definition time. The closure captures its lexical environment when created.
+
+### Can I call a LAMBDA with fewer or extra arguments?
+No. Invocation arity must match the declared parameter count exactly, or #VALUE! is returned.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lambda/lambda" />
+{/* [formualizer-docgen:function-meta:end] */}

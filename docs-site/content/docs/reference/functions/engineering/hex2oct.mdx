@@ -1,0 +1,58 @@
+---
+title: "HEX2OCT"
+description: "HEX2OCT: Converts a hexadecimal text value to octal text."
+---
+
+<FunctionPageSchema id="engineering/hex2oct" />
+
+## Summary
+
+Supports optional left-padding through the `places` argument.
+
+## Remarks
+ - Input must be hexadecimal text up to 10 characters and may be signed two's-complement.
+ - Converted values must fit the octal range `[-2^29, 2^29 - 1]`, or `#NUM!` is returned.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+
+## Examples
+
+<Tabs items={["Convert hex to octal", "Convert signed hex"]}>
+<Tab value="Convert hex to octal">
+<FunctionSandbox
+  title="Convert hex to octal"
+  formula={`=HEX2OCT("1F")`}
+  grid={{}}
+  expected={"37"}
+/>
+</Tab>
+
+<Tab value="Convert signed hex">
+<FunctionSandbox
+  title="Convert signed hex"
+  formula={`=HEX2OCT("FFFFFFFFFF")`}
+  grid={{}}
+  expected={"7777777777"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [OCT2HEX](/docs/reference/functions/engineering/oct2hex)
+- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
+- [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
+- [IMPRODUCT](/docs/reference/functions/engineering/improduct)
+- [IMSUM](/docs/reference/functions/engineering/imsum)
+
+## FAQ
+
+### What causes `HEX2OCT` to return `#NUM!`?
+The decoded value must fit octal output range `[-2^29, 2^29 - 1]`, and optional `places` must be valid.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/hex2oct" />
+{/* [formualizer-docgen:function-meta:end] */}

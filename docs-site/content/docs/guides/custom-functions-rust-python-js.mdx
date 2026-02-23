@@ -1,0 +1,105 @@
+---
+title: Custom Functions (Rust, Python, JS)
+description: Register workbook-local callbacks with consistent semantics across Rust, Python, and JS/WASM.
+---
+
+Formualizer exposes the same custom-function model in all runtimes: register a workbook-local callback, call it from formulas, and unregister when done.
+
+## Semantics that are the same across runtimes
+
+- Function names are case-insensitive and canonicalized to uppercase (`my_fn`, `MY_FN`, `My_Fn` all map to one entry).
+- Resolution is workbook-local first, then global built-ins.
+- Built-in override is blocked by default; opt in with `allow_override_builtin` (Rust/Python) or `allowOverrideBuiltin` (JS).
+- Arity is validated before callback execution (`min_args`/`max_args` style options).
+- Range arguments are materialized as 2D arrays (`LiteralValue::Array` in Rust, nested lists in Python, nested arrays in JS).
+- Returning an array spills into the grid using normal dynamic-array behavior.
+
+## Rust (workbook API)
+
+```rust
+use formualizer_common::LiteralValue;
+use formualizer_workbook::{CustomFnOptions, Workbook};
+use std::sync::Arc;
+
+let mut wb = Workbook::new();
+wb.add_sheet("Sheet1")?;
+wb.set_values(
+    "Sheet1",
+    1,
+    1,
+    &[
+        vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
+        vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
+    ],
+)?;
+
+wb.register_custom_function(
+    "range_total",
+    CustomFnOptions { min_args: 1, max_args: Some(1), ..Default::default() },
+    Arc::new(|args: &[LiteralValue]| {
+        let total = match &args[0] {
+            LiteralValue::Array(rows) => rows.iter().flatten().fold(0.0, |acc, v| {
+                acc + match v {
+                    LiteralValue::Number(n) => *n,
+                    LiteralValue::Int(i) => *i as f64,
+                    _ => 0.0,
+                }
+            }),
+            _ => 0.0,
+        };
+        Ok(LiteralValue::Number(total))
+    }),
+)?;
+
+wb.set_formula("Sheet1", 1, 3, "=RANGE_TOTAL(A1:B2)")?;
+assert_eq!(wb.evaluate_cell("Sheet1", 1, 3)?, LiteralValue::Number(10.0));
+```
+
+## Python
+
+```python
+import formualizer as fz
+
+wb = fz.Workbook(mode=fz.WorkbookMode.Ephemeral)
+wb.add_sheet("Sheet1")
+
+wb.register_function("py_add", lambda a, b: a + b, min_args=2, max_args=2)
+wb.set_formula("Sheet1", 1, 1, "=PY_ADD(20,22)")
+assert wb.evaluate_cell("Sheet1", 1, 1) == 42
+
+# Built-in override is explicit:
+# wb.register_function("sum", lambda *_: 999, allow_override_builtin=True)
+```
+
+## JS/WASM
+
+```ts
+import init, { Workbook } from "formualizer";
+
+await init();
+const wb = new Workbook();
+wb.addSheet("Sheet1");
+
+wb.registerFunction(
+  "js_add",
+  (a, b) => Number(a) + Number(b),
+  { minArgs: 2, maxArgs: 2 },
+);
+
+wb.setFormula("Sheet1", 1, 1, "=JS_ADD(20,22)");
+console.log(wb.evaluateCell("Sheet1", 1, 1)); // 42
+```
+
+## Quick verification commands
+
+```bash
+cargo run -p formualizer-workbook --example custom_function_registration
+python bindings/python/examples/custom_function_registration.py
+cd bindings/wasm && npm run build && node examples/custom-function-registration.mjs
+```
+
+## Related
+
+- [Values, Coercion, and Errors](../core-concepts/values-coercion-and-errors)
+- [Workbook Edits and Batching](./workbook-edits-and-batching)
+- [WASM Plugins: Inspect, Attach, Bind](./wasm-plugins-inspect-attach-bind)

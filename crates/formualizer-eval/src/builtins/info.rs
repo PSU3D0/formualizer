@@ -6,34 +6,52 @@ use formualizer_macros::func_caps;
 
 use super::utils::ARG_ANY_ONE;
 
-/*
-Sprint 9 – Info / Error Introspection Functions
-
-Implemented:
-  ISNUMBER, ISTEXT, ISLOGICAL, ISBLANK, ISERROR, ISERR, ISNA, ISFORMULA, TYPE,
-  NA, N, T
-
-Excel semantic notes (baseline):
-  - ISNUMBER returns TRUE for numeric types (Int, Number) and also Date/DateTime/Time/Duration
-    because Excel stores these as serial numbers. (If this diverges from desired behavior,
-    adjust by removing temporal variants.)
-  - ISBLANK is TRUE only for truly empty cells (LiteralValue::Empty), NOT for empty string "".
-  - ISERROR matches all error kinds; ISERR excludes #N/A.
-  - TYPE codes (Excel): 1 Number, 2 Text, 4 Logical, 16 Error, 64 Array. Blank coerces to 1.
-    Date/DateTime/Time/Duration mapped to 1 (numeric) for now.
-  - NA() returns the canonical #N/A error.
-  - N(value) coercion (Excel): number -> itself; date/time -> serial; TRUE->1, FALSE->0; text->0;
-    error -> propagates error; empty -> 0; other (array) -> first element via implicit (TODO) currently returns 0 with TODO flag.
-  - T(value): if text -> text; if error -> error; else -> empty text "".
-  - ISFORMULA requires formula provenance metadata (not yet tracked). Returns FALSE always (unless
-    we detect a formula node later). Marked TODO.
-
-TODO(excel-nuance): Implement implicit intersection for N() over arrays if/when model finalised.
-TODO(excel-nuance): Track formula provenance to support ISFORMULA.
-*/
+/* Info and type-introspection builtins for spreadsheet formulas. */
 
 #[derive(Debug)]
 pub struct IsNumberFn;
+/// Returns TRUE when the value is numeric.
+///
+/// This includes integer, floating-point, and temporal serial-compatible values.
+///
+/// # Remarks
+/// - Returns TRUE for `Int`, `Number`, `Date`, `DateTime`, `Time`, and `Duration`.
+/// - Text that looks numeric is still text and returns FALSE.
+/// - Errors are treated as non-numeric and return FALSE.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Number is numeric"
+/// formula: '=ISNUMBER(42)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Numeric text is not numeric"
+/// formula: '=ISNUMBER("42")'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUE
+///   - N
+///   - TYPE
+/// faq:
+///   - q: "Does numeric-looking text count as a number?"
+///     a: "No. ISNUMBER checks the stored value type, so text like \"42\" returns FALSE."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISNUMBER
+/// Type: IsNumberFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISNUMBER(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsNumberFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -73,6 +91,46 @@ impl Function for IsNumberFn {
 
 #[derive(Debug)]
 pub struct IsTextFn;
+/// Returns TRUE when the value is text.
+///
+/// # Remarks
+/// - Only text literals return TRUE.
+/// - Numbers, booleans, blanks, and errors return FALSE.
+/// - No coercion from other types to text is performed for this check.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Detect text"
+/// formula: '=ISTEXT("alpha")'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Number is not text"
+/// formula: '=ISTEXT(100)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - T
+///   - TYPE
+///   - ISNUMBER
+/// faq:
+///   - q: "Is an empty string treated as text?"
+///     a: "Yes. An empty string literal is still text, so ISTEXT(\"\") returns TRUE."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISTEXT
+/// Type: IsTextFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISTEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsTextFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -103,6 +161,46 @@ impl Function for IsTextFn {
 
 #[derive(Debug)]
 pub struct IsLogicalFn;
+/// Returns TRUE when the value is a boolean.
+///
+/// # Remarks
+/// - Only logical TRUE/FALSE values return TRUE.
+/// - Numeric truthy/falsy values are not considered logical by this predicate.
+/// - Errors return FALSE.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Boolean input"
+/// formula: '=ISLOGICAL(TRUE)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Numeric input"
+/// formula: '=ISLOGICAL(1)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TRUE
+///   - FALSE
+///   - TYPE
+/// faq:
+///   - q: "Do truthy numbers count as logical values?"
+///     a: "No. ISLOGICAL returns TRUE only for actual boolean TRUE/FALSE values."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISLOGICAL
+/// Type: IsLogicalFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISLOGICAL(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsLogicalFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -133,6 +231,46 @@ impl Function for IsLogicalFn {
 
 #[derive(Debug)]
 pub struct IsBlankFn;
+/// Returns TRUE only for a truly empty value.
+///
+/// # Remarks
+/// - Empty string `""` is text, not blank, so it returns FALSE.
+/// - Numeric zero and FALSE are not blank.
+/// - Errors return FALSE.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Reference to an empty cell"
+/// formula: '=ISBLANK(A1)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Empty string is not blank"
+/// formula: '=ISBLANK("")'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISTEXT
+///   - LEN
+///   - T
+/// faq:
+///   - q: "Why does ISBLANK(\"\") return FALSE?"
+///     a: "Because an empty string is text, not a truly empty cell value."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISBLANK
+/// Type: IsBlankFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISBLANK(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsBlankFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -163,6 +301,46 @@ impl Function for IsBlankFn {
 
 #[derive(Debug)]
 pub struct IsErrorFn; // TRUE for any error (#N/A included)
+/// Returns TRUE for any error value.
+///
+/// # Remarks
+/// - Matches all error kinds, including `#N/A`.
+/// - Non-error values always return FALSE.
+/// - Arity mismatch returns `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Division error"
+/// formula: '=ISERROR(1/0)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Normal value"
+/// formula: '=ISERROR(123)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISERR
+///   - ISNA
+///   - IFERROR
+/// faq:
+///   - q: "Does ISERROR include #N/A?"
+///     a: "Yes. ISERROR returns TRUE for all error kinds, including #N/A."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISERROR
+/// Type: IsErrorFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISERROR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsErrorFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -193,6 +371,46 @@ impl Function for IsErrorFn {
 
 #[derive(Debug)]
 pub struct IsErrFn; // TRUE for any error except #N/A
+/// Returns TRUE for any error except `#N/A`.
+///
+/// # Remarks
+/// - `#N/A` specifically returns FALSE.
+/// - Other errors such as `#DIV/0!` or `#VALUE!` return TRUE.
+/// - Non-error values return FALSE.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "DIV/0 is an error excluding N/A"
+/// formula: '=ISERR(1/0)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "N/A is excluded"
+/// formula: '=ISERR(NA())'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISERROR
+///   - ISNA
+///   - IFERROR
+/// faq:
+///   - q: "What is the difference between ISERR and ISERROR?"
+///     a: "ISERR excludes #N/A, while ISERROR treats #N/A as an error too."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISERR
+/// Type: IsErrFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISERR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsErrFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -227,6 +445,46 @@ impl Function for IsErrFn {
 
 #[derive(Debug)]
 pub struct IsNaFn; // TRUE only for #N/A
+/// Returns TRUE only for the `#N/A` error.
+///
+/// # Remarks
+/// - Other error kinds return FALSE.
+/// - Non-error values return FALSE.
+/// - Useful when `#N/A` has special business meaning.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Check for N/A"
+/// formula: '=ISNA(NA())'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Other errors are not N/A"
+/// formula: '=ISNA(1/0)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - NA
+///   - IFNA
+///   - ISERROR
+/// faq:
+///   - q: "Does ISNA return TRUE for errors other than #N/A?"
+///     a: "No. It returns TRUE only when the value is exactly #N/A."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISNA
+/// Type: IsNaFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISNA(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsNaFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -258,6 +516,48 @@ impl Function for IsNaFn {
 
 #[derive(Debug)]
 pub struct IsFormulaFn; // Requires provenance tracking (not yet) => always FALSE.
+/// Returns whether a value originates from a formula.
+///
+/// Current engine metadata does not track formula provenance at this call site.
+///
+/// # Remarks
+/// - This implementation currently returns FALSE for all inputs.
+/// - Errors are not raised solely due to provenance unavailability.
+/// - Arity mismatch returns `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Literal value"
+/// formula: '=ISFORMULA(10)'
+/// expected: false
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Computed value in expression context"
+/// formula: '=ISFORMULA(1+1)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TYPE
+///   - ISNUMBER
+///   - ISTEXT
+/// faq:
+///   - q: "Can ISFORMULA currently detect formula provenance?"
+///     a: "Not yet. This implementation always returns FALSE because provenance metadata is not tracked here."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISFORMULA
+/// Type: IsFormulaFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISFORMULA(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsFormulaFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -279,7 +579,7 @@ impl Function for IsFormulaFn {
                 ExcelError::new_value(),
             )));
         }
-        // TODO(excel-nuance): formula provenance once AST metadata is plumbed.
+        // Formula provenance metadata is not tracked yet, so ISFORMULA currently returns FALSE.
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
             false,
         )))
@@ -288,6 +588,46 @@ impl Function for IsFormulaFn {
 
 #[derive(Debug)]
 pub struct TypeFn;
+/// Returns an Excel TYPE code describing the value category.
+///
+/// # Remarks
+/// - Codes: `1` number, `2` text, `4` logical, `64` array.
+/// - Errors are propagated unchanged instead of returning `16`.
+/// - Blank values map to numeric code `1` in this implementation.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Text type code"
+/// formula: '=TYPE("abc")'
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Boolean type code"
+/// formula: '=TYPE(TRUE)'
+/// expected: 4
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISNUMBER
+///   - ISTEXT
+///   - ISLOGICAL
+/// faq:
+///   - q: "How are errors handled by TYPE?"
+///     a: "Errors are propagated unchanged instead of returning Excel's error type code 16."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TYPE
+/// Type: TypeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: TYPE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TypeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -333,6 +673,46 @@ impl Function for TypeFn {
 
 #[derive(Debug)]
 pub struct NaFn; // NA() -> #N/A error
+/// Returns the `#N/A` error value.
+///
+/// # Remarks
+/// - `NA()` is commonly used to mark missing lookup results.
+/// - The function takes no arguments.
+/// - The returned value is an error and propagates through dependent formulas.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Direct N/A"
+/// formula: '=NA()'
+/// expected: "#N/A"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Detect N/A"
+/// formula: '=ISNA(NA())'
+/// expected: true
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISNA
+///   - IFNA
+///   - IFERROR
+/// faq:
+///   - q: "When should I use NA() intentionally?"
+///     a: "Use it to mark missing data so lookups and downstream checks can distinguish absent values from blanks."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: NA
+/// Type: NaFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: NA()
+/// Arg schema: []
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NaFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -354,6 +734,47 @@ impl Function for NaFn {
 
 #[derive(Debug)]
 pub struct NFn; // N(value)
+/// Converts a value to its numeric representation.
+///
+/// # Remarks
+/// - Numbers pass through unchanged; booleans convert to `1`/`0`.
+/// - Text and blank values convert to `0`.
+/// - Errors propagate unchanged.
+/// - Temporal values are converted using serial number representation.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Boolean to number"
+/// formula: '=N(TRUE)'
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text to zero"
+/// formula: '=N("hello")'
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUE
+///   - T
+///   - TYPE
+/// faq:
+///   - q: "What does N do with text and blanks?"
+///     a: "Text and blank values convert to 0, while existing errors are passed through."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: N
+/// Type: NFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: N(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for NFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -404,7 +825,7 @@ impl Function for NFn {
             LiteralValue::Text(_) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0))),
             LiteralValue::Empty => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0))),
             LiteralValue::Array(_) => {
-                // TODO(excel-nuance): implicit intersection; for now return 0
+                // Array-to-scalar implicit intersection is not implemented here; returns 0.
                 Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)))
             }
             LiteralValue::Error(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
@@ -415,6 +836,46 @@ impl Function for NFn {
 
 #[derive(Debug)]
 pub struct TFn; // T(value)
+/// Returns text when input is text, otherwise returns empty text.
+///
+/// # Remarks
+/// - Text values pass through unchanged.
+/// - Errors propagate unchanged.
+/// - Numbers, booleans, and blanks return an empty string.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Text passthrough"
+/// formula: '=T("report")'
+/// expected: "report"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Number becomes empty text"
+/// formula: '=T(99)'
+/// expected: ""
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - N
+///   - ISTEXT
+///   - TYPE
+/// faq:
+///   - q: "Does T hide non-text values?"
+///     a: "Yes. Non-text inputs become an empty string, but errors are still propagated."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: T
+/// Type: TFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: T(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -450,6 +911,47 @@ impl Function for TFn {
 /// ISEVEN(number) - Returns TRUE if number is even
 #[derive(Debug)]
 pub struct IsEvenFn;
+/// Returns TRUE when a number is even.
+///
+/// # Remarks
+/// - Numeric input is truncated toward zero before parity is checked.
+/// - Booleans are coerced (`TRUE` -> 1, `FALSE` -> 0).
+/// - Non-numeric text returns `#VALUE!`.
+/// - Errors propagate unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Even integer"
+/// formula: '=ISEVEN(6)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Decimal truncation before parity"
+/// formula: '=ISEVEN(3.9)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISODD
+///   - ISNUMBER
+///   - N
+/// faq:
+///   - q: "How are decimals handled by ISEVEN?"
+///     a: "The number is truncated toward zero before checking even/odd parity."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISEVEN
+/// Type: IsEvenFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISEVEN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsEvenFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -502,6 +1004,47 @@ impl Function for IsEvenFn {
 /// ISODD(number) - Returns TRUE if number is odd
 #[derive(Debug)]
 pub struct IsOddFn;
+/// Returns TRUE when a number is odd.
+///
+/// # Remarks
+/// - Numeric input is truncated toward zero before parity is checked.
+/// - Booleans are coerced (`TRUE` -> 1, `FALSE` -> 0).
+/// - Non-numeric text returns `#VALUE!`.
+/// - Errors propagate unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Odd integer"
+/// formula: '=ISODD(7)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Boolean coercion"
+/// formula: '=ISODD(TRUE)'
+/// expected: true
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISEVEN
+///   - ISNUMBER
+///   - N
+/// faq:
+///   - q: "Are booleans valid inputs for ISODD?"
+///     a: "Yes. TRUE is treated as 1 and FALSE as 0 before the odd check."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISODD
+/// Type: IsOddFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISODD(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for IsOddFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -565,6 +1108,46 @@ impl Function for IsOddFn {
 /// NOTE: Error codes 9-13 are non-standard extensions for internal error types.
 #[derive(Debug)]
 pub struct ErrorTypeFn;
+/// Returns the numeric code for a specific error value.
+///
+/// # Remarks
+/// - Standard mappings include: `#NULL!`=1, `#DIV/0!`=2, `#VALUE!`=3, `#REF!`=4, `#NAME?`=5, `#NUM!`=6, `#N/A`=7.
+/// - Non-error inputs return `#N/A`.
+/// - Additional internal error kinds may map to extended non-standard codes.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Map DIV/0 to code"
+/// formula: '=ERROR.TYPE(1/0)'
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Non-error input returns N/A"
+/// formula: '=ERROR.TYPE(10)'
+/// expected: "#N/A"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISERROR
+///   - ISNA
+///   - IFERROR
+/// faq:
+///   - q: "What if the input is not an error value?"
+///     a: "ERROR.TYPE returns #N/A when the input is not an error."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ERROR.TYPE
+/// Type: ErrorTypeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ERROR.TYPE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ErrorTypeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

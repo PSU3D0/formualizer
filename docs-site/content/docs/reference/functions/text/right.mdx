@@ -1,0 +1,59 @@
+---
+title: "RIGHT"
+description: "Returns the rightmost characters from a text value."
+---
+
+<FunctionPageSchema id="text/right" />
+
+## Summary
+
+Returns the rightmost characters from a text value.
+
+## Remarks
+ - `num_chars` defaults to `1` when omitted.
+ - Negative `num_chars` returns `#VALUE!`.
+ - If `num_chars` exceeds length, the full text is returned.
+ - Non-text values are coerced to text before slicing.
+
+## Examples
+
+<Tabs items={["Take last three characters", "Default count is one"]}>
+<Tab value="Take last three characters">
+<FunctionSandbox
+  title="Take last three characters"
+  formula={`=RIGHT("engine", 3)`}
+  grid={{}}
+  expected={"ine"}
+/>
+</Tab>
+
+<Tab value="Default count is one">
+<FunctionSandbox
+  title="Default count is one"
+  formula={`=RIGHT("abc")`}
+  grid={{}}
+  expected={"c"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LEFT](/docs/reference/functions/text/left)
+- [MID](/docs/reference/functions/text/mid)
+- [LEN](/docs/reference/functions/text/len)
+- [CONCAT](/docs/reference/functions/text/concat)
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+- [FIND](/docs/reference/functions/text/find)
+
+## FAQ
+
+### If num_chars is larger than the text length, what is returned?
+RIGHT returns the full text when the requested count exceeds available characters.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/right" />
+{/* [formualizer-docgen:function-meta:end] */}

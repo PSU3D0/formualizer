@@ -61,6 +61,61 @@ fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32)
 
 #[derive(Debug)]
 pub struct MatchFn;
+/// Returns the relative position of a lookup value in a one-dimensional array.
+///
+/// `MATCH` supports exact and approximate modes and returns a 1-based position.
+///
+/// # Remarks
+/// - `match_type` defaults to `1` (approximate, ascending).
+/// - `match_type=0` performs exact matching and supports `*`, `?`, and `~` wildcards for text.
+/// - `match_type=1` looks for the largest value less than or equal to the lookup value.
+/// - `match_type=-1` looks for the smallest value greater than or equal to the lookup value.
+/// - Approximate modes require sorted data; unsorted data returns `#N/A`.
+/// - If no match is found, returns `#N/A`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Exact text match"
+/// grid:
+///   A1: "A"
+///   A2: "B"
+///   A3: "C"
+/// formula: '=MATCH("B",A1:A3,0)'
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Approximate numeric match"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   A3: 30
+///   A4: 40
+/// formula: '=MATCH(27,A1:A4,1)'
+/// expected: 2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - XMATCH
+///   - XLOOKUP
+///   - VLOOKUP
+/// faq:
+///   - q: "Why does MATCH with match_type 1 or -1 return #N/A on unsorted data?"
+///     a: "Approximate modes assume ordered lookup data; this implementation treats detected unsorted inputs as no valid match and returns #N/A."
+///   - q: "When are wildcards interpreted in MATCH?"
+///     a: "Wildcard patterns (*, ?, ~ escapes) are only applied in exact mode (match_type=0) for text lookup values."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: MATCH
+/// Type: MatchFn
+/// Min args: 2
+/// Max args: 3
+/// Variadic: false
+/// Signature: MATCH(arg1: any@scalar, arg2: any@range, arg3?: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for MatchFn {
     fn name(&self) -> &'static str {
         "MATCH"
@@ -272,6 +327,64 @@ impl Function for MatchFn {
 
 #[derive(Debug)]
 pub struct VLookupFn;
+/// Looks up a value in the first column of a table and returns a value from another column.
+///
+/// `VLOOKUP` searches vertically and returns the matching row's value from `col_index_num`.
+///
+/// # Remarks
+/// - `col_index_num` is 1-based and must be within the table width.
+/// - `range_lookup` defaults to `FALSE` in this engine (exact match by default).
+/// - When `range_lookup=TRUE`, approximate match logic is used against the first column.
+/// - If the lookup value is not found, returns `#N/A`.
+/// - If `col_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
+/// - A matched empty target cell is materialized as numeric `0`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Exact match in a key/value table"
+/// grid:
+///   A1: "SKU-1"
+///   B1: 12.5
+///   A2: "SKU-2"
+///   B2: 18
+/// formula: '=VLOOKUP("SKU-2",A1:B2,2,FALSE)'
+/// expected: 18
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Approximate tier lookup"
+/// grid:
+///   A1: 0
+///   B1: "Bronze"
+///   A2: 1000
+///   B2: "Silver"
+///   A3: 5000
+///   B3: "Gold"
+/// formula: '=VLOOKUP(3200,A1:B3,2,TRUE)'
+/// expected: "Silver"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - HLOOKUP
+///   - XLOOKUP
+///   - MATCH
+/// faq:
+///   - q: "What is the default behavior when range_lookup is omitted?"
+///     a: "This engine defaults range_lookup to FALSE, so VLOOKUP performs exact matching unless TRUE is explicitly provided."
+///   - q: "What happens if col_index_num points outside the table?"
+///     a: "A numeric out-of-range column index returns #REF!, while a non-numeric col_index_num returns #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: VLOOKUP
+/// Type: VLookupFn
+/// Min args: 3
+/// Max args: 4
+/// Variadic: false
+/// Signature: VLOOKUP(arg1: any@scalar, arg2: any@range, arg3: number@scalar, arg4?: logical@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg4{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for VLookupFn {
     fn name(&self) -> &'static str {
         "VLOOKUP"
@@ -471,6 +584,64 @@ impl Function for VLookupFn {
 
 #[derive(Debug)]
 pub struct HLookupFn;
+/// Looks up a value in the first row of a table and returns a value from another row.
+///
+/// `HLOOKUP` searches horizontally and returns the matching column's value from `row_index_num`.
+///
+/// # Remarks
+/// - `row_index_num` is 1-based and must be within the table height.
+/// - `range_lookup` defaults to `FALSE` in this engine (exact match by default).
+/// - When `range_lookup=TRUE`, approximate match logic is used against the first row.
+/// - If the lookup value is not found, returns `#N/A`.
+/// - If `row_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
+/// - A matched empty target cell is materialized as numeric `0`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Exact match across header row"
+/// grid:
+///   A1: "Jan"
+///   B1: "Feb"
+///   A2: 120
+///   B2: 150
+/// formula: '=HLOOKUP("Feb",A1:B2,2,FALSE)'
+/// expected: 150
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Approximate threshold lookup"
+/// grid:
+///   A1: 0
+///   B1: 50
+///   C1: 80
+///   A2: "F"
+///   B2: "C"
+///   C2: "A"
+/// formula: '=HLOOKUP(72,A1:C2,2,TRUE)'
+/// expected: "C"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VLOOKUP
+///   - XLOOKUP
+///   - MATCH
+/// faq:
+///   - q: "Does HLOOKUP default to exact or approximate matching?"
+///     a: "It defaults to exact matching in this engine because range_lookup defaults to FALSE."
+///   - q: "How are invalid row_index_num values reported?"
+///     a: "If row_index_num is outside table height HLOOKUP returns #REF!; if it is non-numeric it returns #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: HLOOKUP
+/// Type: HLookupFn
+/// Min args: 3
+/// Max args: 4
+/// Variadic: false
+/// Signature: HLOOKUP(arg1: any@scalar, arg2: any@range, arg3: number@scalar, arg4?: logical@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg4{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for HLookupFn {
     fn name(&self) -> &'static str {
         "HLOOKUP"

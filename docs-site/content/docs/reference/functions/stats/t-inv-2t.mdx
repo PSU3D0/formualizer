@@ -1,0 +1,54 @@
+---
+title: "T.INV.2T"
+description: "T.INV.2T: Returns the positive t critical value for a two-tailed probability."
+---
+
+<FunctionPageSchema id="stats/t-inv-2t" />
+
+## Summary
+
+`T.INV.2T` solves for `t` such that `P(|T| &gt; t) = probability`.
+
+## Remarks
+ - `probability` must satisfy `0 &lt; probability &lt;= 1`.
+ - `deg_freedom` must be at least `1`.
+ - Returns `#NUM!` for invalid probability or degree-of-freedom arguments.
+ - Alias `TINV` is supported.
+
+## Examples
+
+<Tabs items={["Maximum two-tailed probability", "95% two-sided critical value"]}>
+<Tab value="Maximum two-tailed probability">
+<FunctionSandbox
+  title="Maximum two-tailed probability"
+  formula={`=T.INV.2T(1,10)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="95% two-sided critical value">
+<FunctionSandbox
+  title="95% two-sided critical value"
+  formula={`=T.INV.2T(0.05,10)`}
+  grid={{}}
+  expected={"2.228138851986273"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
+- [T.DIST](/docs/reference/functions/stats/t-dist)
+- [T.INV](/docs/reference/functions/stats/t-inv)
+- [T.TEST](/docs/reference/functions/stats/t-test)
+- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
+- [CHISQ.TEST](/docs/reference/functions/stats/chisq-test)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/t-inv-2t" />
+{/* [formualizer-docgen:function-meta:end] */}

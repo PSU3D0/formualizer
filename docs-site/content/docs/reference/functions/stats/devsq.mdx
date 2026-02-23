@@ -1,0 +1,53 @@
+---
+title: "DEVSQ"
+description: "DEVSQ: Returns the sum of squared deviations from the mean."
+---
+
+<FunctionPageSchema id="stats/devsq" />
+
+## Summary
+
+`DEVSQ` is useful for variance-related calculations and diagnostics of spread.
+
+## Remarks
+ - Returns `#NUM!` when no numeric values are available.
+ - Non-numeric values in referenced ranges are ignored.
+ - Uses the arithmetic mean of included values.
+
+## Examples
+
+<Tabs items={["Sum of squared deviations from scalar values", "Sum of squared deviations from a range"]}>
+<Tab value="Sum of squared deviations from scalar values">
+<FunctionSandbox
+  title="Sum of squared deviations from scalar values"
+  formula={`=DEVSQ(2,4,6)`}
+  grid={{}}
+  expected={"8"}
+/>
+</Tab>
+
+<Tab value="Sum of squared deviations from a range">
+<FunctionSandbox
+  title="Sum of squared deviations from a range"
+  formula={`=DEVSQ(A1:A4)`}
+  grid={{"A1":"1","A2":"2","A3":"3","A4":"4"}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+- [HARMEAN](/docs/reference/functions/stats/harmean)
+- [KURT](/docs/reference/functions/stats/kurt)
+- [MEDIAN](/docs/reference/functions/stats/median)
+- [MODE.MULT](/docs/reference/functions/stats/mode-mult)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/devsq" />
+{/* [formualizer-docgen:function-meta:end] */}

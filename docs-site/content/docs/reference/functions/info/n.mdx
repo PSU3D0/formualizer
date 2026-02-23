@@ -1,0 +1,59 @@
+---
+title: "N"
+description: "Converts a value to its numeric representation."
+---
+
+<FunctionPageSchema id="info/n" />
+
+## Summary
+
+Converts a value to its numeric representation.
+
+## Remarks
+ - Numbers pass through unchanged; booleans convert to `1`/`0`.
+ - Text and blank values convert to `0`.
+ - Errors propagate unchanged.
+ - Temporal values are converted using serial number representation.
+
+## Examples
+
+<Tabs items={["Boolean to number", "Text to zero"]}>
+<Tab value="Boolean to number">
+<FunctionSandbox
+  title="Boolean to number"
+  formula={`=N(TRUE)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Text to zero">
+<FunctionSandbox
+  title="Text to zero"
+  formula={`=N("hello")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [VALUE](/docs/reference/functions/text/value)
+- [T](/docs/reference/functions/info/t)
+- [TYPE](/docs/reference/functions/info/type)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### What does N do with text and blanks?
+Text and blank values convert to 0, while existing errors are passed through.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/n" />
+{/* [formualizer-docgen:function-meta:end] */}

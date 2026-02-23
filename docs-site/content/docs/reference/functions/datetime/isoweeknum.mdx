@@ -1,0 +1,58 @@
+---
+title: "ISOWEEKNUM"
+description: "ISOWEEKNUM: Returns the ISO 8601 week number (`1` to `53`) for a date serial."
+---
+
+<FunctionPageSchema id="datetime/isoweeknum" />
+
+## Summary
+
+Returns the ISO 8601 week number (`1` to `53`) for a date serial.
+
+## Remarks
+ - Weeks start on Monday and week 1 is the week containing the first Thursday of the year.
+ - Input serials are truncated to whole dates before evaluation.
+ - Serials are read using the Excel 1900 date mapping.
+
+## Examples
+
+<Tabs items={["ISO week at year start", "ISO week crossing year boundary"]}>
+<Tab value="ISO week at year start">
+<FunctionSandbox
+  title="ISO week at year start"
+  formula={`=ISOWEEKNUM(45292)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="ISO week crossing year boundary">
+<FunctionSandbox
+  title="ISO week crossing year boundary"
+  formula={`=ISOWEEKNUM(42370)`}
+  grid={{}}
+  expected={"53"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [WEEKNUM](/docs/reference/functions/datetime/weeknum)
+- [WEEKDAY](/docs/reference/functions/datetime/weekday)
+- [DATE](/docs/reference/functions/datetime/date)
+- [DAY](/docs/reference/functions/datetime/day)
+- [HOUR](/docs/reference/functions/datetime/hour)
+- [MINUTE](/docs/reference/functions/datetime/minute)
+
+## FAQ
+
+### Can early-January dates return week 52 or 53?
+Yes. ISO week numbering can place dates near New Year in the prior ISO week-year.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/isoweeknum" />
+{/* [formualizer-docgen:function-meta:end] */}

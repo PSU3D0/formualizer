@@ -1,0 +1,59 @@
+---
+title: "NETWORKDAYS"
+description: "NETWORKDAYS: Returns the number of weekday business days between two dates, inclusive."
+---
+
+<FunctionPageSchema id="datetime/networkdays" />
+
+## Summary
+
+Returns the number of weekday business days between two dates, inclusive.
+
+## Remarks
+ - Weekends are fixed to Saturday and Sunday.
+ - If `start_date &gt; end_date`, the result is negative.
+ - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+ - Input serials are interpreted with Excel 1900 date mapping.
+
+## Examples
+
+<Tabs items={["Count weekdays in a range", "Holiday argument currently has no effect"]}>
+<Tab value="Count weekdays in a range">
+<FunctionSandbox
+  title="Count weekdays in a range"
+  formula={`=NETWORKDAYS(45292, 45299)`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+<Tab value="Holiday argument currently has no effect">
+<FunctionSandbox
+  title="Holiday argument currently has no effect"
+  formula={`=NETWORKDAYS(45292, 45299, 45293)`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [WORKDAY](/docs/reference/functions/datetime/workday)
+- [WEEKDAY](/docs/reference/functions/datetime/weekday)
+- [DAYS](/docs/reference/functions/datetime/days)
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
+- [WEEKNUM](/docs/reference/functions/datetime/weeknum)
+
+## FAQ
+
+### Are custom holidays excluded in NETWORKDAYS right now?
+Not yet. The third argument is accepted but currently ignored, so only Saturday/Sunday weekends are excluded.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/networkdays" />
+{/* [formualizer-docgen:function-meta:end] */}

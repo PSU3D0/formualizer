@@ -1,0 +1,59 @@
+---
+title: "REPT"
+description: "REPT: Repeats text a given number of times."
+---
+
+<FunctionPageSchema id="text/rept" />
+
+## Summary
+
+Repeats a text string a specified number of times.
+
+## Remarks
+ - Repeat count is truncated to an integer.
+ - Negative counts return `#VALUE!`.
+ - Output longer than 32,767 characters returns `#VALUE!`.
+ - Non-text first argument is coerced to text.
+
+## Examples
+
+<Tabs items={["Repeat text three times", "Negative count"]}>
+<Tab value="Repeat text three times">
+<FunctionSandbox
+  title="Repeat text three times"
+  formula={`=REPT("ab", 3)`}
+  grid={{}}
+  expected={"ababab"}
+/>
+</Tab>
+
+<Tab value="Negative count">
+<FunctionSandbox
+  title="Negative count"
+  formula={`=REPT("x", -1)`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CONCAT](/docs/reference/functions/text/concat)
+- [TEXTJOIN](/docs/reference/functions/text/textjoin)
+- [SUBSTITUTE](/docs/reference/functions/text/substitute)
+- [EXACT](/docs/reference/functions/text/exact)
+- [TEXT](/docs/reference/functions/text/text)
+- [TEXTAFTER](/docs/reference/functions/text/textafter)
+
+## FAQ
+
+### Can REPT return very long strings?
+Only up to 32,767 characters; longer results return #VALUE! like Excel.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/rept" />
+{/* [formualizer-docgen:function-meta:end] */}

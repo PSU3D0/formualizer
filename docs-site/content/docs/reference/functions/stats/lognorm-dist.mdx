@@ -1,0 +1,54 @@
+---
+title: "LOGNORM.DIST"
+description: "LOGNORM.DIST: Returns the log-normal probability at `x` as either a cumulative value or density."
+---
+
+<FunctionPageSchema id="stats/lognorm-dist" />
+
+## Summary
+
+`LOGNORM.DIST` models positive-valued variables where `ln(X)` follows a normal distribution.
+
+## Remarks
+ - Set `cumulative` to non-zero for CDF mode; set it to `0` for PDF mode.
+ - Requires `x &gt; 0` and `standard_dev &gt; 0`.
+ - Returns `#NUM!` when `x &lt;= 0` or `standard_dev &lt;= 0`.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Log-normal CDF at x = 1", "Log-normal PDF at x = 1"]}>
+<Tab value="Log-normal CDF at x = 1">
+<FunctionSandbox
+  title="Log-normal CDF at x = 1"
+  formula={`=LOGNORM.DIST(1,0,1,TRUE)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+<Tab value="Log-normal PDF at x = 1">
+<FunctionSandbox
+  title="Log-normal PDF at x = 1"
+  formula={`=LOGNORM.DIST(1,0,1,FALSE)`}
+  grid={{}}
+  expected={"0.3989422804014327"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LOGNORM.INV](/docs/reference/functions/stats/lognorm-inv)
+- [NORM.DIST](/docs/reference/functions/stats/norm-dist)
+- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
+- [F.DIST](/docs/reference/functions/stats/f-dist)
+- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
+- [NEGBINOM.DIST](/docs/reference/functions/stats/negbinom-dist)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/lognorm-dist" />
+{/* [formualizer-docgen:function-meta:end] */}

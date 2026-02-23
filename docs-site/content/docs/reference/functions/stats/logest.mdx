@@ -1,0 +1,54 @@
+---
+title: "LOGEST"
+description: "LOGEST: Returns parameters for an exponential model fitted to known data."
+---
+
+<FunctionPageSchema id="stats/logest" />
+
+## Summary
+
+`LOGEST` fits `y = b * m^x` and returns either `[m, b]` or an expanded statistics matrix.
+
+## Remarks
+ - All known y-values must be strictly greater than `0`.
+ - `known_x` defaults to `1..n` when omitted.
+ - `const` controls whether `b` is fitted (`TRUE` by default).
+ - `stats=TRUE` returns a `5x2` statistics block; otherwise returns `1x2`.
+
+## Examples
+
+<Tabs items={["Exponential base and intercept", "Alternative growth series"]}>
+<Tab value="Exponential base and intercept">
+<FunctionSandbox
+  title="Exponential base and intercept"
+  formula={`=LOGEST({2,4,8},{1,2,3})`}
+  grid={{}}
+  expected={"[[2,1]]"}
+/>
+</Tab>
+
+<Tab value="Alternative growth series">
+<FunctionSandbox
+  title="Alternative growth series"
+  formula={`=LOGEST({3,6,12},{1,2,3})`}
+  grid={{}}
+  expected={"[[2,1.5]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+- [GROWTH](/docs/reference/functions/stats/growth)
+- [HARMEAN](/docs/reference/functions/stats/harmean)
+- [KURT](/docs/reference/functions/stats/kurt)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/logest" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,58 @@
+---
+title: "POWER"
+description: "Raises a base number to a specified power."
+---
+
+<FunctionPageSchema id="math/power" />
+
+## Summary
+
+Raises a base number to a specified power.
+
+## Remarks
+ - Equivalent to exponentiation (`base^exponent`).
+ - Negative bases with fractional exponents return `#NUM!`.
+ - Errors are propagated.
+
+## Examples
+
+<Tabs items={["Integer exponent", "Fractional exponent"]}>
+<Tab value="Integer exponent">
+<FunctionSandbox
+  title="Integer exponent"
+  formula={`=POWER(2,10)`}
+  grid={{}}
+  expected={"1024"}
+/>
+</Tab>
+
+<Tab value="Fractional exponent">
+<FunctionSandbox
+  title="Fractional exponent"
+  formula={`=POWER(9,0.5)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SQRT](/docs/reference/functions/math/sqrt)
+- [EXP](/docs/reference/functions/math/exp)
+- [LN](/docs/reference/functions/math/ln)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [MOD](/docs/reference/functions/math/mod)
+
+## FAQ
+
+### Why can POWER return #NUM! for negative bases?
+Negative bases with fractional exponents are rejected to avoid complex-number results.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/power" />
+{/* [formualizer-docgen:function-meta:end] */}

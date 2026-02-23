@@ -1,0 +1,58 @@
+---
+title: "SUMSQ"
+description: "SUMSQ: Returns the sum of squares of supplied numbers."
+---
+
+<FunctionPageSchema id="math/sumsq" />
+
+## Summary
+
+Returns the sum of squares of supplied numbers.
+
+## Remarks
+ - Accepts one or more scalar values, arrays, or ranges.
+ - For ranges, non-numeric cells are ignored while errors are propagated.
+ - Date/time-like values in ranges are converted to numeric serial values before squaring.
+
+## Examples
+
+<Tabs items={["Sum squares of scalar arguments", "Ignore text cells in a range"]}>
+<Tab value="Sum squares of scalar arguments">
+<FunctionSandbox
+  title="Sum squares of scalar arguments"
+  formula={`=SUMSQ(3,4)`}
+  grid={{}}
+  expected={"25"}
+/>
+</Tab>
+
+<Tab value="Ignore text cells in a range">
+<FunctionSandbox
+  title="Ignore text cells in a range"
+  formula={`=SUMSQ(A1:A3)`}
+  grid={{"A1":"1","A2":"x","A3":"2"}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SUM](/docs/reference/functions/math/sum)
+- [PRODUCT](/docs/reference/functions/stats/product)
+- [SUMPRODUCT](/docs/reference/functions/math/sumproduct)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [MAX](/docs/reference/functions/math/max)
+- [MIN](/docs/reference/functions/math/min)
+
+## FAQ
+
+### How does SUMSQ treat text cells in ranges?
+Non-numeric range cells are ignored, while explicit errors are propagated.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sumsq" />
+{/* [formualizer-docgen:function-meta:end] */}

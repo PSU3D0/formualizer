@@ -1,0 +1,59 @@
+---
+title: "WEEKNUM"
+description: "WEEKNUM: Returns the week number of the year for a date serial."
+---
+
+<FunctionPageSchema id="datetime/weeknum" />
+
+## Summary
+
+Returns the week number of the year for a date serial.
+
+## Remarks
+ - Default `return_type` is `1` (week starts on Sunday).
+ - Supported `return_type` values are `1`, `2`, `11`-`17`, and `21` (ISO week numbering).
+ - Unsupported `return_type` values return `#NUM!`.
+ - Input serials are interpreted using Excel 1900 date mapping rather than workbook `1904` interpretation.
+
+## Examples
+
+<Tabs items={["Default week numbering", "ISO week numbering"]}>
+<Tab value="Default week numbering">
+<FunctionSandbox
+  title="Default week numbering"
+  formula={`=WEEKNUM(45292)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="ISO week numbering">
+<FunctionSandbox
+  title="ISO week numbering"
+  formula={`=WEEKNUM(42370, 21)`}
+  grid={{}}
+  expected={"53"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [WEEKDAY](/docs/reference/functions/datetime/weekday)
+- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
+- [DATE](/docs/reference/functions/datetime/date)
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
+- [WORKDAY](/docs/reference/functions/datetime/workday)
+
+## FAQ
+
+### What is special about return_type 21 in WEEKNUM?
+return_type=21 switches to ISO week numbering, matching ISOWEEKNUM behavior.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/weeknum" />
+{/* [formualizer-docgen:function-meta:end] */}

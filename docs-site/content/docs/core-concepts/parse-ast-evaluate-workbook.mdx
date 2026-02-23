@@ -1,0 +1,44 @@
+---
+title: Parse -> AST -> Evaluate -> Workbook
+description: Understand the execution pipeline from formula text to computed workbook values.
+---
+
+Formualizer computes results as a staged pipeline:
+
+1. Parse formula text into tokens.
+2. Build an Abstract Syntax Tree (AST).
+3. Evaluate AST nodes against context.
+4. Persist values and dependencies in workbook state.
+
+## Why this model matters
+
+- Each stage has clear responsibilities and test boundaries.
+- Errors can be surfaced early (parse) or late (evaluation) with better diagnostics.
+- The workbook remains the source of truth for cached values and recomputation.
+
+## Minimal example
+
+```text
+Input formula: =SUM(A1:A3)
+Parse: tokens [=, SUM, (, A1:A3, )]
+AST: Call(SUM, [Range(A1:A3)])
+Evaluate: Number(42)
+Workbook: cell B1 stores value 42 and dependency edge B1 -> A1:A3
+```
+
+## Common debugging checkpoints
+
+- If parse fails, inspect tokenizer and parser diagnostics first.
+- If parse succeeds but value is wrong, inspect AST shape before evaluator logic.
+- If one cell updates but dependents do not, inspect workbook dependency bookkeeping.
+
+## Related
+
+- [Dependency Graph and Recalculation](./dependency-graph-and-recalc)
+- [Values, Coercion, and Errors](./values-coercion-and-errors)
+- [Workbook Edits and Batching](../guides/workbook-edits-and-batching)
+
+## TODO: Deep dive follow-ups
+
+- Add real AST node examples from parser snapshots.
+- Add section on immutable context propagation during evaluation.

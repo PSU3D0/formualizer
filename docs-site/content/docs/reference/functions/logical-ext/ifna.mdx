@@ -1,0 +1,59 @@
+---
+title: "IFNA"
+description: "IFNA: Returns a fallback only when the first expression is `#N/A`."
+---
+
+<FunctionPageSchema id="logical-ext/ifna" />
+
+## Summary
+
+`IFNA(value, value_if_na)` is narrower than `IFERROR`.
+
+## Remarks
+ - Only `#N/A` triggers fallback.
+ - Other error kinds are returned unchanged.
+ - Non-error results pass through unchanged.
+ - Exactly two arguments are required; other arities return `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Catch N/A", "Do not catch other errors"]}>
+<Tab value="Catch N/A">
+<FunctionSandbox
+  title="Catch N/A"
+  formula={`=IFNA(NA(), "missing")`}
+  grid={{}}
+  expected={"missing"}
+/>
+</Tab>
+
+<Tab value="Do not catch other errors">
+<FunctionSandbox
+  title="Do not catch other errors"
+  formula={`=IFNA(1/0, "missing")`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IFERROR](/docs/reference/functions/logical-ext/iferror)
+- [ISNA](/docs/reference/functions/info/isna)
+- [NA](/docs/reference/functions/info/na)
+- [IFS](/docs/reference/functions/logical-ext/ifs)
+- [NOT](/docs/reference/functions/logical-ext/not)
+- [XOR](/docs/reference/functions/logical-ext/xor)
+
+## FAQ
+
+### Which errors does IFNA intercept?
+Only #N/A is intercepted; all other errors pass through unchanged.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="logical-ext/ifna" />
+{/* [formualizer-docgen:function-meta:end] */}

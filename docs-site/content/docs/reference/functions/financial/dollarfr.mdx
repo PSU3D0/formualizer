@@ -1,0 +1,60 @@
+---
+title: "DOLLARFR"
+description: "DOLLARFR: Converts a decimal dollar value into fractional-dollar notation."
+---
+
+<FunctionPageSchema id="financial/dollarfr" />
+
+## Summary
+
+This is the inverse-style formatting helper used for quoted fractional price conventions.
+
+## Remarks
+ - `fraction` is truncated to an integer denominator and must be `&gt;= 1`.
+ - Sign convention: sign is preserved (`-x` maps to `-result`).
+ - No periodic rate is involved in this conversion.
+ - Returns `#NUM!` when `fraction &lt; 1` after truncation.
+ - Fraction output is encoded by denominator digit width (`ceil(log10(fraction))`).
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=DOLLARFR(1.125, 16)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=DOLLARFR(-3.46875, 32)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DOLLARDE](/docs/reference/functions/financial/dollarde)
+- [EFFECT](/docs/reference/functions/financial/effect)
+- [NOMINAL](/docs/reference/functions/financial/nominal)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
+- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
+- [MIRR](/docs/reference/functions/financial/mirr)
+
+## FAQ
+
+### How does `DOLLARFR` encode the fractional part?
+It scales the numerator into decimal digits based on `ceil(log10(fraction))`, preserving the input sign.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/dollarfr" />
+{/* [formualizer-docgen:function-meta:end] */}

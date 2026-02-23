@@ -1,0 +1,58 @@
+---
+title: "COT"
+description: "Returns the cotangent of an angle, defined as `1 / TAN(angle)`."
+---
+
+<FunctionPageSchema id="math/cot" />
+
+## Summary
+
+`COT` is useful when working with reciprocal tangent relationships.
+
+## Remarks
+ - Domain: valid for all real angles except where `TAN(angle) = 0`.
+ - Radians: input is interpreted in radians.
+ - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
+
+## Examples
+
+<Tabs items={["Cotangent at PI over 4", "Undefined cotangent at zero"]}>
+<Tab value="Cotangent at PI over 4">
+<FunctionSandbox
+  title="Cotangent at PI over 4"
+  formula={`=COT(PI()/4)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Undefined cotangent at zero">
+<FunctionSandbox
+  title="Undefined cotangent at zero"
+  formula={`=COT(0)`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TAN](/docs/reference/functions/math/tan)
+- [SEC](/docs/reference/functions/math/sec)
+- [CSC](/docs/reference/functions/math/csc)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASIN](/docs/reference/functions/math/asin)
+
+## FAQ
+
+### Why is COT undefined at integer multiples of PI()?
+At those points TAN is zero, so 1/TAN triggers a #DIV/0! condition.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/cot" />
+{/* [formualizer-docgen:function-meta:end] */}

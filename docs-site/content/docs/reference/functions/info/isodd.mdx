@@ -1,0 +1,59 @@
+---
+title: "ISODD"
+description: "ISODD: Returns TRUE if number is odd."
+---
+
+<FunctionPageSchema id="info/isodd" />
+
+## Summary
+
+Returns TRUE when a number is odd.
+
+## Remarks
+ - Numeric input is truncated toward zero before parity is checked.
+ - Booleans are coerced (`TRUE` -&gt; 1, `FALSE` -&gt; 0).
+ - Non-numeric text returns `#VALUE!`.
+ - Errors propagate unchanged.
+
+## Examples
+
+<Tabs items={["Odd integer", "Boolean coercion"]}>
+<Tab value="Odd integer">
+<FunctionSandbox
+  title="Odd integer"
+  formula={`=ISODD(7)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Boolean coercion">
+<FunctionSandbox
+  title="Boolean coercion"
+  formula={`=ISODD(TRUE)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ISEVEN](/docs/reference/functions/info/iseven)
+- [ISNUMBER](/docs/reference/functions/info/isnumber)
+- [N](/docs/reference/functions/info/n)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### Are booleans valid inputs for ISODD?
+Yes. TRUE is treated as 1 and FALSE as 0 before the odd check.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/isodd" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,62 @@
+---
+title: "RANDARRAY"
+description: "RANDARRAY: Generates a random spilled array of numbers."
+---
+
+<FunctionPageSchema id="lookup/randarray" />
+
+## Summary
+
+`RANDARRAY` can return decimal values or whole numbers in a specified range.
+
+## Remarks
+ - Defaults: `rows=1`, `columns=1`, `min=0`, `max=1`, `whole_number=FALSE`.
+ - The function is non-deterministic and recalculates to new values.
+ - For whole numbers, values are generated in an inclusive integer range.
+ - `rows &lt;= 0`, `columns &lt;= 0`, or invalid integer bounds return `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Generate a 2x3 decimal matrix", "Generate six integer dice rolls"]}>
+<Tab value="Generate a 2x3 decimal matrix">
+<FunctionSandbox
+  title="Generate a 2x3 decimal matrix"
+  formula={`=RANDARRAY(2,3)`}
+  grid={{}}
+  expected={"2x3 array of decimals in [0,1)"}
+/>
+</Tab>
+
+<Tab value="Generate six integer dice rolls">
+<FunctionSandbox
+  title="Generate six integer dice rolls"
+  formula={`=RANDARRAY(6,1,1,6,TRUE)`}
+  grid={{}}
+  expected={"6x1 array of integers from 1 to 6"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SEQUENCE](/docs/reference/functions/lookup/sequence)
+- [SORT](/docs/reference/functions/lookup/sort)
+- [UNIQUE](/docs/reference/functions/lookup/unique)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+- [DROP](/docs/reference/functions/lookup/drop)
+
+## FAQ
+
+### Are RANDARRAY bounds inclusive?
+In whole_number mode, min and max are inclusive integer bounds; in decimal mode values are generated over the numeric interval from min toward max.
+
+### Why does RANDARRAY recalculate on every recalc pass?
+RANDARRAY is volatile and non-deterministic by design, so its spilled results are regenerated each evaluation.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/randarray" />
+{/* [formualizer-docgen:function-meta:end] */}

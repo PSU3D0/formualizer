@@ -1,4 +1,8 @@
+![Formualizer banner](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png)
+
 # formualizer-sheetport
+
+![Arrow Powered](https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white)
 
 **SheetPort runtime — treat any spreadsheet as a typed, deterministic function.**
 

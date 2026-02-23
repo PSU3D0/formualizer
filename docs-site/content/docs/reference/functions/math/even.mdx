@@ -1,0 +1,58 @@
+---
+title: "EVEN"
+description: "Rounds a number away from zero to the nearest even integer."
+---
+
+<FunctionPageSchema id="math/even" />
+
+## Summary
+
+Rounds a number away from zero to the nearest even integer.
+
+## Remarks
+ - Values already equal to an even integer stay unchanged.
+ - Positive and negative values both move away from zero.
+ - `0` returns `0`.
+
+## Examples
+
+<Tabs items={["Round a positive number to even", "Round a negative number away from zero"]}>
+<Tab value="Round a positive number to even">
+<FunctionSandbox
+  title="Round a positive number to even"
+  formula={`=EVEN(3)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Round a negative number away from zero">
+<FunctionSandbox
+  title="Round a negative number away from zero"
+  formula={`=EVEN(-1.1)`}
+  grid={{}}
+  expected={"-2"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ODD](/docs/reference/functions/math/odd)
+- [ROUNDUP](/docs/reference/functions/math/roundup)
+- [MROUND](/docs/reference/functions/math/mround)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+
+## FAQ
+
+### Does EVEN ever round toward zero?
+No. It always rounds away from zero to the nearest even integer.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/even" />
+{/* [formualizer-docgen:function-meta:end] */}

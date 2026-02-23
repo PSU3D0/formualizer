@@ -1,0 +1,64 @@
+---
+title: "HLOOKUP"
+description: "HLOOKUP: Looks up a value in the first row of a table and returns a value from another row."
+---
+
+<FunctionPageSchema id="lookup/hlookup" />
+
+## Summary
+
+`HLOOKUP` searches horizontally and returns the matching column's value from `row_index_num`.
+
+## Remarks
+ - `row_index_num` is 1-based and must be within the table height.
+ - `range_lookup` defaults to `FALSE` in this engine (exact match by default).
+ - When `range_lookup=TRUE`, approximate match logic is used against the first row.
+ - If the lookup value is not found, returns `#N/A`.
+ - If `row_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
+ - A matched empty target cell is materialized as numeric `0`.
+
+## Examples
+
+<Tabs items={["Exact match across header row", "Approximate threshold lookup"]}>
+<Tab value="Exact match across header row">
+<FunctionSandbox
+  title="Exact match across header row"
+  formula={`=HLOOKUP("Feb",A1:B2,2,FALSE)`}
+  grid={{"A1":"Jan","A2":"120","B1":"Feb","B2":"150"}}
+  expected={"150"}
+/>
+</Tab>
+
+<Tab value="Approximate threshold lookup">
+<FunctionSandbox
+  title="Approximate threshold lookup"
+  formula={`=HLOOKUP(72,A1:C2,2,TRUE)`}
+  grid={{"A1":"0","A2":"F","B1":"50","B2":"C","C1":"80","C2":"A"}}
+  expected={"C"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [VLOOKUP](/docs/reference/functions/lookup/vlookup)
+- [XLOOKUP](/docs/reference/functions/lookup/xlookup)
+- [MATCH](/docs/reference/functions/lookup/match)
+- [CHOOSE](/docs/reference/functions/lookup/choose)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+
+## FAQ
+
+### Does HLOOKUP default to exact or approximate matching?
+It defaults to exact matching in this engine because range_lookup defaults to FALSE.
+
+### How are invalid row_index_num values reported?
+If row_index_num is outside table height HLOOKUP returns #REF!; if it is non-numeric it returns #VALUE!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/hlookup" />
+{/* [formualizer-docgen:function-meta:end] */}

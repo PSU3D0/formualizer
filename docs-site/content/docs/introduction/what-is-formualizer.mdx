@@ -1,0 +1,31 @@
+---
+title: What is Formualizer?
+description: Formualizer is a cross-runtime spreadsheet engine with workbook APIs for Rust, Python, and WASM.
+---
+
+Formualizer is a spreadsheet formula engine you can embed in your own product.
+
+It gives you one core behavior model across runtimes:
+
+- Parse formulas into structured tokens/AST.
+- Store workbook cells (values + formulas).
+- Evaluate dependencies and return computed values.
+- Reuse the same logic from Rust, Python, and JavaScript/WASM.
+
+## Project surfaces
+
+- **Rust crate**: `formualizer` (meta crate) plus focused crates like `formualizer-workbook`.
+- **Python package**: `formualizer` (PyPI).
+- **JS/WASM package**: `formualizer` (npm).
+
+## Typical use cases
+
+- Add Excel-like formulas to your app without embedding Excel.
+- Recalculate workbook-driven business logic in backend jobs.
+- Share one formula model between backend and frontend runtimes.
+
+## See also
+
+- [Why Formualizer?](/docs/introduction/why-formualizer)
+- [Architecture at a Glance](/docs/introduction/architecture-at-a-glance)
+- [Quickstarts](/docs/quickstarts)

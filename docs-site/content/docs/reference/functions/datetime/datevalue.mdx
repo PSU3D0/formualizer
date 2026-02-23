@@ -1,0 +1,58 @@
+---
+title: "DATEVALUE"
+description: "DATEVALUE: Parses a date string and returns its date serial number."
+---
+
+<FunctionPageSchema id="datetime/datevalue" />
+
+## Summary
+
+Parses a date string and returns its date serial number.
+
+## Remarks
+ - Accepted formats are a fixed supported subset (for example `YYYY-MM-DD`, `MM/DD/YYYY`, and month-name forms).
+ - Parsing is not locale-driven; ambiguous text may parse differently than Excel locales.
+ - Output uses Excel 1900 serial mapping and does not currently switch to workbook `1904` mode.
+
+## Examples
+
+<Tabs items={["Parse ISO date", "Parse month-name date"]}>
+<Tab value="Parse ISO date">
+<FunctionSandbox
+  title="Parse ISO date"
+  formula={`=DATEVALUE("2024-01-15")`}
+  grid={{}}
+  expected={"45306"}
+/>
+</Tab>
+
+<Tab value="Parse month-name date">
+<FunctionSandbox
+  title="Parse month-name date"
+  formula={`=DATEVALUE("Jan 15, 2024")`}
+  grid={{}}
+  expected={"45306"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DATE](/docs/reference/functions/datetime/date)
+- [TIMEVALUE](/docs/reference/functions/datetime/timevalue)
+- [VALUE](/docs/reference/functions/text/value)
+- [DAY](/docs/reference/functions/datetime/day)
+- [HOUR](/docs/reference/functions/datetime/hour)
+- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
+
+## FAQ
+
+### Why can DATEVALUE disagree with locale-specific Excel parsing?
+This implementation uses a fixed set of accepted formats instead of workbook locale settings, so ambiguous text may parse differently.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/datevalue" />
+{/* [formualizer-docgen:function-meta:end] */}

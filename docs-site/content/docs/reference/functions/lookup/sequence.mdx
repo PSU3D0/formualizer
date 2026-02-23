@@ -1,0 +1,62 @@
+---
+title: "SEQUENCE"
+description: "SEQUENCE: Generates a sequential numeric array with configurable size, start, and step."
+---
+
+<FunctionPageSchema id="lookup/sequence" />
+
+## Summary
+
+`SEQUENCE` fills values row-by-row and returns a dynamic spill.
+
+## Remarks
+ - Defaults: `columns=1`, `start=1`, `step=1`.
+ - `rows` and `columns` must be positive; otherwise returns `#VALUE!`.
+ - Values are emitted as integers when integral, otherwise as floating-point numbers.
+ - Result spills to the requested dimensions.
+
+## Examples
+
+<Tabs items={["Simple vertical sequence", "2x3 sequence with custom start and step"]}>
+<Tab value="Simple vertical sequence">
+<FunctionSandbox
+  title="Simple vertical sequence"
+  formula={`=SEQUENCE(5)`}
+  grid={{}}
+  expected={"[[1],[2],[3],[4],[5]]"}
+/>
+</Tab>
+
+<Tab value="2x3 sequence with custom start and step">
+<FunctionSandbox
+  title="2x3 sequence with custom start and step"
+  formula={`=SEQUENCE(2,3,10,5)`}
+  grid={{}}
+  expected={"[[10,15,20],[25,30,35]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [RANDARRAY](/docs/reference/functions/lookup/randarray)
+- [TAKE](/docs/reference/functions/lookup/take)
+- [DROP](/docs/reference/functions/lookup/drop)
+- [SORT](/docs/reference/functions/lookup/sort)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+
+## FAQ
+
+### What input values are invalid for SEQUENCE?
+rows and columns must be positive numbers; zero or negative sizes return #VALUE!.
+
+### Does SEQUENCE fill by rows or by columns first?
+SEQUENCE fills row-by-row across columns, then continues on the next row using the same step increment.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/sequence" />
+{/* [formualizer-docgen:function-meta:end] */}

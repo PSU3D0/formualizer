@@ -1,0 +1,58 @@
+---
+title: "ISBLANK"
+description: "ISBLANK: Returns TRUE only for a truly empty value."
+---
+
+<FunctionPageSchema id="info/isblank" />
+
+## Summary
+
+Returns TRUE only for a truly empty value.
+
+## Remarks
+ - Empty string `""` is text, not blank, so it returns FALSE.
+ - Numeric zero and FALSE are not blank.
+ - Errors return FALSE.
+
+## Examples
+
+<Tabs items={["Reference to an empty cell", "Empty string is not blank"]}>
+<Tab value="Reference to an empty cell">
+<FunctionSandbox
+  title="Reference to an empty cell"
+  formula={`=ISBLANK(A1)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Empty string is not blank">
+<FunctionSandbox
+  title="Empty string is not blank"
+  formula={`=ISBLANK("")`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ISTEXT](/docs/reference/functions/info/istext)
+- [LEN](/docs/reference/functions/text/len)
+- [T](/docs/reference/functions/info/t)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISERR](/docs/reference/functions/info/iserr)
+- [ISERROR](/docs/reference/functions/info/iserror)
+
+## FAQ
+
+### Why does ISBLANK("") return FALSE?
+Because an empty string is text, not a truly empty cell value.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/isblank" />
+{/* [formualizer-docgen:function-meta:end] */}

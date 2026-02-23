@@ -1,0 +1,61 @@
+---
+title: "RATE"
+description: "Solves for the periodic interest rate implied by annuity cash flows."
+---
+
+<FunctionPageSchema id="financial/rate" />
+
+## Summary
+
+This function uses Newton-Raphson iteration and returns the per-period rate that satisfies
+ the TVM equation.
+
+## Remarks
+ - Output is a rate per period; convert to annual terms externally if needed.
+ - Cash-flow sign convention matters for convergence: use opposite signs for borrow/repay sides.
+ - `guess` defaults to `0.1` and influences convergence speed and branch selection.
+ - `type = 0` means end-of-period payments; `type != 0` means beginning-of-period payments.
+ - Returns `#NUM!` on non-convergence, near-zero derivative, or unsatisfied numeric conditions.
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=RATE(360, -1798.65157545827, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=RATE(12, -88.84878867834166, 1000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [PMT](/docs/reference/functions/financial/pmt)
+- [NPER](/docs/reference/functions/financial/nper)
+- [IRR](/docs/reference/functions/financial/irr)
+- [FV](/docs/reference/functions/financial/fv)
+- [PV](/docs/reference/functions/financial/pv)
+- [ACCRINT](/docs/reference/functions/financial/accrint)
+
+## FAQ
+
+### How important is `guess` for `RATE`?
+`RATE` uses Newton-Raphson from `guess` (default `0.1`); a poor starting point can lead to non-convergence and `#NUM!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/rate" />
+{/* [formualizer-docgen:function-meta:end] */}

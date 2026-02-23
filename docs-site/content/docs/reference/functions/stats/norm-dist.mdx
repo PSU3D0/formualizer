@@ -1,0 +1,55 @@
+---
+title: "NORM.DIST"
+description: "NORM.DIST: Returns the normal-distribution probability at `x` for a given mean and standard deviation."
+---
+
+<FunctionPageSchema id="stats/norm-dist" />
+
+## Summary
+
+Use `NORM.DIST` for either cumulative probabilities or point density under a non-standard
+ normal model.
+
+## Remarks
+ - Set `cumulative` to non-zero for `P(X &lt;= x)`; set it to `0` for density mode.
+ - `standard_dev` must be strictly greater than `0`.
+ - Returns `#NUM!` when `standard_dev &lt;= 0`.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Normal CDF at the mean", "Normal PDF at the mean"]}>
+<Tab value="Normal CDF at the mean">
+<FunctionSandbox
+  title="Normal CDF at the mean"
+  formula={`=NORM.DIST(50,50,10,TRUE)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+<Tab value="Normal PDF at the mean">
+<FunctionSandbox
+  title="Normal PDF at the mean"
+  formula={`=NORM.DIST(50,50,10,FALSE)`}
+  grid={{}}
+  expected={"0.03989422804014327"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [NORM.INV](/docs/reference/functions/stats/norm-inv)
+- [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
+- [NORM.S.INV](/docs/reference/functions/stats/norm-s-inv)
+- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
+- [F.DIST](/docs/reference/functions/stats/f-dist)
+- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/norm-dist" />
+{/* [formualizer-docgen:function-meta:end] */}

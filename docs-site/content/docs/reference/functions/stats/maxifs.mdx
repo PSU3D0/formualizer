@@ -1,0 +1,60 @@
+---
+title: "MAXIFS"
+description: "MAXIFS: Returns the maximum numeric value in a range that meets all criteria."
+---
+
+<FunctionPageSchema id="stats/maxifs" />
+
+## Summary
+
+`MAXIFS` applies one or more `(criteria_range, criteria)` pairs and returns the largest
+ matching numeric value.
+
+## Remarks
+ - Arguments must be `target_range` plus one or more criteria pairs.
+ - Criteria are combined with logical AND.
+ - Returns `0` when no cells satisfy all criteria.
+ - Non-numeric cells in `target_range` are ignored.
+
+## Examples
+
+<Tabs items={["Maximum value for one condition", "Maximum value with two criteria"]}>
+<Tab value="Maximum value for one condition">
+<FunctionSandbox
+  title="Maximum value for one condition"
+  formula={`=MAXIFS(A1:A3,B1:B3,"East")`}
+  grid={{"A1":"10","A2":"20","A3":"15","B1":"East","B2":"West","B3":"East"}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="Maximum value with two criteria">
+<FunctionSandbox
+  title="Maximum value with two criteria"
+  formula={`=MAXIFS(A1:A4,B1:B4,"B",C1:C4,"Q1")`}
+  grid={{"A1":"100","A2":"80","A3":"90","A4":"70","B1":"A","B2":"A","B3":"B","B4":"B","C1":"Q1","C2":"Q2","C3":"Q1","C4":"Q1"}}
+  expected={"90"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [MINIFS](/docs/reference/functions/stats/minifs)
+- [MAX](/docs/reference/functions/math/max)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### What does MAXIFS return when no rows match all criteria?
+It returns 0 when no numeric target cells satisfy every criterion.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/maxifs" />
+{/* [formualizer-docgen:function-meta:end] */}

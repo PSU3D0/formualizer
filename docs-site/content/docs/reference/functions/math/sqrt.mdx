@@ -1,0 +1,57 @@
+---
+title: "SQRT"
+description: "SQRT: Returns the positive square root of a number."
+---
+
+<FunctionPageSchema id="math/sqrt" />
+
+## Summary
+
+Returns the positive square root of a number.
+
+## Remarks
+ - Input must be greater than or equal to zero.
+ - Negative input returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Square root of a perfect square", "Square root from a reference"]}>
+<Tab value="Square root of a perfect square">
+<FunctionSandbox
+  title="Square root of a perfect square"
+  formula={`=SQRT(144)`}
+  grid={{}}
+  expected={"12"}
+/>
+</Tab>
+
+<Tab value="Square root from a reference">
+<FunctionSandbox
+  title="Square root from a reference"
+  formula={`=SQRT(A1)`}
+  grid={{"A1":"2"}}
+  expected={"1.4142135623730951"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [POWER](/docs/reference/functions/math/power)
+- [SQRTPI](/docs/reference/functions/math/sqrtpi)
+- [EXP](/docs/reference/functions/math/exp)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+
+## FAQ
+
+### When does SQRT return #NUM!?
+It returns #NUM! for negative inputs because real square roots are undefined there.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sqrt" />
+{/* [formualizer-docgen:function-meta:end] */}

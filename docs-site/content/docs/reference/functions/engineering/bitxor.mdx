@@ -1,0 +1,58 @@
+---
+title: "BITXOR"
+description: "BITXOR: Returns the bitwise exclusive OR of two non-negative integers."
+---
+
+<FunctionPageSchema id="engineering/bitxor" />
+
+## Summary
+
+Keeps bits that differ between the two inputs.
+
+## Remarks
+ - Arguments are coerced to numbers and must be whole numbers in the range `[0, 2^48)`.
+ - Returns `#NUM!` for negative values, fractional values, or out-of-range values.
+ - Propagates input errors.
+
+## Examples
+
+<Tabs items={["Highlight differing bits", "XOR identical values"]}>
+<Tab value="Highlight differing bits">
+<FunctionSandbox
+  title="Highlight differing bits"
+  formula={`=BITXOR(13,10)`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+<Tab value="XOR identical values">
+<FunctionSandbox
+  title="XOR identical values"
+  formula={`=BITXOR(5,5)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BITAND](/docs/reference/functions/engineering/bitand)
+- [BITOR](/docs/reference/functions/engineering/bitor)
+- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
+- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+
+## FAQ
+
+### Why does `BITXOR(x, x)` return `0`?
+XOR keeps only differing bits; identical operands cancel every bit position.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/bitxor" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,54 @@
+---
+title: "RSQ"
+description: "RSQ: Returns the coefficient of determination (`R^2`) for paired x/y data."
+---
+
+<FunctionPageSchema id="stats/rsq" />
+
+## Summary
+
+`RSQ` is the square of Pearson correlation and indicates explained linear variance.
+
+## Remarks
+ - Arrays must contain the same number of numeric observations.
+ - Result is in `[0, 1]` for valid numeric inputs.
+ - Returns `#DIV/0!` when either input array has zero variance.
+ - Pairing and shape mismatches return spreadsheet errors from paired-array validation.
+
+## Examples
+
+<Tabs items={["Perfect linear fit", "Strong but imperfect linear relationship"]}>
+<Tab value="Perfect linear fit">
+<FunctionSandbox
+  title="Perfect linear fit"
+  formula={`=RSQ({1,2,3},{2,4,6})`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Strong but imperfect linear relationship">
+<FunctionSandbox
+  title="Strong but imperfect linear relationship"
+  formula={`=RSQ({1,2,3},{1,2,4})`}
+  grid={{}}
+  expected={"0.9642857142857143"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CORREL](/docs/reference/functions/stats/correl)
+- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
+- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
+- [INTERCEPT](/docs/reference/functions/stats/intercept)
+- [PEARSON](/docs/reference/functions/stats/pearson)
+- [SLOPE](/docs/reference/functions/stats/slope)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/rsq" />
+{/* [formualizer-docgen:function-meta:end] */}

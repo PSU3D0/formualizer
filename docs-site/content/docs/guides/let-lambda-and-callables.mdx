@@ -1,0 +1,58 @@
+---
+title: LET/LAMBDA and Callables
+description: Current implemented semantics for LET/LAMBDA, including invocation rules, arity, and scope behavior.
+---
+
+This guide reflects current behavior in `formualizer-eval` tests (`builtins/lambda.rs` and `engine/tests/let_lambda.rs`).
+
+## Implemented semantics
+
+- `LET` requires name/value pairs plus one final expression (`>= 3` args and odd argument count).
+- `LAMBDA` returns a callable value; a callable used as a value (not invoked) yields `#CALC!`.
+- Invocation arity is exact (`LAMBDA(n, ...)` called with 0 or 2 args returns `#VALUE!`).
+- Parameter names must be unique inside `LAMBDA` (`#VALUE!` on duplicates).
+- Local names are case-insensitive in both `LET` and `LAMBDA` invocation (`x` and `X` are the same binding).
+- Local `LET` bindings shadow workbook-defined names.
+
+## Edge cases you should rely on today
+
+```text
+=LET(x,2,x+3)                              -> 5
+=LET(inc,LAMBDA(n,n+1),inc(41))            -> 42
+=LAMBDA(x,x+1)                              -> #CALC!
+=LET(f,LAMBDA(x,x+1),f)                     -> #CALC!
+=LET(inc,LAMBDA(n,n+1),inc(1,2))           -> #VALUE!
+=LET(X,1,x+1)                               -> 2
+```
+
+## Shadowing and capture notes
+
+- Parameter shadowing works: `=LET(n,5,f,LAMBDA(n,n+1),f(10))` evaluates to `11`.
+- Closures capture the environment at lambda creation time (snapshot behavior):
+  - `=LET(k,1,f,LAMBDA(x,x+k),k,2,f(0))` evaluates to `1`, not `2`.
+- Referencing a symbol before it is bound in `LET` resolves as `#NAME?`.
+
+## Minimal engine parity example (Rust)
+
+```rust
+use formualizer_common::{ExcelErrorKind, LiteralValue};
+use formualizer_workbook::Workbook;
+
+let mut wb = Workbook::new();
+wb.add_sheet("Sheet1")?;
+
+wb.set_formula("Sheet1", 1, 1, "=LET(inc,LAMBDA(n,n+1),inc(41))")?;
+wb.set_formula("Sheet1", 1, 2, "=LET(f,LAMBDA(x,x+1),f)")?;
+
+assert_eq!(wb.evaluate_cell("Sheet1", 1, 1)?, LiteralValue::Number(42.0));
+match wb.evaluate_cell("Sheet1", 1, 2)? {
+    LiteralValue::Error(err) => assert_eq!(err.kind, ExcelErrorKind::Calc),
+    other => panic!("expected #CALC!, got {other:?}"),
+}
+```
+
+## Related
+
+- [Values, Coercion, and Errors](../core-concepts/values-coercion-and-errors)
+- [Dependency Graph and Recalculation](../core-concepts/dependency-graph-and-recalc)
+- [Custom Functions (Rust, Python, JS)](./custom-functions-rust-python-js)

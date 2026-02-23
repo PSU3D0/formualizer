@@ -1,0 +1,58 @@
+---
+title: "IMARGUMENT"
+description: "IMARGUMENT: Returns the argument (angle in radians) of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imargument" />
+
+## Summary
+
+The angle is measured from the positive real axis.
+
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Returns `#DIV/0!` for `0+0i`, where the angle is undefined.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["First-quadrant angle", "Negative real axis"]}>
+<Tab value="First-quadrant angle">
+<FunctionSandbox
+  title="First-quadrant angle"
+  formula={`=IMARGUMENT("1+i")`}
+  grid={{}}
+  expected={"0.7853981633974483"}
+/>
+</Tab>
+
+<Tab value="Negative real axis">
+<FunctionSandbox
+  title="Negative real axis"
+  formula={`=IMARGUMENT("-1")`}
+  grid={{}}
+  expected={"3.141592653589793"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMABS](/docs/reference/functions/engineering/imabs)
+- [IMLN](/docs/reference/functions/engineering/imln)
+- [IMSQRT](/docs/reference/functions/engineering/imsqrt)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### Why does `IMARGUMENT(0)` return `#DIV/0!`?
+The argument (angle) of `0+0i` is undefined, so the function returns `#DIV/0!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imargument" />
+{/* [formualizer-docgen:function-meta:end] */}

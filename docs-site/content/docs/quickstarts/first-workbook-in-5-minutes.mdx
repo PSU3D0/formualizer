@@ -1,0 +1,48 @@
+---
+title: First Workbook in 5 Minutes
+description: "End-to-end mini-flow: write inputs, set formula, evaluate output."
+---
+
+This walkthrough gives one tiny but realistic workbook flow:
+
+- Inputs in `A1` and `A2`
+- Formula in `B1`
+- Evaluate and assert result
+
+## Rust example (complete)
+
+```rust
+use formualizer_common::LiteralValue;
+use formualizer_workbook::Workbook;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut wb = Workbook::new();
+    wb.add_sheet("Pricing")?;
+
+    // Inputs
+    wb.set_value("Pricing", 1, 1, LiteralValue::Number(100.0))?; // A1 base price
+    wb.set_value("Pricing", 2, 1, LiteralValue::Number(0.15))?;  // A2 discount
+
+    // Formula
+    wb.set_formula("Pricing", 1, 2, "=A1*(1-A2)")?;            // B1
+
+    // Evaluate
+    let result = wb.evaluate_cell("Pricing", 1, 2)?;
+    assert_eq!(result, LiteralValue::Number(85.0));
+
+    Ok(())
+}
+```
+
+Expected output: `85.0`.
+
+## Same flow in other runtimes
+
+- Python: [Python Quickstart](/docs/quickstarts/python-quickstart)
+- JS/WASM: [JavaScript/WASM Quickstart](/docs/quickstarts/js-wasm-quickstart)
+
+## Next
+
+- [Formula Parser](/formula-parser)
+- [Workbook Edits and Batching](/docs/guides/workbook-edits-and-batching)
+- [Custom Functions (Rust, Python, JS)](/docs/guides/custom-functions-rust-python-js)

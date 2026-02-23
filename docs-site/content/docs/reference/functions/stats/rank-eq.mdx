@@ -1,0 +1,60 @@
+---
+title: "RANK.EQ"
+description: "RANK.EQ: Returns the rank position of a number within a data set, with ties sharing the same rank."
+---
+
+<FunctionPageSchema id="stats/rank-eq" />
+
+## Summary
+
+`RANK.EQ` defaults to descending order (largest value is rank 1), and can switch to ascending
+ order when `order` is non-zero.
+
+## Remarks
+ - Omitting `order`, or setting `order` to `0`, ranks values in descending order.
+ - Any non-zero `order` ranks values in ascending order.
+ - Tied values receive the same rank (the first matching position in the sorted list).
+ - Returns `#N/A` if `number` is not found in `ref`.
+
+## Examples
+
+<Tabs items={["Descending rank with direct values", "Ascending rank with ties in a range"]}>
+<Tab value="Descending rank with direct values">
+<FunctionSandbox
+  title="Descending rank with direct values"
+  formula={`=RANK.EQ(7,{10,7,4,2})`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Ascending rank with ties in a range">
+<FunctionSandbox
+  title="Ascending rank with ties in a range"
+  formula={`=RANK.EQ(A2,A1:A5,1)`}
+  grid={{"A1":"50","A2":"20","A3":"20","A4":"10","A5":"5"}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [RANK.AVG](/docs/reference/functions/stats/rank-avg)
+- [LARGE](/docs/reference/functions/stats/large)
+- [SMALL](/docs/reference/functions/stats/small)
+- [PERCENTILE.EXC](/docs/reference/functions/stats/percentile-exc)
+- [PERCENTILE.INC](/docs/reference/functions/stats/percentile-inc)
+- [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
+
+## FAQ
+
+### When does RANK.EQ return #N/A?
+It returns #N/A when the target number does not appear in the reference set.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/rank-eq" />
+{/* [formualizer-docgen:function-meta:end] */}

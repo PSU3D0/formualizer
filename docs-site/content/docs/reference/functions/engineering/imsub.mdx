@@ -1,0 +1,58 @@
+---
+title: "IMSUB"
+description: "IMSUB: Returns the difference between two complex numbers."
+---
+
+<FunctionPageSchema id="engineering/imsub" />
+
+## Summary
+
+Subtracts the second complex value from the first.
+
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Output keeps the suffix style from the parsed inputs.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Subtract a+bi values", "Subtract pure imaginary from real"]}>
+<Tab value="Subtract a+bi values">
+<FunctionSandbox
+  title="Subtract a+bi values"
+  formula={`=IMSUB("5+3i","2+i")`}
+  grid={{}}
+  expected={"3+2i"}
+/>
+</Tab>
+
+<Tab value="Subtract pure imaginary from real">
+<FunctionSandbox
+  title="Subtract pure imaginary from real"
+  formula={`=IMSUB("4","7j")`}
+  grid={{}}
+  expected={"4-7j"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMSUM](/docs/reference/functions/engineering/imsum)
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [COMPLEX](/docs/reference/functions/engineering/complex)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+- [BITAND](/docs/reference/functions/engineering/bitand)
+- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
+
+## FAQ
+
+### How is subtraction ordered in `IMSUB`?
+It always computes `inumber1 - inumber2`; swapping arguments changes the sign of the result.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imsub" />
+{/* [formualizer-docgen:function-meta:end] */}

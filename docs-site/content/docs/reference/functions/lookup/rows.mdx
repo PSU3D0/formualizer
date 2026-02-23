@@ -1,0 +1,62 @@
+---
+title: "ROWS"
+description: "Returns the number of rows in a reference or array."
+---
+
+<FunctionPageSchema id="lookup/rows" />
+
+## Summary
+
+`ROWS` reports height, not data density.
+
+## Remarks
+ - For a single cell reference, returns `1`.
+ - For full-column references (for example `A:A`), returns `1048576`.
+ - For array literals, returns the outer array length.
+ - Invalid references return an error.
+
+## Examples
+
+<Tabs items={["Count rows in a contiguous range", "Count rows in a full column reference"]}>
+<Tab value="Count rows in a contiguous range">
+<FunctionSandbox
+  title="Count rows in a contiguous range"
+  formula={`=ROWS(B2:D10)`}
+  grid={{}}
+  expected={"9"}
+/>
+</Tab>
+
+<Tab value="Count rows in a full column reference">
+<FunctionSandbox
+  title="Count rows in a full column reference"
+  formula={`=ROWS(A:A)`}
+  grid={{}}
+  expected={"1048576"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ROW](/docs/reference/functions/lookup/row)
+- [COLUMNS](/docs/reference/functions/lookup/columns)
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
+- [TRANSPOSE](/docs/reference/functions/lookup/transpose)
+- [CHOOSE](/docs/reference/functions/lookup/choose)
+- [HLOOKUP](/docs/reference/functions/lookup/hlookup)
+
+## FAQ
+
+### Does ROWS count populated rows or reference height?
+ROWS returns reference height only; blanks inside the range do not reduce the count.
+
+### How does ROWS behave for full-column references?
+A full-column reference (like A:A) returns the sheet row limit, 1048576.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/rows" />
+{/* [formualizer-docgen:function-meta:end] */}

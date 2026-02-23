@@ -1,0 +1,58 @@
+---
+title: "UPPER"
+description: "Converts text to uppercase."
+---
+
+<FunctionPageSchema id="text/upper" />
+
+## Summary
+
+Converts text to uppercase.
+
+## Remarks
+ - Uses ASCII uppercasing semantics in this implementation.
+ - Numbers and booleans are first converted to text.
+ - Errors are propagated unchanged.
+
+## Examples
+
+<Tabs items={["Uppercase letters", "Number coerced to text"]}>
+<Tab value="Uppercase letters">
+<FunctionSandbox
+  title="Uppercase letters"
+  formula={`=UPPER("Quarterly report")`}
+  grid={{}}
+  expected={"QUARTERLY REPORT"}
+/>
+</Tab>
+
+<Tab value="Number coerced to text">
+<FunctionSandbox
+  title="Number coerced to text"
+  formula={`=UPPER(123)`}
+  grid={{}}
+  expected={"123"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LOWER](/docs/reference/functions/text/lower)
+- [PROPER](/docs/reference/functions/text/proper)
+- [EXACT](/docs/reference/functions/text/exact)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [CODE](/docs/reference/functions/text/code)
+
+## FAQ
+
+### Is uppercasing fully Unicode-aware?
+This implementation uses ASCII uppercasing semantics, so non-ASCII case rules are limited.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/upper" />
+{/* [formualizer-docgen:function-meta:end] */}

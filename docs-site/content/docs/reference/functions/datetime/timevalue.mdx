@@ -1,0 +1,58 @@
+---
+title: "TIMEVALUE"
+description: "TIMEVALUE: Parses a time string and returns its fractional-day serial value."
+---
+
+<FunctionPageSchema id="datetime/timevalue" />
+
+## Summary
+
+Parses a time string and returns its fractional-day serial value.
+
+## Remarks
+ - Supported formats include 24-hour and AM/PM text forms with optional seconds.
+ - Result is a fraction in the range `0.0..1.0` and does not include a date component.
+ - Because only a time fraction is returned, workbook date-system choice does not affect output.
+
+## Examples
+
+<Tabs items={["Parse 24-hour time", "Parse 12-hour AM/PM time"]}>
+<Tab value="Parse 24-hour time">
+<FunctionSandbox
+  title="Parse 24-hour time"
+  formula={`=TIMEVALUE("14:30")`}
+  grid={{}}
+  expected={"0.6041666667"}
+/>
+</Tab>
+
+<Tab value="Parse 12-hour AM/PM time">
+<FunctionSandbox
+  title="Parse 12-hour AM/PM time"
+  formula={`=TIMEVALUE("02:30 PM")`}
+  grid={{}}
+  expected={"0.6041666667"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TIME](/docs/reference/functions/datetime/time)
+- [DATEVALUE](/docs/reference/functions/datetime/datevalue)
+- [SECOND](/docs/reference/functions/datetime/second)
+- [DAY](/docs/reference/functions/datetime/day)
+- [HOUR](/docs/reference/functions/datetime/hour)
+- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
+
+## FAQ
+
+### Does TIMEVALUE depend on the 1900 vs 1904 date system?
+No. TIMEVALUE returns only a time fraction, so date-system selection does not change the result.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/timevalue" />
+{/* [formualizer-docgen:function-meta:end] */}

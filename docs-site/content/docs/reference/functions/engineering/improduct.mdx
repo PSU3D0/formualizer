@@ -1,0 +1,58 @@
+---
+title: "IMPRODUCT"
+description: "IMPRODUCT: Returns the product of one or more complex numbers."
+---
+
+<FunctionPageSchema id="engineering/improduct" />
+
+## Summary
+
+Multiplies values sequentially using complex multiplication rules.
+
+## Remarks
+ - Each argument is coerced to complex-number text before parsing.
+ - Accepts any number of arguments from one upward.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Multiply conjugates", "Scale an imaginary value"]}>
+<Tab value="Multiply conjugates">
+<FunctionSandbox
+  title="Multiply conjugates"
+  formula={`=IMPRODUCT("1+i","1-i")`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Scale an imaginary value">
+<FunctionSandbox
+  title="Scale an imaginary value"
+  formula={`=IMPRODUCT("2i","3")`}
+  grid={{}}
+  expected={"6i"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [IMSUM](/docs/reference/functions/engineering/imsum)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+- [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
+- [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+
+## FAQ
+
+### Can `IMPRODUCT` multiply a single argument?
+Yes. With one argument it returns that parsed complex value in canonical formatted form.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/improduct" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,54 @@
+---
+title: "CONFIDENCE.NORM"
+description: "CONFIDENCE.NORM: Returns the half-width of a confidence interval using a normal critical value."
+---
+
+<FunctionPageSchema id="stats/confidence-norm" />
+
+## Summary
+
+`CONFIDENCE.NORM` computes `z_crit * standard_dev / sqrt(size)` for two-sided intervals.
+
+## Remarks
+ - `alpha` must satisfy `0 &lt; alpha &lt; 1`.
+ - `standard_dev` must be greater than `0`.
+ - `size` must be at least `1`.
+ - Returns `#NUM!` when any input is outside valid bounds.
+
+## Examples
+
+<Tabs items={["95% confidence half-width", "90% confidence half-width"]}>
+<Tab value="95% confidence half-width">
+<FunctionSandbox
+  title="95% confidence half-width"
+  formula={`=CONFIDENCE.NORM(0.05,2,100)`}
+  grid={{}}
+  expected={"0.3919927977622559"}
+/>
+</Tab>
+
+<Tab value="90% confidence half-width">
+<FunctionSandbox
+  title="90% confidence half-width"
+  formula={`=CONFIDENCE.NORM(0.1,5,25)`}
+  grid={{}}
+  expected={"1.644853625133699"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [EXPON.DIST](/docs/reference/functions/stats/expon-dist)
+- [F.INV](/docs/reference/functions/stats/f-inv)
+- [LOGNORM.INV](/docs/reference/functions/stats/lognorm-inv)
+- [NORM.INV](/docs/reference/functions/stats/norm-inv)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/confidence-norm" />
+{/* [formualizer-docgen:function-meta:end] */}

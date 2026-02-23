@@ -1,0 +1,59 @@
+---
+title: "TEXTSPLIT"
+description: "TEXTSPLIT: Splits text into a dynamic 2D array by column and optional row delimiters."
+---
+
+<FunctionPageSchema id="text/textsplit" />
+
+## Summary
+
+`TEXTSPLIT` supports multiple delimiters, optional case-insensitive matching, and output padding.
+
+## Remarks
+ - Column delimiter is required; row delimiter is optional.
+ - `match_mode=0` is case-sensitive, `match_mode=1` is case-insensitive.
+ - `ignore_empty=TRUE` drops empty segments created by adjacent delimiters.
+ - Rows are padded to equal width using `pad_with` (default `#N/A`).
+
+## Examples
+
+<Tabs items={["Split CSV row", "Row and column split with padding"]}>
+<Tab value="Split CSV row">
+<FunctionSandbox
+  title="Split CSV row"
+  formula={`=TEXTSPLIT("A,B,C", ",")`}
+  grid={{}}
+  expected={"{A,B,C}"}
+/>
+</Tab>
+
+<Tab value="Row and column split with padding">
+<FunctionSandbox
+  title="Row and column split with padding"
+  formula={`=TEXTSPLIT("A,B;C", ",", ";")`}
+  grid={{}}
+  expected={"{A,B;C,#N/A}"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TEXTBEFORE](/docs/reference/functions/text/textbefore)
+- [TEXTAFTER](/docs/reference/functions/text/textafter)
+- [TEXTJOIN](/docs/reference/functions/text/textjoin)
+- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
+- [EXACT](/docs/reference/functions/text/exact)
+- [FIXED](/docs/reference/functions/text/fixed)
+
+## FAQ
+
+### Is delimiter matching case-sensitive?
+Yes by default; set match_mode to 1 for case-insensitive delimiter matching.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/textsplit" />
+{/* [formualizer-docgen:function-meta:end] */}

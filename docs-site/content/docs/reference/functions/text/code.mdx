@@ -1,0 +1,61 @@
+---
+title: "CODE"
+description: "Returns a numeric code for the first character in a text string."
+---
+
+<FunctionPageSchema id="text/code" />
+
+## Summary
+
+Returns the numeric code of the first character in text.
+
+ `CODE` mirrors Excel behavior with Windows-1252 compatibility mappings.
+
+## Remarks
+ - Only the first character is inspected.
+ - Empty text returns `#VALUE!`.
+ - Text-like coercion is applied to non-text scalar inputs.
+ - Known Unicode characters in the Windows-1252 extension map back to their Excel codes.
+
+## Examples
+
+<Tabs items={["ASCII code", "Extended mapping"]}>
+<Tab value="ASCII code">
+<FunctionSandbox
+  title="ASCII code"
+  formula={`=CODE("A")`}
+  grid={{}}
+  expected={"65"}
+/>
+</Tab>
+
+<Tab value="Extended mapping">
+<FunctionSandbox
+  title="Extended mapping"
+  formula={`=CODE(CHAR(128))`}
+  grid={{}}
+  expected={"128"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CHAR](/docs/reference/functions/text/char)
+- [UNICODE](/docs/reference/functions/text/unicode)
+- [UNICHAR](/docs/reference/functions/text/unichar)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [LEN](/docs/reference/functions/text/len)
+- [LOWER](/docs/reference/functions/text/lower)
+
+## FAQ
+
+### What if the input text is empty?
+CODE returns #VALUE! because there is no first character to evaluate.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/code" />
+{/* [formualizer-docgen:function-meta:end] */}

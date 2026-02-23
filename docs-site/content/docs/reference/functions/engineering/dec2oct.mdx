@@ -1,0 +1,58 @@
+---
+title: "DEC2OCT"
+description: "DEC2OCT: Converts a decimal integer to octal text."
+---
+
+<FunctionPageSchema id="engineering/dec2oct" />
+
+## Summary
+
+Optionally pads the result with leading zeros using `places`.
+
+## Remarks
+ - `number` is coerced to an integer and must be in `[-2^29, 2^29 - 1]`.
+ - Negative values are returned as 10-digit two's-complement octal strings.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+
+## Examples
+
+<Tabs items={["Convert decimal to octal", "Two's-complement negative output"]}>
+<Tab value="Convert decimal to octal">
+<FunctionSandbox
+  title="Convert decimal to octal"
+  formula={`=DEC2OCT(64)`}
+  grid={{}}
+  expected={"100"}
+/>
+</Tab>
+
+<Tab value="Two's-complement negative output">
+<FunctionSandbox
+  title="Two's-complement negative output"
+  formula={`=DEC2OCT(-1)`}
+  grid={{}}
+  expected={"7777777777"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [OCT2DEC](/docs/reference/functions/engineering/oct2dec)
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
+- [DELTA](/docs/reference/functions/engineering/delta)
+
+## FAQ
+
+### What range does `DEC2OCT` support?
+`number` must be in `[-2^29, 2^29 - 1]`; outside that range returns `#NUM!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/dec2oct" />
+{/* [formualizer-docgen:function-meta:end] */}

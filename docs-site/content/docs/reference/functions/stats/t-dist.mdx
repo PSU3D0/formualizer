@@ -1,0 +1,54 @@
+---
+title: "T.DIST"
+description: "T.DIST: Returns the Student's t probability for `x` and a given degrees-of-freedom value."
+---
+
+<FunctionPageSchema id="stats/t-dist" />
+
+## Summary
+
+Use `T.DIST` in either cumulative mode (left-tail probability) or density mode.
+
+## Remarks
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
+ - `deg_freedom` must be at least `1`.
+ - Returns `#NUM!` when `deg_freedom &lt; 1`.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["t CDF at zero", "t PDF at zero"]}>
+<Tab value="t CDF at zero">
+<FunctionSandbox
+  title="t CDF at zero"
+  formula={`=T.DIST(0,10,TRUE)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+<Tab value="t PDF at zero">
+<FunctionSandbox
+  title="t PDF at zero"
+  formula={`=T.DIST(0,10,FALSE)`}
+  grid={{}}
+  expected={"0.389108383966031"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [T.INV](/docs/reference/functions/stats/t-inv)
+- [T.TEST](/docs/reference/functions/stats/t-test)
+- [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
+- [T.INV.2T](/docs/reference/functions/stats/t-inv-2t)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/t-dist" />
+{/* [formualizer-docgen:function-meta:end] */}

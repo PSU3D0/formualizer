@@ -1,0 +1,61 @@
+---
+title: "CHAR"
+description: "Returns the character specified by a number Excel uses Windows-1252 encoding for codes 1-255."
+---
+
+<FunctionPageSchema id="text/char" />
+
+## Summary
+
+Returns the character represented by a numeric code.
+
+ `CHAR` follows Excel-style Windows-1252 behavior for codes `1..255`.
+
+## Remarks
+ - Input is truncated to an integer code.
+ - Valid code range is `1` through `255`; outside this range returns `#VALUE!`.
+ - Codes in the Windows-1252 extension range (128-159) are mapped to Unicode equivalents.
+ - Errors are propagated unchanged.
+
+## Examples
+
+<Tabs items={["ASCII character", "Out-of-range code"]}>
+<Tab value="ASCII character">
+<FunctionSandbox
+  title="ASCII character"
+  formula={`=CHAR(65)`}
+  grid={{}}
+  expected={"A"}
+/>
+</Tab>
+
+<Tab value="Out-of-range code">
+<FunctionSandbox
+  title="Out-of-range code"
+  formula={`=CHAR(300)`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CODE](/docs/reference/functions/text/code)
+- [UNICHAR](/docs/reference/functions/text/unichar)
+- [UNICODE](/docs/reference/functions/text/unicode)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [LEN](/docs/reference/functions/text/len)
+- [LOWER](/docs/reference/functions/text/lower)
+
+## FAQ
+
+### Which character set does CHAR use for codes 128-159?
+It follows Excel-style Windows-1252 mappings, including extended symbols in that range.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/char" />
+{/* [formualizer-docgen:function-meta:end] */}

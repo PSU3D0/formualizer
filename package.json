@@ -1,0 +1,8 @@
+{
+  "name": "formualizer-workspace",
+  "private": true,
+  "workspaces": [
+    "docs-site",
+    "bindings/wasm"
+  ]
+}

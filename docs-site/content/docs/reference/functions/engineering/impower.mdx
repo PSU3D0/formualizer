@@ -1,0 +1,58 @@
+---
+title: "IMPOWER"
+description: "IMPOWER: Raises a complex number to a real power."
+---
+
+<FunctionPageSchema id="engineering/impower" />
+
+## Summary
+
+Uses polar form and returns the principal-value result as complex text.
+
+## Remarks
+ - `inumber` is coerced to complex-number text; `n` is numerically coerced.
+ - Returns `#NUM!` for undefined zero-power cases such as `0^0` or `0^-1`.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Square a complex value", "Negative real exponent"]}>
+<Tab value="Square a complex value">
+<FunctionSandbox
+  title="Square a complex value"
+  formula={`=IMPOWER("1+i",2)`}
+  grid={{}}
+  expected={"2i"}
+/>
+</Tab>
+
+<Tab value="Negative real exponent">
+<FunctionSandbox
+  title="Negative real exponent"
+  formula={`=IMPOWER("2",-1)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMSQRT](/docs/reference/functions/engineering/imsqrt)
+- [IMEXP](/docs/reference/functions/engineering/imexp)
+- [IMLN](/docs/reference/functions/engineering/imln)
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [IMSUB](/docs/reference/functions/engineering/imsub)
+- [BITAND](/docs/reference/functions/engineering/bitand)
+
+## FAQ
+
+### How does `IMPOWER` handle zero base with non-positive exponent?
+`0^0` and `0` raised to a negative exponent are treated as undefined and return `#NUM!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/impower" />
+{/* [formualizer-docgen:function-meta:end] */}

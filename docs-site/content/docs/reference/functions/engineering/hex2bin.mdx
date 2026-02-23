@@ -1,0 +1,58 @@
+---
+title: "HEX2BIN"
+description: "HEX2BIN: Converts a hexadecimal text value to binary text."
+---
+
+<FunctionPageSchema id="engineering/hex2bin" />
+
+## Summary
+
+Supports optional left-padding through the `places` argument.
+
+## Remarks
+ - Input must be hexadecimal text up to 10 characters and may be signed two's-complement.
+ - The converted decimal value must be in `[-512, 511]`, or the function returns `#NUM!`.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+
+## Examples
+
+<Tabs items={["Convert positive hex to binary", "Convert signed hex"]}>
+<Tab value="Convert positive hex to binary">
+<FunctionSandbox
+  title="Convert positive hex to binary"
+  formula={`=HEX2BIN("1F")`}
+  grid={{}}
+  expected={"11111"}
+/>
+</Tab>
+
+<Tab value="Convert signed hex">
+<FunctionSandbox
+  title="Convert signed hex"
+  formula={`=HEX2BIN("FFFFFFFFFF")`}
+  grid={{}}
+  expected={"1111111111"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
+- [IMPRODUCT](/docs/reference/functions/engineering/improduct)
+- [IMSUM](/docs/reference/functions/engineering/imsum)
+
+## FAQ
+
+### Why can valid hex text still produce `#NUM!` in `HEX2BIN`?
+After conversion, the decimal value must fit `[-512, 511]`; otherwise binary output is rejected.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/hex2bin" />
+{/* [formualizer-docgen:function-meta:end] */}

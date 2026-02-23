@@ -1,0 +1,61 @@
+---
+title: "MIRR"
+description: "MIRR: Calculates modified internal rate of return with separate finance and reinvest rates."
+---
+
+<FunctionPageSchema id="financial/mirr" />
+
+## Summary
+
+Negative cash flows are discounted at `finance_rate` and positive cash flows are compounded at
+ `reinvest_rate`, then combined into a single periodic return.
+
+## Remarks
+ - `finance_rate` and `reinvest_rate` are both rates per cash-flow period.
+ - Cash-flow sign convention: at least one negative and one positive cash flow are required.
+ - Non-numeric cells in arrays/ranges are ignored; direct scalar errors are propagated.
+ - A callable value input returns `#CALC!`.
+ - Returns `#NUM!` for insufficient cash flows, and `#DIV/0!` when computed positive/negative legs are invalid.
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=MIRR({-10000,3000,4200,6800}, 0.1, 0.12)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=MIRR({-120000,39000,30000,21000,37000,46000}, 0.1, 0.12)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IRR](/docs/reference/functions/financial/irr)
+- [NPV](/docs/reference/functions/financial/npv)
+- [XNPV](/docs/reference/functions/financial/xnpv)
+- [SLN](/docs/reference/functions/financial/sln)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
+- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
+
+## FAQ
+
+### Why does `MIRR` return `#DIV/0!` for some cash-flow sets?
+`MIRR` needs both a negative leg and a positive leg; if discounted negatives or compounded positives are invalid, it returns `#DIV/0!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/mirr" />
+{/* [formualizer-docgen:function-meta:end] */}

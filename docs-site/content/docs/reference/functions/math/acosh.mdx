@@ -1,0 +1,58 @@
+---
+title: "ACOSH"
+description: "ACOSH: Returns the inverse hyperbolic cosine of a number."
+---
+
+<FunctionPageSchema id="math/acosh" />
+
+## Summary
+
+`ACOSH` is the inverse of `COSH` for inputs at or above `1`.
+
+## Remarks
+ - Domain: input must be greater than or equal to `1`.
+ - Radians: this function is hyperbolic, so the output is not an angle in radians.
+ - Errors: returns `#NUM!` when the input is less than `1`.
+
+## Examples
+
+<Tabs items={["Boundary value", "Inverse hyperbolic cosine of ten"]}>
+<Tab value="Boundary value">
+<FunctionSandbox
+  title="Boundary value"
+  formula={`=ACOSH(1)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Inverse hyperbolic cosine of ten">
+<FunctionSandbox
+  title="Inverse hyperbolic cosine of ten"
+  formula={`=ACOSH(10)`}
+  grid={{}}
+  expected={"2.993222846126381"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [COSH](/docs/reference/functions/math/cosh)
+- [ASINH](/docs/reference/functions/math/asinh)
+- [ATANH](/docs/reference/functions/math/atanh)
+- [DEGREES](/docs/reference/functions/math/degrees)
+- [RADIANS](/docs/reference/functions/math/radians)
+- [SECH](/docs/reference/functions/math/sech)
+
+## FAQ
+
+### When does ACOSH return #NUM!?
+ACOSH requires input &gt;= 1; values below 1 return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/acosh" />
+{/* [formualizer-docgen:function-meta:end] */}

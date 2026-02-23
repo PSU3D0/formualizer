@@ -1,0 +1,58 @@
+---
+title: "TRUNC"
+description: "Truncates a number toward zero, optionally at a specified digit position."
+---
+
+<FunctionPageSchema id="math/trunc" />
+
+## Summary
+
+Truncates a number toward zero, optionally at a specified digit position.
+
+## Remarks
+ - If `num_digits` is omitted, truncation is to an integer.
+ - Positive `num_digits` keeps decimal places; negative values zero places to the left.
+ - Passing more than two arguments returns `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Truncate to two decimal places", "Truncate toward zero at the hundreds place"]}>
+<Tab value="Truncate to two decimal places">
+<FunctionSandbox
+  title="Truncate to two decimal places"
+  formula={`=TRUNC(12.3456,2)`}
+  grid={{}}
+  expected={"12.34"}
+/>
+</Tab>
+
+<Tab value="Truncate toward zero at the hundreds place">
+<FunctionSandbox
+  title="Truncate toward zero at the hundreds place"
+  formula={`=TRUNC(-987.65,-2)`}
+  grid={{}}
+  expected={"-900"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [INT](/docs/reference/functions/math/int)
+- [ROUND](/docs/reference/functions/math/round)
+- [ROUNDDOWN](/docs/reference/functions/math/rounddown)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+
+## FAQ
+
+### How does TRUNC differ from INT for negative numbers?
+TRUNC removes digits toward zero, while INT floors toward negative infinity.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/trunc" />
+{/* [formualizer-docgen:function-meta:end] */}

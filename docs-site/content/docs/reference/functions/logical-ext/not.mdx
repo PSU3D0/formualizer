@@ -1,0 +1,59 @@
+---
+title: "NOT"
+description: "NOT: Reverses the logical value of its argument."
+---
+
+<FunctionPageSchema id="logical-ext/not" />
+
+## Summary
+
+`NOT` converts the input to a logical value, then flips it.
+
+## Remarks
+ - Numbers are coerced (`0` -&gt; TRUE after inversion, non-zero -&gt; FALSE after inversion).
+ - Blank values are treated as FALSE, so `NOT(blank)` returns TRUE.
+ - Text and other non-coercible values return `#VALUE!`.
+ - Errors are propagated unchanged.
+
+## Examples
+
+<Tabs items={["Invert boolean", "Invert numeric truthiness"]}>
+<Tab value="Invert boolean">
+<FunctionSandbox
+  title="Invert boolean"
+  formula={`=NOT(TRUE)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+<Tab value="Invert numeric truthiness">
+<FunctionSandbox
+  title="Invert numeric truthiness"
+  formula={`=NOT(0)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [AND](/docs/reference/functions/logical/and)
+- [OR](/docs/reference/functions/logical/or)
+- [XOR](/docs/reference/functions/logical-ext/xor)
+- [IFERROR](/docs/reference/functions/logical-ext/iferror)
+- [IFNA](/docs/reference/functions/logical-ext/ifna)
+- [IFS](/docs/reference/functions/logical-ext/ifs)
+
+## FAQ
+
+### How does NOT treat blanks?
+Blank is treated as FALSE first, so NOT(blank) returns TRUE.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="logical-ext/not" />
+{/* [formualizer-docgen:function-meta:end] */}

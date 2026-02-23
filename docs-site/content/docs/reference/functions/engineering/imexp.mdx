@@ -1,0 +1,58 @@
+---
+title: "IMEXP"
+description: "IMEXP: Returns the complex exponential of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imexp" />
+
+## Summary
+
+Computes `e^(a+bi)` and returns the result as complex text.
+
+## Remarks
+ - Input is coerced to complex-number text before parsing.
+ - Uses Euler's identity for the imaginary component.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Exponential of zero", "Exponential of a real value"]}>
+<Tab value="Exponential of zero">
+<FunctionSandbox
+  title="Exponential of zero"
+  formula={`=IMEXP("0")`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Exponential of a real value">
+<FunctionSandbox
+  title="Exponential of a real value"
+  formula={`=IMEXP("1")`}
+  grid={{}}
+  expected={"2.718281828459045"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMLN](/docs/reference/functions/engineering/imln)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+- [IMSIN](/docs/reference/functions/engineering/imsin)
+- [IMCOS](/docs/reference/functions/engineering/imcos)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+
+## FAQ
+
+### Does `IMEXP` return text or a numeric complex type?
+It returns a canonical complex text string, consistent with other `IM*` functions.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imexp" />
+{/* [formualizer-docgen:function-meta:end] */}

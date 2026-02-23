@@ -15,6 +15,9 @@ pub use formualizer_eval as eval;
 #[cfg(feature = "workbook")]
 pub use formualizer_workbook as workbook;
 
+#[cfg(feature = "workbook")]
+pub mod doc_examples;
+
 #[cfg(feature = "sheetport")]
 pub use formualizer_sheetport as sheetport;
 

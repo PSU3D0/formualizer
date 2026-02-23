@@ -1,0 +1,60 @@
+---
+title: "CUMPRINC"
+description: "CUMPRINC: Returns cumulative principal paid between two inclusive payment periods."
+---
+
+<FunctionPageSchema id="financial/cumprinc" />
+
+## Summary
+
+Use this to measure principal reduction over a selected amortization window.
+
+## Remarks
+ - `rate` is the interest rate per payment period.
+ - `start_period` and `end_period` are 1-based, inclusive integer periods.
+ - `type` must be `0` (end-of-period) or `1` (beginning-of-period).
+ - Sign convention follows payment direction; with positive `pv`, cumulative principal is typically negative.
+ - Returns `#NUM!` for invalid domain values (non-positive rate, invalid ranges, invalid type, or non-positive `pv`).
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=CUMPRINC(0.06/12, 360, 300000, 1, 12, 0)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=CUMPRINC(0.06/12, 360, 300000, 13, 24, 0)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [PPMT](/docs/reference/functions/financial/ppmt)
+- [PMT](/docs/reference/functions/financial/pmt)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
+- [ACCRINT](/docs/reference/functions/financial/accrint)
+- [DOLLARDE](/docs/reference/functions/financial/dollarde)
+- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
+
+## FAQ
+
+### Why is `CUMPRINC` often negative for loans?
+With positive `pv`, payment cash outflows are negative in this convention, so cumulative principal is typically negative.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/cumprinc" />
+{/* [formualizer-docgen:function-meta:end] */}

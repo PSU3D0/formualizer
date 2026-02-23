@@ -1,0 +1,54 @@
+---
+title: "Z.TEST"
+description: "Z.TEST: Returns the one-tailed p-value of a z-test against hypothesized mean `x`."
+---
+
+<FunctionPageSchema id="stats/z-test" />
+
+## Summary
+
+`Z.TEST` evaluates whether the sample mean is significantly greater than the target value.
+
+## Remarks
+ - Uses provided `sigma` when supplied; otherwise computes population standard deviation.
+ - Returns `#NUM!` when `sigma &lt;= 0`.
+ - Returns `#DIV/0!` when implied standard deviation is zero.
+ - Returns `#N/A` when the data array has no numeric values.
+
+## Examples
+
+<Tabs items={["Z-test with provided sigma", "Z-test with sigma estimated from sample"]}>
+<Tab value="Z-test with provided sigma">
+<FunctionSandbox
+  title="Z-test with provided sigma"
+  formula={`=Z.TEST({1,2,3,4,5},2,1)`}
+  grid={{}}
+  expected={"0.012673659338734137"}
+/>
+</Tab>
+
+<Tab value="Z-test with sigma estimated from sample">
+<FunctionSandbox
+  title="Z-test with sigma estimated from sample"
+  formula={`=Z.TEST({1,2,3,4,5},2)`}
+  grid={{}}
+  expected={"0.056923149003329065"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LARGE](/docs/reference/functions/stats/large)
+- [PERCENTILE.EXC](/docs/reference/functions/stats/percentile-exc)
+- [PERCENTILE.INC](/docs/reference/functions/stats/percentile-inc)
+- [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
+- [PERCENTRANK.INC](/docs/reference/functions/stats/percentrank-inc)
+- [QUARTILE.EXC](/docs/reference/functions/stats/quartile-exc)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/z-test" />
+{/* [formualizer-docgen:function-meta:end] */}

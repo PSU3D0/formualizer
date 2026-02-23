@@ -1,0 +1,58 @@
+---
+title: "EXP"
+description: "EXP: Returns Euler's number `e` raised to the given power."
+---
+
+<FunctionPageSchema id="math/exp" />
+
+## Summary
+
+`EXP` is the inverse of `LN` for positive-domain values.
+
+## Remarks
+ - Computes `e^x` using floating-point math.
+ - Very large positive inputs may overflow to infinity.
+ - Input errors are propagated.
+
+## Examples
+
+<Tabs items={["Compute e to the first power", "Invert LN"]}>
+<Tab value="Compute e to the first power">
+<FunctionSandbox
+  title="Compute e to the first power"
+  formula={`=EXP(1)`}
+  grid={{}}
+  expected={"2.718281828459045"}
+/>
+</Tab>
+
+<Tab value="Invert LN">
+<FunctionSandbox
+  title="Invert LN"
+  formula={`=EXP(LN(5))`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LN](/docs/reference/functions/math/ln)
+- [LOG](/docs/reference/functions/math/log)
+- [LOG10](/docs/reference/functions/math/log10)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+
+## FAQ
+
+### Can EXP overflow?
+Yes. Very large positive inputs can overflow floating-point range.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/exp" />
+{/* [formualizer-docgen:function-meta:end] */}

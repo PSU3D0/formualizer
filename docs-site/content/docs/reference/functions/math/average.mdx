@@ -1,0 +1,71 @@
+---
+title: "AVERAGE"
+description: "AVERAGE: Returns the arithmetic mean of numeric values across scalars and ranges."
+---
+
+<FunctionPageSchema id="math/average" />
+
+## Summary
+
+`AVERAGE` sums numeric inputs and divides by the count of numeric values that participated.
+
+## Remarks
+ - Errors in any scalar argument or referenced range propagate immediately.
+ - In ranges, only numeric/date-time serial values are included; text and blanks are ignored.
+ - Scalar arguments use lenient number coercion with locale support.
+ - If no numeric values are found, `AVERAGE` returns `#DIV/0!`.
+
+## Examples
+
+<Tabs items={["Average of scalar values", "Average over a mixed range", "No numeric values returns divide-by-zero"]}>
+<Tab value="Average of scalar values">
+<FunctionSandbox
+  title="Average of scalar values"
+  formula={`=AVERAGE(10, 20, 5)`}
+  grid={{}}
+  expected={"11.666666666666666"}
+/>
+</Tab>
+
+<Tab value="Average over a mixed range">
+<FunctionSandbox
+  title="Average over a mixed range"
+  formula={`=AVERAGE(A1:A3)`}
+  grid={{"A1":"10","A2":"x","A3":"20"}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="No numeric values returns divide-by-zero">
+<FunctionSandbox
+  title="No numeric values returns divide-by-zero"
+  formula={`=AVERAGE("x", "")`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SUM](/docs/reference/functions/math/sum)
+- [COUNT](/docs/reference/functions/math/count)
+- [AVERAGEIF](/docs/reference/functions/math/averageif)
+- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
+- [MEDIAN](/docs/reference/functions/stats/median)
+- [MAX](/docs/reference/functions/math/max)
+
+## FAQ
+
+### When does AVERAGE return #DIV/0!?
+It returns #DIV/0! when no numeric values are found after filtering/coercion.
+
+### Do text cells in ranges affect the denominator?
+No. Only numeric values are counted toward the divisor.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/average" />
+{/* [formualizer-docgen:function-meta:end] */}

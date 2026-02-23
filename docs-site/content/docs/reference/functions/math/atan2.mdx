@@ -1,0 +1,57 @@
+---
+title: "ATAN2"
+description: "ATAN2: Returns the arctangent of `y/x`, preserving quadrant information."
+---
+
+<FunctionPageSchema id="math/atan2" />
+
+## Summary
+
+Returns the arctangent of `y/x`, preserving quadrant information.
+
+## Remarks
+ - Formualizer uses Excel-style argument order: `ATAN2(x_num, y_num)`.
+ - Returns `#DIV/0!` when both arguments are zero.
+
+## Examples
+
+<Tabs items={["First quadrant angle", "Undefined angle at origin"]}>
+<Tab value="First quadrant angle">
+<FunctionSandbox
+  title="First quadrant angle"
+  formula={`=ATAN2(1,1)`}
+  grid={{}}
+  expected={"0.7853981633974483"}
+/>
+</Tab>
+
+<Tab value="Undefined angle at origin">
+<FunctionSandbox
+  title="Undefined angle at origin"
+  formula={`=ATAN2(0,0)`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ATAN](/docs/reference/functions/math/atan)
+- [ACOT](/docs/reference/functions/math/acot)
+- [RADIANS](/docs/reference/functions/math/radians)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ASIN](/docs/reference/functions/math/asin)
+- [ASINH](/docs/reference/functions/math/asinh)
+
+## FAQ
+
+### Why does ATAN2 return #DIV/0! at (0,0)?
+The origin has no defined direction angle, so ATAN2 reports #DIV/0!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/atan2" />
+{/* [formualizer-docgen:function-meta:end] */}

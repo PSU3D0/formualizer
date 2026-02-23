@@ -1,0 +1,63 @@
+---
+title: "CHOOSEROWS"
+description: "CHOOSEROWS: Returns selected rows from an array or range."
+---
+
+<FunctionPageSchema id="lookup/chooserows" />
+
+## Summary
+
+`CHOOSEROWS` builds a new spilled array containing only the requested rows, in the
+ order provided.
+
+## Remarks
+ - Row indexes are 1-based; negative indexes count from the end (`-1` is last row).
+ - Repeated indexes are allowed and duplicate rows in the output.
+ - Index `0` or out-of-bounds indexes return `#VALUE!`.
+ - The result spills as an array unless it collapses to a single cell.
+
+## Examples
+
+<Tabs items={["Pick first and last rows", "Duplicate a row in output"]}>
+<Tab value="Pick first and last rows">
+<FunctionSandbox
+  title="Pick first and last rows"
+  formula={`=CHOOSEROWS(A1:A3,1,-1)`}
+  grid={{"A1":"Jan","A2":"Feb","A3":"Mar"}}
+  expected={"[[\"Jan\"],[\"Mar\"]]"}
+/>
+</Tab>
+
+<Tab value="Duplicate a row in output">
+<FunctionSandbox
+  title="Duplicate a row in output"
+  formula={`=CHOOSEROWS(A1:A2,2,2)`}
+  grid={{"A1":"5","A2":"9"}}
+  expected={"[[9],[9]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [TAKE](/docs/reference/functions/lookup/take)
+- [DROP](/docs/reference/functions/lookup/drop)
+- [XMATCH](/docs/reference/functions/lookup/xmatch)
+- [XLOOKUP](/docs/reference/functions/lookup/xlookup)
+- [FILTER](/docs/reference/functions/lookup/filter)
+
+## FAQ
+
+### Can I return rows in a custom order?
+Yes. CHOOSEROWS returns rows in the exact order of the supplied indexes, and repeated indexes duplicate rows.
+
+### When does CHOOSEROWS return #VALUE!?
+It returns #VALUE! for index 0 and for row indexes outside the source height after applying negative-index conversion.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/chooserows" />
+{/* [formualizer-docgen:function-meta:end] */}

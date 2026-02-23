@@ -1,0 +1,58 @@
+---
+title: "STDEV.P"
+description: "STDEV.P: Returns population standard deviation using `n` in the denominator."
+---
+
+<FunctionPageSchema id="stats/stdev-p" />
+
+## Summary
+
+Use `STDEV.P` when your values represent the entire population, not a sample.
+
+## Remarks
+ - Requires at least one numeric value.
+ - Returns `#DIV/0!` when no numeric values are provided.
+ - Non-numeric values in referenced ranges are ignored.
+
+## Examples
+
+<Tabs items={["Population standard deviation from scalar arguments", "Population standard deviation from a range"]}>
+<Tab value="Population standard deviation from scalar arguments">
+<FunctionSandbox
+  title="Population standard deviation from scalar arguments"
+  formula={`=STDEV.P(2,4,6)`}
+  grid={{}}
+  expected={"1.632993161855452"}
+/>
+</Tab>
+
+<Tab value="Population standard deviation from a range">
+<FunctionSandbox
+  title="Population standard deviation from a range"
+  formula={`=STDEV.P(A1:A3)`}
+  grid={{"A1":"1","A2":"2","A3":"3"}}
+  expected={"0.816496580927726"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [STDEV.S](/docs/reference/functions/stats/stdev-s)
+- [VAR.P](/docs/reference/functions/stats/var-p)
+- [VAR.S](/docs/reference/functions/stats/var-s)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### When does STDEV.P return #DIV/0!?
+It returns #DIV/0! when no numeric values are provided.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/stdev-p" />
+{/* [formualizer-docgen:function-meta:end] */}

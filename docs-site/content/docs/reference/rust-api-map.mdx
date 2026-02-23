@@ -1,0 +1,19 @@
+---
+title: Rust API Map
+description: High-level map of the Rust workspace crates and the surfaces they expose.
+---
+
+> **v1 scaffold:** This map is intentionally concise and will gain deeper per-module links over time.
+
+| Crate | Responsibility | Start Here |
+| --- | --- | --- |
+| `formualizer-parse` | Tokenization, parser, and AST construction | [Parser + AST Inspector](/docs/playground/parser-ast-inspector) |
+| `formualizer-eval` | Formula evaluation engine and built-in function execution | [Function Reference](/docs/reference/functions) |
+| `formualizer-common` | Shared value, error, and utility types | [Errors and Types](/docs/reference/errors-and-types) |
+| `formualizer-io` | Workbook/file I/O and backend adapters | [Errors and Types](/docs/reference/errors-and-types) |
+| `formualizer-macros` | Procedural macros used by internal crates | [Reference Index](/docs/reference) |
+
+Cross-binding views:
+
+- [Python API Map](/docs/reference/python-api-map)
+- [JS/WASM API Map](/docs/reference/js-wasm-api-map)

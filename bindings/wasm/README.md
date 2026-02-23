@@ -1,4 +1,8 @@
+![Formualizer banner](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png)
+
 # Formualizer for WASM
+
+![Arrow Powered](https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white)
 
 **Parse, evaluate, and mutate Excel workbooks in the browser or Node.js.**
 

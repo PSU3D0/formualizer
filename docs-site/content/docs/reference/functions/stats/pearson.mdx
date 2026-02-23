@@ -1,0 +1,54 @@
+---
+title: "PEARSON"
+description: "Returns the Pearson correlation coefficient between two paired numeric arrays."
+---
+
+<FunctionPageSchema id="stats/pearson" />
+
+## Summary
+
+`PEARSON` reports linear association on a normalized scale from `-1` to `1`.
+
+## Remarks
+ - Arrays must contain the same number of numeric observations.
+ - Returns `#DIV/0!` when either array has zero variance.
+ - Positive values indicate positive linear association; negative values indicate inverse association.
+ - Pairing and shape mismatches return spreadsheet errors from paired-array validation.
+
+## Examples
+
+<Tabs items={["Perfect positive linear correlation", "Perfect negative linear correlation"]}>
+<Tab value="Perfect positive linear correlation">
+<FunctionSandbox
+  title="Perfect positive linear correlation"
+  formula={`=PEARSON({1,2,3},{2,4,6})`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Perfect negative linear correlation">
+<FunctionSandbox
+  title="Perfect negative linear correlation"
+  formula={`=PEARSON({1,2,3},{3,2,1})`}
+  grid={{}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CORREL](/docs/reference/functions/stats/correl)
+- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
+- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
+- [INTERCEPT](/docs/reference/functions/stats/intercept)
+- [RSQ](/docs/reference/functions/stats/rsq)
+- [SLOPE](/docs/reference/functions/stats/slope)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/pearson" />
+{/* [formualizer-docgen:function-meta:end] */}

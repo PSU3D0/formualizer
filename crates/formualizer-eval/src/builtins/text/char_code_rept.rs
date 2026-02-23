@@ -21,6 +21,49 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 /// Excel uses Windows-1252 encoding for codes 1-255
 #[derive(Debug)]
 pub struct CharFn;
+/// Returns the character represented by a numeric code.
+///
+/// `CHAR` follows Excel-style Windows-1252 behavior for codes `1..255`.
+///
+/// # Remarks
+/// - Input is truncated to an integer code.
+/// - Valid code range is `1` through `255`; outside this range returns `#VALUE!`.
+/// - Codes in the Windows-1252 extension range (128-159) are mapped to Unicode equivalents.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "ASCII character"
+/// formula: '=CHAR(65)'
+/// expected: "A"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Out-of-range code"
+/// formula: '=CHAR(300)'
+/// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CODE
+///   - UNICHAR
+///   - UNICODE
+/// faq:
+///   - q: "Which character set does CHAR use for codes 128-159?"
+///     a: "It follows Excel-style Windows-1252 mappings, including extended symbols in that range."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CHAR
+/// Type: CharFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CHAR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CharFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -97,6 +140,49 @@ impl Function for CharFn {
 /// CODE(text) - Returns a numeric code for the first character in a text string
 #[derive(Debug)]
 pub struct CodeFn;
+/// Returns the numeric code of the first character in text.
+///
+/// `CODE` mirrors Excel behavior with Windows-1252 compatibility mappings.
+///
+/// # Remarks
+/// - Only the first character is inspected.
+/// - Empty text returns `#VALUE!`.
+/// - Text-like coercion is applied to non-text scalar inputs.
+/// - Known Unicode characters in the Windows-1252 extension map back to their Excel codes.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "ASCII code"
+/// formula: '=CODE("A")'
+/// expected: 65
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Extended mapping"
+/// formula: '=CODE(CHAR(128))'
+/// expected: 128
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CHAR
+///   - UNICODE
+///   - UNICHAR
+/// faq:
+///   - q: "What if the input text is empty?"
+///     a: "CODE returns #VALUE! because there is no first character to evaluate."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CODE
+/// Type: CodeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: CODE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for CodeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -173,6 +259,47 @@ impl Function for CodeFn {
 /// REPT(text, number_times) - Repeats text a given number of times
 #[derive(Debug)]
 pub struct ReptFn;
+/// Repeats a text string a specified number of times.
+///
+/// # Remarks
+/// - Repeat count is truncated to an integer.
+/// - Negative counts return `#VALUE!`.
+/// - Output longer than 32,767 characters returns `#VALUE!`.
+/// - Non-text first argument is coerced to text.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Repeat text three times"
+/// formula: '=REPT("ab", 3)'
+/// expected: "ababab"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative count"
+/// formula: '=REPT("x", -1)'
+/// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CONCAT
+///   - TEXTJOIN
+///   - SUBSTITUTE
+/// faq:
+///   - q: "Can REPT return very long strings?"
+///     a: "Only up to 32,767 characters; longer results return #VALUE! like Excel."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: REPT
+/// Type: ReptFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: REPT(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ReptFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

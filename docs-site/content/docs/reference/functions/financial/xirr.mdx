@@ -1,0 +1,60 @@
+---
+title: "XIRR"
+description: "XIRR: Calculates annualized internal rate of return for irregularly dated cash flows."
+---
+
+<FunctionPageSchema id="financial/xirr" />
+
+## Summary
+
+The solver uses Newton-Raphson on `XNPV(rate, values, dates) = 0` with day-count basis 365.
+
+## Remarks
+ - Output is an annualized rate.
+ - Cash-flow sign convention requires at least one negative and one positive value.
+ - `guess` defaults to `0.1` and can materially affect convergence.
+ - Non-numeric entries in value/date arrays are ignored; callable inputs return `#CALC!`.
+ - Returns `#NUM!` for mismatched lengths, insufficient valid points, missing sign change, derivative failure, or non-convergence.
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=XIRR({-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=XIRR({-5000,1200,1800,2400}, {0,180,365,730}, 0.1)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [XNPV](/docs/reference/functions/financial/xnpv)
+- [IRR](/docs/reference/functions/financial/irr)
+- [NPV](/docs/reference/functions/financial/npv)
+- [ACCRINT](/docs/reference/functions/financial/accrint)
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
+- [DB](/docs/reference/functions/financial/db)
+
+## FAQ
+
+### What data shape does `XIRR` require?
+`values` and `dates` must have equal numeric length with at least one positive and one negative cash flow, or `#NUM!` is returned.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/xirr" />
+{/* [formualizer-docgen:function-meta:end] */}

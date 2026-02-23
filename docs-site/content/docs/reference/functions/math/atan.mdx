@@ -1,0 +1,58 @@
+---
+title: "ATAN"
+description: "ATAN: Returns the angle in radians whose tangent is the input value."
+---
+
+<FunctionPageSchema id="math/atan" />
+
+## Summary
+
+`ATAN` is useful for recovering a slope angle from a ratio.
+
+## Remarks
+ - Domain: accepts any real number.
+ - Radians: output is in the range `(-PI()/2, PI()/2)`.
+ - Errors: no function-specific domain errors are produced.
+
+## Examples
+
+<Tabs items={["Arctangent of one", "Negative slope angle"]}>
+<Tab value="Arctangent of one">
+<FunctionSandbox
+  title="Arctangent of one"
+  formula={`=ATAN(1)`}
+  grid={{}}
+  expected={"0.7853981633974483"}
+/>
+</Tab>
+
+<Tab value="Negative slope angle">
+<FunctionSandbox
+  title="Negative slope angle"
+  formula={`=ATAN(-1)`}
+  grid={{}}
+  expected={"-0.7853981633974483"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TAN](/docs/reference/functions/math/tan)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ASIN](/docs/reference/functions/math/asin)
+- [ASINH](/docs/reference/functions/math/asinh)
+
+## FAQ
+
+### Does ATAN ever return #NUM! for large values?
+No. ATAN accepts any real input and asymptotically approaches +/-PI()/2.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/atan" />
+{/* [formualizer-docgen:function-meta:end] */}

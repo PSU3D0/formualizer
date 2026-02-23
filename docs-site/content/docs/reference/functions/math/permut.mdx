@@ -1,0 +1,70 @@
+---
+title: "PERMUT"
+description: "Returns the number of permutations for selecting and ordering `k` items from `n`."
+---
+
+<FunctionPageSchema id="math/permut" />
+
+## Summary
+
+`PERMUT` computes `n!/(n-k)!` after truncating both inputs toward zero.
+
+## Remarks
+ - Fractional inputs are truncated to integers.
+ - If `n &lt; 0`, `k &lt; 0`, or `k &gt; n`, the function returns `#NUM!`.
+ - Argument errors propagate directly.
+
+## Examples
+
+<Tabs items={["Basic permutations", "Fractional arguments are truncated", "Out-of-range k returns numeric error"]}>
+<Tab value="Basic permutations">
+<FunctionSandbox
+  title="Basic permutations"
+  formula={`=PERMUT(5, 2)`}
+  grid={{}}
+  expected={"20"}
+/>
+</Tab>
+
+<Tab value="Fractional arguments are truncated">
+<FunctionSandbox
+  title="Fractional arguments are truncated"
+  formula={`=PERMUT(7.9, 3.1)`}
+  grid={{}}
+  expected={"210"}
+/>
+</Tab>
+
+<Tab value="Out-of-range k returns numeric error">
+<FunctionSandbox
+  title="Out-of-range k returns numeric error"
+  formula={`=PERMUT(4, 6)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [COMBIN](/docs/reference/functions/math/combin)
+- [FACT](/docs/reference/functions/math/fact)
+- [MULTINOMIAL](/docs/reference/functions/math/multinomial)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [MOD](/docs/reference/functions/math/mod)
+- [MROUND](/docs/reference/functions/math/mround)
+
+## FAQ
+
+### Why does PERMUT fail when k is larger than n?
+Permutations require choosing at most n items, so k &gt; n returns #NUM!.
+
+### How are decimal inputs handled?
+PERMUT truncates n and k toward zero before computing n!/(n-k)!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/permut" />
+{/* [formualizer-docgen:function-meta:end] */}

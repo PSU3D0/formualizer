@@ -1,0 +1,58 @@
+---
+title: "HEX2DEC"
+description: "HEX2DEC: Converts a hexadecimal text value to decimal."
+---
+
+<FunctionPageSchema id="engineering/hex2dec" />
+
+## Summary
+
+Supports up to 10 hex digits, including signed two's-complement values.
+
+## Remarks
+ - Input is coerced to text and must contain only hexadecimal characters.
+ - 10-digit values beginning with `8`-`F` are interpreted as signed 40-bit numbers.
+ - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
+
+## Examples
+
+<Tabs items={["Convert a positive hex value", "Interpret signed 40-bit hex"]}>
+<Tab value="Convert a positive hex value">
+<FunctionSandbox
+  title="Convert a positive hex value"
+  formula={`=HEX2DEC("FF")`}
+  grid={{}}
+  expected={"255"}
+/>
+</Tab>
+
+<Tab value="Interpret signed 40-bit hex">
+<FunctionSandbox
+  title="Interpret signed 40-bit hex"
+  formula={`=HEX2DEC("FFFFFFFFFF")`}
+  grid={{}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+- [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
+- [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### When is a 10-digit hex input treated as negative in `HEX2DEC`?
+If the first digit is `8` through `F`, it is decoded as signed 40-bit two's-complement.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/hex2dec" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,59 @@
+---
+title: "SEARCH"
+description: "SEARCH: Returns the 1-based position of one text string inside another."
+---
+
+<FunctionPageSchema id="text/search" />
+
+## Summary
+
+`SEARCH` is case-insensitive and supports `*` and `?` wildcards.
+
+## Remarks
+ - Search is case-insensitive.
+ - `*` matches any sequence and `?` matches a single character.
+ - `start_num` is 1-based and must be greater than `0`.
+ - If no match is found, returns `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Case-insensitive search", "Wildcard pattern"]}>
+<Tab value="Case-insensitive search">
+<FunctionSandbox
+  title="Case-insensitive search"
+  formula={`=SEARCH("world", "Hello World")`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+<Tab value="Wildcard pattern">
+<FunctionSandbox
+  title="Wildcard pattern"
+  formula={`=SEARCH("d?ta*", "Meta Data Lake")`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [FIND](/docs/reference/functions/text/find)
+- [EXACT](/docs/reference/functions/text/exact)
+- [SUBSTITUTE](/docs/reference/functions/text/substitute)
+- [CONCAT](/docs/reference/functions/text/concat)
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+- [LEFT](/docs/reference/functions/text/left)
+
+## FAQ
+
+### How are case and wildcards handled?
+SEARCH is case-insensitive and supports * for any sequence plus ? for one character.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/search" />
+{/* [formualizer-docgen:function-meta:end] */}

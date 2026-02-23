@@ -1,0 +1,59 @@
+---
+title: "AVEDEV"
+description: "AVEDEV: Returns the average of absolute deviations from the mean."
+---
+
+<FunctionPageSchema id="stats/avedev" />
+
+## Summary
+
+`AVEDEV` provides a robust spread measure that is less sensitive to outliers than squared-error
+ metrics.
+
+## Remarks
+ - Returns `#NUM!` when no numeric values are available.
+ - Non-numeric values in referenced ranges are ignored.
+ - Uses the arithmetic mean as the center point.
+
+## Examples
+
+<Tabs items={["Average absolute deviation from scalar values", "Average absolute deviation from a range"]}>
+<Tab value="Average absolute deviation from scalar values">
+<FunctionSandbox
+  title="Average absolute deviation from scalar values"
+  formula={`=AVEDEV(2,4,6)`}
+  grid={{}}
+  expected={"1.3333333333333333"}
+/>
+</Tab>
+
+<Tab value="Average absolute deviation from a range">
+<FunctionSandbox
+  title="Average absolute deviation from a range"
+  formula={`=AVEDEV(A1:A4)`}
+  grid={{"A1":"1","A2":"1","A3":"3","A4":"5"}}
+  expected={"1.5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [STDEV.S](/docs/reference/functions/stats/stdev-s)
+- [VAR.S](/docs/reference/functions/stats/var-s)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+- [HARMEAN](/docs/reference/functions/stats/harmean)
+- [KURT](/docs/reference/functions/stats/kurt)
+
+## FAQ
+
+### What center does AVEDEV use for deviations?
+It computes absolute deviations around the arithmetic mean of included values.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/avedev" />
+{/* [formualizer-docgen:function-meta:end] */}

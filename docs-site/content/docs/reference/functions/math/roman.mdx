@@ -1,0 +1,59 @@
+---
+title: "ROMAN"
+description: "Converts an Arabic number to a Roman numeral string."
+---
+
+<FunctionPageSchema id="math/roman" />
+
+## Summary
+
+Converts an Arabic number to a Roman numeral string.
+
+## Remarks
+ - Accepts integer values in the range `0..=3999`.
+ - `0` returns an empty string.
+ - Optional `form` controls output compactness (`0` classic through `4` simplified).
+ - Out-of-range values return `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Classic Roman numeral", "Another conversion"]}>
+<Tab value="Classic Roman numeral">
+<FunctionSandbox
+  title="Classic Roman numeral"
+  formula={`=ROMAN(1999)`}
+  grid={{}}
+  expected={"MCMXCIX"}
+/>
+</Tab>
+
+<Tab value="Another conversion">
+<FunctionSandbox
+  title="Another conversion"
+  formula={`=ROMAN(44)`}
+  grid={{}}
+  expected={"XLIV"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ARABIC](/docs/reference/functions/math/arabic)
+- [TEXT](/docs/reference/functions/text/text)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+- [FLOOR](/docs/reference/functions/math/floor)
+
+## FAQ
+
+### What input range does ROMAN support?
+ROMAN accepts truncated integers from 0 through 3999; outside that range it returns #VALUE!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/roman" />
+{/* [formualizer-docgen:function-meta:end] */}

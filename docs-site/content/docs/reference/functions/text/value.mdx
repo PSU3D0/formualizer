@@ -1,0 +1,59 @@
+---
+title: "VALUE"
+description: "Converts text that represents a number into a numeric value."
+---
+
+<FunctionPageSchema id="text/value" />
+
+## Summary
+
+Converts text that represents a number into a numeric value.
+
+## Remarks
+ - Parsing uses locale-aware invariant number parsing from the function context.
+ - Non-numeric text returns `#VALUE!`.
+ - Booleans and numbers are first coerced to text, then parsed.
+ - Errors are propagated unchanged.
+
+## Examples
+
+<Tabs items={["Parse decimal text", "Invalid numeric text"]}>
+<Tab value="Parse decimal text">
+<FunctionSandbox
+  title="Parse decimal text"
+  formula={`=VALUE("12.5")`}
+  grid={{}}
+  expected={"12.5"}
+/>
+</Tab>
+
+<Tab value="Invalid numeric text">
+<FunctionSandbox
+  title="Invalid numeric text"
+  formula={`=VALUE("abc")`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TEXT](/docs/reference/functions/text/text)
+- [N](/docs/reference/functions/info/n)
+- [ISNUMBER](/docs/reference/functions/info/isnumber)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [CODE](/docs/reference/functions/text/code)
+
+## FAQ
+
+### Does VALUE coerce arbitrary text like TRUE/FALSE?
+VALUE parses numeric text only; non-numeric strings return #VALUE!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/value" />
+{/* [formualizer-docgen:function-meta:end] */}

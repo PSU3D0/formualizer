@@ -20,6 +20,50 @@ pub struct ChooseColsFn;
 #[derive(Debug)]
 pub struct ChooseRowsFn;
 
+/// Returns one value from a list using a 1-based index.
+///
+/// `CHOOSE` selects from `value1, value2, ...` based on `index_num`.
+///
+/// # Remarks
+/// - `index_num` is 1-based and is truncated to an integer.
+/// - Indexes less than 1 or greater than the number of choices return `#VALUE!`.
+/// - Errors in `index_num` are propagated.
+/// - The selected argument is returned as-is, including non-text/non-numeric values.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Select a label"
+/// formula: '=CHOOSE(2,"Low","Medium","High")'
+/// expected: "Medium"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Use numeric choices"
+/// formula: '=CHOOSE(3,10,20,30,40)'
+/// expected: 30
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - INDEX
+///   - CHOOSECOLS
+///   - CHOOSEROWS
+/// faq:
+///   - q: "How are decimal index_num values handled?"
+///     a: "The index is truncated toward zero before selection, so CHOOSE(2.9,...) selects the second argument."
+///   - q: "What error do I get for index_num 0 or too large?"
+///     a: "CHOOSE returns #VALUE! when index_num is less than 1 or greater than the number of provided choices."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CHOOSE
+/// Type: ChooseFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: CHOOSE(arg1: number@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for ChooseFn {
     fn name(&self) -> &'static str {
         "CHOOSE"
@@ -127,6 +171,62 @@ fn materialize_rows_2d<'b>(
     }
 }
 
+/// Returns selected columns from an array or range.
+///
+/// `CHOOSECOLS` builds a new spilled array containing only the requested columns, in the
+/// order provided.
+///
+/// # Remarks
+/// - Column indexes are 1-based; negative indexes count from the end (`-1` is last column).
+/// - Repeated indexes are allowed and duplicate columns in the output.
+/// - Index `0` or out-of-bounds indexes return `#VALUE!`.
+/// - The result spills as an array unless it collapses to a single cell.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Select first and third columns"
+/// grid:
+///   A1: "Name"
+///   B1: "Dept"
+///   C1: "Score"
+///   A2: "Ana"
+///   B2: "Ops"
+///   C2: 91
+/// formula: '=CHOOSECOLS(A1:C2,1,3)'
+/// expected: [["Name","Score"],["Ana",91]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Select the last column with a negative index"
+/// grid:
+///   A1: 10
+///   B1: 20
+///   C1: 30
+/// formula: '=CHOOSECOLS(A1:C1,-1)'
+/// expected: 30
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CHOOSEROWS
+///   - TAKE
+///   - DROP
+/// faq:
+///   - q: "How do negative column indexes work?"
+///     a: "Negative indexes count from the right edge of the array, so -1 selects the last column, -2 the second-to-last, and so on."
+///   - q: "What triggers #VALUE! in CHOOSECOLS?"
+///     a: "Index 0 and any index whose absolute position falls outside the source width return #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CHOOSECOLS
+/// Type: ChooseColsFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CHOOSECOLS(arg1: range|any@range, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=range|any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=Some(1),default=false}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for ChooseColsFn {
     func_caps!(PURE, LOOKUP);
     fn name(&self) -> &'static str {
@@ -231,6 +331,58 @@ impl Function for ChooseColsFn {
     }
 }
 
+/// Returns selected rows from an array or range.
+///
+/// `CHOOSEROWS` builds a new spilled array containing only the requested rows, in the
+/// order provided.
+///
+/// # Remarks
+/// - Row indexes are 1-based; negative indexes count from the end (`-1` is last row).
+/// - Repeated indexes are allowed and duplicate rows in the output.
+/// - Index `0` or out-of-bounds indexes return `#VALUE!`.
+/// - The result spills as an array unless it collapses to a single cell.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Pick first and last rows"
+/// grid:
+///   A1: "Jan"
+///   A2: "Feb"
+///   A3: "Mar"
+/// formula: '=CHOOSEROWS(A1:A3,1,-1)'
+/// expected: [["Jan"],["Mar"]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Duplicate a row in output"
+/// grid:
+///   A1: 5
+///   A2: 9
+/// formula: '=CHOOSEROWS(A1:A2,2,2)'
+/// expected: [[9],[9]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CHOOSECOLS
+///   - TAKE
+///   - DROP
+/// faq:
+///   - q: "Can I return rows in a custom order?"
+///     a: "Yes. CHOOSEROWS returns rows in the exact order of the supplied indexes, and repeated indexes duplicate rows."
+///   - q: "When does CHOOSEROWS return #VALUE!?"
+///     a: "It returns #VALUE! for index 0 and for row indexes outside the source height after applying negative-index conversion."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: CHOOSEROWS
+/// Type: ChooseRowsFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CHOOSEROWS(arg1: range|any@range, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=range|any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=Some(1),default=false}
+/// Caps: PURE, LOOKUP
+/// [formualizer-docgen:schema:end]
 impl Function for ChooseRowsFn {
     func_caps!(PURE, LOOKUP);
     fn name(&self) -> &'static str {

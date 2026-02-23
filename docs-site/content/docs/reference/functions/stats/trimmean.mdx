@@ -1,0 +1,54 @@
+---
+title: "TRIMMEAN"
+description: "TRIMMEAN: Returns the mean after trimming a percentage of values from both tails."
+---
+
+<FunctionPageSchema id="stats/trimmean" />
+
+## Summary
+
+`TRIMMEAN` sorts numeric data, removes an equal count from low and high ends, then averages the
+ remaining interior values.
+
+## Remarks
+ - `percent` must satisfy `0 &lt;= percent &lt; 1`.
+ - The trimmed count per side is `floor(n * percent / 2)`.
+ - Returns `#NUM!` for invalid percent values or when no numeric values are available.
+
+## Examples
+
+<Tabs items={["Trimmed mean from direct values", "Trimmed mean from a range"]}>
+<Tab value="Trimmed mean from direct values">
+<FunctionSandbox
+  title="Trimmed mean from direct values"
+  formula={`=TRIMMEAN({1,2,3,4,5,6},0.3333333333333333)`}
+  grid={{}}
+  expected={"3.5"}
+/>
+</Tab>
+
+<Tab value="Trimmed mean from a range">
+<FunctionSandbox
+  title="Trimmed mean from a range"
+  formula={`=TRIMMEAN(A1:A6,0.4)`}
+  grid={{"A1":"10","A2":"12","A3":"13","A4":"20","A5":"21","A6":"30"}}
+  expected={"16.5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CORREL](/docs/reference/functions/stats/correl)
+- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
+- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
+- [INTERCEPT](/docs/reference/functions/stats/intercept)
+- [PEARSON](/docs/reference/functions/stats/pearson)
+- [RSQ](/docs/reference/functions/stats/rsq)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/trimmean" />
+{/* [formualizer-docgen:function-meta:end] */}

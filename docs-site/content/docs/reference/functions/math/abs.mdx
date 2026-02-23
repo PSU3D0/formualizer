@@ -1,0 +1,58 @@
+---
+title: "ABS"
+description: "Returns the absolute value of a number."
+---
+
+<FunctionPageSchema id="math/abs" />
+
+## Summary
+
+Returns the absolute value of a number.
+
+## Remarks
+ - Negative numbers are returned as positive values.
+ - Zero and positive numbers are unchanged.
+ - Errors are propagated.
+
+## Examples
+
+<Tabs items={["Absolute value of a negative number", "Absolute value from a cell reference"]}>
+<Tab value="Absolute value of a negative number">
+<FunctionSandbox
+  title="Absolute value of a negative number"
+  formula={`=ABS(-12.5)`}
+  grid={{}}
+  expected={"12.5"}
+/>
+</Tab>
+
+<Tab value="Absolute value from a cell reference">
+<FunctionSandbox
+  title="Absolute value from a cell reference"
+  formula={`=ABS(A1)`}
+  grid={{"A1":"-42"}}
+  expected={"42"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SIGN](/docs/reference/functions/math/sign)
+- [INT](/docs/reference/functions/math/int)
+- [MOD](/docs/reference/functions/math/mod)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASIN](/docs/reference/functions/math/asin)
+
+## FAQ
+
+### How does ABS handle errors or non-numeric text?
+Input errors propagate, and non-coercible text returns a coercion error.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/abs" />
+{/* [formualizer-docgen:function-meta:end] */}

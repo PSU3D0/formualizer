@@ -1,0 +1,58 @@
+---
+title: "ACOT"
+description: "ACOT: Returns the angle in radians whose cotangent is the input value."
+---
+
+<FunctionPageSchema id="math/acot" />
+
+## Summary
+
+`ACOT` maps real inputs to principal angles in `(0, PI())`.
+
+## Remarks
+ - Domain: accepts any real number, including `0`.
+ - Radians: output is in `(0, PI())`, with `ACOT(0) = PI()/2`.
+ - Errors: no function-specific domain errors are produced.
+
+## Examples
+
+<Tabs items={["Arccotangent of one", "Arccotangent of negative one"]}>
+<Tab value="Arccotangent of one">
+<FunctionSandbox
+  title="Arccotangent of one"
+  formula={`=ACOT(1)`}
+  grid={{}}
+  expected={"0.7853981633974483"}
+/>
+</Tab>
+
+<Tab value="Arccotangent of negative one">
+<FunctionSandbox
+  title="Arccotangent of negative one"
+  formula={`=ACOT(-1)`}
+  grid={{}}
+  expected={"2.356194490192345"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ATAN](/docs/reference/functions/math/atan)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COT](/docs/reference/functions/math/cot)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ASIN](/docs/reference/functions/math/asin)
+- [ASINH](/docs/reference/functions/math/asinh)
+
+## FAQ
+
+### What is ACOT(0)?
+ACOT(0) is PI()/2 in the principal-value branch used here.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/acot" />
+{/* [formualizer-docgen:function-meta:end] */}

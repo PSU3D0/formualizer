@@ -1,0 +1,58 @@
+---
+title: "IMCOS"
+description: "IMCOS: Returns the cosine of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imcos" />
+
+## Summary
+
+Evaluates complex cosine and returns the result as complex text.
+
+## Remarks
+ - Input is coerced to complex-number text before parsing.
+ - Uses hyperbolic components for the imaginary part.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Cosine of zero", "Cosine on imaginary axis"]}>
+<Tab value="Cosine of zero">
+<FunctionSandbox
+  title="Cosine of zero"
+  formula={`=IMCOS("0")`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Cosine on imaginary axis">
+<FunctionSandbox
+  title="Cosine on imaginary axis"
+  formula={`=IMCOS("i")`}
+  grid={{}}
+  expected={"1.5430806348152437"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMSIN](/docs/reference/functions/engineering/imsin)
+- [IMEXP](/docs/reference/functions/engineering/imexp)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
+
+## FAQ
+
+### Why is the imaginary part negated in `IMCOS`?
+Complex cosine uses `cos(a+bi)=cos(a)cosh(b)-i sin(a)sinh(b)`, so the imaginary term carries a minus sign.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imcos" />
+{/* [formualizer-docgen:function-meta:end] */}

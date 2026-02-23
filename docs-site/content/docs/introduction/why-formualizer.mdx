@@ -1,0 +1,30 @@
+---
+title: Why Formualizer?
+description: Why teams choose Formualizer for spreadsheet logic in production systems.
+---
+
+Teams usually adopt Formualizer to stop duplicating formula logic across services and languages.
+
+## Practical reasons to use it
+
+- **Cross-runtime consistency**: Use the same workbook/formula behavior in Rust, Python, and WASM.
+- **Spreadsheet-native model**: Work directly with sheets, cells, formulas, references, and recalculation.
+- **Embeddable API**: Call workbook methods from your code instead of shelling out to office tooling.
+- **Extensibility**: Add custom functions in each runtime when built-ins are not enough.
+
+## Good fit
+
+- You need deterministic workbook calculations in CI or production.
+- You need one source of truth for formula behavior across backend + frontend.
+- You need to load/edit/evaluate workbooks programmatically.
+
+## Tradeoffs to plan for
+
+- API surface is broad; start with quickstarts and grow incrementally.
+- Pin versions and run workbook regression tests during upgrades.
+
+## See also
+
+- [Versioning and Stability](/docs/introduction/versioning-and-stability)
+- [First Workbook in 5 Minutes](/docs/quickstarts/first-workbook-in-5-minutes)
+- [Deterministic Testing](/docs/guides/deterministic-testing)

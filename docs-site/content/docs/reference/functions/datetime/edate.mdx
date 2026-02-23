@@ -1,0 +1,58 @@
+---
+title: "EDATE"
+description: "EDATE: Returns the serial date offset by a whole number of months from a start date."
+---
+
+<FunctionPageSchema id="datetime/edate" />
+
+## Summary
+
+Returns the serial date offset by a whole number of months from a start date.
+
+## Remarks
+ - `months` is truncated to an integer before calculation.
+ - If the target month has fewer days, the day is clamped to that month's last valid day.
+ - Serials are interpreted and emitted with Excel 1900 date mapping (not workbook-specific `1904` mode).
+
+## Examples
+
+<Tabs items={["Add months to first-of-month date", "Clamp month-end overflow"]}>
+<Tab value="Add months to first-of-month date">
+<FunctionSandbox
+  title="Add months to first-of-month date"
+  formula={`=EDATE(44927, 3)`}
+  grid={{}}
+  expected={"45017"}
+/>
+</Tab>
+
+<Tab value="Clamp month-end overflow">
+<FunctionSandbox
+  title="Clamp month-end overflow"
+  formula={`=EDATE(45322, 1)`}
+  grid={{}}
+  expected={"45351"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [EOMONTH](/docs/reference/functions/datetime/eomonth)
+- [DATE](/docs/reference/functions/datetime/date)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
+- [DAYS](/docs/reference/functions/datetime/days)
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
+- [DAY](/docs/reference/functions/datetime/day)
+
+## FAQ
+
+### What happens when the start day does not exist in the target month?
+EDATE clamps to the last valid day of the target month (for example Jan 31 + 1 month becomes Feb month-end).
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/edate" />
+{/* [formualizer-docgen:function-meta:end] */}

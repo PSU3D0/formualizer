@@ -1,0 +1,59 @@
+---
+title: "CONCATENATE"
+description: "CONCATENATE: Legacy alias for `CONCAT` that joins multiple values as text."
+---
+
+<FunctionPageSchema id="text/concatenate" />
+
+## Summary
+
+Legacy alias for `CONCAT` that joins multiple values as text.
+
+## Remarks
+ - Semantics match `CONCAT` in this implementation.
+ - Blank values contribute an empty string.
+ - Numbers and booleans are coerced to text.
+ - Errors are propagated as soon as encountered.
+
+## Examples
+
+<Tabs items={["Legacy concatenate behavior", "Boolean coercion"]}>
+<Tab value="Legacy concatenate behavior">
+<FunctionSandbox
+  title="Legacy concatenate behavior"
+  formula={`=CONCATENATE("Jan", "-", 2026)`}
+  grid={{}}
+  expected={"Jan-2026"}
+/>
+</Tab>
+
+<Tab value="Boolean coercion">
+<FunctionSandbox
+  title="Boolean coercion"
+  formula={`=CONCATENATE("Flag:", TRUE)`}
+  grid={{}}
+  expected={"Flag:TRUE"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CONCAT](/docs/reference/functions/text/concat)
+- [TEXTJOIN](/docs/reference/functions/text/textjoin)
+- [VALUE](/docs/reference/functions/text/value)
+- [LEFT](/docs/reference/functions/text/left)
+- [RIGHT](/docs/reference/functions/text/right)
+- [FIND](/docs/reference/functions/text/find)
+
+## FAQ
+
+### Is CONCATENATE behavior different from CONCAT here?
+No. In this engine CONCATENATE uses the same join semantics as CONCAT.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/concatenate" />
+{/* [formualizer-docgen:function-meta:end] */}

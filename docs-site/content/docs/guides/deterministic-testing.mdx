@@ -1,0 +1,63 @@
+---
+title: Deterministic Testing
+description: Practical checks and command set for reproducible tests across Rust, Python, and WASM bindings.
+---
+
+Deterministic tests in Formualizer are mostly about controlling volatility, asserting stable outputs, and running the same fixtures across runtimes.
+
+## Practical checklist
+
+- Freeze volatile time behavior when testing `NOW()`, `TODAY()`, or date-time formulas.
+- Assert error **kind** (`Name`, `Value`, `Calc`, etc.) before asserting full message text.
+- Keep fixture coordinates explicit and 1-based in binding tests (`("Sheet1", 1, 1)`).
+- Re-run critical eval paths in loops to catch non-deterministic scheduling issues.
+- For custom functions, test: registration, case-insensitive lookup, arity rejection, unregister behavior.
+- For edit propagation, test both `evaluate_all()` and demand-driven `evaluate_cell()` flows after edits.
+
+## Freeze volatile clock in Rust tests
+
+```rust
+use chrono::TimeZone;
+use formualizer_eval::engine::DeterministicMode;
+use formualizer_eval::timezone::TimeZoneSpec;
+use formualizer_workbook::Workbook;
+
+let fixed = chrono::Utc.with_ymd_and_hms(2025, 1, 15, 10, 0, 0).single().unwrap();
+let mut wb = Workbook::new();
+
+wb.set_deterministic_mode(DeterministicMode::Enabled {
+    timestamp_utc: fixed,
+    timezone: TimeZoneSpec::Utc,
+})?;
+```
+
+## Recommended command set
+
+```bash
+# Rust core and workbook behavior
+cargo test -p formualizer-eval deterministic_clock
+cargo test -p formualizer-eval let_lambda
+cargo test -p formualizer-workbook custom_functions
+cargo test -p formualizer-workbook transactions
+
+# Python binding parity
+pytest -q bindings/python/tests/test_custom_function_registration.py
+pytest -q bindings/python/tests/test_edit_propagation_calamine.py
+
+# WASM binding parity
+cd bindings/wasm && wasm-pack test --node
+```
+
+## Plugin seam checks (when working on WASM plugin support)
+
+```bash
+cargo test -p formualizer-workbook wasm_plugin_seam
+cargo test -p formualizer-workbook wasm_module_registry --features wasm_plugins
+cargo test -p formualizer-workbook wasm_module_registry --features wasm_runtime_wasmtime
+```
+
+## Related
+
+- [Workbook Edits and Batching](./workbook-edits-and-batching)
+- [LET/LAMBDA and Callables](./let-lambda-and-callables)
+- [WASM Plugins: Inspect, Attach, Bind](./wasm-plugins-inspect-attach-bind)

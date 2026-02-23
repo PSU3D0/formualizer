@@ -1,0 +1,58 @@
+---
+title: "ROUND"
+description: "Rounds a number to a specified number of digits."
+---
+
+<FunctionPageSchema id="math/round" />
+
+## Summary
+
+Rounds a number to a specified number of digits.
+
+## Remarks
+ - Positive `digits` rounds to the right of the decimal point.
+ - Negative `digits` rounds to the left of the decimal point.
+ - Uses standard half-up style rounding from Rust's `round` behavior.
+
+## Examples
+
+<Tabs items={["Round to two decimals", "Round to nearest hundred"]}>
+<Tab value="Round to two decimals">
+<FunctionSandbox
+  title="Round to two decimals"
+  formula={`=ROUND(3.14159,2)`}
+  grid={{}}
+  expected={"3.14"}
+/>
+</Tab>
+
+<Tab value="Round to nearest hundred">
+<FunctionSandbox
+  title="Round to nearest hundred"
+  formula={`=ROUND(1234,-2)`}
+  grid={{}}
+  expected={"1200"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ROUNDUP](/docs/reference/functions/math/roundup)
+- [ROUNDDOWN](/docs/reference/functions/math/rounddown)
+- [MROUND](/docs/reference/functions/math/mround)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [MOD](/docs/reference/functions/math/mod)
+
+## FAQ
+
+### What does a negative digits argument do in ROUND?
+It rounds digits to the left of the decimal point (for example, tens or hundreds).
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/round" />
+{/* [formualizer-docgen:function-meta:end] */}

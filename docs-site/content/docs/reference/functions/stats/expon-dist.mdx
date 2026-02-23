@@ -1,0 +1,54 @@
+---
+title: "EXPON.DIST"
+description: "EXPON.DIST: Returns the exponential-distribution probability at `x` for rate `lambda`."
+---
+
+<FunctionPageSchema id="stats/expon-dist" />
+
+## Summary
+
+Use `EXPON.DIST` for waiting-time models where events occur with a constant hazard rate.
+
+## Remarks
+ - Requires `x &gt;= 0` and `lambda &gt; 0`.
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
+ - Returns `#NUM!` when inputs violate domain requirements.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Exponential CDF", "Exponential PDF"]}>
+<Tab value="Exponential CDF">
+<FunctionSandbox
+  title="Exponential CDF"
+  formula={`=EXPON.DIST(1,1,TRUE)`}
+  grid={{}}
+  expected={"0.6321205588285577"}
+/>
+</Tab>
+
+<Tab value="Exponential PDF">
+<FunctionSandbox
+  title="Exponential PDF"
+  formula={`=EXPON.DIST(1,1,FALSE)`}
+  grid={{}}
+  expected={"0.36787944117144233"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
+- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
+- [F.INV](/docs/reference/functions/stats/f-inv)
+- [LOGNORM.INV](/docs/reference/functions/stats/lognorm-inv)
+- [NORM.INV](/docs/reference/functions/stats/norm-inv)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/expon-dist" />
+{/* [formualizer-docgen:function-meta:end] */}

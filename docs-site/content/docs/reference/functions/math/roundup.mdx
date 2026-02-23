@@ -1,0 +1,58 @@
+---
+title: "ROUNDUP"
+description: "ROUNDUP: Rounds a number away from zero to a specified number of digits."
+---
+
+<FunctionPageSchema id="math/roundup" />
+
+## Summary
+
+Rounds a number away from zero to a specified number of digits.
+
+## Remarks
+ - Positive `num_digits` affects decimals; negative values affect digits left of the decimal.
+ - Any discarded non-zero part increases the magnitude of the result.
+ - Input errors are propagated.
+
+## Examples
+
+<Tabs items={["Round up decimals away from zero", "Round up a negative value at the hundreds place"]}>
+<Tab value="Round up decimals away from zero">
+<FunctionSandbox
+  title="Round up decimals away from zero"
+  formula={`=ROUNDUP(3.14159,3)`}
+  grid={{}}
+  expected={"3.142"}
+/>
+</Tab>
+
+<Tab value="Round up a negative value at the hundreds place">
+<FunctionSandbox
+  title="Round up a negative value at the hundreds place"
+  formula={`=ROUNDUP(-987.65,-2)`}
+  grid={{}}
+  expected={"-1000"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ROUND](/docs/reference/functions/math/round)
+- [ROUNDDOWN](/docs/reference/functions/math/rounddown)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [MOD](/docs/reference/functions/math/mod)
+
+## FAQ
+
+### What does ROUNDUP do when discarded digits are already zero?
+It leaves the value unchanged because no non-zero discarded part remains.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/roundup" />
+{/* [formualizer-docgen:function-meta:end] */}

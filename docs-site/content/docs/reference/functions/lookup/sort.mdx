@@ -1,0 +1,63 @@
+---
+title: "SORT"
+description: "Sorts an array by a selected row or column and returns a spilled result."
+---
+
+<FunctionPageSchema id="lookup/sort" />
+
+## Summary
+
+`SORT` can order rows (default) or columns.
+
+## Remarks
+ - Defaults: `sort_index=1`, `sort_order=1` (ascending), `by_col=FALSE`.
+ - `sort_index` is 1-based in the active sort axis.
+ - `sort_order &lt; 0` sorts descending; otherwise ascending.
+ - Invalid sort indexes return `#VALUE!`.
+ - Empty input returns an empty spill.
+
+## Examples
+
+<Tabs items={["Sort rows by second column", "Sort columns by first row descending"]}>
+<Tab value="Sort rows by second column">
+<FunctionSandbox
+  title="Sort rows by second column"
+  formula={`=SORT(A1:B3,2,1,FALSE)`}
+  grid={{"A1":"C","A2":"A","A3":"B","B1":"30","B2":"10","B3":"20"}}
+  expected={"[[\"A\",10],[\"B\",20],[\"C\",30]]"}
+/>
+</Tab>
+
+<Tab value="Sort columns by first row descending">
+<FunctionSandbox
+  title="Sort columns by first row descending"
+  formula={`=SORT(A1:C2,1,-1,TRUE)`}
+  grid={{"A1":"1","A2":"A","B1":"3","B2":"C","C1":"2","C2":"B"}}
+  expected={"[[3,2,1],[\"C\",\"B\",\"A\"]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SORTBY](/docs/reference/functions/lookup/sortby)
+- [TAKE](/docs/reference/functions/lookup/take)
+- [DROP](/docs/reference/functions/lookup/drop)
+- [UNIQUE](/docs/reference/functions/lookup/unique)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+
+## FAQ
+
+### What changes when by_col is TRUE?
+SORT reorders columns instead of rows, and sort_index is interpreted as a row index used as the sort key.
+
+### What causes #VALUE! in SORT?
+If sort_index is outside the active axis (row or column axis based on by_col), SORT returns #VALUE!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/sort" />
+{/* [formualizer-docgen:function-meta:end] */}

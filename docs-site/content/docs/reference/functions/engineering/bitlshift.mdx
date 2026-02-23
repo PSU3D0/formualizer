@@ -1,0 +1,58 @@
+---
+title: "BITLSHIFT"
+description: "BITLSHIFT: Shifts a non-negative integer left or right by a given bit count."
+---
+
+<FunctionPageSchema id="engineering/bitlshift" />
+
+## Summary
+
+Positive `shift_amount` shifts left; negative `shift_amount` shifts right.
+
+## Remarks
+ - `number` must be a whole number in `[0, 2^48)`.
+ - Shift values are numerically coerced; large positive shifts can return `#NUM!`.
+ - Left-shift results must remain below `2^48`, or the function returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Shift left by two bits", "Use negative shift to move right"]}>
+<Tab value="Shift left by two bits">
+<FunctionSandbox
+  title="Shift left by two bits"
+  formula={`=BITLSHIFT(6,2)`}
+  grid={{}}
+  expected={"24"}
+/>
+</Tab>
+
+<Tab value="Use negative shift to move right">
+<FunctionSandbox
+  title="Use negative shift to move right"
+  formula={`=BITLSHIFT(32,-3)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
+- [BITAND](/docs/reference/functions/engineering/bitand)
+- [BITOR](/docs/reference/functions/engineering/bitor)
+- [BITXOR](/docs/reference/functions/engineering/bitxor)
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+
+## FAQ
+
+### What does a negative `shift_amount` do in `BITLSHIFT`?
+Negative shifts are interpreted as right shifts, while positive shifts move bits left.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/bitlshift" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,36 @@
+---
+title: Named Ranges and Tables
+description: Use semantic references to improve readability and maintainability of formulas.
+---
+
+Named references let formulas describe intent instead of coordinates.
+
+## Why they matter
+
+- `Revenue_Q1` is easier to audit than `Sheet1!B2:B100`.
+- Table-style references stay meaningful as data grows.
+- Names can centralize workbook assumptions.
+
+## Common usage patterns
+
+- Use workbook-level names for constants and key ranges.
+- Use table columns for row-wise calculations.
+- Keep naming conventions consistent across teams and bindings.
+
+## Short example
+
+```text
+Name: TaxRate = 0.0825
+A2 formula: =A1 * TaxRate
+```
+
+## Related
+
+- [Dependency Graph and Recalculation](./dependency-graph-and-recalc)
+- [Custom Functions (Rust, Python, JS)](../guides/custom-functions-rust-python-js)
+- [WASM Plugins: Inspect, Attach, Bind](../guides/wasm-plugins-inspect-attach-bind)
+
+## TODO: Deep dive follow-ups
+
+- Document scope rules (workbook vs sheet) and precedence.
+- Add examples for structured table references.

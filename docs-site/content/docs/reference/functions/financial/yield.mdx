@@ -1,0 +1,64 @@
+---
+title: "YIELD"
+description: "Returns annual yield for a coupon-paying security from its market price."
+---
+
+<FunctionPageSchema id="financial/yield" />
+
+## Summary
+
+`YIELD` solves for the annual rate that makes `PRICE(...)` match the input `pr`.
+
+## Remarks
+ - Date inputs are spreadsheet serial dates and must satisfy `maturity &gt; settlement`.
+ - `rate` is coupon rate (annual decimal), `pr` is price per 100 face value, and `redemption` is redemption per 100; `pr` and `redemption` must be positive.
+ - `frequency` must be `1` (annual), `2` (semiannual), or `4` (quarterly).
+ - `basis` codes: `0=US(NASD)30/360`, `1=Actual/Actual`, `2=Actual/360`, `3=Actual/365`, `4=European30/360`.
+ - Result is an annualized decimal yield (for example, `0.05` means 5%).
+ - This implementation uses Newton-Raphson iteration; if it cannot converge, it returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Par price implies coupon-rate yield", "Yield recovered from a discounted price"]}>
+<Tab value="Par price implies coupon-rate yield">
+<FunctionSandbox
+  title="Par price implies coupon-rate yield"
+  formula={`=YIELD(DATE(2024,3,1), DATE(2026,3,1), 0.05, 100, 100, 2, 0)`}
+  grid={{}}
+  expected={"0.05"}
+/>
+</Tab>
+
+<Tab value="Yield recovered from a discounted price">
+<FunctionSandbox
+  title="Yield recovered from a discounted price"
+  formula={`=YIELD(DATE(2024,2,15), DATE(2027,2,15), 0.05, 97.2914042780609, 100, 2, 0)`}
+  grid={{}}
+  expected={"0.06"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [PRICE](/docs/reference/functions/financial/price)
+- [ACCRINT](/docs/reference/functions/financial/accrint)
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
+- [DB](/docs/reference/functions/financial/db)
+- [DDB](/docs/reference/functions/financial/ddb)
+- [FV](/docs/reference/functions/financial/fv)
+
+## FAQ
+
+### What does the returned `YIELD` represent?
+It is an annualized decimal yield (for example, `0.06` means 6% per year).
+
+### When does `YIELD` return `#NUM!` besides invalid inputs?
+The Newton-Raphson solve can fail to converge or hit an unstable derivative; in those cases it returns `#NUM!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/yield" />
+{/* [formualizer-docgen:function-meta:end] */}

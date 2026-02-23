@@ -1,0 +1,54 @@
+---
+title: "GROWTH"
+description: "GROWTH: Returns fitted values from an exponential trend model."
+---
+
+<FunctionPageSchema id="stats/growth" />
+
+## Summary
+
+`GROWTH` fits `y = b * m^x` by linearizing in log space, then returns predictions for `new_x`.
+
+## Remarks
+ - All known y-values must be strictly greater than `0`.
+ - `known_x` defaults to `1..n`; `new_x` defaults to `known_x`.
+ - `const` defaults to `TRUE`; set to `FALSE` to force `b = 1`.
+ - Returns spreadsheet errors for invalid domains, mismatched lengths, or degenerate x-variance.
+
+## Examples
+
+<Tabs items={["Exponential growth forecast", "Default x-values with perfect doubling pattern"]}>
+<Tab value="Exponential growth forecast">
+<FunctionSandbox
+  title="Exponential growth forecast"
+  formula={`=GROWTH({2,4,8},{1,2,3},{4,5})`}
+  grid={{}}
+  expected={"[[16,32]]"}
+/>
+</Tab>
+
+<Tab value="Default x-values with perfect doubling pattern">
+<FunctionSandbox
+  title="Default x-values with perfect doubling pattern"
+  formula={`=GROWTH({3,6,12})`}
+  grid={{}}
+  expected={"[[3,6,12]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+- [HARMEAN](/docs/reference/functions/stats/harmean)
+- [KURT](/docs/reference/functions/stats/kurt)
+- [LINEST](/docs/reference/functions/stats/linest)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/growth" />
+{/* [formualizer-docgen:function-meta:end] */}

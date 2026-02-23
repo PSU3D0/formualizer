@@ -1,0 +1,70 @@
+---
+title: "LCM"
+description: "LCM: Returns the least common multiple of one or more integers."
+---
+
+<FunctionPageSchema id="math/lcm" />
+
+## Summary
+
+`LCM` truncates fractional arguments toward zero and combines values iteratively.
+
+## Remarks
+ - Inputs must be non-negative and within the supported Excel-compatible range.
+ - If any input is `0`, the resulting least common multiple is `0`.
+ - Any argument error propagates immediately.
+
+## Examples
+
+<Tabs items={["Least common multiple for two integers", "Fractional values are truncated", "Negative values return numeric error"]}>
+<Tab value="Least common multiple for two integers">
+<FunctionSandbox
+  title="Least common multiple for two integers"
+  formula={`=LCM(4, 6)`}
+  grid={{}}
+  expected={"12"}
+/>
+</Tab>
+
+<Tab value="Fractional values are truncated">
+<FunctionSandbox
+  title="Fractional values are truncated"
+  formula={`=LCM(6.8, 8.2)`}
+  grid={{}}
+  expected={"24"}
+/>
+</Tab>
+
+<Tab value="Negative values return numeric error">
+<FunctionSandbox
+  title="Negative values return numeric error"
+  formula={`=LCM(-3, 6)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [GCD](/docs/reference/functions/math/gcd)
+- [MOD](/docs/reference/functions/math/mod)
+- [MROUND](/docs/reference/functions/math/mround)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+
+## FAQ
+
+### Why does LCM return 0 when one argument is 0?
+LCM is defined as 0 if any truncated input is 0 in this implementation.
+
+### Are fractional inputs accepted?
+Yes, but they are truncated toward zero before the LCM calculation.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/lcm" />
+{/* [formualizer-docgen:function-meta:end] */}

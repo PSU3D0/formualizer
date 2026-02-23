@@ -1,0 +1,59 @@
+---
+title: "CONCAT"
+description: "Concatenates multiple values into one text string."
+---
+
+<FunctionPageSchema id="text/concat" />
+
+## Summary
+
+Concatenates multiple values into one text string.
+
+## Remarks
+ - Accepts one or more arguments.
+ - Blank values contribute an empty string.
+ - Numbers and booleans are coerced to text.
+ - Errors are propagated as soon as encountered.
+
+## Examples
+
+<Tabs items={["Join text pieces", "Concatenate with blanks"]}>
+<Tab value="Join text pieces">
+<FunctionSandbox
+  title="Join text pieces"
+  formula={`=CONCAT("Q", 1, "-", "2026")`}
+  grid={{}}
+  expected={"Q1-2026"}
+/>
+</Tab>
+
+<Tab value="Concatenate with blanks">
+<FunctionSandbox
+  title="Concatenate with blanks"
+  formula={`=CONCAT("A", "", "B")`}
+  grid={{}}
+  expected={"AB"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+- [TEXTJOIN](/docs/reference/functions/text/textjoin)
+- [VALUE](/docs/reference/functions/text/value)
+- [LEFT](/docs/reference/functions/text/left)
+- [RIGHT](/docs/reference/functions/text/right)
+- [FIND](/docs/reference/functions/text/find)
+
+## FAQ
+
+### Do blank arguments add separators or characters?
+No. CONCAT appends each value directly, and blanks contribute an empty string.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/concat" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,60 @@
+---
+title: "IPMT"
+description: "IPMT: Returns the interest-only component of a payment for a specific period."
+---
+
+<FunctionPageSchema id="financial/ipmt" />
+
+## Summary
+
+Use this with `PMT` or `PPMT` to break a fixed payment into interest and principal pieces.
+
+## Remarks
+ - `rate` is the interest rate per payment period.
+ - `per` is 1-based and must satisfy `1 &lt;= per &lt;= nper`.
+ - Cash-flow sign convention: for a positive loan principal (`pv`), interest components are typically negative.
+ - `type = 1` yields zero interest in period 1 (annuity-due first payment).
+ - Returns `#NUM!` when `per` is outside valid bounds.
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=IPMT(0.06/12, 1, 360, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=IPMT(0.06/12, 12, 360, 300000)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [PMT](/docs/reference/functions/financial/pmt)
+- [PPMT](/docs/reference/functions/financial/ppmt)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
+- [DB](/docs/reference/functions/financial/db)
+- [DDB](/docs/reference/functions/financial/ddb)
+
+## FAQ
+
+### Why is `IPMT` period 1 equal to zero for `type=1`?
+With beginning-of-period payments, the first payment occurs before interest accrues, so period-1 interest is zero.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/ipmt" />
+{/* [formualizer-docgen:function-meta:end] */}

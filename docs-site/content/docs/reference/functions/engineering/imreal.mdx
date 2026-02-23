@@ -1,0 +1,58 @@
+---
+title: "IMREAL"
+description: "IMREAL: Returns the real coefficient of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imreal" />
+
+## Summary
+
+Accepts complex text (for example `a+bi`) or numeric values.
+
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Purely imaginary values return `0`.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Real part from a+bi", "Real part of pure imaginary"]}>
+<Tab value="Real part from a+bi">
+<FunctionSandbox
+  title="Real part from a+bi"
+  formula={`=IMREAL("3+4i")`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Real part of pure imaginary">
+<FunctionSandbox
+  title="Real part of pure imaginary"
+  formula={`=IMREAL("5j")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+- [COMPLEX](/docs/reference/functions/engineering/complex)
+- [IMABS](/docs/reference/functions/engineering/imabs)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### What does `IMREAL` return for a purely imaginary input?
+It returns `0` because the real coefficient is zero.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imreal" />
+{/* [formualizer-docgen:function-meta:end] */}

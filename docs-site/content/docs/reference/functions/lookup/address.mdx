@@ -1,0 +1,64 @@
+---
+title: "ADDRESS"
+description: "ADDRESS: Returns a cell reference as text from row and column numbers."
+---
+
+<FunctionPageSchema id="lookup/address" />
+
+## Summary
+
+`ADDRESS` can emit either A1 or R1C1 notation and optionally prefix the address with a
+ sheet name.
+
+## Remarks
+ - `abs_num` defaults to `1` (`$A$1`) and supports values `1..4`.
+ - `a1` defaults to `TRUE`; `FALSE` returns R1C1-style text.
+ - Valid row range is `1..1048576`; valid column range is `1..16384`.
+ - Out-of-range row/column values or invalid `abs_num` return `#VALUE!`.
+ - If `sheet_text` contains spaces or special characters, it is quoted.
+
+## Examples
+
+<Tabs items={["Absolute A1 reference", "Relative R1C1 reference with sheet"]}>
+<Tab value="Absolute A1 reference">
+<FunctionSandbox
+  title="Absolute A1 reference"
+  formula={`=ADDRESS(2,3)`}
+  grid={{}}
+  expected={"$C$2"}
+/>
+</Tab>
+
+<Tab value="Relative R1C1 reference with sheet">
+<FunctionSandbox
+  title="Relative R1C1 reference with sheet"
+  formula={`=ADDRESS(5,3,4,FALSE,"Data Sheet")`}
+  grid={{}}
+  expected={"'Data Sheet'!R[5]C[3]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
+- [OFFSET](/docs/reference/functions/reference-fns/offset)
+- [INDIRECT](/docs/reference/functions/reference-fns/indirect)
+- [CHOOSE](/docs/reference/functions/lookup/choose)
+- [HLOOKUP](/docs/reference/functions/lookup/hlookup)
+- [MATCH](/docs/reference/functions/lookup/match)
+
+## FAQ
+
+### What happens when abs_num is outside 1..4?
+ADDRESS returns #VALUE!; only 1 (absolute), 2 (absolute row), 3 (absolute column), and 4 (relative) are valid.
+
+### Why does sheet_text sometimes add single quotes?
+Sheet names containing spaces or special characters are quoted and internal apostrophes are escaped to keep a valid reference string.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/address" />
+{/* [formualizer-docgen:function-meta:end] */}

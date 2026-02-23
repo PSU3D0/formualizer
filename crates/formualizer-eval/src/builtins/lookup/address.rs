@@ -22,6 +22,52 @@ fn column_to_letters(col: u32) -> String {
 #[derive(Debug)]
 pub struct AddressFn;
 
+/// Returns a cell reference as text from row and column numbers.
+///
+/// `ADDRESS` can emit either A1 or R1C1 notation and optionally prefix the address with a
+/// sheet name.
+///
+/// # Remarks
+/// - `abs_num` defaults to `1` (`$A$1`) and supports values `1..4`.
+/// - `a1` defaults to `TRUE`; `FALSE` returns R1C1-style text.
+/// - Valid row range is `1..1048576`; valid column range is `1..16384`.
+/// - Out-of-range row/column values or invalid `abs_num` return `#VALUE!`.
+/// - If `sheet_text` contains spaces or special characters, it is quoted.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Absolute A1 reference"
+/// formula: '=ADDRESS(2,3)'
+/// expected: "$C$2"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Relative R1C1 reference with sheet"
+/// formula: '=ADDRESS(5,3,4,FALSE,"Data Sheet")'
+/// expected: "'Data Sheet'!R[5]C[3]"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - INDEX
+///   - OFFSET
+///   - INDIRECT
+/// faq:
+///   - q: "What happens when abs_num is outside 1..4?"
+///     a: "ADDRESS returns #VALUE!; only 1 (absolute), 2 (absolute row), 3 (absolute column), and 4 (relative) are valid."
+///   - q: "Why does sheet_text sometimes add single quotes?"
+///     a: "Sheet names containing spaces or special characters are quoted and internal apostrophes are escaped to keep a valid reference string."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ADDRESS
+/// Type: AddressFn
+/// Min args: 2
+/// Max args: 5
+/// Variadic: false
+/// Signature: ADDRESS(arg1: number@scalar, arg2: number@scalar, arg3?: number@scalar, arg4?: logical@scalar, arg5?: text@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=true}; arg4{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}; arg5{kinds=text,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for AddressFn {
     fn name(&self) -> &'static str {
         "ADDRESS"

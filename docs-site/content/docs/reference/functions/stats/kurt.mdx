@@ -1,0 +1,55 @@
+---
+title: "KURT"
+description: "Returns the sample excess kurtosis of a numeric distribution."
+---
+
+<FunctionPageSchema id="stats/kurt" />
+
+## Summary
+
+`KURT` indicates tail heaviness relative to a normal distribution after Excel-style sample
+ correction.
+
+## Remarks
+ - Requires at least four numeric values.
+ - Returns `#DIV/0!` when there are fewer than four numbers or zero sample standard deviation.
+ - Positive values suggest heavier tails; negative values suggest lighter tails.
+ - Non-numeric values in ranges are ignored by statistical-collection rules.
+
+## Examples
+
+<Tabs items={["Uniformly spaced values", "Heavier-tail sample"]}>
+<Tab value="Uniformly spaced values">
+<FunctionSandbox
+  title="Uniformly spaced values"
+  formula={`=KURT({1,2,3,4})`}
+  grid={{}}
+  expected={"-1.2"}
+/>
+</Tab>
+
+<Tab value="Heavier-tail sample">
+<FunctionSandbox
+  title="Heavier-tail sample"
+  formula={`=KURT({1,1,1,2,10,10,10,10})`}
+  grid={{}}
+  expected={"-2.3069755007920767"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+- [HARMEAN](/docs/reference/functions/stats/harmean)
+- [MEDIAN](/docs/reference/functions/stats/median)
+- [MODE.MULT](/docs/reference/functions/stats/mode-mult)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/kurt" />
+{/* [formualizer-docgen:function-meta:end] */}

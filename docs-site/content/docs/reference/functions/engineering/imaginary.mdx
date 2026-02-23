@@ -1,0 +1,58 @@
+---
+title: "IMAGINARY"
+description: "Returns the imaginary coefficient of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imaginary" />
+
+## Summary
+
+Accepts complex text (for example `a+bi`) or numeric values.
+
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Purely real values return `0`.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Imaginary part from a+bi", "Imaginary part with j suffix"]}>
+<Tab value="Imaginary part from a+bi">
+<FunctionSandbox
+  title="Imaginary part from a+bi"
+  formula={`=IMAGINARY("3+4i")`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Imaginary part with j suffix">
+<FunctionSandbox
+  title="Imaginary part with j suffix"
+  formula={`=IMAGINARY("-2j")`}
+  grid={{}}
+  expected={"-2"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMREAL](/docs/reference/functions/engineering/imreal)
+- [COMPLEX](/docs/reference/functions/engineering/complex)
+- [IMABS](/docs/reference/functions/engineering/imabs)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### What does `IMAGINARY` return for a real-only input?
+It returns `0` because there is no imaginary component.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imaginary" />
+{/* [formualizer-docgen:function-meta:end] */}

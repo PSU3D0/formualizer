@@ -1,0 +1,58 @@
+---
+title: "GEOMEAN"
+description: "GEOMEAN: Returns the geometric mean of positive numeric values."
+---
+
+<FunctionPageSchema id="stats/geomean" />
+
+## Summary
+
+`GEOMEAN` is commonly used for rates of change and multiplicative growth comparisons.
+
+## Remarks
+ - All numeric inputs must be strictly greater than `0`.
+ - Returns `#NUM!` if any value is `&lt;= 0`, or if no numeric values are provided.
+ - Non-numeric values in referenced ranges are ignored.
+
+## Examples
+
+<Tabs items={["Geometric mean from scalar values", "Geometric mean from a range"]}>
+<Tab value="Geometric mean from scalar values">
+<FunctionSandbox
+  title="Geometric mean from scalar values"
+  formula={`=GEOMEAN(4,16)`}
+  grid={{}}
+  expected={"8"}
+/>
+</Tab>
+
+<Tab value="Geometric mean from a range">
+<FunctionSandbox
+  title="Geometric mean from a range"
+  formula={`=GEOMEAN(A1:A3)`}
+  grid={{"A1":"1","A2":"3","A3":"9"}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [HARMEAN](/docs/reference/functions/stats/harmean)
+- [PRODUCT](/docs/reference/functions/stats/product)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [KURT](/docs/reference/functions/stats/kurt)
+
+## FAQ
+
+### When does GEOMEAN return #NUM!?
+GEOMEAN returns #NUM! if any numeric value is &lt;= 0 or if no numeric values exist.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/geomean" />
+{/* [formualizer-docgen:function-meta:end] */}

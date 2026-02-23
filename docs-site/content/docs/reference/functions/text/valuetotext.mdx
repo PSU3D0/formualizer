@@ -1,0 +1,59 @@
+---
+title: "VALUETOTEXT"
+description: "VALUETOTEXT: Converts a value to text representation."
+---
+
+<FunctionPageSchema id="text/valuetotext" />
+
+## Summary
+
+`VALUETOTEXT(value, [format])` supports concise (`0`) and strict (`1`) modes.
+
+## Remarks
+ - Concise mode (`0`) returns natural text for scalars.
+ - Strict mode (`1`) adds explicit quoting for text and serializes arrays with braces.
+ - In concise mode, error values are propagated as errors.
+ - In strict mode, error values are rendered as their error text.
+
+## Examples
+
+<Tabs items={["Concise text conversion", "Strict quoting for text"]}>
+<Tab value="Concise text conversion">
+<FunctionSandbox
+  title="Concise text conversion"
+  formula={`=VALUETOTEXT(123)`}
+  grid={{}}
+  expected={"123"}
+/>
+</Tab>
+
+<Tab value="Strict quoting for text">
+<FunctionSandbox
+  title="Strict quoting for text"
+  formula={`=VALUETOTEXT("hello", 1)`}
+  grid={{}}
+  expected={"\"hello\""}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
+- [TEXT](/docs/reference/functions/text/text)
+- [VALUE](/docs/reference/functions/text/value)
+- [DOLLAR](/docs/reference/functions/text/dollar)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+
+## FAQ
+
+### How are errors handled in concise vs strict mode?
+Concise mode returns the error, while strict mode converts the error to its text form.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/valuetotext" />
+{/* [formualizer-docgen:function-meta:end] */}

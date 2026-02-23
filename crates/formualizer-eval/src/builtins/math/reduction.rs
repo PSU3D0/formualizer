@@ -8,6 +8,63 @@ use formualizer_macros::func_caps;
 
 #[derive(Debug)]
 pub struct MinFn; // MIN(...)
+/// Returns the smallest numeric value from one or more arguments.
+///
+/// `MIN` scans scalar values and ranges, considering only values that can be treated as numbers.
+///
+/// # Remarks
+/// - Errors in any scalar argument or range cell propagate immediately.
+/// - In ranges, non-numeric cells are ignored.
+/// - Scalar text is included only when it can be coerced to a number.
+/// - If no numeric value is found, `MIN` returns `0`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Minimum in a numeric range"
+/// grid:
+///   A1: 8
+///   A2: -2
+///   A3: 5
+/// formula: "=MIN(A1:A3)"
+/// expected: -2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Coercible scalar text participates"
+/// formula: "=MIN(10, \"3\", 7)"
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "No numeric values returns zero"
+/// formula: "=MIN(\"x\")"
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MAX
+///   - SMALL
+///   - LARGE
+///   - MINIFS
+/// faq:
+///   - q: "Why can MIN return 0 even when no numbers are present?"
+///     a: "If nothing numeric is found after coercion/scan, MIN falls back to 0."
+///   - q: "Do errors in referenced ranges get ignored?"
+///     a: "No. Any encountered range or scalar error is propagated."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: MIN
+/// Type: MinFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MIN(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for MinFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY);
     fn name(&self) -> &'static str {
@@ -78,6 +135,63 @@ impl Function for MinFn {
 
 #[derive(Debug)]
 pub struct MaxFn; // MAX(...)
+/// Returns the largest numeric value from one or more arguments.
+///
+/// `MAX` scans scalar values and ranges, considering only values that can be treated as numbers.
+///
+/// # Remarks
+/// - Errors in any scalar argument or range cell propagate immediately.
+/// - In ranges, non-numeric cells are ignored.
+/// - Scalar text is included only when it can be coerced to a number.
+/// - If no numeric value is found, `MAX` returns `0`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Maximum in a numeric range"
+/// grid:
+///   A1: 5
+///   A2: 9
+///   A3: 1
+/// formula: "=MAX(A1:A3)"
+/// expected: 9
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Scalar text can be coerced"
+/// formula: "=MAX(2, \"11\", 4)"
+/// expected: 11
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "No numeric values returns zero"
+/// formula: "=MAX(\"x\")"
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MIN
+///   - LARGE
+///   - SMALL
+///   - MAXIFS
+/// faq:
+///   - q: "Why can MAX return 0 for non-numeric input sets?"
+///     a: "When no numeric values are found, MAX returns 0 by design."
+///   - q: "Does MAX evaluate scalar text arguments?"
+///     a: "Yes, but only when scalar text can be coerced to a numeric value."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: MAX
+/// Type: MaxFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MAX(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
 impl Function for MaxFn {
     func_caps!(PURE, REDUCTION, NUMERIC_ONLY);
     fn name(&self) -> &'static str {

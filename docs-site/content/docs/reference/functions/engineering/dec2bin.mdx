@@ -1,0 +1,58 @@
+---
+title: "DEC2BIN"
+description: "DEC2BIN: Converts a decimal integer to binary text."
+---
+
+<FunctionPageSchema id="engineering/dec2bin" />
+
+## Summary
+
+Optionally pads the result with leading zeros using `places`.
+
+## Remarks
+ - `number` is coerced to an integer and must be in `[-512, 511]`.
+ - Negative values are returned as 10-bit two's-complement binary strings.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+
+## Examples
+
+<Tabs items={["Convert a positive integer", "Pad binary output"]}>
+<Tab value="Convert a positive integer">
+<FunctionSandbox
+  title="Convert a positive integer"
+  formula={`=DEC2BIN(42)`}
+  grid={{}}
+  expected={"101010"}
+/>
+</Tab>
+
+<Tab value="Pad binary output">
+<FunctionSandbox
+  title="Pad binary output"
+  formula={`=DEC2BIN(5,8)`}
+  grid={{}}
+  expected={"00000101"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
+- [DELTA](/docs/reference/functions/engineering/delta)
+
+## FAQ
+
+### What limits apply to `DEC2BIN`?
+`number` must be in `[-512, 511]`, and optional `places` must be between output width and `10`, else `#NUM!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/dec2bin" />
+{/* [formualizer-docgen:function-meta:end] */}

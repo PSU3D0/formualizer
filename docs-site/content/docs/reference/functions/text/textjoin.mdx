@@ -1,0 +1,59 @@
+---
+title: "TEXTJOIN"
+description: "TEXTJOIN: Joins text values using a delimiter, with optional empty-value filtering."
+---
+
+<FunctionPageSchema id="text/textjoin" />
+
+## Summary
+
+`TEXTJOIN(delimiter, ignore_empty, text1, ...)` is useful for building labels and lists.
+
+## Remarks
+ - `ignore_empty=TRUE` skips empty strings and empty cells.
+ - `ignore_empty=FALSE` includes empty items, which can produce adjacent delimiters.
+ - Delimiter and values are coerced to text.
+ - Any error in inputs propagates immediately.
+
+## Examples
+
+<Tabs items={["Ignore empty entries", "Keep empty entries"]}>
+<Tab value="Ignore empty entries">
+<FunctionSandbox
+  title="Ignore empty entries"
+  formula={`=TEXTJOIN(",", TRUE, "a", "", "c")`}
+  grid={{}}
+  expected={"a,c"}
+/>
+</Tab>
+
+<Tab value="Keep empty entries">
+<FunctionSandbox
+  title="Keep empty entries"
+  formula={`=TEXTJOIN("-", FALSE, "a", "", "c")`}
+  grid={{}}
+  expected={"a--c"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CONCAT](/docs/reference/functions/text/concat)
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+- [TEXTSPLIT](/docs/reference/functions/text/textsplit)
+- [SUBSTITUTE](/docs/reference/functions/text/substitute)
+- [FIND](/docs/reference/functions/text/find)
+- [LEFT](/docs/reference/functions/text/left)
+
+## FAQ
+
+### What does ignore_empty change?
+TRUE skips empty values; FALSE keeps them, which can create adjacent delimiters.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/textjoin" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,59 @@
+---
+title: "DAYS"
+description: "Returns the number of whole days between two date serial values."
+---
+
+<FunctionPageSchema id="datetime/days" />
+
+## Summary
+
+Returns the number of whole days between two date serial values.
+
+## Remarks
+ - Result is `end_date - start_date`; negative results are allowed.
+ - Fractional serial inputs are truncated to their date portion.
+ - Serials are interpreted with the Excel 1900 mapping (including the 1900 leap-year bug behavior).
+ - This function currently does not switch interpretation based on workbook `1900`/`1904` mode.
+
+## Examples
+
+<Tabs items={["Positive day difference", "Negative day difference"]}>
+<Tab value="Positive day difference">
+<FunctionSandbox
+  title="Positive day difference"
+  formula={`=DAYS(45366, 45323)`}
+  grid={{}}
+  expected={"43"}
+/>
+</Tab>
+
+<Tab value="Negative day difference">
+<FunctionSandbox
+  title="Negative day difference"
+  formula={`=DAYS(45323, 45366)`}
+  grid={{}}
+  expected={"-43"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
+- [EDATE](/docs/reference/functions/datetime/edate)
+- [EOMONTH](/docs/reference/functions/datetime/eomonth)
+- [DATE](/docs/reference/functions/datetime/date)
+
+## FAQ
+
+### Does DAYS count partial-day time fractions?
+No. DAYS truncates both serial inputs to whole dates before subtracting end_date - start_date.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/days" />
+{/* [formualizer-docgen:function-meta:end] */}

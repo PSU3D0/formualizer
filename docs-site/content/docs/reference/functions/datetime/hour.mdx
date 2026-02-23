@@ -1,0 +1,58 @@
+---
+title: "HOUR"
+description: "Extracts the hour component (`0` to `23`) from a time or datetime serial."
+---
+
+<FunctionPageSchema id="datetime/hour" />
+
+## Summary
+
+Extracts the hour component (`0` to `23`) from a time or datetime serial.
+
+## Remarks
+ - For values `&gt;= 1`, only the fractional time part is used.
+ - For values `&lt; 1`, the value is treated directly as a time fraction.
+ - Date-system choice does not affect hour extraction because only the fractional part is used.
+
+## Examples
+
+<Tabs items={["Extract hour from noon", "Extract hour from datetime serial"]}>
+<Tab value="Extract hour from noon">
+<FunctionSandbox
+  title="Extract hour from noon"
+  formula={`=HOUR(0.5)`}
+  grid={{}}
+  expected={"12"}
+/>
+</Tab>
+
+<Tab value="Extract hour from datetime serial">
+<FunctionSandbox
+  title="Extract hour from datetime serial"
+  formula={`=HOUR(45351.75)`}
+  grid={{}}
+  expected={"18"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [MINUTE](/docs/reference/functions/datetime/minute)
+- [SECOND](/docs/reference/functions/datetime/second)
+- [TIME](/docs/reference/functions/datetime/time)
+- [DAY](/docs/reference/functions/datetime/day)
+- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
+- [MONTH](/docs/reference/functions/datetime/month)
+
+## FAQ
+
+### Why is HOUR unchanged across 1900 and 1904 date systems?
+HOUR reads only the fractional time component of a serial, so date-system epoch differences do not affect it.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/hour" />
+{/* [formualizer-docgen:function-meta:end] */}

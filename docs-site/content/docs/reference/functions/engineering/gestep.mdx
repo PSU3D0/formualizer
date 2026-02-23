@@ -1,0 +1,58 @@
+---
+title: "GESTEP"
+description: "GESTEP: Returns `1` when a number is greater than or equal to a step value."
+---
+
+<FunctionPageSchema id="engineering/gestep" />
+
+## Summary
+
+Returns `0` when the number is below the step.
+
+## Remarks
+ - If `step` is omitted, it defaults to `0`.
+ - Inputs are numerically coerced.
+ - Propagates input errors.
+
+## Examples
+
+<Tabs items={["Value meets threshold", "Default threshold of zero"]}>
+<Tab value="Value meets threshold">
+<FunctionSandbox
+  title="Value meets threshold"
+  formula={`=GESTEP(5,3)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Default threshold of zero">
+<FunctionSandbox
+  title="Default threshold of zero"
+  formula={`=GESTEP(-2)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DELTA](/docs/reference/functions/engineering/delta)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
+
+## FAQ
+
+### What default threshold does `GESTEP` use?
+If omitted, `step` defaults to `0`, so the function returns `1` for non-negative inputs.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/gestep" />
+{/* [formualizer-docgen:function-meta:end] */}

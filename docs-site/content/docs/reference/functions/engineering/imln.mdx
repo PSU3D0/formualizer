@@ -1,0 +1,58 @@
+---
+title: "IMLN"
+description: "IMLN: Returns the natural logarithm of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imln" />
+
+## Summary
+
+Produces the principal complex logarithm as text.
+
+## Remarks
+ - Input is coerced to complex-number text before parsing.
+ - Returns `#NUM!` for zero input because `ln(0)` is undefined.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Natural log of 1", "Natural log on imaginary axis"]}>
+<Tab value="Natural log of 1">
+<FunctionSandbox
+  title="Natural log of 1"
+  formula={`=IMLN("1")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Natural log on imaginary axis">
+<FunctionSandbox
+  title="Natural log on imaginary axis"
+  formula={`=IMLN("i")`}
+  grid={{}}
+  expected={"1.5707963267948966i"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMEXP](/docs/reference/functions/engineering/imexp)
+- [IMLOG10](/docs/reference/functions/engineering/imlog10)
+- [IMLOG2](/docs/reference/functions/engineering/imlog2)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### Why does `IMLN(0)` return `#NUM!`?
+The complex logarithm at zero is undefined, so this implementation returns `#NUM!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imln" />
+{/* [formualizer-docgen:function-meta:end] */}

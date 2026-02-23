@@ -1,0 +1,60 @@
+---
+title: "MINIFS"
+description: "MINIFS: Returns the minimum numeric value in a range that meets all criteria."
+---
+
+<FunctionPageSchema id="stats/minifs" />
+
+## Summary
+
+`MINIFS` evaluates one or more `(criteria_range, criteria)` pairs and returns the smallest
+ matching numeric value.
+
+## Remarks
+ - Arguments must be `target_range` plus one or more criteria pairs.
+ - Criteria are combined with logical AND.
+ - Returns `0` when no cells satisfy all criteria.
+ - Non-numeric cells in `target_range` are ignored.
+
+## Examples
+
+<Tabs items={["Minimum value for one condition", "Minimum value with two criteria"]}>
+<Tab value="Minimum value for one condition">
+<FunctionSandbox
+  title="Minimum value for one condition"
+  formula={`=MINIFS(A1:A3,B1:B3,"East")`}
+  grid={{"A1":"10","A2":"20","A3":"15","B1":"East","B2":"West","B3":"East"}}
+  expected={"10"}
+/>
+</Tab>
+
+<Tab value="Minimum value with two criteria">
+<FunctionSandbox
+  title="Minimum value with two criteria"
+  formula={`=MINIFS(A1:A4,B1:B4,"B",C1:C4,"Q1")`}
+  grid={{"A1":"100","A2":"80","A3":"90","A4":"70","B1":"A","B2":"A","B3":"B","B4":"B","C1":"Q1","C2":"Q2","C3":"Q1","C4":"Q1"}}
+  expected={"70"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [MAXIFS](/docs/reference/functions/stats/maxifs)
+- [MIN](/docs/reference/functions/math/min)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### How does MINIFS treat non-numeric target cells?
+Non-numeric target cells are ignored; only numeric matches are eligible.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/minifs" />
+{/* [formualizer-docgen:function-meta:end] */}

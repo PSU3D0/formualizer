@@ -1,0 +1,57 @@
+---
+title: "TAN"
+description: "Returns the tangent of an angle in radians."
+---
+
+<FunctionPageSchema id="math/tan" />
+
+## Summary
+
+Returns the tangent of an angle in radians.
+
+## Remarks
+ - Input is interpreted as radians.
+ - Near odd multiples of `PI()/2`, results can become very large.
+
+## Examples
+
+<Tabs items={["Tangent at PI/4", "Tangent at zero"]}>
+<Tab value="Tangent at PI/4">
+<FunctionSandbox
+  title="Tangent at PI/4"
+  formula={`=TAN(PI()/4)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Tangent at zero">
+<FunctionSandbox
+  title="Tangent at zero"
+  formula={`=TAN(0)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SIN](/docs/reference/functions/math/sin)
+- [COS](/docs/reference/functions/math/cos)
+- [ATAN](/docs/reference/functions/math/atan)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASIN](/docs/reference/functions/math/asin)
+
+## FAQ
+
+### Why does TAN explode near PI()/2?
+Because COS approaches zero there, TAN can become extremely large in magnitude.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/tan" />
+{/* [formualizer-docgen:function-meta:end] */}

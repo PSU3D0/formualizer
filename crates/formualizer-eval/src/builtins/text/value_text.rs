@@ -37,6 +37,47 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
 // VALUE(text) - parse number
 #[derive(Debug)]
 pub struct ValueFn;
+/// Converts text that represents a number into a numeric value.
+///
+/// # Remarks
+/// - Parsing uses locale-aware invariant number parsing from the function context.
+/// - Non-numeric text returns `#VALUE!`.
+/// - Booleans and numbers are first coerced to text, then parsed.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Parse decimal text"
+/// formula: '=VALUE("12.5")'
+/// expected: 12.5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Invalid numeric text"
+/// formula: '=VALUE("abc")'
+/// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TEXT
+///   - N
+///   - ISNUMBER
+/// faq:
+///   - q: "Does VALUE coerce arbitrary text like TRUE/FALSE?"
+///     a: "VALUE parses numeric text only; non-numeric strings return #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: VALUE
+/// Type: ValueFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: VALUE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ValueFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -66,6 +107,49 @@ impl Function for ValueFn {
 // TEXT(value, format_text) - limited formatting (#,0,0.00, percent, yyyy, mm, dd, hh:mm) naive
 #[derive(Debug)]
 pub struct TextFn;
+/// Formats a value as text using a format pattern.
+///
+/// This implementation supports common numeric, percent, grouping, and basic date tokens.
+///
+/// # Remarks
+/// - Requires exactly two arguments: value and format text.
+/// - Numeric text is parsed before formatting; invalid numeric text returns `#VALUE!`.
+/// - Error inputs are propagated unchanged.
+/// - Supported patterns are intentionally limited compared with full Excel formatting.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Fixed decimal formatting"
+/// formula: '=TEXT(12.3, "0.00")'
+/// expected: "12.30"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Percent formatting"
+/// formula: '=TEXT(0.256, "0%")'
+/// expected: "26%"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUE
+///   - FIXED
+///   - DOLLAR
+/// faq:
+///   - q: "How complete is format_text support?"
+///     a: "Only a limited subset of Excel-style numeric/date tokens is supported in this implementation."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: TEXT
+/// Type: TextFn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: TEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TextFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

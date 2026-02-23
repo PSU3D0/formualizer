@@ -146,7 +146,7 @@ impl Reference {
             col_abs_end: self.col_abs_end,
         };
 
-        serde_wasm_bindgen::to_value(&data).map_err(|e| JsValue::from_str(&e.to_string()))
+        crate::utils::to_js_value(&data)
     }
 
     fn col_to_letters(col: usize) -> String {

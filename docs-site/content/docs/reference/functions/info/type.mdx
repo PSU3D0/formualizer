@@ -1,0 +1,58 @@
+---
+title: "TYPE"
+description: "Returns an Excel TYPE code describing the value category."
+---
+
+<FunctionPageSchema id="info/type" />
+
+## Summary
+
+Returns an Excel TYPE code describing the value category.
+
+## Remarks
+ - Codes: `1` number, `2` text, `4` logical, `64` array.
+ - Errors are propagated unchanged instead of returning `16`.
+ - Blank values map to numeric code `1` in this implementation.
+
+## Examples
+
+<Tabs items={["Text type code", "Boolean type code"]}>
+<Tab value="Text type code">
+<FunctionSandbox
+  title="Text type code"
+  formula={`=TYPE("abc")`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Boolean type code">
+<FunctionSandbox
+  title="Boolean type code"
+  formula={`=TYPE(TRUE)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ISNUMBER](/docs/reference/functions/info/isnumber)
+- [ISTEXT](/docs/reference/functions/info/istext)
+- [ISLOGICAL](/docs/reference/functions/info/islogical)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### How are errors handled by TYPE?
+Errors are propagated unchanged instead of returning Excel's error type code 16.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/type" />
+{/* [formualizer-docgen:function-meta:end] */}

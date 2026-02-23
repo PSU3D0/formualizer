@@ -1,0 +1,58 @@
+---
+title: "DMAX"
+description: "DMAX: Returns the largest value in a database field for records matching criteria."
+---
+
+<FunctionPageSchema id="database/dmax" />
+
+## Summary
+
+`DMAX` scans the filtered records and returns the maximum numeric value found in `field`.
+
+## Remarks
+ - Criteria rows are OR conditions; multiple non-empty criteria columns in one row are AND conditions.
+ - `field` can be a case-insensitive header string or a 1-based column index; failed resolution returns `#VALUE!`.
+ - If no numeric values are matched, this implementation returns `0`.
+
+## Examples
+
+<Tabs items={["Maximum revenue for West or South", "Maximum units for Widget deals"]}>
+<Tab value="Maximum revenue for West or South">
+<FunctionSandbox
+  title="Maximum revenue for West or South"
+  formula={`=DMAX(A1:E7, "Revenue", G1:G3)`}
+  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Region","G2":"West","G3":"South"}}
+  expected={"126000"}
+/>
+</Tab>
+
+<Tab value="Maximum units for Widget deals">
+<FunctionSandbox
+  title="Maximum units for Widget deals"
+  formula={`=DMAX(A1:E7, 4, G1:G2)`}
+  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Product","G2":"Widget"}}
+  expected={"24"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DMIN](/docs/reference/functions/database/dmin)
+- [DGET](/docs/reference/functions/database/dget)
+- [MAXIFS](/docs/reference/functions/stats/maxifs)
+- [DAVERAGE](/docs/reference/functions/database/daverage)
+- [DCOUNT](/docs/reference/functions/database/dcount)
+- [DCOUNTA](/docs/reference/functions/database/dcounta)
+
+## FAQ
+
+### What does DMAX return when no numeric field values match criteria?
+This implementation returns 0 when the filtered set has no numeric values.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="database/dmax" />
+{/* [formualizer-docgen:function-meta:end] */}

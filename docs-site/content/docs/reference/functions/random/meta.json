@@ -1,0 +1,10 @@
+{
+  "collapsible": true,
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "rand",
+    "randbetween"
+  ],
+  "title": "Random Functions"
+}

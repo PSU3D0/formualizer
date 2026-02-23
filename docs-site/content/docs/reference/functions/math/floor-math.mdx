@@ -1,0 +1,58 @@
+---
+title: "FLOOR.MATH"
+description: "Rounds a number down to the nearest integer or multiple using `FLOOR.MATH` rules."
+---
+
+<FunctionPageSchema id="math/floor-math" />
+
+## Summary
+
+Rounds a number down to the nearest integer or multiple using `FLOOR.MATH` rules.
+
+## Remarks
+ - If `significance` is omitted (or passed as `0`), the function uses `1`.
+ - `significance` is treated as a positive magnitude.
+ - For negative numbers, non-zero `mode` rounds toward zero; otherwise it rounds away from zero.
+
+## Examples
+
+<Tabs items={["Default behavior for a positive number", "Use mode to round a negative number toward zero"]}>
+<Tab value="Default behavior for a positive number">
+<FunctionSandbox
+  title="Default behavior for a positive number"
+  formula={`=FLOOR.MATH(24.3,5)`}
+  grid={{}}
+  expected={"20"}
+/>
+</Tab>
+
+<Tab value="Use mode to round a negative number toward zero">
+<FunctionSandbox
+  title="Use mode to round a negative number toward zero"
+  formula={`=FLOOR.MATH(-24.3,5,1)`}
+  grid={{}}
+  expected={"-20"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [FLOOR](/docs/reference/functions/math/floor)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+- [ROUNDDOWN](/docs/reference/functions/math/rounddown)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [GCD](/docs/reference/functions/math/gcd)
+
+## FAQ
+
+### How does mode affect negative numbers in FLOOR.MATH?
+With non-zero mode, negatives round toward zero; otherwise they round away from zero.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/floor-math" />
+{/* [formualizer-docgen:function-meta:end] */}

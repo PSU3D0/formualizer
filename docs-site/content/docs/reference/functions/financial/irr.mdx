@@ -1,0 +1,60 @@
+---
+title: "IRR"
+description: "IRR: Calculates periodic internal rate of return for regularly spaced cash flows."
+---
+
+<FunctionPageSchema id="financial/irr" />
+
+## Summary
+
+The function iteratively finds the per-period rate where discounted cash flows sum to zero.
+
+## Remarks
+ - Output is a rate per cash-flow period (not automatically annualized).
+ - Cash-flow sign convention: outflows are negative and inflows are positive.
+ - Non-numeric cells in arrays/ranges are ignored; direct scalar errors are propagated.
+ - A callable value input returns `#CALC!`.
+ - Returns `#NUM!` if fewer than two numeric cash flows are available, if derivative is near zero, or if iteration does not converge.
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=IRR({-10000,3000,4200,6800})`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=IRR({-5000,1200,1410,1875,1050}, 0.1)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [MIRR](/docs/reference/functions/financial/mirr)
+- [NPV](/docs/reference/functions/financial/npv)
+- [XIRR](/docs/reference/functions/financial/xirr)
+- [ACCRINT](/docs/reference/functions/financial/accrint)
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
+- [DB](/docs/reference/functions/financial/db)
+
+## FAQ
+
+### Why can `IRR` return `#NUM!` even with numeric cash flows?
+The Newton solve can fail if derivative terms become unstable or no convergent root is reached from the chosen guess.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/irr" />
+{/* [formualizer-docgen:function-meta:end] */}

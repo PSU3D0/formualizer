@@ -1,0 +1,59 @@
+---
+title: "ISEVEN"
+description: "ISEVEN: Returns TRUE if number is even."
+---
+
+<FunctionPageSchema id="info/iseven" />
+
+## Summary
+
+Returns TRUE when a number is even.
+
+## Remarks
+ - Numeric input is truncated toward zero before parity is checked.
+ - Booleans are coerced (`TRUE` -&gt; 1, `FALSE` -&gt; 0).
+ - Non-numeric text returns `#VALUE!`.
+ - Errors propagate unchanged.
+
+## Examples
+
+<Tabs items={["Even integer", "Decimal truncation before parity"]}>
+<Tab value="Even integer">
+<FunctionSandbox
+  title="Even integer"
+  formula={`=ISEVEN(6)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Decimal truncation before parity">
+<FunctionSandbox
+  title="Decimal truncation before parity"
+  formula={`=ISEVEN(3.9)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ISODD](/docs/reference/functions/info/isodd)
+- [ISNUMBER](/docs/reference/functions/info/isnumber)
+- [N](/docs/reference/functions/info/n)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### How are decimals handled by ISEVEN?
+The number is truncated toward zero before checking even/odd parity.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/iseven" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -6,10 +6,48 @@ use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
-/// TODAY() - Returns current date as serial number (volatile)
+/// Returns the current date as a volatile serial value.
+///
+/// # Remarks
+/// - `TODAY` is volatile and recalculates each time the workbook recalculates.
+/// - The result is an integer date serial with no time fraction.
+/// - Serial output respects the active workbook date system (`1900` or `1904`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "TODAY has no time fraction"
+/// formula: "=TODAY()=INT(TODAY())"
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Date arithmetic with TODAY"
+/// formula: "=TODAY()+7-TODAY()"
+/// expected: 7
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - NOW
+///   - DATE
+///   - WORKDAY
+/// faq:
+///   - q: "Will TODAY include a time-of-day fraction?"
+///     a: "No. TODAY always returns an integer serial date, so its fractional part is always 0."
+/// ```
 #[derive(Debug)]
 pub struct TodayFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: TODAY
+/// Type: TodayFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: TODAY()
+/// Arg schema: []
+/// Caps: VOLATILE
+/// [formualizer-docgen:schema:end]
 impl Function for TodayFn {
     func_caps!(VOLATILE);
 
@@ -34,10 +72,48 @@ impl Function for TodayFn {
     }
 }
 
-/// NOW() - Returns current date and time as serial number (volatile)
+/// Returns the current date and time as a volatile datetime serial.
+///
+/// # Remarks
+/// - `NOW` is volatile and may produce a different value at each recalculation.
+/// - The integer part is the current date serial; the fractional part is time of day.
+/// - Serial output respects the active workbook date system (`1900` or `1904`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "NOW includes today's date"
+/// formula: "=INT(NOW())=TODAY()"
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "NOW is at or after TODAY"
+/// formula: "=NOW()>=TODAY()"
+/// expected: true
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TODAY
+///   - TIME
+///   - SECOND
+/// faq:
+///   - q: "How do I isolate only the time portion from NOW?"
+///     a: "Use NOW()-INT(NOW()); the integer part is date serial and the fractional part is time-of-day."
+/// ```
 #[derive(Debug)]
 pub struct NowFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: NOW
+/// Type: NowFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: NOW()
+/// Arg schema: []
+/// Caps: VOLATILE
+/// [formualizer-docgen:schema:end]
 impl Function for NowFn {
     func_caps!(VOLATILE);
 

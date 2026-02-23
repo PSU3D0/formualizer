@@ -1,0 +1,63 @@
+---
+title: "UNIQUE"
+description: "UNIQUE: Returns distinct rows or columns from a range."
+---
+
+<FunctionPageSchema id="lookup/unique" />
+
+## Summary
+
+`UNIQUE` preserves first-occurrence order and can optionally return only values that appear once.
+
+## Remarks
+ - Defaults: `by_col=FALSE`, `exactly_once=FALSE`.
+ - With `by_col=FALSE`, uniqueness is evaluated by full rows.
+ - With `by_col=TRUE`, uniqueness is evaluated by full columns.
+ - With `exactly_once=TRUE`, only entries with frequency 1 are returned.
+ - Result spills as an array.
+
+## Examples
+
+<Tabs items={["Unique values by row", "Only values that appear once"]}>
+<Tab value="Unique values by row">
+<FunctionSandbox
+  title="Unique values by row"
+  formula={`=UNIQUE(A1:A4)`}
+  grid={{"A1":"A","A2":"A","A3":"B","A4":"C"}}
+  expected={"[[\"A\"],[\"B\"],[\"C\"]]"}
+/>
+</Tab>
+
+<Tab value="Only values that appear once">
+<FunctionSandbox
+  title="Only values that appear once"
+  formula={`=UNIQUE(A1:A4,FALSE,TRUE)`}
+  grid={{"A1":"1","A2":"1","A3":"2","A4":"3"}}
+  expected={"[[2],[3]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [FILTER](/docs/reference/functions/lookup/filter)
+- [SORT](/docs/reference/functions/lookup/sort)
+- [SORTBY](/docs/reference/functions/lookup/sortby)
+- [HSTACK](/docs/reference/functions/lookup/hstack)
+- [VSTACK](/docs/reference/functions/lookup/vstack)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+
+## FAQ
+
+### What does exactly_once=TRUE change?
+Instead of returning first occurrences, UNIQUE returns only rows or columns whose full key appears exactly one time.
+
+### How does by_col affect uniqueness checks?
+by_col=FALSE compares entire rows, while by_col=TRUE compares entire columns and spills unique columns.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/unique" />
+{/* [formualizer-docgen:function-meta:end] */}

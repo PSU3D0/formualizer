@@ -670,6 +670,126 @@ fn eval_dcounta<'a, 'b>(
 #[derive(Debug)]
 pub struct DSumFn;
 
+/// Sums values in a database field for records that match criteria.
+///
+/// `DSUM` filters database rows using a criteria range, then adds the selected field values.
+///
+/// # Remarks
+/// - Criteria rows are evaluated with OR semantics; populated criteria columns within one row are ANDed.
+/// - `field` resolves by case-insensitive header text or 1-based column index; unknown headers and out-of-range indexes return `#VALUE!`.
+/// - Non-numeric values in the target field are ignored unless they coerce to numbers.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Sum revenue for East or West regions"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "West"
+///   G3: "East"
+/// formula: "=DSUM(A1:E7, \"Revenue\", G1:G3)"
+/// expected: 415500
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sum revenue by field index with numeric criteria"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Units"
+///   G2: ">20"
+/// formula: "=DSUM(A1:E7, 5, G1:G2)"
+/// expected: 488500
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DAVERAGE
+///   - DCOUNT
+///   - SUMIFS
+/// faq:
+///   - q: "How are multiple criteria rows interpreted in DSUM?"
+///     a: "Each criteria row is an OR branch, while multiple populated criteria columns in one row are combined with AND."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DSUM
+/// Type: DSumFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DSUM(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DSumFn {
     func_caps!(PURE, REDUCTION);
 
@@ -702,6 +822,126 @@ impl Function for DSumFn {
 #[derive(Debug)]
 pub struct DAverageFn;
 
+/// Returns the arithmetic mean of values in a database field for matching records.
+///
+/// `DAVERAGE` applies criteria filtering first, then averages the numeric values in `field`.
+///
+/// # Remarks
+/// - Criteria rows are OR conditions, while criteria columns in the same row are AND conditions.
+/// - `field` can be a case-insensitive header name or a 1-based column index; invalid field resolution returns `#VALUE!`.
+/// - If no numeric values match, the function returns `#DIV/0!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Average units for Gadget sales"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Product"
+///   G2: "Gadget"
+/// formula: "=DAVERAGE(A1:E7, \"Units\", G1:G2)"
+/// expected: 29
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Average revenue for West or South regions"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "West"
+///   G3: "South"
+/// formula: "=DAVERAGE(A1:E7, 5, G1:G3)"
+/// expected: 97000
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DSUM
+///   - DCOUNT
+///   - AVERAGEIFS
+/// faq:
+///   - q: "What happens if criteria match rows but field values are non-numeric?"
+///     a: "DAVERAGE skips non-numeric values and returns #DIV/0! if no numeric values remain after filtering."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DAVERAGE
+/// Type: DAverageFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DAVERAGE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DAverageFn {
     func_caps!(PURE, REDUCTION);
 
@@ -734,6 +974,126 @@ impl Function for DAverageFn {
 #[derive(Debug)]
 pub struct DCountFn;
 
+/// Counts numeric cells in a database field for records matching criteria.
+///
+/// `DCOUNT` ignores non-numeric values in the selected field even when the row itself matches.
+///
+/// # Remarks
+/// - Criteria rows are ORed, and criteria columns inside a single row are ANDed.
+/// - `field` header lookup is case-insensitive, and numeric `field` uses 1-based indexing; unresolved headers or invalid indexes return `#VALUE!`.
+/// - Only numeric field values contribute to the count.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Count numeric revenue entries in East region"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "East"
+/// formula: "=DCOUNT(A1:E7, \"Revenue\", G1:G2)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Count numeric units for Widget or Service products"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Product"
+///   G2: "Widget"
+///   G3: "Service"
+/// formula: "=DCOUNT(A1:E7, 4, G1:G3)"
+/// expected: 4
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DCOUNTA
+///   - DSUM
+///   - COUNTIFS
+/// faq:
+///   - q: "Does DCOUNT count text values that look like numbers?"
+///     a: "Only values resolved as numeric in the target field are counted; true non-numeric text is ignored."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DCOUNT
+/// Type: DCountFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DCOUNT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DCountFn {
     func_caps!(PURE, REDUCTION);
 
@@ -766,6 +1126,126 @@ impl Function for DCountFn {
 #[derive(Debug)]
 pub struct DMaxFn;
 
+/// Returns the largest value in a database field for records matching criteria.
+///
+/// `DMAX` scans the filtered records and returns the maximum numeric value found in `field`.
+///
+/// # Remarks
+/// - Criteria rows are OR conditions; multiple non-empty criteria columns in one row are AND conditions.
+/// - `field` can be a case-insensitive header string or a 1-based column index; failed resolution returns `#VALUE!`.
+/// - If no numeric values are matched, this implementation returns `0`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Maximum revenue for West or South"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "West"
+///   G3: "South"
+/// formula: "=DMAX(A1:E7, \"Revenue\", G1:G3)"
+/// expected: 126000
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Maximum units for Widget deals"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Product"
+///   G2: "Widget"
+/// formula: "=DMAX(A1:E7, 4, G1:G2)"
+/// expected: 24
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DMIN
+///   - DGET
+///   - MAXIFS
+/// faq:
+///   - q: "What does DMAX return when no numeric field values match criteria?"
+///     a: "This implementation returns 0 when the filtered set has no numeric values."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DMAX
+/// Type: DMaxFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DMAX(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DMaxFn {
     func_caps!(PURE, REDUCTION);
 
@@ -798,6 +1278,126 @@ impl Function for DMaxFn {
 #[derive(Debug)]
 pub struct DMinFn;
 
+/// Returns the smallest value in a database field for records matching criteria.
+///
+/// `DMIN` applies criteria filtering and then evaluates the minimum numeric value from `field`.
+///
+/// # Remarks
+/// - Criteria rows are ORed together; criteria columns on the same row are ANDed.
+/// - `field` resolves from a case-insensitive header label or 1-based index, and invalid resolution yields `#VALUE!`.
+/// - If no numeric values are matched, this implementation returns `0`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Minimum revenue for East or West"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "East"
+///   G3: "West"
+/// formula: "=DMIN(A1:E7, \"Revenue\", G1:G3)"
+/// expected: 46000
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Minimum units where revenue exceeds 100000"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Revenue"
+///   G2: ">100000"
+/// formula: "=DMIN(A1:E7, 4, G1:G2)"
+/// expected: 22
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DMAX
+///   - DGET
+///   - MINIFS
+/// faq:
+///   - q: "How are mixed criteria (text plus numeric operators) handled in DMIN?"
+///     a: "Criteria are parsed per criteria cell, then applied as AND within row and OR across rows before the minimum is chosen."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DMIN
+/// Type: DMinFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DMIN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DMinFn {
     func_caps!(PURE, REDUCTION);
 
@@ -830,6 +1430,127 @@ impl Function for DMinFn {
 #[derive(Debug)]
 pub struct DProductFn;
 
+/// Multiplies values in a database field for records that satisfy criteria.
+///
+/// `DPRODUCT` filters the database first, then returns the product of numeric values in `field`.
+///
+/// # Remarks
+/// - Criteria rows are evaluated as OR alternatives; criteria columns in one row are AND constraints.
+/// - `field` resolves via case-insensitive header text or 1-based column index; unresolved field references return `#VALUE!`.
+/// - If no numeric values match, this implementation returns `0`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Product of units in North or South"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "North"
+///   G3: "South"
+/// formula: "=DPRODUCT(A1:E7, \"Units\", G1:G3)"
+/// expected: 486
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Product of units for East or West by index field"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "East"
+///   G3: "West"
+/// formula: "=DPRODUCT(A1:E7, 4, G1:G3)"
+/// expected: 196416
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DSUM
+///   - DCOUNT
+///   - PRODUCT
+/// faq:
+///   - q: "What result does DPRODUCT return if no numeric records match?"
+///     a: "This implementation returns 0 when no numeric field values remain after criteria filtering."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DPRODUCT
+/// Type: DProductFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DPRODUCT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DProductFn {
     func_caps!(PURE, REDUCTION);
 
@@ -862,6 +1583,126 @@ impl Function for DProductFn {
 #[derive(Debug)]
 pub struct DStdevFn;
 
+/// Returns the sample standard deviation of a database field for matching records.
+///
+/// `DSTDEV` computes standard deviation with the sample denominator (`n - 1`) after criteria filtering.
+///
+/// # Remarks
+/// - Criteria rows represent OR branches; criteria columns in each row are combined with AND.
+/// - `field` is resolved by case-insensitive header text or 1-based column index; invalid field resolution returns `#VALUE!`.
+/// - At least two numeric values must match criteria, otherwise the result is `#DIV/0!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Sample stdev of units for East or West"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "East"
+///   G3: "West"
+/// formula: "=DSTDEV(A1:E7, \"Units\", G1:G3)"
+/// expected: 7.847504911329036
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sample stdev of widget revenue"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Product"
+///   G2: "Widget"
+/// formula: "=DSTDEV(A1:E7, 5, G1:G2)"
+/// expected: 19756.85535031659
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DSTDEVP
+///   - DVAR
+///   - STDEV.S
+/// faq:
+///   - q: "Why does DSTDEV return #DIV/0! with one matching row?"
+///     a: "DSTDEV uses sample statistics and needs at least two numeric matches for an n-1 denominator."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DSTDEV
+/// Type: DStdevFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DSTDEV(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DStdevFn {
     func_caps!(PURE, REDUCTION);
 
@@ -894,6 +1735,126 @@ impl Function for DStdevFn {
 #[derive(Debug)]
 pub struct DStdevPFn;
 
+/// Returns the population standard deviation of a database field for matching records.
+///
+/// `DSTDEVP` computes standard deviation with the population denominator (`n`) after criteria filtering.
+///
+/// # Remarks
+/// - Criteria rows are OR branches, and each row's populated criteria columns are ANDed.
+/// - `field` can be a case-insensitive header label or 1-based index; invalid lookup returns `#VALUE!`.
+/// - At least one numeric value must match criteria, otherwise the result is `#DIV/0!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Population stdev of units for East or West"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "East"
+///   G3: "West"
+/// formula: "=DSTDEVP(A1:E7, \"Units\", G1:G3)"
+/// expected: 6.796138609534093
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Population stdev of widget revenue"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Product"
+///   G2: "Widget"
+/// formula: "=DSTDEVP(A1:E7, 5, G1:G2)"
+/// expected: 16131.404843417147
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DSTDEV
+///   - DVARP
+///   - STDEV.P
+/// faq:
+///   - q: "When should I prefer DSTDEVP over DSTDEV?"
+///     a: "Use DSTDEVP when matching rows represent the full population; DSTDEV is for samples."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DSTDEVP
+/// Type: DStdevPFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DSTDEVP(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DStdevPFn {
     func_caps!(PURE, REDUCTION);
 
@@ -926,6 +1887,126 @@ impl Function for DStdevPFn {
 #[derive(Debug)]
 pub struct DVarFn;
 
+/// Returns the sample variance of a database field for records matching criteria.
+///
+/// `DVAR` filters records first, then computes variance using the sample denominator (`n - 1`).
+///
+/// # Remarks
+/// - Criteria rows are OR alternatives; criteria columns within each row are AND constraints.
+/// - `field` can be resolved by case-insensitive header text or 1-based index; unresolved fields return `#VALUE!`.
+/// - At least two numeric values must match criteria, otherwise the function returns `#DIV/0!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Sample variance of units for East or West"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "East"
+///   G3: "West"
+/// formula: "=DVAR(A1:E7, \"Units\", G1:G3)"
+/// expected: 61.583333333333336
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sample variance of widget revenue"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Product"
+///   G2: "Widget"
+/// formula: "=DVAR(A1:E7, 5, G1:G2)"
+/// expected: 390333333.3333333
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DVARP
+///   - DSTDEV
+///   - VAR.S
+/// faq:
+///   - q: "Does DVAR use sample or population variance math?"
+///     a: "DVAR uses sample variance with an n-1 denominator and returns #DIV/0! when fewer than two numeric rows match."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DVAR
+/// Type: DVarFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DVAR(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DVarFn {
     func_caps!(PURE, REDUCTION);
 
@@ -958,6 +2039,126 @@ impl Function for DVarFn {
 #[derive(Debug)]
 pub struct DVarPFn;
 
+/// Returns the population variance of a database field for records matching criteria.
+///
+/// `DVARP` computes variance with the population denominator (`n`) over filtered records.
+///
+/// # Remarks
+/// - Criteria rows are OR branches; populated criteria cells in the same row are combined with AND.
+/// - `field` accepts case-insensitive header text or 1-based index; bad field/header resolution returns `#VALUE!`.
+/// - At least one numeric value must match criteria, otherwise the function returns `#DIV/0!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Population variance of units for East or West"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "East"
+///   G3: "West"
+/// formula: "=DVARP(A1:E7, \"Units\", G1:G3)"
+/// expected: 46.1875
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Population variance of widget revenue"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Product"
+///   G2: "Widget"
+/// formula: "=DVARP(A1:E7, 5, G1:G2)"
+/// expected: 260222222.2222222
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DVAR
+///   - DSTDEVP
+///   - VAR.P
+/// faq:
+///   - q: "Why can DVARP return a value with only one matched row?"
+///     a: "Population variance divides by n, so one numeric match yields a defined result instead of #DIV/0!."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DVARP
+/// Type: DVarPFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DVARP(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DVarPFn {
     func_caps!(PURE, REDUCTION);
 
@@ -990,6 +2191,127 @@ impl Function for DVarPFn {
 #[derive(Debug)]
 pub struct DGetFn;
 
+/// Returns a single field value from the only record that matches criteria.
+///
+/// `DGET` is useful for keyed lookups where criteria are expected to identify exactly one record.
+///
+/// # Remarks
+/// - Criteria rows are OR alternatives; criteria columns inside one row are AND predicates.
+/// - `field` resolves from a case-insensitive header name or 1-based index; unresolved field/header references return `#VALUE!`.
+/// - Returns `#VALUE!` when no records match and `#NUM!` when multiple records match.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Get salesperson for a unique North Widget record"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   H1: "Product"
+///   G2: "North"
+///   H2: "Widget"
+/// formula: "=DGET(A1:E7, \"Salesperson\", G1:H2)"
+/// expected: "Kim"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Multiple matches return NUM error"
+/// grid:
+///   A1: "Region"
+///   B1: "Salesperson"
+///   C1: "Product"
+///   D1: "Units"
+///   E1: "Revenue"
+///   A2: "West"
+///   B2: "Diaz"
+///   C2: "Widget"
+///   D2: 24
+///   E2: 126000
+///   A3: "East"
+///   B3: "Patel"
+///   C3: "Gadget"
+///   D3: 31
+///   E3: 142500
+///   A4: "North"
+///   B4: "Kim"
+///   C4: "Widget"
+///   D4: 18
+///   E4: 87000
+///   A5: "West"
+///   B5: "Ramos"
+///   C5: "Service"
+///   D5: 12
+///   E5: 46000
+///   A6: "South"
+///   B6: "Lee"
+///   C6: "Gadget"
+///   D6: 27
+///   E6: 119000
+///   A7: "East"
+///   B7: "Noor"
+///   C7: "Widget"
+///   D7: 22
+///   E7: 101000
+///   G1: "Region"
+///   G2: "East"
+/// formula: "=DGET(A1:E7, 5, G1:G2)"
+/// expected: "#NUM!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DSUM
+///   - DCOUNT
+///   - XLOOKUP
+/// faq:
+///   - q: "Why does DGET fail when criteria match two rows?"
+///     a: "DGET requires exactly one matching record; multiple matches produce #NUM! and zero matches produce #VALUE!."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DGET
+/// Type: DGetFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DGET(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DGetFn {
     func_caps!(PURE, REDUCTION);
 
@@ -1021,7 +2343,62 @@ impl Function for DGetFn {
 /* ─────────────────────────── DCOUNTA ──────────────────────────── */
 #[derive(Debug)]
 pub struct DCountAFn;
-
+/// Counts non-blank values in a database field for records matching criteria.
+///
+/// # Remarks
+/// - `DCOUNTA` counts both text and numeric non-empty values.
+/// - Criteria rows are OR-ed; criteria columns in the same row are AND-ed.
+/// - Blank cells are excluded from the count.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Count non-blank names where score > 80"
+/// grid:
+///   A1: "Name"
+///   B1: "Score"
+///   A2: "Ana"
+///   B2: 92
+///   A3: "Bo"
+///   B3: 75
+///   A4: "Cy"
+///   B4: 88
+///   D1: "Score"
+///   D2: ">80"
+/// formula: "=DCOUNTA(A1:B4,\"Name\",D1:D2)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Count all non-blank values in a field"
+/// grid:
+///   A1: "Item"
+///   A2: "X"
+///   A3: "Y"
+///   A4: ""
+///   C1: "Item"
+/// formula: "=DCOUNTA(A1:A4,\"Item\",C1:C1)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DCOUNT
+///   - DGET
+///   - COUNTA
+/// faq:
+///   - q: "What is treated as blank in DCOUNTA?"
+///     a: "Empty cells and empty strings are treated as blank; other value types are counted when their row matches criteria."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: DCOUNTA
+/// Type: DCountAFn
+/// Min args: 3
+/// Max args: 1
+/// Variadic: false
+/// Signature: DCOUNTA(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
 impl Function for DCountAFn {
     func_caps!(PURE, REDUCTION);
 

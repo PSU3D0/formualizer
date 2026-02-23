@@ -11,7 +11,48 @@ use formualizer_macros::func_caps;
 
 #[derive(Debug)]
 pub struct TrueFn;
+/// Returns the logical constant TRUE.
+///
+/// Use `TRUE()` when you want an explicit boolean value in formulas.
+///
+/// # Remarks
+/// - `TRUE` takes no arguments and always returns the boolean value `TRUE`.
+/// - No coercion or evaluation side effects are involved.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Return TRUE directly"
+/// formula: '=TRUE()'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Use TRUE in branching"
+/// formula: '=IF(TRUE(), "yes", "no")'
+/// expected: "yes"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FALSE
+///   - IF
+///   - AND
+/// faq:
+///   - q: "Can TRUE accept arguments?"
+///     a: "No. TRUE takes zero arguments and always returns the boolean constant TRUE."
+/// ```
 
+/// [formualizer-docgen:schema:start]
+/// Name: TRUE
+/// Type: TrueFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: TRUE()
+/// Arg schema: []
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for TrueFn {
     func_caps!(PURE);
 
@@ -37,7 +78,48 @@ impl Function for TrueFn {
 
 #[derive(Debug)]
 pub struct FalseFn;
+/// Returns the logical constant FALSE.
+///
+/// Use `FALSE()` when you want an explicit boolean false value in formulas.
+///
+/// # Remarks
+/// - `FALSE` takes no arguments and always returns the boolean value `FALSE`.
+/// - No coercion or evaluation side effects are involved.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Return FALSE directly"
+/// formula: '=FALSE()'
+/// expected: false
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Use FALSE in branching"
+/// formula: '=IF(FALSE(), "yes", "no")'
+/// expected: "no"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TRUE
+///   - IF
+///   - OR
+/// faq:
+///   - q: "Can FALSE accept arguments?"
+///     a: "No. FALSE takes zero arguments and always returns the boolean constant FALSE."
+/// ```
 
+/// [formualizer-docgen:schema:start]
+/// Name: FALSE
+/// Type: FalseFn
+/// Min args: 0
+/// Max args: 0
+/// Variadic: false
+/// Signature: FALSE()
+/// Arg schema: []
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for FalseFn {
     func_caps!(PURE);
 
@@ -63,7 +145,50 @@ impl Function for FalseFn {
 
 #[derive(Debug)]
 pub struct AndFn;
+/// Returns TRUE only when all supplied values evaluate to TRUE.
+///
+/// `AND` evaluates arguments left to right and short-circuits on a decisive `FALSE`.
+///
+/// # Remarks
+/// - Booleans and numbers are accepted (`0` is FALSE, non-zero is TRUE).
+/// - Blank values are treated as FALSE.
+/// - Text and other non-coercible values yield `#VALUE!` unless a prior FALSE short-circuits.
+/// - If no decisive FALSE is found, the first encountered error is returned.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "All truthy inputs"
+/// formula: '=AND(TRUE, 1, 5)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text input causes VALUE error"
+/// formula: '=AND(TRUE, "x")'
+/// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - OR
+///   - NOT
+///   - XOR
+/// faq:
+///   - q: "What happens with blanks and text in AND?"
+///     a: "Blank values evaluate as FALSE; non-coercible text yields #VALUE! unless a prior FALSE short-circuits."
+/// ```
 
+/// [formualizer-docgen:schema:start]
+/// Name: AND
+/// Type: AndFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: AND(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for AndFn {
     func_caps!(PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT);
 
@@ -146,7 +271,50 @@ impl Function for AndFn {
 
 #[derive(Debug)]
 pub struct OrFn;
+/// Returns TRUE when any supplied value evaluates to TRUE.
+///
+/// `OR` evaluates arguments left to right and short-circuits on a decisive `TRUE`.
+///
+/// # Remarks
+/// - Booleans and numbers are accepted (`0` is FALSE, non-zero is TRUE).
+/// - Blank values are ignored.
+/// - Text and other non-coercible values yield `#VALUE!` if no prior TRUE short-circuits.
+/// - If no TRUE is found, the first encountered error is returned.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "One truthy value makes OR true"
+/// formula: '=OR(FALSE, 0, 2)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "No true values and text input"
+/// formula: '=OR(FALSE, "x")'
+/// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - AND
+///   - NOT
+///   - XOR
+/// faq:
+///   - q: "How does OR treat blanks and text?"
+///     a: "Blanks are ignored; non-coercible text returns #VALUE! unless a prior TRUE already short-circuits."
+/// ```
 
+/// [formualizer-docgen:schema:start]
+/// Name: OR
+/// Type: OrFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: OR(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for OrFn {
     func_caps!(PURE, REDUCTION, BOOL_ONLY, SHORT_CIRCUIT);
 
@@ -227,7 +395,50 @@ impl Function for OrFn {
 
 #[derive(Debug)]
 pub struct IfFn;
+/// Returns one value when a condition is TRUE and another when FALSE.
+///
+/// `IF(condition, value_if_true, [value_if_false])` supports two or three arguments.
+///
+/// # Remarks
+/// - Condition coercion: booleans are used directly, numbers use `0` as FALSE and non-zero as TRUE.
+/// - A blank condition is treated as FALSE.
+/// - Text or other non-numeric/non-boolean conditions return `#VALUE!`.
+/// - With only two arguments, the FALSE branch defaults to logical `FALSE`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Numeric condition"
+/// formula: '=IF(2, "yes", "no")'
+/// expected: "yes"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Two-argument IF defaults false branch"
+/// formula: '=IF(0, 10)'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IFS
+///   - IFERROR
+///   - IFNA
+/// faq:
+///   - q: "What is returned when IF has only two arguments and condition is FALSE?"
+///     a: "The false branch defaults to logical FALSE when value_if_false is omitted."
+/// ```
 
+/// [formualizer-docgen:schema:start]
+/// Name: IF
+/// Type: IfFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: IF(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for IfFn {
     func_caps!(PURE, SHORT_CIRCUIT);
 

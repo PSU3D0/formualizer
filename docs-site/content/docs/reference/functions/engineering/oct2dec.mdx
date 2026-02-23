@@ -1,0 +1,58 @@
+---
+title: "OCT2DEC"
+description: "OCT2DEC: Converts an octal text value to decimal."
+---
+
+<FunctionPageSchema id="engineering/oct2dec" />
+
+## Summary
+
+Supports up to 10 octal digits, including signed two's-complement values.
+
+## Remarks
+ - Input is coerced to text and must contain only digits `0` through `7`.
+ - 10-digit values beginning with `4`-`7` are interpreted as signed 30-bit numbers.
+ - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
+
+## Examples
+
+<Tabs items={["Convert positive octal", "Interpret signed 30-bit octal"]}>
+<Tab value="Convert positive octal">
+<FunctionSandbox
+  title="Convert positive octal"
+  formula={`=OCT2DEC("17")`}
+  grid={{}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="Interpret signed 30-bit octal">
+<FunctionSandbox
+  title="Interpret signed 30-bit octal"
+  formula={`=OCT2DEC("7777777777")`}
+  grid={{}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
+- [OCT2BIN](/docs/reference/functions/engineering/oct2bin)
+- [OCT2HEX](/docs/reference/functions/engineering/oct2hex)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### How does `OCT2DEC` interpret 10-digit values starting with `4`-`7`?
+Those are treated as signed 30-bit two's-complement octal values.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/oct2dec" />
+{/* [formualizer-docgen:function-meta:end] */}

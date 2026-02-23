@@ -1,0 +1,59 @@
+---
+title: "FIXED"
+description: "Formats a number as text with fixed decimal places."
+---
+
+<FunctionPageSchema id="text/fixed" />
+
+## Summary
+
+Formats a number as text with fixed decimal places.
+
+## Remarks
+ - Default decimal places is `2` when omitted.
+ - Third argument controls comma grouping (`TRUE` disables commas).
+ - Values are rounded to the requested decimal precision.
+ - Numeric coercion failures return `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Fixed with commas", "Fixed without commas"]}>
+<Tab value="Fixed with commas">
+<FunctionSandbox
+  title="Fixed with commas"
+  formula={`=FIXED(12345.678, 1, FALSE)`}
+  grid={{}}
+  expected={"12,345.7"}
+/>
+</Tab>
+
+<Tab value="Fixed without commas">
+<FunctionSandbox
+  title="Fixed without commas"
+  formula={`=FIXED(12345.678, 1, TRUE)`}
+  grid={{}}
+  expected={"12345.7"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DOLLAR](/docs/reference/functions/text/dollar)
+- [TEXT](/docs/reference/functions/text/text)
+- [VALUE](/docs/reference/functions/text/value)
+- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
+- [TEXTSPLIT](/docs/reference/functions/text/textsplit)
+- [VALUETOTEXT](/docs/reference/functions/text/valuetotext)
+
+## FAQ
+
+### What does the third argument control?
+Set it to TRUE to suppress thousands separators; FALSE keeps comma grouping.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/fixed" />
+{/* [formualizer-docgen:function-meta:end] */}

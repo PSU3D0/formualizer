@@ -1,0 +1,54 @@
+---
+title: "T.INV"
+description: "T.INV: Returns the t-value whose left-tail probability equals `probability`."
+---
+
+<FunctionPageSchema id="stats/t-inv" />
+
+## Summary
+
+`T.INV` is the inverse of `T.DIST(x, deg_freedom, TRUE)`.
+
+## Remarks
+ - `probability` must be strictly between `0` and `1`.
+ - `deg_freedom` must be at least `1`.
+ - Returns `#NUM!` for out-of-range probability or invalid degrees of freedom.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Median t quantile", "Upper-tail critical value"]}>
+<Tab value="Median t quantile">
+<FunctionSandbox
+  title="Median t quantile"
+  formula={`=T.INV(0.5,10)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Upper-tail critical value">
+<FunctionSandbox
+  title="Upper-tail critical value"
+  formula={`=T.INV(0.975,10)`}
+  grid={{}}
+  expected={"2.228138851986273"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
+- [T.DIST](/docs/reference/functions/stats/t-dist)
+- [T.INV.2T](/docs/reference/functions/stats/t-inv-2t)
+- [T.TEST](/docs/reference/functions/stats/t-test)
+- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
+- [CHISQ.TEST](/docs/reference/functions/stats/chisq-test)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/t-inv" />
+{/* [formualizer-docgen:function-meta:end] */}

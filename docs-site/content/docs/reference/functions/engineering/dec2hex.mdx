@@ -1,0 +1,58 @@
+---
+title: "DEC2HEX"
+description: "DEC2HEX: Converts a decimal integer to hexadecimal text."
+---
+
+<FunctionPageSchema id="engineering/dec2hex" />
+
+## Summary
+
+Optionally pads the result with leading zeros using `places`.
+
+## Remarks
+ - `number` is coerced to an integer and must be in `[-2^39, 2^39 - 1]`.
+ - Negative values are returned as 10-digit two's-complement hexadecimal strings.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+
+## Examples
+
+<Tabs items={["Convert decimal to hex", "Pad hexadecimal output"]}>
+<Tab value="Convert decimal to hex">
+<FunctionSandbox
+  title="Convert decimal to hex"
+  formula={`=DEC2HEX(255)`}
+  grid={{}}
+  expected={"FF"}
+/>
+</Tab>
+
+<Tab value="Pad hexadecimal output">
+<FunctionSandbox
+  title="Pad hexadecimal output"
+  formula={`=DEC2HEX(31,4)`}
+  grid={{}}
+  expected={"001F"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
+- [DELTA](/docs/reference/functions/engineering/delta)
+
+## FAQ
+
+### How are negative values formatted by `DEC2HEX`?
+Negative outputs use 10-digit two's-complement hexadecimal representation.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/dec2hex" />
+{/* [formualizer-docgen:function-meta:end] */}

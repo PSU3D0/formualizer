@@ -1,0 +1,59 @@
+---
+title: "UNICHAR"
+description: "UNICHAR: Returns the Unicode character for a given code point."
+---
+
+<FunctionPageSchema id="text/unichar" />
+
+## Summary
+
+Returns the Unicode character for a given code point.
+
+## Remarks
+ - Input is truncated to an integer code point.
+ - Code point `0`, surrogate range, and values above `0x10FFFF` return `#VALUE!`.
+ - Errors are propagated unchanged.
+ - Non-numeric inputs are coerced with numeric coercion rules.
+
+## Examples
+
+<Tabs items={["Basic Unicode code point", "Invalid code point"]}>
+<Tab value="Basic Unicode code point">
+<FunctionSandbox
+  title="Basic Unicode code point"
+  formula={`=UNICHAR(9731)`}
+  grid={{}}
+  expected={"☃"}
+/>
+</Tab>
+
+<Tab value="Invalid code point">
+<FunctionSandbox
+  title="Invalid code point"
+  formula={`=UNICHAR(0)`}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [UNICODE](/docs/reference/functions/text/unicode)
+- [CHAR](/docs/reference/functions/text/char)
+- [CODE](/docs/reference/functions/text/code)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [LEN](/docs/reference/functions/text/len)
+- [LOWER](/docs/reference/functions/text/lower)
+
+## FAQ
+
+### Which code points are invalid?
+0, surrogate values, and anything above 0x10FFFF return #VALUE!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/unichar" />
+{/* [formualizer-docgen:function-meta:end] */}

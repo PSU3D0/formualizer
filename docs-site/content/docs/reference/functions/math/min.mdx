@@ -1,0 +1,71 @@
+---
+title: "MIN"
+description: "MIN: Returns the smallest numeric value from one or more arguments."
+---
+
+<FunctionPageSchema id="math/min" />
+
+## Summary
+
+`MIN` scans scalar values and ranges, considering only values that can be treated as numbers.
+
+## Remarks
+ - Errors in any scalar argument or range cell propagate immediately.
+ - In ranges, non-numeric cells are ignored.
+ - Scalar text is included only when it can be coerced to a number.
+ - If no numeric value is found, `MIN` returns `0`.
+
+## Examples
+
+<Tabs items={["Minimum in a numeric range", "Coercible scalar text participates", "No numeric values returns zero"]}>
+<Tab value="Minimum in a numeric range">
+<FunctionSandbox
+  title="Minimum in a numeric range"
+  formula={`=MIN(A1:A3)`}
+  grid={{"A1":"8","A2":"-2","A3":"5"}}
+  expected={"-2"}
+/>
+</Tab>
+
+<Tab value="Coercible scalar text participates">
+<FunctionSandbox
+  title="Coercible scalar text participates"
+  formula={`=MIN(10, "3", 7)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="No numeric values returns zero">
+<FunctionSandbox
+  title="No numeric values returns zero"
+  formula={`=MIN("x")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [MAX](/docs/reference/functions/math/max)
+- [SMALL](/docs/reference/functions/stats/small)
+- [LARGE](/docs/reference/functions/stats/large)
+- [MINIFS](/docs/reference/functions/stats/minifs)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [SUMSQ](/docs/reference/functions/math/sumsq)
+
+## FAQ
+
+### Why can MIN return 0 even when no numbers are present?
+If nothing numeric is found after coercion/scan, MIN falls back to 0.
+
+### Do errors in referenced ranges get ignored?
+No. Any encountered range or scalar error is propagated.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/min" />
+{/* [formualizer-docgen:function-meta:end] */}

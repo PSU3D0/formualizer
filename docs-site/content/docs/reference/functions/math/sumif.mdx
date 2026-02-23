@@ -1,0 +1,70 @@
+---
+title: "SUMIF"
+description: "SUMIF: Adds values that satisfy a single criterion."
+---
+
+<FunctionPageSchema id="math/sumif" />
+
+## Summary
+
+`SUMIF` evaluates each cell in `range` against `criteria`, then sums corresponding values.
+
+## Remarks
+ - If `sum_range` is omitted, matching cells from `range` are summed.
+ - Criteria support operators like `"&gt;10"` and wildcard text patterns.
+ - Cells that do not coerce to numbers in the sum target contribute `0`.
+
+## Examples
+
+<Tabs items={["Sum values above a threshold", "Use separate sum range", "Wildcard criteria"]}>
+<Tab value="Sum values above a threshold">
+<FunctionSandbox
+  title="Sum values above a threshold"
+  formula={`=SUMIF(A1:A3, ">10")`}
+  grid={{"A1":"5","A2":"15","A3":"25"}}
+  expected={"40"}
+/>
+</Tab>
+
+<Tab value="Use separate sum range">
+<FunctionSandbox
+  title="Use separate sum range"
+  formula={`=SUMIF(A1:A3, "East", B1:B3)`}
+  grid={{"A1":"East","A2":"West","A3":"East","B1":"10","B2":"40","B3":"20"}}
+  expected={"30"}
+/>
+</Tab>
+
+<Tab value="Wildcard criteria">
+<FunctionSandbox
+  title="Wildcard criteria"
+  formula={`=SUMIF({"apple","pear","apricot"}, "ap*", {2,3,5})`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SUM](/docs/reference/functions/math/sum)
+- [SUMIFS](/docs/reference/functions/math/sumifs)
+- [COUNTIF](/docs/reference/functions/math/countif)
+- [AVERAGEIF](/docs/reference/functions/math/averageif)
+- [COUNTIFS](/docs/reference/functions/math/countifs)
+- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
+
+## FAQ
+
+### What happens when matching cells are non-numeric in SUMIF?
+They contribute 0 to the sum target after coercion logic.
+
+### Can SUMIF use wildcard criteria like * and ??
+Yes. Text criteria support wildcard matching semantics.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sumif" />
+{/* [formualizer-docgen:function-meta:end] */}

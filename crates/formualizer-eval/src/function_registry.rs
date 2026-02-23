@@ -98,6 +98,18 @@ pub fn register_alias(ns: &str, alias: &str, target_ns: &str, target_name: &str)
     ALIASES.insert(akey, tkey);
 }
 
+/// Snapshot canonical registered functions (namespace, name, function object).
+///
+/// Keys are normalized uppercase. Aliases are not included in this list.
+pub fn snapshot_registered() -> Vec<(String, String, Arc<dyn Function>)> {
+    REG.iter()
+        .map(|entry| {
+            let ((ns, name), func) = entry.pair();
+            (ns.clone(), name.clone(), Arc::clone(func))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

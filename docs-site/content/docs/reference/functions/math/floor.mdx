@@ -1,0 +1,58 @@
+---
+title: "FLOOR"
+description: "FLOOR: Rounds a number down to the nearest multiple of a significance."
+---
+
+<FunctionPageSchema id="math/floor" />
+
+## Summary
+
+This implementation defaults significance to `1` and normalizes negative significance to positive.
+
+## Remarks
+ - If `significance` is omitted, `1` is used.
+ - `significance = 0` returns `#DIV/0!`.
+ - Negative significance is treated as its absolute value in this fallback behavior.
+
+## Examples
+
+<Tabs items={["Round down to the nearest multiple", "Round a negative number to a lower multiple"]}>
+<Tab value="Round down to the nearest multiple">
+<FunctionSandbox
+  title="Round down to the nearest multiple"
+  formula={`=FLOOR(5.9,2)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Round a negative number to a lower multiple">
+<FunctionSandbox
+  title="Round a negative number to a lower multiple"
+  formula={`=FLOOR(-5.9,2)`}
+  grid={{}}
+  expected={"-6"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [ROUNDDOWN](/docs/reference/functions/math/rounddown)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+- [GCD](/docs/reference/functions/math/gcd)
+
+## FAQ
+
+### Why does FLOOR move negative values farther from zero?
+FLOOR rounds down to a lower multiple, which is more negative for negative inputs.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/floor" />
+{/* [formualizer-docgen:function-meta:end] */}

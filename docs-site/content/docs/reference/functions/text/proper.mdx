@@ -1,0 +1,59 @@
+---
+title: "PROPER"
+description: "PROPER: Capitalizes the first letter of each alphanumeric word."
+---
+
+<FunctionPageSchema id="text/proper" />
+
+## Summary
+
+Capitalizes the first letter of each alphanumeric word.
+
+## Remarks
+ - Word boundaries are reset by non-alphanumeric characters.
+ - Internal letters in each word are lowercased.
+ - Non-text inputs are coerced to text.
+ - Errors are propagated unchanged.
+
+## Examples
+
+<Tabs items={["Title case simple phrase", "Hyphen-separated words"]}>
+<Tab value="Title case simple phrase">
+<FunctionSandbox
+  title="Title case simple phrase"
+  formula={`=PROPER("hello world")`}
+  grid={{}}
+  expected={"Hello World"}
+/>
+</Tab>
+
+<Tab value="Hyphen-separated words">
+<FunctionSandbox
+  title="Hyphen-separated words"
+  formula={`=PROPER("north-east REGION")`}
+  grid={{}}
+  expected={"North-East Region"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [UPPER](/docs/reference/functions/text/upper)
+- [LOWER](/docs/reference/functions/text/lower)
+- [TRIM](/docs/reference/functions/text/trim)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [CODE](/docs/reference/functions/text/code)
+
+## FAQ
+
+### How are word boundaries determined?
+Any non-alphanumeric character starts a new word boundary for capitalization.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/proper" />
+{/* [formualizer-docgen:function-meta:end] */}

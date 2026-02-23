@@ -1,0 +1,59 @@
+---
+title: "IF"
+description: "IF: Returns one value when a condition is TRUE and another when FALSE."
+---
+
+<FunctionPageSchema id="logical/if" />
+
+## Summary
+
+`IF(condition, value_if_true, [value_if_false])` supports two or three arguments.
+
+## Remarks
+ - Condition coercion: booleans are used directly, numbers use `0` as FALSE and non-zero as TRUE.
+ - A blank condition is treated as FALSE.
+ - Text or other non-numeric/non-boolean conditions return `#VALUE!`.
+ - With only two arguments, the FALSE branch defaults to logical `FALSE`.
+
+## Examples
+
+<Tabs items={["Numeric condition", "Two-argument IF defaults false branch"]}>
+<Tab value="Numeric condition">
+<FunctionSandbox
+  title="Numeric condition"
+  formula={`=IF(2, "yes", "no")`}
+  grid={{}}
+  expected={"yes"}
+/>
+</Tab>
+
+<Tab value="Two-argument IF defaults false branch">
+<FunctionSandbox
+  title="Two-argument IF defaults false branch"
+  formula={`=IF(0, 10)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IFS](/docs/reference/functions/logical-ext/ifs)
+- [IFERROR](/docs/reference/functions/logical-ext/iferror)
+- [IFNA](/docs/reference/functions/logical-ext/ifna)
+- [AND](/docs/reference/functions/logical/and)
+- [OR](/docs/reference/functions/logical/or)
+- [FALSE](/docs/reference/functions/logical/false)
+
+## FAQ
+
+### What is returned when IF has only two arguments and condition is FALSE?
+The false branch defaults to logical FALSE when value_if_false is omitted.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="logical/if" />
+{/* [formualizer-docgen:function-meta:end] */}

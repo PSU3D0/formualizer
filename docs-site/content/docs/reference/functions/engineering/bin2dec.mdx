@@ -1,0 +1,58 @@
+---
+title: "BIN2DEC"
+description: "BIN2DEC: Converts a binary text value to decimal."
+---
+
+<FunctionPageSchema id="engineering/bin2dec" />
+
+## Summary
+
+Supports up to 10 binary digits, including two's-complement negative values.
+
+## Remarks
+ - Input is coerced to text and must contain only `0` and `1`.
+ - 10-digit values starting with `1` are interpreted as signed two's-complement numbers.
+ - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
+
+## Examples
+
+<Tabs items={["Convert an unsigned binary value", "Interpret signed 10-bit binary"]}>
+<Tab value="Convert an unsigned binary value">
+<FunctionSandbox
+  title="Convert an unsigned binary value"
+  formula={`=BIN2DEC("101010")`}
+  grid={{}}
+  expected={"42"}
+/>
+</Tab>
+
+<Tab value="Interpret signed 10-bit binary">
+<FunctionSandbox
+  title="Interpret signed 10-bit binary"
+  formula={`=BIN2DEC("1111111111")`}
+  grid={{}}
+  expected={"-1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
+
+## FAQ
+
+### How does `BIN2DEC` handle 10-bit values starting with `1`?
+They are interpreted as signed two's-complement values, so `1111111111` becomes `-1`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/bin2dec" />
+{/* [formualizer-docgen:function-meta:end] */}

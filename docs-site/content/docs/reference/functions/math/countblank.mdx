@@ -1,0 +1,70 @@
+---
+title: "COUNTBLANK"
+description: "COUNTBLANK: Counts blank cells, including empty-string text results."
+---
+
+<FunctionPageSchema id="math/countblank" />
+
+## Summary
+
+`COUNTBLANK` treats both true empty cells and `""` text values as blank.
+
+## Remarks
+ - Empty-string text values are counted.
+ - Numbers, booleans, and non-empty text are not counted.
+ - Supports scalar arguments and ranges.
+
+## Examples
+
+<Tabs items={["Count blanks in a range", "Scalar empty-string counts as blank", "Non-empty values are excluded"]}>
+<Tab value="Count blanks in a range">
+<FunctionSandbox
+  title="Count blanks in a range"
+  formula={`=COUNTBLANK(A1:A3)`}
+  grid={{"A1":"10","A2":""}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Scalar empty-string counts as blank">
+<FunctionSandbox
+  title="Scalar empty-string counts as blank"
+  formula={`=COUNTBLANK("", 5)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Non-empty values are excluded">
+<FunctionSandbox
+  title="Non-empty values are excluded"
+  formula={`=COUNTBLANK(1, "x", TRUE)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [COUNTA](/docs/reference/functions/math/counta)
+- [COUNT](/docs/reference/functions/math/count)
+- [COUNTIF](/docs/reference/functions/math/countif)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [AVERAGEIF](/docs/reference/functions/math/averageif)
+- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
+
+## FAQ
+
+### Does COUNTBLANK include cells that contain ""?
+Yes. Empty-string text values are treated as blank for COUNTBLANK.
+
+### Are numeric zeros considered blank?
+No. Zero is a numeric value, so it is not counted as blank.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/countblank" />
+{/* [formualizer-docgen:function-meta:end] */}

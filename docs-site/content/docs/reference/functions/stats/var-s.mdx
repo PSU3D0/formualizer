@@ -1,0 +1,58 @@
+---
+title: "VAR.S"
+description: "VAR.S: Estimates sample variance using `n-1` in the denominator."
+---
+
+<FunctionPageSchema id="stats/var-s" />
+
+## Summary
+
+`VAR.S` is the squared counterpart of `STDEV.S` for sample-based variability.
+
+## Remarks
+ - Requires at least two numeric values.
+ - Returns `#DIV/0!` when fewer than two numeric values are provided.
+ - Non-numeric values in referenced ranges are ignored.
+
+## Examples
+
+<Tabs items={["Sample variance from scalar arguments", "Sample variance from a range"]}>
+<Tab value="Sample variance from scalar arguments">
+<FunctionSandbox
+  title="Sample variance from scalar arguments"
+  formula={`=VAR.S(2,4,6)`}
+  grid={{}}
+  expected={"4"}
+/>
+</Tab>
+
+<Tab value="Sample variance from a range">
+<FunctionSandbox
+  title="Sample variance from a range"
+  formula={`=VAR.S(A1:A3)`}
+  grid={{"A1":"1","A2":"2","A3":"3"}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [VAR.P](/docs/reference/functions/stats/var-p)
+- [STDEV.S](/docs/reference/functions/stats/stdev-s)
+- [STDEV.P](/docs/reference/functions/stats/stdev-p)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### Why does VAR.S return #DIV/0!?
+Sample variance requires at least two numeric observations.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/var-s" />
+{/* [formualizer-docgen:function-meta:end] */}

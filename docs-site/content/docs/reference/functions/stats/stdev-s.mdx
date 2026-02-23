@@ -1,0 +1,58 @@
+---
+title: "STDEV.S"
+description: "STDEV.S: Estimates sample standard deviation using `n-1` in the denominator."
+---
+
+<FunctionPageSchema id="stats/stdev-s" />
+
+## Summary
+
+`STDEV.S` measures spread when your values represent a sample of a larger population.
+
+## Remarks
+ - Requires at least two numeric values.
+ - Returns `#DIV/0!` when fewer than two numeric values are provided.
+ - Non-numeric values in referenced ranges are ignored.
+
+## Examples
+
+<Tabs items={["Sample standard deviation from scalar arguments", "Sample standard deviation from a range"]}>
+<Tab value="Sample standard deviation from scalar arguments">
+<FunctionSandbox
+  title="Sample standard deviation from scalar arguments"
+  formula={`=STDEV.S(2,4,6)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Sample standard deviation from a range">
+<FunctionSandbox
+  title="Sample standard deviation from a range"
+  formula={`=STDEV.S(A1:A3)`}
+  grid={{"A1":"5","A2":"7","A3":"9"}}
+  expected={"2"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [STDEV.P](/docs/reference/functions/stats/stdev-p)
+- [VAR.S](/docs/reference/functions/stats/var-s)
+- [VAR.P](/docs/reference/functions/stats/var-p)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### Why does STDEV.S return #DIV/0!?
+Sample standard deviation needs at least two numeric values.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/stdev-s" />
+{/* [formualizer-docgen:function-meta:end] */}

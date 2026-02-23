@@ -1,0 +1,58 @@
+---
+title: "SQRTPI"
+description: "SQRTPI: Returns the square root of a number multiplied by pi."
+---
+
+<FunctionPageSchema id="math/sqrtpi" />
+
+## Summary
+
+Returns the square root of a number multiplied by pi.
+
+## Remarks
+ - Computes `SQRT(number * PI())`.
+ - `number` must be greater than or equal to `0`; otherwise returns `#NUM!`.
+ - Input errors are propagated.
+
+## Examples
+
+<Tabs items={["Square root of pi", "Scale before taking square root"]}>
+<Tab value="Square root of pi">
+<FunctionSandbox
+  title="Square root of pi"
+  formula={`=SQRTPI(1)`}
+  grid={{}}
+  expected={"1.772453850905516"}
+/>
+</Tab>
+
+<Tab value="Scale before taking square root">
+<FunctionSandbox
+  title="Scale before taking square root"
+  formula={`=SQRTPI(4)`}
+  grid={{}}
+  expected={"3.544907701811032"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SQRT](/docs/reference/functions/math/sqrt)
+- [PI](/docs/reference/functions/math/pi)
+- [POWER](/docs/reference/functions/math/power)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+
+## FAQ
+
+### When does SQRTPI return #NUM!?
+It returns #NUM! when the input is negative, because number*PI must be non-negative.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sqrtpi" />
+{/* [formualizer-docgen:function-meta:end] */}

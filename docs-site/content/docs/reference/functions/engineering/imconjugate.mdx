@@ -1,0 +1,58 @@
+---
+title: "IMCONJUGATE"
+description: "IMCONJUGATE: Returns the complex conjugate of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imconjugate" />
+
+## Summary
+
+Negates the imaginary coefficient and keeps the real coefficient unchanged.
+
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Preserves the original suffix style (`i` or `j`) when possible.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Conjugate with i suffix", "Conjugate with j suffix"]}>
+<Tab value="Conjugate with i suffix">
+<FunctionSandbox
+  title="Conjugate with i suffix"
+  formula={`=IMCONJUGATE("3+4i")`}
+  grid={{}}
+  expected={"3-4i"}
+/>
+</Tab>
+
+<Tab value="Conjugate with j suffix">
+<FunctionSandbox
+  title="Conjugate with j suffix"
+  formula={`=IMCONJUGATE("-2j")`}
+  grid={{}}
+  expected={"2j"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMSUB](/docs/reference/functions/engineering/imsub)
+- [IMPRODUCT](/docs/reference/functions/engineering/improduct)
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### Does `IMCONJUGATE` keep the `i`/`j` suffix style?
+Yes. It negates only the imaginary coefficient and preserves the parsed suffix form.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imconjugate" />
+{/* [formualizer-docgen:function-meta:end] */}

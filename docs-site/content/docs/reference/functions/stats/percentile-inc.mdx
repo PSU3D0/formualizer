@@ -1,0 +1,59 @@
+---
+title: "PERCENTILE.INC"
+description: "PERCENTILE.INC: Returns the k-th percentile of a data set using inclusive interpolation."
+---
+
+<FunctionPageSchema id="stats/percentile-inc" />
+
+## Summary
+
+`PERCENTILE.INC` accepts percentile values from `0` through `1` and interpolates between
+ sorted values as needed.
+
+## Remarks
+ - `k` must be in the inclusive range `[0, 1]`.
+ - Returns `#NUM!` for empty numeric input or invalid percentile arguments.
+ - Alias `PERCENTILE` is supported.
+
+## Examples
+
+<Tabs items={["Inclusive 25th percentile from direct values", "Inclusive median-style interpolation from a range"]}>
+<Tab value="Inclusive 25th percentile from direct values">
+<FunctionSandbox
+  title="Inclusive 25th percentile from direct values"
+  formula={`=PERCENTILE.INC({1,2,3,4,5},0.25)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Inclusive median-style interpolation from a range">
+<FunctionSandbox
+  title="Inclusive median-style interpolation from a range"
+  formula={`=PERCENTILE.INC(A1:A4,0.5)`}
+  grid={{"A1":"10","A2":"20","A3":"30","A4":"40"}}
+  expected={"25"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [PERCENTILE.EXC](/docs/reference/functions/stats/percentile-exc)
+- [QUARTILE.INC](/docs/reference/functions/stats/quartile-inc)
+- [PERCENTRANK.INC](/docs/reference/functions/stats/percentrank-inc)
+- [LARGE](/docs/reference/functions/stats/large)
+- [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
+- [QUARTILE.EXC](/docs/reference/functions/stats/quartile-exc)
+
+## FAQ
+
+### What k range is valid for PERCENTILE.INC?
+k must be between 0 and 1 inclusive; outside that range returns #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/percentile-inc" />
+{/* [formualizer-docgen:function-meta:end] */}

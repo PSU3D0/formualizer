@@ -1,0 +1,58 @@
+---
+title: "QUOTIENT"
+description: "QUOTIENT: Returns the integer portion of a division result, truncated toward zero."
+---
+
+<FunctionPageSchema id="math/quotient" />
+
+## Summary
+
+Returns the integer portion of a division result, truncated toward zero.
+
+## Remarks
+ - Fractional remainder is discarded without rounding.
+ - Dividing by `0` returns `#DIV/0!`.
+ - Input errors are propagated.
+
+## Examples
+
+<Tabs items={["Positive quotient", "Negative quotient truncates toward zero"]}>
+<Tab value="Positive quotient">
+<FunctionSandbox
+  title="Positive quotient"
+  formula={`=QUOTIENT(10,3)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Negative quotient truncates toward zero">
+<FunctionSandbox
+  title="Negative quotient truncates toward zero"
+  formula={`=QUOTIENT(-10,3)`}
+  grid={{}}
+  expected={"-3"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [MOD](/docs/reference/functions/math/mod)
+- [INT](/docs/reference/functions/math/int)
+- [TRUNC](/docs/reference/functions/math/trunc)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [MROUND](/docs/reference/functions/math/mround)
+
+## FAQ
+
+### How is QUOTIENT different from regular division?
+It truncates the fractional part toward zero instead of returning a decimal result.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/quotient" />
+{/* [formualizer-docgen:function-meta:end] */}

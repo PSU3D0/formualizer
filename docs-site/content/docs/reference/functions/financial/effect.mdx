@@ -1,0 +1,61 @@
+---
+title: "EFFECT"
+description: "Converts a nominal annual rate into an effective annual rate."
+---
+
+<FunctionPageSchema id="financial/effect" />
+
+## Summary
+
+This is useful when nominal APR is quoted with periodic compounding and you need annualized
+ yield including compounding effects.
+
+## Remarks
+ - `nominal_rate` is annual; `npery` is compounding periods per year.
+ - `npery` is truncated to an integer before computation.
+ - Sign convention is not cash-flow based; this function transforms rate conventions only.
+ - Returns `#NUM!` when `nominal_rate &lt;= 0` or `npery &lt; 1`.
+ - Result formula: `(1 + nominal_rate / npery)^npery - 1`.
+
+## Examples
+
+<Tabs items={["Example", "Example"]}>
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=EFFECT(0.12, 12)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+<Tab value="Example">
+<FunctionSandbox
+  title="Example"
+  formula={`=EFFECT(0.08, 4)`}
+  grid={{}}
+  expected={"null"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [NOMINAL](/docs/reference/functions/financial/nominal)
+- [RATE](/docs/reference/functions/financial/rate)
+- [DOLLARDE](/docs/reference/functions/financial/dollarde)
+- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
+- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
+
+## FAQ
+
+### Does `EFFECT` accept fractional compounding periods?
+`npery` is truncated to an integer first; values less than 1 (or non-positive `nominal_rate`) return `#NUM!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/effect" />
+{/* [formualizer-docgen:function-meta:end] */}

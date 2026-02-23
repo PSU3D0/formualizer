@@ -1,0 +1,58 @@
+---
+title: "CEILING"
+description: "CEILING: Rounds a number up to the nearest multiple of a significance."
+---
+
+<FunctionPageSchema id="math/ceiling" />
+
+## Summary
+
+This implementation defaults significance to `1` and normalizes negative significance to positive.
+
+## Remarks
+ - If `significance` is omitted, `1` is used.
+ - `significance = 0` returns `#DIV/0!`.
+ - Negative significance is treated as its absolute value in this fallback behavior.
+
+## Examples
+
+<Tabs items={["Round up to the nearest multiple", "Round a negative number toward positive infinity"]}>
+<Tab value="Round up to the nearest multiple">
+<FunctionSandbox
+  title="Round up to the nearest multiple"
+  formula={`=CEILING(5.1,2)`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+<Tab value="Round a negative number toward positive infinity">
+<FunctionSandbox
+  title="Round a negative number toward positive infinity"
+  formula={`=CEILING(-5.1,2)`}
+  grid={{}}
+  expected={"-4"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+- [FLOOR](/docs/reference/functions/math/floor)
+- [ROUNDUP](/docs/reference/functions/math/roundup)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
+- [GCD](/docs/reference/functions/math/gcd)
+
+## FAQ
+
+### What happens if CEILING significance is 0?
+It returns #DIV/0! because a zero multiple is invalid.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/ceiling" />
+{/* [formualizer-docgen:function-meta:end] */}

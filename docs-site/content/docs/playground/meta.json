@@ -1,0 +1,9 @@
+{
+  "title": "Playground",
+  "pages": [
+    "index",
+    "formula-sandbox",
+    "parser-ast-inspector",
+    "mini-grid-sandbox"
+  ]
+}

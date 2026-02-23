@@ -18,6 +18,50 @@ use formualizer_parse::parser::ReferenceType;
 #[derive(Debug)]
 pub struct RowFn;
 
+/// Returns the row number of a reference, or of the current cell when omitted.
+///
+/// `ROW` returns a 1-based row index.
+///
+/// # Remarks
+/// - With a range argument, `ROW` returns the first row in that reference.
+/// - Without arguments, it uses the row of the formula cell.
+/// - Full-column references such as `A:A` return `1`.
+/// - Invalid references return an error (`#REF!`/`#VALUE!` depending on context).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Row of a single-cell reference"
+/// formula: '=ROW(B5)'
+/// expected: 5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Row of a multi-cell range"
+/// formula: '=ROW(C3:E9)'
+/// expected: 3
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ROWS
+///   - COLUMN
+///   - ADDRESS
+/// faq:
+///   - q: "What does ROW return for a multi-cell reference?"
+///     a: "ROW returns the first row index of the reference, not an array of every row number."
+///   - q: "What if ROW() is called without arguments?"
+///     a: "It uses the formula cell position; if no current cell context exists, it returns #VALUE!."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ROW
+/// Type: RowFn
+/// Min args: 0
+/// Max args: 1
+/// Variadic: false
+/// Signature: ROW(arg1?: range@range)
+/// Arg schema: arg1{kinds=range,required=false,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RowFn {
     fn name(&self) -> &'static str {
         "ROW"
@@ -110,6 +154,50 @@ impl Function for RowFn {
 #[derive(Debug)]
 pub struct RowsFn;
 
+/// Returns the number of rows in a reference or array.
+///
+/// `ROWS` reports height, not data density.
+///
+/// # Remarks
+/// - For a single cell reference, returns `1`.
+/// - For full-column references (for example `A:A`), returns `1048576`.
+/// - For array literals, returns the outer array length.
+/// - Invalid references return an error.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Count rows in a contiguous range"
+/// formula: '=ROWS(B2:D10)'
+/// expected: 9
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Count rows in a full column reference"
+/// formula: '=ROWS(A:A)'
+/// expected: 1048576
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ROW
+///   - COLUMNS
+///   - INDEX
+/// faq:
+///   - q: "Does ROWS count populated rows or reference height?"
+///     a: "ROWS returns reference height only; blanks inside the range do not reduce the count."
+///   - q: "How does ROWS behave for full-column references?"
+///     a: "A full-column reference (like A:A) returns the sheet row limit, 1048576."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ROWS
+/// Type: RowsFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ROWS(arg1: any@range)
+/// Arg schema: arg1{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RowsFn {
     fn name(&self) -> &'static str {
         "ROWS"
@@ -212,6 +300,50 @@ impl Function for RowsFn {
 #[derive(Debug)]
 pub struct ColumnFn;
 
+/// Returns the column number of a reference, or of the current cell when omitted.
+///
+/// `COLUMN` returns a 1-based column index (`A` = 1).
+///
+/// # Remarks
+/// - With a range argument, `COLUMN` returns the first column in that reference.
+/// - Without arguments, it uses the column of the formula cell.
+/// - Full-row references such as `5:5` return `1`.
+/// - Invalid references return an error (`#REF!`/`#VALUE!` depending on context).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Column of a single-cell reference"
+/// formula: '=COLUMN(C5)'
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Column of a range"
+/// formula: '=COLUMN(B2:D4)'
+/// expected: 2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COLUMNS
+///   - ROW
+///   - ADDRESS
+/// faq:
+///   - q: "What does COLUMN return for a range like B2:D4?"
+///     a: "COLUMN returns the first column index of the reference (2 for column B)."
+///   - q: "What if COLUMN() is used without a reference?"
+///     a: "It returns the formula cell's column number, or #VALUE! if current-cell context is unavailable."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: COLUMN
+/// Type: ColumnFn
+/// Min args: 0
+/// Max args: 1
+/// Variadic: false
+/// Signature: COLUMN(arg1?: range@range)
+/// Arg schema: arg1{kinds=range,required=false,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ColumnFn {
     fn name(&self) -> &'static str {
         "COLUMN"
@@ -304,6 +436,50 @@ impl Function for ColumnFn {
 #[derive(Debug)]
 pub struct ColumnsFn;
 
+/// Returns the number of columns in a reference or array.
+///
+/// `COLUMNS` reports width, not data density.
+///
+/// # Remarks
+/// - For a single cell reference, returns `1`.
+/// - For full-row references (for example `1:1`), returns `16384`.
+/// - For array literals, returns the first row width.
+/// - Invalid references return an error.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Count columns in a rectangular range"
+/// formula: '=COLUMNS(B2:D10)'
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Count columns in a full row reference"
+/// formula: '=COLUMNS(1:1)'
+/// expected: 16384
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COLUMN
+///   - ROWS
+///   - CHOOSECOLS
+/// faq:
+///   - q: "Does COLUMNS count non-empty cells?"
+///     a: "No. COLUMNS returns the width of the referenced array/range, including blank cells."
+///   - q: "What does COLUMNS return for a full-row reference like 1:1?"
+///     a: "It returns the sheet column limit, 16384."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: COLUMNS
+/// Type: ColumnsFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: COLUMNS(arg1: any@range)
+/// Arg schema: arg1{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ColumnsFn {
     fn name(&self) -> &'static str {
         "COLUMNS"

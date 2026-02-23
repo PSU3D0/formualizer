@@ -1,0 +1,54 @@
+---
+title: "GAUSS"
+description: "GAUSS: Returns the standard normal area between `0` and `z`."
+---
+
+<FunctionPageSchema id="stats/gauss" />
+
+## Summary
+
+`GAUSS` computes `NORM.S.DIST(z, TRUE) - 0.5`, preserving the sign of `z`.
+
+## Remarks
+ - Positive `z` returns a positive area; negative `z` returns a negative area.
+ - `GAUSS(0)` returns `0`.
+ - Output magnitude is always less than `0.5`.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Area from mean to z = 1", "Symmetric negative z-value"]}>
+<Tab value="Area from mean to z = 1">
+<FunctionSandbox
+  title="Area from mean to z = 1"
+  formula={`=GAUSS(1)`}
+  grid={{}}
+  expected={"0.3413447460685429"}
+/>
+</Tab>
+
+<Tab value="Symmetric negative z-value">
+<FunctionSandbox
+  title="Symmetric negative z-value"
+  formula={`=GAUSS(-1)`}
+  grid={{}}
+  expected={"-0.3413447460685429"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [FISHER](/docs/reference/functions/stats/fisher)
+- [FISHERINV](/docs/reference/functions/stats/fisherinv)
+- [NORM.S.INV](/docs/reference/functions/stats/norm-s-inv)
+- [PHI](/docs/reference/functions/stats/phi)
+- [CORREL](/docs/reference/functions/stats/correl)
+- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/gauss" />
+{/* [formualizer-docgen:function-meta:end] */}

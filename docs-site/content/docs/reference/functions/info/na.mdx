@@ -1,0 +1,58 @@
+---
+title: "NA"
+description: "NA: Returns the `#N/A` error value."
+---
+
+<FunctionPageSchema id="info/na" />
+
+## Summary
+
+Returns the `#N/A` error value.
+
+## Remarks
+ - `NA()` is commonly used to mark missing lookup results.
+ - The function takes no arguments.
+ - The returned value is an error and propagates through dependent formulas.
+
+## Examples
+
+<Tabs items={["Direct N/A", "Detect N/A"]}>
+<Tab value="Direct N/A">
+<FunctionSandbox
+  title="Direct N/A"
+  formula={`=NA()`}
+  grid={{}}
+  expected={"#N/A"}
+/>
+</Tab>
+
+<Tab value="Detect N/A">
+<FunctionSandbox
+  title="Detect N/A"
+  formula={`=ISNA(NA())`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ISNA](/docs/reference/functions/info/isna)
+- [IFNA](/docs/reference/functions/logical-ext/ifna)
+- [IFERROR](/docs/reference/functions/logical-ext/iferror)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### When should I use NA() intentionally?
+Use it to mark missing data so lookups and downstream checks can distinguish absent values from blanks.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/na" />
+{/* [formualizer-docgen:function-meta:end] */}

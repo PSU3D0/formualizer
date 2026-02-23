@@ -1,0 +1,59 @@
+---
+title: "UNICODE"
+description: "Returns the Unicode code point of the first character in text."
+---
+
+<FunctionPageSchema id="text/unicode" />
+
+## Summary
+
+Returns the Unicode code point of the first character in text.
+
+## Remarks
+ - Only the first character is evaluated.
+ - Empty text returns `#VALUE!`.
+ - Non-text inputs are coerced to text before inspection.
+ - Errors are propagated unchanged.
+
+## Examples
+
+<Tabs items={["Code point for letter A", "Code point for emoji"]}>
+<Tab value="Code point for letter A">
+<FunctionSandbox
+  title="Code point for letter A"
+  formula={`=UNICODE("A")`}
+  grid={{}}
+  expected={"65"}
+/>
+</Tab>
+
+<Tab value="Code point for emoji">
+<FunctionSandbox
+  title="Code point for emoji"
+  formula={`=UNICODE("😀")`}
+  grid={{}}
+  expected={"128512"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [UNICHAR](/docs/reference/functions/text/unichar)
+- [CODE](/docs/reference/functions/text/code)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [LEN](/docs/reference/functions/text/len)
+- [LOWER](/docs/reference/functions/text/lower)
+
+## FAQ
+
+### If text has multiple characters, which one is used?
+UNICODE inspects only the first character and ignores the rest.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/unicode" />
+{/* [formualizer-docgen:function-meta:end] */}

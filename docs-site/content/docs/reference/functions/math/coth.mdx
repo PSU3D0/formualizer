@@ -1,0 +1,58 @@
+---
+title: "COTH"
+description: "COTH: Returns the hyperbolic cotangent of a number, defined as `COSH(x) / SINH(x)`."
+---
+
+<FunctionPageSchema id="math/coth" />
+
+## Summary
+
+`COTH` is the reciprocal of `TANH` where defined.
+
+## Remarks
+ - Domain: valid for all real numbers except `0`.
+ - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+ - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
+
+## Examples
+
+<Tabs items={["Hyperbolic cotangent at one", "Division by zero at origin"]}>
+<Tab value="Hyperbolic cotangent at one">
+<FunctionSandbox
+  title="Hyperbolic cotangent at one"
+  formula={`=COTH(1)`}
+  grid={{}}
+  expected={"1.3130352854993312"}
+/>
+</Tab>
+
+<Tab value="Division by zero at origin">
+<FunctionSandbox
+  title="Division by zero at origin"
+  formula={`=COTH(0)`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TANH](/docs/reference/functions/math/tanh)
+- [CSCH](/docs/reference/functions/math/csch)
+- [SECH](/docs/reference/functions/math/sech)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASIN](/docs/reference/functions/math/asin)
+
+## FAQ
+
+### Why is COTH undefined at zero?
+COTH divides by SINH(x), and SINH(0) is zero, so #DIV/0! is returned.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/coth" />
+{/* [formualizer-docgen:function-meta:end] */}

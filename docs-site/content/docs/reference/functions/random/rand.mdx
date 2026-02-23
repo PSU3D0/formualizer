@@ -1,0 +1,64 @@
+---
+title: "RAND"
+description: "Returns a uniformly distributed pseudo-random number in the interval `[0, 1)`."
+---
+
+<FunctionPageSchema id="random/rand" />
+
+## Summary
+
+`RAND` is volatile and recalculates whenever dependent formulas recalculate.
+
+## Remarks
+ - The result is always greater than or equal to `0` and strictly less than `1`.
+ - Because the function is volatile, repeated evaluations can return different values.
+ - The engine seeds randomness per evaluation context for reproducible execution flows.
+
+## Examples
+
+<Tabs items={["RAND stays within bounds", "Derived integer bucket from RAND"]}>
+<Tab value="RAND stays within bounds">
+<FunctionSandbox
+  title="RAND stays within bounds"
+  formula={`=LET(n, RAND(), AND(n>=0, n<1))`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Derived integer bucket from RAND">
+<FunctionSandbox
+  title="Derived integer bucket from RAND"
+  formula={`=LET(n, INT(RAND()*10), AND(n>=0, n<=9))`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [RANDBETWEEN](/docs/reference/functions/random/randbetween)
+- [LET](/docs/reference/functions/lambda/let)
+- [INT](/docs/reference/functions/math/int)
+- [NOW](/docs/reference/functions/datetime/now)
+- [TODAY](/docs/reference/functions/datetime/today)
+- [FALSE](/docs/reference/functions/logical/false)
+
+## FAQ
+
+### Can RAND return the same value on every recalculation?
+Not by default. RAND is volatile, so recalculation can produce a different sample each time.
+
+### If RAND is used twice in one formula, do both uses share one sample?
+Only if you bind it once (for example with LET). Two separate RAND calls are two separate draws.
+
+### Why does RAND look deterministic in some engine runs?
+Randomness is seeded per evaluation context, which keeps a run reproducible while still treating RAND as volatile across recalculations.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="random/rand" />
+{/* [formualizer-docgen:function-meta:end] */}

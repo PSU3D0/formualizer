@@ -1,0 +1,55 @@
+---
+title: "BINOM.DIST"
+description: "BINOM.DIST: Returns the binomial probability for a count of successes across independent trials."
+---
+
+<FunctionPageSchema id="stats/binom-dist" />
+
+## Summary
+
+Use `BINOM.DIST` to evaluate either exact-success probability (PMF) or cumulative probability
+ up to a success count (CDF).
+
+## Remarks
+ - `number_s` and `trials` are truncated to integers.
+ - Requires `0 &lt;= number_s &lt;= trials`, `trials &gt;= 0`, and `0 &lt;= probability_s &lt;= 1`.
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PMF mode.
+ - Returns `#NUM!` for invalid count or probability ranges.
+
+## Examples
+
+<Tabs items={["Binomial PMF for exactly 3 successes", "Binomial CDF for at most 3 successes"]}>
+<Tab value="Binomial PMF for exactly 3 successes">
+<FunctionSandbox
+  title="Binomial PMF for exactly 3 successes"
+  formula={`=BINOM.DIST(3,10,0.5,FALSE)`}
+  grid={{}}
+  expected={"0.1171875"}
+/>
+</Tab>
+
+<Tab value="Binomial CDF for at most 3 successes">
+<FunctionSandbox
+  title="Binomial CDF for at most 3 successes"
+  formula={`=BINOM.DIST(3,10,0.5,TRUE)`}
+  grid={{}}
+  expected={"0.171875"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [F.DIST](/docs/reference/functions/stats/f-dist)
+- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
+- [LOGNORM.DIST](/docs/reference/functions/stats/lognorm-dist)
+- [NEGBINOM.DIST](/docs/reference/functions/stats/negbinom-dist)
+- [NORM.DIST](/docs/reference/functions/stats/norm-dist)
+- [T.TEST](/docs/reference/functions/stats/t-test)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/binom-dist" />
+{/* [formualizer-docgen:function-meta:end] */}

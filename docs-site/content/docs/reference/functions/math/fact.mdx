@@ -1,0 +1,70 @@
+---
+title: "FACT"
+description: "Returns the factorial of a non-negative integer."
+---
+
+<FunctionPageSchema id="math/fact" />
+
+## Summary
+
+`FACT` truncates fractional inputs toward zero before computing the factorial.
+
+## Remarks
+ - Non-numeric values that cannot be coerced return `#VALUE!`.
+ - Negative inputs return `#NUM!`.
+ - Results above `170!` overflow Excel-compatible limits and return `#NUM!`.
+
+## Examples
+
+<Tabs items={["Basic factorial", "Fractional input is truncated", "Negative input returns numeric error"]}>
+<Tab value="Basic factorial">
+<FunctionSandbox
+  title="Basic factorial"
+  formula={`=FACT(5)`}
+  grid={{}}
+  expected={"120"}
+/>
+</Tab>
+
+<Tab value="Fractional input is truncated">
+<FunctionSandbox
+  title="Fractional input is truncated"
+  formula={`=FACT(5.9)`}
+  grid={{}}
+  expected={"120"}
+/>
+</Tab>
+
+<Tab value="Negative input returns numeric error">
+<FunctionSandbox
+  title="Negative input returns numeric error"
+  formula={`=FACT(-1)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [COMBIN](/docs/reference/functions/math/combin)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASIN](/docs/reference/functions/math/asin)
+- [ASINH](/docs/reference/functions/math/asinh)
+
+## FAQ
+
+### Why does FACT(171) return #NUM!?
+Excel-compatible factorial support is capped at 170!; larger values overflow and return #NUM!.
+
+### Does FACT round fractional inputs?
+No. It truncates toward zero before computing the factorial.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/fact" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,58 @@
+---
+title: "CSCH"
+description: "CSCH: Returns the hyperbolic cosecant of a number, defined as `1 / SINH(x)`."
+---
+
+<FunctionPageSchema id="math/csch" />
+
+## Summary
+
+`CSCH` is the reciprocal of `SINH` where defined.
+
+## Remarks
+ - Domain: valid for all real numbers except `0`.
+ - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+ - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
+
+## Examples
+
+<Tabs items={["Hyperbolic cosecant at one", "Division by zero at origin"]}>
+<Tab value="Hyperbolic cosecant at one">
+<FunctionSandbox
+  title="Hyperbolic cosecant at one"
+  formula={`=CSCH(1)`}
+  grid={{}}
+  expected={"0.8509181282393216"}
+/>
+</Tab>
+
+<Tab value="Division by zero at origin">
+<FunctionSandbox
+  title="Division by zero at origin"
+  formula={`=CSCH(0)`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SINH](/docs/reference/functions/math/sinh)
+- [COTH](/docs/reference/functions/math/coth)
+- [SECH](/docs/reference/functions/math/sech)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ASIN](/docs/reference/functions/math/asin)
+
+## FAQ
+
+### When does CSCH return #DIV/0!?
+CSCH returns #DIV/0! when SINH(x) is zero, which occurs at x = 0.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/csch" />
+{/* [formualizer-docgen:function-meta:end] */}

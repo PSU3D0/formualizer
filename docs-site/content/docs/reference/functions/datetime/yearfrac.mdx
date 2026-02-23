@@ -1,0 +1,59 @@
+---
+title: "YEARFRAC"
+description: "YEARFRAC: Returns the fraction of a year between two dates for a selected day-count basis."
+---
+
+<FunctionPageSchema id="datetime/yearfrac" />
+
+## Summary
+
+Returns the fraction of a year between two dates for a selected day-count basis.
+
+## Remarks
+ - Supported `basis` values: `0` (US 30/360), `1` (actual/actual), `2` (actual/360), `3` (actual/365), `4` (European 30/360).
+ - If `start_date &gt; end_date`, the result is negative.
+ - Invalid `basis` values return `#NUM!`.
+ - Serial dates are interpreted with the Excel 1900 mapping rather than workbook `1900`/`1904` context.
+
+## Examples
+
+<Tabs items={["Actual/360 convention", "Actual/365 convention"]}>
+<Tab value="Actual/360 convention">
+<FunctionSandbox
+  title="Actual/360 convention"
+  formula={`=YEARFRAC(44197, 44378, 2)`}
+  grid={{}}
+  expected={"0.5027777778"}
+/>
+</Tab>
+
+<Tab value="Actual/365 convention">
+<FunctionSandbox
+  title="Actual/365 convention"
+  formula={`=YEARFRAC(44197, 44378, 3)`}
+  grid={{}}
+  expected={"0.495890411"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [DAYS](/docs/reference/functions/datetime/days)
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
+- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
+- [WORKDAY](/docs/reference/functions/datetime/workday)
+- [WEEKDAY](/docs/reference/functions/datetime/weekday)
+
+## FAQ
+
+### How does the basis argument change YEARFRAC?
+Basis selects the day-count convention (actual or 30/360 variants), so the same dates can yield different fractions.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/yearfrac" />
+{/* [formualizer-docgen:function-meta:end] */}

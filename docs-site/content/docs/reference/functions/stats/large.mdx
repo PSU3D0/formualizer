@@ -1,0 +1,59 @@
+---
+title: "LARGE"
+description: "Returns the k-th largest value in a data set."
+---
+
+<FunctionPageSchema id="stats/large" />
+
+## Summary
+
+`LARGE` is useful for top-N analysis, such as highest score, second-highest sale, or third-best
+ result.
+
+## Remarks
+ - `k` must be at least `1`.
+ - Returns `#NUM!` if `k` is greater than the count of numeric values.
+ - Non-numeric values in referenced ranges are ignored.
+
+## Examples
+
+<Tabs items={["Second-largest from direct values", "Third-largest from a range"]}>
+<Tab value="Second-largest from direct values">
+<FunctionSandbox
+  title="Second-largest from direct values"
+  formula={`=LARGE({4,9,1,7},2)`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+<Tab value="Third-largest from a range">
+<FunctionSandbox
+  title="Third-largest from a range"
+  formula={`=LARGE(A1:A4,3)`}
+  grid={{"A1":"3","A2":"12","A3":"8","A4":"5"}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SMALL](/docs/reference/functions/stats/small)
+- [MAX](/docs/reference/functions/math/max)
+- [RANK.EQ](/docs/reference/functions/stats/rank-eq)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### When does LARGE return #NUM!?
+It returns #NUM! when k &lt; 1, k exceeds numeric count, or no numeric values exist.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/large" />
+{/* [formualizer-docgen:function-meta:end] */}

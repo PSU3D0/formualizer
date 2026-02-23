@@ -1,0 +1,58 @@
+---
+title: "T"
+description: "Returns text when input is text, otherwise returns empty text."
+---
+
+<FunctionPageSchema id="info/t" />
+
+## Summary
+
+Returns text when input is text, otherwise returns empty text.
+
+## Remarks
+ - Text values pass through unchanged.
+ - Errors propagate unchanged.
+ - Numbers, booleans, and blanks return an empty string.
+
+## Examples
+
+<Tabs items={["Text passthrough", "Number becomes empty text"]}>
+<Tab value="Text passthrough">
+<FunctionSandbox
+  title="Text passthrough"
+  formula={`=T("report")`}
+  grid={{}}
+  expected={"report"}
+/>
+</Tab>
+
+<Tab value="Number becomes empty text">
+<FunctionSandbox
+  title="Number becomes empty text"
+  formula={`=T(99)`}
+  grid={{}}
+  expected={""}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [N](/docs/reference/functions/info/n)
+- [ISTEXT](/docs/reference/functions/info/istext)
+- [TYPE](/docs/reference/functions/info/type)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### Does T hide non-text values?
+Yes. Non-text inputs become an empty string, but errors are still propagated.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/t" />
+{/* [formualizer-docgen:function-meta:end] */}

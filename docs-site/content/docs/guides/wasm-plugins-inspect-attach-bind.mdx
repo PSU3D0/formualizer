@@ -1,0 +1,61 @@
+---
+title: "WASM Plugins: Inspect, Attach, Bind"
+description: Use the Rust workbook plugin seam to inspect manifests, attach modules, and bind exports to worksheet functions.
+---
+
+WASM plugin integration is currently exposed through the Rust workbook API (`formualizer-workbook`).
+
+## Feature and runtime requirements
+
+- `wasm_plugins`: enables manifest parsing, validation, inspect APIs, and module attachment.
+- `wasm_runtime_wasmtime`: enables executable runtime integration on native targets (`not(target_arch = "wasm32")`).
+- With only `wasm_plugins`, bind attempts return `#N/IMPL` because runtime invocation is intentionally pending by default.
+
+## Inspect -> Attach -> Bind flow
+
+1. **Inspect** (`inspect_wasm_module_*`) reads manifest metadata without mutating workbook state.
+2. **Attach** (`attach_wasm_module_*`) registers a module into workbook-local plugin state.
+3. **Bind** (`bind_wasm_function`) maps a worksheet function name (for formulas) to a module export.
+
+```rust
+use formualizer_common::LiteralValue;
+use formualizer_workbook::{CustomFnOptions, WasmFunctionSpec, Workbook};
+
+let mut wb = Workbook::new();
+wb.use_wasmtime_runtime();
+wb.add_sheet("Sheet1")?;
+
+let info = wb.inspect_wasm_module_file("./plugins/math_div.wasm")?;
+assert!(wb.list_wasm_modules().is_empty()); // inspect is effect-free
+
+wb.attach_wasm_module_file("./plugins/math_div.wasm")?;
+wb.bind_wasm_function(
+    "WASM_DIV",
+    CustomFnOptions { min_args: 2, max_args: Some(2), ..Default::default() },
+    WasmFunctionSpec::new(&info.module_id, "fn_safe_div", 1),
+)?;
+
+wb.set_formula("Sheet1", 1, 1, "=WASM_DIV(20,4)")?;
+assert_eq!(wb.evaluate_cell("Sheet1", 1, 1)?, LiteralValue::Number(5.0));
+```
+
+## What validation happens before bind
+
+- Module id must be non-empty and match manifest id.
+- Manifest schema/ABI/codec must match current constants (`formualizer.udf.module/v1`, ABI 1, codec 1).
+- Export name must exist in manifest function declarations.
+- Arity/options must be valid (`max_args >= min_args`).
+
+## Example commands in this repo
+
+```bash
+cargo run -p formualizer-workbook --features wasm_plugins --example wasm_plugin_inspect_catalog
+cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example wasm_plugin_inspect_attach_bind
+cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example wasm_plugin_attach_dir
+```
+
+## Related
+
+- [Custom Functions (Rust, Python, JS)](./custom-functions-rust-python-js)
+- [Workbook Edits and Batching](./workbook-edits-and-batching)
+- [Deterministic Testing](./deterministic-testing)

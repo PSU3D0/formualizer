@@ -45,6 +45,57 @@ fn materialize_arg<'b>(
     }
 }
 
+/// Concatenates arrays horizontally into a single spilled array.
+///
+/// `HSTACK` appends columns from each argument left-to-right.
+///
+/// # Remarks
+/// - All non-empty range arguments must have the same row count.
+/// - Scalar arguments are treated as 1x1 values.
+/// - Mismatched row counts return `#VALUE!`.
+/// - Empty inputs are skipped; if all inputs are empty, result is an empty spill.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Join two 2-row ranges side by side"
+/// grid:
+///   A1: 1
+///   A2: 2
+///   B1: 10
+///   B2: 20
+/// formula: '=HSTACK(A1:A2,B1:B2)'
+/// expected: [[1,10],[2,20]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Append a scalar column"
+/// grid:
+///   A1: "Item"
+/// formula: '=HSTACK(A1,"OK")'
+/// expected: [["Item","OK"]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VSTACK
+///   - CHOOSECOLS
+///   - TAKE
+/// faq:
+///   - q: "Why does HSTACK return #VALUE! when combining ranges?"
+///     a: "All non-empty inputs must have identical row counts; mismatched heights produce #VALUE!."
+///   - q: "How are scalar arguments treated in HSTACK?"
+///     a: "Each scalar is treated as a 1x1 block, so it only aligns with other arguments when the target row count is 1."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: HSTACK
+/// Type: HStackFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: HSTACK(arg1...: range|any@range)
+/// Arg schema: arg1{kinds=range|any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for HStackFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -157,6 +208,55 @@ enum HStackEntry<'a> {
     Scalar(LiteralValue),
 }
 
+/// Concatenates arrays vertically into a single spilled array.
+///
+/// `VSTACK` appends rows from each argument top-to-bottom.
+///
+/// # Remarks
+/// - All non-empty range arguments must have the same column count.
+/// - Scalar arguments are treated as 1x1 values.
+/// - Mismatched column counts return `#VALUE!`.
+/// - Empty inputs are skipped; if all inputs are empty, result is an empty spill.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Join two 1-row ranges vertically"
+/// grid:
+///   A1: 1
+///   B1: 10
+///   A2: 2
+///   B2: 20
+/// formula: '=VSTACK(A1:B1,A2:B2)'
+/// expected: [[1,10],[2,20]]
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Stack scalar values"
+/// formula: '=VSTACK(5,9)'
+/// expected: [[5],[9]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - HSTACK
+///   - CHOOSEROWS
+///   - DROP
+/// faq:
+///   - q: "When does VSTACK return #VALUE!?"
+///     a: "VSTACK requires matching column counts across non-empty range arguments; differing widths return #VALUE!."
+///   - q: "What happens if all VSTACK inputs are empty ranges?"
+///     a: "Empty inputs are skipped, and if every argument is empty the function returns an empty spill."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: VSTACK
+/// Type: VStackFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: VSTACK(arg1...: range|any@range)
+/// Arg schema: arg1{kinds=range|any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for VStackFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

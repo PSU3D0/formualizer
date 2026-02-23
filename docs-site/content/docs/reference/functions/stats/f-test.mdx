@@ -1,0 +1,54 @@
+---
+title: "F.TEST"
+description: "F.TEST: Returns the two-tailed p-value from an F-test comparing sample variances."
+---
+
+<FunctionPageSchema id="stats/f-test" />
+
+## Summary
+
+`F.TEST` evaluates whether two samples have significantly different variances.
+
+## Remarks
+ - Each array must contain at least two numeric values.
+ - Uses sample variances and computes a two-tailed probability.
+ - Returns `#DIV/0!` when either sample variance is zero.
+ - Alias `FTEST` is supported.
+
+## Examples
+
+<Tabs items={["Identical samples yield p-value 1", "Different variances example"]}>
+<Tab value="Identical samples yield p-value 1">
+<FunctionSandbox
+  title="Identical samples yield p-value 1"
+  formula={`=F.TEST({1,2,3,4},{1,2,3,4})`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Different variances example">
+<FunctionSandbox
+  title="Different variances example"
+  formula={`=F.TEST({1,2,3,4},{1,1,1,5})`}
+  grid={{}}
+  expected={"0.5466810975407987"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [F.DIST](/docs/reference/functions/stats/f-dist)
+- [F.INV](/docs/reference/functions/stats/f-inv)
+- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
+- [CHISQ.TEST](/docs/reference/functions/stats/chisq-test)
+- [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
+- [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/f-test" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,70 @@
+---
+title: "COMBIN"
+description: "Returns the number of combinations for selecting `k` items from `n`."
+---
+
+<FunctionPageSchema id="math/combin" />
+
+## Summary
+
+`COMBIN` evaluates `n` choose `k` using truncated integer inputs.
+
+## Remarks
+ - Fractional inputs are truncated toward zero before evaluation.
+ - If `n &lt; 0`, `k &lt; 0`, or `k &gt; n`, the function returns `#NUM!`.
+ - Argument errors propagate directly.
+
+## Examples
+
+<Tabs items={["Basic combinations", "Fractional arguments are truncated", "Invalid k returns numeric error"]}>
+<Tab value="Basic combinations">
+<FunctionSandbox
+  title="Basic combinations"
+  formula={`=COMBIN(5, 2)`}
+  grid={{}}
+  expected={"10"}
+/>
+</Tab>
+
+<Tab value="Fractional arguments are truncated">
+<FunctionSandbox
+  title="Fractional arguments are truncated"
+  formula={`=COMBIN(6.9, 3.2)`}
+  grid={{}}
+  expected={"20"}
+/>
+</Tab>
+
+<Tab value="Invalid k returns numeric error">
+<FunctionSandbox
+  title="Invalid k returns numeric error"
+  formula={`=COMBIN(3, 5)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [PERMUT](/docs/reference/functions/math/permut)
+- [FACT](/docs/reference/functions/math/fact)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [MOD](/docs/reference/functions/math/mod)
+- [MROUND](/docs/reference/functions/math/mround)
+- [POWER](/docs/reference/functions/math/power)
+
+## FAQ
+
+### When does COMBIN return #NUM!?
+It returns #NUM! if n or k is negative, or if k is greater than n after truncation.
+
+### Can COMBIN take non-integer values?
+Yes, but both inputs are truncated toward zero before evaluation.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/combin" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,20 @@
+{
+  "collapsible": true,
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "daverage",
+    "dcount",
+    "dcounta",
+    "dget",
+    "dmax",
+    "dmin",
+    "dproduct",
+    "dstdev",
+    "dstdevp",
+    "dsum",
+    "dvar",
+    "dvarp"
+  ],
+  "title": "Database Functions"
+}

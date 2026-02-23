@@ -1,0 +1,58 @@
+---
+title: "ISNA"
+description: "ISNA: Returns TRUE only for the `#N/A` error."
+---
+
+<FunctionPageSchema id="info/isna" />
+
+## Summary
+
+Returns TRUE only for the `#N/A` error.
+
+## Remarks
+ - Other error kinds return FALSE.
+ - Non-error values return FALSE.
+ - Useful when `#N/A` has special business meaning.
+
+## Examples
+
+<Tabs items={["Check for N/A", "Other errors are not N/A"]}>
+<Tab value="Check for N/A">
+<FunctionSandbox
+  title="Check for N/A"
+  formula={`=ISNA(NA())`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Other errors are not N/A">
+<FunctionSandbox
+  title="Other errors are not N/A"
+  formula={`=ISNA(1/0)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [NA](/docs/reference/functions/info/na)
+- [IFNA](/docs/reference/functions/logical-ext/ifna)
+- [ISERROR](/docs/reference/functions/info/iserror)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### Does ISNA return TRUE for errors other than #N/A?
+No. It returns TRUE only when the value is exactly #N/A.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/isna" />
+{/* [formualizer-docgen:function-meta:end] */}

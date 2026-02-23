@@ -1,0 +1,58 @@
+---
+title: "MROUND"
+description: "MROUND: Rounds a number to the nearest multiple."
+---
+
+<FunctionPageSchema id="math/mround" />
+
+## Summary
+
+Rounds a number to the nearest multiple.
+
+## Remarks
+ - Returns `0` when `multiple` is `0`.
+ - If `number` and `multiple` have different signs, returns `#NUM!`.
+ - Midpoints are rounded away from zero.
+
+## Examples
+
+<Tabs items={["Round to nearest 5", "Round negative value"]}>
+<Tab value="Round to nearest 5">
+<FunctionSandbox
+  title="Round to nearest 5"
+  formula={`=MROUND(17,5)`}
+  grid={{}}
+  expected={"15"}
+/>
+</Tab>
+
+<Tab value="Round negative value">
+<FunctionSandbox
+  title="Round negative value"
+  formula={`=MROUND(-17,-5)`}
+  grid={{}}
+  expected={"-15"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ROUND](/docs/reference/functions/math/round)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [FLOOR](/docs/reference/functions/math/floor)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [MOD](/docs/reference/functions/math/mod)
+
+## FAQ
+
+### Why does MROUND return #NUM! for mixed signs?
+If number and multiple have different signs (excluding zero), MROUND returns #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/mround" />
+{/* [formualizer-docgen:function-meta:end] */}

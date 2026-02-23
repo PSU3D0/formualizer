@@ -1,0 +1,73 @@
+---
+title: "RANDBETWEEN"
+description: "RANDBETWEEN: Returns a random integer between two inclusive bounds."
+---
+
+<FunctionPageSchema id="random/randbetween" />
+
+## Summary
+
+`RANDBETWEEN` evaluates both bounds, then samples an integer in `[low, high]`.
+
+## Remarks
+ - Bounds are coerced to numbers and truncated to integers.
+ - If `high &lt; low`, the function returns `#NUM!`.
+ - The function is volatile and may return a different integer each recalculation.
+
+## Examples
+
+<Tabs items={["Value always falls inside the requested interval", "Equal bounds produce a fixed value", "Upper bound below lower bound is invalid"]}>
+<Tab value="Value always falls inside the requested interval">
+<FunctionSandbox
+  title="Value always falls inside the requested interval"
+  formula={`=LET(n, RANDBETWEEN(1, 3), AND(n>=1, n<=3, INT(n)=n))`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Equal bounds produce a fixed value">
+<FunctionSandbox
+  title="Equal bounds produce a fixed value"
+  formula={`=RANDBETWEEN(7, 7)`}
+  grid={{}}
+  expected={"7"}
+/>
+</Tab>
+
+<Tab value="Upper bound below lower bound is invalid">
+<FunctionSandbox
+  title="Upper bound below lower bound is invalid"
+  formula={`=RANDBETWEEN(5, 1)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [RAND](/docs/reference/functions/random/rand)
+- [INT](/docs/reference/functions/math/int)
+- [LET](/docs/reference/functions/lambda/let)
+- [INDIRECT](/docs/reference/functions/reference-fns/indirect)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [BITAND](/docs/reference/functions/engineering/bitand)
+
+## FAQ
+
+### Are both bounds included in RANDBETWEEN?
+Yes. RANDBETWEEN samples an integer in the closed interval [low, high].
+
+### What happens with decimal bounds like RANDBETWEEN(1.9, 4.2)?
+Bounds are truncated to integers before sampling, so this behaves like RANDBETWEEN(1, 4).
+
+### Is RANDBETWEEN deterministic?
+It is volatile, so results can change on recalculation, though a single evaluation context uses seeded randomness for reproducible execution.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="random/randbetween" />
+{/* [formualizer-docgen:function-meta:end] */}

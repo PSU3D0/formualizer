@@ -1,0 +1,58 @@
+---
+title: "IMDIV"
+description: "IMDIV: Returns the quotient of two complex numbers."
+---
+
+<FunctionPageSchema id="engineering/imdiv" />
+
+## Summary
+
+Divides the first complex value by the second.
+
+## Remarks
+ - Inputs are coerced to complex-number text before parsing.
+ - Returns `#DIV/0!` when the divisor is `0+0i`.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<Tabs items={["Divide complex numbers", "Division by zero complex"]}>
+<Tab value="Divide complex numbers">
+<FunctionSandbox
+  title="Divide complex numbers"
+  formula={`=IMDIV("3+4i","1-i")`}
+  grid={{}}
+  expected={"-0.5+3.5i"}
+/>
+</Tab>
+
+<Tab value="Division by zero complex">
+<FunctionSandbox
+  title="Division by zero complex"
+  formula={`=IMDIV("2+i","0")`}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMPRODUCT](/docs/reference/functions/engineering/improduct)
+- [IMSUB](/docs/reference/functions/engineering/imsub)
+- [IMCONJUGATE](/docs/reference/functions/engineering/imconjugate)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+- [BITAND](/docs/reference/functions/engineering/bitand)
+- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
+
+## FAQ
+
+### When does `IMDIV` return `#DIV/0!`?
+If the divisor is `0+0i` (denominator magnitude near zero), division is undefined and returns `#DIV/0!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imdiv" />
+{/* [formualizer-docgen:function-meta:end] */}

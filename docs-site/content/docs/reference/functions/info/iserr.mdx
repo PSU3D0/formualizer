@@ -1,0 +1,58 @@
+---
+title: "ISERR"
+description: "ISERR: Returns TRUE for any error except `#N/A`."
+---
+
+<FunctionPageSchema id="info/iserr" />
+
+## Summary
+
+Returns TRUE for any error except `#N/A`.
+
+## Remarks
+ - `#N/A` specifically returns FALSE.
+ - Other errors such as `#DIV/0!` or `#VALUE!` return TRUE.
+ - Non-error values return FALSE.
+
+## Examples
+
+<Tabs items={["DIV/0 is an error excluding N/A", "N/A is excluded"]}>
+<Tab value="DIV/0 is an error excluding N/A">
+<FunctionSandbox
+  title="DIV/0 is an error excluding N/A"
+  formula={`=ISERR(1/0)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="N/A is excluded">
+<FunctionSandbox
+  title="N/A is excluded"
+  formula={`=ISERR(NA())`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ISERROR](/docs/reference/functions/info/iserror)
+- [ISNA](/docs/reference/functions/info/isna)
+- [IFERROR](/docs/reference/functions/logical-ext/iferror)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISEVEN](/docs/reference/functions/info/iseven)
+
+## FAQ
+
+### What is the difference between ISERR and ISERROR?
+ISERR excludes #N/A, while ISERROR treats #N/A as an error too.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/iserr" />
+{/* [formualizer-docgen:function-meta:end] */}

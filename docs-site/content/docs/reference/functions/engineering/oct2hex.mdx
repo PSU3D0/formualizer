@@ -1,0 +1,58 @@
+---
+title: "OCT2HEX"
+description: "OCT2HEX: Converts an octal text value to hexadecimal text."
+---
+
+<FunctionPageSchema id="engineering/oct2hex" />
+
+## Summary
+
+Supports optional left-padding through the `places` argument.
+
+## Remarks
+ - Input must be octal text up to 10 digits and may be signed two's-complement.
+ - Signed values are converted through their decimal representation.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+
+## Examples
+
+<Tabs items={["Convert octal to hex", "Convert signed octal"]}>
+<Tab value="Convert octal to hex">
+<FunctionSandbox
+  title="Convert octal to hex"
+  formula={`=OCT2HEX("77")`}
+  grid={{}}
+  expected={"3F"}
+/>
+</Tab>
+
+<Tab value="Convert signed octal">
+<FunctionSandbox
+  title="Convert signed octal"
+  formula={`=OCT2HEX("7777777777")`}
+  grid={{}}
+  expected={"FFFFFFFFFF"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
+- [OCT2DEC](/docs/reference/functions/engineering/oct2dec)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+
+## FAQ
+
+### How does `OCT2HEX` treat signed octal input?
+Signed 10-digit octal is decoded via two's-complement and then emitted as hex, preserving signed meaning.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/oct2hex" />
+{/* [formualizer-docgen:function-meta:end] */}

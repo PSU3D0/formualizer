@@ -1,0 +1,58 @@
+---
+title: "BIN2OCT"
+description: "BIN2OCT: Converts a binary text value to octal text."
+---
+
+<FunctionPageSchema id="engineering/bin2oct" />
+
+## Summary
+
+Supports optional left-padding through the `places` argument.
+
+## Remarks
+ - Input must be binary text up to 10 digits and may be signed two's-complement.
+ - Signed values are preserved through conversion to octal.
+ - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+
+## Examples
+
+<Tabs items={["Convert binary to octal", "Pad octal output"]}>
+<Tab value="Convert binary to octal">
+<FunctionSandbox
+  title="Convert binary to octal"
+  formula={`=BIN2OCT("111111")`}
+  grid={{}}
+  expected={"77"}
+/>
+</Tab>
+
+<Tab value="Pad octal output">
+<FunctionSandbox
+  title="Pad octal output"
+  formula={`=BIN2OCT("111111",4)`}
+  grid={{}}
+  expected={"0077"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [OCT2BIN](/docs/reference/functions/engineering/oct2bin)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
+- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
+- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
+- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
+
+## FAQ
+
+### How are signed 10-bit binaries handled by `BIN2OCT`?
+They are first decoded as signed decimal and then re-encoded to octal with two's-complement output for negatives.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/bin2oct" />
+{/* [formualizer-docgen:function-meta:end] */}

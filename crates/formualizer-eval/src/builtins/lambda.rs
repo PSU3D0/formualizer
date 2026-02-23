@@ -43,6 +43,64 @@ fn binding_from_calc_value(cv: CalcValue<'_>) -> LocalBinding {
 #[derive(Debug)]
 pub struct LetFn;
 
+/// Binds local names to values and evaluates a final expression with those bindings.
+///
+/// `LET` introduces lexical variables using name/value pairs, then returns the last expression.
+///
+/// # Remarks
+/// - Arguments must be provided as `name, value` pairs followed by one final calculation expression.
+/// - Names are resolved as local identifiers and can shadow workbook-level names.
+/// - Bindings are evaluated left-to-right, so later values can reference earlier bindings.
+/// - Invalid names or malformed arity return `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Bind intermediate values"
+/// formula: "=LET(rate,0.08,price,125,price*(1+rate))"
+/// expected: 135
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Use LET with range calculations"
+/// grid:
+///   A1: 10
+///   A2: 4
+/// formula: "=LET(total,SUM(A1:A2),total*2)"
+/// expected: 28
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Nested LET supports shadowing"
+/// formula: "=LET(x,2,LET(x,5,x)+x)"
+/// expected: 7
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LAMBDA
+///   - IF
+///   - SUM
+///   - INDEX
+/// faq:
+///   - q: "Can a LET binding reference a name defined later in the same LET?"
+///     a: "No. LET evaluates name/value pairs left-to-right, so each binding can only use earlier bindings."
+///   - q: "Does LET overwrite workbook or worksheet names permanently?"
+///     a: "No. LET names are lexical and local to that formula evaluation; they only shadow outer names inside the LET expression."
+///   - q: "Is LET itself volatile?"
+///     a: "No. LET is deterministic unless one of its bound expressions calls a volatile function such as RAND."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: LET
+/// Type: LetFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LET(<schema unavailable>)
+/// Arg schema: <unavailable: arg_schema panicked>
+/// Caps: PURE, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for LetFn {
     fn caps(&self) -> FnCaps {
         FnCaps::PURE | FnCaps::SHORT_CIRCUIT
@@ -135,6 +193,60 @@ impl CustomCallable for LambdaClosure {
 #[derive(Debug)]
 pub struct LambdaFn;
 
+/// Creates an anonymous callable that can be invoked with spreadsheet arguments.
+///
+/// `LAMBDA` captures its defining local scope and returns a reusable function value.
+///
+/// # Remarks
+/// - All arguments except the last are parameter names; the last argument is the body expression.
+/// - Parameter names must be unique (case-insensitive), or `#VALUE!` is returned.
+/// - Invocation arity must exactly match the declared parameter count.
+/// - Returning an uninvoked lambda as a final cell value yields a `#CALC!` in evaluation.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Inline lambda invocation"
+/// formula: "=LAMBDA(x,x+1)(41)"
+/// expected: 42
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Lambda captures outer LET bindings"
+/// formula: "=LET(k,10,addk,LAMBDA(n,n+k),addk(5))"
+/// expected: 15
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Duplicate parameter names are invalid"
+/// formula: "=LAMBDA(x,x,x+1)"
+/// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LET
+///   - IF
+///   - SUM
+/// faq:
+///   - q: "Why does =LAMBDA(x,x+1) return #CALC! instead of a number?"
+///     a: "LAMBDA returns a callable value. In a cell result position, it must be invoked, for example =LAMBDA(x,x+1)(1)."
+///   - q: "Does a LAMBDA read outer LET variables at call time or definition time?"
+///     a: "Definition time. The closure captures its lexical environment when created."
+///   - q: "Can I call a LAMBDA with fewer or extra arguments?"
+///     a: "No. Invocation arity must match the declared parameter count exactly, or #VALUE! is returned."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: LAMBDA
+/// Type: LambdaFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: LAMBDA(<schema unavailable>)
+/// Arg schema: <unavailable: arg_schema panicked>
+/// Caps: PURE, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
 impl Function for LambdaFn {
     fn caps(&self) -> FnCaps {
         FnCaps::PURE | FnCaps::SHORT_CIRCUIT

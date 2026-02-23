@@ -1,0 +1,64 @@
+---
+title: "OFFSET"
+description: "OFFSET: Returns a reference shifted from a starting reference by rows and columns."
+---
+
+<FunctionPageSchema id="reference-fns/offset" />
+
+## Summary
+
+`OFFSET` is volatile and returns a reference that can point to a single cell or a resized
+ range, depending on the optional `height` and `width` arguments.
+
+## Remarks
+ - `rows` and `cols` shift from the top-left of `reference`.
+ - If omitted, `height` and `width` default to the original reference size.
+ - Non-positive target coordinates or dimensions return `#REF!`.
+ - Non-numeric offset/size inputs return `#VALUE!`.
+ - In value context, a 1x1 result returns a scalar; larger results spill as an array.
+
+## Examples
+
+<Tabs items={["Move one row down and one column right", "Offset and resize a range"]}>
+<Tab value="Move one row down and one column right">
+<FunctionSandbox
+  title="Move one row down and one column right"
+  formula={`=OFFSET(A1,1,1)`}
+  grid={{"A1":"10","B2":"42"}}
+  expected={"42"}
+/>
+</Tab>
+
+<Tab value="Offset and resize a range">
+<FunctionSandbox
+  title="Offset and resize a range"
+  formula={`=SUM(OFFSET(A1,1,0,2,2))`}
+  grid={{"A1":"1","A2":"2","A3":"3","B1":"4","B2":"5","B3":"6"}}
+  expected={"16"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
+- [INDIRECT](/docs/reference/functions/reference-fns/indirect)
+- [ADDRESS](/docs/reference/functions/lookup/address)
+- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
+
+## FAQ
+
+### What defaults are used when height and width are omitted?
+OFFSET keeps the source reference size, then applies the row/column shift to that same-sized block.
+
+### When does OFFSET return #REF!?
+It returns #REF! if the shifted start goes to row/column &lt;= 0 or if requested height/width are non-positive.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="reference-fns/offset" />
+{/* [formualizer-docgen:function-meta:end] */}

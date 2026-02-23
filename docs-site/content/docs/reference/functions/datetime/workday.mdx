@@ -1,0 +1,59 @@
+---
+title: "WORKDAY"
+description: "WORKDAY: Returns the date serial that is a given number of weekdays from a start date."
+---
+
+<FunctionPageSchema id="datetime/workday" />
+
+## Summary
+
+Returns the date serial that is a given number of weekdays from a start date.
+
+## Remarks
+ - Positive `days` moves forward; negative `days` moves backward.
+ - Weekends are fixed to Saturday and Sunday.
+ - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+ - Input and output serials use Excel 1900 date mapping.
+
+## Examples
+
+<Tabs items={["Move forward by five workdays", "Holiday argument currently has no effect"]}>
+<Tab value="Move forward by five workdays">
+<FunctionSandbox
+  title="Move forward by five workdays"
+  formula={`=WORKDAY(45292, 5)`}
+  grid={{}}
+  expected={"45299"}
+/>
+</Tab>
+
+<Tab value="Holiday argument currently has no effect">
+<FunctionSandbox
+  title="Holiday argument currently has no effect"
+  formula={`=WORKDAY(45292, 5, 45293)`}
+  grid={{}}
+  expected={"45299"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
+- [WEEKDAY](/docs/reference/functions/datetime/weekday)
+- [TODAY](/docs/reference/functions/datetime/today)
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
+- [WEEKNUM](/docs/reference/functions/datetime/weeknum)
+
+## FAQ
+
+### Does WORKDAY include the start date when days=0?
+Yes. With zero offset, WORKDAY returns the start date serial unchanged; nonzero offsets skip weekend days while stepping.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/workday" />
+{/* [formualizer-docgen:function-meta:end] */}

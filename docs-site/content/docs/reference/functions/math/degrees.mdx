@@ -1,0 +1,57 @@
+---
+title: "DEGREES"
+description: "Converts an angle from radians to degrees."
+---
+
+<FunctionPageSchema id="math/degrees" />
+
+## Summary
+
+Converts an angle from radians to degrees.
+
+## Remarks
+ - Useful when converting the output of inverse trig functions.
+ - Output is `radians * 180 / PI()`.
+
+## Examples
+
+<Tabs items={["Convert PI radians", "Convert PI/2 radians"]}>
+<Tab value="Convert PI radians">
+<FunctionSandbox
+  title="Convert PI radians"
+  formula={`=DEGREES(PI())`}
+  grid={{}}
+  expected={"180"}
+/>
+</Tab>
+
+<Tab value="Convert PI/2 radians">
+<FunctionSandbox
+  title="Convert PI/2 radians"
+  formula={`=DEGREES(PI()/2)`}
+  grid={{}}
+  expected={"90"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [RADIANS](/docs/reference/functions/math/radians)
+- [ATAN](/docs/reference/functions/math/atan)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOSH](/docs/reference/functions/math/acosh)
+- [ATANH](/docs/reference/functions/math/atanh)
+- [SECH](/docs/reference/functions/math/sech)
+
+## FAQ
+
+### Does DEGREES change the angle value or just units?
+It converts units only, multiplying radians by 180/PI().
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/degrees" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,59 @@
+---
+title: "TRIM"
+description: "TRIM: Removes leading/trailing whitespace and collapses internal runs to single spaces."
+---
+
+<FunctionPageSchema id="text/trim" />
+
+## Summary
+
+Removes leading/trailing whitespace and collapses internal runs to single spaces.
+
+## Remarks
+ - Leading and trailing whitespace is removed.
+ - Consecutive whitespace inside the text is collapsed to one ASCII space.
+ - Non-text inputs are coerced to text before trimming.
+ - Errors are propagated unchanged.
+
+## Examples
+
+<Tabs items={["Normalize spacing", "Already clean text"]}>
+<Tab value="Normalize spacing">
+<FunctionSandbox
+  title="Normalize spacing"
+  formula={`=TRIM("  alpha   beta  ")`}
+  grid={{}}
+  expected={"alpha beta"}
+/>
+</Tab>
+
+<Tab value="Already clean text">
+<FunctionSandbox
+  title="Already clean text"
+  formula={`=TRIM("report")`}
+  grid={{}}
+  expected={"report"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CLEAN](/docs/reference/functions/text/clean)
+- [TEXTJOIN](/docs/reference/functions/text/textjoin)
+- [SUBSTITUTE](/docs/reference/functions/text/substitute)
+- [CHAR](/docs/reference/functions/text/char)
+- [CODE](/docs/reference/functions/text/code)
+- [LEN](/docs/reference/functions/text/len)
+
+## FAQ
+
+### What whitespace does TRIM normalize?
+It trims edges and collapses internal whitespace runs to single spaces.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/trim" />
+{/* [formualizer-docgen:function-meta:end] */}

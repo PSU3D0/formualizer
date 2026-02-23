@@ -1,0 +1,55 @@
+---
+title: "LINEST"
+description: "LINEST: Returns linear-regression coefficients and optional fit statistics."
+---
+
+<FunctionPageSchema id="stats/linest" />
+
+## Summary
+
+`LINEST` fits a straight line to known y/x pairs and returns either `[slope, intercept]` or a
+ larger statistics matrix.
+
+## Remarks
+ - `known_y` is required; `known_x` defaults to `1..n` when omitted.
+ - `const` controls whether an intercept is fitted (`TRUE` by default).
+ - `stats=TRUE` returns a `5x2` result block; otherwise it returns `1x2`.
+ - Returns spreadsheet errors for mismatched lengths, empty data, or degenerate x-values.
+
+## Examples
+
+<Tabs items={["Slope and intercept only", "Linear fit with non-zero intercept"]}>
+<Tab value="Slope and intercept only">
+<FunctionSandbox
+  title="Slope and intercept only"
+  formula={`=LINEST({2,4,6},{1,2,3})`}
+  grid={{}}
+  expected={"[[2,0]]"}
+/>
+</Tab>
+
+<Tab value="Linear fit with non-zero intercept">
+<FunctionSandbox
+  title="Linear fit with non-zero intercept"
+  formula={`=LINEST({3,5,7},{1,2,3})`}
+  grid={{}}
+  expected={"[[2,1]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+- [GROWTH](/docs/reference/functions/stats/growth)
+- [HARMEAN](/docs/reference/functions/stats/harmean)
+- [KURT](/docs/reference/functions/stats/kurt)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/linest" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,59 @@
+---
+title: "TEXTBEFORE"
+description: "TEXTBEFORE: Returns text that appears before a delimiter."
+---
+
+<FunctionPageSchema id="text/textbefore" />
+
+## Summary
+
+Returns text that appears before a delimiter.
+
+## Remarks
+ - Delimiter matching is case-sensitive.
+ - `instance_num` defaults to `1`; negative instances search from the end.
+ - `instance_num=0` or empty delimiter returns `#VALUE!`.
+ - If requested delimiter occurrence is not found, returns `#N/A`.
+
+## Examples
+
+<Tabs items={["Text before first delimiter", "Text before last delimiter"]}>
+<Tab value="Text before first delimiter">
+<FunctionSandbox
+  title="Text before first delimiter"
+  formula={`=TEXTBEFORE("a-b-c", "-")`}
+  grid={{}}
+  expected={"a"}
+/>
+</Tab>
+
+<Tab value="Text before last delimiter">
+<FunctionSandbox
+  title="Text before last delimiter"
+  formula={`=TEXTBEFORE("a-b-c", "-", -1)`}
+  grid={{}}
+  expected={"a-b"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TEXTAFTER](/docs/reference/functions/text/textafter)
+- [FIND](/docs/reference/functions/text/find)
+- [SEARCH](/docs/reference/functions/text/search)
+- [TEXTSPLIT](/docs/reference/functions/text/textsplit)
+- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
+- [EXACT](/docs/reference/functions/text/exact)
+
+## FAQ
+
+### What happens when the delimiter is missing?
+TEXTBEFORE returns #N/A when the requested delimiter occurrence is not found.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/textbefore" />
+{/* [formualizer-docgen:function-meta:end] */}

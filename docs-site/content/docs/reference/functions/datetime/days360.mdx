@@ -1,0 +1,58 @@
+---
+title: "DAYS360"
+description: "DAYS360: Returns the day count between two dates using a 30/360 convention."
+---
+
+<FunctionPageSchema id="datetime/days360" />
+
+## Summary
+
+Returns the day count between two dates using a 30/360 convention.
+
+## Remarks
+ - `method` omitted or `FALSE` uses U.S. (NASD) rules; `TRUE` uses the European 30E/360 method.
+ - Inputs are coerced to dates by truncating serials to integer days.
+ - Serials are interpreted with the Excel 1900 date mapping, not a workbook-specific date system.
+
+## Examples
+
+<Tabs items={["U.S. 30/360 method", "European 30E/360 method"]}>
+<Tab value="U.S. 30/360 method">
+<FunctionSandbox
+  title="U.S. 30/360 method"
+  formula={`=DAYS360(40574, 40602)`}
+  grid={{}}
+  expected={"30"}
+/>
+</Tab>
+
+<Tab value="European 30E/360 method">
+<FunctionSandbox
+  title="European 30E/360 method"
+  formula={`=DAYS360(40574, 40602, TRUE)`}
+  grid={{}}
+  expected={"28"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [DAYS](/docs/reference/functions/datetime/days)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
+- [DATEDIF](/docs/reference/functions/datetime/datedif)
+- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
+- [WORKDAY](/docs/reference/functions/datetime/workday)
+- [WEEKDAY](/docs/reference/functions/datetime/weekday)
+
+## FAQ
+
+### Why does DAYS360 differ from actual day counts?
+DAYS360 applies 30/360 financial conventions, so month-end dates are adjusted by rule instead of using calendar day totals.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/days360" />
+{/* [formualizer-docgen:function-meta:end] */}

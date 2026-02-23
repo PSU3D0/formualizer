@@ -1,0 +1,54 @@
+---
+title: "FISHERINV"
+description: "FISHERINV: Returns the inverse Fisher transformation of `y`."
+---
+
+<FunctionPageSchema id="stats/fisherinv" />
+
+## Summary
+
+`FISHERINV` maps Fisher z-values back to the open interval `(-1, 1)`.
+
+## Remarks
+ - The inverse form is `(e^(2y) - 1) / (e^(2y) + 1)`.
+ - Output is always strictly between `-1` and `1` for finite inputs.
+ - This function is useful for converting transformed correlation estimates back to r-space.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Inverse Fisher at zero", "Round-trip with FISHER(0.5)"]}>
+<Tab value="Inverse Fisher at zero">
+<FunctionSandbox
+  title="Inverse Fisher at zero"
+  formula={`=FISHERINV(0)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+<Tab value="Round-trip with FISHER(0.5)">
+<FunctionSandbox
+  title="Round-trip with FISHER(0.5)"
+  formula={`=FISHERINV(0.5493061443340549)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [FISHER](/docs/reference/functions/stats/fisher)
+- [CORREL](/docs/reference/functions/stats/correl)
+- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
+- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
+- [FORECAST.LINEAR](/docs/reference/functions/stats/forecast-linear)
+- [FREQUENCY](/docs/reference/functions/stats/frequency)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/fisherinv" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,54 @@
+---
+title: "LOGNORM.INV"
+description: "LOGNORM.INV: Returns the positive value `x` whose log-normal cumulative probability is `probability`."
+---
+
+<FunctionPageSchema id="stats/lognorm-inv" />
+
+## Summary
+
+This function inverts `LOGNORM.DIST(x, mean, standard_dev, TRUE)`.
+
+## Remarks
+ - `probability` must be strictly between `0` and `1`.
+ - `standard_dev` must be strictly greater than `0`.
+ - Returns `#NUM!` when inputs violate probability or scale constraints.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Median log-normal quantile", "Upper quantile for mean 0 and stdev 1"]}>
+<Tab value="Median log-normal quantile">
+<FunctionSandbox
+  title="Median log-normal quantile"
+  formula={`=LOGNORM.INV(0.5,0,1)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Upper quantile for mean 0 and stdev 1">
+<FunctionSandbox
+  title="Upper quantile for mean 0 and stdev 1"
+  formula={`=LOGNORM.INV(0.841344746068543,0,1)`}
+  grid={{}}
+  expected={"2.718281828459045"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LOGNORM.DIST](/docs/reference/functions/stats/lognorm-dist)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
+- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
+- [EXPON.DIST](/docs/reference/functions/stats/expon-dist)
+- [F.INV](/docs/reference/functions/stats/f-inv)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/lognorm-inv" />
+{/* [formualizer-docgen:function-meta:end] */}

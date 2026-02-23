@@ -1,0 +1,70 @@
+---
+title: "SUMIFS"
+description: "SUMIFS: Adds values that satisfy multiple criteria."
+---
+
+<FunctionPageSchema id="math/sumifs" />
+
+## Summary
+
+`SUMIFS` applies all criteria pairs with logical AND and sums the matching cells.
+
+## Remarks
+ - The first argument is always the sum target range.
+ - Criteria are supplied in `(criteria_range, criteria)` pairs.
+ - Criteria ranges are broadcast/padded according to engine matching rules.
+
+## Examples
+
+<Tabs items={["Sum with two conditions", "Numeric criteria on single range", "No matching rows yields zero"]}>
+<Tab value="Sum with two conditions">
+<FunctionSandbox
+  title="Sum with two conditions"
+  formula={`=SUMIFS(C1:C3, A1:A3, "East", B1:B3, ">=2025")`}
+  grid={{"A1":"East","A2":"East","A3":"West","B1":"2024","B2":"2025","B3":"2025","C1":"10","C2":"20","C3":"30"}}
+  expected={"20"}
+/>
+</Tab>
+
+<Tab value="Numeric criteria on single range">
+<FunctionSandbox
+  title="Numeric criteria on single range"
+  formula={`=SUMIFS({5,10,20,30}, {1,2,3,4}, ">=2", {1,2,3,4}, "<=3")`}
+  grid={{}}
+  expected={"30"}
+/>
+</Tab>
+
+<Tab value="No matching rows yields zero">
+<FunctionSandbox
+  title="No matching rows yields zero"
+  formula={`=SUMIFS({10,20}, {"A","B"}, "C")`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SUMIF](/docs/reference/functions/math/sumif)
+- [COUNTIFS](/docs/reference/functions/math/countifs)
+- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
+- [SUMPRODUCT](/docs/reference/functions/math/sumproduct)
+- [AVERAGEIF](/docs/reference/functions/math/averageif)
+- [SUM](/docs/reference/functions/math/sum)
+
+## FAQ
+
+### How are multiple SUMIFS criteria combined?
+All criteria pairs are applied with logical AND; every condition must match.
+
+### What if criteria range sizes differ?
+Ranges are broadcast/padded under engine rules instead of strict Excel-size rejection.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sumifs" />
+{/* [formualizer-docgen:function-meta:end] */}

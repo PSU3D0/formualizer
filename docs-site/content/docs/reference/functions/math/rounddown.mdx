@@ -1,0 +1,58 @@
+---
+title: "ROUNDDOWN"
+description: "ROUNDDOWN: Rounds a number toward zero to a specified number of digits."
+---
+
+<FunctionPageSchema id="math/rounddown" />
+
+## Summary
+
+Rounds a number toward zero to a specified number of digits.
+
+## Remarks
+ - Positive `num_digits` affects decimals; negative values affect digits left of the decimal.
+ - Always reduces magnitude toward zero (unlike `INT` for negatives).
+ - Input errors are propagated.
+
+## Examples
+
+<Tabs items={["Trim decimals without rounding up", "Round down a negative value at the hundreds place"]}>
+<Tab value="Trim decimals without rounding up">
+<FunctionSandbox
+  title="Trim decimals without rounding up"
+  formula={`=ROUNDDOWN(3.14159,3)`}
+  grid={{}}
+  expected={"3.141"}
+/>
+</Tab>
+
+<Tab value="Round down a negative value at the hundreds place">
+<FunctionSandbox
+  title="Round down a negative value at the hundreds place"
+  formula={`=ROUNDDOWN(-987.65,-2)`}
+  grid={{}}
+  expected={"-900"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ROUND](/docs/reference/functions/math/round)
+- [ROUNDUP](/docs/reference/functions/math/roundup)
+- [TRUNC](/docs/reference/functions/math/trunc)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [MOD](/docs/reference/functions/math/mod)
+
+## FAQ
+
+### Does ROUNDDOWN always move toward negative infinity?
+No. It moves toward zero, which is different from FLOOR-style behavior on negatives.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/rounddown" />
+{/* [formualizer-docgen:function-meta:end] */}

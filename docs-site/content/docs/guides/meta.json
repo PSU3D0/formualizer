@@ -1,0 +1,11 @@
+{
+  "title": "Guides",
+  "pages": [
+    "index",
+    "workbook-edits-and-batching",
+    "custom-functions-rust-python-js",
+    "wasm-plugins-inspect-attach-bind",
+    "let-lambda-and-callables",
+    "deterministic-testing"
+  ]
+}

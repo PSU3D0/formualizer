@@ -1,0 +1,58 @@
+---
+title: "INT"
+description: "Rounds a number down to the nearest integer."
+---
+
+<FunctionPageSchema id="math/int" />
+
+## Summary
+
+`INT` uses floor semantics, so negative values move farther from zero.
+
+## Remarks
+ - Equivalent to mathematical floor (`floor(x)`).
+ - Coercion is lenient for numeric-like inputs; invalid values return an error.
+ - Input errors are propagated.
+
+## Examples
+
+<Tabs items={["Drop decimal digits from a positive number", "Floor a negative number"]}>
+<Tab value="Drop decimal digits from a positive number">
+<FunctionSandbox
+  title="Drop decimal digits from a positive number"
+  formula={`=INT(8.9)`}
+  grid={{}}
+  expected={"8"}
+/>
+</Tab>
+
+<Tab value="Floor a negative number">
+<FunctionSandbox
+  title="Floor a negative number"
+  formula={`=INT(-8.9)`}
+  grid={{}}
+  expected={"-9"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TRUNC](/docs/reference/functions/math/trunc)
+- [ROUNDDOWN](/docs/reference/functions/math/rounddown)
+- [FLOOR](/docs/reference/functions/math/floor)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+
+## FAQ
+
+### Why is INT(-8.9) equal to -9 instead of -8?
+INT uses floor semantics, so negative values round toward negative infinity.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/int" />
+{/* [formualizer-docgen:function-meta:end] */}

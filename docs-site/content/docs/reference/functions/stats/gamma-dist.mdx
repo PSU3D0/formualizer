@@ -1,0 +1,54 @@
+---
+title: "GAMMA.DIST"
+description: "GAMMA.DIST: Returns the gamma-distribution probability at `x` for shape `alpha` and scale `beta`."
+---
+
+<FunctionPageSchema id="stats/gamma-dist" />
+
+## Summary
+
+`GAMMA.DIST` supports cumulative and density modes for right-skewed waiting-time models.
+
+## Remarks
+ - Requires `x &gt;= 0`, `alpha &gt; 0`, and `beta &gt; 0`.
+ - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
+ - Returns `#NUM!` when any parameter is outside its valid range.
+ - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Examples
+
+<Tabs items={["Gamma CDF with alpha=1 and beta=2", "Gamma PDF with alpha=1 and beta=2"]}>
+<Tab value="Gamma CDF with alpha=1 and beta=2">
+<FunctionSandbox
+  title="Gamma CDF with alpha=1 and beta=2"
+  formula={`=GAMMA.DIST(2,1,2,TRUE)`}
+  grid={{}}
+  expected={"0.6321205588285577"}
+/>
+</Tab>
+
+<Tab value="Gamma PDF with alpha=1 and beta=2">
+<FunctionSandbox
+  title="Gamma PDF with alpha=1 and beta=2"
+  formula={`=GAMMA.DIST(2,1,2,FALSE)`}
+  grid={{}}
+  expected={"0.18393972058572117"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
+- [F.DIST](/docs/reference/functions/stats/f-dist)
+- [LOGNORM.DIST](/docs/reference/functions/stats/lognorm-dist)
+- [NEGBINOM.DIST](/docs/reference/functions/stats/negbinom-dist)
+- [NORM.DIST](/docs/reference/functions/stats/norm-dist)
+- [T.TEST](/docs/reference/functions/stats/t-test)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/gamma-dist" />
+{/* [formualizer-docgen:function-meta:end] */}

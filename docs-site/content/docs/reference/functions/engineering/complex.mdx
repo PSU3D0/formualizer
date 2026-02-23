@@ -1,0 +1,58 @@
+---
+title: "COMPLEX"
+description: "Builds a complex number text value from real and imaginary coefficients."
+---
+
+<FunctionPageSchema id="engineering/complex" />
+
+## Summary
+
+Returns canonical text such as `3+4i` or `-2j`.
+
+## Remarks
+ - `real_num` and `i_num` are numerically coerced.
+ - `suffix` may be `"i"`, `"j"`, empty text, or omitted; empty/omitted defaults to `i`.
+ - Any other suffix returns `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Build with default suffix", "Build with j suffix"]}>
+<Tab value="Build with default suffix">
+<FunctionSandbox
+  title="Build with default suffix"
+  formula={`=COMPLEX(3,4)`}
+  grid={{}}
+  expected={"3+4i"}
+/>
+</Tab>
+
+<Tab value="Build with j suffix">
+<FunctionSandbox
+  title="Build with j suffix"
+  formula={`=COMPLEX(0,-1,"j")`}
+  grid={{}}
+  expected={"-j"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IMREAL](/docs/reference/functions/engineering/imreal)
+- [IMAGINARY](/docs/reference/functions/engineering/imaginary)
+- [IMSUM](/docs/reference/functions/engineering/imsum)
+- [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
+- [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
+- [IMPRODUCT](/docs/reference/functions/engineering/improduct)
+
+## FAQ
+
+### Which suffix values are valid in `COMPLEX`?
+Only suffixes i or j are accepted (empty or omitted defaults to i); other suffix strings return `#VALUE!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/complex" />
+{/* [formualizer-docgen:function-meta:end] */}

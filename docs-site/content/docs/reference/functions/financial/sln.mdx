@@ -1,0 +1,62 @@
+---
+title: "SLN"
+description: "SLN: Returns straight-line depreciation for a single period."
+---
+
+<FunctionPageSchema id="financial/sln" />
+
+## Summary
+
+`SLN` spreads the depreciable amount (`cost - salvage`) evenly across `life` periods.
+
+## Remarks
+ - Formula: `(cost - salvage) / life`.
+ - `life` must be non-zero; `life = 0` returns `#DIV/0!`.
+ - This function returns the algebraic result: if `salvage &gt; cost`, depreciation is negative.
+ - Inputs are interpreted as scalar numeric values in matching currency/period units.
+
+## Examples
+
+<Tabs items={["Straight-line yearly depreciation", "Negative depreciation when salvage exceeds cost"]}>
+<Tab value="Straight-line yearly depreciation">
+<FunctionSandbox
+  title="Straight-line yearly depreciation"
+  formula={`=SLN(10000, 1000, 9)`}
+  grid={{}}
+  expected={"1000"}
+/>
+</Tab>
+
+<Tab value="Negative depreciation when salvage exceeds cost">
+<FunctionSandbox
+  title="Negative depreciation when salvage exceeds cost"
+  formula={`=SLN(1000, 1200, 2)`}
+  grid={{}}
+  expected={"-100"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SYD](/docs/reference/functions/financial/syd)
+- [DB](/docs/reference/functions/financial/db)
+- [DDB](/docs/reference/functions/financial/ddb)
+- [MIRR](/docs/reference/functions/financial/mirr)
+- [XNPV](/docs/reference/functions/financial/xnpv)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
+
+## FAQ
+
+### Can `SLN` return a negative value?
+Yes. If `salvage &gt; cost`, `(cost - salvage) / life` is negative.
+
+### What happens when `life` is zero?
+`SLN` returns `#DIV/0!`.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/sln" />
+{/* [formualizer-docgen:function-meta:end] */}

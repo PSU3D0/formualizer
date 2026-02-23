@@ -1,0 +1,54 @@
+---
+title: "NEGBINOM.DIST"
+description: "NEGBINOM.DIST: Returns negative-binomial probabilities for failures observed before a target success count."
+---
+
+<FunctionPageSchema id="stats/negbinom-dist" />
+
+## Summary
+
+`NEGBINOM.DIST` supports exact-failure mode (PMF) and cumulative mode (CDF).
+
+## Remarks
+ - `number_f` is truncated and must be `&gt;= 0`.
+ - `number_s` is truncated and must be `&gt;= 1`.
+ - `probability_s` must satisfy `0 &lt; p &lt; 1`.
+ - Returns `#NUM!` when counts or probability are outside valid ranges.
+
+## Examples
+
+<Tabs items={["Negative binomial PMF", "Negative binomial CDF"]}>
+<Tab value="Negative binomial PMF">
+<FunctionSandbox
+  title="Negative binomial PMF"
+  formula={`=NEGBINOM.DIST(2,1,0.5,FALSE)`}
+  grid={{}}
+  expected={"0.125"}
+/>
+</Tab>
+
+<Tab value="Negative binomial CDF">
+<FunctionSandbox
+  title="Negative binomial CDF"
+  formula={`=NEGBINOM.DIST(2,1,0.5,TRUE)`}
+  grid={{}}
+  expected={"0.875"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
+- [F.DIST](/docs/reference/functions/stats/f-dist)
+- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
+- [LOGNORM.DIST](/docs/reference/functions/stats/lognorm-dist)
+- [NORM.DIST](/docs/reference/functions/stats/norm-dist)
+- [T.TEST](/docs/reference/functions/stats/t-test)
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/negbinom-dist" />
+{/* [formualizer-docgen:function-meta:end] */}

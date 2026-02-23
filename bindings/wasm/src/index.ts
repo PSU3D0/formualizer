@@ -29,8 +29,10 @@ async function ensureInitialized<T>(fn: () => T): Promise<T> {
 
 export interface Token {
   tokenType: string;
+  subtype: string;
   value: string;
   pos: number;
+  end: number;
 }
 
 export interface ReferenceData {
@@ -57,6 +59,10 @@ export interface ASTNodeData {
   operand?: ASTNodeData;
   elements?: ASTNodeData[][];
   message?: string;
+  sourceStart?: number;
+  sourceEnd?: number;
+  sourceTokenType?: string;
+  sourceTokenSubtype?: string;
 }
 
 export enum FormulaDialect {
@@ -74,6 +80,30 @@ function resolveDialect(dialect?: FormulaDialect): wasm.FormulaDialect | undefin
     : wasm.FormulaDialect.Excel;
 }
 
+function normalizeWasmValue<T>(value: unknown): T {
+  if (value instanceof Map) {
+    const obj: Record<string, unknown> = {};
+    for (const [k, v] of value.entries()) {
+      obj[String(k)] = normalizeWasmValue(v);
+    }
+    return obj as T;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeWasmValue(item)) as T;
+  }
+
+  if (value && typeof value === 'object') {
+    const obj: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      obj[k] = normalizeWasmValue(v);
+    }
+    return obj as T;
+  }
+
+  return value as T;
+}
+
 export class Tokenizer {
   private inner: wasm.Tokenizer;
 
@@ -82,7 +112,7 @@ export class Tokenizer {
   }
 
   get tokens(): Token[] {
-    return this.inner.tokens() as unknown as Token[];
+    return normalizeWasmValue<Token[]>(this.inner.tokens() as unknown);
   }
 
   render(): string {
@@ -94,7 +124,7 @@ export class Tokenizer {
   }
 
   getToken(index: number): Token {
-    return this.inner.getToken(index) as unknown as Token;
+    return normalizeWasmValue<Token>(this.inner.getToken(index) as unknown);
   }
 
   toString(): string {
@@ -111,7 +141,7 @@ export class Parser {
 
   parse(): ASTNodeData {
     const ast = this.inner.parse();
-    return ast.toJSON() as unknown as ASTNodeData;
+    return normalizeWasmValue<ASTNodeData>(ast.toJSON() as unknown);
   }
 }
 
@@ -123,7 +153,7 @@ export class ASTNode {
   }
 
   toJSON(): ASTNodeData {
-    return this.inner.toJSON() as unknown as ASTNodeData;
+    return normalizeWasmValue<ASTNodeData>(this.inner.toJSON() as unknown);
   }
 
   toString(): string {
@@ -211,7 +241,7 @@ export class Reference {
   }
 
   toJSON(): ReferenceData {
-    return this.inner.toJSON() as unknown as ReferenceData;
+    return normalizeWasmValue<ReferenceData>(this.inner.toJSON() as unknown);
   }
 }
 
@@ -234,7 +264,7 @@ export async function parse(
 ): Promise<ASTNodeData> {
   return ensureInitialized(() => {
     const ast = wasm.parse(formula, resolveDialect(dialect));
-    return ast.toJSON() as unknown as ASTNodeData;
+    return normalizeWasmValue<ASTNodeData>(ast.toJSON() as unknown);
   });
 }
 

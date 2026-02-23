@@ -1,11 +1,16 @@
+![Formualizer banner](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png)
+
 # Formualizer
+
+![Arrow Powered](https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white)
 
 **The spreadsheet engine that actually evaluates formulas.** Parse, evaluate, and mutate Excel workbooks from Rust, Python, or the browser.
 
 A permissively-licensed, production-grade spreadsheet engine with 320+ Excel-compatible functions, Apache Arrow storage, incremental dependency tracking, undo/redo, and dynamic array support. One Rust core, three language targets, MIT/Apache-2.0.
 
 [![CI](https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg)](https://github.com/psu3d0/formualizer/actions/workflows/ci.yml)
-![Coverage](https://raw.githubusercontent.com/psu3d0/formualizer/badges/coverage.svg)
+![Python Coverage](https://raw.githubusercontent.com/psu3d0/formualizer/badges/coverage.svg)
+![Rust Core Coverage](https://raw.githubusercontent.com/psu3d0/formualizer/badges/rust-core-coverage.svg)
 [![crates.io](https://img.shields.io/crates/v/formualizer.svg)](https://crates.io/crates/formualizer)
 [![PyPI](https://img.shields.io/pypi/v/formualizer.svg)](https://pypi.org/project/formualizer/)
 [![npm](https://img.shields.io/npm/v/formualizer.svg)](https://www.npmjs.com/package/formualizer)

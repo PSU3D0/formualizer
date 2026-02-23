@@ -1,0 +1,70 @@
+---
+title: "GCD"
+description: "GCD: Returns the greatest common divisor of one or more integers."
+---
+
+<FunctionPageSchema id="math/gcd" />
+
+## Summary
+
+`GCD` truncates each argument toward zero before calculating the divisor.
+
+## Remarks
+ - Inputs must be between `0` and `9.99999999e9` after truncation, or `#NUM!` is returned.
+ - Negative values return `#NUM!`.
+ - Any argument error propagates immediately.
+
+## Examples
+
+<Tabs items={["Greatest common divisor of two numbers", "Variadic and fractional arguments", "Negative values are invalid"]}>
+<Tab value="Greatest common divisor of two numbers">
+<FunctionSandbox
+  title="Greatest common divisor of two numbers"
+  formula={`=GCD(24, 36)`}
+  grid={{}}
+  expected={"12"}
+/>
+</Tab>
+
+<Tab value="Variadic and fractional arguments">
+<FunctionSandbox
+  title="Variadic and fractional arguments"
+  formula={`=GCD(18.9, 6, 30)`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+<Tab value="Negative values are invalid">
+<FunctionSandbox
+  title="Negative values are invalid"
+  formula={`=GCD(-2, 4)`}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [LCM](/docs/reference/functions/math/lcm)
+- [MOD](/docs/reference/functions/math/mod)
+- [QUOTIENT](/docs/reference/functions/math/quotient)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+
+## FAQ
+
+### What happens to decimal inputs in GCD?
+Each argument is truncated toward zero before the divisor is computed.
+
+### When does GCD return #NUM!?
+Negative values or values outside the supported bound return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/gcd" />
+{/* [formualizer-docgen:function-meta:end] */}
