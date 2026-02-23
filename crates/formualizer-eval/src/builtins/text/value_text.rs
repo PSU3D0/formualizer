@@ -58,6 +58,16 @@ pub struct ValueFn;
 /// formula: '=VALUE("abc")'
 /// expected: "#VALUE!"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TEXT
+///   - N
+///   - ISNUMBER
+/// faq:
+///   - q: "Does VALUE coerce arbitrary text like TRUE/FALSE?"
+///     a: "VALUE parses numeric text only; non-numeric strings return #VALUE!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: VALUE
 /// Type: ValueFn
@@ -119,6 +129,16 @@ pub struct TextFn;
 /// title: "Percent formatting"
 /// formula: '=TEXT(0.256, "0%")'
 /// expected: "26%"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUE
+///   - FIXED
+///   - DOLLAR
+/// faq:
+///   - q: "How complete is format_text support?"
+///     a: "Only a limited subset of Excel-style numeric/date tokens is supported in this implementation."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TEXT

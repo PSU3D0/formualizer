@@ -32,6 +32,16 @@ pub struct NotFn;
 /// formula: '=NOT(0)'
 /// expected: true
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - AND
+///   - OR
+///   - XOR
+/// faq:
+///   - q: "How does NOT treat blanks?"
+///     a: "Blank is treated as FALSE first, so NOT(blank) returns TRUE."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: NOT
 /// Type: NotFn
@@ -106,6 +116,16 @@ pub struct XorFn;
 /// title: "Text input triggers VALUE error"
 /// formula: '=XOR(1, "x")'
 /// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - AND
+///   - OR
+///   - NOT
+/// faq:
+///   - q: "What determines XOR's final result?"
+///     a: "XOR returns TRUE when the count of truthy inputs is odd; blanks are ignored."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: XOR
@@ -245,6 +265,16 @@ pub struct IfErrorFn; // IFERROR(value, fallback)
 /// formula: '=IFERROR(42, 0)'
 /// expected: 42
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IFNA
+///   - IF
+///   - ISERROR
+/// faq:
+///   - q: "Does IFERROR catch all error types?"
+///     a: "Yes. Any error kind in the first argument triggers the fallback value."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: IFERROR
 /// Type: IfErrorFn
@@ -318,6 +348,16 @@ pub struct IfNaFn; // IFNA(value, fallback)
 /// formula: '=IFNA(1/0, "missing")'
 /// expected: "#DIV/0!"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IFERROR
+///   - ISNA
+///   - NA
+/// faq:
+///   - q: "Which errors does IFNA intercept?"
+///     a: "Only #N/A is intercepted; all other errors pass through unchanged."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: IFNA
 /// Type: IfNaFn
@@ -389,6 +429,16 @@ pub struct IfsFn; // IFS(cond1, val1, cond2, val2, ...)
 /// title: "No conditions matched"
 /// formula: '=IFS(FALSE, 1, 0, 2)'
 /// expected: "#N/A"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IF
+///   - AND
+///   - OR
+/// faq:
+///   - q: "What errors can IFS return on structure issues?"
+///     a: "Odd argument counts return #VALUE!, and no TRUE condition returns #N/A."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: IFS

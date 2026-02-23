@@ -250,6 +250,16 @@ pub struct TextSplitFn;
 /// formula: '=TEXTSPLIT("A,B;C", ",", ";")'
 /// expected: "{A,B;C,#N/A}"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TEXTBEFORE
+///   - TEXTAFTER
+///   - TEXTJOIN
+/// faq:
+///   - q: "Is delimiter matching case-sensitive?"
+///     a: "Yes by default; set match_mode to 1 for case-insensitive delimiter matching."
+/// ```
 
 /// [formualizer-docgen:schema:start]
 /// Name: TEXTSPLIT
@@ -493,6 +503,16 @@ pub struct ValueToTextFn;
 /// formula: '=VALUETOTEXT("hello", 1)'
 /// expected: '"hello"'
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ARRAYTOTEXT
+///   - TEXT
+///   - VALUE
+/// faq:
+///   - q: "How are errors handled in concise vs strict mode?"
+///     a: "Concise mode returns the error, while strict mode converts the error to its text form."
+/// ```
 
 /// [formualizer-docgen:schema:start]
 /// Name: VALUETOTEXT
@@ -614,6 +634,16 @@ pub struct ArrayToTextFn;
 /// title: "Strict 2D representation"
 /// formula: '=ARRAYTOTEXT({1,2;3,4}, 1)'
 /// expected: "{1,2;3,4}"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUETOTEXT
+///   - TEXTJOIN
+///   - TEXTSPLIT
+/// faq:
+///   - q: "What changes when format is 1?"
+///     a: "Format 1 returns brace-delimited array syntax; format 0 flattens values into a comma-space list."
 /// ```
 
 /// [formualizer-docgen:schema:start]

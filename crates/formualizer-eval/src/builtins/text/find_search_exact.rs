@@ -60,6 +60,16 @@ pub struct FindFn;
 /// formula: '=FIND("world", "Hello World")'
 /// expected: "#VALUE!"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SEARCH
+///   - EXACT
+///   - TEXTBEFORE
+/// faq:
+///   - q: "Do wildcard characters work in FIND?"
+///     a: "No. FIND treats * and ? as literal characters and matches case-sensitively."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: FIND
 /// Type: FindFn
@@ -152,6 +162,16 @@ pub struct SearchFn;
 /// title: "Wildcard pattern"
 /// formula: '=SEARCH("d?ta*", "Meta Data Lake")'
 /// expected: 6
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FIND
+///   - EXACT
+///   - SUBSTITUTE
+/// faq:
+///   - q: "How are case and wildcards handled?"
+///     a: "SEARCH is case-insensitive and supports * for any sequence plus ? for one character."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SEARCH
@@ -293,6 +313,16 @@ pub struct ExactFn;
 /// title: "Case difference is not equal"
 /// formula: '=EXACT("Form", "form")'
 /// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FIND
+///   - SEARCH
+///   - UPPER
+/// faq:
+///   - q: "Does EXACT perform case-sensitive comparison?"
+///     a: "Yes. EXACT compares the resulting text values with exact case and character equality."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: EXACT

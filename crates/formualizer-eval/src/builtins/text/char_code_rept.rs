@@ -44,6 +44,16 @@ pub struct CharFn;
 /// formula: '=CHAR(300)'
 /// expected: "#VALUE!"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CODE
+///   - UNICHAR
+///   - UNICODE
+/// faq:
+///   - q: "Which character set does CHAR use for codes 128-159?"
+///     a: "It follows Excel-style Windows-1252 mappings, including extended symbols in that range."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CHAR
 /// Type: CharFn
@@ -153,6 +163,16 @@ pub struct CodeFn;
 /// formula: '=CODE(CHAR(128))'
 /// expected: 128
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CHAR
+///   - UNICODE
+///   - UNICHAR
+/// faq:
+///   - q: "What if the input text is empty?"
+///     a: "CODE returns #VALUE! because there is no first character to evaluate."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CODE
 /// Type: CodeFn
@@ -259,6 +279,16 @@ pub struct ReptFn;
 /// title: "Negative count"
 /// formula: '=REPT("x", -1)'
 /// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CONCAT
+///   - TEXTJOIN
+///   - SUBSTITUTE
+/// faq:
+///   - q: "Can REPT return very long strings?"
+///     a: "Only up to 32,767 characters; longer results return #VALUE! like Excel."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: REPT

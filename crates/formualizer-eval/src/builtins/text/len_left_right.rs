@@ -38,6 +38,16 @@ pub struct LenFn;
 /// formula: '=LEN("a b")'
 /// expected: 3
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LEFT
+///   - RIGHT
+///   - MID
+/// faq:
+///   - q: "Does LEN ignore spaces?"
+///     a: "No. LEN counts spaces and other visible characters as part of the total length."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LEN
 /// Type: LenFn
@@ -99,6 +109,16 @@ pub struct LeftFn;
 /// title: "Default count is one"
 /// formula: '=LEFT("Data")'
 /// expected: "D"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RIGHT
+///   - MID
+///   - LEN
+/// faq:
+///   - q: "What if num_chars is negative?"
+///     a: "LEFT returns #VALUE! when num_chars is below zero."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LEFT
@@ -183,6 +203,16 @@ pub struct RightFn;
 /// title: "Default count is one"
 /// formula: '=RIGHT("abc")'
 /// expected: "c"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LEFT
+///   - MID
+///   - LEN
+/// faq:
+///   - q: "If num_chars is larger than the text length, what is returned?"
+///     a: "RIGHT returns the full text when the requested count exceeds available characters."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: RIGHT

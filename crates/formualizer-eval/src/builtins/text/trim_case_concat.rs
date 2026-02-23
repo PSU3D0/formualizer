@@ -64,6 +64,16 @@ pub struct TrimFn;
 /// formula: '=TRIM("report")'
 /// expected: "report"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CLEAN
+///   - TEXTJOIN
+///   - SUBSTITUTE
+/// faq:
+///   - q: "What whitespace does TRIM normalize?"
+///     a: "It trims edges and collapses internal whitespace runs to single spaces."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TRIM
 /// Type: TrimFn
@@ -132,6 +142,16 @@ pub struct UpperFn;
 /// formula: '=UPPER(123)'
 /// expected: "123"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LOWER
+///   - PROPER
+///   - EXACT
+/// faq:
+///   - q: "Is uppercasing fully Unicode-aware?"
+///     a: "This implementation uses ASCII uppercasing semantics, so non-ASCII case rules are limited."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: UPPER
 /// Type: UpperFn
@@ -184,6 +204,16 @@ pub struct LowerFn;
 /// title: "Boolean coerced to text"
 /// formula: '=LOWER(TRUE)'
 /// expected: "true"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - UPPER
+///   - PROPER
+///   - EXACT
+/// faq:
+///   - q: "How are booleans handled by LOWER?"
+///     a: "Inputs are coerced to text first, so TRUE/FALSE become lowercase string values."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LOWER
@@ -238,6 +268,16 @@ pub struct ProperFn;
 /// title: "Hyphen-separated words"
 /// formula: '=PROPER("north-east REGION")'
 /// expected: "North-East Region"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - UPPER
+///   - LOWER
+///   - TRIM
+/// faq:
+///   - q: "How are word boundaries determined?"
+///     a: "Any non-alphanumeric character starts a new word boundary for capitalization."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: PROPER
@@ -313,6 +353,16 @@ pub struct ConcatFn;
 /// formula: '=CONCAT("A", "", "B")'
 /// expected: "AB"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CONCATENATE
+///   - TEXTJOIN
+///   - VALUE
+/// faq:
+///   - q: "Do blank arguments add separators or characters?"
+///     a: "No. CONCAT appends each value directly, and blanks contribute an empty string."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CONCAT
 /// Type: ConcatFn
@@ -373,6 +423,16 @@ pub struct ConcatenateFn;
 /// formula: '=CONCATENATE("Flag:", TRUE)'
 /// expected: "Flag:TRUE"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CONCAT
+///   - TEXTJOIN
+///   - VALUE
+/// faq:
+///   - q: "Is CONCATENATE behavior different from CONCAT here?"
+///     a: "No. In this engine CONCATENATE uses the same join semantics as CONCAT."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CONCATENATE
 /// Type: ConcatenateFn
@@ -431,6 +491,16 @@ pub struct TextJoinFn;
 /// title: "Keep empty entries"
 /// formula: '=TEXTJOIN("-", FALSE, "a", "", "c")'
 /// expected: "a--c"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CONCAT
+///   - CONCATENATE
+///   - TEXTSPLIT
+/// faq:
+///   - q: "What does ignore_empty change?"
+///     a: "TRUE skips empty values; FALSE keeps them, which can create adjacent delimiters."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TEXTJOIN

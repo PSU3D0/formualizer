@@ -63,6 +63,16 @@ pub struct CleanFn;
 /// formula: '=CLEAN("A B")'
 /// expected: "A B"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TRIM
+///   - CHAR
+///   - SUBSTITUTE
+/// faq:
+///   - q: "Does CLEAN remove normal spaces or only control characters?"
+///     a: "It removes only ASCII control characters (0-31); regular printable spaces remain."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CLEAN
 /// Type: CleanFn
@@ -127,6 +137,16 @@ pub struct UnicharFn;
 /// title: "Invalid code point"
 /// formula: '=UNICHAR(0)'
 /// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - UNICODE
+///   - CHAR
+///   - CODE
+/// faq:
+///   - q: "Which code points are invalid?"
+///     a: "0, surrogate values, and anything above 0x10FFFF return #VALUE!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: UNICHAR
@@ -204,6 +224,16 @@ pub struct UnicodeFn;
 /// title: "Code point for emoji"
 /// formula: '=UNICODE("😀")'
 /// expected: 128512
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - UNICHAR
+///   - CODE
+///   - CHAR
+/// faq:
+///   - q: "If text has multiple characters, which one is used?"
+///     a: "UNICODE inspects only the first character and ignores the rest."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: UNICODE
@@ -309,6 +339,16 @@ pub struct TextBeforeFn;
 /// title: "Text before last delimiter"
 /// formula: '=TEXTBEFORE("a-b-c", "-", -1)'
 /// expected: "a-b"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TEXTAFTER
+///   - FIND
+///   - SEARCH
+/// faq:
+///   - q: "What happens when the delimiter is missing?"
+///     a: "TEXTBEFORE returns #N/A when the requested delimiter occurrence is not found."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TEXTBEFORE
@@ -430,6 +470,16 @@ pub struct TextAfterFn;
 /// title: "Text after last delimiter"
 /// formula: '=TEXTAFTER("a-b-c", "-", -1)'
 /// expected: "c"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TEXTBEFORE
+///   - FIND
+///   - SEARCH
+/// faq:
+///   - q: "Is matching case-sensitive?"
+///     a: "Yes. TEXTAFTER performs case-sensitive delimiter matching in this implementation."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TEXTAFTER
@@ -577,6 +627,16 @@ pub struct DollarFn;
 /// title: "Negative value with zero decimals"
 /// formula: '=DOLLAR(-999.4, 0)'
 /// expected: "($999)"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FIXED
+///   - TEXT
+///   - VALUE
+/// faq:
+///   - q: "How are negative numbers displayed?"
+///     a: "Negative results are formatted in parentheses, for example ($1,234.00)."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: DOLLAR
@@ -733,6 +793,16 @@ pub struct FixedFn;
 /// title: "Fixed without commas"
 /// formula: '=FIXED(12345.678, 1, TRUE)'
 /// expected: "12345.7"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DOLLAR
+///   - TEXT
+///   - VALUE
+/// faq:
+///   - q: "What does the third argument control?"
+///     a: "Set it to TRUE to suppress thousands separators; FALSE keeps comma grouping."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: FIXED

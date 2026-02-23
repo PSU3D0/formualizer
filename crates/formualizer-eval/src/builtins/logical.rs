@@ -32,6 +32,16 @@ pub struct TrueFn;
 /// formula: '=IF(TRUE(), "yes", "no")'
 /// expected: "yes"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FALSE
+///   - IF
+///   - AND
+/// faq:
+///   - q: "Can TRUE accept arguments?"
+///     a: "No. TRUE takes zero arguments and always returns the boolean constant TRUE."
+/// ```
 
 /// [formualizer-docgen:schema:start]
 /// Name: TRUE
@@ -88,6 +98,16 @@ pub struct FalseFn;
 /// title: "Use FALSE in branching"
 /// formula: '=IF(FALSE(), "yes", "no")'
 /// expected: "no"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TRUE
+///   - IF
+///   - OR
+/// faq:
+///   - q: "Can FALSE accept arguments?"
+///     a: "No. FALSE takes zero arguments and always returns the boolean constant FALSE."
 /// ```
 
 /// [formualizer-docgen:schema:start]
@@ -147,6 +167,16 @@ pub struct AndFn;
 /// title: "Text input causes VALUE error"
 /// formula: '=AND(TRUE, "x")'
 /// expected: "#VALUE!"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - OR
+///   - NOT
+///   - XOR
+/// faq:
+///   - q: "What happens with blanks and text in AND?"
+///     a: "Blank values evaluate as FALSE; non-coercible text yields #VALUE! unless a prior FALSE short-circuits."
 /// ```
 
 /// [formualizer-docgen:schema:start]
@@ -264,6 +294,16 @@ pub struct OrFn;
 /// formula: '=OR(FALSE, "x")'
 /// expected: "#VALUE!"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - AND
+///   - NOT
+///   - XOR
+/// faq:
+///   - q: "How does OR treat blanks and text?"
+///     a: "Blanks are ignored; non-coercible text returns #VALUE! unless a prior TRUE already short-circuits."
+/// ```
 
 /// [formualizer-docgen:schema:start]
 /// Name: OR
@@ -377,6 +417,16 @@ pub struct IfFn;
 /// title: "Two-argument IF defaults false branch"
 /// formula: '=IF(0, 10)'
 /// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IFS
+///   - IFERROR
+///   - IFNA
+/// faq:
+///   - q: "What is returned when IF has only two arguments and condition is FALSE?"
+///     a: "The false branch defaults to logical FALSE when value_if_false is omitted."
 /// ```
 
 /// [formualizer-docgen:schema:start]

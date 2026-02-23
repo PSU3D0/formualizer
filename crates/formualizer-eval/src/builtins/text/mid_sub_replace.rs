@@ -39,6 +39,16 @@ pub struct MidFn;
 /// formula: '=MID("abc", 10, 2)'
 /// expected: ""
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - LEFT
+///   - RIGHT
+///   - REPLACE
+/// faq:
+///   - q: "How does MID handle out-of-range start positions?"
+///     a: "If start_num is beyond the text length, MID returns an empty string."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: MID
 /// Type: MidFn
@@ -117,6 +127,16 @@ pub struct SubstituteFn;
 /// title: "Replace only second match"
 /// formula: '=SUBSTITUTE("2024-01-2024", "2024", "FY24", 2)'
 /// expected: "2024-01-FY24"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - REPLACE
+///   - TEXTBEFORE
+///   - TEXTAFTER
+/// faq:
+///   - q: "Is SUBSTITUTE case-sensitive?"
+///     a: "Yes. It matches old_text with exact case and replaces either all or the requested instance."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SUBSTITUTE
@@ -214,6 +234,16 @@ pub struct ReplaceFn;
 /// title: "Insert at start"
 /// formula: '=REPLACE("report", 1, 0, "Q1-")'
 /// expected: "Q1-report"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUBSTITUTE
+///   - MID
+///   - LEFT
+/// faq:
+///   - q: "Does REPLACE match text patterns?"
+///     a: "No. REPLACE is position-based and replaces by start_num and num_chars, not by searching old text."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: REPLACE

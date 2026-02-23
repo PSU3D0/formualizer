@@ -32,6 +32,16 @@ pub struct IsNumberFn;
 /// formula: '=ISNUMBER("42")'
 /// expected: false
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUE
+///   - N
+///   - TYPE
+/// faq:
+///   - q: "Does numeric-looking text count as a number?"
+///     a: "No. ISNUMBER checks the stored value type, so text like \"42\" returns FALSE."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISNUMBER
 /// Type: IsNumberFn
@@ -101,6 +111,16 @@ pub struct IsTextFn;
 /// formula: '=ISTEXT(100)'
 /// expected: false
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - T
+///   - TYPE
+///   - ISNUMBER
+/// faq:
+///   - q: "Is an empty string treated as text?"
+///     a: "Yes. An empty string literal is still text, so ISTEXT(\"\") returns TRUE."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISTEXT
 /// Type: IsTextFn
@@ -160,6 +180,16 @@ pub struct IsLogicalFn;
 /// title: "Numeric input"
 /// formula: '=ISLOGICAL(1)'
 /// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TRUE
+///   - FALSE
+///   - TYPE
+/// faq:
+///   - q: "Do truthy numbers count as logical values?"
+///     a: "No. ISLOGICAL returns TRUE only for actual boolean TRUE/FALSE values."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISLOGICAL
@@ -221,6 +251,16 @@ pub struct IsBlankFn;
 /// formula: '=ISBLANK("")'
 /// expected: false
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISTEXT
+///   - LEN
+///   - T
+/// faq:
+///   - q: "Why does ISBLANK(\"\") return FALSE?"
+///     a: "Because an empty string is text, not a truly empty cell value."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISBLANK
 /// Type: IsBlankFn
@@ -281,6 +321,16 @@ pub struct IsErrorFn; // TRUE for any error (#N/A included)
 /// formula: '=ISERROR(123)'
 /// expected: false
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISERR
+///   - ISNA
+///   - IFERROR
+/// faq:
+///   - q: "Does ISERROR include #N/A?"
+///     a: "Yes. ISERROR returns TRUE for all error kinds, including #N/A."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISERROR
 /// Type: IsErrorFn
@@ -340,6 +390,16 @@ pub struct IsErrFn; // TRUE for any error except #N/A
 /// title: "N/A is excluded"
 /// formula: '=ISERR(NA())'
 /// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISERROR
+///   - ISNA
+///   - IFERROR
+/// faq:
+///   - q: "What is the difference between ISERR and ISERROR?"
+///     a: "ISERR excludes #N/A, while ISERROR treats #N/A as an error too."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISERR
@@ -405,6 +465,16 @@ pub struct IsNaFn; // TRUE only for #N/A
 /// formula: '=ISNA(1/0)'
 /// expected: false
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - NA
+///   - IFNA
+///   - ISERROR
+/// faq:
+///   - q: "Does ISNA return TRUE for errors other than #N/A?"
+///     a: "No. It returns TRUE only when the value is exactly #N/A."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISNA
 /// Type: IsNaFn
@@ -468,6 +538,16 @@ pub struct IsFormulaFn; // Requires provenance tracking (not yet) => always FALS
 /// formula: '=ISFORMULA(1+1)'
 /// expected: false
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TYPE
+///   - ISNUMBER
+///   - ISTEXT
+/// faq:
+///   - q: "Can ISFORMULA currently detect formula provenance?"
+///     a: "Not yet. This implementation always returns FALSE because provenance metadata is not tracked here."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISFORMULA
 /// Type: IsFormulaFn
@@ -527,6 +607,16 @@ pub struct TypeFn;
 /// title: "Boolean type code"
 /// formula: '=TYPE(TRUE)'
 /// expected: 4
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISNUMBER
+///   - ISTEXT
+///   - ISLOGICAL
+/// faq:
+///   - q: "How are errors handled by TYPE?"
+///     a: "Errors are propagated unchanged instead of returning Excel's error type code 16."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TYPE
@@ -603,6 +693,16 @@ pub struct NaFn; // NA() -> #N/A error
 /// formula: '=ISNA(NA())'
 /// expected: true
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISNA
+///   - IFNA
+///   - IFERROR
+/// faq:
+///   - q: "When should I use NA() intentionally?"
+///     a: "Use it to mark missing data so lookups and downstream checks can distinguish absent values from blanks."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: NA
 /// Type: NaFn
@@ -654,6 +754,16 @@ pub struct NFn; // N(value)
 /// title: "Text to zero"
 /// formula: '=N("hello")'
 /// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUE
+///   - T
+///   - TYPE
+/// faq:
+///   - q: "What does N do with text and blanks?"
+///     a: "Text and blank values convert to 0, while existing errors are passed through."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: N
@@ -746,6 +856,16 @@ pub struct TFn; // T(value)
 /// formula: '=T(99)'
 /// expected: ""
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - N
+///   - ISTEXT
+///   - TYPE
+/// faq:
+///   - q: "Does T hide non-text values?"
+///     a: "Yes. Non-text inputs become an empty string, but errors are still propagated."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: T
 /// Type: TFn
@@ -811,6 +931,16 @@ pub struct IsEvenFn;
 /// title: "Decimal truncation before parity"
 /// formula: '=ISEVEN(3.9)'
 /// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISODD
+///   - ISNUMBER
+///   - N
+/// faq:
+///   - q: "How are decimals handled by ISEVEN?"
+///     a: "The number is truncated toward zero before checking even/odd parity."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISEVEN
@@ -894,6 +1024,16 @@ pub struct IsOddFn;
 /// title: "Boolean coercion"
 /// formula: '=ISODD(TRUE)'
 /// expected: true
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISEVEN
+///   - ISNUMBER
+///   - N
+/// faq:
+///   - q: "Are booleans valid inputs for ISODD?"
+///     a: "Yes. TRUE is treated as 1 and FALSE as 0 before the odd check."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISODD
@@ -987,6 +1127,16 @@ pub struct ErrorTypeFn;
 /// title: "Non-error input returns N/A"
 /// formula: '=ERROR.TYPE(10)'
 /// expected: "#N/A"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISERROR
+///   - ISNA
+///   - IFERROR
+/// faq:
+///   - q: "What if the input is not an error value?"
+///     a: "ERROR.TYPE returns #N/A when the input is not an error."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ERROR.TYPE
