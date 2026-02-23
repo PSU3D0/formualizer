@@ -59,6 +59,16 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
 /// formula: "=EDATE(45322, 1)"
 /// expected: 45351
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - EOMONTH
+///   - DATE
+///   - YEARFRAC
+/// faq:
+///   - q: "What happens when the start day does not exist in the target month?"
+///     a: "EDATE clamps to the last valid day of the target month (for example Jan 31 + 1 month becomes Feb month-end)."
+/// ```
 #[derive(Debug)]
 pub struct EdateFn;
 
@@ -143,6 +153,16 @@ impl Function for EdateFn {
 /// title: "Get end of month two months ahead"
 /// formula: "=EOMONTH(45322, 2)"
 /// expected: 45382
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - EDATE
+///   - DATE
+///   - DAY
+/// faq:
+///   - q: "Does EOMONTH always return a month-end date?"
+///     a: "Yes. Regardless of the start day, EOMONTH returns the final calendar day of the target month after offset."
 /// ```
 #[derive(Debug)]
 pub struct EomonthFn;

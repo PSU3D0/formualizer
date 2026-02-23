@@ -27,6 +27,16 @@ use formualizer_macros::func_caps;
 /// formula: '=DATEVALUE("Jan 15, 2024")'
 /// expected: 45306
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DATE
+///   - TIMEVALUE
+///   - VALUE
+/// faq:
+///   - q: "Why can DATEVALUE disagree with locale-specific Excel parsing?"
+///     a: "This implementation uses a fixed set of accepted formats instead of workbook locale settings, so ambiguous text may parse differently."
+/// ```
 #[derive(Debug)]
 pub struct DateValueFn;
 
@@ -118,6 +128,16 @@ impl Function for DateValueFn {
 /// title: "Parse 12-hour AM/PM time"
 /// formula: '=TIMEVALUE("02:30 PM")'
 /// expected: 0.6041666667
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TIME
+///   - DATEVALUE
+///   - SECOND
+/// faq:
+///   - q: "Does TIMEVALUE depend on the 1900 vs 1904 date system?"
+///     a: "No. TIMEVALUE returns only a time fraction, so date-system selection does not change the result."
 /// ```
 #[derive(Debug)]
 pub struct TimeValueFn;

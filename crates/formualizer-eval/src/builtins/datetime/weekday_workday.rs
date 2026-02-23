@@ -56,6 +56,16 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i64, ExcelError> {
 /// formula: "=WEEKDAY(45292, 2)"
 /// expected: 1
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - WEEKNUM
+///   - ISOWEEKNUM
+///   - WORKDAY
+/// faq:
+///   - q: "Why do I get #NUM! for some return_type values?"
+///     a: "WEEKDAY only accepts specific Excel return_type codes (1, 2, 3, 11-17); other codes return #NUM!."
+/// ```
 #[derive(Debug)]
 pub struct WeekdayFn;
 /// [formualizer-docgen:schema:start]
@@ -234,6 +244,16 @@ impl Function for WeekdayFn {
 /// formula: "=WEEKNUM(42370, 21)"
 /// expected: 53
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - WEEKDAY
+///   - ISOWEEKNUM
+///   - DATE
+/// faq:
+///   - q: "What is special about return_type 21 in WEEKNUM?"
+///     a: "return_type=21 switches to ISO week numbering, matching ISOWEEKNUM behavior."
+/// ```
 #[derive(Debug)]
 pub struct WeeknumFn;
 /// [formualizer-docgen:schema:start]
@@ -348,6 +368,16 @@ impl Function for WeeknumFn {
 /// title: "Complete months difference"
 /// formula: '=DATEDIF(44197, 44378, "M")'
 /// expected: 6
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DAYS
+///   - YEARFRAC
+///   - DATE
+/// faq:
+///   - q: "How are unit strings interpreted in DATEDIF?"
+///     a: "Unit text is case-insensitive, but only Y, M, D, MD, YM, and YD are supported; other units return #NUM!."
 /// ```
 #[derive(Debug)]
 pub struct DatedifFn;
@@ -529,6 +559,16 @@ fn is_weekend(date: &NaiveDate) -> bool {
 /// formula: "=NETWORKDAYS(45292, 45299, 45293)"
 /// expected: 6
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - WORKDAY
+///   - WEEKDAY
+///   - DAYS
+/// faq:
+///   - q: "Are custom holidays excluded in NETWORKDAYS right now?"
+///     a: "Not yet. The third argument is accepted but currently ignored, so only Saturday/Sunday weekends are excluded."
+/// ```
 #[derive(Debug)]
 pub struct NetworkdaysFn;
 /// [formualizer-docgen:schema:start]
@@ -621,6 +661,16 @@ impl Function for NetworkdaysFn {
 /// title: "Holiday argument currently has no effect"
 /// formula: "=WORKDAY(45292, 5, 45293)"
 /// expected: 45299
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - NETWORKDAYS
+///   - WEEKDAY
+///   - TODAY
+/// faq:
+///   - q: "Does WORKDAY include the start date when days=0?"
+///     a: "Yes. With zero offset, WORKDAY returns the start date serial unchanged; nonzero offsets skip weekend days while stepping."
 /// ```
 #[derive(Debug)]
 pub struct WorkdayFn;

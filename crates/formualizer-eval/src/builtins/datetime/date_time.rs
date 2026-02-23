@@ -45,6 +45,16 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
 /// formula: "=DATE(2024, 13, 5)"
 /// expected: 45662
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DATEVALUE
+///   - YEAR
+///   - EDATE
+/// faq:
+///   - q: "Does DATE follow the workbook 1900/1904 date system?"
+///     a: "Yes. DATE emits a serial in the active workbook date system, so the same calendar date can map to different serials across 1900 vs 1904 mode."
+/// ```
 #[derive(Debug)]
 pub struct DateFn;
 
@@ -127,6 +137,16 @@ impl Function for DateFn {
 /// title: "Wrap overflowing hour"
 /// formula: "=TIME(25, 0, 0)"
 /// expected: 0.0416666667
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TIMEVALUE
+///   - HOUR
+///   - NOW
+/// faq:
+///   - q: "Can TIME return values greater than 1 day?"
+///     a: "No. TIME wraps overflow and always returns a fraction in [0,1), so extra days are discarded."
 /// ```
 #[derive(Debug)]
 pub struct TimeFn;

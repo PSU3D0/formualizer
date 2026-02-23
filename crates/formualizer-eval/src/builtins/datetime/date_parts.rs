@@ -109,6 +109,16 @@ fn days_360_between(start: NaiveDate, end: NaiveDate, european: bool) -> i64 {
 /// formula: "=DAYS(45323, 45366)"
 /// expected: -43
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DATEDIF
+///   - DAYS360
+///   - NETWORKDAYS
+/// faq:
+///   - q: "Does DAYS count partial-day time fractions?"
+///     a: "No. DAYS truncates both serial inputs to whole dates before subtracting end_date - start_date."
+/// ```
 #[derive(Debug)]
 pub struct DaysFn;
 
@@ -175,6 +185,16 @@ impl Function for DaysFn {
 /// title: "European 30E/360 method"
 /// formula: "=DAYS360(40574, 40602, TRUE)"
 /// expected: 28
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DAYS
+///   - YEARFRAC
+///   - DATEDIF
+/// faq:
+///   - q: "Why does DAYS360 differ from actual day counts?"
+///     a: "DAYS360 applies 30/360 financial conventions, so month-end dates are adjusted by rule instead of using calendar day totals."
 /// ```
 #[derive(Debug)]
 pub struct Days360Fn;
@@ -268,6 +288,16 @@ impl Function for Days360Fn {
 /// title: "Actual/365 convention"
 /// formula: "=YEARFRAC(44197, 44378, 3)"
 /// expected: 0.4958904110
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DAYS360
+///   - DAYS
+///   - DATEDIF
+/// faq:
+///   - q: "How does the basis argument change YEARFRAC?"
+///     a: "Basis selects the day-count convention (actual or 30/360 variants), so the same dates can yield different fractions."
 /// ```
 #[derive(Debug)]
 pub struct YearFracFn;
@@ -406,6 +436,16 @@ impl Function for YearFracFn {
 /// formula: "=ISOWEEKNUM(42370)"
 /// expected: 53
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - WEEKNUM
+///   - WEEKDAY
+///   - DATE
+/// faq:
+///   - q: "Can early-January dates return week 52 or 53?"
+///     a: "Yes. ISO week numbering can place dates near New Year in the prior ISO week-year."
+/// ```
 #[derive(Debug)]
 pub struct IsoWeekNumFn;
 
@@ -467,6 +507,16 @@ impl Function for IsoWeekNumFn {
 /// title: "Extract year from datetime serial"
 /// formula: "=YEAR(45351.75)"
 /// expected: 2024
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MONTH
+///   - DAY
+///   - DATE
+/// faq:
+///   - q: "Does YEAR use the fractional time part of a serial?"
+///     a: "No. YEAR resolves the calendar date and ignores time-of-day fractions."
 /// ```
 #[derive(Debug)]
 pub struct YearFn;
@@ -531,6 +581,16 @@ impl Function for YearFn {
 /// formula: "=MONTH(45351)"
 /// expected: 2
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - YEAR
+///   - DAY
+///   - EOMONTH
+/// faq:
+///   - q: "Can MONTH return values outside 1 through 12?"
+///     a: "No. MONTH always returns an integer from 1 to 12 after serial-to-date conversion."
+/// ```
 #[derive(Debug)]
 pub struct MonthFn;
 
@@ -594,6 +654,16 @@ impl Function for MonthFn {
 /// formula: "=DAY(45351)"
 /// expected: 29
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DATE
+///   - MONTH
+///   - EOMONTH
+/// faq:
+///   - q: "Does DAY return day-of-year or day-of-month?"
+///     a: "DAY returns the day number within the month (1-31), not the ordinal day of the year."
+/// ```
 #[derive(Debug)]
 pub struct DayFn;
 
@@ -656,6 +726,16 @@ impl Function for DayFn {
 /// title: "Extract hour from datetime serial"
 /// formula: "=HOUR(45351.75)"
 /// expected: 18
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MINUTE
+///   - SECOND
+///   - TIME
+/// faq:
+///   - q: "Why is HOUR unchanged across 1900 and 1904 date systems?"
+///     a: "HOUR reads only the fractional time component of a serial, so date-system epoch differences do not affect it."
 /// ```
 #[derive(Debug)]
 pub struct HourFn;
@@ -723,6 +803,16 @@ impl Function for HourFn {
 /// formula: "=MINUTE(0.5)"
 /// expected: 0
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - HOUR
+///   - SECOND
+///   - TIMEVALUE
+/// faq:
+///   - q: "Does MINUTE round to nearest minute?"
+///     a: "No. MINUTE extracts the minute component from the interpreted time value; it does not independently round to minute precision."
+/// ```
 #[derive(Debug)]
 pub struct MinuteFn;
 
@@ -787,6 +877,16 @@ impl Function for MinuteFn {
 /// title: "Extract second from exact noon"
 /// formula: "=SECOND(0.5)"
 /// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - HOUR
+///   - MINUTE
+///   - TIMEVALUE
+/// faq:
+///   - q: "Can SECOND return 60 for leap seconds?"
+///     a: "No. SECOND returns values from 0 to 59 based on spreadsheet serial-time interpretation."
 /// ```
 #[derive(Debug)]
 pub struct SecondFn;

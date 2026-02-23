@@ -25,6 +25,16 @@ use formualizer_macros::func_caps;
 /// formula: "=TODAY()+7-TODAY()"
 /// expected: 7
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - NOW
+///   - DATE
+///   - WORKDAY
+/// faq:
+///   - q: "Will TODAY include a time-of-day fraction?"
+///     a: "No. TODAY always returns an integer serial date, so its fractional part is always 0."
+/// ```
 #[derive(Debug)]
 pub struct TodayFn;
 
@@ -80,6 +90,16 @@ impl Function for TodayFn {
 /// title: "NOW is at or after TODAY"
 /// formula: "=NOW()>=TODAY()"
 /// expected: true
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TODAY
+///   - TIME
+///   - SECOND
+/// faq:
+///   - q: "How do I isolate only the time portion from NOW?"
+///     a: "Use NOW()-INT(NOW()); the integer part is date serial and the fractional part is time-of-day."
 /// ```
 #[derive(Debug)]
 pub struct NowFn;

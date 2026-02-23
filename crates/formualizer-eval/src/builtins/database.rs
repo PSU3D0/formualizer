@@ -770,6 +770,16 @@ pub struct DSumFn;
 /// expected: 488500
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - DAVERAGE
+///   - DCOUNT
+///   - SUMIFS
+/// faq:
+///   - q: "How are multiple criteria rows interpreted in DSUM?"
+///     a: "Each criteria row is an OR branch, while multiple populated criteria columns in one row are combined with AND."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: DSUM
 /// Type: DSumFn
@@ -910,6 +920,16 @@ pub struct DAverageFn;
 ///   G3: "South"
 /// formula: "=DAVERAGE(A1:E7, 5, G1:G3)"
 /// expected: 97000
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DSUM
+///   - DCOUNT
+///   - AVERAGEIFS
+/// faq:
+///   - q: "What happens if criteria match rows but field values are non-numeric?"
+///     a: "DAVERAGE skips non-numeric values and returns #DIV/0! if no numeric values remain after filtering."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -1054,6 +1074,16 @@ pub struct DCountFn;
 /// expected: 4
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - DCOUNTA
+///   - DSUM
+///   - COUNTIFS
+/// faq:
+///   - q: "Does DCOUNT count text values that look like numbers?"
+///     a: "Only values resolved as numeric in the target field are counted; true non-numeric text is ignored."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: DCOUNT
 /// Type: DCountFn
@@ -1196,6 +1226,16 @@ pub struct DMaxFn;
 /// expected: 24
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - DMIN
+///   - DGET
+///   - MAXIFS
+/// faq:
+///   - q: "What does DMAX return when no numeric field values match criteria?"
+///     a: "This implementation returns 0 when the filtered set has no numeric values."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: DMAX
 /// Type: DMaxFn
@@ -1336,6 +1376,16 @@ pub struct DMinFn;
 ///   G2: ">100000"
 /// formula: "=DMIN(A1:E7, 4, G1:G2)"
 /// expected: 22
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DMAX
+///   - DGET
+///   - MINIFS
+/// faq:
+///   - q: "How are mixed criteria (text plus numeric operators) handled in DMIN?"
+///     a: "Criteria are parsed per criteria cell, then applied as AND within row and OR across rows before the minimum is chosen."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -1481,6 +1531,16 @@ pub struct DProductFn;
 /// expected: 196416
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - DSUM
+///   - DCOUNT
+///   - PRODUCT
+/// faq:
+///   - q: "What result does DPRODUCT return if no numeric records match?"
+///     a: "This implementation returns 0 when no numeric field values remain after criteria filtering."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: DPRODUCT
 /// Type: DProductFn
@@ -1621,6 +1681,16 @@ pub struct DStdevFn;
 ///   G2: "Widget"
 /// formula: "=DSTDEV(A1:E7, 5, G1:G2)"
 /// expected: 19756.85535031659
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DSTDEVP
+///   - DVAR
+///   - STDEV.S
+/// faq:
+///   - q: "Why does DSTDEV return #DIV/0! with one matching row?"
+///     a: "DSTDEV uses sample statistics and needs at least two numeric matches for an n-1 denominator."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -1765,6 +1835,16 @@ pub struct DStdevPFn;
 /// expected: 16131.404843417147
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - DSTDEV
+///   - DVARP
+///   - STDEV.P
+/// faq:
+///   - q: "When should I prefer DSTDEVP over DSTDEV?"
+///     a: "Use DSTDEVP when matching rows represent the full population; DSTDEV is for samples."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: DSTDEVP
 /// Type: DStdevPFn
@@ -1907,6 +1987,16 @@ pub struct DVarFn;
 /// expected: 390333333.3333333
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - DVARP
+///   - DSTDEV
+///   - VAR.S
+/// faq:
+///   - q: "Does DVAR use sample or population variance math?"
+///     a: "DVAR uses sample variance with an n-1 denominator and returns #DIV/0! when fewer than two numeric rows match."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: DVAR
 /// Type: DVarFn
@@ -2047,6 +2137,16 @@ pub struct DVarPFn;
 ///   G2: "Widget"
 /// formula: "=DVARP(A1:E7, 5, G1:G2)"
 /// expected: 260222222.2222222
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DVAR
+///   - DSTDEVP
+///   - VAR.P
+/// faq:
+///   - q: "Why can DVARP return a value with only one matched row?"
+///     a: "Population variance divides by n, so one numeric match yields a defined result instead of #DIV/0!."
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -2192,6 +2292,16 @@ pub struct DGetFn;
 /// expected: "#NUM!"
 /// ```
 ///
+/// ```yaml,docs
+/// related:
+///   - DSUM
+///   - DCOUNT
+///   - XLOOKUP
+/// faq:
+///   - q: "Why does DGET fail when criteria match two rows?"
+///     a: "DGET requires exactly one matching record; multiple matches produce #NUM! and zero matches produce #VALUE!."
+/// ```
+///
 /// [formualizer-docgen:schema:start]
 /// Name: DGET
 /// Type: DGetFn
@@ -2268,6 +2378,16 @@ pub struct DCountAFn;
 ///   C1: "Item"
 /// formula: "=DCOUNTA(A1:A4,\"Item\",C1:C1)"
 /// expected: 2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DCOUNT
+///   - DGET
+///   - COUNTA
+/// faq:
+///   - q: "What is treated as blank in DCOUNTA?"
+///     a: "Empty cells and empty strings are treated as blank; other value types are counted when their row matches criteria."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: DCOUNTA
