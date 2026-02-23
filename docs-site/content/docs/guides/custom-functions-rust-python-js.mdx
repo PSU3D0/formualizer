@@ -14,19 +14,18 @@ Formualizer exposes the same custom-function model in all runtimes: register a w
 - Range arguments are materialized as 2D arrays (`LiteralValue::Array` in Rust, nested lists in Python, nested arrays in JS).
 - Returning an array spills into the grid using normal dynamic-array behavior.
 
-## Rust (workbook API)
+## Register and call a custom function
 
-```rust
-use formualizer_common::LiteralValue;
+<CodeTabs
+  title="Register a callback, then use it in a formula"
+  rust={`use formualizer_common::LiteralValue;
 use formualizer_workbook::{CustomFnOptions, Workbook};
 use std::sync::Arc;
 
 let mut wb = Workbook::new();
 wb.add_sheet("Sheet1")?;
 wb.set_values(
-    "Sheet1",
-    1,
-    1,
+    "Sheet1", 1, 1,
     &[
         vec![LiteralValue::Number(1.0), LiteralValue::Number(2.0)],
         vec![LiteralValue::Number(3.0), LiteralValue::Number(4.0)],
@@ -52,13 +51,8 @@ wb.register_custom_function(
 )?;
 
 wb.set_formula("Sheet1", 1, 3, "=RANGE_TOTAL(A1:B2)")?;
-assert_eq!(wb.evaluate_cell("Sheet1", 1, 3)?, LiteralValue::Number(10.0));
-```
-
-## Python
-
-```python
-import formualizer as fz
+assert_eq!(wb.evaluate_cell("Sheet1", 1, 3)?, LiteralValue::Number(10.0));`}
+  python={`import formualizer as fz
 
 wb = fz.Workbook(mode=fz.WorkbookMode.Ephemeral)
 wb.add_sheet("Sheet1")
@@ -68,27 +62,25 @@ wb.set_formula("Sheet1", 1, 1, "=PY_ADD(20,22)")
 assert wb.evaluate_cell("Sheet1", 1, 1) == 42
 
 # Built-in override is explicit:
-# wb.register_function("sum", lambda *_: 999, allow_override_builtin=True)
-```
-
-## JS/WASM
-
-```ts
-import init, { Workbook } from "formualizer";
+# wb.register_function("sum", lambda *_: 999, allow_override_builtin=True)`}
+  ts={`import init, { Workbook } from "formualizer";
 
 await init();
 const wb = new Workbook();
 wb.addSheet("Sheet1");
 
 wb.registerFunction(
-  "js_add",
+  "JS_ADD",
   (a, b) => Number(a) + Number(b),
   { minArgs: 2, maxArgs: 2 },
 );
 
 wb.setFormula("Sheet1", 1, 1, "=JS_ADD(20,22)");
-console.log(wb.evaluateCell("Sheet1", 1, 1)); // 42
-```
+wb.evaluateAll();
+console.log(wb.evaluateCell("Sheet1", 1, 1)); // 42`}
+  runnable={false}
+  tsLabel="JS / WASM"
+/>
 
 ## Quick verification commands
 

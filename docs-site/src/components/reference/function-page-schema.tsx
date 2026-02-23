@@ -1,4 +1,5 @@
 import functionsMeta from '@/generated/functions-meta.json';
+import { siteUrl } from '@/lib/env';
 
 type FunctionMetaRecord = {
   name: string;
@@ -38,7 +39,7 @@ export function FunctionPageSchema({ id }: { id: string }) {
   const [categorySlug, functionSlug] = id.split('/');
   if (!categorySlug || !functionSlug) return null;
 
-  const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+  const base = siteUrl.replace(/\/$/, '');
   const pageUrl = `${siteUrl}/docs/reference/functions/${categorySlug}/${functionSlug}`;
   const description = meta.shortSummary ?? `${meta.name} function reference and examples.`;
 

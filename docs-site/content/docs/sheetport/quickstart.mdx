@@ -35,12 +35,9 @@ ports:
 
 ## 2. Implementation
 
-### Rust
-
-Using the `formualizer` crate:
-
-```rust
-use formualizer::Workbook;
+<CodeTabs
+  title="SheetPort: write inputs → evaluate → read outputs"
+  rust={`use formualizer::Workbook;
 use formualizer::sheetport::{SheetPortSession, EvalOptions, InputUpdate};
 use formualizer::sheetport_spec::Manifest;
 use formualizer::common::LiteralValue;
@@ -64,15 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Monthly payment: {:?}", outputs.get("monthly_payment"));
 
     Ok(())
-}
-```
-
-### Python
-
-Using the `formualizer` Python package:
-
-```python
-import formualizer as fz
+}`}
+  python={`import formualizer as fz
 
 # Load workbook and manifest
 wb = fz.Workbook.load_path("model.xlsx")
@@ -86,33 +76,28 @@ session.write_inputs({
 
 # Evaluate and get outputs
 outputs = session.evaluate_once()
-print("Monthly payment:", outputs["monthly_payment"])
-```
+print("Monthly payment:", outputs["monthly_payment"])`}
+  ts={`import init, { Workbook, SheetPortSession } from 'formualizer';
 
-### JavaScript / WASM
+await init();
 
-Using the `formualizer` WASM bindings:
+const wb = Workbook.fromBytes(new Uint8Array(modelBuffer));
+const session = SheetPortSession.fromManifestYaml(manifestYaml, wb);
 
-```ts
-import init, { Workbook, SheetPortSession } from 'formualizer';
+// Write inputs
+session.writeInputs({
+    principal: 250000,
+    rate: 0.065
+});
 
-async function run() {
-    await init();
-    
-    const wb = Workbook.fromBytes(new Uint8Array(modelBuffer));
-    const session = SheetPortSession.fromManifestYaml(manifestYaml, wb);
+// Evaluate and read outputs
+const outputs = session.evaluateOnce();
+console.log('Monthly payment:', outputs.monthly_payment);`}
+  runnable={false}
+  tsLabel="JS / WASM"
+/>
 
-    // Write inputs
-    session.writeInputs({
-        principal: 250000,
-        rate: 0.065
-    });
-
-    // Evaluate and read outputs
-    const outputs = session.evaluateOnce();
-    console.log('Monthly payment:', outputs.monthly_payment);
-}
-```
+> The JS/WASM tab requires a workbook file, so it isn't runnable in-browser here. For self-contained runnable examples, see the [JS/WASM Quickstart](/docs/quickstarts/js-wasm-quickstart).
 
 ## Related Links
 

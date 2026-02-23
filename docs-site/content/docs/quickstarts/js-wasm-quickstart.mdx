@@ -11,8 +11,9 @@ npm install formualizer
 
 ## 2) Initialize and evaluate
 
-```ts
-import init, { Workbook } from "formualizer";
+<RunnableCode
+  title="Quick evaluation"
+  code={`import init, { Workbook } from "formualizer";
 
 await init();
 
@@ -23,8 +24,9 @@ wb.setValue("Sheet1", 1, 1, 100);
 wb.setValue("Sheet1", 2, 1, 20);
 wb.setFormula("Sheet1", 1, 2, "=A1-A2");
 
-console.log(wb.evaluateCell("Sheet1", 1, 2)); // 80
-```
+wb.evaluateAll();
+console.log(wb.evaluateCell("Sheet1", 1, 2)); // 80`}
+/>
 
 ## 3) Run the repo example
 

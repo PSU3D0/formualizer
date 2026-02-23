@@ -9,10 +9,11 @@ This walkthrough gives one tiny but realistic workbook flow:
 - Formula in `B1`
 - Evaluate and assert result
 
-## Rust example (complete)
+## Complete example
 
-```rust
-use formualizer_common::LiteralValue;
+<CodeTabs
+  title="Pricing discount: A1 base price, A2 discount → B1 result"
+  rust={`use formualizer_common::LiteralValue;
 use formualizer_workbook::Workbook;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -24,22 +25,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     wb.set_value("Pricing", 2, 1, LiteralValue::Number(0.15))?;  // A2 discount
 
     // Formula
-    wb.set_formula("Pricing", 1, 2, "=A1*(1-A2)")?;            // B1
+    wb.set_formula("Pricing", 1, 2, "=A1*(1-A2)")?;              // B1
 
     // Evaluate
     let result = wb.evaluate_cell("Pricing", 1, 2)?;
     assert_eq!(result, LiteralValue::Number(85.0));
 
     Ok(())
-}
-```
+}`}
+  python={`import formualizer as fz
 
-Expected output: `85.0`.
+wb = fz.Workbook()
+wb.add_sheet("Pricing")
 
-## Same flow in other runtimes
+# Inputs
+wb.set_value("Pricing", 1, 1, 100.0)  # A1 base price
+wb.set_value("Pricing", 2, 1, 0.15)   # A2 discount
 
-- Python: [Python Quickstart](/docs/quickstarts/python-quickstart)
-- JS/WASM: [JavaScript/WASM Quickstart](/docs/quickstarts/js-wasm-quickstart)
+# Formula
+wb.set_formula("Pricing", 1, 2, "=A1*(1-A2)")  # B1
+
+# Evaluate
+result = wb.evaluate_cell("Pricing", 1, 2)
+print(result)  # 85.0`}
+  ts={`import init, { Workbook } from "formualizer";
+
+await init();
+const wb = new Workbook();
+wb.addSheet("Pricing");
+
+// Inputs
+wb.setValue("Pricing", 1, 1, 100);   // A1 base price
+wb.setValue("Pricing", 2, 1, 0.15);  // A2 discount
+
+// Formula
+wb.setFormula("Pricing", 1, 2, "=A1*(1-A2)");  // B1
+
+// Evaluate
+wb.evaluateAll();
+console.log(wb.evaluateCell("Pricing", 1, 2)); // 85`}
+/>
+
+For runtime-specific setup details, see:
+- [Rust Quickstart](/docs/quickstarts/rust-quickstart)
+- [Python Quickstart](/docs/quickstarts/python-quickstart)
+- [JavaScript/WASM Quickstart](/docs/quickstarts/js-wasm-quickstart)
 
 ## Next
 

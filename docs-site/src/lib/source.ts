@@ -125,6 +125,49 @@ function renderLlmFriendlyMarkdown(processed: string): string {
     }
   );
 
+  // Convert CodeTabs to multi-language code blocks
+  llmSafe = llmSafe.replace(
+    /<CodeTabs[\s\S]*?\/>/g,
+    (match) => {
+      const titleMatch = match.match(/title="([^"]*)"/);
+      const title = titleMatch ? titleMatch[1] : '';
+
+      const langMap: Array<[string, string, string]> = [
+        ['rust', 'rust', 'Rust'],
+        ['python', 'python', 'Python'],
+        ['ts', 'ts', 'JS/WASM'],
+      ];
+
+      let out = title ? `**${title}**\n\n` : '';
+
+      for (const [prop, lang, label] of langMap) {
+        const codeMatch = match.match(new RegExp(`${prop}=\\{` + '`([\\s\\S]*?)`' + '\\}'));
+        if (codeMatch) {
+          out += `**${label}:**\n\`\`\`${lang}\n${codeMatch[1]}\n\`\`\`\n\n`;
+        }
+      }
+
+      return out;
+    }
+  );
+
+  // Convert RunnableCode to a standard code block
+  llmSafe = llmSafe.replace(
+    /<RunnableCode[\s\S]*?\/>/g,
+    (match) => {
+      const titleMatch = match.match(/title="([^"]*)"/);
+      const title = titleMatch ? titleMatch[1] : '';
+      const codeMatch = match.match(/code=\{`([\s\S]*?)`\}/);
+      const code = codeMatch ? codeMatch[1] : '';
+      const langMatch = match.match(/lang="([^"]*)"/);
+      const lang = langMatch ? langMatch[1] : 'ts';
+
+      let out = title ? `**${title}:**\n` : '';
+      out += `\`\`\`${lang}\n${code}\n\`\`\`\n`;
+      return out;
+    }
+  );
+
   return llmSafe;
 }
 

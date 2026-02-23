@@ -2,6 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { InstallCta } from '@/components/home/install-cta';
 import { WorkflowTabs } from '@/components/home/workflow-tabs';
+import { siteUrl } from '@/lib/env';
 
 const runtimeCards = [
   {
@@ -54,7 +55,43 @@ const featureCards = [
 ];
 
 export default function HomePage() {
+  const base = siteUrl.replace(/\/$/, '');
+
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Formualizer',
+    applicationCategory: 'DeveloperApplication',
+    operatingSystem: 'Cross-platform',
+    description:
+      'Embeddable spreadsheet formula engine with 320+ Excel-compatible functions, Arrow-powered storage, and deterministic evaluation. Available for Rust, Python, and JavaScript/WASM.',
+    url: base,
+    offers: {
+      '@type': 'Offer',
+      price: '0',
+      priceCurrency: 'USD',
+    },
+    softwareRequirements: 'Rust 1.85+, Python 3.9+, or Node.js 18+ (WASM)',
+    programmingLanguage: ['Rust', 'Python', 'JavaScript', 'TypeScript'],
+    license: 'https://opensource.org/licenses/MIT',
+    codeRepository: 'https://github.com/psu3d0/formualizer',
+    featureList: [
+      '320+ Excel-compatible built-in functions',
+      'Incremental dependency graph with cycle detection',
+      'SheetPort: treat spreadsheets as typed deterministic functions',
+      'Arrow-powered columnar storage',
+      'Custom function registration (Rust, Python, JS)',
+      'WASM plugin support',
+      'Deterministic evaluation controls',
+    ],
+  };
+
   return (
+    <>
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+    />
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-10 px-6 py-10 md:py-14 max-[430px]:gap-8 max-[430px]:pt-0">
       <section className="relative overflow-hidden rounded-3xl border bg-fd-card max-[430px]:-mx-6 max-[430px]:rounded-none max-[430px]:border-x-0">
         <Image
@@ -260,5 +297,6 @@ export default function HomePage() {
 
       <WorkflowTabs />
     </div>
+    </>
   );
 }
