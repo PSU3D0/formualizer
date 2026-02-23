@@ -312,7 +312,27 @@ mod tests_tan {
 
 #[derive(Debug)]
 pub struct AsinFn;
-/// Returns the arcsine of a value, in radians.
+/// Returns the angle in radians whose sine is the input value.
+///
+/// Use `ASIN` to recover an angle from a normalized ratio.
+///
+/// # Remarks
+/// - Domain: input must be between `-1` and `1`, inclusive.
+/// - Radians: output is in the range `[-PI()/2, PI()/2]`.
+/// - Errors: returns `#NUM!` when the input is outside the valid domain.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arcsine of one half"
+/// formula: "=ASIN(0.5)"
+/// expected: 0.5235987755982989
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Lower boundary"
+/// formula: "=ASIN(-1)"
+/// expected: -1.5707963267948966
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ASIN
 /// Type: AsinFn
@@ -401,7 +421,27 @@ mod tests_asin {
 
 #[derive(Debug)]
 pub struct AcosFn;
-/// Returns the arccosine of a value, in radians.
+/// Returns the angle in radians whose cosine is the input value.
+///
+/// Use `ACOS` when you need an angle from a normalized adjacent/hypotenuse ratio.
+///
+/// # Remarks
+/// - Domain: input must be between `-1` and `1`, inclusive.
+/// - Radians: output is in the range `[0, PI()]`.
+/// - Errors: returns `#NUM!` when the input is outside the valid domain.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arccosine of one half"
+/// formula: "=ACOS(0.5)"
+/// expected: 1.0471975511965979
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Upper-angle boundary"
+/// formula: "=ACOS(-1)"
+/// expected: 3.141592653589793
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ACOS
 /// Type: AcosFn
@@ -488,7 +528,27 @@ mod tests_acos {
 
 #[derive(Debug)]
 pub struct AtanFn;
-/// Returns the arctangent of a number, in radians.
+/// Returns the angle in radians whose tangent is the input value.
+///
+/// `ATAN` is useful for recovering a slope angle from a ratio.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: output is in the range `(-PI()/2, PI()/2)`.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arctangent of one"
+/// formula: "=ATAN(1)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative slope angle"
+/// formula: "=ATAN(-1)"
+/// expected: -0.7853981633974483
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ATAN
 /// Type: AtanFn
@@ -715,7 +775,27 @@ mod tests_atan2 {
 
 #[derive(Debug)]
 pub struct SecFn;
-/// Returns the secant of an angle in radians.
+/// Returns the secant of an angle, defined as `1 / COS(angle)`.
+///
+/// Use `SEC` for reciprocal-cosine calculations in radian-based formulas.
+///
+/// # Remarks
+/// - Domain: valid for all real angles except where `COS(angle) = 0`.
+/// - Radians: input is interpreted in radians.
+/// - Errors: returns `#DIV/0!` near odd multiples of `PI()/2`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Secant at zero"
+/// formula: "=SEC(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Singularity at PI over 2"
+/// formula: "=SEC(PI()/2)"
+/// expected: "#DIV/0!"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SEC
 /// Type: SecFn
@@ -804,7 +884,27 @@ mod tests_sec {
 
 #[derive(Debug)]
 pub struct CscFn;
-/// Returns the cosecant of an angle in radians.
+/// Returns the cosecant of an angle, defined as `1 / SIN(angle)`.
+///
+/// Use `CSC` for reciprocal-sine calculations in radian-based formulas.
+///
+/// # Remarks
+/// - Domain: valid for all real angles except where `SIN(angle) = 0`.
+/// - Radians: input is interpreted in radians.
+/// - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Cosecant at PI over 2"
+/// formula: "=CSC(PI()/2)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Zero sine denominator"
+/// formula: "=CSC(0)"
+/// expected: "#DIV/0!"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CSC
 /// Type: CscFn
@@ -892,7 +992,27 @@ mod tests_csc {
 
 #[derive(Debug)]
 pub struct CotFn;
-/// Returns the cotangent of an angle in radians.
+/// Returns the cotangent of an angle, defined as `1 / TAN(angle)`.
+///
+/// `COT` is useful when working with reciprocal tangent relationships.
+///
+/// # Remarks
+/// - Domain: valid for all real angles except where `TAN(angle) = 0`.
+/// - Radians: input is interpreted in radians.
+/// - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Cotangent at PI over 4"
+/// formula: "=COT(PI()/4)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Undefined cotangent at zero"
+/// formula: "=COT(0)"
+/// expected: "#DIV/0!"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COT
 /// Type: CotFn
@@ -980,7 +1100,27 @@ mod tests_cot {
 
 #[derive(Debug)]
 pub struct AcotFn;
-/// Returns the arccotangent of a number, in radians.
+/// Returns the angle in radians whose cotangent is the input value.
+///
+/// `ACOT` maps real inputs to principal angles in `(0, PI())`.
+///
+/// # Remarks
+/// - Domain: accepts any real number, including `0`.
+/// - Radians: output is in `(0, PI())`, with `ACOT(0) = PI()/2`.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Arccotangent of one"
+/// formula: "=ACOT(1)"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Arccotangent of negative one"
+/// formula: "=ACOT(-1)"
+/// expected: 2.356194490192345
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ACOT
 /// Type: AcotFn
@@ -1062,6 +1202,26 @@ mod tests_acot {
 #[derive(Debug)]
 pub struct SinhFn;
 /// Returns the hyperbolic sine of a number.
+///
+/// `SINH` computes `(e^x - e^-x) / 2`.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic sine at zero"
+/// formula: "=SINH(0)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic sine at one"
+/// formula: "=SINH(1)"
+/// expected: 1.1752011936438014
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SINH
 /// Type: SinhFn
@@ -1131,6 +1291,26 @@ mod tests_sinh {
 #[derive(Debug)]
 pub struct CoshFn;
 /// Returns the hyperbolic cosine of a number.
+///
+/// `COSH` computes `(e^x + e^-x) / 2`.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosine at zero"
+/// formula: "=COSH(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosine at one"
+/// formula: "=COSH(1)"
+/// expected: 1.5430806348152437
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COSH
 /// Type: CoshFn
@@ -1203,6 +1383,26 @@ mod tests_cosh {
 #[derive(Debug)]
 pub struct TanhFn;
 /// Returns the hyperbolic tangent of a number.
+///
+/// `TANH` computes `SINH(x) / COSH(x)`.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic tangent at zero"
+/// formula: "=TANH(0)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic tangent at two"
+/// formula: "=TANH(2)"
+/// expected: 0.9640275800758169
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TANH
 /// Type: TanhFn
@@ -1275,6 +1475,26 @@ mod tests_tanh {
 #[derive(Debug)]
 pub struct AsinhFn;
 /// Returns the inverse hyperbolic sine of a number.
+///
+/// `ASINH` is the inverse of `SINH` over all real inputs.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the output is not an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic sine of one"
+/// formula: "=ASINH(1)"
+/// expected: 0.881373587019543
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic sine of negative two"
+/// formula: "=ASINH(-2)"
+/// expected: -1.4436354751788103
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ASINH
 /// Type: AsinhFn
@@ -1347,6 +1567,26 @@ mod tests_asinh {
 #[derive(Debug)]
 pub struct AcoshFn;
 /// Returns the inverse hyperbolic cosine of a number.
+///
+/// `ACOSH` is the inverse of `COSH` for inputs at or above `1`.
+///
+/// # Remarks
+/// - Domain: input must be greater than or equal to `1`.
+/// - Radians: this function is hyperbolic, so the output is not an angle in radians.
+/// - Errors: returns `#NUM!` when the input is less than `1`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Boundary value"
+/// formula: "=ACOSH(1)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic cosine of ten"
+/// formula: "=ACOSH(10)"
+/// expected: 2.993222846126381
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ACOSH
 /// Type: AcoshFn
@@ -1429,6 +1669,26 @@ mod tests_acosh {
 #[derive(Debug)]
 pub struct AtanhFn;
 /// Returns the inverse hyperbolic tangent of a number.
+///
+/// `ATANH` is the inverse of `TANH` on the open interval `(-1, 1)`.
+///
+/// # Remarks
+/// - Domain: input must be strictly between `-1` and `1`.
+/// - Radians: this function is hyperbolic, so the output is not an angle in radians.
+/// - Errors: returns `#NUM!` when the input is `<= -1` or `>= 1`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic tangent of one half"
+/// formula: "=ATANH(0.5)"
+/// expected: 0.5493061443340548
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Domain boundary error"
+/// formula: "=ATANH(1)"
+/// expected: "#NUM!"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ATANH
 /// Type: AtanhFn
@@ -1515,7 +1775,27 @@ mod tests_atanh {
 
 #[derive(Debug)]
 pub struct SechFn;
-/// Returns the hyperbolic secant of a number.
+/// Returns the hyperbolic secant of a number, defined as `1 / COSH(x)`.
+///
+/// `SECH` produces values in `(0, 1]` for real inputs.
+///
+/// # Remarks
+/// - Domain: accepts any real number.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: no function-specific domain errors are produced.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic secant at zero"
+/// formula: "=SECH(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic secant at two"
+/// formula: "=SECH(2)"
+/// expected: 0.2658022288340797
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SECH
 /// Type: SechFn
@@ -1587,7 +1867,27 @@ mod tests_sech {
 
 #[derive(Debug)]
 pub struct CschFn;
-/// Returns the hyperbolic cosecant of a number.
+/// Returns the hyperbolic cosecant of a number, defined as `1 / SINH(x)`.
+///
+/// `CSCH` is the reciprocal of `SINH` where defined.
+///
+/// # Remarks
+/// - Domain: valid for all real numbers except `0`.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosecant at one"
+/// formula: "=CSCH(1)"
+/// expected: 0.8509181282393216
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Division by zero at origin"
+/// formula: "=CSCH(0)"
+/// expected: "#DIV/0!"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CSCH
 /// Type: CschFn
@@ -1677,7 +1977,27 @@ mod tests_csch {
 
 #[derive(Debug)]
 pub struct CothFn;
-/// Returns the hyperbolic cotangent of a number.
+/// Returns the hyperbolic cotangent of a number, defined as `COSH(x) / SINH(x)`.
+///
+/// `COTH` is the reciprocal of `TANH` where defined.
+///
+/// # Remarks
+/// - Domain: valid for all real numbers except `0`.
+/// - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+/// - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Hyperbolic cotangent at one"
+/// formula: "=COTH(1)"
+/// expected: 1.3130352854993312
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Division by zero at origin"
+/// formula: "=COTH(0)"
+/// expected: "#DIV/0!"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COTH
 /// Type: CothFn
