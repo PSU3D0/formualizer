@@ -1,17 +1,42 @@
 ---
-title: SUM
-description: Reference for the SUM function.
+title: "SUM"
+description: "Adds numeric values across scalars and ranges."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary for `SUM`.
+`SUM` evaluates all arguments, coercing text to numbers where possible, 
+ and returns the total. Blank cells and logical values in ranges are ignored.
 
-## Formula example
+## Remarks
+ - If any argument evaluates to an error, `SUM` propagates the first error it encounters.
+ - Unparseable text literals (e.g., `"foo"`) will result in a `#VALUE!` error.
 
-```text
-=SUM()
-```
+## Examples
+
+<Tabs items={[
+  'Basic scalar addition',
+  'Summing a range',
+]}>
+<Tab value="Basic scalar addition">
+<FunctionSandbox
+  title="Basic scalar addition"
+  formula={`=SUM(10, 20, 5)`}
+  grid={{}}
+  expected={"35"}
+/>
+</Tab>
+
+<Tab value="Summing a range">
+<FunctionSandbox
+  title="Summing a range"
+  formula={`=SUM(A1:A3)`}
+  grid={{"A1":"10","A2":"20","A3":"N/A"}}
+  expected={"30"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

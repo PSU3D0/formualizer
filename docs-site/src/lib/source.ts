@@ -98,12 +98,31 @@ function markdownRuntimeMeta(id: string): string {
 }
 
 function renderLlmFriendlyMarkdown(processed: string): string {
-  const withRuntime = processed.replace(
+  let llmSafe = processed.replace(
     /<FunctionMeta\s+id="([^"]+)"\s*\/>/g,
     (_full, id: string) => markdownRuntimeMeta(id),
   );
 
-  return withRuntime.replace(/\{\/\*\s*\[formualizer-docgen:function-meta:(start|end)\]\s*\*\/\}/g, '');
+  // Strip docgen markers
+  llmSafe = llmSafe.replace(/\{\/\*\s*\[formualizer-docgen:function-meta:(start|end)\]\s*\*\/\}/g, '');
+
+  // Convert FunctionSandbox back to readable markdown block
+  llmSafe = llmSafe.replace(
+    /<FunctionSandbox\s+title="([^"]*)"\s+formula=\{`([^`]+)`\}\s+grid=\{([^}]+)\}\s+expected=\{([^}]+)\}\s*\/>/g,
+    (_full, title, formula, gridJson, expectedJson) => {
+      let out = `### Example: ${title || 'Evaluation'}\n\n`;
+      if (gridJson && gridJson !== '{}') {
+        out += `**Inputs:**\n\`\`\`json\n${gridJson}\n\`\`\`\n\n`;
+      }
+      out += `**Formula:**\n\`\`\`excel\n${formula}\n\`\`\`\n\n`;
+      if (expectedJson && expectedJson !== 'null') {
+        out += `**Expected Result:** \`${expectedJson.replace(/^"|"$/g, '')}\`\n\n`;
+      }
+      return out;
+    }
+  );
+
+  return llmSafe;
 }
 
 export async function getLLMText(page: InferPageType<typeof source>) {

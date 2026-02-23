@@ -11,29 +11,31 @@ use formualizer_macros::func_caps;
 #[derive(Debug)]
 pub struct SumFn;
 
-/// Adds numeric values across scalars and ranges, ignoring blanks and propagating errors.
+/// Adds numeric values across scalars and ranges.
 ///
-/// # Formula example
-/// ```excel
-/// # returns: 6
-/// =SUM(1,2,3)
+/// `SUM` evaluates all arguments, coercing text to numbers where possible, 
+/// and returns the total. Blank cells and logical values in ranges are ignored.
+///
+/// # Remarks
+/// - If any argument evaluates to an error, `SUM` propagates the first error it encounters.
+/// - Unparseable text literals (e.g., `"foo"`) will result in a `#VALUE!` error.
+///
+/// # Examples
+/// 
+/// ```yaml,sandbox
+/// title: "Basic scalar addition"
+/// formula: "=SUM(10, 20, 5)"
+/// expected: 35
 /// ```
 ///
-/// # Rust example
-/// ```rust,no_run
-/// use formualizer_common::LiteralValue;
-/// use formualizer_eval::engine::{Engine, EvalConfig};
-/// use formualizer_eval::test_workbook::TestWorkbook;
-/// use formualizer_parse::parser::parse;
-///
-/// let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
-/// let ast = parse("=SUM(1,2,3)")?;
-/// engine.set_cell_formula("Sheet1", 1, 1, ast)?;
-/// let value = engine
-///     .evaluate_cell("Sheet1", 1, 1)?
-///     .unwrap_or(LiteralValue::Empty);
-/// assert_eq!(value, LiteralValue::Number(6.0));
-/// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+/// ```yaml,sandbox
+/// title: "Summing a range"
+/// grid:
+///   A1: 10
+///   A2: 20
+///   A3: "N/A"
+/// formula: "=SUM(A1:A3)"
+/// expected: 30
 /// ```
 ///
 /// [formualizer-docgen:schema:start]
@@ -118,27 +120,29 @@ pub struct CountFn;
 
 /// Counts numeric values across scalars and ranges.
 ///
-/// # Formula example
-/// ```excel
-/// # returns: 3
-/// =COUNT(1,"x",2,3)
+/// `COUNT` evaluates all arguments and counts how many are numeric values.
+/// Numbers, dates, and text representations of numbers (when supplied directly) are counted.
+///
+/// # Remarks
+/// - Text values inside ranges are ignored and not counted.
+/// - Blank cells and logical values in ranges are ignored.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Counting mixed scalar inputs"
+/// formula: "=COUNT(1, \"x\", 2, 3)"
+/// expected: 3
 /// ```
 ///
-/// # Rust example
-/// ```rust,no_run
-/// use formualizer_common::LiteralValue;
-/// use formualizer_eval::engine::{Engine, EvalConfig};
-/// use formualizer_eval::test_workbook::TestWorkbook;
-/// use formualizer_parse::parser::parse;
-///
-/// let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
-/// let ast = parse("=COUNT(1,\"x\",2,3)")?;
-/// engine.set_cell_formula("Sheet1", 1, 1, ast)?;
-/// let value = engine
-///     .evaluate_cell("Sheet1", 1, 1)?
-///     .unwrap_or(LiteralValue::Empty);
-/// assert_eq!(value, LiteralValue::Number(3.0));
-/// # Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+/// ```yaml,sandbox
+/// title: "Counting in a range"
+/// grid:
+///   A1: 10
+///   A2: "foo"
+///   A3: 20
+/// formula: "=COUNT(A1:A3)"
+/// expected: 2
 /// ```
 ///
 /// [formualizer-docgen:schema:start]

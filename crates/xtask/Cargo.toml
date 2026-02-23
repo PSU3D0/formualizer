@@ -16,3 +16,4 @@ syn = { version = "2.0", features = ["full", "visit"] }
 walkdir = "2.5"
 formualizer-eval = { path = "../formualizer-eval" }
 formualizer-common = { path = "../formualizer-common" }
+serde_yaml = "0.9"

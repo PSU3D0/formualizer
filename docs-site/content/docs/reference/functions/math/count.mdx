@@ -1,17 +1,42 @@
 ---
-title: COUNT
-description: Reference for the COUNT function.
+title: "COUNT"
+description: "Counts numeric values across scalars and ranges."
 ---
 
 ## Summary
 
-> TODO: Add a concise human summary for `COUNT`.
+`COUNT` evaluates all arguments and counts how many are numeric values.
+ Numbers, dates, and text representations of numbers (when supplied directly) are counted.
 
-## Formula example
+## Remarks
+ - Text values inside ranges are ignored and not counted.
+ - Blank cells and logical values in ranges are ignored.
 
-```text
-=COUNT()
-```
+## Examples
+
+<Tabs items={[
+  'Counting mixed scalar inputs',
+  'Counting in a range',
+]}>
+<Tab value="Counting mixed scalar inputs">
+<FunctionSandbox
+  title="Counting mixed scalar inputs"
+  formula={`=COUNT(1, "x", 2, 3)`}
+  grid={{}}
+  expected={"3"}
+/>
+</Tab>
+
+<Tab value="Counting in a range">
+<FunctionSandbox
+  title="Counting in a range"
+  formula={`=COUNT(A1:A3)`}
+  grid={{"A1":"10","A2":"foo","A3":"20"}}
+  expected={"2"}
+/>
+</Tab>
+
+</Tabs>
 
 ## Runtime metadata
 

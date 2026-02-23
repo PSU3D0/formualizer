@@ -5,6 +5,21 @@ const withMDX = createMDX();
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
+  serverExternalPackages: ['formualizer'],
+  webpack: (config, { isServer }) => {
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+      layers: true,
+    };
+
+    // For WASM support
+    if (!isServer) {
+       config.output.webassemblyModuleFilename = 'static/wasm/[modulehash].wasm';
+    }
+
+    return config;
+  },
   async rewrites() {
     return [
       {
