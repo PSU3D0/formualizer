@@ -20,7 +20,9 @@ pub fn js_error_with_cause(
     wasm_bindgen::JsValue::from(error)
 }
 
-pub fn to_js_value<T: Serialize>(value: &T) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
+pub fn to_js_value<T: Serialize>(
+    value: &T,
+) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
     value
         .serialize(
             &serde_wasm_bindgen::Serializer::new()

@@ -773,9 +773,12 @@ fn collect_function_ref_entries(
             continue;
         }
 
-        let struct_doc =
-            select_struct_doc_for_registration(&struct_docs_by_type, &type_name, &registration_file)
-                .unwrap_or_default();
+        let struct_doc = select_struct_doc_for_registration(
+            &struct_docs_by_type,
+            &type_name,
+            &registration_file,
+        )
+        .unwrap_or_default();
         let combined_doc = [struct_doc.trim(), impl_info.doc_text.trim()]
             .iter()
             .filter(|s| !s.is_empty())
@@ -1123,7 +1126,9 @@ struct ParsedDocContent {
 }
 
 fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> ParsedDocContent {
-    let re_schema = Regex::new(r"(?s)\[formualizer-docgen:schema:start\].*?\[formualizer-docgen:schema:end\]").unwrap();
+    let re_schema =
+        Regex::new(r"(?s)\[formualizer-docgen:schema:start\].*?\[formualizer-docgen:schema:end\]")
+            .unwrap();
     let clean_doc = re_schema.replace_all(doc_text, "").to_string();
 
     let mut sandboxes = Vec::new();
@@ -1271,7 +1276,10 @@ fn normalize_short_summary(raw: &str, fn_name: &str) -> String {
     .expect("valid regex");
     summary = signature_prefix.replace(&summary, "").to_string();
 
-    if summary.to_uppercase().starts_with(&format!("{} - ", fn_name.to_uppercase())) {
+    if summary
+        .to_uppercase()
+        .starts_with(&format!("{} - ", fn_name.to_uppercase()))
+    {
         summary = summary[fn_name.len() + 3..].trim().to_string();
     }
 
@@ -1410,7 +1418,10 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
     lines.push("---".to_string());
     lines.push("".to_string());
 
-    lines.push(format!("<FunctionPageSchema id=\"{}\" />", function_meta_id(entry)));
+    lines.push(format!(
+        "<FunctionPageSchema id=\"{}\" />",
+        function_meta_id(entry)
+    ));
     lines.push("".to_string());
 
     // Overview
@@ -1424,7 +1435,7 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
         lines.push(sanitize_mdx_text(&entry.remarks));
         lines.push("".to_string());
     }
-    
+
     // Examples (Sandboxes)
     if !entry.sandboxes.is_empty() {
         lines.push("## Examples".to_string());
@@ -1446,9 +1457,11 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
         for sandbox in &entry.sandboxes {
             let title = sandbox.title.as_deref().unwrap_or("Example");
             let title_attr = escape_jsx_attr(title);
-            let grid_json = serde_json::to_string(&sandbox.grid).unwrap_or_else(|_| "{}".to_string());
+            let grid_json =
+                serde_json::to_string(&sandbox.grid).unwrap_or_else(|_| "{}".to_string());
             let expected_json = sandbox.expected.as_deref().unwrap_or("null");
-            let expected_json_escaped = serde_json::to_string(&expected_json).unwrap_or_else(|_| "\"\"".to_string());
+            let expected_json_escaped =
+                serde_json::to_string(&expected_json).unwrap_or_else(|_| "\"\"".to_string());
 
             if entry.sandboxes.len() > 1 {
                 lines.push(format!("<Tab value=\"{}\">", title_attr));
@@ -1479,7 +1492,7 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
             1 => format!("={}(A1)", entry.function_name),
             _ => format!("={}(A1, B1)", entry.function_name),
         };
-        
+
         lines.push("## Formula example".to_string());
         lines.push("".to_string());
         lines.push("```text".to_string());
@@ -1509,13 +1522,13 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
             lines.push("".to_string());
         }
     }
-    
+
     // Runtime metadata
     lines.push("## Runtime metadata".to_string());
     lines.push("".to_string());
     lines.push(render_function_meta_block(entry));
     lines.push("".to_string());
-    
+
     lines.join("\n")
 }
 

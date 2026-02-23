@@ -159,10 +159,7 @@ impl ASTNodeData {
         let source = Self::source_from_core(node);
         match &node.node_type {
             ASTNodeType::Literal(lit) => match lit {
-                LiteralValue::Number(n) => ASTNodeData::Number {
-                    value: *n,
-                    source,
-                },
+                LiteralValue::Number(n) => ASTNodeData::Number { value: *n, source },
                 LiteralValue::Int(i) => ASTNodeData::Number {
                     value: *i as f64,
                     source,
@@ -171,10 +168,7 @@ impl ASTNodeData {
                     value: s.clone(),
                     source,
                 },
-                LiteralValue::Boolean(b) => ASTNodeData::Boolean {
-                    value: *b,
-                    source,
-                },
+                LiteralValue::Boolean(b) => ASTNodeData::Boolean { value: *b, source },
                 LiteralValue::Error(e) => ASTNodeData::Error {
                     message: format!("{e:?}"),
                     source,

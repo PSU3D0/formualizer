@@ -13,7 +13,7 @@ pub struct SumFn;
 
 /// Adds numeric values across scalars and ranges.
 ///
-/// `SUM` evaluates all arguments, coercing text to numbers where possible, 
+/// `SUM` evaluates all arguments, coercing text to numbers where possible,
 /// and returns the total. Blank cells and logical values in ranges are ignored.
 ///
 /// # Remarks
@@ -21,7 +21,7 @@ pub struct SumFn;
 /// - Unparseable text literals (e.g., `"foo"`) will result in a `#VALUE!` error.
 ///
 /// # Examples
-/// 
+///
 /// ```yaml,sandbox
 /// title: "Basic scalar addition"
 /// formula: "=SUM(10, 20, 5)"
