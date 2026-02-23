@@ -37,6 +37,29 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
 // FIND(find_text, within_text, [start_num]) - case sensitive
 #[derive(Debug)]
 pub struct FindFn;
+/// Returns the 1-based position of one text string inside another.
+///
+/// `FIND` is case-sensitive and does not interpret wildcard characters.
+///
+/// # Remarks
+/// - Search is case-sensitive (`"A"` and `"a"` are different).
+/// - `start_num` is 1-based and must be greater than `0`.
+/// - If no match is found, returns `#VALUE!`.
+/// - Errors in either argument are propagated.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Case-sensitive match"
+/// formula: '=FIND("World", "Hello World")'
+/// expected: 7
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Case mismatch fails"
+/// formula: '=FIND("world", "Hello World")'
+/// expected: "#VALUE!"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: FIND
 /// Type: FindFn
@@ -107,6 +130,29 @@ impl Function for FindFn {
 // SEARCH(find_text, within_text, [start_num]) - case insensitive + simple wildcard * ?
 #[derive(Debug)]
 pub struct SearchFn;
+/// Returns the 1-based position of one text string inside another.
+///
+/// `SEARCH` is case-insensitive and supports `*` and `?` wildcards.
+///
+/// # Remarks
+/// - Search is case-insensitive.
+/// - `*` matches any sequence and `?` matches a single character.
+/// - `start_num` is 1-based and must be greater than `0`.
+/// - If no match is found, returns `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Case-insensitive search"
+/// formula: '=SEARCH("world", "Hello World")'
+/// expected: 7
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Wildcard pattern"
+/// formula: '=SEARCH("d?ta*", "Meta Data Lake")'
+/// expected: 6
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SEARCH
 /// Type: SearchFn
@@ -227,6 +273,27 @@ fn wildcard_match(pat: &str, text: &str) -> bool {
 // EXACT(text1,text2)
 #[derive(Debug)]
 pub struct ExactFn;
+/// Compares two text values for exact equality.
+///
+/// # Remarks
+/// - Comparison is case-sensitive.
+/// - No wildcard semantics are applied.
+/// - Non-text values are converted to text before comparison.
+/// - Errors in either argument are propagated.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Exact same text"
+/// formula: '=EXACT("Form", "Form")'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Case difference is not equal"
+/// formula: '=EXACT("Form", "form")'
+/// expected: false
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: EXACT
 /// Type: ExactFn

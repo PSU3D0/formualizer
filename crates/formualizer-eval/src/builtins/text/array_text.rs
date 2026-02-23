@@ -227,6 +227,29 @@ fn split_by_delimiters(text: &str, delimiters: &[String], case_insensitive: bool
 
 #[derive(Debug)]
 pub struct TextSplitFn;
+/// Splits text into a dynamic 2D array by column and optional row delimiters.
+///
+/// `TEXTSPLIT` supports multiple delimiters, optional case-insensitive matching, and output padding.
+///
+/// # Remarks
+/// - Column delimiter is required; row delimiter is optional.
+/// - `match_mode=0` is case-sensitive, `match_mode=1` is case-insensitive.
+/// - `ignore_empty=TRUE` drops empty segments created by adjacent delimiters.
+/// - Rows are padded to equal width using `pad_with` (default `#N/A`).
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Split CSV row"
+/// formula: '=TEXTSPLIT("A,B,C", ",")'
+/// expected: "{A,B,C}"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Row and column split with padding"
+/// formula: '=TEXTSPLIT("A,B;C", ",", ";")'
+/// expected: "{A,B;C,#N/A}"
+/// ```
 
 /// [formualizer-docgen:schema:start]
 /// Name: TEXTSPLIT
@@ -447,6 +470,29 @@ fn value_to_text_repr(v: &LiteralValue, strict: bool) -> String {
 
 #[derive(Debug)]
 pub struct ValueToTextFn;
+/// Converts a value to text representation.
+///
+/// `VALUETOTEXT(value, [format])` supports concise (`0`) and strict (`1`) modes.
+///
+/// # Remarks
+/// - Concise mode (`0`) returns natural text for scalars.
+/// - Strict mode (`1`) adds explicit quoting for text and serializes arrays with braces.
+/// - In concise mode, error values are propagated as errors.
+/// - In strict mode, error values are rendered as their error text.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Concise text conversion"
+/// formula: '=VALUETOTEXT(123)'
+/// expected: "123"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Strict quoting for text"
+/// formula: '=VALUETOTEXT("hello", 1)'
+/// expected: '"hello"'
+/// ```
 
 /// [formualizer-docgen:schema:start]
 /// Name: VALUETOTEXT
@@ -546,6 +592,29 @@ fn arg_arraytotext() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct ArrayToTextFn;
+/// Converts an array or range into a text representation.
+///
+/// `ARRAYTOTEXT(array, [format])` supports concise (`0`) and strict (`1`) output styles.
+///
+/// # Remarks
+/// - Strict mode returns brace-delimited array syntax with row/column separators.
+/// - Concise mode flattens all values into a comma-space list.
+/// - Cells are converted using the same scalar text rules used by `VALUETOTEXT`.
+/// - Errors in scalar-only input propagate immediately.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Concise flattened output"
+/// formula: '=ARRAYTOTEXT({1,2,3})'
+/// expected: "1, 2, 3"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Strict 2D representation"
+/// formula: '=ARRAYTOTEXT({1,2;3,4}, 1)'
+/// expected: "{1,2;3,4}"
+/// ```
 
 /// [formualizer-docgen:schema:start]
 /// Name: ARRAYTOTEXT

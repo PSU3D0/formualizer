@@ -37,6 +37,27 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
 // VALUE(text) - parse number
 #[derive(Debug)]
 pub struct ValueFn;
+/// Converts text that represents a number into a numeric value.
+///
+/// # Remarks
+/// - Parsing uses locale-aware invariant number parsing from the function context.
+/// - Non-numeric text returns `#VALUE!`.
+/// - Booleans and numbers are first coerced to text, then parsed.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Parse decimal text"
+/// formula: '=VALUE("12.5")'
+/// expected: 12.5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Invalid numeric text"
+/// formula: '=VALUE("abc")'
+/// expected: "#VALUE!"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: VALUE
 /// Type: ValueFn
@@ -76,6 +97,29 @@ impl Function for ValueFn {
 // TEXT(value, format_text) - limited formatting (#,0,0.00, percent, yyyy, mm, dd, hh:mm) naive
 #[derive(Debug)]
 pub struct TextFn;
+/// Formats a value as text using a format pattern.
+///
+/// This implementation supports common numeric, percent, grouping, and basic date tokens.
+///
+/// # Remarks
+/// - Requires exactly two arguments: value and format text.
+/// - Numeric text is parsed before formatting; invalid numeric text returns `#VALUE!`.
+/// - Error inputs are propagated unchanged.
+/// - Supported patterns are intentionally limited compared with full Excel formatting.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Fixed decimal formatting"
+/// formula: '=TEXT(12.3, "0.00")'
+/// expected: "12.30"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Percent formatting"
+/// formula: '=TEXT(0.256, "0%")'
+/// expected: "26%"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TEXT
 /// Type: TextFn

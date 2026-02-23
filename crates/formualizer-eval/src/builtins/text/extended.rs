@@ -42,6 +42,27 @@ fn coerce_text(v: &LiteralValue) -> String {
 
 #[derive(Debug)]
 pub struct CleanFn;
+/// Removes non-printable ASCII control characters from text.
+///
+/// # Remarks
+/// - Characters with codes `0..31` are removed.
+/// - Printable whitespace like regular spaces is preserved.
+/// - Non-text inputs are coerced to text before cleaning.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Strip control characters"
+/// formula: '=CLEAN("A"&CHAR(10)&"B")'
+/// expected: "AB"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Printable spaces remain"
+/// formula: '=CLEAN("A B")'
+/// expected: "A B"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CLEAN
 /// Type: CleanFn
@@ -86,6 +107,27 @@ impl Function for CleanFn {
 
 #[derive(Debug)]
 pub struct UnicharFn;
+/// Returns the Unicode character for a given code point.
+///
+/// # Remarks
+/// - Input is truncated to an integer code point.
+/// - Code point `0`, surrogate range, and values above `0x10FFFF` return `#VALUE!`.
+/// - Errors are propagated unchanged.
+/// - Non-numeric inputs are coerced with numeric coercion rules.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Basic Unicode code point"
+/// formula: '=UNICHAR(9731)'
+/// expected: "☃"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Invalid code point"
+/// formula: '=UNICHAR(0)'
+/// expected: "#VALUE!"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: UNICHAR
 /// Type: UnicharFn
@@ -142,6 +184,27 @@ impl Function for UnicharFn {
 
 #[derive(Debug)]
 pub struct UnicodeFn;
+/// Returns the Unicode code point of the first character in text.
+///
+/// # Remarks
+/// - Only the first character is evaluated.
+/// - Empty text returns `#VALUE!`.
+/// - Non-text inputs are coerced to text before inspection.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Code point for letter A"
+/// formula: '=UNICODE("A")'
+/// expected: 65
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Code point for emoji"
+/// formula: '=UNICODE("😀")'
+/// expected: 128512
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: UNICODE
 /// Type: UnicodeFn
@@ -226,6 +289,27 @@ fn arg_textbefore() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct TextBeforeFn;
+/// Returns text that appears before a delimiter.
+///
+/// # Remarks
+/// - Delimiter matching is case-sensitive.
+/// - `instance_num` defaults to `1`; negative instances search from the end.
+/// - `instance_num=0` or empty delimiter returns `#VALUE!`.
+/// - If requested delimiter occurrence is not found, returns `#N/A`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Text before first delimiter"
+/// formula: '=TEXTBEFORE("a-b-c", "-")'
+/// expected: "a"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text before last delimiter"
+/// formula: '=TEXTBEFORE("a-b-c", "-", -1)'
+/// expected: "a-b"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TEXTBEFORE
 /// Type: TextBeforeFn
@@ -326,6 +410,27 @@ impl Function for TextBeforeFn {
 
 #[derive(Debug)]
 pub struct TextAfterFn;
+/// Returns text that appears after a delimiter.
+///
+/// # Remarks
+/// - Delimiter matching is case-sensitive.
+/// - `instance_num` defaults to `1`; negative instances search from the end.
+/// - `instance_num=0` or empty delimiter returns `#VALUE!`.
+/// - If requested delimiter occurrence is not found, returns `#N/A`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Text after first delimiter"
+/// formula: '=TEXTAFTER("a-b-c", "-")'
+/// expected: "b-c"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text after last delimiter"
+/// formula: '=TEXTAFTER("a-b-c", "-", -1)'
+/// expected: "c"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TEXTAFTER
 /// Type: TextAfterFn
@@ -452,6 +557,27 @@ fn arg_dollar() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct DollarFn;
+/// Formats a number as currency text.
+///
+/// # Remarks
+/// - Default decimal places is `2` when omitted.
+/// - Negative values are rendered in parentheses, such as `($1,234.00)`.
+/// - Uses comma group separators and dollar symbol.
+/// - Input coercion failures or propagated errors return an error.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Default currency formatting"
+/// formula: '=DOLLAR(1234.5)'
+/// expected: "$1,234.50"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative value with zero decimals"
+/// formula: '=DOLLAR(-999.4, 0)'
+/// expected: "($999)"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: DOLLAR
 /// Type: DollarFn
@@ -587,6 +713,27 @@ fn arg_fixed() -> Vec<ArgSchema> {
 
 #[derive(Debug)]
 pub struct FixedFn;
+/// Formats a number as text with fixed decimal places.
+///
+/// # Remarks
+/// - Default decimal places is `2` when omitted.
+/// - Third argument controls comma grouping (`TRUE` disables commas).
+/// - Values are rounded to the requested decimal precision.
+/// - Numeric coercion failures return `#VALUE!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Fixed with commas"
+/// formula: '=FIXED(12345.678, 1, FALSE)'
+/// expected: "12,345.7"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fixed without commas"
+/// formula: '=FIXED(12345.678, 1, TRUE)'
+/// expected: "12345.7"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: FIXED
 /// Type: FixedFn

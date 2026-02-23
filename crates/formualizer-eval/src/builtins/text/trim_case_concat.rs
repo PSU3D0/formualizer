@@ -43,6 +43,27 @@ fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
 
 #[derive(Debug)]
 pub struct TrimFn;
+/// Removes leading/trailing whitespace and collapses internal runs to single spaces.
+///
+/// # Remarks
+/// - Leading and trailing whitespace is removed.
+/// - Consecutive whitespace inside the text is collapsed to one ASCII space.
+/// - Non-text inputs are coerced to text before trimming.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Normalize spacing"
+/// formula: '=TRIM("  alpha   beta  ")'
+/// expected: "alpha beta"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Already clean text"
+/// formula: '=TRIM("report")'
+/// expected: "report"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TRIM
 /// Type: TrimFn
@@ -91,6 +112,26 @@ impl Function for TrimFn {
 
 #[derive(Debug)]
 pub struct UpperFn;
+/// Converts text to uppercase.
+///
+/// # Remarks
+/// - Uses ASCII uppercasing semantics in this implementation.
+/// - Numbers and booleans are first converted to text.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Uppercase letters"
+/// formula: '=UPPER("Quarterly report")'
+/// expected: "QUARTERLY REPORT"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Number coerced to text"
+/// formula: '=UPPER(123)'
+/// expected: "123"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: UPPER
 /// Type: UpperFn
@@ -124,6 +165,26 @@ impl Function for UpperFn {
 }
 #[derive(Debug)]
 pub struct LowerFn;
+/// Converts text to lowercase.
+///
+/// # Remarks
+/// - Uses ASCII lowercasing semantics in this implementation.
+/// - Numbers and booleans are first converted to text.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Lowercase letters"
+/// formula: '=LOWER("Data PIPELINE")'
+/// expected: "data pipeline"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Boolean coerced to text"
+/// formula: '=LOWER(TRUE)'
+/// expected: "true"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LOWER
 /// Type: LowerFn
@@ -157,6 +218,27 @@ impl Function for LowerFn {
 }
 #[derive(Debug)]
 pub struct ProperFn;
+/// Capitalizes the first letter of each alphanumeric word.
+///
+/// # Remarks
+/// - Word boundaries are reset by non-alphanumeric characters.
+/// - Internal letters in each word are lowercased.
+/// - Non-text inputs are coerced to text.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Title case simple phrase"
+/// formula: '=PROPER("hello world")'
+/// expected: "Hello World"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Hyphen-separated words"
+/// formula: '=PROPER("north-east REGION")'
+/// expected: "North-East Region"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: PROPER
 /// Type: ProperFn
@@ -210,6 +292,27 @@ impl Function for ProperFn {
 // CONCAT(text1, text2, ...)
 #[derive(Debug)]
 pub struct ConcatFn;
+/// Concatenates multiple values into one text string.
+///
+/// # Remarks
+/// - Accepts one or more arguments.
+/// - Blank values contribute an empty string.
+/// - Numbers and booleans are coerced to text.
+/// - Errors are propagated as soon as encountered.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Join text pieces"
+/// formula: '=CONCAT("Q", 1, "-", "2026")'
+/// expected: "Q1-2026"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Concatenate with blanks"
+/// formula: '=CONCAT("A", "", "B")'
+/// expected: "AB"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CONCAT
 /// Type: ConcatFn
@@ -249,6 +352,27 @@ impl Function for ConcatFn {
 // CONCATENATE (alias semantics)
 #[derive(Debug)]
 pub struct ConcatenateFn;
+/// Legacy alias for `CONCAT` that joins multiple values as text.
+///
+/// # Remarks
+/// - Semantics match `CONCAT` in this implementation.
+/// - Blank values contribute an empty string.
+/// - Numbers and booleans are coerced to text.
+/// - Errors are propagated as soon as encountered.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Legacy concatenate behavior"
+/// formula: '=CONCATENATE("Jan", "-", 2026)'
+/// expected: "Jan-2026"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Boolean coercion"
+/// formula: '=CONCATENATE("Flag:", TRUE)'
+/// expected: "Flag:TRUE"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CONCATENATE
 /// Type: ConcatenateFn
@@ -285,6 +409,29 @@ impl Function for ConcatenateFn {
 // TEXTJOIN(delimiter, ignore_empty, text1, [text2, ...])
 #[derive(Debug)]
 pub struct TextJoinFn;
+/// Joins text values using a delimiter, with optional empty-value filtering.
+///
+/// `TEXTJOIN(delimiter, ignore_empty, text1, ...)` is useful for building labels and lists.
+///
+/// # Remarks
+/// - `ignore_empty=TRUE` skips empty strings and empty cells.
+/// - `ignore_empty=FALSE` includes empty items, which can produce adjacent delimiters.
+/// - Delimiter and values are coerced to text.
+/// - Any error in inputs propagates immediately.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Ignore empty entries"
+/// formula: '=TEXTJOIN(",", TRUE, "a", "", "c")'
+/// expected: "a,c"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Keep empty entries"
+/// formula: '=TEXTJOIN("-", FALSE, "a", "", "c")'
+/// expected: "a--c"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TEXTJOIN
 /// Type: TextJoinFn

@@ -17,6 +17,27 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 
 #[derive(Debug)]
 pub struct LenFn;
+/// Returns the number of characters in a text value.
+///
+/// # Remarks
+/// - Counts Unicode scalar characters, not bytes.
+/// - Empty values return `0`.
+/// - Non-text values are converted to their text form before counting.
+/// - Errors are propagated unchanged.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Basic text length"
+/// formula: '=LEN("hello")'
+/// expected: 5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Whitespace is counted"
+/// formula: '=LEN("a b")'
+/// expected: 3
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LEN
 /// Type: LenFn
@@ -58,6 +79,27 @@ impl Function for LenFn {
 
 #[derive(Debug)]
 pub struct LeftFn;
+/// Returns the leftmost characters from a text value.
+///
+/// # Remarks
+/// - `num_chars` defaults to `1` when omitted.
+/// - Negative `num_chars` returns `#VALUE!`.
+/// - If `num_chars` exceeds length, the full text is returned.
+/// - Non-text values are coerced to text before slicing.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Take first two characters"
+/// formula: '=LEFT("Formualizer", 2)'
+/// expected: "Fo"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Default count is one"
+/// formula: '=LEFT("Data")'
+/// expected: "D"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LEFT
 /// Type: LeftFn
@@ -121,6 +163,27 @@ impl Function for LeftFn {
 
 #[derive(Debug)]
 pub struct RightFn;
+/// Returns the rightmost characters from a text value.
+///
+/// # Remarks
+/// - `num_chars` defaults to `1` when omitted.
+/// - Negative `num_chars` returns `#VALUE!`.
+/// - If `num_chars` exceeds length, the full text is returned.
+/// - Non-text values are coerced to text before slicing.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Take last three characters"
+/// formula: '=RIGHT("engine", 3)'
+/// expected: "ine"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Default count is one"
+/// formula: '=RIGHT("abc")'
+/// expected: "c"
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: RIGHT
 /// Type: RightFn
