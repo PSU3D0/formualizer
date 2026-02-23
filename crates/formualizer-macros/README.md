@@ -1,4 +1,8 @@
+![Formualizer banner](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-banner.png)
+
 # formualizer-macros
+
+![Arrow Powered](https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white)
 
 `formualizer-macros` bundles the procedural macros that power the
 Formualizer spreadsheet engine. Today it exposes the `func_caps!` macro used to
