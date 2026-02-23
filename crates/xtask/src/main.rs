@@ -1083,18 +1083,87 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> ParsedDocContent {
     if short_summary.is_empty() {
         short_summary = format!("Reference for the {} function.", fn_name);
     }
+
+    short_summary = normalize_short_summary(&short_summary, fn_name);
+
     if overview_lines.is_empty() {
         overview_lines.push(short_summary.clone());
     }
 
+    let overview = normalize_overview_text(&overview_lines.join("\n"));
+
     ParsedDocContent {
         short_summary,
-        overview: overview_lines.join("\n").trim().to_string(),
+        overview,
         remarks: remarks_lines.join("\n").trim().to_string(),
         sandboxes,
         related_hints,
         faq_entries,
     }
+}
+
+fn normalize_short_summary(raw: &str, fn_name: &str) -> String {
+    let mut summary = Regex::new(r"\s+")
+        .expect("valid regex")
+        .replace_all(raw.trim(), " ")
+        .to_string();
+
+    summary = summary.trim_matches('`').to_string();
+
+    let signature_prefix = Regex::new(&format!(
+        r"(?i)^\s*`?{}\s*\([^)]*\)\s*[-:]\s*",
+        regex::escape(fn_name)
+    ))
+    .expect("valid regex");
+    summary = signature_prefix.replace(&summary, "").to_string();
+
+    if summary.to_uppercase().starts_with(&format!("{} - ", fn_name.to_uppercase())) {
+        summary = summary[fn_name.len() + 3..].trim().to_string();
+    }
+
+    if summary.starts_with("Returns ")
+        && let Some(rel_idx) = summary[8..].find(" Returns ")
+    {
+        let idx = 8 + rel_idx;
+        if !summary[..idx].trim_end().ends_with('.') {
+            summary.insert(idx, '.');
+        }
+    }
+
+    if let Some((prefix, _suffix)) = summary.split_once(" F = ") {
+        summary = prefix.trim().to_string();
+    }
+
+    if summary.len() > 180 {
+        let truncated = summary
+            .char_indices()
+            .take_while(|(i, _)| *i < 176)
+            .map(|(_, c)| c)
+            .collect::<String>();
+        summary = format!("{}…", truncated.trim_end());
+    }
+
+    if summary.is_empty() {
+        return format!("Reference for the {} function.", fn_name);
+    }
+
+    if !summary.ends_with('.')
+        && !summary.ends_with('!')
+        && !summary.ends_with('?')
+        && summary.len() < 140
+    {
+        summary.push('.');
+    }
+
+    summary
+}
+
+fn normalize_overview_text(raw: &str) -> String {
+    let cleaned = Regex::new(r"\n{3,}")
+        .expect("valid regex")
+        .replace_all(raw.trim(), "\n\n")
+        .to_string();
+    cleaned
 }
 
 fn slugify_for_docs(input: &str) -> String {

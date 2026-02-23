@@ -1,0 +1,91 @@
+# Docs-ref fallback inventory (Formula example placeholders)
+
+Total fallback pages: 82
+
+## stats (48)
+
+- beta-dist
+- binom-dist
+- chisq-dist
+- chisq-inv
+- chisq-test
+- confidence-norm
+- confidence-t
+- covariance-p
+- covariance-s
+- expon-dist
+- f-dist
+- f-inv
+- f-test
+- fisher
+- fisherinv
+- forecast-linear
+- frequency
+- gamma-dist
+- gauss
+- growth
+- hypgeom-dist
+- kurt
+- linest
+- logest
+- lognorm-dist
+- lognorm-inv
+- negbinom-dist
+- norm-dist
+- norm-inv
+- norm-s-dist
+- norm-s-inv
+- pearson
+- percentrank-exc
+- percentrank-inc
+- phi
+- poisson-dist
+- rsq
+- skew
+- standardize
+- steyx
+- t-dist-2t
+- t-dist
+- t-inv-2t
+- t-inv
+- t-test
+- trend
+- weibull-dist
+- z-test
+
+## math (34)
+
+- acos
+- acosh
+- acot
+- asin
+- asinh
+- atan
+- atanh
+- ceiling-math
+- ceiling
+- cosh
+- cot
+- coth
+- csc
+- csch
+- even
+- exp
+- floor-math
+- floor
+- int
+- ln
+- log10
+- multinomial
+- odd
+- quotient
+- rounddown
+- roundup
+- sec
+- sech
+- seriessum
+- sinh
+- sqrtpi
+- sumsq
+- tanh
+- trunc
