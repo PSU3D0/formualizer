@@ -8,6 +8,7 @@
   <a href="https://crates.io/crates/formualizer"><img alt="crates.io" src="https://img.shields.io/crates/v/formualizer.svg" /></a>
   <a href="https://pypi.org/project/formualizer/"><img alt="PyPI" src="https://img.shields.io/pypi/v/formualizer.svg" /></a>
   <a href="https://www.npmjs.com/package/formualizer"><img alt="npm" src="https://img.shields.io/npm/v/formualizer.svg" /></a>
+  <a href="https://www.formualizer.dev/docs"><img alt="Documentation" src="https://img.shields.io/badge/docs-formualizer.dev-blue" /></a>
   <a href="#license"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
 </p>
 
@@ -36,6 +37,16 @@ A permissively-licensed, production-grade spreadsheet engine with 320+ Excel-com
 | **File I/O** | Load and write XLSX (calamine, umya), CSV, JSON — all behind feature flags |
 | **SheetPort** | Treat any spreadsheet as a typed API with YAML manifests, schema validation, and batch evaluation |
 | **Deterministic mode** | Inject clock, timezone, and RNG seed for reproducible evaluation (built for AI agents) |
+
+## Documentation
+
+📖 **[formualizer.dev](https://www.formualizer.dev/docs)** — full documentation, interactive tools, and API reference.
+
+- [Quickstarts](https://www.formualizer.dev/docs/quickstarts) — get running in Rust, Python, or JS/WASM in minutes
+- [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 320+ built-in functions with examples
+- [Formula Parser](https://www.formualizer.dev/formula-parser) — interactive browser-based formula parser and AST inspector
+- [SheetPort Guide](https://www.formualizer.dev/docs/sheetport) — treat spreadsheets as typed, deterministic APIs
+- [Core Concepts](https://www.formualizer.dev/docs/core-concepts) — dependency graph, evaluation pipeline, coercion rules
 
 ## Who is this for?
 
@@ -229,9 +240,9 @@ Formal benchmarks are in progress.
 
 | Target | Install | Docs |
 |--------|---------|------|
-| Rust | `cargo add formualizer` | [docs.rs](https://docs.rs/formualizer) |
-| Python | `pip install formualizer` | [bindings/python/README.md](bindings/python/README.md) |
-| WASM | `npm install formualizer` | [bindings/wasm/README.md](bindings/wasm/README.md) |
+| Rust | `cargo add formualizer` | [docs.rs](https://docs.rs/formualizer) · [guide](https://www.formualizer.dev/docs/quickstarts/rust-quickstart) |
+| Python | `pip install formualizer` | [README](bindings/python/README.md) · [guide](https://www.formualizer.dev/docs/quickstarts/python-quickstart) |
+| WASM | `npm install formualizer` | [README](bindings/wasm/README.md) · [guide](https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart) |
 
 Both Python and WASM bindings expose the same core API surface: tokenization, parsing, workbook operations, evaluation, undo/redo, and SheetPort.
 

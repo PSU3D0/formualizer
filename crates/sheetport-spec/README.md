@@ -59,3 +59,8 @@ cargo run -p sheetport-spec --bin fio-lint -- tests/fixtures/supply_planning.yam
 
 - `spec_version` in the manifest is the authoritative spec version.
 - The crate version is expected to track the supported spec version.
+
+## Documentation
+
+- [What Is SheetPort?](https://www.formualizer.dev/docs/sheetport/what-is-sheetport)
+- [Manifest Format (FIO Spec)](https://www.formualizer.dev/docs/sheetport/manifest-format)

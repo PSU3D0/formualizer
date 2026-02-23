@@ -4,6 +4,7 @@
   <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
   <a href="https://pypi.org/project/formualizer/"><img alt="PyPI" src="https://img.shields.io/pypi/v/formualizer.svg" /></a>
   <a href="../../LICENSE-MIT"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
+  <a href="https://www.formualizer.dev/docs/quickstarts/python-quickstart"><img alt="Documentation" src="https://img.shields.io/badge/docs-formualizer.dev-blue" /></a>
 </p>
 
 <p align="center">
@@ -23,6 +24,16 @@ pip install formualizer
 ```
 
 Prebuilt wheels are available for Python 3.10-3.13 on Linux, macOS, and Windows. No Rust toolchain required.
+
+## Documentation
+
+Full documentation at **[formualizer.dev](https://www.formualizer.dev/docs)**:
+
+- [Python Quickstart](https://www.formualizer.dev/docs/quickstarts/python-quickstart)
+- [Python API Reference](https://www.formualizer.dev/docs/reference/python-api-map)
+- [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 320+ built-in functions
+- [SheetPort Guide](https://www.formualizer.dev/docs/sheetport) — spreadsheets as typed APIs
+- [Workbook Edits and Batching](https://www.formualizer.dev/docs/guides/workbook-edits-and-batching)
 
 ## Quick start
 

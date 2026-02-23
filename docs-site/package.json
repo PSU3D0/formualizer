@@ -12,6 +12,7 @@
     "format": "biome format --write"
   },
   "dependencies": {
+    "@vercel/analytics": "^1.6.1",
     "formualizer": "^0.4.1",
     "fumadocs-core": "16.6.5",
     "fumadocs-mdx": "14.2.8",

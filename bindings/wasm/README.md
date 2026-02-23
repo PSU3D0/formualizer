@@ -4,6 +4,7 @@
   <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
   <a href="https://www.npmjs.com/package/formualizer"><img alt="npm" src="https://img.shields.io/npm/v/formualizer.svg" /></a>
   <a href="../../LICENSE-MIT"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
+  <a href="https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart"><img alt="Documentation" src="https://img.shields.io/badge/docs-formualizer.dev-blue" /></a>
 </p>
 
 <p align="center">
@@ -21,6 +22,16 @@ A Rust-powered spreadsheet engine compiled to WebAssembly with 320+ Excel-compat
 ```bash
 npm install formualizer
 ```
+
+## Documentation
+
+Full documentation at **[formualizer.dev](https://www.formualizer.dev/docs)**:
+
+- [JS/WASM Quickstart](https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart)
+- [JS/WASM API Reference](https://www.formualizer.dev/docs/reference/js-wasm-api-map)
+- [Formula Parser](https://www.formualizer.dev/formula-parser) — interactive in-browser tool
+- [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 320+ built-in functions
+- [SheetPort Guide](https://www.formualizer.dev/docs/sheetport) — spreadsheets as typed APIs
 
 ## Quick start
 

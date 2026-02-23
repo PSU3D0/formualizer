@@ -32,6 +32,13 @@ Use `formualizer-sheetport` when you want to:
 - **Batch execution** — `BatchExecutor` fans scenarios across a shared workbook with baseline reset between runs.
 - **Selector resolution** — `a1` references, named ranges, and header-based table layouts.
 
+## Documentation
+
+- [What Is SheetPort?](https://www.formualizer.dev/docs/sheetport/what-is-sheetport)
+- [Manifest Format (FIO Spec)](https://www.formualizer.dev/docs/sheetport/manifest-format)
+- [SheetPort Quickstart](https://www.formualizer.dev/docs/sheetport/quickstart)
+- [Sessions and Evaluation](https://www.formualizer.dev/docs/sheetport/sessions-and-evaluation)
+
 ## License
 
 Dual-licensed under MIT or Apache-2.0, at your option.
