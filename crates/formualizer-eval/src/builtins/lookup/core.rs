@@ -94,6 +94,18 @@ pub struct MatchFn;
 /// formula: '=MATCH(27,A1:A4,1)'
 /// expected: 2
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - XMATCH
+///   - XLOOKUP
+///   - VLOOKUP
+/// faq:
+///   - q: "Why does MATCH with match_type 1 or -1 return #N/A on unsorted data?"
+///     a: "Approximate modes assume ordered lookup data; this implementation treats detected unsorted inputs as no valid match and returns #N/A."
+///   - q: "When are wildcards interpreted in MATCH?"
+///     a: "Wildcard patterns (*, ?, ~ escapes) are only applied in exact mode (match_type=0) for text lookup values."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: MATCH
 /// Type: MatchFn
@@ -351,6 +363,18 @@ pub struct VLookupFn;
 /// formula: '=VLOOKUP(3200,A1:B3,2,TRUE)'
 /// expected: "Silver"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - HLOOKUP
+///   - XLOOKUP
+///   - MATCH
+/// faq:
+///   - q: "What is the default behavior when range_lookup is omitted?"
+///     a: "This engine defaults range_lookup to FALSE, so VLOOKUP performs exact matching unless TRUE is explicitly provided."
+///   - q: "What happens if col_index_num points outside the table?"
+///     a: "A numeric out-of-range column index returns #REF!, while a non-numeric col_index_num returns #VALUE!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: VLOOKUP
 /// Type: VLookupFn
@@ -595,6 +619,18 @@ pub struct HLookupFn;
 ///   C2: "A"
 /// formula: '=HLOOKUP(72,A1:C2,2,TRUE)'
 /// expected: "C"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VLOOKUP
+///   - XLOOKUP
+///   - MATCH
+/// faq:
+///   - q: "Does HLOOKUP default to exact or approximate matching?"
+///     a: "It defaults to exact matching in this engine because range_lookup defaults to FALSE."
+///   - q: "How are invalid row_index_num values reported?"
+///     a: "If row_index_num is outside table height HLOOKUP returns #REF!; if it is non-numeric it returns #VALUE!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: HLOOKUP

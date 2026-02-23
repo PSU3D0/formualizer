@@ -46,6 +46,18 @@ pub struct AddressFn;
 /// formula: '=ADDRESS(5,3,4,FALSE,"Data Sheet")'
 /// expected: "'Data Sheet'!R[5]C[3]"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - INDEX
+///   - OFFSET
+///   - INDIRECT
+/// faq:
+///   - q: "What happens when abs_num is outside 1..4?"
+///     a: "ADDRESS returns #VALUE!; only 1 (absolute), 2 (absolute row), 3 (absolute column), and 4 (relative) are valid."
+///   - q: "Why does sheet_text sometimes add single quotes?"
+///     a: "Sheet names containing spaces or special characters are quoted and internal apostrophes are escaped to keep a valid reference string."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ADDRESS
 /// Type: AddressFn

@@ -42,6 +42,18 @@ pub struct ChooseRowsFn;
 /// formula: '=CHOOSE(3,10,20,30,40)'
 /// expected: 30
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - INDEX
+///   - CHOOSECOLS
+///   - CHOOSEROWS
+/// faq:
+///   - q: "How are decimal index_num values handled?"
+///     a: "The index is truncated toward zero before selection, so CHOOSE(2.9,...) selects the second argument."
+///   - q: "What error do I get for index_num 0 or too large?"
+///     a: "CHOOSE returns #VALUE! when index_num is less than 1 or greater than the number of provided choices."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CHOOSE
 /// Type: ChooseFn
@@ -193,6 +205,18 @@ fn materialize_rows_2d<'b>(
 /// formula: '=CHOOSECOLS(A1:C1,-1)'
 /// expected: 30
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CHOOSEROWS
+///   - TAKE
+///   - DROP
+/// faq:
+///   - q: "How do negative column indexes work?"
+///     a: "Negative indexes count from the right edge of the array, so -1 selects the last column, -2 the second-to-last, and so on."
+///   - q: "What triggers #VALUE! in CHOOSECOLS?"
+///     a: "Index 0 and any index whose absolute position falls outside the source width return #VALUE!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CHOOSECOLS
 /// Type: ChooseColsFn
@@ -336,6 +360,18 @@ impl Function for ChooseColsFn {
 ///   A2: 9
 /// formula: '=CHOOSEROWS(A1:A2,2,2)'
 /// expected: [[9],[9]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CHOOSECOLS
+///   - TAKE
+///   - DROP
+/// faq:
+///   - q: "Can I return rows in a custom order?"
+///     a: "Yes. CHOOSEROWS returns rows in the exact order of the supplied indexes, and repeated indexes duplicate rows."
+///   - q: "When does CHOOSEROWS return #VALUE!?"
+///     a: "It returns #VALUE! for index 0 and for row indexes outside the source height after applying negative-index conversion."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CHOOSEROWS

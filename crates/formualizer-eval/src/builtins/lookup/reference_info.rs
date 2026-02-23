@@ -40,6 +40,18 @@ pub struct RowFn;
 /// formula: '=ROW(C3:E9)'
 /// expected: 3
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ROWS
+///   - COLUMN
+///   - ADDRESS
+/// faq:
+///   - q: "What does ROW return for a multi-cell reference?"
+///     a: "ROW returns the first row index of the reference, not an array of every row number."
+///   - q: "What if ROW() is called without arguments?"
+///     a: "It uses the formula cell position; if no current cell context exists, it returns #VALUE!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROW
 /// Type: RowFn
@@ -163,6 +175,18 @@ pub struct RowsFn;
 /// title: "Count rows in a full column reference"
 /// formula: '=ROWS(A:A)'
 /// expected: 1048576
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ROW
+///   - COLUMNS
+///   - INDEX
+/// faq:
+///   - q: "Does ROWS count populated rows or reference height?"
+///     a: "ROWS returns reference height only; blanks inside the range do not reduce the count."
+///   - q: "How does ROWS behave for full-column references?"
+///     a: "A full-column reference (like A:A) returns the sheet row limit, 1048576."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ROWS
@@ -298,6 +322,18 @@ pub struct ColumnFn;
 /// formula: '=COLUMN(B2:D4)'
 /// expected: 2
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COLUMNS
+///   - ROW
+///   - ADDRESS
+/// faq:
+///   - q: "What does COLUMN return for a range like B2:D4?"
+///     a: "COLUMN returns the first column index of the reference (2 for column B)."
+///   - q: "What if COLUMN() is used without a reference?"
+///     a: "It returns the formula cell's column number, or #VALUE! if current-cell context is unavailable."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COLUMN
 /// Type: ColumnFn
@@ -421,6 +457,18 @@ pub struct ColumnsFn;
 /// title: "Count columns in a full row reference"
 /// formula: '=COLUMNS(1:1)'
 /// expected: 16384
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COLUMN
+///   - ROWS
+///   - CHOOSECOLS
+/// faq:
+///   - q: "Does COLUMNS count non-empty cells?"
+///     a: "No. COLUMNS returns the width of the referenced array/range, including blank cells."
+///   - q: "What does COLUMNS return for a full-row reference like 1:1?"
+///     a: "It returns the sheet column limit, 16384."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: COLUMNS

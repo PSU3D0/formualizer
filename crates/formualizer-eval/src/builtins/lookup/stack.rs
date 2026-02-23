@@ -74,6 +74,18 @@ fn materialize_arg<'b>(
 /// formula: '=HSTACK(A1,"OK")'
 /// expected: [["Item","OK"]]
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VSTACK
+///   - CHOOSECOLS
+///   - TAKE
+/// faq:
+///   - q: "Why does HSTACK return #VALUE! when combining ranges?"
+///     a: "All non-empty inputs must have identical row counts; mismatched heights produce #VALUE!."
+///   - q: "How are scalar arguments treated in HSTACK?"
+///     a: "Each scalar is treated as a 1x1 block, so it only aligns with other arguments when the target row count is 1."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: HSTACK
 /// Type: HStackFn
@@ -222,6 +234,18 @@ enum HStackEntry<'a> {
 /// title: "Stack scalar values"
 /// formula: '=VSTACK(5,9)'
 /// expected: [[5],[9]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - HSTACK
+///   - CHOOSEROWS
+///   - DROP
+/// faq:
+///   - q: "When does VSTACK return #VALUE!?"
+///     a: "VSTACK requires matching column counts across non-empty range arguments; differing widths return #VALUE!."
+///   - q: "What happens if all VSTACK inputs are empty ranges?"
+///     a: "Empty inputs are skipped, and if every argument is empty the function returns an empty spill."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: VSTACK

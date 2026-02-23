@@ -122,6 +122,18 @@ pub struct IndexFn;
 /// formula: '=INDEX(A1:A3,2)'
 /// expected: "Q2"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MATCH
+///   - XLOOKUP
+///   - OFFSET
+/// faq:
+///   - q: "How does INDEX behave when column_num is omitted?"
+///     a: "For 1D arrays, row_num selects the position along that vector; for 2D arrays, omitted column_num defaults to the first column."
+///   - q: "Which errors indicate bad indexes?"
+///     a: "Non-numeric index arguments return #VALUE!, while 0/negative or out-of-bounds indexes return #REF!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: INDEX
 /// Type: IndexFn
@@ -357,6 +369,18 @@ pub struct OffsetFn;
 /// formula: '=SUM(OFFSET(A1,1,0,2,2))'
 /// expected: 16
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - INDEX
+///   - INDIRECT
+///   - ADDRESS
+/// faq:
+///   - q: "What defaults are used when height and width are omitted?"
+///     a: "OFFSET keeps the source reference size, then applies the row/column shift to that same-sized block."
+///   - q: "When does OFFSET return #REF!?"
+///     a: "It returns #REF! if the shifted start goes to row/column <= 0 or if requested height/width are non-positive."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: OFFSET
 /// Type: OffsetFn
@@ -561,6 +585,18 @@ pub struct IndirectFn;
 ///   A3: 9
 /// formula: '=SUM(INDIRECT("A1:A3"))'
 /// expected: 21
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ADDRESS
+///   - INDEX
+///   - OFFSET
+/// faq:
+///   - q: "What happens if a1_style is FALSE?"
+///     a: "R1C1 parsing is not implemented here yet, so INDIRECT(...,FALSE) returns #N/IMPL!."
+///   - q: "How are bad reference strings reported?"
+///     a: "If the text cannot be parsed or resolved to a valid reference, INDIRECT returns #REF!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: INDIRECT

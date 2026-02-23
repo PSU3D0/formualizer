@@ -198,6 +198,20 @@ pub struct XLookupFn;
 /// formula: '=XLOOKUP(2,A1:A2,B1:C2)'
 /// expected: [["West",140]]
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - XMATCH
+///   - MATCH
+///   - FILTER
+/// faq:
+///   - q: "How do match_mode and search_mode interact?"
+///     a: "match_mode controls exact/approximate/wildcard behavior, while search_mode controls scan direction; reverse search (-1) returns the last matching position."
+///   - q: "What happens when no match is found?"
+///     a: "If if_not_found is provided, XLOOKUP returns that value; otherwise it returns #N/A."
+///   - q: "Why do I get #VALUE! from XLOOKUP on valid ranges?"
+///     a: "The lookup_array must be one-dimensional (single row or single column); multi-row-and-column lookup ranges return #VALUE!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: XLOOKUP
 /// Type: XLookupFn
@@ -548,6 +562,18 @@ pub struct XMatchFn;
 /// formula: '=XMATCH(7,A1:A3,0,-1)'
 /// expected: 3
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - XLOOKUP
+///   - MATCH
+///   - INDEX
+/// faq:
+///   - q: "How do search_mode values affect duplicate matches?"
+///     a: "search_mode=1 returns the first qualifying match, while search_mode=-1 scans from the end and returns the last qualifying match."
+///   - q: "When do binary-intent search modes (2 or -2) return #N/A?"
+///     a: "For approximate modes they require sorted data in the expected direction; unsorted arrays are treated as no valid match and return #N/A."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: XMATCH
 /// Type: XMatchFn
@@ -866,6 +892,18 @@ pub struct SortFn;
 /// formula: '=SORT(A1:C2,1,-1,TRUE)'
 /// expected: [[3,2,1],["C","B","A"]]
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SORTBY
+///   - TAKE
+///   - DROP
+/// faq:
+///   - q: "What changes when by_col is TRUE?"
+///     a: "SORT reorders columns instead of rows, and sort_index is interpreted as a row index used as the sort key."
+///   - q: "What causes #VALUE! in SORT?"
+///     a: "If sort_index is outside the active axis (row or column axis based on by_col), SORT returns #VALUE!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SORT
 /// Type: SortFn
@@ -1092,6 +1130,18 @@ pub struct SortByFn;
 /// formula: '=SORTBY(A1:A3,B1:B3,-1)'
 /// expected: [["Q2"],["Q3"],["Q1"]]
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SORT
+///   - UNIQUE
+///   - FILTER
+/// faq:
+///   - q: "How are multiple sort criteria applied?"
+///     a: "SORTBY evaluates criteria left-to-right, using later by_array values only when earlier criteria compare equal."
+///   - q: "Why do I get #VALUE! with SORTBY?"
+///     a: "Each by_array must be one-dimensional and aligned to the primary array row count; mismatched shapes return #VALUE!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SORTBY
 /// Type: SortByFn
@@ -1302,6 +1352,18 @@ pub struct RandArrayFn;
 /// title: "Generate six integer dice rolls"
 /// formula: '=RANDARRAY(6,1,1,6,TRUE)'
 /// expected: "6x1 array of integers from 1 to 6"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SEQUENCE
+///   - SORT
+///   - UNIQUE
+/// faq:
+///   - q: "Are RANDARRAY bounds inclusive?"
+///     a: "In whole_number mode, min and max are inclusive integer bounds; in decimal mode values are generated over the numeric interval from min toward max."
+///   - q: "Why does RANDARRAY recalculate on every recalc pass?"
+///     a: "RANDARRAY is volatile and non-deterministic by design, so its spilled results are regenerated each evaluation."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: RANDARRAY
@@ -1667,6 +1729,18 @@ pub struct GroupByFn;
 /// formula: '=GROUPBY(A1:A4,B1:B4,"AVERAGE",3,1,1)'
 /// expected: "Grouped table with team averages plus grand total row"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - PIVOTBY
+///   - SORTBY
+///   - UNIQUE
+/// faq:
+///   - q: "What shape constraints does GROUPBY enforce?"
+///     a: "row_fields and values must have the same number of rows; mismatched heights return #VALUE!."
+///   - q: "Can the aggregation function be numeric instead of text?"
+///     a: "Yes. GROUPBY accepts either function names (like \"SUM\") or numeric function codes, and invalid entries return #VALUE!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: GROUPBY
 /// Type: GroupByFn
@@ -2028,6 +2102,18 @@ pub struct PivotByFn;
 ///   C4: 55
 /// formula: '=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,1,1,1,1)'
 /// expected: "Pivot table including row and column totals"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - GROUPBY
+///   - SORTBY
+///   - UNIQUE
+/// faq:
+///   - q: "What rows must align in PIVOTBY inputs?"
+///     a: "row_fields, col_fields, and values must share the same row count; otherwise PIVOTBY returns #VALUE!."
+///   - q: "What value range is currently aggregated?"
+///     a: "Current implementation aggregates using the first value column (and first col_fields column for keys), so extra columns are not yet summarized independently."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: PIVOTBY
@@ -2488,6 +2574,18 @@ pub struct FilterFn;
 /// formula: '=FILTER(A1:A2,B1:B2,"No matches")'
 /// expected: "No matches"
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - XLOOKUP
+///   - UNIQUE
+///   - SORT
+/// faq:
+///   - q: "What happens when include has no TRUE rows?"
+///     a: "FILTER returns if_empty when provided; otherwise it returns #CALC! to signal an empty result set."
+///   - q: "How strict is include shape matching?"
+///     a: "include must match array row count or be a single broadcast row; incompatible dimensions return #VALUE!."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: FILTER
 /// Type: FilterFn
@@ -2648,6 +2746,18 @@ pub struct UniqueFn;
 ///   A4: 3
 /// formula: '=UNIQUE(A1:A4,FALSE,TRUE)'
 /// expected: [[2],[3]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FILTER
+///   - SORT
+///   - SORTBY
+/// faq:
+///   - q: "What does exactly_once=TRUE change?"
+///     a: "Instead of returning first occurrences, UNIQUE returns only rows or columns whose full key appears exactly one time."
+///   - q: "How does by_col affect uniqueness checks?"
+///     a: "by_col=FALSE compares entire rows, while by_col=TRUE compares entire columns and spills unique columns."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: UNIQUE
@@ -2816,6 +2926,18 @@ pub struct SequenceFn;
 /// formula: '=SEQUENCE(2,3,10,5)'
 /// expected: [[10,15,20],[25,30,35]]
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - RANDARRAY
+///   - TAKE
+///   - DROP
+/// faq:
+///   - q: "What input values are invalid for SEQUENCE?"
+///     a: "rows and columns must be positive numbers; zero or negative sizes return #VALUE!."
+///   - q: "Does SEQUENCE fill by rows or by columns first?"
+///     a: "SEQUENCE fills row-by-row across columns, then continues on the next row using the same step increment."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SEQUENCE
 /// Type: SequenceFn
@@ -2974,6 +3096,18 @@ pub struct TransposeFn;
 /// formula: '=TRANSPOSE(A1:B2)'
 /// expected: [[1,3],[2,4]]
 /// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TAKE
+///   - DROP
+///   - HSTACK
+/// faq:
+///   - q: "What happens to errors inside the source array?"
+///     a: "TRANSPOSE preserves error values and only changes their position in the output matrix."
+///   - q: "Does TRANSPOSE return a scalar for 1x1 inputs?"
+///     a: "Yes. After transposition, a 1x1 result collapses to a scalar in this engine."
+/// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TRANSPOSE
 /// Type: TransposeFn
@@ -3073,6 +3207,18 @@ pub struct TakeFn;
 ///   C2: 6
 /// formula: '=TAKE(A1:C2,-1,-2)'
 /// expected: [[5,6]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DROP
+///   - CHOOSEROWS
+///   - CHOOSECOLS
+/// faq:
+///   - q: "How are negative rows or columns interpreted?"
+///     a: "Negative counts take from the end of the array, so TAKE(...,-1) returns the last row and TAKE(...,,-1) returns the last column."
+///   - q: "When does TAKE return #VALUE!?"
+///     a: "If the absolute requested row or column count exceeds source dimensions, TAKE returns #VALUE!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TAKE
@@ -3245,6 +3391,18 @@ pub struct DropFn;
 ///   C1: 30
 /// formula: '=DROP(A1:C1,0,-1)'
 /// expected: [[10,20]]
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TAKE
+///   - CHOOSEROWS
+///   - CHOOSECOLS
+/// faq:
+///   - q: "What does a negative drop count mean?"
+///     a: "Negative counts drop from the end, so DROP(array,0,-1) removes the last column and keeps the leading columns."
+///   - q: "What if DROP removes every row or column?"
+///     a: "The result is an empty spill rather than an error when all rows or all columns are removed."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: DROP
