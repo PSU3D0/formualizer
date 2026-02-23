@@ -46,11 +46,38 @@ export async function generateMetadata(props: PageProps<'/docs/[[...slug]]'>): P
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
+  const slugs = params.slug ?? [];
+  const isFunctionPage =
+    slugs.length >= 4 && slugs[0] === 'reference' && slugs[1] === 'functions';
+
+  const keywords = isFunctionPage
+    ? [
+        `${page.data.title} function`,
+        `${page.data.title} formula`,
+        `excel ${page.data.title.toLowerCase()} function`,
+        'spreadsheet function reference',
+        'formualizer',
+      ]
+    : undefined;
+
   return {
     title: page.data.title,
     description: page.data.description,
+    keywords,
+    alternates: {
+      canonical: page.url,
+    },
     openGraph: {
+      title: page.data.title,
+      description: page.data.description,
+      url: page.url,
       images: getPageImage(page).url,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: page.data.title,
+      description: page.data.description,
+      images: [getPageImage(page).url],
     },
   };
 }

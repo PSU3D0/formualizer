@@ -25,6 +25,7 @@ type FunctionArg = {
 type FunctionMetaRecord = {
   name: string;
   category: string;
+  shortSummary?: string;
   minArgs: number | null;
   maxArgs: number | null;
   variadic: boolean | null;
@@ -102,6 +103,8 @@ function renderLlmFriendlyMarkdown(processed: string): string {
     /<FunctionMeta\s+id="([^"]+)"\s*\/>/g,
     (_full, id: string) => markdownRuntimeMeta(id),
   );
+
+  llmSafe = llmSafe.replace(/<FunctionPageSchema\s+id="([^"]+)"\s*\/>/g, '');
 
   // Strip docgen markers
   llmSafe = llmSafe.replace(/\{\/\*\s*\[formualizer-docgen:function-meta:(start|end)\]\s*\*\/\}/g, '');

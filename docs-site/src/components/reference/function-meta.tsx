@@ -16,6 +16,7 @@ type FunctionArg = {
 type FunctionMetaRecord = {
   name: string;
   category: string;
+  shortSummary?: string;
   typeName: string;
   minArgs: number | null;
   maxArgs: number | null;

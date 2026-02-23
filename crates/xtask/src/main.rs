@@ -571,6 +571,8 @@ fn run_docs_ref(args: DocsRefArgs) -> Result<()> {
         .flat_map(|items| items.iter().cloned())
         .collect::<Vec<_>>();
 
+    print_docs_ref_quality_warnings(&all_entries);
+
     for values in by_category.values_mut() {
         values.sort_by(|a, b| a.function_name.cmp(&b.function_name));
     }
@@ -1250,10 +1252,13 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
     lines.push(format!("title: \"{}\"", entry.function_name));
 
     // Description (escape quotes + keep on one line)
-    let desc = sanitize_mdx_text(&entry.short_summary).replace('\n', " ");
+    let desc = build_frontmatter_description(entry);
     let escaped_desc = desc.replace("\"", "\\\"");
     lines.push(format!("description: \"{}\"", escaped_desc));
     lines.push("---".to_string());
+    lines.push("".to_string());
+
+    lines.push(format!("<FunctionPageSchema id=\"{}\" />", function_meta_id(entry)));
     lines.push("".to_string());
 
     // Overview
@@ -1362,6 +1367,36 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
     lines.join("\n")
 }
 
+fn build_frontmatter_description(entry: &FunctionRefEntry) -> String {
+    let mut desc = sanitize_mdx_text(&entry.short_summary).replace('\n', " ");
+    desc = Regex::new(r"\s+")
+        .expect("valid regex")
+        .replace_all(desc.trim(), " ")
+        .to_string();
+
+    if !desc
+        .to_uppercase()
+        .contains(&entry.function_name.to_uppercase())
+    {
+        desc = format!("{}: {}", entry.function_name, desc);
+    }
+
+    const MAX_DESC: usize = 165;
+    if desc.chars().count() > MAX_DESC {
+        let mut cut = 0usize;
+        for (i, _) in desc.char_indices() {
+            if i <= MAX_DESC - 1 {
+                cut = i;
+            } else {
+                break;
+            }
+        }
+        desc = format!("{}…", desc[..cut].trim_end());
+    }
+
+    desc
+}
+
 fn sanitize_mdx_text(input: &str) -> String {
     input
         .replace('&', "&amp;")
@@ -1390,6 +1425,32 @@ fn render_function_meta_block(entry: &FunctionRefEntry) -> String {
     .join("\n")
 }
 
+fn print_docs_ref_quality_warnings(entries: &[FunctionRefEntry]) {
+    let mut by_desc: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut short_desc_count = 0usize;
+
+    for entry in entries {
+        let desc = build_frontmatter_description(entry);
+        if desc.chars().count() < 35 {
+            short_desc_count += 1;
+        }
+
+        by_desc
+            .entry(desc.to_ascii_lowercase())
+            .or_default()
+            .push(entry.function_name.clone());
+    }
+
+    let duplicates = by_desc
+        .values()
+        .filter(|names| names.len() > 1)
+        .map(|names| names.len())
+        .sum::<usize>();
+
+    println!("  metadata short descriptions (<35 chars): {short_desc_count}");
+    println!("  metadata duplicate description collisions: {duplicates}");
+}
+
 fn render_functions_meta_json(entries: &[FunctionRefEntry]) -> Result<String> {
     let mut map = serde_json::Map::new();
 
@@ -1399,6 +1460,7 @@ fn render_functions_meta_json(entries: &[FunctionRefEntry]) -> Result<String> {
             serde_json::json!({
                 "name": entry.function_name,
                 "category": entry.category,
+                "shortSummary": entry.short_summary,
                 "typeName": entry.type_name,
                 "minArgs": entry.min_args,
                 "maxArgs": entry.max_args,
