@@ -37,12 +37,25 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i64, ExcelError> {
     }
 }
 
-/// WEEKDAY(serial_number, [return_type]) - Returns the day of the week
-/// return_type:
-///   1 (default): 1 (Sunday) to 7 (Saturday)
-///   2: 1 (Monday) to 7 (Sunday)
-///   3: 0 (Monday) to 6 (Sunday)
-///   11-17: Various configurations
+/// Returns the day-of-week index for a date serial with configurable numbering.
+///
+/// # Remarks
+/// - Default `return_type` is `1` (`Sunday=1` through `Saturday=7`).
+/// - Supported `return_type` values are `1`, `2`, `3`, `11`-`17`; unsupported values return `#NUM!`.
+/// - Input serials are interpreted with Excel 1900 date mapping, including its historical leap-year quirk.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Default numbering (Sunday-first)"
+/// formula: "=WEEKDAY(45292)"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Monday-first numbering"
+/// formula: "=WEEKDAY(45292, 2)"
+/// expected: 1
+/// ```
 #[derive(Debug)]
 pub struct WeekdayFn;
 /// [formualizer-docgen:schema:start]
@@ -201,7 +214,26 @@ impl Function for WeekdayFn {
     }
 }
 
-/// WEEKNUM(serial_number, [return_type]) - Returns the week number of the year
+/// Returns the week number of the year for a date serial.
+///
+/// # Remarks
+/// - Default `return_type` is `1` (week starts on Sunday).
+/// - Supported `return_type` values are `1`, `2`, `11`-`17`, and `21` (ISO week numbering).
+/// - Unsupported `return_type` values return `#NUM!`.
+/// - Input serials are interpreted using Excel 1900 date mapping rather than workbook `1904` interpretation.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Default week numbering"
+/// formula: "=WEEKNUM(45292)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "ISO week numbering"
+/// formula: "=WEEKNUM(42370, 21)"
+/// expected: 53
+/// ```
 #[derive(Debug)]
 pub struct WeeknumFn;
 /// [formualizer-docgen:schema:start]
@@ -296,12 +328,27 @@ impl Function for WeeknumFn {
     }
 }
 
-/// DATEDIF(start_date, end_date, unit) - Calculates the difference between two dates
-/// unit: "Y" (years), "M" (months), "D" (days), "MD", "YM", "YD"
+/// Returns the difference between two dates in a requested unit.
 ///
-/// NOTE: The "YD" unit has a known minor edge case with Feb 29 leap year handling.
-/// It uses .min(28) which may produce slightly different results than Excel for
-/// certain leap year date combinations.
+/// # Remarks
+/// - Supported units are `"Y"`, `"M"`, `"D"`, `"MD"`, `"YM"`, and `"YD"`.
+/// - If `start_date > end_date`, the function returns `#NUM!`.
+/// - Unit matching is case-insensitive.
+/// - `"YD"` uses a Feb-29 normalization strategy that can differ slightly from Excel in edge cases.
+/// - Input serials are interpreted with Excel 1900 date mapping.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Difference in days"
+/// formula: '=DATEDIF(44197, 44378, "D")'
+/// expected: 181
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Complete months difference"
+/// formula: '=DATEDIF(44197, 44378, "M")'
+/// expected: 6
+/// ```
 #[derive(Debug)]
 pub struct DatedifFn;
 /// [formualizer-docgen:schema:start]
@@ -462,10 +509,26 @@ fn is_weekend(date: &NaiveDate) -> bool {
     matches!(date.weekday(), Weekday::Sat | Weekday::Sun)
 }
 
-/// NETWORKDAYS(start_date, end_date, [holidays]) - Returns working days between two dates
+/// Returns the number of weekday business days between two dates, inclusive.
 ///
-/// NOTE: The holidays parameter is currently accepted but not implemented.
-/// Holiday values passed to this function will be silently ignored.
+/// # Remarks
+/// - Weekends are fixed to Saturday and Sunday.
+/// - If `start_date > end_date`, the result is negative.
+/// - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+/// - Input serials are interpreted with Excel 1900 date mapping.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Count weekdays in a range"
+/// formula: "=NETWORKDAYS(45292, 45299)"
+/// expected: 6
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Holiday argument currently has no effect"
+/// formula: "=NETWORKDAYS(45292, 45299, 45293)"
+/// expected: 6
+/// ```
 #[derive(Debug)]
 pub struct NetworkdaysFn;
 /// [formualizer-docgen:schema:start]
@@ -539,10 +602,26 @@ impl Function for NetworkdaysFn {
     }
 }
 
-/// WORKDAY(start_date, days, [holidays]) - Returns a date that is a specified number of working days away
+/// Returns the date serial that is a given number of weekdays from a start date.
 ///
-/// NOTE: The holidays parameter is currently accepted but not implemented.
-/// Holiday values passed to this function will be silently ignored.
+/// # Remarks
+/// - Positive `days` moves forward; negative `days` moves backward.
+/// - Weekends are fixed to Saturday and Sunday.
+/// - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+/// - Input and output serials use Excel 1900 date mapping.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Move forward by five workdays"
+/// formula: "=WORKDAY(45292, 5)"
+/// expected: 45299
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Holiday argument currently has no effect"
+/// formula: "=WORKDAY(45292, 5, 45293)"
+/// expected: 45299
+/// ```
 #[derive(Debug)]
 pub struct WorkdayFn;
 /// [formualizer-docgen:schema:start]

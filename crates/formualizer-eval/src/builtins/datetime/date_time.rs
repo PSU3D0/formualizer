@@ -24,7 +24,27 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
     }
 }
 
-/// DATE(year, month, day) - Creates a date serial number
+/// Returns the serial number for a calendar date from year, month, and day.
+///
+/// `DATE` normalizes out-of-range month and day values to produce a valid calendar date.
+///
+/// # Remarks
+/// - Years in the range `0..=1899` are interpreted as `1900..=3799` for Excel compatibility.
+/// - The returned serial is date-system aware and depends on the active workbook system (`1900` vs `1904`).
+/// - In the `1900` system, serial mapping preserves Excel's historical phantom `1900-02-29` behavior.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Build a standard date"
+/// formula: "=DATE(2024, 1, 15)"
+/// expected: 45306
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Normalize overflowing month input"
+/// formula: "=DATE(2024, 13, 5)"
+/// expected: 45662
+/// ```
 #[derive(Debug)]
 pub struct DateFn;
 
@@ -87,7 +107,27 @@ impl Function for DateFn {
     }
 }
 
-/// TIME(hour, minute, second) - Creates a time serial number (fraction of day)
+/// Returns the fractional-day serial for a time built from hour, minute, and second.
+///
+/// `TIME` normalizes overflowing and negative components by wrapping across day boundaries.
+///
+/// # Remarks
+/// - The result is always in the range `0.0..1.0` and represents only a time-of-day fraction.
+/// - Values are normalized like Excel (for example, `25` hours becomes `01:00:00`).
+/// - Time fractions are date-system independent because they do not include a date component.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Create noon"
+/// formula: "=TIME(12, 0, 0)"
+/// expected: 0.5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Wrap overflowing hour"
+/// formula: "=TIME(25, 0, 0)"
+/// expected: 0.0416666667
+/// ```
 #[derive(Debug)]
 pub struct TimeFn;
 

@@ -40,7 +40,25 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
     }
 }
 
-/// EDATE(start_date, months) - Returns date that is months away from start_date
+/// Returns the serial date offset by a whole number of months from a start date.
+///
+/// # Remarks
+/// - `months` is truncated to an integer before calculation.
+/// - If the target month has fewer days, the day is clamped to that month's last valid day.
+/// - Serials are interpreted and emitted with Excel 1900 date mapping (not workbook-specific `1904` mode).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Add months to first-of-month date"
+/// formula: "=EDATE(44927, 3)"
+/// expected: 45017
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Clamp month-end overflow"
+/// formula: "=EDATE(45322, 1)"
+/// expected: 45351
+/// ```
 #[derive(Debug)]
 pub struct EdateFn;
 
@@ -107,7 +125,25 @@ impl Function for EdateFn {
     }
 }
 
-/// EOMONTH(start_date, months) - Returns last day of month that is months away
+/// Returns the serial for the last day of the month at a month offset from a start date.
+///
+/// # Remarks
+/// - `months` is truncated to an integer before offset calculation.
+/// - The returned date is always the month-end date for the target month.
+/// - Serials are interpreted and returned using Excel 1900 mapping rather than workbook `1904` mode.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Get end of current month"
+/// formula: "=EOMONTH(44927, 0)"
+/// expected: 44957
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Get end of month two months ahead"
+/// formula: "=EOMONTH(45322, 2)"
+/// expected: 45382
+/// ```
 #[derive(Debug)]
 pub struct EomonthFn;
 

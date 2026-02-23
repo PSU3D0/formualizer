@@ -21,7 +21,27 @@ fn to_bitwise_int(v: &LiteralValue) -> Result<i64, ExcelError> {
 
 /* ─────────────────────────── BITAND ──────────────────────────── */
 
-/// BITAND(number1, number2) - Returns bitwise AND of two numbers
+/// Returns the bitwise AND of two non-negative integers.
+///
+/// Combines matching bits from both inputs and keeps only bits set in both numbers.
+///
+/// # Remarks
+/// - Arguments are coerced to numbers and must be whole numbers in the range `[0, 2^48)`.
+/// - Returns `#NUM!` for negative values, fractional values, or values outside the supported range.
+/// - Propagates input errors.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Mask selected bits"
+/// formula: "=BITAND(13,10)"
+/// expected: 8
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Check least-significant bit"
+/// formula: "=BITAND(7,1)"
+/// expected: 1
+/// ```
 #[derive(Debug)]
 pub struct BitAndFn;
 /// [formualizer-docgen:schema:start]
@@ -76,7 +96,27 @@ impl Function for BitAndFn {
 
 /* ─────────────────────────── BITOR ──────────────────────────── */
 
-/// BITOR(number1, number2) - Returns bitwise OR of two numbers
+/// Returns the bitwise OR of two non-negative integers.
+///
+/// Combines matching bits from both inputs and keeps bits set in either number.
+///
+/// # Remarks
+/// - Arguments are coerced to numbers and must be whole numbers in the range `[0, 2^48)`.
+/// - Returns `#NUM!` for negative values, fractional values, or out-of-range values.
+/// - Propagates input errors.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Merge bit flags"
+/// formula: "=BITOR(13,10)"
+/// expected: 15
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Set an additional bit"
+/// formula: "=BITOR(8,1)"
+/// expected: 9
+/// ```
 #[derive(Debug)]
 pub struct BitOrFn;
 /// [formualizer-docgen:schema:start]
@@ -131,7 +171,27 @@ impl Function for BitOrFn {
 
 /* ─────────────────────────── BITXOR ──────────────────────────── */
 
-/// BITXOR(number1, number2) - Returns bitwise XOR of two numbers
+/// Returns the bitwise exclusive OR of two non-negative integers.
+///
+/// Keeps bits that differ between the two inputs.
+///
+/// # Remarks
+/// - Arguments are coerced to numbers and must be whole numbers in the range `[0, 2^48)`.
+/// - Returns `#NUM!` for negative values, fractional values, or out-of-range values.
+/// - Propagates input errors.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Highlight differing bits"
+/// formula: "=BITXOR(13,10)"
+/// expected: 7
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "XOR identical values"
+/// formula: "=BITXOR(5,5)"
+/// expected: 0
+/// ```
 #[derive(Debug)]
 pub struct BitXorFn;
 /// [formualizer-docgen:schema:start]
@@ -186,7 +246,27 @@ impl Function for BitXorFn {
 
 /* ─────────────────────────── BITLSHIFT ──────────────────────────── */
 
-/// BITLSHIFT(number, shift_amount) - Returns number shifted left by shift_amount bits
+/// Shifts a non-negative integer left or right by a given bit count.
+///
+/// Positive `shift_amount` shifts left; negative `shift_amount` shifts right.
+///
+/// # Remarks
+/// - `number` must be a whole number in `[0, 2^48)`.
+/// - Shift values are numerically coerced; large positive shifts can return `#NUM!`.
+/// - Left-shift results must remain below `2^48`, or the function returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Shift left by two bits"
+/// formula: "=BITLSHIFT(6,2)"
+/// expected: 24
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Use negative shift to move right"
+/// formula: "=BITLSHIFT(32,-3)"
+/// expected: 4
+/// ```
 #[derive(Debug)]
 pub struct BitLShiftFn;
 /// [formualizer-docgen:schema:start]
@@ -259,7 +339,27 @@ impl Function for BitLShiftFn {
 
 /* ─────────────────────────── BITRSHIFT ──────────────────────────── */
 
-/// BITRSHIFT(number, shift_amount) - Returns number shifted right by shift_amount bits
+/// Shifts a non-negative integer right or left by a given bit count.
+///
+/// Positive `shift_amount` shifts right; negative `shift_amount` shifts left.
+///
+/// # Remarks
+/// - `number` must be a whole number in `[0, 2^48)`.
+/// - Shift values are numerically coerced; large right shifts return `0`.
+/// - Negative shifts that overflow the 48-bit limit return `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Shift right by three bits"
+/// formula: "=BITRSHIFT(32,3)"
+/// expected: 4
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Use negative shift to move left"
+/// formula: "=BITRSHIFT(5,-1)"
+/// expected: 10
+/// ```
 #[derive(Debug)]
 pub struct BitRShiftFn;
 /// [formualizer-docgen:schema:start]
@@ -345,7 +445,27 @@ fn coerce_base_text(v: &LiteralValue) -> Result<String, ExcelError> {
     }
 }
 
-/// BIN2DEC(number) - Converts binary number to decimal
+/// Converts a binary text value to decimal.
+///
+/// Supports up to 10 binary digits, including two's-complement negative values.
+///
+/// # Remarks
+/// - Input is coerced to text and must contain only `0` and `1`.
+/// - 10-digit values starting with `1` are interpreted as signed two's-complement numbers.
+/// - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert an unsigned binary value"
+/// formula: "=BIN2DEC(\"101010\")"
+/// expected: 42
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Interpret signed 10-bit binary"
+/// formula: "=BIN2DEC(\"1111111111\")"
+/// expected: -1
+/// ```
 #[derive(Debug)]
 pub struct Bin2DecFn;
 /// [formualizer-docgen:schema:start]
@@ -406,7 +526,27 @@ impl Function for Bin2DecFn {
     }
 }
 
-/// DEC2BIN(number, [places]) - Converts decimal to binary
+/// Converts a decimal integer to binary text.
+///
+/// Optionally pads the result with leading zeros using `places`.
+///
+/// # Remarks
+/// - `number` is coerced to an integer and must be in `[-512, 511]`.
+/// - Negative values are returned as 10-bit two's-complement binary strings.
+/// - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert a positive integer"
+/// formula: "=DEC2BIN(42)"
+/// expected: "101010"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Pad binary output"
+/// formula: "=DEC2BIN(5,8)"
+/// expected: "00000101"
+/// ```
 #[derive(Debug)]
 pub struct Dec2BinFn;
 /// [formualizer-docgen:schema:start]
@@ -485,7 +625,27 @@ impl Function for Dec2BinFn {
     }
 }
 
-/// HEX2DEC(number) - Converts hexadecimal to decimal
+/// Converts a hexadecimal text value to decimal.
+///
+/// Supports up to 10 hex digits, including signed two's-complement values.
+///
+/// # Remarks
+/// - Input is coerced to text and must contain only hexadecimal characters.
+/// - 10-digit values beginning with `8`-`F` are interpreted as signed 40-bit numbers.
+/// - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert a positive hex value"
+/// formula: "=HEX2DEC(\"FF\")"
+/// expected: 255
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Interpret signed 40-bit hex"
+/// formula: "=HEX2DEC(\"FFFFFFFFFF\")"
+/// expected: -1
+/// ```
 #[derive(Debug)]
 pub struct Hex2DecFn;
 /// [formualizer-docgen:schema:start]
@@ -545,7 +705,27 @@ impl Function for Hex2DecFn {
     }
 }
 
-/// DEC2HEX(number, [places]) - Converts decimal to hexadecimal
+/// Converts a decimal integer to hexadecimal text.
+///
+/// Optionally pads the result with leading zeros using `places`.
+///
+/// # Remarks
+/// - `number` is coerced to an integer and must be in `[-2^39, 2^39 - 1]`.
+/// - Negative values are returned as 10-digit two's-complement hexadecimal strings.
+/// - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert decimal to hex"
+/// formula: "=DEC2HEX(255)"
+/// expected: "FF"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Pad hexadecimal output"
+/// formula: "=DEC2HEX(31,4)"
+/// expected: "001F"
+/// ```
 #[derive(Debug)]
 pub struct Dec2HexFn;
 /// [formualizer-docgen:schema:start]
@@ -624,7 +804,27 @@ impl Function for Dec2HexFn {
     }
 }
 
-/// OCT2DEC(number) - Converts octal to decimal
+/// Converts an octal text value to decimal.
+///
+/// Supports up to 10 octal digits, including signed two's-complement values.
+///
+/// # Remarks
+/// - Input is coerced to text and must contain only digits `0` through `7`.
+/// - 10-digit values beginning with `4`-`7` are interpreted as signed 30-bit numbers.
+/// - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert positive octal"
+/// formula: "=OCT2DEC(\"17\")"
+/// expected: 15
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Interpret signed 30-bit octal"
+/// formula: "=OCT2DEC(\"7777777777\")"
+/// expected: -1
+/// ```
 #[derive(Debug)]
 pub struct Oct2DecFn;
 /// [formualizer-docgen:schema:start]
@@ -684,7 +884,27 @@ impl Function for Oct2DecFn {
     }
 }
 
-/// DEC2OCT(number, [places]) - Converts decimal to octal
+/// Converts a decimal integer to octal text.
+///
+/// Optionally pads the result with leading zeros using `places`.
+///
+/// # Remarks
+/// - `number` is coerced to an integer and must be in `[-2^29, 2^29 - 1]`.
+/// - Negative values are returned as 10-digit two's-complement octal strings.
+/// - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert decimal to octal"
+/// formula: "=DEC2OCT(64)"
+/// expected: "100"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Two's-complement negative output"
+/// formula: "=DEC2OCT(-1)"
+/// expected: "7777777777"
+/// ```
 #[derive(Debug)]
 pub struct Dec2OctFn;
 /// [formualizer-docgen:schema:start]
@@ -765,7 +985,27 @@ impl Function for Dec2OctFn {
 
 /* ─────────────────────────── Cross-Base Conversions ──────────────────────────── */
 
-/// BIN2HEX(number, [places]) - Converts binary to hexadecimal
+/// Converts a binary text value to hexadecimal text.
+///
+/// Optionally pads the output with leading zeros using `places`.
+///
+/// # Remarks
+/// - Input must be a binary string up to 10 digits; 10-digit values may be signed.
+/// - Signed binary values are converted using two's-complement semantics.
+/// - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert binary to hex"
+/// formula: "=BIN2HEX(\"1010\")"
+/// expected: "A"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Pad hexadecimal output"
+/// formula: "=BIN2HEX(\"1010\",4)"
+/// expected: "000A"
+/// ```
 #[derive(Debug)]
 pub struct Bin2HexFn;
 /// [formualizer-docgen:schema:start]
@@ -853,7 +1093,27 @@ impl Function for Bin2HexFn {
     }
 }
 
-/// HEX2BIN(number, [places]) - Converts hexadecimal to binary
+/// Converts a hexadecimal text value to binary text.
+///
+/// Supports optional left-padding through the `places` argument.
+///
+/// # Remarks
+/// - Input must be hexadecimal text up to 10 characters and may be signed two's-complement.
+/// - The converted decimal value must be in `[-512, 511]`, or the function returns `#NUM!`.
+/// - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert positive hex to binary"
+/// formula: "=HEX2BIN(\"1F\")"
+/// expected: "11111"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert signed hex"
+/// formula: "=HEX2BIN(\"FFFFFFFFFF\")"
+/// expected: "1111111111"
+/// ```
 #[derive(Debug)]
 pub struct Hex2BinFn;
 /// [formualizer-docgen:schema:start]
@@ -948,7 +1208,27 @@ impl Function for Hex2BinFn {
     }
 }
 
-/// BIN2OCT(number, [places]) - Converts binary to octal
+/// Converts a binary text value to octal text.
+///
+/// Supports optional left-padding through the `places` argument.
+///
+/// # Remarks
+/// - Input must be binary text up to 10 digits and may be signed two's-complement.
+/// - Signed values are preserved through conversion to octal.
+/// - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert binary to octal"
+/// formula: "=BIN2OCT(\"111111\")"
+/// expected: "77"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Pad octal output"
+/// formula: "=BIN2OCT(\"111111\",4)"
+/// expected: "0077"
+/// ```
 #[derive(Debug)]
 pub struct Bin2OctFn;
 /// [formualizer-docgen:schema:start]
@@ -1035,7 +1315,27 @@ impl Function for Bin2OctFn {
     }
 }
 
-/// OCT2BIN(number, [places]) - Converts octal to binary
+/// Converts an octal text value to binary text.
+///
+/// Supports optional left-padding through the `places` argument.
+///
+/// # Remarks
+/// - Input must be octal text up to 10 digits and may be signed two's-complement.
+/// - Converted values must fall in `[-512, 511]`, or the function returns `#NUM!`.
+/// - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert octal to binary"
+/// formula: "=OCT2BIN(\"77\")"
+/// expected: "111111"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert signed octal"
+/// formula: "=OCT2BIN(\"7777777777\")"
+/// expected: "1111111111"
+/// ```
 #[derive(Debug)]
 pub struct Oct2BinFn;
 /// [formualizer-docgen:schema:start]
@@ -1129,7 +1429,27 @@ impl Function for Oct2BinFn {
     }
 }
 
-/// HEX2OCT(number, [places]) - Converts hexadecimal to octal
+/// Converts a hexadecimal text value to octal text.
+///
+/// Supports optional left-padding through the `places` argument.
+///
+/// # Remarks
+/// - Input must be hexadecimal text up to 10 characters and may be signed two's-complement.
+/// - Converted values must fit the octal range `[-2^29, 2^29 - 1]`, or `#NUM!` is returned.
+/// - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert hex to octal"
+/// formula: "=HEX2OCT(\"1F\")"
+/// expected: "37"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert signed hex"
+/// formula: "=HEX2OCT(\"FFFFFFFFFF\")"
+/// expected: "7777777777"
+/// ```
 #[derive(Debug)]
 pub struct Hex2OctFn;
 /// [formualizer-docgen:schema:start]
@@ -1223,7 +1543,27 @@ impl Function for Hex2OctFn {
     }
 }
 
-/// OCT2HEX(number, [places]) - Converts octal to hexadecimal
+/// Converts an octal text value to hexadecimal text.
+///
+/// Supports optional left-padding through the `places` argument.
+///
+/// # Remarks
+/// - Input must be octal text up to 10 digits and may be signed two's-complement.
+/// - Signed values are converted through their decimal representation.
+/// - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Convert octal to hex"
+/// formula: "=OCT2HEX(\"77\")"
+/// expected: "3F"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert signed octal"
+/// formula: "=OCT2HEX(\"7777777777\")"
+/// expected: "FFFFFFFFFF"
+/// ```
 #[derive(Debug)]
 pub struct Oct2HexFn;
 /// [formualizer-docgen:schema:start]
@@ -1312,7 +1652,27 @@ impl Function for Oct2HexFn {
 
 /* ─────────────────────────── Engineering Comparison Functions ──────────────────────────── */
 
-/// DELTA(number1, [number2]) - Tests whether two values are equal
+/// Tests whether two numbers are equal.
+///
+/// Returns `1` when values match and `0` otherwise.
+///
+/// # Remarks
+/// - If `number2` is omitted, it defaults to `0`.
+/// - Inputs are numerically coerced.
+/// - Uses a small numeric tolerance for floating-point comparison.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Equal values"
+/// formula: "=DELTA(5,5)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Default second argument"
+/// formula: "=DELTA(2.5)"
+/// expected: 0
+/// ```
 #[derive(Debug)]
 pub struct DeltaFn;
 /// [formualizer-docgen:schema:start]
@@ -1368,7 +1728,27 @@ impl Function for DeltaFn {
     }
 }
 
-/// GESTEP(number, [step]) - Tests whether a number is >= step value
+/// Returns `1` when a number is greater than or equal to a step value.
+///
+/// Returns `0` when the number is below the step.
+///
+/// # Remarks
+/// - If `step` is omitted, it defaults to `0`.
+/// - Inputs are numerically coerced.
+/// - Propagates input errors.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Value meets threshold"
+/// formula: "=GESTEP(5,3)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Default threshold of zero"
+/// formula: "=GESTEP(-2)"
+/// expected: 0
+/// ```
 #[derive(Debug)]
 pub struct GestepFn;
 /// [formualizer-docgen:schema:start]
@@ -1592,9 +1972,27 @@ fn erfc_direct(x: f64) -> f64 {
     erfc_large(x)
 }
 
-/// ERF(lower_limit, [upper_limit]) - Returns the error function integrated between lower_limit and upper_limit
-/// If only lower_limit is provided, returns erf(lower_limit)
-/// If both are provided, returns erf(upper_limit) - erf(lower_limit)
+/// Returns the Gaussian error function over one bound or between two bounds.
+///
+/// With one argument it returns `erf(x)`; with two it returns `erf(upper) - erf(lower)`.
+///
+/// # Remarks
+/// - Inputs are numerically coerced.
+/// - A second argument switches the function to interval mode.
+/// - Results are approximate floating-point values.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Single-bound ERF"
+/// formula: "=ERF(1)"
+/// expected: 0.8427007929497149
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Interval ERF"
+/// formula: "=ERF(0,1)"
+/// expected: 0.8427007929497149
+/// ```
 #[derive(Debug)]
 pub struct ErfFn;
 /// [formualizer-docgen:schema:start]
@@ -1653,7 +2051,27 @@ impl Function for ErfFn {
     }
 }
 
-/// ERFC(x) - Returns the complementary error function = 1 - erf(x)
+/// Returns the complementary error function of a number.
+///
+/// `ERFC(x)` is equivalent to `1 - ERF(x)`.
+///
+/// # Remarks
+/// - Input is numerically coerced.
+/// - Results are approximate floating-point values.
+/// - Propagates input errors.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Complement at one"
+/// formula: "=ERFC(1)"
+/// expected: 0.1572992070502851
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Complement at zero"
+/// formula: "=ERFC(0)"
+/// expected: 1
+/// ```
 #[derive(Debug)]
 pub struct ErfcFn;
 /// [formualizer-docgen:schema:start]
@@ -1696,7 +2114,27 @@ impl Function for ErfcFn {
     }
 }
 
-/// ERF.PRECISE(x) - Returns the error function (same as ERF with one argument)
+/// Returns the error function of a number.
+///
+/// This is the one-argument precise variant of `ERF`.
+///
+/// # Remarks
+/// - Input is numerically coerced.
+/// - Equivalent to `ERF(x)` in single-argument mode.
+/// - Results are approximate floating-point values.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Positive input"
+/// formula: "=ERF.PRECISE(1)"
+/// expected: 0.8427007929497149
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative input"
+/// formula: "=ERF.PRECISE(-1)"
+/// expected: -0.8427007929497149
+/// ```
 #[derive(Debug)]
 pub struct ErfPreciseFn;
 /// [formualizer-docgen:schema:start]
@@ -1909,7 +2347,27 @@ fn coerce_complex_str(v: &LiteralValue) -> Result<String, ExcelError> {
 static ARG_COMPLEX_THREE: std::sync::LazyLock<Vec<ArgSchema>> =
     std::sync::LazyLock::new(|| vec![ArgSchema::any(), ArgSchema::any(), ArgSchema::any()]);
 
-/// COMPLEX(real_num, i_num, [suffix]) - Converts real and imaginary coefficients into a complex number
+/// Builds a complex number text value from real and imaginary coefficients.
+///
+/// Returns canonical text such as `3+4i` or `-2j`.
+///
+/// # Remarks
+/// - `real_num` and `i_num` are numerically coerced.
+/// - `suffix` may be `"i"`, `"j"`, empty text, or omitted; empty/omitted defaults to `i`.
+/// - Any other suffix returns `#VALUE!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Build with default suffix"
+/// formula: "=COMPLEX(3,4)"
+/// expected: "3+4i"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Build with j suffix"
+/// formula: "=COMPLEX(0,-1,\"j\")"
+/// expected: "-j"
+/// ```
 #[derive(Debug)]
 pub struct ComplexFn;
 /// [formualizer-docgen:schema:start]
@@ -1990,7 +2448,27 @@ impl Function for ComplexFn {
     }
 }
 
-/// IMREAL(inumber) - Returns the real coefficient of a complex number
+/// Returns the real coefficient of a complex number.
+///
+/// Accepts complex text (for example `a+bi`) or numeric values.
+///
+/// # Remarks
+/// - Inputs are coerced to complex-number text before parsing.
+/// - Purely imaginary values return `0`.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Real part from a+bi"
+/// formula: "=IMREAL(\"3+4i\")"
+/// expected: 3
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Real part of pure imaginary"
+/// formula: "=IMREAL(\"5j\")"
+/// expected: 0
+/// ```
 #[derive(Debug)]
 pub struct ImRealFn;
 /// [formualizer-docgen:schema:start]
@@ -2038,7 +2516,27 @@ impl Function for ImRealFn {
     }
 }
 
-/// IMAGINARY(inumber) - Returns the imaginary coefficient of a complex number
+/// Returns the imaginary coefficient of a complex number.
+///
+/// Accepts complex text (for example `a+bi`) or numeric values.
+///
+/// # Remarks
+/// - Inputs are coerced to complex-number text before parsing.
+/// - Purely real values return `0`.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Imaginary part from a+bi"
+/// formula: "=IMAGINARY(\"3+4i\")"
+/// expected: 4
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Imaginary part with j suffix"
+/// formula: "=IMAGINARY(\"-2j\")"
+/// expected: -2
+/// ```
 #[derive(Debug)]
 pub struct ImaginaryFn;
 /// [formualizer-docgen:schema:start]
@@ -2086,7 +2584,27 @@ impl Function for ImaginaryFn {
     }
 }
 
-/// IMABS(inumber) - Returns the absolute value (modulus) of a complex number
+/// Returns the modulus (absolute value) of a complex number.
+///
+/// Computes `sqrt(real^2 + imaginary^2)`.
+///
+/// # Remarks
+/// - Inputs are coerced to complex-number text before parsing.
+/// - Returns a non-negative real number.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "3-4-5 triangle modulus"
+/// formula: "=IMABS(\"3+4i\")"
+/// expected: 5
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Purely real input"
+/// formula: "=IMABS(\"5\")"
+/// expected: 5
+/// ```
 #[derive(Debug)]
 pub struct ImAbsFn;
 /// [formualizer-docgen:schema:start]
@@ -2135,7 +2653,27 @@ impl Function for ImAbsFn {
     }
 }
 
-/// IMARGUMENT(inumber) - Returns the argument theta (angle in radians) of a complex number
+/// Returns the argument (angle in radians) of a complex number.
+///
+/// The angle is measured from the positive real axis.
+///
+/// # Remarks
+/// - Inputs are coerced to complex-number text before parsing.
+/// - Returns `#DIV/0!` for `0+0i`, where the angle is undefined.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "First-quadrant angle"
+/// formula: "=IMARGUMENT(\"1+i\")"
+/// expected: 0.7853981633974483
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative real axis"
+/// formula: "=IMARGUMENT(\"-1\")"
+/// expected: 3.141592653589793
+/// ```
 #[derive(Debug)]
 pub struct ImArgumentFn;
 /// [formualizer-docgen:schema:start]
@@ -2191,7 +2729,27 @@ impl Function for ImArgumentFn {
     }
 }
 
-/// IMCONJUGATE(inumber) - Returns the complex conjugate of a complex number
+/// Returns the complex conjugate of a complex number.
+///
+/// Negates the imaginary coefficient and keeps the real coefficient unchanged.
+///
+/// # Remarks
+/// - Inputs are coerced to complex-number text before parsing.
+/// - Preserves the original suffix style (`i` or `j`) when possible.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Conjugate with i suffix"
+/// formula: "=IMCONJUGATE(\"3+4i\")"
+/// expected: "3-4i"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Conjugate with j suffix"
+/// formula: "=IMCONJUGATE(\"-2j\")"
+/// expected: "2j"
+/// ```
 #[derive(Debug)]
 pub struct ImConjugateFn;
 /// [formualizer-docgen:schema:start]
@@ -2254,7 +2812,27 @@ fn check_suffix_compatibility(s1: char, s2: char) -> Result<char, ExcelError> {
     }
 }
 
-/// IMSUM(inumber1, [inumber2], ...) - Returns the sum of complex numbers
+/// Returns the sum of one or more complex numbers.
+///
+/// Adds real parts together and imaginary parts together.
+///
+/// # Remarks
+/// - Each argument is coerced to complex-number text before parsing.
+/// - Accepts any number of arguments from one upward.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Add multiple complex values"
+/// formula: "=IMSUM(\"3+4i\",\"1-2i\",\"5\")"
+/// expected: "9+2i"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Add j-suffix values"
+/// formula: "=IMSUM(\"2j\",\"-j\")"
+/// expected: "j"
+/// ```
 #[derive(Debug)]
 pub struct ImSumFn;
 /// [formualizer-docgen:schema:start]
@@ -2323,7 +2901,27 @@ impl Function for ImSumFn {
     }
 }
 
-/// IMSUB(inumber1, inumber2) - Returns the difference of two complex numbers
+/// Returns the difference between two complex numbers.
+///
+/// Subtracts the second complex value from the first.
+///
+/// # Remarks
+/// - Inputs are coerced to complex-number text before parsing.
+/// - Output keeps the suffix style from the parsed inputs.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Subtract a+bi values"
+/// formula: "=IMSUB(\"5+3i\",\"2+i\")"
+/// expected: "3+2i"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Subtract pure imaginary from real"
+/// formula: "=IMSUB(\"4\",\"7j\")"
+/// expected: "4-7j"
+/// ```
 #[derive(Debug)]
 pub struct ImSubFn;
 /// [formualizer-docgen:schema:start]
@@ -2388,7 +2986,27 @@ impl Function for ImSubFn {
     }
 }
 
-/// IMPRODUCT(inumber1, [inumber2], ...) - Returns the product of complex numbers
+/// Returns the product of one or more complex numbers.
+///
+/// Multiplies values sequentially using complex multiplication rules.
+///
+/// # Remarks
+/// - Each argument is coerced to complex-number text before parsing.
+/// - Accepts any number of arguments from one upward.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Multiply conjugates"
+/// formula: "=IMPRODUCT(\"1+i\",\"1-i\")"
+/// expected: "2"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Scale an imaginary value"
+/// formula: "=IMPRODUCT(\"2i\",\"3\")"
+/// expected: "6i"
+/// ```
 #[derive(Debug)]
 pub struct ImProductFn;
 /// [formualizer-docgen:schema:start]
@@ -2461,7 +3079,27 @@ impl Function for ImProductFn {
     }
 }
 
-/// IMDIV(inumber1, inumber2) - Returns the quotient of two complex numbers
+/// Returns the quotient of two complex numbers.
+///
+/// Divides the first complex value by the second.
+///
+/// # Remarks
+/// - Inputs are coerced to complex-number text before parsing.
+/// - Returns `#DIV/0!` when the divisor is `0+0i`.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Divide complex numbers"
+/// formula: "=IMDIV(\"3+4i\",\"1-i\")"
+/// expected: "-0.5+3.5i"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Division by zero complex"
+/// formula: "=IMDIV(\"2+i\",\"0\")"
+/// expected: "#DIV/0!"
+/// ```
 #[derive(Debug)]
 pub struct ImDivFn;
 /// [formualizer-docgen:schema:start]
@@ -2539,8 +3177,27 @@ impl Function for ImDivFn {
     }
 }
 
-/// IMEXP(inumber) - Returns exponential of a complex number
-/// e^(a+bi) = e^a * (cos(b) + i*sin(b))
+/// Returns the complex exponential of a complex number.
+///
+/// Computes `e^(a+bi)` and returns the result as complex text.
+///
+/// # Remarks
+/// - Input is coerced to complex-number text before parsing.
+/// - Uses Euler's identity for the imaginary component.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Exponential of zero"
+/// formula: "=IMEXP(\"0\")"
+/// expected: "1"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Exponential of a real value"
+/// formula: "=IMEXP(\"1\")"
+/// expected: "2.718281828459045"
+/// ```
 #[derive(Debug)]
 pub struct ImExpFn;
 /// [formualizer-docgen:schema:start]
@@ -2594,8 +3251,27 @@ impl Function for ImExpFn {
     }
 }
 
-/// IMLN(inumber) - Returns the natural logarithm of a complex number
-/// ln(a+bi) = ln(|z|) + i*arg(z)
+/// Returns the natural logarithm of a complex number.
+///
+/// Produces the principal complex logarithm as text.
+///
+/// # Remarks
+/// - Input is coerced to complex-number text before parsing.
+/// - Returns `#NUM!` for zero input because `ln(0)` is undefined.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Natural log of 1"
+/// formula: "=IMLN(\"1\")"
+/// expected: "0"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Natural log on imaginary axis"
+/// formula: "=IMLN(\"i\")"
+/// expected: "1.5707963267948966i"
+/// ```
 #[derive(Debug)]
 pub struct ImLnFn;
 /// [formualizer-docgen:schema:start]
@@ -2656,8 +3332,27 @@ impl Function for ImLnFn {
     }
 }
 
-/// IMLOG10(inumber) - Returns the base-10 logarithm of a complex number
-/// log10(z) = ln(z) / ln(10)
+/// Returns the base-10 logarithm of a complex number.
+///
+/// Produces the principal complex logarithm in base 10.
+///
+/// # Remarks
+/// - Input is coerced to complex-number text before parsing.
+/// - Returns `#NUM!` for zero input.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Base-10 log of a real value"
+/// formula: "=IMLOG10(\"10\")"
+/// expected: "1"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Base-10 log on imaginary axis"
+/// formula: "=IMLOG10(\"i\")"
+/// expected: "0.6821881769209206i"
+/// ```
 #[derive(Debug)]
 pub struct ImLog10Fn;
 /// [formualizer-docgen:schema:start]
@@ -2719,8 +3414,27 @@ impl Function for ImLog10Fn {
     }
 }
 
-/// IMLOG2(inumber) - Returns the base-2 logarithm of a complex number
-/// log2(z) = ln(z) / ln(2)
+/// Returns the base-2 logarithm of a complex number.
+///
+/// Produces the principal complex logarithm in base 2.
+///
+/// # Remarks
+/// - Input is coerced to complex-number text before parsing.
+/// - Returns `#NUM!` for zero input.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Base-2 log of a real value"
+/// formula: "=IMLOG2(\"8\")"
+/// expected: "3"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Base-2 log on imaginary axis"
+/// formula: "=IMLOG2(\"i\")"
+/// expected: "2.266180070913597i"
+/// ```
 #[derive(Debug)]
 pub struct ImLog2Fn;
 /// [formualizer-docgen:schema:start]
@@ -2782,8 +3496,27 @@ impl Function for ImLog2Fn {
     }
 }
 
-/// IMPOWER(inumber, n) - Returns a complex number raised to a power
-/// z^n = |z|^n * (cos(n*theta) + i*sin(n*theta))
+/// Raises a complex number to a real power.
+///
+/// Uses polar form and returns the principal-value result as complex text.
+///
+/// # Remarks
+/// - `inumber` is coerced to complex-number text; `n` is numerically coerced.
+/// - Returns `#NUM!` for undefined zero-power cases such as `0^0` or `0^-1`.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Square a complex value"
+/// formula: "=IMPOWER(\"1+i\",2)"
+/// expected: "2i"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative real exponent"
+/// formula: "=IMPOWER(\"2\",-1)"
+/// expected: "0.5"
+/// ```
 #[derive(Debug)]
 pub struct ImPowerFn;
 /// [formualizer-docgen:schema:start]
@@ -2862,8 +3595,27 @@ impl Function for ImPowerFn {
     }
 }
 
-/// IMSQRT(inumber) - Returns the square root of a complex number
-/// sqrt(z) = sqrt(|z|) * (cos(theta/2) + i*sin(theta/2))
+/// Returns the principal square root of a complex number.
+///
+/// Computes the root in polar form and returns complex text.
+///
+/// # Remarks
+/// - Input is coerced to complex-number text before parsing.
+/// - Returns the principal branch of the square root.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Square root of a negative real"
+/// formula: "=IMSQRT(\"-4\")"
+/// expected: "2i"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Square root of a+bi"
+/// formula: "=IMSQRT(\"3+4i\")"
+/// expected: "2+i"
+/// ```
 #[derive(Debug)]
 pub struct ImSqrtFn;
 /// [formualizer-docgen:schema:start]
@@ -2921,8 +3673,27 @@ impl Function for ImSqrtFn {
     }
 }
 
-/// IMSIN(inumber) - Returns the sine of a complex number
-/// sin(a+bi) = sin(a)*cosh(b) + i*cos(a)*sinh(b)
+/// Returns the sine of a complex number.
+///
+/// Evaluates complex sine and returns the result as complex text.
+///
+/// # Remarks
+/// - Input is coerced to complex-number text before parsing.
+/// - Uses hyperbolic components for the imaginary part.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Sine of zero"
+/// formula: "=IMSIN(\"0\")"
+/// expected: "0"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sine on imaginary axis"
+/// formula: "=IMSIN(\"i\")"
+/// expected: "1.1752011936438014i"
+/// ```
 #[derive(Debug)]
 pub struct ImSinFn;
 /// [formualizer-docgen:schema:start]
@@ -2975,8 +3746,27 @@ impl Function for ImSinFn {
     }
 }
 
-/// IMCOS(inumber) - Returns the cosine of a complex number
-/// cos(a+bi) = cos(a)*cosh(b) - i*sin(a)*sinh(b)
+/// Returns the cosine of a complex number.
+///
+/// Evaluates complex cosine and returns the result as complex text.
+///
+/// # Remarks
+/// - Input is coerced to complex-number text before parsing.
+/// - Uses hyperbolic components for the imaginary part.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Cosine of zero"
+/// formula: "=IMCOS(\"0\")"
+/// expected: "1"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Cosine on imaginary axis"
+/// formula: "=IMCOS(\"i\")"
+/// expected: "1.5430806348152437"
+/// ```
 #[derive(Debug)]
 pub struct ImCosFn;
 /// [formualizer-docgen:schema:start]
@@ -3194,7 +3984,27 @@ fn convert_units(value: f64, from: &str, to: &str) -> Result<f64, ExcelError> {
     Ok(base_value / to_info.to_base)
 }
 
-/// CONVERT(number, from_unit, to_unit) - Converts between measurement units
+/// Converts a numeric value from one supported unit to another.
+///
+/// Supports a focused set of length, mass, and temperature units.
+///
+/// # Remarks
+/// - `number` is numerically coerced; unit arguments must be text.
+/// - Returns `#N/A` for unknown units or incompatible unit categories.
+/// - Temperature conversions support `C/cel`, `F/fah`, and `K/kel`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Length conversion"
+/// formula: "=CONVERT(1,\"km\",\"m\")"
+/// expected: 1000
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Temperature conversion"
+/// formula: "=CONVERT(32,\"F\",\"C\")"
+/// expected: 0
+/// ```
 #[derive(Debug)]
 pub struct ConvertFn;
 /// [formualizer-docgen:schema:start]

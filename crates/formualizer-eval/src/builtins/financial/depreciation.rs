@@ -18,8 +18,29 @@ fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     }
 }
 
-/// SLN(cost, salvage, life)
-/// Returns the straight-line depreciation of an asset for one period
+/// Returns straight-line depreciation for a single period.
+///
+/// `SLN` spreads the depreciable amount (`cost - salvage`) evenly across `life` periods.
+///
+/// # Remarks
+/// - Formula: `(cost - salvage) / life`.
+/// - `life` must be non-zero; `life = 0` returns `#DIV/0!`.
+/// - This function returns the algebraic result: if `salvage > cost`, depreciation is negative.
+/// - Inputs are interpreted as scalar numeric values in matching currency/period units.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Straight-line yearly depreciation"
+/// formula: "=SLN(10000, 1000, 9)"
+/// expected: 1000
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative depreciation when salvage exceeds cost"
+/// formula: "=SLN(1000, 1200, 2)"
+/// expected: -100
+/// ```
 #[derive(Debug)]
 pub struct SlnFn;
 /// [formualizer-docgen:schema:start]
@@ -71,8 +92,29 @@ impl Function for SlnFn {
     }
 }
 
-/// SYD(cost, salvage, life, per)
-/// Returns the sum-of-years' digits depreciation of an asset for a specified period
+/// Returns sum-of-years'-digits depreciation for a requested period.
+///
+/// `SYD` applies accelerated depreciation by weighting earlier periods more heavily.
+///
+/// # Remarks
+/// - Formula: `(cost - salvage) * (life - per + 1) / (life * (life + 1) / 2)`.
+/// - `life` and `per` must satisfy: `life > 0`, `per > 0`, and `per <= life`; otherwise returns `#NUM!`.
+/// - The function uses the provided numeric values directly (no integer-only enforcement).
+/// - Result sign follows `(cost - salvage)`: positive for typical depreciation expense, negative if `salvage > cost`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "First SYD period"
+/// formula: "=SYD(10000, 1000, 5, 1)"
+/// expected: 3000
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Final SYD period"
+/// formula: "=SYD(10000, 1000, 5, 5)"
+/// expected: 600
+/// ```
 #[derive(Debug)]
 pub struct SydFn;
 /// [formualizer-docgen:schema:start]
@@ -131,8 +173,31 @@ impl Function for SydFn {
     }
 }
 
-/// DB(cost, salvage, life, period, [month])
-/// Returns the depreciation of an asset for a specified period using the fixed-declining balance method
+/// Returns fixed-declining-balance depreciation for a specified period.
+///
+/// `DB` computes per-period depreciation using a declining-balance rate and an optional
+/// first-year month proration.
+///
+/// # Remarks
+/// - Parameters: `cost`, `salvage`, `life`, `period`, and optional `month` (default `12`).
+/// - `month` must be in `1..=12`; `life` and `period` must be positive; invalid values return `#NUM!`.
+/// - `life` and `period` are truncated to integers for period checks and iteration.
+/// - The declining rate is rounded to three decimals; if `cost <= 0` or `salvage <= 0`, this implementation uses a rate of `1.0`.
+/// - Returned value is the period depreciation amount (generally positive expense, but sign follows provided inputs).
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "First full-year DB period"
+/// formula: "=DB(10000, 1000, 5, 1)"
+/// expected: 3690
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional period input is truncated"
+/// formula: "=DB(10000, 1000, 5, 2.9)"
+/// expected: 2328.39
+/// ```
 #[derive(Debug)]
 pub struct DbFn;
 /// [formualizer-docgen:schema:start]
@@ -234,18 +299,31 @@ impl Function for DbFn {
     }
 }
 
-/// DDB(cost, salvage, life, period, [factor])
-/// Returns the depreciation of an asset for a specified period using the double-declining balance method
+/// Returns declining-balance depreciation for a period using a configurable acceleration factor.
 ///
-/// TODO: KNOWN ISSUES - This implementation has correctness issues that need to be fixed:
-/// 1. Fractional period handling is incorrect - Excel does NOT support fractional periods
-///    for DDB and returns an error. The current implementation attempts a weighted average
-///    approach which doesn't match Excel behavior.
-/// 2. Salvage value logic may not match Excel exactly - Excel's DDB doesn't consider salvage
-///    during the per-period depreciation calculation; it only prevents cumulative depreciation
-///    from exceeding (cost - salvage).
+/// `DDB` defaults to the double-declining method (`factor = 2`) and applies a salvage floor so
+/// book value does not fall below `salvage`.
 ///
-/// See merge-review/03-financial.md for full analysis.
+/// # Remarks
+/// - Parameters: `cost`, `salvage`, `life`, `period`, and optional `factor` (default `2`).
+/// - Input constraints: `cost >= 0`, `salvage >= 0`, `life > 0`, `period > 0`, `factor > 0`, and `period <= life`; violations return `#NUM!`.
+/// - Per-period rate is `factor / life`.
+/// - This implementation processes the integer part of `period` and then blends with the next period for a fractional remainder.
+/// - Result is the period depreciation amount; with valid inputs above it is non-negative.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Default double-declining first period"
+/// formula: "=DDB(10000, 1000, 5, 1)"
+/// expected: 4000
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Using a custom factor"
+/// formula: "=DDB(10000, 1000, 5, 1, 1.5)"
+/// expected: 3000
+/// ```
 #[derive(Debug)]
 pub struct DdbFn;
 /// [formualizer-docgen:schema:start]

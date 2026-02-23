@@ -22,8 +22,27 @@ fn coerce_literal_num(v: &LiteralValue) -> Result<f64, ExcelError> {
     }
 }
 
-/// PMT(rate, nper, pv, [fv], [type])
-/// Calculates the payment for a loan based on constant payments and a constant interest rate
+/// Calculates the constant payment amount for a fixed-rate annuity or loan.
+///
+/// Use this to solve for periodic payment size when rate, term, and present/future value
+/// targets are known.
+///
+/// # Remarks
+/// - `rate` is the interest rate per payment period (for example, annual rate / 12 for monthly payments).
+/// - Cash-flow sign convention: cash paid out is negative and cash received is positive.
+/// - `type = 0` means end-of-period payments; `type != 0` means beginning-of-period payments.
+/// - Returns `#NUM!` when `nper` is zero.
+/// - Propagates argument conversion and underlying value errors.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =PMT(0.06/12, 360, 300000)
+/// result: -1798.6515754582708
+/// ```
+/// ```yaml,sandbox
+/// formula: =PMT(0.05/4, 20, -10000, 0, 1)
+/// result: 561.1890334005388
+/// ```
 #[derive(Debug)]
 pub struct PmtFn;
 /// [formualizer-docgen:schema:start]
@@ -100,8 +119,26 @@ impl Function for PmtFn {
     }
 }
 
-/// PV(rate, nper, pmt, [fv], [type])
-/// Calculates the present value of an investment
+/// Calculates present value from periodic cash flows at a fixed rate.
+///
+/// Use this to discount a regular payment stream and optional terminal value back to time zero.
+///
+/// # Remarks
+/// - `rate` is the discount rate per period.
+/// - Cash-flow sign convention: inflows are positive and outflows are negative.
+/// - `type = 0` assumes payments at period end; `type != 0` assumes period start.
+/// - When `rate` is zero, present value is computed with simple arithmetic (no discounting).
+/// - Returns argument-related errors if coercion fails or an input is an error value.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =PV(0.06/12, 360, -1798.65157545827)
+/// result: 299999.9999999998
+/// ```
+/// ```yaml,sandbox
+/// formula: =PV(0, 10, -500)
+/// result: 5000
+/// ```
 #[derive(Debug)]
 pub struct PvFn;
 /// [formualizer-docgen:schema:start]
@@ -169,8 +206,26 @@ impl Function for PvFn {
     }
 }
 
-/// FV(rate, nper, pmt, [pv], [type])
-/// Calculates the future value of an investment
+/// Calculates future value from a fixed periodic rate and payment stream.
+///
+/// Use this to project an ending balance after compounding a present value and periodic payments.
+///
+/// # Remarks
+/// - `rate` is the interest rate per period.
+/// - Cash-flow sign convention: payments you make are negative; receipts are positive.
+/// - `type = 0` models end-of-period payments; `type != 0` models beginning-of-period payments.
+/// - When `rate` is zero, result is linear (`-pv - pmt * nper`).
+/// - Returns argument-related errors if coercion fails or an input is an error value.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =FV(0.04/12, 120, -200)
+/// result: 29449.96094509572
+/// ```
+/// ```yaml,sandbox
+/// formula: =FV(0, 24, -150, 1000)
+/// result: 2600
+/// ```
 #[derive(Debug)]
 pub struct FvFn;
 /// [formualizer-docgen:schema:start]
@@ -238,8 +293,27 @@ impl Function for FvFn {
     }
 }
 
-/// NPV(rate, value1, [value2], ...)
-/// Calculates the net present value of an investment
+/// Calculates net present value for equally spaced cash flows.
+///
+/// The first cash-flow argument is discounted one period from the present, matching spreadsheet
+/// `NPV` behavior for periodic series.
+///
+/// # Remarks
+/// - `rate` is the discount rate per period.
+/// - Cash-flow sign convention: investments/outflows are negative, returns/inflows are positive.
+/// - Non-numeric values are ignored; numeric values in arrays/ranges are consumed left-to-right.
+/// - Embedded error values inside provided cash-flow values are propagated as errors.
+/// - Returns argument coercion errors for invalid `rate` or direct scalar failures.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =NPV(0.08, 4000, 5000, 6000)
+/// result: 12753.391251333636
+/// ```
+/// ```yaml,sandbox
+/// formula: =NPV(0.10, -5000, 2000, 2500, 3000)
+/// result: 1034.7653848780812
+/// ```
 #[derive(Debug)]
 pub struct NpvFn;
 /// [formualizer-docgen:schema:start]
@@ -321,8 +395,26 @@ impl Function for NpvFn {
     }
 }
 
-/// NPER(rate, pmt, pv, [fv], [type])
-/// Calculates the number of periods for an investment
+/// Calculates the number of periods needed to satisfy a cash-flow target.
+///
+/// Use this to solve term length when periodic rate, payment, and value constraints are known.
+///
+/// # Remarks
+/// - `rate` is the interest rate per period.
+/// - Cash-flow sign convention: at least one of `pmt`, `pv`, or `fv` should usually have opposite sign.
+/// - `type = 0` means payments at period end; `type != 0` means period start.
+/// - Returns `#NUM!` when inputs imply no finite solution (for example, invalid logarithm domain).
+/// - Returns `#NUM!` when both `rate = 0` and `pmt = 0`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =NPER(0.06/12, -1798.65157545827, 300000)
+/// result: 360.00000000000045
+/// ```
+/// ```yaml,sandbox
+/// formula: =NPER(0, -250, 5000)
+/// result: 20
+/// ```
 #[derive(Debug)]
 pub struct NperFn;
 /// [formualizer-docgen:schema:start]
@@ -402,8 +494,27 @@ impl Function for NperFn {
     }
 }
 
-/// RATE(nper, pmt, pv, [fv], [type], [guess])
-/// Calculates the interest rate per period
+/// Solves for the periodic interest rate implied by annuity cash flows.
+///
+/// This function uses Newton-Raphson iteration and returns the per-period rate that satisfies
+/// the TVM equation.
+///
+/// # Remarks
+/// - Output is a rate per period; convert to annual terms externally if needed.
+/// - Cash-flow sign convention matters for convergence: use opposite signs for borrow/repay sides.
+/// - `guess` defaults to `0.1` and influences convergence speed and branch selection.
+/// - `type = 0` means end-of-period payments; `type != 0` means beginning-of-period payments.
+/// - Returns `#NUM!` on non-convergence, near-zero derivative, or unsatisfied numeric conditions.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =RATE(360, -1798.65157545827, 300000)
+/// result: 0.005000000000000038
+/// ```
+/// ```yaml,sandbox
+/// formula: =RATE(12, -88.84878867834166, 1000)
+/// result: 0.010000000000005125
+/// ```
 #[derive(Debug)]
 pub struct RateFn;
 /// [formualizer-docgen:schema:start]
@@ -516,8 +627,26 @@ impl Function for RateFn {
     }
 }
 
-/// IPMT(rate, per, nper, pv, [fv], [type])
-/// Calculates the interest payment for a given period
+/// Returns the interest-only component of a payment for a specific period.
+///
+/// Use this with `PMT` or `PPMT` to break a fixed payment into interest and principal pieces.
+///
+/// # Remarks
+/// - `rate` is the interest rate per payment period.
+/// - `per` is 1-based and must satisfy `1 <= per <= nper`.
+/// - Cash-flow sign convention: for a positive loan principal (`pv`), interest components are typically negative.
+/// - `type = 1` yields zero interest in period 1 (annuity-due first payment).
+/// - Returns `#NUM!` when `per` is outside valid bounds.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =IPMT(0.06/12, 1, 360, 300000)
+/// result: -1500
+/// ```
+/// ```yaml,sandbox
+/// formula: =IPMT(0.06/12, 12, 360, 300000)
+/// result: -1483.1572957145672
+/// ```
 #[derive(Debug)]
 pub struct IpmtFn;
 /// [formualizer-docgen:schema:start]
@@ -611,8 +740,26 @@ impl Function for IpmtFn {
     }
 }
 
-/// PPMT(rate, per, nper, pv, [fv], [type])
-/// Calculates the principal payment for a given period
+/// Returns the principal component of a payment for a specific period.
+///
+/// `PPMT` is computed as `PMT - IPMT` using the same rate, timing, and sign convention.
+///
+/// # Remarks
+/// - `rate` is the interest rate per payment period.
+/// - `per` is 1-based and must satisfy `1 <= per <= nper`.
+/// - Cash-flow sign convention: with a positive borrowed `pv`, principal components are usually negative.
+/// - `type = 1` means beginning-of-period payments.
+/// - Returns `#NUM!` when `per` is outside valid bounds.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =PPMT(0.06/12, 1, 360, 300000)
+/// result: -298.6515754582708
+/// ```
+/// ```yaml,sandbox
+/// formula: =PPMT(0.06/12, 12, 360, 300000)
+/// result: -315.4942797437036
+/// ```
 #[derive(Debug)]
 pub struct PpmtFn;
 /// [formualizer-docgen:schema:start]
@@ -707,7 +854,27 @@ impl Function for PpmtFn {
     }
 }
 
-/// EFFECT(nominal_rate, npery) - Returns the effective annual interest rate
+/// Converts a nominal annual rate into an effective annual rate.
+///
+/// This is useful when nominal APR is quoted with periodic compounding and you need annualized
+/// yield including compounding effects.
+///
+/// # Remarks
+/// - `nominal_rate` is annual; `npery` is compounding periods per year.
+/// - `npery` is truncated to an integer before computation.
+/// - Sign convention is not cash-flow based; this function transforms rate conventions only.
+/// - Returns `#NUM!` when `nominal_rate <= 0` or `npery < 1`.
+/// - Result formula: `(1 + nominal_rate / npery)^npery - 1`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =EFFECT(0.12, 12)
+/// result: 0.12682503013196977
+/// ```
+/// ```yaml,sandbox
+/// formula: =EFFECT(0.08, 4)
+/// result: 0.08243215999999998
+/// ```
 #[derive(Debug)]
 pub struct EffectFn;
 /// [formualizer-docgen:schema:start]
@@ -759,7 +926,26 @@ impl Function for EffectFn {
     }
 }
 
-/// NOMINAL(effect_rate, npery) - Returns the nominal annual interest rate
+/// Converts an effective annual rate into a nominal annual rate.
+///
+/// This is the inverse-style transformation of `EFFECT` for a chosen compounding frequency.
+///
+/// # Remarks
+/// - `effect_rate` is annual effective yield; `npery` is periods per year.
+/// - `npery` is truncated to an integer before computation.
+/// - Sign convention is not cash-flow based; this function converts annual rate representation.
+/// - Returns `#NUM!` when `effect_rate <= 0` or `npery < 1`.
+/// - Result formula: `npery * ((1 + effect_rate)^(1/npery) - 1)`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =NOMINAL(0.12682503013196977, 12)
+/// result: 0.1200000000000001
+/// ```
+/// ```yaml,sandbox
+/// formula: =NOMINAL(0.08243216, 4)
+/// result: 0.08000000000000007
+/// ```
 #[derive(Debug)]
 pub struct NominalFn;
 /// [formualizer-docgen:schema:start]
@@ -811,7 +997,26 @@ impl Function for NominalFn {
     }
 }
 
-/// IRR(values, [guess]) - Internal rate of return
+/// Calculates periodic internal rate of return for regularly spaced cash flows.
+///
+/// The function iteratively finds the per-period rate where discounted cash flows sum to zero.
+///
+/// # Remarks
+/// - Output is a rate per cash-flow period (not automatically annualized).
+/// - Cash-flow sign convention: outflows are negative and inflows are positive.
+/// - Non-numeric cells in arrays/ranges are ignored; direct scalar errors are propagated.
+/// - A callable value input returns `#CALC!`.
+/// - Returns `#NUM!` if fewer than two numeric cash flows are available, if derivative is near zero, or if iteration does not converge.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =IRR({-10000,3000,4200,6800})
+/// result: 0.16340560068898924
+/// ```
+/// ```yaml,sandbox
+/// formula: =IRR({-5000,1200,1410,1875,1050}, 0.1)
+/// result: 0.041848876015677466
+/// ```
 #[derive(Debug)]
 pub struct IrrFn;
 /// [formualizer-docgen:schema:start]
@@ -931,7 +1136,27 @@ impl Function for IrrFn {
     }
 }
 
-/// MIRR(values, finance_rate, reinvest_rate) - Modified IRR
+/// Calculates modified internal rate of return with separate finance and reinvest rates.
+///
+/// Negative cash flows are discounted at `finance_rate` and positive cash flows are compounded at
+/// `reinvest_rate`, then combined into a single periodic return.
+///
+/// # Remarks
+/// - `finance_rate` and `reinvest_rate` are both rates per cash-flow period.
+/// - Cash-flow sign convention: at least one negative and one positive cash flow are required.
+/// - Non-numeric cells in arrays/ranges are ignored; direct scalar errors are propagated.
+/// - A callable value input returns `#CALC!`.
+/// - Returns `#NUM!` for insufficient cash flows, and `#DIV/0!` when computed positive/negative legs are invalid.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =MIRR({-10000,3000,4200,6800}, 0.1, 0.12)
+/// result: 0.15147133664676304
+/// ```
+/// ```yaml,sandbox
+/// formula: =MIRR({-120000,39000,30000,21000,37000,46000}, 0.1, 0.12)
+/// result: 0.1260941303659051
+/// ```
 #[derive(Debug)]
 pub struct MirrFn;
 /// [formualizer-docgen:schema:start]
@@ -1040,7 +1265,26 @@ impl Function for MirrFn {
     }
 }
 
-/// CUMIPMT(rate, nper, pv, start_period, end_period, type) - Cumulative interest payment
+/// Returns cumulative interest paid between two inclusive payment periods.
+///
+/// Use this to total the interest component over a slice of an amortization schedule.
+///
+/// # Remarks
+/// - `rate` is the interest rate per payment period.
+/// - `start_period` and `end_period` are 1-based, inclusive integer periods.
+/// - `type` must be `0` (end-of-period) or `1` (beginning-of-period).
+/// - Sign convention follows this implementation's balance model; with positive `pv`, cumulative interest is typically positive.
+/// - Returns `#NUM!` for invalid domain values (non-positive rate, invalid ranges, invalid type, or non-positive `pv`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =CUMIPMT(0.06/12, 360, 300000, 1, 12, 0)
+/// result: 16929.385083045923
+/// ```
+/// ```yaml,sandbox
+/// formula: =CUMIPMT(0.06/12, 360, 300000, 13, 24, 0)
+/// result: 14681.09233746059
+/// ```
 #[derive(Debug)]
 pub struct CumipmtFn;
 /// [formualizer-docgen:schema:start]
@@ -1131,7 +1375,26 @@ impl Function for CumipmtFn {
     }
 }
 
-/// CUMPRINC(rate, nper, pv, start_period, end_period, type) - Cumulative principal payment
+/// Returns cumulative principal paid between two inclusive payment periods.
+///
+/// Use this to measure principal reduction over a selected amortization window.
+///
+/// # Remarks
+/// - `rate` is the interest rate per payment period.
+/// - `start_period` and `end_period` are 1-based, inclusive integer periods.
+/// - `type` must be `0` (end-of-period) or `1` (beginning-of-period).
+/// - Sign convention follows payment direction; with positive `pv`, cumulative principal is typically negative.
+/// - Returns `#NUM!` for invalid domain values (non-positive rate, invalid ranges, invalid type, or non-positive `pv`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =CUMPRINC(0.06/12, 360, 300000, 1, 12, 0)
+/// result: -38513.20398854517
+/// ```
+/// ```yaml,sandbox
+/// formula: =CUMPRINC(0.06/12, 360, 300000, 13, 24, 0)
+/// result: -36264.91124295984
+/// ```
 #[derive(Debug)]
 pub struct CumprincFn;
 /// [formualizer-docgen:schema:start]
@@ -1223,8 +1486,26 @@ impl Function for CumprincFn {
     }
 }
 
-/// XNPV(rate, values, dates) - Net present value for irregular cash flows
-/// Formula: Sum of values[i] / (1 + rate)^((dates[i] - dates[0]) / 365)
+/// Calculates annualized net present value for irregularly dated cash flows.
+///
+/// Discounting uses an actual-day offset divided by 365 from the first provided date.
+///
+/// # Remarks
+/// - `rate` is an annual discount rate.
+/// - Cash-flow sign convention: outflows are negative and inflows are positive.
+/// - `values` and `dates` are flattened to numeric entries; non-numeric entries are ignored.
+/// - Scalar error inputs are propagated; callable inputs return `#CALC!`.
+/// - Returns `#NUM!` when `values` and `dates` lengths differ or no numeric pair exists.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =XNPV(0.10, {-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})
+/// result: 332.4567993989465
+/// ```
+/// ```yaml,sandbox
+/// formula: =XNPV(0.08, {-5000,1200,1800,2400}, {0,180,365,730})
+/// result: -120.41078799700836
+/// ```
 #[derive(Debug)]
 pub struct XnpvFn;
 /// [formualizer-docgen:schema:start]
@@ -1387,8 +1668,26 @@ fn calculate_xnpv_derivative(rate: f64, values: &[f64], dates: &[f64]) -> f64 {
     d_xnpv
 }
 
-/// XIRR(values, dates, [guess]) - Internal rate of return for irregular cash flows
-/// Uses Newton-Raphson iteration to find rate where XNPV = 0
+/// Calculates annualized internal rate of return for irregularly dated cash flows.
+///
+/// The solver uses Newton-Raphson on `XNPV(rate, values, dates) = 0` with day-count basis 365.
+///
+/// # Remarks
+/// - Output is an annualized rate.
+/// - Cash-flow sign convention requires at least one negative and one positive value.
+/// - `guess` defaults to `0.1` and can materially affect convergence.
+/// - Non-numeric entries in value/date arrays are ignored; callable inputs return `#CALC!`.
+/// - Returns `#NUM!` for mismatched lengths, insufficient valid points, missing sign change, derivative failure, or non-convergence.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =XIRR({-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})
+/// result: 0.11541278310055854
+/// ```
+/// ```yaml,sandbox
+/// formula: =XIRR({-5000,1200,1800,2400}, {0,180,365,730}, 0.1)
+/// result: 0.06001829492127762
+/// ```
 #[derive(Debug)]
 pub struct XirrFn;
 /// [formualizer-docgen:schema:start]
@@ -1558,8 +1857,26 @@ impl Function for XirrFn {
     }
 }
 
-/// DOLLARDE(fractional_dollar, fraction) - Convert fractional dollar to decimal
-/// Example: DOLLARDE(1.02, 16) = 1.125 (1 and 2/16)
+/// Converts fractional-dollar notation into a decimal dollar value.
+///
+/// This is commonly used for security price formats such as thirty-seconds (`fraction = 32`).
+///
+/// # Remarks
+/// - `fraction` is truncated to an integer denominator and must be `>= 1`.
+/// - Sign convention: sign is preserved (`-x` maps to `-result`).
+/// - No periodic rate is involved in this conversion.
+/// - Returns `#NUM!` when `fraction < 1` after truncation.
+/// - Fractional parsing uses denominator digit width (`ceil(log10(fraction))`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =DOLLARDE(1.02, 16)
+/// result: 1.125
+/// ```
+/// ```yaml,sandbox
+/// formula: =DOLLARDE(-3.15, 32)
+/// result: -3.46875
+/// ```
 #[derive(Debug)]
 pub struct DollardeFn;
 /// [formualizer-docgen:schema:start]
@@ -1625,8 +1942,26 @@ impl Function for DollardeFn {
     }
 }
 
-/// DOLLARFR(decimal_dollar, fraction) - Convert decimal dollar to fractional
-/// Example: DOLLARFR(1.125, 16) = 1.02
+/// Converts a decimal dollar value into fractional-dollar notation.
+///
+/// This is the inverse-style formatting helper used for quoted fractional price conventions.
+///
+/// # Remarks
+/// - `fraction` is truncated to an integer denominator and must be `>= 1`.
+/// - Sign convention: sign is preserved (`-x` maps to `-result`).
+/// - No periodic rate is involved in this conversion.
+/// - Returns `#NUM!` when `fraction < 1` after truncation.
+/// - Fraction output is encoded by denominator digit width (`ceil(log10(fraction))`).
+///
+/// # Examples
+/// ```yaml,sandbox
+/// formula: =DOLLARFR(1.125, 16)
+/// result: 1.02
+/// ```
+/// ```yaml,sandbox
+/// formula: =DOLLARFR(-3.46875, 32)
+/// result: -3.15
+/// ```
 #[derive(Debug)]
 pub struct DollarfrFn;
 /// [formualizer-docgen:schema:start]

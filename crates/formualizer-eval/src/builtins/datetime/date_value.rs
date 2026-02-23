@@ -8,7 +8,25 @@ use chrono::NaiveDate;
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
-/// DATEVALUE(date_text) - Converts a date string to serial number
+/// Parses a date string and returns its date serial number.
+///
+/// # Remarks
+/// - Accepted formats are a fixed supported subset (for example `YYYY-MM-DD`, `MM/DD/YYYY`, and month-name forms).
+/// - Parsing is not locale-driven; ambiguous text may parse differently than Excel locales.
+/// - Output uses Excel 1900 serial mapping and does not currently switch to workbook `1904` mode.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Parse ISO date"
+/// formula: '=DATEVALUE("2024-01-15")'
+/// expected: 45306
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Parse month-name date"
+/// formula: '=DATEVALUE("Jan 15, 2024")'
+/// expected: 45306
+/// ```
 #[derive(Debug)]
 pub struct DateValueFn;
 
@@ -82,7 +100,25 @@ impl Function for DateValueFn {
     }
 }
 
-/// TIMEVALUE(time_text) - Converts a time string to serial number fraction
+/// Parses a time string and returns its fractional-day serial value.
+///
+/// # Remarks
+/// - Supported formats include 24-hour and AM/PM text forms with optional seconds.
+/// - Result is a fraction in the range `0.0..1.0` and does not include a date component.
+/// - Because only a time fraction is returned, workbook date-system choice does not affect output.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Parse 24-hour time"
+/// formula: '=TIMEVALUE("14:30")'
+/// expected: 0.6041666667
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Parse 12-hour AM/PM time"
+/// formula: '=TIMEVALUE("02:30 PM")'
+/// expected: 0.6041666667
+/// ```
 #[derive(Debug)]
 pub struct TimeValueFn;
 

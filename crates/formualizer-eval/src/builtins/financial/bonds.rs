@@ -205,8 +205,32 @@ fn coupons_remaining(settlement: &NaiveDate, maturity: &NaiveDate, frequency: i3
     count
 }
 
-/// ACCRINT(issue, first_interest, settlement, rate, par, frequency, [basis], [calc_method])
-/// Returns accrued interest for a security that pays periodic interest
+/// Returns accrued interest for a coupon-bearing security.
+///
+/// `ACCRINT` calculates interest from either `issue` or the previous coupon date up to
+/// `settlement`, depending on `calc_method`.
+///
+/// # Remarks
+/// - Date inputs are spreadsheet serial dates; `settlement` must be after `issue`.
+/// - `rate` is the annual coupon rate as a decimal (for example, `0.06` for 6%), and `par` is principal amount; both must be positive.
+/// - `frequency` must be `1` (annual), `2` (semiannual), or `4` (quarterly).
+/// - `basis` codes: `0=US(NASD)30/360`, `1=Actual/Actual`, `2=Actual/360`, `3=Actual/365`, `4=European30/360`.
+/// - `calc_method`: non-zero accrues from `issue`; `0` accrues from the previous coupon date.
+/// - Return value is in the same currency units as `par` and is positive for valid positive inputs.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Accrue from issue date (default calc_method)"
+/// formula: "=ACCRINT(DATE(2024,1,1), DATE(2024,7,1), DATE(2024,7,1), 0.06, 1000, 2, 0)"
+/// expected: 30
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Accrue from previous coupon (calc_method = 0)"
+/// formula: "=ACCRINT(DATE(2024,1,1), DATE(2024,7,1), DATE(2024,10,1), 0.08, 1000, 2, 0, 0)"
+/// expected: 20
+/// ```
 #[derive(Debug)]
 pub struct AccrintFn;
 
@@ -325,8 +349,30 @@ impl Function for AccrintFn {
     }
 }
 
-/// ACCRINTM(issue, settlement, rate, par, [basis])
-/// Returns accrued interest for a security that pays interest at maturity
+/// Returns accrued interest for a security that pays interest at maturity.
+///
+/// `ACCRINTM` accrues from `issue` to `settlement` with no periodic coupon schedule.
+///
+/// # Remarks
+/// - Date inputs are spreadsheet serial dates and must satisfy `settlement > issue`.
+/// - `rate` is an annual decimal rate (for example, `0.05` for 5%), and `par` must be positive.
+/// - `basis` codes: `0=US(NASD)30/360`, `1=Actual/Actual`, `2=Actual/360`, `3=Actual/365`, `4=European30/360`.
+/// - Return value is accrued interest amount in the same currency units as `par`.
+/// - With positive `rate` and `par`, the result is positive.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "One full 30/360 year"
+/// formula: "=ACCRINTM(DATE(2024,1,1), DATE(2025,1,1), 0.05, 1000, 0)"
+/// expected: 50
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "European 30/360 half-year accrual"
+/// formula: "=ACCRINTM(DATE(2024,2,28), DATE(2024,8,28), 0.04, 1000, 4)"
+/// expected: 20
+/// ```
 #[derive(Debug)]
 pub struct AccrintmFn;
 
@@ -413,8 +459,32 @@ impl Function for AccrintmFn {
     }
 }
 
-/// PRICE(settlement, maturity, rate, yld, redemption, frequency, [basis])
-/// Returns price per $100 face value for a security that pays periodic interest
+/// Returns clean price per 100 face value for a coupon-paying security.
+///
+/// `PRICE` discounts remaining coupons and redemption to settlement and subtracts accrued
+/// coupon interest according to the chosen day-count basis.
+///
+/// # Remarks
+/// - Date inputs are spreadsheet serial dates and must satisfy `maturity > settlement`.
+/// - `rate` (coupon) and `yld` (yield) are annual decimal rates; `redemption` is amount paid per 100 face value at maturity.
+/// - `frequency` must be `1` (annual), `2` (semiannual), or `4` (quarterly).
+/// - `basis` codes: `0=US(NASD)30/360`, `1=Actual/Actual`, `2=Actual/360`, `3=Actual/365`, `4=European30/360`.
+/// - Return value is quoted per 100 face value; positive inputs usually produce a positive price.
+/// - Coupon schedule is derived by stepping backward from `maturity`, with end-of-month adjustment behavior in month arithmetic.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Single remaining coupon period"
+/// formula: "=PRICE(DATE(2024,4,1), DATE(2024,7,1), 0.06, 0.05, 100, 2, 0)"
+/// expected: 100.2283950617284
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Par bond when coupon rate equals yield"
+/// formula: "=PRICE(DATE(2024,3,1), DATE(2026,3,1), 0.05, 0.05, 100, 2, 0)"
+/// expected: 100
+/// ```
 #[derive(Debug)]
 pub struct PriceFn;
 
@@ -573,8 +643,31 @@ fn calculate_price(
     }
 }
 
-/// YIELD(settlement, maturity, rate, pr, redemption, frequency, [basis])
-/// Returns yield of a security that pays periodic interest
+/// Returns annual yield for a coupon-paying security from its market price.
+///
+/// `YIELD` solves for the annual rate that makes `PRICE(...)` match the input `pr`.
+///
+/// # Remarks
+/// - Date inputs are spreadsheet serial dates and must satisfy `maturity > settlement`.
+/// - `rate` is coupon rate (annual decimal), `pr` is price per 100 face value, and `redemption` is redemption per 100; `pr` and `redemption` must be positive.
+/// - `frequency` must be `1` (annual), `2` (semiannual), or `4` (quarterly).
+/// - `basis` codes: `0=US(NASD)30/360`, `1=Actual/Actual`, `2=Actual/360`, `3=Actual/365`, `4=European30/360`.
+/// - Result is an annualized decimal yield (for example, `0.05` means 5%).
+/// - This implementation uses Newton-Raphson iteration; if it cannot converge, it returns `#NUM!`.
+///
+/// # Examples
+///
+/// ```yaml,sandbox
+/// title: "Par price implies coupon-rate yield"
+/// formula: "=YIELD(DATE(2024,3,1), DATE(2026,3,1), 0.05, 100, 100, 2, 0)"
+/// expected: 0.05
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Yield recovered from a discounted price"
+/// formula: "=YIELD(DATE(2024,2,15), DATE(2027,2,15), 0.05, 97.2914042780609, 100, 2, 0)"
+/// expected: 0.06
+/// ```
 #[derive(Debug)]
 pub struct YieldFn;
 

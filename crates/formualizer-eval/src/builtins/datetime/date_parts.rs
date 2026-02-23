@@ -89,7 +89,26 @@ fn days_360_between(start: NaiveDate, end: NaiveDate, european: bool) -> i64 {
         + i64::from(ed as i32 - sd as i32)
 }
 
-/// DAYS(end_date, start_date) - Returns day delta between two dates.
+/// Returns the number of whole days between two date serial values.
+///
+/// # Remarks
+/// - Result is `end_date - start_date`; negative results are allowed.
+/// - Fractional serial inputs are truncated to their date portion.
+/// - Serials are interpreted with the Excel 1900 mapping (including the 1900 leap-year bug behavior).
+/// - This function currently does not switch interpretation based on workbook `1900`/`1904` mode.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Positive day difference"
+/// formula: "=DAYS(45366, 45323)"
+/// expected: 43
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Negative day difference"
+/// formula: "=DAYS(45323, 45366)"
+/// expected: -43
+/// ```
 #[derive(Debug)]
 pub struct DaysFn;
 
@@ -138,7 +157,25 @@ impl Function for DaysFn {
     }
 }
 
-/// DAYS360(start_date, end_date, [method]) - 30/360 day count.
+/// Returns the day count between two dates using a 30/360 convention.
+///
+/// # Remarks
+/// - `method` omitted or `FALSE` uses U.S. (NASD) rules; `TRUE` uses the European 30E/360 method.
+/// - Inputs are coerced to dates by truncating serials to integer days.
+/// - Serials are interpreted with the Excel 1900 date mapping, not a workbook-specific date system.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "U.S. 30/360 method"
+/// formula: "=DAYS360(40574, 40602)"
+/// expected: 30
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "European 30E/360 method"
+/// formula: "=DAYS360(40574, 40602, TRUE)"
+/// expected: 28
+/// ```
 #[derive(Debug)]
 pub struct Days360Fn;
 
@@ -212,7 +249,26 @@ impl Function for Days360Fn {
     }
 }
 
-/// YEARFRAC(start_date, end_date, [basis]) - Fractional years between dates.
+/// Returns the fraction of a year between two dates for a selected day-count basis.
+///
+/// # Remarks
+/// - Supported `basis` values: `0` (US 30/360), `1` (actual/actual), `2` (actual/360), `3` (actual/365), `4` (European 30/360).
+/// - If `start_date > end_date`, the result is negative.
+/// - Invalid `basis` values return `#NUM!`.
+/// - Serial dates are interpreted with the Excel 1900 mapping rather than workbook `1900`/`1904` context.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Actual/360 convention"
+/// formula: "=YEARFRAC(44197, 44378, 2)"
+/// expected: 0.5027777778
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Actual/365 convention"
+/// formula: "=YEARFRAC(44197, 44378, 3)"
+/// expected: 0.4958904110
+/// ```
 #[derive(Debug)]
 pub struct YearFracFn;
 
@@ -331,7 +387,25 @@ impl Function for YearFracFn {
     }
 }
 
-/// ISOWEEKNUM(date) - ISO 8601 week number.
+/// Returns the ISO 8601 week number (`1` to `53`) for a date serial.
+///
+/// # Remarks
+/// - Weeks start on Monday and week 1 is the week containing the first Thursday of the year.
+/// - Input serials are truncated to whole dates before evaluation.
+/// - Serials are read using the Excel 1900 date mapping.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "ISO week at year start"
+/// formula: "=ISOWEEKNUM(45292)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "ISO week crossing year boundary"
+/// formula: "=ISOWEEKNUM(42370)"
+/// expected: 53
+/// ```
 #[derive(Debug)]
 pub struct IsoWeekNumFn;
 
@@ -375,7 +449,25 @@ impl Function for IsoWeekNumFn {
     }
 }
 
-/// YEAR(serial_number) - Extracts year from date
+/// Extracts the calendar year from a date serial.
+///
+/// # Remarks
+/// - Fractional time is ignored; only the integer date portion is used.
+/// - Input serials are interpreted with Excel 1900 date semantics.
+/// - Results are Gregorian calendar years.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Extract year from date serial"
+/// formula: "=YEAR(44927)"
+/// expected: 2023
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Extract year from datetime serial"
+/// formula: "=YEAR(45351.75)"
+/// expected: 2024
+/// ```
 #[derive(Debug)]
 pub struct YearFn;
 
@@ -420,7 +512,25 @@ impl Function for YearFn {
     }
 }
 
-/// MONTH(serial_number) - Extracts month from date
+/// Extracts the month number (`1` to `12`) from a date serial.
+///
+/// # Remarks
+/// - Fractional time is ignored; only the date portion contributes.
+/// - Serials are interpreted with Excel 1900 date semantics.
+/// - The result always uses January=`1` through December=`12`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Extract month from January date"
+/// formula: "=MONTH(44927)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Extract month from leap-day serial"
+/// formula: "=MONTH(45351)"
+/// expected: 2
+/// ```
 #[derive(Debug)]
 pub struct MonthFn;
 
@@ -465,7 +575,25 @@ impl Function for MonthFn {
     }
 }
 
-/// DAY(serial_number) - Extracts day from date
+/// Extracts the day-of-month (`1` to `31`) from a date serial.
+///
+/// # Remarks
+/// - Fractional time is ignored; only the integer serial portion is used.
+/// - Serials are interpreted with Excel 1900 date semantics.
+/// - Output is the day within the month, not day-of-year.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Extract day from first-of-month"
+/// formula: "=DAY(44927)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Extract day from leap date"
+/// formula: "=DAY(45351)"
+/// expected: 29
+/// ```
 #[derive(Debug)]
 pub struct DayFn;
 
@@ -510,7 +638,25 @@ impl Function for DayFn {
     }
 }
 
-/// HOUR(serial_number) - Extracts hour from time
+/// Extracts the hour component (`0` to `23`) from a time or datetime serial.
+///
+/// # Remarks
+/// - For values `>= 1`, only the fractional time part is used.
+/// - For values `< 1`, the value is treated directly as a time fraction.
+/// - Date-system choice does not affect hour extraction because only the fractional part is used.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Extract hour from noon"
+/// formula: "=HOUR(0.5)"
+/// expected: 12
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Extract hour from datetime serial"
+/// formula: "=HOUR(45351.75)"
+/// expected: 18
+/// ```
 #[derive(Debug)]
 pub struct HourFn;
 
@@ -558,7 +704,25 @@ impl Function for HourFn {
     }
 }
 
-/// MINUTE(serial_number) - Extracts minute from time
+/// Extracts the minute component (`0` to `59`) from a time or datetime serial.
+///
+/// # Remarks
+/// - The integer date portion is ignored for minute extraction.
+/// - Conversion uses Excel 1900 serial interpretation for the date portion when present.
+/// - Time is derived from the fractional serial component.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Extract minute from 15:30:45"
+/// formula: "=MINUTE(0.6463541667)"
+/// expected: 30
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Extract minute from exact noon"
+/// formula: "=MINUTE(0.5)"
+/// expected: 0
+/// ```
 #[derive(Debug)]
 pub struct MinuteFn;
 
@@ -605,7 +769,25 @@ impl Function for MinuteFn {
     }
 }
 
-/// SECOND(serial_number) - Extracts second from time
+/// Extracts the second component (`0` to `59`) from a time or datetime serial.
+///
+/// # Remarks
+/// - The integer date portion is ignored for second extraction.
+/// - Conversion uses Excel 1900 serial interpretation when resolving datetime values.
+/// - Time is computed from the serial fraction and rounded to whole seconds.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Extract second from 15:30:45"
+/// formula: "=SECOND(0.6463541667)"
+/// expected: 45
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Extract second from exact noon"
+/// formula: "=SECOND(0.5)"
+/// expected: 0
+/// ```
 #[derive(Debug)]
 pub struct SecondFn;
 
