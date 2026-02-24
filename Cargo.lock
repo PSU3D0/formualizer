@@ -1183,7 +1183,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "formualizer-common",
  "formualizer-eval",
@@ -1219,7 +1219,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-eval"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "arrow",
  "arrow-array",
@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-macros"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "formualizer-common",
  "proc-macro2",
@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-python"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "chrono",
  "formualizer",
@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-sheetport"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "chrono",
  "formualizer-common",
@@ -1299,7 +1299,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-wasm"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "console_error_panic_hook",
  "formualizer",
@@ -1317,7 +1317,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-workbook"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "calamine",
  "chrono",
