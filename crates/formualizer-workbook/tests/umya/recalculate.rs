@@ -3,6 +3,17 @@ use formualizer_workbook::{
     LiteralValue, SpreadsheetReader, UmyaAdapter, recalculate_file, recalculate_file_with_limit,
 };
 
+fn assert_number_or_text_number(value: Option<LiteralValue>, expected: f64) {
+    match value {
+        Some(LiteralValue::Number(n)) => assert_eq!(n, expected),
+        Some(LiteralValue::Text(s)) => {
+            let parsed = s.parse::<f64>().expect("numeric text");
+            assert_eq!(parsed, expected);
+        }
+        other => panic!("expected numeric cache {expected}, got {other:?}"),
+    }
+}
+
 #[test]
 fn recalculate_file_in_place_writes_cached_values_and_preserves_formulas() {
     let path = build_workbook(|book| {
@@ -32,7 +43,7 @@ fn recalculate_file_in_place_writes_cached_values_and_preserves_formulas() {
 
     let b1 = sheet.cells.get(&(1, 2)).expect("B1");
     assert_eq!(b1.formula.as_deref(), Some("=_xlfn._xlws.SUM(A1:A2)"));
-    assert_eq!(b1.value, Some(LiteralValue::Text("3".to_string())));
+    assert_number_or_text_number(b1.value.clone(), 3.0);
 
     let b2 = sheet.cells.get(&(2, 2)).expect("B2");
     assert_eq!(b2.formula.as_deref(), Some("=1/0"));
@@ -71,8 +82,31 @@ fn recalculate_file_output_path_does_not_mutate_input() {
 
     let mut out_adapter = UmyaAdapter::open_path(&output).expect("open output");
     let out_sheet = out_adapter.read_sheet("Sheet1").expect("read output");
-    assert_eq!(
+    assert_number_or_text_number(
         out_sheet.cells.get(&(1, 2)).and_then(|c| c.value.clone()),
-        Some(LiteralValue::Text("10".to_string()))
+        10.0,
     );
+}
+
+#[test]
+fn recalculate_file_no_formula_cache_changes_copies_input_to_output() {
+    let input = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        sh.get_cell_mut((1, 1)).set_formula("=\"ok\""); // A1
+    });
+
+    // First run seeds cached values.
+    recalculate_file(&input, None).expect("seed in-place caches");
+    let input_bytes = std::fs::read(&input).expect("read seeded input bytes");
+
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let output = out_dir.path().join("recalc_no_changes.xlsx");
+
+    let summary = recalculate_file(&input, Some(&output)).expect("recalculate to output path");
+    assert_eq!(summary.status.as_str(), "success");
+    assert_eq!(summary.evaluated, 1);
+    assert_eq!(summary.errors, 0);
+
+    let output_bytes = std::fs::read(&output).expect("read copied output bytes");
+    assert_eq!(input_bytes, output_bytes);
 }

@@ -15,9 +15,9 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 ciborium = "0.2"
 libc = "0.2"
-umya-spreadsheet = "2.3.2"
+umya-spreadsheet = "=2.3.2"
 
 [dev-dependencies]
 anyhow = { workspace = true }
 tempfile = { workspace = true }
-umya-spreadsheet = "2.3.2"
+umya-spreadsheet = "=2.3.2"

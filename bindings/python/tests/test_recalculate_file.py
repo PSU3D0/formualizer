@@ -39,7 +39,8 @@ def test_recalculate_file_in_place_summary_and_formula_preservation(tmp_path: Pa
     data_only = openpyxl.load_workbook(path, data_only=True)
     with_formula = openpyxl.load_workbook(path, data_only=False)
 
-    # Current umya cache-write limitation can surface as numeric strings.
+    # Numeric cached values may be returned as numbers or numeric strings
+    # depending on the active umya implementation.
     assert data_only["Sheet1"]["B1"].value in (3, 3.0, "3")
     assert data_only["Sheet1"]["B2"].value in (3, 3.0, "3")
     assert data_only["Sheet1"]["B3"].value == "#DIV/0!"

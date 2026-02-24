@@ -73,7 +73,7 @@ optional = true
 [dev-dependencies]
 wasm-encoder = "0.240"
 tempfile = { workspace = true }
-umya-spreadsheet = "2.3.2"
+umya-spreadsheet = "=2.3.2"
 
 [[test]]
 name = "calamine"
@@ -86,6 +86,6 @@ path = "tests/umya/mod.rs"
 required-features = ["umya"]
 
 [dependencies.umya-spreadsheet]
-version = "2.3.2"
+version = "=2.3.2"
 package = "umya-spreadsheet"
 optional = true

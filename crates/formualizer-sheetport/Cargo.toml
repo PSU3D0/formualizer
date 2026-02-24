@@ -26,4 +26,4 @@ chrono = { workspace = true }
 [dev-dependencies]
 chrono = { workspace = true }
 tempfile = { workspace = true }
-umya-spreadsheet = "2.3.2"
+umya-spreadsheet = "=2.3.2"

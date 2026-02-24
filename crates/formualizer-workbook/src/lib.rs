@@ -18,12 +18,12 @@ pub use backends::CalamineAdapter;
 pub use backends::CsvAdapter;
 #[cfg(feature = "json")]
 pub use backends::JsonAdapter;
-#[cfg(feature = "umya")]
-pub use backends::UmyaAdapter;
 #[cfg(feature = "csv")]
 pub use backends::csv::CsvArrayPolicy;
 #[cfg(feature = "json")]
 pub use backends::json::JsonReadOptions;
+#[cfg(feature = "umya")]
+pub use backends::{FormulaCacheUpdate, FormulaCacheUpdateRef, UmyaAdapter};
 pub use builtins::{ensure_builtins_loaded, register_function_dynamic, try_load_builtins};
 pub use error::{IoError, with_cell_context};
 #[cfg(feature = "umya")]

@@ -52,3 +52,6 @@ wasm-bindgen-futures = "0.4.45"
 js-sys = "0.3.72"
 web-sys = "0.3.72"
 syn = "2.0"
+
+[patch.crates-io]
+umya-spreadsheet = { git = "https://github.com/PSU3D0/umya-spreadsheet.git", rev = "4b64d65daf19bba79800951cd38920d7eb95320c" }

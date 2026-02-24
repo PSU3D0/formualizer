@@ -21,6 +21,24 @@ use crate::traits::{DefinedName as WorkbookDefinedName, DefinedNameDefinition, D
 
 type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
 
+/// Owned cache-write update used by batch formula-cache APIs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormulaCacheUpdate {
+    pub sheet: String,
+    pub row: u32,
+    pub col: u32,
+    pub value: LiteralValue,
+}
+
+/// Borrowed cache-write update used by zero-copy batch formula-cache APIs.
+#[derive(Clone, Copy, Debug)]
+pub struct FormulaCacheUpdateRef<'a> {
+    pub sheet: &'a str,
+    pub row: u32,
+    pub col: u32,
+    pub value: &'a LiteralValue,
+}
+
 pub struct UmyaAdapter {
     workbook: RwLock<Spreadsheet>,
     lazy: bool,
@@ -253,23 +271,16 @@ impl UmyaAdapter {
         out
     }
 
-    pub fn set_formula_cached_value(
-        &mut self,
-        sheet: &str,
+    fn write_formula_cache_to_sheet(
+        ws: &mut Worksheet,
         row: u32,
         col: u32,
         value: &LiteralValue,
         date_system: formualizer_eval::engine::DateSystem,
-    ) -> Result<(), umya_spreadsheet::XlsxError> {
-        let mut wb = self.workbook.write();
-        wb.read_sheet_by_name(sheet);
-        let ws = wb
-            .get_sheet_by_name_mut(sheet)
-            .ok_or_else(|| umya_spreadsheet::XlsxError::CellError("sheet not found".into()))?;
-
+    ) {
         let cell = ws.get_cell_mut((col, row));
         if !cell.is_formula() {
-            return Ok(());
+            return;
         }
 
         let formula_obj = cell.get_formula_obj().cloned();
@@ -323,7 +334,80 @@ impl UmyaAdapter {
         }
 
         cell.set_cell_value(cv);
+    }
+
+    /// Write cached values for formula cells in a single workbook lock, amortizing
+    /// sheet lookup/deserialization across updates.
+    pub fn set_formula_cached_values_batch<'a, I>(
+        &mut self,
+        updates: I,
+        date_system: formualizer_eval::engine::DateSystem,
+    ) -> Result<(), umya_spreadsheet::XlsxError>
+    where
+        I: IntoIterator<Item = FormulaCacheUpdateRef<'a>>,
+    {
+        let mut grouped: BTreeMap<&str, Vec<(u32, u32, &LiteralValue)>> = BTreeMap::new();
+        for update in updates {
+            grouped
+                .entry(update.sheet)
+                .or_default()
+                .push((update.row, update.col, update.value));
+        }
+
+        if grouped.is_empty() {
+            return Ok(());
+        }
+
+        let mut wb = self.workbook.write();
+        for (sheet, cells) in grouped {
+            wb.read_sheet_by_name(sheet);
+            let ws = wb
+                .get_sheet_by_name_mut(sheet)
+                .ok_or_else(|| umya_spreadsheet::XlsxError::CellError("sheet not found".into()))?;
+
+            for (row, col, value) in cells {
+                Self::write_formula_cache_to_sheet(ws, row, col, value, date_system);
+            }
+        }
+
         Ok(())
+    }
+
+    /// Owned variant of [`Self::set_formula_cached_values_batch`].
+    pub fn write_formula_caches_batch(
+        &mut self,
+        updates: &[FormulaCacheUpdate],
+        date_system: formualizer_eval::engine::DateSystem,
+    ) -> Result<(), umya_spreadsheet::XlsxError> {
+        self.set_formula_cached_values_batch(
+            updates.iter().map(|u| FormulaCacheUpdateRef {
+                sheet: &u.sheet,
+                row: u.row,
+                col: u.col,
+                value: &u.value,
+            }),
+            date_system,
+        )
+    }
+
+    /// Backward-compatible single-cell cache write API.
+    pub fn set_formula_cached_value(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: &LiteralValue,
+        date_system: formualizer_eval::engine::DateSystem,
+    ) -> Result<(), umya_spreadsheet::XlsxError> {
+        self.set_formula_cached_values_batch(
+            std::iter::once(FormulaCacheUpdateRef {
+                sheet,
+                row,
+                col,
+                value,
+            }),
+            date_system,
+        )
     }
 }
 

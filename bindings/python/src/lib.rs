@@ -116,8 +116,8 @@ fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<wor
 ///     A summary dictionary containing total/per-sheet evaluated counts and errors.
 ///
 /// Note:
-///     Until an upstream umya patch lands, formula cached values are written as
-///     string-typed payloads in XLSX cell XML. Formula text is preserved.
+///     Formula text is preserved. Cached-value typing follows the active
+///     `umya-spreadsheet` implementation.
 #[gen_stub_pyfunction(module = "formualizer")]
 #[pyfunction]
 #[pyo3(signature = (path, output=None))]

@@ -3,6 +3,8 @@
 mod common;
 
 #[cfg(feature = "umya")]
+mod formula_cache_batch;
+#[cfg(feature = "umya")]
 mod formulas;
 #[cfg(feature = "umya")]
 mod ingest_recalc;

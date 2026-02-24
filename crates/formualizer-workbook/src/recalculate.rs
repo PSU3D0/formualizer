@@ -1,9 +1,10 @@
+use crate::backends::umya::FormulaCacheUpdate;
 use crate::error::col_to_a1;
 use crate::{IoError, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter, workbook::WBResolver};
-use formualizer_common::LiteralValue;
+use formualizer_common::{LiteralValue, PackedSheetCell};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 pub const DEFAULT_ERROR_LOCATION_LIMIT: usize = 20;
@@ -68,14 +69,8 @@ impl RecalculateSummary {
 /// - `input`: source workbook path
 /// - `output`: optional destination path; when `None`, updates `input` in-place.
 ///
-/// # Current limitation
-///
-/// With current `umya-spreadsheet`, cached values for formula cells are persisted as
-/// string-typed payloads (`t="str"`) even when the computed value is numeric/bool/error.
-/// Formula text is preserved.
-///
-/// We plan to remove this limitation via an upstream umya patch that allows explicit typed
-/// formula-cache serialization.
+/// Formula text is preserved. Cached-value typing is delegated to the active
+/// `umya-spreadsheet` implementation.
 pub fn recalculate_file(
     input: &Path,
     output: Option<&Path>,
@@ -93,21 +88,19 @@ pub fn recalculate_file_with_limit(
 
     let mut engine: Engine<WBResolver> = Engine::new(WBResolver::default(), EvalConfig::default());
     adapter.stream_into_engine(&mut engine)?;
-    engine.evaluate_all().map_err(IoError::Engine)?;
+    let (_eval_result, delta) = engine.evaluate_all_with_delta().map_err(IoError::Engine)?;
 
+    let changed_cells: HashSet<PackedSheetCell> = delta.changed_cells.into_iter().collect();
     let formula_cells = adapter.formula_cells();
     let date_system = engine.config.date_system;
 
     let mut summary = RecalculateSummary::default();
+    let mut updates: Vec<FormulaCacheUpdate> = Vec::new();
 
     for (sheet, row, col) in formula_cells {
         let value = engine
             .get_cell_value(&sheet, row, col)
             .unwrap_or(LiteralValue::Empty);
-
-        adapter
-            .set_formula_cached_value(&sheet, row, col, &value, date_system)
-            .map_err(|e| IoError::from_backend("umya", e))?;
 
         let sheet_stats = summary.sheets.entry(sheet.clone()).or_default();
         sheet_stats.evaluated += 1;
@@ -129,6 +122,20 @@ pub fn recalculate_file_with_limit(
                 entry.locations_truncated += 1;
             }
         }
+
+        let should_write = engine
+            .sheet_id(&sheet)
+            .and_then(|sid| PackedSheetCell::try_from_excel_1based(sid, row, col))
+            .is_some_and(|packed| changed_cells.contains(&packed));
+
+        if should_write {
+            updates.push(FormulaCacheUpdate {
+                sheet,
+                row,
+                col,
+                value,
+            });
+        }
     }
 
     summary.status = if summary.errors == 0 {
@@ -136,6 +143,19 @@ pub fn recalculate_file_with_limit(
     } else {
         RecalculateStatus::ErrorsFound
     };
+
+    if updates.is_empty() {
+        if let Some(path) = output
+            && path != input
+        {
+            std::fs::copy(input, path)?;
+        }
+        return Ok(summary);
+    }
+
+    adapter
+        .write_formula_caches_batch(&updates, date_system)
+        .map_err(|e| IoError::from_backend("umya", e))?;
 
     if let Some(path) = output {
         adapter

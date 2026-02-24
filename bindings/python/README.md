@@ -75,8 +75,8 @@ print(summary["status"], summary["evaluated"], summary["errors"])
 summary = fz.recalculate_file("financial_model.xlsx", output="financial_model.recalc.xlsx")
 ```
 
-> Current limitation: cached values for formula cells are currently written as
-> string-typed payloads by the underlying umya writer. Formula text is preserved.
+> Formula text is preserved. Cached-value typing follows the active
+> `umya-spreadsheet` implementation.
 
 ### Parse and analyze formulas
 

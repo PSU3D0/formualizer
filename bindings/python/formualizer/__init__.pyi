@@ -1298,8 +1298,8 @@ def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] =
         A summary dictionary containing total/per-sheet evaluated counts and errors.
     
     Note:
-        Until an upstream umya patch lands, formula cached values are written as
-        string-typed payloads in XLSX cell XML. Formula text is preserved.
+        Formula text is preserved. Cached-value typing follows the active
+        `umya-spreadsheet` implementation.
     """
 
 def tokenize(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> Tokenizer:
