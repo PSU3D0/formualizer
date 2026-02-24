@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-parse"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 description = "High-performance Excel/OpenFormula tokenizer + parser with a stable AST surface"
 homepage.workspace = true
