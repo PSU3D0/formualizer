@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-python"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 homepage = "https://github.com/PSU3D0/formualizer"
 license = "MIT OR Apache-2.0"
