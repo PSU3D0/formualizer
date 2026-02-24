@@ -90,6 +90,24 @@ impl UmyaAdapter {
         Some((name, header_row))
     }
 
+    #[inline]
+    fn clamp_excel_row(row_1based: u32) -> u32 {
+        row_1based.clamp(1, Self::EXCEL_MAX_ROWS)
+    }
+
+    #[inline]
+    fn clamp_excel_col(col_1based: u32) -> u32 {
+        col_1based.clamp(1, Self::EXCEL_MAX_COLS)
+    }
+
+    #[inline]
+    fn clamp_excel_cell(row_1based: u32, col_1based: u32) -> (u32, u32) {
+        (
+            Self::clamp_excel_row(row_1based),
+            Self::clamp_excel_col(col_1based),
+        )
+    }
+
     fn normalize_open_ended_bounds(
         start_row: Option<u32>,
         start_col: Option<u32>,
@@ -124,10 +142,15 @@ impl UmyaAdapter {
             sc = Some(1);
         }
 
-        let sr = sr?;
-        let sc = sc?;
-        let er = er?;
-        let ec = ec?;
+        let mut sr = sr?;
+        let mut sc = sc?;
+        let mut er = er?;
+        let mut ec = ec?;
+
+        sr = Self::clamp_excel_row(sr);
+        sc = Self::clamp_excel_col(sc);
+        er = Self::clamp_excel_row(er);
+        ec = Self::clamp_excel_col(ec);
 
         if er < sr || ec < sc {
             return None;
@@ -884,6 +907,7 @@ impl UmyaAdapter {
                 sheet, row, col, ..
             } => {
                 let sheet = sheet.or_else(|| base_sheet.map(|s| s.to_string()))?;
+                let (row, col) = Self::clamp_excel_cell(row, col);
                 (sheet, row, col, row, col)
             }
             ReferenceType::Range {
@@ -986,6 +1010,7 @@ impl UmyaAdapter {
                 sheet, row, col, ..
             } => {
                 let sheet = sheet.unwrap_or_else(|| current_sheet.to_string());
+                let (row, col) = Self::clamp_excel_cell(row, col);
                 (sheet, row, col, row, col)
             }
             ReferenceType::Range {

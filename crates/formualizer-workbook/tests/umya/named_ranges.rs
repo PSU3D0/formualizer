@@ -1,7 +1,8 @@
 use formualizer_common::LiteralValue;
 use formualizer_workbook::{
     CellData, LoadStrategy, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter, Workbook,
-    WorkbookConfig, traits::NamedRangeScope,
+    WorkbookConfig,
+    traits::{DefinedNameDefinition, NamedRangeScope},
 };
 
 fn build_named_range_workbook() -> Workbook {
@@ -260,4 +261,59 @@ fn umya_named_range_set_value_recalc() {
         matches!(updated, LiteralValue::Number(n) if (n - 50.0).abs() < 1e-9),
         "got {updated:?} instead"
     );
+}
+
+#[test]
+fn umya_named_range_out_of_bounds_is_clamped_for_ingest() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let path = tmp.path().join("named_range_oob_plus_one.xlsx");
+
+    let mut book = umya_spreadsheet::new_file();
+    let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("default sheet");
+    sheet1.get_cell_mut((1, 1)).set_value_number(1.0); // A1
+    sheet1
+        .add_defined_name("TooFar", "Sheet1!$A$1:$A$1048577")
+        .expect("add out-of-bounds named range");
+    sheet1.get_cell_mut((2, 1)).set_formula("=SUM(TooFar)"); // B1
+    umya_spreadsheet::writer::xlsx::write(&book, &path).expect("write workbook");
+
+    let mut adapter = UmyaAdapter::open_path(&path).expect("open workbook");
+    let names = adapter.defined_names().expect("read defined names");
+    let toofar = names
+        .into_iter()
+        .find(|n| n.name == "TooFar")
+        .expect("TooFar defined name imported");
+
+    match toofar.definition {
+        DefinedNameDefinition::Range { address } => {
+            assert_eq!(address.start_row, 1);
+            assert_eq!(address.end_row, 1_048_576);
+            assert_eq!(address.start_col, 1);
+            assert_eq!(address.end_col, 1);
+        }
+        other => panic!("expected range definition, got {other:?}"),
+    }
+
+    let backend = UmyaAdapter::open_path(&path).expect("open workbook for load");
+    let mut workbook = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load workbook should not panic/fail");
+
+    let addr = workbook
+        .named_range_address("TooFar")
+        .expect("TooFar resolved in workbook");
+    assert_eq!(addr.end_row, 1_048_576);
+
+    workbook.evaluate_all().expect("evaluate workbook");
+    let value = workbook
+        .get_value("Sheet1", 1, 2)
+        .expect("formula value in B1");
+    match value {
+        LiteralValue::Number(n) => assert!((n - 1.0).abs() < 1e-9),
+        LiteralValue::Int(i) => assert_eq!(i, 1),
+        other => panic!("expected numeric value 1 for SUM(TooFar), got {other:?}"),
+    }
 }
