@@ -3,11 +3,12 @@ use crate::arrow_store::SheetStore;
 use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
+use crate::engine::row_visibility::RowVisibilityState;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::virtual_deps::VirtualDepBuilder;
 use crate::engine::{
-    DependencyGraph, EvalConfig, FormulaParseDiagnostic, FormulaParsePolicy, Scheduler, VertexId,
-    VertexKind,
+    DependencyGraph, EvalConfig, FormulaParseDiagnostic, FormulaParsePolicy, RowVisibilitySource,
+    Scheduler, VertexId, VertexKind, VisibilityMaskMode,
 };
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
@@ -55,6 +56,12 @@ pub struct Engine<R> {
     source_cache: Arc<std::sync::RwLock<SourceCache>>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
     staged_formulas: StagedFormulaMap,
+    /// Per-sheet row visibility sidecar state.
+    row_visibility: FxHashMap<SheetId, RowVisibilityState>,
+    /// Cached row visibility masks keyed by sheet/span/mode/version.
+    row_visibility_mask_cache: std::sync::RwLock<
+        FxHashMap<VisibilityMaskCacheKey, std::sync::Arc<arrow_array::BooleanArray>>,
+    >,
     /// Non-fatal malformed formula diagnostics captured during ingest/graph-build.
     formula_parse_diagnostics: Vec<FormulaParseDiagnostic>,
     /// Transient cancellation flag used during evaluation
@@ -228,6 +235,103 @@ where
     }
 
     #[inline]
+    pub fn set_row_hidden(
+        &mut self,
+        sheet: &str,
+        row_1based: u32,
+        hidden: bool,
+        source: RowVisibilitySource,
+    ) -> Result<(), crate::engine::EditorError> {
+        if self.log.is_some() {
+            let sheet_id = self.engine.ensure_known_sheet_id(sheet)?;
+            let row0 = Engine::<R>::normalize_row_1based(row_1based)?;
+            let old_hidden = self
+                .engine
+                .row_visibility
+                .get(&sheet_id)
+                .map(|state| state.is_row_hidden(row0, Some(source)))
+                .unwrap_or(false);
+            if old_hidden == hidden {
+                return Ok(());
+            }
+
+            let _ = self
+                .engine
+                .set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source);
+
+            let Some(log_ptr) = self.log else {
+                return Err(crate::engine::EditorError::TransactionFailed {
+                    reason: "action_with_logger: missing ChangeLog".to_string(),
+                });
+            };
+            unsafe { &mut *log_ptr }.record(crate::engine::ChangeEvent::SetRowVisibility {
+                sheet_id,
+                row0,
+                source,
+                old_hidden,
+                new_hidden: hidden,
+            });
+
+            Ok(())
+        } else {
+            self.engine
+                .set_row_hidden(sheet, row_1based, hidden, source)
+        }
+    }
+
+    #[inline]
+    pub fn set_rows_hidden(
+        &mut self,
+        sheet: &str,
+        start_row_1based: u32,
+        end_row_1based: u32,
+        hidden: bool,
+        source: RowVisibilitySource,
+    ) -> Result<(), crate::engine::EditorError> {
+        if self.log.is_some() {
+            let sheet_id = self.engine.ensure_known_sheet_id(sheet)?;
+            let (start_row0, end_row0) =
+                Engine::<R>::normalize_row_range_1based(start_row_1based, end_row_1based)?;
+
+            let Some(log_ptr) = self.log else {
+                return Err(crate::engine::EditorError::TransactionFailed {
+                    reason: "action_with_logger: missing ChangeLog".to_string(),
+                });
+            };
+            let log = unsafe { &mut *log_ptr };
+
+            for row0 in start_row0..=end_row0 {
+                let old_hidden = self
+                    .engine
+                    .row_visibility
+                    .get(&sheet_id)
+                    .map(|state| state.is_row_hidden(row0, Some(source)))
+                    .unwrap_or(false);
+                if old_hidden == hidden {
+                    continue;
+                }
+
+                let _ = self
+                    .engine
+                    .set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source);
+
+                log.record(crate::engine::ChangeEvent::SetRowVisibility {
+                    sheet_id,
+                    row0,
+                    source,
+                    old_hidden,
+                    new_hidden: hidden,
+                });
+            }
+
+            Ok(())
+        } else {
+            self.engine
+                .set_rows_hidden(sheet, start_row_1based, end_row_1based, hidden, source)
+        }
+    }
+
+    #[inline]
     pub fn insert_rows(
         &mut self,
         sheet: &str,
@@ -260,6 +364,8 @@ where
             if let Some(asheet) = self.engine.arrow_sheets.sheet_mut(sheet) {
                 asheet.insert_rows(before0 as usize, count as usize);
             }
+            self.engine
+                .shift_row_visibility_insert(sheet_id, before0, count);
             if let Some(undo_ptr) = self.arrow_undo {
                 unsafe { &mut *undo_ptr }.record_insert_rows(sheet_id, before0, count);
             }
@@ -379,6 +485,15 @@ struct SourceCache {
     tables: FxHashMap<(String, Option<u64>), Arc<dyn crate::traits::Table>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct VisibilityMaskCacheKey {
+    sheet_id: SheetId,
+    start_row0: u32,
+    end_row0: u32,
+    mode: VisibilityMaskMode,
+    version: u64,
+}
+
 struct SourceCacheSession {
     cache: Arc<std::sync::RwLock<SourceCache>>,
 }
@@ -469,6 +584,42 @@ pub(crate) mod criteria_mask_test_hooks {
     }
     pub(crate) fn inc_all_null() {
         TEXT_SEGMENTS_ALL_NULL.with(|c| c.set(c.get() + 1));
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod visibility_mask_test_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        static HITS: Cell<usize> = const { Cell::new(0) };
+        static MISSES: Cell<usize> = const { Cell::new(0) };
+        static EVICTIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub fn reset() {
+        HITS.with(|c| c.set(0));
+        MISSES.with(|c| c.set(0));
+        EVICTIONS.with(|c| c.set(0));
+    }
+
+    pub fn counters() -> (usize, usize, usize) {
+        let hits = HITS.with(|c| c.get());
+        let misses = MISSES.with(|c| c.get());
+        let evictions = EVICTIONS.with(|c| c.get());
+        (hits, misses, evictions)
+    }
+
+    pub(crate) fn inc_hit() {
+        HITS.with(|c| c.set(c.get() + 1));
+    }
+
+    pub(crate) fn inc_miss() {
+        MISSES.with(|c| c.set(c.get() + 1));
+    }
+
+    pub(crate) fn inc_eviction() {
+        EVICTIONS.with(|c| c.set(c.get() + 1));
     }
 }
 
@@ -728,6 +879,8 @@ where
             row_bounds_cache: std::sync::RwLock::new(None),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
+            row_visibility: FxHashMap::default(),
+            row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
             active_cancel_flag: None,
             action_depth: 0,
@@ -773,6 +926,8 @@ where
             row_bounds_cache: std::sync::RwLock::new(None),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
+            row_visibility: FxHashMap::default(),
+            row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
             active_cancel_flag: None,
             action_depth: 0,
@@ -1050,6 +1205,9 @@ where
         let name = self.graph.sheet_name(sheet_id).to_string();
         self.graph.remove_sheet(sheet_id)?;
         self.arrow_sheets.sheets.retain(|s| s.name.as_ref() != name);
+        if self.row_visibility.remove(&sheet_id).is_some() {
+            self.invalidate_row_visibility_mask_cache();
+        }
         Ok(())
     }
 
@@ -1412,7 +1570,9 @@ where
     ) -> Result<(), crate::engine::EditorError> {
         // 1) Roll back the dependency graph structure.
         journal.graph.undo(&mut self.graph)?;
-        // 2) Roll back Arrow-truth overlays.
+        // 2) Roll back engine row-visibility sidecar events.
+        self.apply_inverse_row_visibility_events(&journal.graph.events);
+        // 3) Roll back Arrow-truth overlays.
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
         Ok(())
     }
@@ -1435,6 +1595,9 @@ where
                             compound_stack.pop();
                         }
                     }
+                    ChangeEvent::SetRowVisibility { .. } => {
+                        // Engine-side metadata handled after dropping graph editor borrow.
+                    }
                     _ => {
                         editor.apply_inverse(ev.clone())?;
                     }
@@ -1442,7 +1605,12 @@ where
             }
         }
 
-        // 2) Roll back Arrow-truth overlays mirrored from those ChangeEvents.
+        // 2) Roll back engine row-visibility metadata.
+        for ev in events.iter().rev() {
+            self.apply_inverse_row_visibility_event(ev);
+        }
+
+        // 3) Roll back Arrow-truth overlays mirrored from those ChangeEvents.
         for ev in events.iter().rev() {
             self.mirror_inverse_change_to_arrow(ev);
         }
@@ -1521,6 +1689,9 @@ where
         log: &mut crate::engine::ChangeLog,
     ) -> Result<(), crate::engine::EditorError> {
         let batch = undo.undo(&mut self.graph, log)?;
+        for item in batch.iter().rev() {
+            self.apply_inverse_row_visibility_event(&item.event);
+        }
         self.mirror_undo_batch_to_arrow(&batch);
         Ok(())
     }
@@ -1531,6 +1702,9 @@ where
         log: &mut crate::engine::ChangeLog,
     ) -> Result<(), crate::engine::EditorError> {
         let batch = undo.redo(&mut self.graph, log)?;
+        for item in &batch {
+            self.apply_forward_row_visibility_event(&item.event);
+        }
         self.mirror_redo_batch_to_arrow(&batch);
         Ok(())
     }
@@ -1547,6 +1721,7 @@ where
         };
 
         journal.graph.undo(&mut self.graph)?;
+        self.apply_inverse_row_visibility_events(&journal.graph.events);
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
 
         undo.push_redo_action(journal);
@@ -1565,6 +1740,7 @@ where
         };
 
         journal.graph.redo(&mut self.graph)?;
+        self.apply_forward_row_visibility_events(&journal.graph.events);
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ false);
 
         undo.push_done_action(journal);
@@ -1643,6 +1819,9 @@ where
                 // Inverse: restore prior spill.
                 self.mirror_spill_snapshot(old, /*clear_only=*/ false);
             }
+            ChangeEvent::SetRowVisibility { .. } => {
+                // Engine-side metadata only; no Arrow overlay effect.
+            }
             _ => {}
         }
     }
@@ -1668,6 +1847,9 @@ where
             }
             ChangeEvent::SpillCleared { old, .. } => {
                 self.mirror_spill_snapshot(old, /*clear_only=*/ true);
+            }
+            ChangeEvent::SetRowVisibility { .. } => {
+                // Engine-side metadata only; no Arrow overlay effect.
             }
             _ => {
                 // Other graph structural operations do not have direct value effects in Arrow.
@@ -1949,6 +2131,306 @@ where
         crate::engine::arrow_ingest::ArrowBulkUpdateBuilder::new(self)
     }
 
+    fn ensure_known_sheet_id(&self, sheet: &str) -> Result<SheetId, crate::engine::EditorError> {
+        self.graph.sheet_id(sheet).ok_or(
+            crate::engine::graph::editor::vertex_editor::EditorError::InvalidName {
+                name: sheet.to_string(),
+                reason: "Unknown sheet".to_string(),
+            },
+        )
+    }
+
+    fn normalize_row_1based(row_1based: u32) -> Result<u32, crate::engine::EditorError> {
+        if row_1based == 0 {
+            return Err(crate::engine::EditorError::OutOfBounds { row: 0, col: 0 });
+        }
+        Ok(row_1based - 1)
+    }
+
+    fn normalize_row_range_1based(
+        start_row_1based: u32,
+        end_row_1based: u32,
+    ) -> Result<(u32, u32), crate::engine::EditorError> {
+        if start_row_1based == 0 || end_row_1based == 0 {
+            return Err(crate::engine::EditorError::OutOfBounds { row: 0, col: 0 });
+        }
+        if start_row_1based > end_row_1based {
+            return Err(crate::engine::EditorError::TransactionFailed {
+                reason: "Row range start is greater than end".to_string(),
+            });
+        }
+        Ok((start_row_1based - 1, end_row_1based - 1))
+    }
+
+    fn invalidate_row_visibility_mask_cache(&self) {
+        if let Ok(mut cache) = self.row_visibility_mask_cache.write() {
+            cache.clear();
+        }
+    }
+
+    fn set_row_hidden_by_sheet_id(
+        &mut self,
+        sheet_id: SheetId,
+        row0: u32,
+        hidden: bool,
+        source: RowVisibilitySource,
+    ) -> bool {
+        let changed = {
+            let state = self.row_visibility.entry(sheet_id).or_default();
+            state.set_row_hidden(row0, hidden, source)
+        };
+
+        let remove_entry = self
+            .row_visibility
+            .get(&sheet_id)
+            .map(|state| state.is_empty())
+            .unwrap_or(false);
+        if remove_entry {
+            self.row_visibility.remove(&sheet_id);
+        }
+
+        if changed {
+            self.invalidate_row_visibility_mask_cache();
+        }
+
+        changed
+    }
+
+    fn set_rows_hidden_by_sheet_id(
+        &mut self,
+        sheet_id: SheetId,
+        start_row0: u32,
+        end_row0: u32,
+        hidden: bool,
+        source: RowVisibilitySource,
+    ) -> bool {
+        let changed = {
+            let state = self.row_visibility.entry(sheet_id).or_default();
+            state.set_rows_hidden(start_row0, end_row0, hidden, source)
+        };
+
+        let remove_entry = self
+            .row_visibility
+            .get(&sheet_id)
+            .map(|state| state.is_empty())
+            .unwrap_or(false);
+        if remove_entry {
+            self.row_visibility.remove(&sheet_id);
+        }
+
+        if changed {
+            self.invalidate_row_visibility_mask_cache();
+        }
+
+        changed
+    }
+
+    fn shift_row_visibility_insert(&mut self, sheet_id: SheetId, before0: u32, count: u32) {
+        if count == 0 {
+            return;
+        }
+        let mut changed = false;
+        let remove_entry = if let Some(state) = self.row_visibility.get_mut(&sheet_id) {
+            changed = state.insert_rows(before0, count);
+            state.is_empty()
+        } else {
+            false
+        };
+        if remove_entry {
+            self.row_visibility.remove(&sheet_id);
+        }
+        if changed {
+            self.invalidate_row_visibility_mask_cache();
+        }
+    }
+
+    fn shift_row_visibility_delete(&mut self, sheet_id: SheetId, start0: u32, count: u32) {
+        if count == 0 {
+            return;
+        }
+        let mut changed = false;
+        let remove_entry = if let Some(state) = self.row_visibility.get_mut(&sheet_id) {
+            changed = state.delete_rows(start0, count);
+            state.is_empty()
+        } else {
+            false
+        };
+        if remove_entry {
+            self.row_visibility.remove(&sheet_id);
+        }
+        if changed {
+            self.invalidate_row_visibility_mask_cache();
+        }
+    }
+
+    fn apply_inverse_row_visibility_event(&mut self, event: &crate::engine::ChangeEvent) {
+        if let crate::engine::ChangeEvent::SetRowVisibility {
+            sheet_id,
+            row0,
+            source,
+            old_hidden,
+            ..
+        } = event
+        {
+            let _ = self.set_row_hidden_by_sheet_id(*sheet_id, *row0, *old_hidden, *source);
+        }
+    }
+
+    fn apply_forward_row_visibility_event(&mut self, event: &crate::engine::ChangeEvent) {
+        if let crate::engine::ChangeEvent::SetRowVisibility {
+            sheet_id,
+            row0,
+            source,
+            new_hidden,
+            ..
+        } = event
+        {
+            let _ = self.set_row_hidden_by_sheet_id(*sheet_id, *row0, *new_hidden, *source);
+        }
+    }
+
+    fn apply_inverse_row_visibility_events(&mut self, events: &[crate::engine::ChangeEvent]) {
+        for event in events.iter().rev() {
+            self.apply_inverse_row_visibility_event(event);
+        }
+    }
+
+    fn apply_forward_row_visibility_events(&mut self, events: &[crate::engine::ChangeEvent]) {
+        for event in events {
+            self.apply_forward_row_visibility_event(event);
+        }
+    }
+
+    pub fn set_row_hidden(
+        &mut self,
+        sheet: &str,
+        row_1based: u32,
+        hidden: bool,
+        source: RowVisibilitySource,
+    ) -> Result<(), crate::engine::EditorError> {
+        let sheet_id = self.ensure_known_sheet_id(sheet)?;
+        let row0 = Self::normalize_row_1based(row_1based)?;
+        if self.set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source) {
+            self.mark_data_edited();
+        }
+        Ok(())
+    }
+
+    pub fn set_rows_hidden(
+        &mut self,
+        sheet: &str,
+        start_row_1based: u32,
+        end_row_1based: u32,
+        hidden: bool,
+        source: RowVisibilitySource,
+    ) -> Result<(), crate::engine::EditorError> {
+        let sheet_id = self.ensure_known_sheet_id(sheet)?;
+        let (start_row0, end_row0) =
+            Self::normalize_row_range_1based(start_row_1based, end_row_1based)?;
+        if self.set_rows_hidden_by_sheet_id(sheet_id, start_row0, end_row0, hidden, source) {
+            self.mark_data_edited();
+        }
+        Ok(())
+    }
+
+    pub fn is_row_hidden(
+        &self,
+        sheet: &str,
+        row_1based: u32,
+        source: Option<RowVisibilitySource>,
+    ) -> Option<bool> {
+        let sheet_id = self.graph.sheet_id(sheet)?;
+        let row0 = row_1based.checked_sub(1)?;
+        Some(
+            self.row_visibility
+                .get(&sheet_id)
+                .map(|state| state.is_row_hidden(row0, source))
+                .unwrap_or(false),
+        )
+    }
+
+    pub fn row_visibility_version(&self, sheet: &str) -> Option<u64> {
+        let sheet_id = self.graph.sheet_id(sheet)?;
+        Some(
+            self.row_visibility
+                .get(&sheet_id)
+                .map(|state| state.version())
+                .unwrap_or(0),
+        )
+    }
+
+    fn build_row_visibility_mask_for_view(
+        &self,
+        view: &RangeView<'_>,
+        mode: VisibilityMaskMode,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        let sheet_rows = view.sheet().nrows as usize;
+        if sheet_rows == 0 || view.start_row() >= sheet_rows {
+            return Some(std::sync::Arc::new(arrow_array::BooleanArray::new_null(0)));
+        }
+
+        let sheet_id = self.graph.sheet_id(view.sheet_name())?;
+        let start_row0 = view.start_row() as u32;
+        let end_row0 = view.end_row().min(sheet_rows.saturating_sub(1)) as u32;
+        let version = self
+            .row_visibility
+            .get(&sheet_id)
+            .map(|state| state.version())
+            .unwrap_or(0);
+        let key = VisibilityMaskCacheKey {
+            sheet_id,
+            start_row0,
+            end_row0,
+            mode,
+            version,
+        };
+
+        if let Ok(cache) = self.row_visibility_mask_cache.read()
+            && let Some(mask) = cache.get(&key)
+        {
+            #[cfg(test)]
+            visibility_mask_test_hooks::inc_hit();
+            return Some(mask.clone());
+        }
+
+        #[cfg(test)]
+        visibility_mask_test_hooks::inc_miss();
+
+        let state = self.row_visibility.get(&sheet_id);
+        let mut out = Vec::with_capacity((end_row0 - start_row0 + 1) as usize);
+        for row0 in start_row0..=end_row0 {
+            let manual_hidden = state
+                .map(|s| s.is_row_hidden(row0, Some(RowVisibilitySource::Manual)))
+                .unwrap_or(false);
+            let filter_hidden = state
+                .map(|s| s.is_row_hidden(row0, Some(RowVisibilitySource::Filter)))
+                .unwrap_or(false);
+
+            let include = match mode {
+                VisibilityMaskMode::IncludeAll => true,
+                VisibilityMaskMode::ExcludeManualHidden => !manual_hidden,
+                VisibilityMaskMode::ExcludeFilterHidden => !filter_hidden,
+                VisibilityMaskMode::ExcludeManualOrFilterHidden => {
+                    !(manual_hidden || filter_hidden)
+                }
+            };
+            out.push(include);
+        }
+
+        let mask = std::sync::Arc::new(arrow_array::BooleanArray::from(out));
+        if let Ok(mut cache) = self.row_visibility_mask_cache.write() {
+            const MAX_CACHE_ENTRIES: usize = 4096;
+            if cache.len() >= MAX_CACHE_ENTRIES {
+                cache.clear();
+                #[cfg(test)]
+                visibility_mask_test_hooks::inc_eviction();
+            }
+            cache.insert(key, mask.clone());
+        }
+
+        Some(mask)
+    }
+
     /// Insert rows (1-based) and mirror into Arrow store when enabled
     pub fn insert_rows(
         &mut self,
@@ -1958,22 +2440,18 @@ where
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
-        let sheet_id = self.graph.sheet_id(sheet).ok_or(
-            crate::engine::graph::editor::vertex_editor::EditorError::InvalidName {
-                name: sheet.to_string(),
-                reason: "Unknown sheet".to_string(),
-            },
-        )?;
-        let mut editor = VertexEditor::new(&mut self.graph);
+        let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let before0 = before.saturating_sub(1);
-        let summary = editor.insert_rows(sheet_id, before0, count)?;
+        let summary = {
+            let mut editor = VertexEditor::new(&mut self.graph);
+            editor.insert_rows(sheet_id, before0, count)?
+        };
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
             let before0 = before0 as usize;
             asheet.insert_rows(before0, count as usize);
         }
-        self.snapshot_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.has_edited = true;
+        self.shift_row_visibility_insert(sheet_id, before0, count);
+        self.mark_data_edited();
         Ok(summary)
     }
 
@@ -1986,22 +2464,18 @@ where
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
-        let sheet_id = self.graph.sheet_id(sheet).ok_or(
-            crate::engine::graph::editor::vertex_editor::EditorError::InvalidName {
-                name: sheet.to_string(),
-                reason: "Unknown sheet".to_string(),
-            },
-        )?;
-        let mut editor = VertexEditor::new(&mut self.graph);
+        let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let start0 = start.saturating_sub(1);
-        let summary = editor.delete_rows(sheet_id, start0, count)?;
+        let summary = {
+            let mut editor = VertexEditor::new(&mut self.graph);
+            editor.delete_rows(sheet_id, start0, count)?
+        };
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
             let start0 = start0 as usize;
             asheet.delete_rows(start0, count as usize);
         }
-        self.snapshot_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.has_edited = true;
+        self.shift_row_visibility_delete(sheet_id, start0, count);
+        self.mark_data_edited();
         Ok(summary)
     }
 
@@ -6836,6 +7310,14 @@ where
             return Some(std::sync::Arc::new(arrow_array::BooleanArray::new_null(0)));
         }
         compute_criteria_mask(view, col_in_view, pred)
+    }
+
+    fn build_row_visibility_mask(
+        &self,
+        view: &RangeView<'_>,
+        mode: VisibilityMaskMode,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        self.build_row_visibility_mask_for_view(view, mode)
     }
 }
 

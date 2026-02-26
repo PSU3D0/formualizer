@@ -7,6 +7,7 @@
 
 use crate::SheetId;
 use crate::engine::named_range::{NameScope, NamedDefinition};
+use crate::engine::row_visibility::RowVisibilitySource;
 use crate::engine::vertex::VertexId;
 use crate::reference::CellRef;
 use formualizer_common::Coord as AbsCoord;
@@ -47,6 +48,13 @@ pub enum ChangeEvent {
         old_value: Option<LiteralValue>,
         old_formula: Option<ASTNode>,
         new: ASTNode,
+    },
+    SetRowVisibility {
+        sheet_id: SheetId,
+        row0: u32,
+        source: RowVisibilitySource,
+        old_hidden: bool,
+        new_hidden: bool,
     },
     /// Vertex creation snapshot (for undo). Minimal for now.
     AddVertex {

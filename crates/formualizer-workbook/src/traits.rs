@@ -110,6 +110,8 @@ pub struct SheetData {
     pub date_system_1904: bool,
     pub merged_cells: Vec<MergedRange>,
     pub hidden: bool,
+    pub row_hidden_manual: Vec<u32>,
+    pub row_hidden_filter: Vec<u32>,
 }
 
 #[cfg_attr(feature = "json", derive(Serialize, Deserialize))]

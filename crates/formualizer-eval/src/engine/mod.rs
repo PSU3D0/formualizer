@@ -12,6 +12,7 @@ pub mod ingest_builder;
 pub mod journal;
 pub mod plan;
 pub mod range_view;
+pub mod row_visibility;
 pub mod scheduler;
 pub mod spill;
 pub mod vertex;
@@ -46,6 +47,7 @@ pub use graph::{
     ChangeEvent, DependencyGraph, DependencyRef, OperationSummary, StripeKey, StripeType,
     block_index,
 };
+pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
 pub use scheduler::{Layer, Schedule, Scheduler};
 pub use vertex::{VertexId, VertexKind};
 

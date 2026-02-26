@@ -402,6 +402,10 @@ impl SpreadsheetReader for CalamineAdapter {
             date_system_1904: false, // calamine XLSX currently doesn’t expose this
             merged_cells: Vec::<MergedRange>::new(),
             hidden: false,
+            // Explicit fallback: calamine does not expose row visibility metadata.
+            row_hidden_manual: vec![],
+            // Explicit fallback: filter-hidden row state is unavailable via calamine.
+            row_hidden_filter: vec![],
         })
     }
 
@@ -765,6 +769,31 @@ where
             }
             // Mark as loaded for API parity
             self.loaded_sheets.insert(n.to_string());
+
+            // Explicit fallback: calamine cannot currently read row visibility metadata,
+            // so we intentionally seed no hidden rows.
+            let row_hidden_manual: &[u32] = &[];
+            let row_hidden_filter: &[u32] = &[];
+            for row in row_hidden_manual {
+                engine
+                    .set_row_hidden(
+                        n,
+                        *row,
+                        true,
+                        formualizer_eval::engine::RowVisibilitySource::Manual,
+                    )
+                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+            }
+            for row in row_hidden_filter {
+                engine
+                    .set_row_hidden(
+                        n,
+                        *row,
+                        true,
+                        formualizer_eval::engine::RowVisibilitySource::Filter,
+                    )
+                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+            }
         }
 
         if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {

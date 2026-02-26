@@ -635,6 +635,19 @@ impl SpreadsheetReader for UmyaAdapter {
                 },
             );
         }
+        let mut row_hidden_manual: Vec<u32> = ws
+            .get_row_dimensions_to_hashmap()
+            .iter()
+            .filter_map(|(row, row_dim)| {
+                if *row_dim.get_hidden() {
+                    Some(*row)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        row_hidden_manual.sort_unstable();
+
         let dims = cells_map.keys().fold((0u32, 0u32), |mut acc, (r, c)| {
             if *r > acc.0 {
                 acc.0 = *r;
@@ -652,6 +665,8 @@ impl SpreadsheetReader for UmyaAdapter {
             date_system_1904: false,
             merged_cells: vec![],
             hidden: false,
+            row_hidden_manual,
+            row_hidden_filter: vec![],
         })
     }
 
@@ -1191,6 +1206,27 @@ where
                 if !formulas.is_empty() {
                     eager_formula_batches.push((n.clone(), formulas));
                 }
+            }
+
+            for row in &sheet_data.row_hidden_manual {
+                engine
+                    .set_row_hidden(
+                        n,
+                        *row,
+                        true,
+                        formualizer_eval::engine::RowVisibilitySource::Manual,
+                    )
+                    .map_err(|e| IoError::from_backend("umya", e))?;
+            }
+            for row in &sheet_data.row_hidden_filter {
+                engine
+                    .set_row_hidden(
+                        n,
+                        *row,
+                        true,
+                        formualizer_eval::engine::RowVisibilitySource::Filter,
+                    )
+                    .map_err(|e| IoError::from_backend("umya", e))?;
             }
         }
 

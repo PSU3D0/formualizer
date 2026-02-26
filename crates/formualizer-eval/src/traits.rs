@@ -1,4 +1,5 @@
 use crate::engine::range_view::RangeView;
+use crate::engine::row_visibility::VisibilityMaskMode;
 pub use crate::function::Function;
 use crate::interpreter::Interpreter;
 use crate::reference::CellRef;
@@ -1254,6 +1255,16 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
         None
     }
+
+    /// Optional: Build row-visibility mask aligned to `view` rows.
+    /// Returns None if not supported by the underlying context.
+    fn build_row_visibility_mask(
+        &self,
+        _view: &RangeView<'_>,
+        _mode: VisibilityMaskMode,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        None
+    }
 }
 
 /// Minimal backend capability descriptor for planning and adapters.
@@ -1337,6 +1348,15 @@ pub trait FunctionContext<'ctx> {
         _view: &RangeView<'_>,
         _col_in_view: usize,
         _pred: &crate::args::CriteriaPredicate,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        None
+    }
+
+    /// Optional: Build row-visibility mask aligned to `view` rows.
+    fn get_row_visibility_mask(
+        &self,
+        _view: &RangeView<'_>,
+        _mode: VisibilityMaskMode,
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
         None
     }
@@ -1430,5 +1450,13 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
         pred: &crate::args::CriteriaPredicate,
     ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
         self.base.build_criteria_mask(view, col_in_view, pred)
+    }
+
+    fn get_row_visibility_mask(
+        &self,
+        view: &RangeView<'_>,
+        mode: VisibilityMaskMode,
+    ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+        self.base.build_row_visibility_mask(view, mode)
     }
 }

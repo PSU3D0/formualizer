@@ -202,6 +202,9 @@ fn apply_forward_change_event(
             let mut editor = VertexEditor::new(graph);
             editor.set_cell_formula(*addr, new.clone());
         }
+        ChangeEvent::SetRowVisibility { .. } => {
+            // Engine-level sidecar metadata; applied by Engine undo/redo orchestration.
+        }
         ChangeEvent::AddVertex {
             coord,
             sheet_id,

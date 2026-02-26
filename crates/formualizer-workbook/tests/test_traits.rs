@@ -144,6 +144,8 @@ impl SpreadsheetReader for MockReader {
             date_system_1904: false,
             merged_cells: vec![],
             hidden: false,
+            row_hidden_manual: vec![],
+            row_hidden_filter: vec![],
         })
     }
 
