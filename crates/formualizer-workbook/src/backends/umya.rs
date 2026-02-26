@@ -888,11 +888,14 @@ impl UmyaAdapter {
         // Only support cell/range references for Stage 1.
         let reference = ReferenceType::from_string(trimmed).ok()?;
 
+        // Scope is determined solely by the presence of local_sheet_id in the OOXML.
+        // declared_on_sheet is only used as a fallback for resolving an address that
+        // omits its sheet prefix — it must not influence the scope classification.
         let scope_sheet = if defined.has_local_sheet_id() {
             let idx = *defined.get_local_sheet_id() as usize;
             sheet_names.get(idx).cloned()
         } else {
-            declared_on_sheet.map(|s| s.to_string())
+            None
         };
 
         let scope = if scope_sheet.is_some() {
@@ -901,7 +904,7 @@ impl UmyaAdapter {
             DefinedNameScope::Workbook
         };
 
-        let base_sheet = scope_sheet.as_deref();
+        let base_sheet = scope_sheet.as_deref().or(declared_on_sheet);
         let (sheet_name, start_row, start_col, end_row, end_col) = match reference {
             ReferenceType::Cell {
                 sheet, row, col, ..

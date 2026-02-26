@@ -2,7 +2,7 @@ use formualizer_common::LiteralValue;
 use formualizer_workbook::{
     CellData, LoadStrategy, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter, Workbook,
     WorkbookConfig,
-    traits::{DefinedNameDefinition, NamedRangeScope},
+    traits::{DefinedNameDefinition, DefinedNameScope, NamedRangeScope},
 };
 
 fn build_named_range_workbook() -> Workbook {
@@ -213,6 +213,138 @@ fn umya_imports_open_ended_column_named_ranges() {
         LiteralValue::Number(n) => assert!((n - 123.0).abs() < 1e-9),
         LiteralValue::Int(i) => assert_eq!(i, 123),
         other => panic!("expected numeric lookup result, got {other:?}"),
+    }
+}
+
+// Helper: write a umya Spreadsheet to bytes via the xlsx writer.
+fn book_to_bytes(book: &umya_spreadsheet::Spreadsheet) -> Vec<u8> {
+    let mut buf = Vec::new();
+    umya_spreadsheet::writer::xlsx::write_writer(book, &mut buf).expect("write to bytes");
+    buf
+}
+
+/// Workbook-scoped names must remain Workbook-scoped in `defined_names()` regardless of
+/// which worksheet object they were associated with when the file was built.
+/// Before the fix, names without a localSheetId that came through the sheet-level
+/// iteration path were incorrectly stamped with the iterating sheet as their scope.
+#[test]
+fn workbook_scoped_names_not_demoted_to_sheet_scope() {
+    let mut book = umya_spreadsheet::new_file();
+    let _ = book.new_sheet("Data");
+
+    // Add workbook-scoped names to each sheet — no set_local_sheet_id call, so no localSheetId.
+    {
+        let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1");
+        for r in 1..=4u32 {
+            sheet1.get_cell_mut((r, 1)).set_value_number(r as f64);
+        }
+        sheet1
+            .add_defined_name("RangeAlpha", "Sheet1!$A$1:$A$4")
+            .expect("RangeAlpha");
+    }
+    {
+        let data = book.get_sheet_by_name_mut("Data").expect("Data");
+        for r in 1..=7u32 {
+            data.get_cell_mut((r, 1)).set_value_number(r as f64);
+        }
+        data.add_defined_name("RangeBeta", "Data!$A$1:$A$7")
+            .expect("RangeBeta");
+    }
+
+    let bytes = book_to_bytes(&book);
+    let mut adapter = UmyaAdapter::open_bytes(bytes).expect("open from bytes");
+    let names = adapter.defined_names().expect("defined_names");
+
+    for name in ["RangeAlpha", "RangeBeta"] {
+        let workbook_entries: Vec<_> = names
+            .iter()
+            .filter(|n| n.name == name && n.scope == DefinedNameScope::Workbook)
+            .collect();
+        assert_eq!(
+            workbook_entries.len(),
+            1,
+            "{name} should appear exactly once as Workbook-scoped"
+        );
+
+        let sheet_entries: Vec<_> = names
+            .iter()
+            .filter(|n| n.name == name && n.scope == DefinedNameScope::Sheet)
+            .collect();
+        assert!(
+            sheet_entries.is_empty(),
+            "{name} must not be classified as Sheet-scoped; found: {sheet_entries:?}"
+        );
+    }
+}
+
+/// Workbook-scoped names declared on one sheet must be usable in formulas on a
+/// different sheet.  Before the fix this produced #NAME? when the name was
+/// incorrectly classified as sheet-scoped to its declaring sheet.
+#[test]
+fn workbook_scoped_name_resolves_cross_sheet() {
+    let mut book = umya_spreadsheet::new_file();
+    let _ = book.new_sheet("Lookup");
+
+    // Lookup table on "Lookup": two-column key/value table.
+    // Umya get_cell_mut takes (col, row), so row varies as the second argument.
+    {
+        let lookup = book.get_sheet_by_name_mut("Lookup").expect("Lookup");
+        let entries = [("Alpha", 10.0), ("Beta", 20.0), ("Gamma", 30.0)];
+        for (i, (key, val)) in entries.iter().enumerate() {
+            let row = (i + 1) as u32;
+            lookup.get_cell_mut((1, row)).set_value(*key); // col A
+            lookup.get_cell_mut((2, row)).set_value_number(*val); // col B
+        }
+        // Workbook-scoped name — no set_local_sheet_id, so no localSheetId.
+        lookup
+            .add_defined_name("LookupTable", "Lookup!$A$1:$B$3")
+            .expect("LookupTable");
+    }
+
+    // Summary sheet uses the name in cross-sheet formulas placed in col A.
+    {
+        let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1");
+        sheet1
+            .get_cell_mut((1, 1)) // col=1 row=1 → A1
+            .set_formula("=ROWS(LookupTable)");
+        sheet1
+            .get_cell_mut((1, 2)) // col=1 row=2 → A2
+            .set_formula("=VLOOKUP(\"Beta\", LookupTable, 2, FALSE())");
+    }
+
+    let bytes = book_to_bytes(&book);
+    let backend = UmyaAdapter::open_bytes(bytes).expect("open from bytes");
+    let mut workbook = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load workbook");
+    workbook.evaluate_all().expect("evaluate");
+
+    // formualizer get_value uses (row, col): A1=(row=1,col=1), A2=(row=2,col=1).
+    let rows_val = workbook.get_value("Sheet1", 1, 1).expect("ROWS result");
+    match rows_val {
+        LiteralValue::Number(n) => {
+            assert!(
+                (n - 3.0).abs() < 1e-9,
+                "ROWS(LookupTable) should be 3, got {n}"
+            )
+        }
+        LiteralValue::Int(i) => assert_eq!(i, 3, "ROWS(LookupTable) should be 3"),
+        other => panic!("expected number for ROWS, got {other:?}"),
+    }
+
+    let vlookup_val = workbook.get_value("Sheet1", 2, 1).expect("VLOOKUP result");
+    match vlookup_val {
+        LiteralValue::Number(n) => {
+            assert!(
+                (n - 20.0).abs() < 1e-9,
+                "VLOOKUP Beta should be 20.0, got {n}"
+            )
+        }
+        LiteralValue::Int(i) => assert_eq!(i, 20, "VLOOKUP Beta should be 20"),
+        other => panic!("expected number for VLOOKUP, got {other:?}"),
     }
 }
 
