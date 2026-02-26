@@ -635,6 +635,19 @@ impl SpreadsheetReader for UmyaAdapter {
                 },
             );
         }
+        let mut row_hidden_manual: Vec<u32> = ws
+            .get_row_dimensions_to_hashmap()
+            .iter()
+            .filter_map(|(row, row_dim)| {
+                if *row_dim.get_hidden() {
+                    Some(*row)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        row_hidden_manual.sort_unstable();
+
         let dims = cells_map.keys().fold((0u32, 0u32), |mut acc, (r, c)| {
             if *r > acc.0 {
                 acc.0 = *r;
@@ -652,6 +665,8 @@ impl SpreadsheetReader for UmyaAdapter {
             date_system_1904: false,
             merged_cells: vec![],
             hidden: false,
+            row_hidden_manual,
+            row_hidden_filter: vec![],
         })
     }
 
@@ -888,11 +903,14 @@ impl UmyaAdapter {
         // Only support cell/range references for Stage 1.
         let reference = ReferenceType::from_string(trimmed).ok()?;
 
+        // Scope is determined solely by the presence of local_sheet_id in the OOXML.
+        // declared_on_sheet is only used as a fallback for resolving an address that
+        // omits its sheet prefix — it must not influence the scope classification.
         let scope_sheet = if defined.has_local_sheet_id() {
             let idx = *defined.get_local_sheet_id() as usize;
             sheet_names.get(idx).cloned()
         } else {
-            declared_on_sheet.map(|s| s.to_string())
+            None
         };
 
         let scope = if scope_sheet.is_some() {
@@ -901,7 +919,7 @@ impl UmyaAdapter {
             DefinedNameScope::Workbook
         };
 
-        let base_sheet = scope_sheet.as_deref();
+        let base_sheet = scope_sheet.as_deref().or(declared_on_sheet);
         let (sheet_name, start_row, start_col, end_row, end_col) = match reference {
             ReferenceType::Cell {
                 sheet, row, col, ..
@@ -1188,6 +1206,27 @@ where
                 if !formulas.is_empty() {
                     eager_formula_batches.push((n.clone(), formulas));
                 }
+            }
+
+            for row in &sheet_data.row_hidden_manual {
+                engine
+                    .set_row_hidden(
+                        n,
+                        *row,
+                        true,
+                        formualizer_eval::engine::RowVisibilitySource::Manual,
+                    )
+                    .map_err(|e| IoError::from_backend("umya", e))?;
+            }
+            for row in &sheet_data.row_hidden_filter {
+                engine
+                    .set_row_hidden(
+                        n,
+                        *row,
+                        true,
+                        formualizer_eval::engine::RowVisibilitySource::Filter,
+                    )
+                    .map_err(|e| IoError::from_backend("umya", e))?;
             }
         }
 

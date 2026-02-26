@@ -20,3 +20,5 @@ mod large;
 mod named_ranges;
 #[cfg(feature = "calamine")]
 mod offsets;
+#[cfg(feature = "calamine")]
+mod row_visibility;

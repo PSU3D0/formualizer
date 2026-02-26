@@ -5,6 +5,7 @@ use formualizer_common::{
     LiteralValue, RangeAddress,
     error::{ExcelError, ExcelErrorKind},
 };
+use formualizer_eval::engine::RowVisibilitySource;
 use formualizer_eval::engine::eval::EvalPlan;
 use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
 use parking_lot::RwLock;
@@ -882,6 +883,16 @@ trait WorkbookActionOps {
         start: (u32, u32),
         cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError>;
+
+    fn set_row_hidden(&mut self, sheet: &str, row: u32, hidden: bool) -> Result<(), IoError>;
+
+    fn set_rows_hidden(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        end_row: u32,
+        hidden: bool,
+    ) -> Result<(), IoError>;
 }
 
 /// Transactional edit surface for `Workbook::action`.
@@ -934,6 +945,22 @@ impl WorkbookAction<'_> {
         cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
         self.ops.write_range(sheet, start, cells)
+    }
+
+    #[inline]
+    pub fn set_row_hidden(&mut self, sheet: &str, row: u32, hidden: bool) -> Result<(), IoError> {
+        self.ops.set_row_hidden(sheet, row, hidden)
+    }
+
+    #[inline]
+    pub fn set_rows_hidden(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        end_row: u32,
+        hidden: bool,
+    ) -> Result<(), IoError> {
+        self.ops.set_rows_hidden(sheet, start_row, end_row, hidden)
     }
 }
 
@@ -1491,6 +1518,45 @@ impl Workbook {
                         }
                         Ok(())
                     }
+
+                    fn set_row_hidden(
+                        &mut self,
+                        sheet: &str,
+                        row: u32,
+                        hidden: bool,
+                    ) -> Result<(), IoError> {
+                        self.tx
+                            .set_row_hidden(sheet, row, hidden, RowVisibilitySource::Manual)
+                            .map_err(|e| match e {
+                                formualizer_eval::engine::EditorError::Excel(excel) => {
+                                    IoError::Engine(excel)
+                                }
+                                other => IoError::from_backend("editor", other),
+                            })
+                    }
+
+                    fn set_rows_hidden(
+                        &mut self,
+                        sheet: &str,
+                        start_row: u32,
+                        end_row: u32,
+                        hidden: bool,
+                    ) -> Result<(), IoError> {
+                        self.tx
+                            .set_rows_hidden(
+                                sheet,
+                                start_row,
+                                end_row,
+                                hidden,
+                                RowVisibilitySource::Manual,
+                            )
+                            .map_err(|e| match e {
+                                formualizer_eval::engine::EditorError::Excel(excel) => {
+                                    IoError::Engine(excel)
+                                }
+                                other => IoError::from_backend("editor", other),
+                            })
+                    }
                 }
 
                 let mut ops = TxOps { tx };
@@ -1593,6 +1659,45 @@ impl Workbook {
                         }
                     }
                     Ok(())
+                }
+
+                fn set_row_hidden(
+                    &mut self,
+                    sheet: &str,
+                    row: u32,
+                    hidden: bool,
+                ) -> Result<(), IoError> {
+                    self.tx
+                        .set_row_hidden(sheet, row, hidden, RowVisibilitySource::Manual)
+                        .map_err(|e| match e {
+                            formualizer_eval::engine::EditorError::Excel(excel) => {
+                                IoError::Engine(excel)
+                            }
+                            other => IoError::from_backend("editor", other),
+                        })
+                }
+
+                fn set_rows_hidden(
+                    &mut self,
+                    sheet: &str,
+                    start_row: u32,
+                    end_row: u32,
+                    hidden: bool,
+                ) -> Result<(), IoError> {
+                    self.tx
+                        .set_rows_hidden(
+                            sheet,
+                            start_row,
+                            end_row,
+                            hidden,
+                            RowVisibilitySource::Manual,
+                        )
+                        .map_err(|e| match e {
+                            formualizer_eval::engine::EditorError::Excel(excel) => {
+                                IoError::Engine(excel)
+                            }
+                            other => IoError::from_backend("editor", other),
+                        })
                 }
             }
 
@@ -1901,6 +2006,39 @@ impl Workbook {
                     .map_err(IoError::Engine)
             }
         }
+    }
+
+    pub fn set_row_hidden(&mut self, sheet: &str, row: u32, hidden: bool) -> Result<(), IoError> {
+        self.engine
+            .set_row_hidden(sheet, row, hidden, RowVisibilitySource::Manual)
+            .map_err(|e| IoError::from_backend("editor", e))
+    }
+
+    pub fn set_rows_hidden(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        end_row: u32,
+        hidden: bool,
+    ) -> Result<(), IoError> {
+        self.engine
+            .set_rows_hidden(
+                sheet,
+                start_row,
+                end_row,
+                hidden,
+                RowVisibilitySource::Manual,
+            )
+            .map_err(|e| IoError::from_backend("editor", e))
+    }
+
+    pub fn is_row_hidden(&self, sheet: &str, row: u32) -> Result<bool, IoError> {
+        self.engine
+            .is_row_hidden(sheet, row, Some(RowVisibilitySource::Manual))
+            .ok_or_else(|| IoError::Backend {
+                backend: "workbook".to_string(),
+                message: format!("Unknown sheet: {sheet}"),
+            })
     }
 
     pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {

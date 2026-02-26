@@ -71,6 +71,10 @@ struct JsonSheet {
     tables: Vec<TableDefinition>,
     #[serde(default)]
     named_ranges: Vec<NamedRange>,
+    #[serde(default)]
+    row_hidden_manual: Vec<u32>,
+    #[serde(default)]
+    row_hidden_filter: Vec<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -252,6 +256,8 @@ impl JsonAdapter {
             date_system_1904: js.date_system_1904,
             merged_cells: js.merged_cells.clone(),
             hidden: js.hidden,
+            row_hidden_manual: js.row_hidden_manual.clone(),
+            row_hidden_filter: js.row_hidden_filter.clone(),
         })
     }
 
@@ -441,6 +447,8 @@ impl SpreadsheetReader for JsonAdapter {
                 date_system_1904: false,
                 merged_cells: vec![],
                 hidden: false,
+                row_hidden_manual: vec![],
+                row_hidden_filter: vec![],
             })
         }
     }
@@ -821,6 +829,27 @@ where
                 if !formulas.is_empty() {
                     eager_formula_batches.push((name.clone(), formulas));
                 }
+            }
+
+            for row in &sheet.row_hidden_manual {
+                engine
+                    .set_row_hidden(
+                        name,
+                        *row,
+                        true,
+                        formualizer_eval::engine::RowVisibilitySource::Manual,
+                    )
+                    .map_err(|e| IoError::from_backend("json", e))?;
+            }
+            for row in &sheet.row_hidden_filter {
+                engine
+                    .set_row_hidden(
+                        name,
+                        *row,
+                        true,
+                        formualizer_eval::engine::RowVisibilitySource::Filter,
+                    )
+                    .map_err(|e| IoError::from_backend("json", e))?;
             }
         }
 

@@ -45,3 +45,21 @@ The evaluator uses an invariant locale:
 - Numeric parsing uses `.` as the decimal separator and does not accept thousands separators.
 - Locale-specific decimal formats like `"1.234,56"` are not supported and should yield `#VALUE!`
   when a number is required (e.g. `VALUE()`, `TEXT()` numeric formatting).
+
+## Visibility Aggregates (Phase 1)
+
+Supported now:
+
+- `SUBTOTAL(function_num, ref1, [ref2], ...)` with `function_num` in `1..11` and `101..111`.
+- `AGGREGATE(function_num, options, ref1, [ref2], ...)` with `function_num` in `1..11` and
+  `options` in `0..3`.
+- Hidden-row behavior is wired to workbook/engine row visibility masks:
+  - `SUBTOTAL(1..11, ...)` includes hidden rows.
+  - `SUBTOTAL(101..111, ...)` excludes manual + filter hidden rows.
+  - `AGGREGATE` options `1`/`3` exclude manual + filter hidden rows.
+- `AGGREGATE` options `2`/`3` ignore errors in aggregated refs.
+
+Deferred in phase-1:
+
+- Nested `SUBTOTAL`/`AGGREGATE` exclusion semantics (currently treated as ordinary scalar values).
+- `AGGREGATE` `function_num` `12..19` and `options` `4..7` (return `#N/IMPL!`).

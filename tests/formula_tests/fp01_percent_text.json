@@ -1,0 +1,38 @@
+{
+  "name": "fp01_percent_text",
+  "generated": "2026-02-25T23:45:00",
+  "generator": "manual",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=VALUE(\"90%\")",
+      "result": 0.9,
+      "result_type": "float",
+      "description": "VALUE should parse percent text"
+    },
+    {
+      "formula": "=--\"90%\"",
+      "result": 0.9,
+      "result_type": "float",
+      "description": "double unary should coerce percent text"
+    },
+    {
+      "formula": "=1*MID(\"Pool (90%)\",7,3)",
+      "result": 0.9,
+      "result_type": "float",
+      "description": "numeric multiplication should coerce MID percent text"
+    },
+    {
+      "formula": "=ROUND(1000*MID(\"Pool (90%)\",7,3),0)",
+      "result": 900,
+      "result_type": "int",
+      "description": "ROUND should receive numeric value from percent text"
+    },
+    {
+      "formula": "=10/RIGHT(\"SH Count: 5\",1)",
+      "result": 2,
+      "result_type": "int",
+      "description": "control check numeric text coercion still works"
+    }
+  ]
+}

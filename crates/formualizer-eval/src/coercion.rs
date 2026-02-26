@@ -25,10 +25,12 @@ pub fn to_number_strict(value: &LiteralValue) -> Result<f64, ExcelError> {
 /// - As strict, but also parses numeric text using ASCII/invariant rules
 pub fn to_number_lenient(value: &LiteralValue) -> Result<f64, ExcelError> {
     match value {
-        LiteralValue::Text(s) => s.trim().parse::<f64>().map_err(|_| {
-            ExcelError::new(ExcelErrorKind::Value)
-                .with_message(format!("Cannot convert '{s}' to number"))
-        }),
+        LiteralValue::Text(s) => crate::locale::Locale::invariant()
+            .parse_number_invariant(s)
+            .ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message(format!("Cannot convert '{s}' to number"))
+            }),
         _ => to_number_strict(value),
     }
 }
@@ -120,6 +122,19 @@ mod tests {
             1.0
         );
         assert_eq!(to_number_lenient(&LiteralValue::Empty).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn number_lenient_parses_percent_text() {
+        assert_eq!(
+            to_number_lenient(&LiteralValue::Text("90%".into())).unwrap(),
+            0.9
+        );
+        assert_eq!(
+            to_number_lenient(&LiteralValue::Text(" 90.5% ".into())).unwrap(),
+            0.905
+        );
+        assert!(to_number_lenient(&LiteralValue::Text("abc%".into())).is_err());
     }
 
     #[test]

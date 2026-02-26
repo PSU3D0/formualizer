@@ -102,3 +102,10 @@ mod sumifs_arrow_fastpath;
 mod sumifs_cached_mask_padding;
 mod used_bounds_cache;
 mod whole_column_sumifs;
+
+mod aggregate_visibility_options;
+mod row_visibility_mask;
+mod row_visibility_state;
+mod row_visibility_transactions;
+mod subtotal_visibility;
+mod visibility_mask_cache;
