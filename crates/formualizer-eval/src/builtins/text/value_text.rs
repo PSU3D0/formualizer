@@ -343,6 +343,23 @@ mod tests {
             .into_literal();
         assert_eq!(out, LiteralValue::Number(12.5));
     }
+
+    #[test]
+    fn value_percent_text() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(ValueFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "VALUE").unwrap();
+        let s = lit(LiteralValue::Text("90%".into()));
+        let out = f
+            .dispatch(
+                &[ArgumentHandle::new(&s, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Number(0.9));
+    }
+
     #[test]
     fn text_basic_number() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(TextFn));
