@@ -2,6 +2,8 @@ use crate::common::build_workbook;
 use formualizer_workbook::{
     LiteralValue, SpreadsheetReader, UmyaAdapter, recalculate_file, recalculate_file_with_limit,
 };
+use std::fs::File;
+use std::io::Read;
 
 fn assert_number_or_text_number(value: Option<LiteralValue>, expected: f64) {
     match value {
@@ -109,4 +111,55 @@ fn recalculate_file_no_formula_cache_changes_copies_input_to_output() {
 
     let output_bytes = std::fs::read(&output).expect("read copied output bytes");
     assert_eq!(input_bytes, output_bytes);
+}
+
+fn sheet1_cell_fragment(path: &std::path::Path, cell_ref: &str) -> String {
+    let file = File::open(path).expect("open xlsx");
+    let mut zip = zip::ZipArchive::new(file).expect("zip archive");
+    let mut sheet_xml = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml")
+        .expect("sheet1.xml")
+        .read_to_string(&mut sheet_xml)
+        .expect("read sheet xml");
+
+    let marker = format!("<c r=\"{cell_ref}\"");
+    let start = sheet_xml.find(&marker).expect("cell marker present");
+    let rest = &sheet_xml[start..];
+    let end_rel = rest.find("</c>").expect("cell closing tag");
+    rest[..end_rel + 4].to_string()
+}
+
+#[test]
+fn recalculate_numeric_formula_cache_rewrites_string_typed_cache_to_numeric_type() {
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        sh.get_cell_mut((1, 1)).set_value_number(1); // A1
+        sh.get_cell_mut((1, 2)).set_value_number(2); // A2
+        // Seed a stale string-typed cache on a numeric formula result.
+        sh.get_cell_mut((2, 1))
+            .set_formula("=A1+A2")
+            .set_formula_result_string("3"); // B1
+    });
+
+    let before = sheet1_cell_fragment(&path, "B1");
+    assert!(
+        before.contains("t=\"str\""),
+        "expected precondition with string-typed formula cache, got: {before}"
+    );
+
+    recalculate_file(&path, None).expect("recalculate in place");
+
+    let after = sheet1_cell_fragment(&path, "B1");
+    assert!(
+        !after.contains("t=\"str\""),
+        "formula cache should not remain string-typed after numeric recalc, got: {after}"
+    );
+    assert!(
+        after.contains("<f>A1+A2</f>") || after.contains("<f>=A1+A2</f>"),
+        "formula text must be preserved: {after}"
+    );
+    assert!(
+        after.contains("<v>3</v>") || after.contains("<v>3.0</v>"),
+        "numeric cached value must be written, got: {after}"
+    );
 }
