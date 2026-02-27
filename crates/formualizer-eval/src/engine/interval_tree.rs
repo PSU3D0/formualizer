@@ -179,12 +179,22 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
     }
 
     /// Get mutable reference to values for an exact interval match
+    /// non recursive implementation.
     pub fn get_mut(&mut self, low: u32, high: u32) -> Option<&mut HashSet<T>> {
-        if let Some(root) = &mut self.root {
-            Self::get_mut_in_node(root, low, high)
-        } else {
-            None
+        let mut current = self.root.as_mut();
+
+        while let Some(node) = current {
+            if node.low == low && node.high == high {
+                return Some(&mut node.values);
+            }
+
+            if low < node.low {
+                current = node.left.as_mut();
+            } else {
+                current = node.right.as_mut();
+            }
         }
+        None
     }
 
     fn get_mut_in_node(node: &mut Box<Node<T>>, low: u32, high: u32) -> Option<&mut HashSet<T>> {
@@ -314,8 +324,11 @@ impl<'a, T: Clone + Eq + std::hash::Hash> Entry<'a, T> {
         // Check if interval exists
         if self.tree.get_mut(self.low, self.high).is_none() {
             // Create new node with empty set
-            if let Some(root) = &mut self.tree.root {
-                Self::ensure_interval_exists(root, self.low, self.high);
+            if let Some(ref mut root) = self.tree.root {
+                // Iterative creation
+                if Self::ensure_interval_exists(root, self.low, self.high) {
+                    self.tree.size += 1;
+                }
             } else {
                 self.tree.root = Some(Box::new(Node {
                     low: self.low,
@@ -332,39 +345,78 @@ impl<'a, T: Clone + Eq + std::hash::Hash> Entry<'a, T> {
         self.tree.get_mut(self.low, self.high).unwrap()
     }
 
-    fn ensure_interval_exists(node: &mut Box<Node<T>>, low: u32, high: u32) {
-        if high > node.max_high {
-            node.max_high = high;
-        }
-
-        if low == node.low && high == node.high {
-            return;
-        }
-
-        if low < node.low {
-            if let Some(left) = &mut node.left {
-                Self::ensure_interval_exists(left, low, high);
-            } else {
-                node.left = Some(Box::new(Node {
-                    low,
-                    high,
-                    max_high: high,
-                    values: HashSet::new(),
-                    left: None,
-                    right: None,
-                }));
+    // returns true, if a new node was inserted
+    // returns false, if the node already existed.
+    fn ensure_interval_exists(mut node: &mut Box<Node<T>>, low: u32, high: u32) -> bool {
+        loop {
+            if high > node.max_high {
+                node.max_high = high;
             }
-        } else if let Some(right) = &mut node.right {
-            Self::ensure_interval_exists(right, low, high);
-        } else {
-            node.right = Some(Box::new(Node {
-                low,
-                high,
-                max_high: high,
-                values: HashSet::new(),
-                left: None,
-                right: None,
-            }));
+
+            if low == node.low && high == node.high {
+                return false; // Already exists
+            }
+
+            if low < node.low {
+                if node.left.is_none() {
+                    node.left = Some(Box::new(Node {
+                        low,
+                        high,
+                        max_high: high,
+                        values: HashSet::new(),
+                        left: None,
+                        right: None,
+                    }));
+                    return true;
+                }
+                node = node.left.as_mut().unwrap();
+            } else {
+                if node.right.is_none() {
+                    node.right = Some(Box::new(Node {
+                        low,
+                        high,
+                        max_high: high,
+                        values: HashSet::new(),
+                        left: None,
+                        right: None,
+                    }));
+
+                    return true;
+                }
+                node = node.right.as_mut().unwrap();
+            }
+        }
+    }
+}
+impl<T: Clone + Eq + std::hash::Hash> Drop for IntervalTree<T> {
+    /// Manually handles the deallocation of the tree structure.
+    ///
+    /// **Why it's needed:** The default Rust destructor is recursive. If the tree
+    /// is deep (e.g., 10,000+ nodes in a line), the default drop will exceed
+    /// the stack limit. This implementation moves the cleanup to the heap.
+    ///
+    /// **Callers:** Automatically called by the Rust compiler when an `IntervalTree`
+    /// goes out of scope, or when `drop(tree)` is called manually.
+    fn drop(&mut self) {
+        let mut stack = Vec::new();
+
+        // Take the root out of the tree, replacing it with None.
+        if let Some(node) = self.root.take() {
+            stack.push(node);
+        }
+
+        while let Some(mut node) = stack.pop() {
+            // Use .take() to move the children into the heap-allocated stack.
+            // This prevents the compiler from trying to drop them recursively
+            // when 'node' itself is dropped at the end of this loop iteration.
+            if let Some(left) = node.left.take() {
+                stack.push(left);
+            }
+            if let Some(right) = node.right.take() {
+                stack.push(right);
+            }
+            // 'node' goes out of scope here and is deallocated, but its
+            // children are safe on our manual stack.
         }
     }
 }
@@ -448,5 +500,19 @@ mod tests {
         // Query for high rows
         let results = tree.query(500_000, u32::MAX);
         assert_eq!(results.len(), 50);
+    }
+
+    #[test]
+    fn test_entry_recursion_bug() {
+        let mut tree: IntervalTree<u32> = IntervalTree::new();
+
+        // The bug happens when we insert a value, then use entry()
+        // on a coordinate that would be a child of that value.
+        let count: u32 = 5000;
+        for i in 0..count {
+            tree.entry(i, i).or_insert_with(HashSet::new);
+        }
+
+        assert_eq!(tree.len(), count as usize);
     }
 }
