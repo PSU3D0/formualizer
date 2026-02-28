@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 /// Custom interval tree optimized for spreadsheet cell indexing.
 ///
@@ -17,289 +17,20 @@ use std::collections::HashSet;
 /// - Value set (HashSet<VertexId>)
 ///
 /// This is simpler than generic interval trees because we optimize for our specific use case.
+
+#[derive(Debug, Clone)]
+struct IntervalNode<T: Clone + Eq + std::hash::Hash> {
+    high: u32,
+    values: HashSet<T>,
+}
+
+/// B-Tree based implementation of the interval index.
 #[derive(Debug, Clone)]
 pub struct IntervalTree<T: Clone + Eq + std::hash::Hash> {
-    root: Option<Box<Node<T>>>,
+    /// Maps low coordinate to a set of intervals/values starting there.
+    /// Internal storage uses IntervalNode, NOT Entry.
+    map: BTreeMap<u32, Vec<IntervalNode<T>>>,
     size: usize,
-}
-
-#[derive(Debug, Clone)]
-struct Node<T: Clone + Eq + std::hash::Hash> {
-    /// The interval [low, high]
-    low: u32,
-    high: u32,
-    /// Maximum high value in this subtree (for query pruning)
-    max_high: u32,
-    /// Values associated with this interval
-    values: HashSet<T>,
-    /// Left child (intervals with smaller low value)
-    left: Option<Box<Node<T>>>,
-    /// Right child (intervals with larger low value)
-    right: Option<Box<Node<T>>>,
-}
-
-impl<T: Clone + Eq + std::hash::Hash> Node<T> {
-    /// Creates a new leaf node for the interval tree.
-    fn new(low: u32, high: u32, values: HashSet<T>) -> Self {
-        Self {
-            low,
-            high,
-            max_high: high,
-            values,
-            left: None,
-            right: None,
-        }
-    }
-}
-
-impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
-    /// Create a new empty interval tree
-    pub fn new() -> Self {
-        Self {
-            root: None,
-            size: 0,
-        }
-    }
-
-    /// Insert a value for the given interval [low, high]
-    pub fn insert(&mut self, low: u32, high: u32, value: T) {
-        if let Some(root) = &mut self.root {
-            if Self::insert_into_node(root, low, high, value) {
-                self.size += 1;
-            }
-        } else {
-            let mut values = HashSet::new();
-            values.insert(value);
-            self.root = Some(Box::new(Node {
-                low,
-                high,
-                max_high: high,
-                values,
-                left: None,
-                right: None,
-            }));
-            self.size = 1;
-        }
-    }
-
-    /// Insert into a node, returns true if a new interval was created
-    fn insert_into_node(mut node: &mut Box<Node<T>>, low: u32, high: u32, value: T) -> bool {
-        loop {
-            // Update max_high as we traverse down
-            if high > node.max_high {
-                node.max_high = high;
-            }
-
-            // Exact match found
-            if node.low == low && node.high == high {
-                node.values.insert(value);
-                return false;
-            }
-
-            if low < node.low {
-                if node.left.is_none() {
-                    let mut values = HashSet::new();
-                    values.insert(value);
-                    node.left = Some(Box::new(Node::new(low, high, values)));
-                    return true;
-                }
-                // Move reference to the left child and continue loop
-                node = node.left.as_mut().unwrap();
-            } else {
-                if node.right.is_none() {
-                    let mut values = HashSet::new();
-                    values.insert(value);
-                    node.right = Some(Box::new(Node::new(low, high, values)));
-                    return true;
-                }
-                // Move reference to the right child and continue loop
-                node = node.right.as_mut().unwrap();
-            }
-        }
-    }
-
-    /// Remove a value from the interval [low, high]
-    pub fn remove(&mut self, low: u32, high: u32, value: &T) -> bool {
-        if let Some(root) = &mut self.root {
-            Self::remove_from_node(root, low, high, value)
-        } else {
-            false
-        }
-    }
-
-    fn remove_from_node(node: &mut Box<Node<T>>, low: u32, high: u32, value: &T) -> bool {
-        if low == node.low && high == node.high {
-            return node.values.remove(value);
-        }
-
-        if low < node.low {
-            if let Some(left) = &mut node.left {
-                return Self::remove_from_node(left, low, high, value);
-            }
-        } else if let Some(right) = &mut node.right {
-            return Self::remove_from_node(right, low, high, value);
-        }
-
-        false
-    }
-
-    /// Query all intervals that overlap with [query_low, query_high]
-    pub fn query(&self, q_low: u32, q_high: u32) -> Vec<(u32, u32, HashSet<T>)> {
-        let mut results = Vec::new();
-        let mut stack = Vec::new();
-
-        if let Some(root) = &self.root {
-            stack.push(root.as_ref());
-        }
-
-        while let Some(node) = stack.pop() {
-            // 1. Check if current node's interval overlaps [q_low, q_high]
-            if node.low <= q_high && node.high >= q_low {
-                results.push((node.low, node.high, node.values.clone()));
-            }
-
-            // 2. Search left child?
-            // Only if the subtree's maximum endpoint could reach our query range
-            if let Some(left) = &node.left
-                && left.max_high >= q_low
-            {
-                stack.push(left.as_ref());
-            }
-
-            // 3. Search right child?
-            // Since right.low >= node.low, we only search if the query high
-            // could possibly overlap with any node starting at node.low or higher.
-            if let Some(right) = &node.right
-                && q_high >= node.low
-            {
-                stack.push(right.as_ref());
-            }
-        }
-        results
-    }
-
-    /// Get mutable reference to values for an exact interval match
-    /// non recursive implementation.
-    pub fn get_mut(&mut self, low: u32, high: u32) -> Option<&mut HashSet<T>> {
-        let mut current = self.root.as_mut();
-
-        while let Some(node) = current {
-            if node.low == low && node.high == high {
-                return Some(&mut node.values);
-            }
-
-            if low < node.low {
-                current = node.left.as_mut();
-            } else {
-                current = node.right.as_mut();
-            }
-        }
-        None
-    }
-
-    fn get_mut_in_node(node: &mut Box<Node<T>>, low: u32, high: u32) -> Option<&mut HashSet<T>> {
-        if low == node.low && high == node.high {
-            return Some(&mut node.values);
-        }
-
-        if low < node.low {
-            if let Some(left) = &mut node.left {
-                return Self::get_mut_in_node(left, low, high);
-            }
-        } else if let Some(right) = &mut node.right {
-            return Self::get_mut_in_node(right, low, high);
-        }
-
-        None
-    }
-
-    /// Check if the tree is empty
-    pub fn is_empty(&self) -> bool {
-        self.root.is_none()
-    }
-
-    /// Get the number of intervals in the tree
-    pub fn len(&self) -> usize {
-        self.size
-    }
-
-    /// Clear all intervals from the tree
-    pub fn clear(&mut self) {
-        self.root = None;
-        self.size = 0;
-    }
-
-    /// Entry API for convenient insert-or-update operations
-    pub fn entry(&mut self, low: u32, high: u32) -> Entry<'_, T> {
-        Entry {
-            tree: self,
-            low,
-            high,
-        }
-    }
-
-    /// Bulk build optimization for a collection of point intervals [x,x].
-    /// Expects (low == high) for all items. Existing content is discarded if tree is empty; if not empty, falls back to incremental inserts.
-    pub fn bulk_build_points(&mut self, mut items: Vec<(u32, std::collections::HashSet<T>)>) {
-        if self.root.is_some() {
-            // Fallback: incremental insert to preserve existing nodes
-            for (k, set) in items.into_iter() {
-                for v in set {
-                    self.insert(k, k, v);
-                }
-            }
-            return;
-        }
-        if items.is_empty() {
-            return;
-        }
-        // Sort by coordinate to build balanced tree
-        items.sort_by_key(|(k, _)| *k);
-        // Deduplicate keys by merging sets
-        let mut dedup: Vec<(u32, std::collections::HashSet<T>)> = Vec::with_capacity(items.len());
-        for (k, set) in items.into_iter() {
-            if let Some(last) = dedup.last_mut()
-                && last.0 == k
-            {
-                last.1.extend(set);
-                continue;
-            }
-            dedup.push((k, set));
-        }
-        fn build_balanced<T: Clone + Eq + std::hash::Hash>(
-            slice: &[(u32, std::collections::HashSet<T>)],
-        ) -> Option<Box<Node<T>>> {
-            if slice.is_empty() {
-                return None;
-            }
-            let mid = slice.len() / 2;
-            let (low, values) = (&slice[mid].0, &slice[mid].1);
-            let left = build_balanced(&slice[..mid]);
-            let right = build_balanced(&slice[mid + 1..]);
-            // max_high is same as low (point interval); but need subtree max
-            let mut max_high = *low;
-            if let Some(ref l) = left
-                && l.max_high > max_high
-            {
-                max_high = l.max_high;
-            }
-            if let Some(ref r) = right
-                && r.max_high > max_high
-            {
-                max_high = r.max_high;
-            }
-            Some(Box::new(Node {
-                low: *low,
-                high: *low,
-                max_high,
-                values: values.clone(),
-                left,
-                right,
-            }))
-        }
-        self.size = dedup.len();
-        self.root = build_balanced(&dedup);
-    }
 }
 
 impl<T: Clone + Eq + std::hash::Hash> Default for IntervalTree<T> {
@@ -308,115 +39,144 @@ impl<T: Clone + Eq + std::hash::Hash> Default for IntervalTree<T> {
     }
 }
 
-/// Entry API for interval tree
-pub struct Entry<'a, T: Clone + Eq + std::hash::Hash> {
+impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
+    pub fn new() -> Self {
+        Self {
+            map: BTreeMap::new(),
+            size: 0,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
+    /// Get a mutable reference to the values for an exact interval match.
+    /// Required by the Entry API.
+    pub fn get_mut(&mut self, low: u32, high: u32) -> Option<&mut HashSet<T>> {
+        self.map.get_mut(&low).and_then(|nodes| {
+            nodes
+                .iter_mut()
+                .find(|n| n.high == high)
+                .map(|n| &mut n.values)
+        })
+    }
+
+    /// Insert a value for the given interval [low, high]
+    pub fn insert(&mut self, low: u32, high: u32, value: T) {
+        let entries = self.map.entry(low).or_default();
+
+        if let Some(node) = entries.iter_mut().find(|n| n.high == high) {
+            node.values.insert(value);
+        } else {
+            let mut values = HashSet::new();
+            values.insert(value);
+            entries.push(IntervalNode { high, values });
+            self.size += 1;
+        }
+    }
+
+    pub fn query(&self, q_low: u32, q_high: u32) -> Vec<(u32, u32, HashSet<T>)> {
+        let mut results = Vec::new();
+        for (&low, nodes) in self.map.range(..=q_high) {
+            for node in nodes {
+                if node.high >= q_low {
+                    results.push((low, node.high, node.values.clone()));
+                }
+            }
+        }
+        results
+    }
+
+    pub fn remove(&mut self, low: u32, high: u32, value: &T) -> bool {
+        if let Some(nodes) = self.map.get_mut(&low)
+            && let Some(node) = nodes.iter_mut().find(|n| n.high == high)
+        {
+            let removed = node.values.remove(value);
+            if node.values.is_empty() {
+                nodes.retain(|n| n.high != high);
+            }
+            if nodes.is_empty() {
+                self.map.remove(&low);
+            }
+            if removed {
+                self.size -= 1;
+            }
+            return removed;
+        }
+        false
+    }
+
+    pub fn entry(&mut self, low: u32, high: u32) -> BTreeEntry<'_, T> {
+        BTreeEntry {
+            tree: self,
+            low,
+            high,
+        }
+    }
+
+    /// Bulk build optimization for a collection of point intervals [x,x].
+    pub fn bulk_build_points(&mut self, mut items: Vec<(u32, HashSet<T>)>) {
+        if !self.is_empty() {
+            // Fallback: incremental insert to preserve existing nodes
+            for (coord, set) in items {
+                for val in set {
+                    self.insert(coord, coord, val);
+                }
+            }
+            return;
+        }
+
+        if items.is_empty() {
+            return;
+        }
+
+        // 1. Sort by coordinate
+        items.sort_by_key(|(k, _)| *k);
+
+        // 2. Process items. BTreeMap handles the balancing (O(log N)).
+        for (coord, set) in items {
+            let entries = self.map.entry(coord).or_default();
+
+            // Since this is specifically for point intervals, check if [coord, coord] exists
+            if let Some(node) = entries.iter_mut().find(|n| n.high == coord) {
+                node.values.extend(set);
+            } else {
+                entries.push(IntervalNode {
+                    high: coord,
+                    values: set,
+                });
+                self.size += 1;
+            }
+        }
+    }
+}
+
+pub struct BTreeEntry<'a, T: Clone + Eq + std::hash::Hash> {
     tree: &'a mut IntervalTree<T>,
     low: u32,
     high: u32,
 }
 
-impl<'a, T: Clone + Eq + std::hash::Hash> Entry<'a, T> {
-    /// Get or insert an empty HashSet for this interval
+impl<'a, T: Clone + Eq + std::hash::Hash> BTreeEntry<'a, T> {
     pub fn or_insert_with<F>(self, f: F) -> &'a mut HashSet<T>
     where
         F: FnOnce() -> HashSet<T>,
     {
-        // Check if interval exists
         if self.tree.get_mut(self.low, self.high).is_none() {
-            let initial_values = f();
-            // Create new node with empty set
-            if let Some(ref mut root) = self.tree.root {
-                // Iterative creation
-                if Self::ensure_interval_exists(root, self.low, self.high, initial_values) {
-                    self.tree.size += 1;
-                }
-            } else {
-                self.tree.root = Some(Box::new(Node::new(self.low, self.high, initial_values)));
-                self.tree.size = 1;
-            }
+            let values = f();
+            let entries = self.tree.map.entry(self.low).or_default();
+            entries.push(IntervalNode {
+                high: self.high,
+                values,
+            });
+            self.tree.size += 1;
         }
-
         self.tree.get_mut(self.low, self.high).unwrap()
-    }
-
-    // returns true, if a new node was inserted
-    // returns false, if the node already existed.
-    fn ensure_interval_exists(
-        mut node: &mut Box<Node<T>>,
-        low: u32,
-        high: u32,
-        values: HashSet<T>,
-    ) -> bool {
-        loop {
-            if high > node.max_high {
-                node.max_high = high;
-            }
-
-            if low == node.low && high == node.high {
-                return false; // Already exists
-            }
-
-            if low < node.low {
-                if node.left.is_none() {
-                    node.left = Some(Box::new(Node {
-                        low,
-                        high,
-                        max_high: high,
-                        values,
-                        left: None,
-                        right: None,
-                    }));
-                    return true;
-                }
-                node = node.left.as_mut().unwrap();
-            } else {
-                if node.right.is_none() {
-                    node.right = Some(Box::new(Node {
-                        low,
-                        high,
-                        max_high: high,
-                        values,
-                        left: None,
-                        right: None,
-                    }));
-
-                    return true;
-                }
-                node = node.right.as_mut().unwrap();
-            }
-        }
-    }
-}
-impl<T: Clone + Eq + std::hash::Hash> Drop for IntervalTree<T> {
-    /// Manually handles the deallocation of the tree structure.
-    ///
-    /// **Why it's needed:** The default Rust destructor is recursive. If the tree
-    /// is deep (e.g., 10,000+ nodes in a line), the default drop will exceed
-    /// the stack limit. This implementation moves the cleanup to the heap.
-    ///
-    /// **Callers:** Automatically called by the Rust compiler when an `IntervalTree`
-    /// goes out of scope, or when `drop(tree)` is called manually.
-    fn drop(&mut self) {
-        let mut stack = Vec::new();
-
-        // Take the root out of the tree, replacing it with None.
-        if let Some(node) = self.root.take() {
-            stack.push(node);
-        }
-
-        while let Some(mut node) = stack.pop() {
-            // Use .take() to move the children into the heap-allocated stack.
-            // This prevents the compiler from trying to drop them recursively
-            // when 'node' itself is dropped at the end of this loop iteration.
-            if let Some(left) = node.left.take() {
-                stack.push(left);
-            }
-            if let Some(right) = node.right.take() {
-                stack.push(right);
-            }
-            // 'node' goes out of scope here and is deallocated, but its
-            // children are safe on our manual stack.
-        }
     }
 }
 
