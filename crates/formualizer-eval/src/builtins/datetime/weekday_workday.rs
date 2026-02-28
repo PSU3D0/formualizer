@@ -8,6 +8,15 @@ use chrono::{Datelike, NaiveDate, Weekday};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
+/// Day of year in a standard 365-day (non-leap) year.
+/// Feb 29 dates are clamped to Feb 28 (day 59).
+fn non_leap_day_of_year(month: u32, day: u32) -> i64 {
+    const CUM: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+    const DAYS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let capped = day.min(DAYS[(month - 1) as usize]);
+    CUM[(month - 1) as usize] + capped as i64
+}
+
 fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
     match v {
@@ -72,119 +81,43 @@ impl Function for WeekdayFn {
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
+        let serial_int = serial.trunc() as i64;
+        if serial_int < 0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
         let return_type = if args.len() > 1 {
             coerce_to_int(&args[1])?
         } else {
             1
         };
 
-        let date = serial_to_date(serial)?;
-        let weekday = date.weekday();
+        // Compute weekday directly from serial number (not chrono) to correctly
+        // handle Excel's phantom Feb 29. serial % 7: 0=Sat, 1=Sun, 2=Mon, ..., 6=Fri
+        let d = (serial_int % 7) as i64;
 
-        // Convert chrono weekday (Mon=0..Sun=6) to Excel format
-        let result = match return_type {
-            1 => match weekday {
-                Weekday::Sun => 1,
-                Weekday::Mon => 2,
-                Weekday::Tue => 3,
-                Weekday::Wed => 4,
-                Weekday::Thu => 5,
-                Weekday::Fri => 6,
-                Weekday::Sat => 7,
-            },
-            2 => match weekday {
-                Weekday::Mon => 1,
-                Weekday::Tue => 2,
-                Weekday::Wed => 3,
-                Weekday::Thu => 4,
-                Weekday::Fri => 5,
-                Weekday::Sat => 6,
-                Weekday::Sun => 7,
-            },
-            3 => match weekday {
-                Weekday::Mon => 0,
-                Weekday::Tue => 1,
-                Weekday::Wed => 2,
-                Weekday::Thu => 3,
-                Weekday::Fri => 4,
-                Weekday::Sat => 5,
-                Weekday::Sun => 6,
-            },
-            11 => match weekday {
-                // Mon=1..Sun=7
-                Weekday::Mon => 1,
-                Weekday::Tue => 2,
-                Weekday::Wed => 3,
-                Weekday::Thu => 4,
-                Weekday::Fri => 5,
-                Weekday::Sat => 6,
-                Weekday::Sun => 7,
-            },
-            12 => match weekday {
-                // Tue=1..Mon=7
-                Weekday::Tue => 1,
-                Weekday::Wed => 2,
-                Weekday::Thu => 3,
-                Weekday::Fri => 4,
-                Weekday::Sat => 5,
-                Weekday::Sun => 6,
-                Weekday::Mon => 7,
-            },
-            13 => match weekday {
-                // Wed=1..Tue=7
-                Weekday::Wed => 1,
-                Weekday::Thu => 2,
-                Weekday::Fri => 3,
-                Weekday::Sat => 4,
-                Weekday::Sun => 5,
-                Weekday::Mon => 6,
-                Weekday::Tue => 7,
-            },
-            14 => match weekday {
-                // Thu=1..Wed=7
-                Weekday::Thu => 1,
-                Weekday::Fri => 2,
-                Weekday::Sat => 3,
-                Weekday::Sun => 4,
-                Weekday::Mon => 5,
-                Weekday::Tue => 6,
-                Weekday::Wed => 7,
-            },
-            15 => match weekday {
-                // Fri=1..Thu=7
-                Weekday::Fri => 1,
-                Weekday::Sat => 2,
-                Weekday::Sun => 3,
-                Weekday::Mon => 4,
-                Weekday::Tue => 5,
-                Weekday::Wed => 6,
-                Weekday::Thu => 7,
-            },
-            16 => match weekday {
-                // Sat=1..Fri=7
-                Weekday::Sat => 1,
-                Weekday::Sun => 2,
-                Weekday::Mon => 3,
-                Weekday::Tue => 4,
-                Weekday::Wed => 5,
-                Weekday::Thu => 6,
-                Weekday::Fri => 7,
-            },
-            17 => match weekday {
-                // Sun=1..Sat=7
-                Weekday::Sun => 1,
-                Weekday::Mon => 2,
-                Weekday::Tue => 3,
-                Weekday::Wed => 4,
-                Weekday::Thu => 5,
-                Weekday::Fri => 6,
-                Weekday::Sat => 7,
-            },
+        // Map return_type to the d-value of its starting day and whether 0-based
+        let (start_d, zero_based) = match return_type {
+            1 | 17 => (1i64, false), // Sun=1..Sat=7
+            2 | 11 => (2, false),    // Mon=1..Sun=7
+            3 => (2, true),          // Mon=0..Sun=6
+            12 => (3, false),        // Tue=1..Mon=7
+            13 => (4, false),        // Wed=1..Tue=7
+            14 => (5, false),        // Thu=1..Wed=7
+            15 => (6, false),        // Fri=1..Thu=7
+            16 => (0, false),        // Sat=1..Fri=7
             _ => {
                 return Ok(CalcValue::Scalar(
                     LiteralValue::Error(ExcelError::new_num()),
                 ));
             }
+        };
+
+        let result = if zero_based {
+            (d - start_d + 7) % 7
+        } else {
+            (d - start_d + 7) % 7 + 1
         };
 
         Ok(CalcValue::Scalar(LiteralValue::Int(result)))
@@ -221,29 +154,61 @@ impl Function for WeeknumFn {
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
+        let serial_int = serial.trunc() as i64;
+        if serial_int < 0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // Serial 0 always returns week 0
+        if serial_int == 0 {
+            return Ok(CalcValue::Scalar(LiteralValue::Int(0)));
+        }
+
         let return_type = if args.len() > 1 {
             coerce_to_int(&args[1])?
         } else {
             1
         };
 
-        let date = serial_to_date(serial)?;
+        if return_type == 21 {
+            // ISO week number: computed from serial-based weekday
+            // serial % 7: 0=Sat, 1=Sun, 2=Mon, ..., 6=Fri
+            let d = (serial_int % 7) as i64;
+            // ISO weekday: Mon=1, ..., Sun=7
+            let iso_wd = if d < 2 { d + 6 } else { d - 1 };
 
-        // Determine first day of week
-        let week_starts = match return_type {
-            1 | 17 => Weekday::Sun,
-            2 | 11 => Weekday::Mon,
-            12 => Weekday::Tue,
-            13 => Weekday::Wed,
-            14 => Weekday::Thu,
-            15 => Weekday::Fri,
-            16 => Weekday::Sat,
-            21 => {
-                // ISO week number (special case)
-                return Ok(CalcValue::Scalar(LiteralValue::Int(
-                    date.iso_week().week() as i64
-                )));
+            // Thursday of this ISO week
+            let thu_serial = serial_int - iso_wd + 4;
+
+            if thu_serial < 1 {
+                // Falls in last week of previous year (only for first days of 1900)
+                return Ok(CalcValue::Scalar(LiteralValue::Int(52)));
             }
+
+            // Get year of the Thursday
+            let thu_date = serial_to_date(thu_serial as f64)?;
+            let thu_year = thu_date.year();
+
+            // Serial for Jan 1 of that year
+            let jan1 = NaiveDate::from_ymd_opt(thu_year, 1, 1).unwrap();
+            let jan1_serial = date_to_serial(&jan1) as i64;
+
+            let week = (thu_serial - jan1_serial) / 7 + 1;
+            return Ok(CalcValue::Scalar(LiteralValue::Int(week)));
+        }
+
+        // Non-ISO week number using serial-based weekday for Jan 1
+        // Starting weekday as d-value: 0=Sat, 1=Sun, 2=Mon, ..., 6=Fri
+        let week_starts_d: i64 = match return_type {
+            1 | 17 => 1, // Sunday
+            2 | 11 => 2, // Monday
+            12 => 3,     // Tuesday
+            13 => 4,     // Wednesday
+            14 => 5,     // Thursday
+            15 => 6,     // Friday
+            16 => 0,     // Saturday
             _ => {
                 return Ok(CalcValue::Scalar(
                     LiteralValue::Error(ExcelError::new_num()),
@@ -251,37 +216,32 @@ impl Function for WeeknumFn {
             }
         };
 
-        // Calculate week number based on when week starts
-        let jan1 = NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap();
-        let jan1_weekday = jan1.weekday();
+        // Get the year for this serial
+        let date = serial_to_date(serial)?;
+        let year = date.year();
 
-        // Days from week start day to Jan 1
-        let days_to_week_start = |wd: Weekday| -> i64 {
-            let target = week_starts.num_days_from_sunday() as i64;
-            let current = wd.num_days_from_sunday() as i64;
-            (current - target + 7) % 7
-        };
+        // Serial for Jan 1 of the year
+        let jan1 = NaiveDate::from_ymd_opt(year, 1, 1).unwrap();
+        let jan1_serial = date_to_serial(&jan1) as i64;
 
-        let jan1_offset = days_to_week_start(jan1_weekday);
-        let day_of_year = date.ordinal() as i64;
+        // Jan 1's weekday (d-value from serial)
+        let jan1_d = (jan1_serial % 7) as i64;
 
-        // Week 1 starts on the first occurrence of week_starts day, or Jan 1 if it is that day
-        let week_num = if jan1_offset == 0 {
-            (day_of_year - 1) / 7 + 1
-        } else {
-            (day_of_year + jan1_offset - 1) / 7 + 1
-        };
+        // Offset: how many days from week_starts to Jan 1
+        let offset = (jan1_d - week_starts_d + 7) % 7;
 
-        Ok(CalcValue::Scalar(LiteralValue::Int(week_num)))
+        // Day of year (1-based)
+        let day_of_year = serial_int - jan1_serial + 1;
+
+        // Week number: Jan 1 is always in week 1
+        let week = (day_of_year + offset - 1) / 7 + 1;
+
+        Ok(CalcValue::Scalar(LiteralValue::Int(week)))
     }
 }
 
 /// DATEDIF(start_date, end_date, unit) - Calculates the difference between two dates
 /// unit: "Y" (years), "M" (months), "D" (days), "MD", "YM", "YD"
-///
-/// NOTE: The "YD" unit has a known minor edge case with Feb 29 leap year handling.
-/// It uses .min(28) which may produce slightly different results than Excel for
-/// certain leap year date combinations.
 #[derive(Debug)]
 pub struct DatedifFn;
 impl Function for DatedifFn {
@@ -395,25 +355,14 @@ impl Function for DatedifFn {
                 months
             }
             "YD" => {
-                // Days ignoring years
-                // NOTE: Known edge case - uses .min(28) for Feb 29 handling which may differ from Excel
-                let start_in_end_year = NaiveDate::from_ymd_opt(
-                    end_date.year(),
-                    start_date.month(),
-                    start_date.day().min(28), // Handle Feb 29 -> Feb 28
-                );
-                match start_in_end_year {
-                    Some(d) if d <= end_date => (end_date - d).num_days(),
-                    _ => {
-                        // Start date would be after end date in same year, use previous year
-                        let start_prev_year = NaiveDate::from_ymd_opt(
-                            end_date.year() - 1,
-                            start_date.month(),
-                            start_date.day().min(28),
-                        )
-                        .unwrap();
-                        (end_date - start_prev_year).num_days()
-                    }
+                // Days ignoring years: use day-of-year in a non-leap context
+                // to match Excel/LibreOffice behavior (consistent 365-day year)
+                let start_doy = non_leap_day_of_year(start_date.month(), start_date.day());
+                let end_doy = non_leap_day_of_year(end_date.month(), end_date.day());
+                if end_doy >= start_doy {
+                    end_doy - start_doy
+                } else {
+                    365 - start_doy + end_doy
                 }
             }
             _ => {

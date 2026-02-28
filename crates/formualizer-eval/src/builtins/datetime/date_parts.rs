@@ -54,6 +54,10 @@ impl Function for YearFn {
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
+        // Serial 0: Excel returns YEAR=1900
+        if serial.trunc() == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1900)));
+        }
         let date = serial_to_date(serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
             date.year() as i64,
@@ -89,6 +93,10 @@ impl Function for MonthFn {
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
+        // Serial 0: Excel returns MONTH=1
+        if serial.trunc() == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)));
+        }
         let date = serial_to_date(serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
             date.month() as i64,
@@ -124,6 +132,15 @@ impl Function for DayFn {
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let serial = coerce_to_serial(&args[0])?;
+        let serial_int = serial.trunc() as i64;
+        // Serial 0: Excel returns DAY=0
+        if serial_int == 0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)));
+        }
+        // Serial 60: phantom Feb 29, 1900
+        if serial_int == 60 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(29)));
+        }
         let date = serial_to_date(serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
             date.day() as i64,

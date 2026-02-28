@@ -541,7 +541,7 @@ impl PyWorkbook {
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                     "scope must be 'workbook' or 'sheet'",
-                ))
+                ));
             }
         };
 

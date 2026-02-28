@@ -7,9 +7,9 @@
 //! without requiring special runtime handling.
 
 use super::DependencyGraph;
-use crate::reference::{CellRef, Coord};
-use crate::engine::vertex::VertexKind;
 use crate::SheetId;
+use crate::engine::vertex::VertexKind;
+use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -96,7 +96,10 @@ impl DependencyGraph {
             },
 
             ASTNodeType::Reference {
-                reference: ReferenceType::Cell { sheet, row, col, .. },
+                reference:
+                    ReferenceType::Cell {
+                        sheet, row, col, ..
+                    },
                 ..
             } => {
                 // Resolve the sheet name

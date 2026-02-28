@@ -156,7 +156,10 @@ impl<'g> BulkIngestBuilder<'g> {
                     self.g.try_fold_indirect(ast, stage.id);
                 }
                 if dbg {
-                    eprintln!("[fz][ingest] sheet '{}' INDIRECT folding pass done", stage.name);
+                    eprintln!(
+                        "[fz][ingest] sheet '{}' INDIRECT folding pass done",
+                        stage.name
+                    );
                 }
             }
             // 1) Build plan for formulas on this sheet

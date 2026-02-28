@@ -1,6 +1,6 @@
 //! DATE and TIME functions
 
-use super::serial::{create_date_normalized, time_to_fraction};
+use super::serial::time_to_fraction;
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -68,8 +68,18 @@ impl Function for DateFn {
             year
         };
 
-        let date = create_date_normalized(adjusted_year, month, day)?;
-        let serial = super::serial::date_to_serial_for(ctx.date_system(), &date);
+        // Normalize month to get target year/month using Euclidean division
+        let total_months = (adjusted_year as i64) * 12 + (month as i64) - 1;
+        let norm_year = total_months.div_euclid(12) as i32;
+        let norm_month = (total_months.rem_euclid(12) + 1) as u32;
+
+        // Compute serial via first-of-month serial + (day - 1).
+        // This correctly handles the phantom Feb 29 (serial 60) because
+        // serial arithmetic respects the phantom day boundary.
+        let first_of_month = chrono::NaiveDate::from_ymd_opt(norm_year, norm_month, 1)
+            .ok_or_else(ExcelError::new_num)?;
+        let first_serial = super::serial::date_to_serial_for(ctx.date_system(), &first_of_month);
+        let serial = first_serial + (day as f64 - 1.0);
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             serial,

@@ -2223,11 +2223,11 @@ impl Parser {
             && self.tokens[self.position].subtype == TokenSubType::Arg
         {
             // Empty first argument - represented as empty text literal for compatibility
+            // Don't consume the comma - let the while loop handle it as a separator
             args.push(ASTNode::new(
                 ASTNodeType::Literal(LiteralValue::Text("".to_string())),
                 None,
             ));
-            self.position += 1;
         } else {
             // Parse first argument
             args.push(self.parse_expression()?);
@@ -2736,11 +2736,11 @@ impl<'a> SpanParser<'a> {
             && self.tokens[self.position].token_type == TokenType::Sep
             && self.tokens[self.position].subtype == TokenSubType::Arg
         {
+            // Empty first argument - don't consume the comma; let the while loop handle it
             args.push(ASTNode::new(
                 ASTNodeType::Literal(LiteralValue::Text("".to_string())),
                 None,
             ));
-            self.position += 1;
         } else {
             args.push(self.parse_expression()?);
         }

@@ -769,8 +769,8 @@ fn irr_solve(cashflows: &[f64], guess: f64) -> Option<f64> {
     // --- Phase 2: Bracket the root, then apply Brent's method ---
     // Search for a sign change in NPV across a wide range of rates.
     let probes: &[f64] = &[
-        -0.99, -0.9, -0.5, -0.1, -0.01, 0.0, 0.001, 0.005, 0.01, 0.02,
-        0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0,
+        -0.99, -0.9, -0.5, -0.1, -0.01, 0.0, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3,
+        0.5, 1.0, 2.0, 5.0, 10.0,
     ];
     let mut lo = f64::NAN;
     let mut hi = f64::NAN;
@@ -853,14 +853,11 @@ fn irr_solve(cashflows: &[f64], guess: f64) -> Option<f64> {
                 // Inverse quadratic interpolation
                 let dpre = (fpre - fcur) / (xpre - xcur);
                 let dblk = (fblk - fcur) / (xblk - xcur);
-                -fcur * (fblk * dblk - fpre * dpre)
-                    / (dblk * dpre * (fblk - fpre))
+                -fcur * (fblk * dblk - fpre * dpre) / (dblk * dpre * (fblk - fpre))
             };
 
             // Accept if step is small enough
-            if 2.0 * stry.abs()
-                < spre.abs().min(3.0 * sbis.abs() - delta)
-            {
+            if 2.0 * stry.abs() < spre.abs().min(3.0 * sbis.abs() - delta) {
                 spre = scur;
                 scur = stry;
             } else {
@@ -956,7 +953,9 @@ impl Function for IrrFn {
 
         match irr_solve(&cashflows, guess) {
             Some(rate) => Ok(CalcValue::Scalar(LiteralValue::Number(rate))),
-            None => Ok(CalcValue::Scalar(LiteralValue::Error(ExcelError::new_num()))),
+            None => Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            )),
         }
     }
 }
@@ -1655,14 +1654,18 @@ impl Function for RriFn {
 
         // nper must be > 0, pv must be non-zero
         if nper <= 0.0 || pv == 0.0 {
-            return Ok(CalcValue::Scalar(LiteralValue::Error(ExcelError::new_num())));
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
         }
 
         // If pv and fv have different signs, the ratio is negative and
         // fractional exponent would produce NaN → Excel returns #NUM!
         let ratio = fv / pv;
         if ratio < 0.0 {
-            return Ok(CalcValue::Scalar(LiteralValue::Error(ExcelError::new_num())));
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
         }
 
         let result = ratio.powf(1.0 / nper) - 1.0;
