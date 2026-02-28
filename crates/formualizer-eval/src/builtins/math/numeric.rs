@@ -1321,4 +1321,82 @@ mod tests_numeric {
             LiteralValue::Number(4.0)
         );
     }
+
+    // ── Too-few-arguments: must not panic ────────────────────────────────
+    // Excel gates this at the input layer (you can't type =ROUND(5) into a
+    // cell), but programmatically-generated workbooks can contain formulas
+    // with missing arguments. Formualizer must return an error value, not
+    // panic with an index-out-of-bounds.
+
+    #[test]
+    fn round_one_arg_returns_error_not_panic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(RoundFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ROUND").unwrap();
+        let n = lit(LiteralValue::Number(2.5));
+        let result = f
+            .dispatch(
+                &[ArgumentHandle::new(&n, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert!(
+            matches!(result, LiteralValue::Error(_)),
+            "Expected an error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn rounddown_one_arg_returns_error_not_panic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(RoundDownFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ROUNDDOWN").unwrap();
+        let n = lit(LiteralValue::Number(1.9));
+        let result = f
+            .dispatch(
+                &[ArgumentHandle::new(&n, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert!(
+            matches!(result, LiteralValue::Error(_)),
+            "Expected an error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn abs_zero_args_returns_error_not_panic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AbsFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ABS").unwrap();
+        let result = f
+            .dispatch(&[], &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert!(
+            matches!(result, LiteralValue::Error(_)),
+            "Expected an error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn mod_one_arg_returns_error_not_panic() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(ModFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "MOD").unwrap();
+        let n = lit(LiteralValue::Number(10.0));
+        let result = f
+            .dispatch(
+                &[ArgumentHandle::new(&n, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert!(
+            matches!(result, LiteralValue::Error(_)),
+            "Expected an error, got {result:?}"
+        );
+    }
 }

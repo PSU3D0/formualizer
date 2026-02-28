@@ -86,6 +86,11 @@ pub struct PreparedArgs<'a> {
 #[derive(Default)]
 pub struct ValidationOptions {
     pub warn_only: bool,
+    /// Minimum number of arguments the function requires.  When non-zero,
+    /// `validate_and_prepare` rejects calls with fewer arguments before any
+    /// per-argument validation runs, preventing out-of-bounds panics in
+    /// `eval` implementations.
+    pub min_args: usize,
 }
 
 // Legacy adapter removed in clean break.
@@ -176,6 +181,21 @@ pub fn validate_and_prepare<'a, 'b>(
     schema: &[ArgSchema],
     options: ValidationOptions,
 ) -> Result<PreparedArgs<'a>, ExcelError> {
+    // Minimum arity — reject too-few arguments before per-arg validation so
+    // that individual `eval` implementations cannot panic on indexing.
+    if options.min_args > 0 && args.len() < options.min_args {
+        if options.warn_only {
+            return Ok(PreparedArgs { items: Vec::new() });
+        }
+        return Err(
+            ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "Too few arguments: expected at least {}, got {}",
+                options.min_args,
+                args.len()
+            )),
+        );
+    }
+
     // Arity: simple rule – if schema.len() == 1, allow variadic repetition; else match up to schema.len()
     if schema.is_empty() {
         return Ok(PreparedArgs { items: Vec::new() });

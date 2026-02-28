@@ -148,13 +148,18 @@ pub trait Function: Send + Sync + 'static {
         args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
         ctx: &dyn crate::traits::FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        // Central argument validation
+        // Central argument validation (includes min-arity check)
         {
             use crate::args::{ValidationOptions, validate_and_prepare};
             let schema = self.arg_schema();
-            if let Err(e) =
-                validate_and_prepare(args, schema, ValidationOptions { warn_only: false })
-            {
+            if let Err(e) = validate_and_prepare(
+                args,
+                schema,
+                ValidationOptions {
+                    warn_only: false,
+                    min_args: self.min_args(),
+                },
+            ) {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
         }
