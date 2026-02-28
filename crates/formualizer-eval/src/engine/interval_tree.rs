@@ -470,7 +470,7 @@ impl<T: Clone + Eq + std::hash::Hash> BTreeIntervalTree<T> {
 
     /// Insert a value for the given interval [low, high]
     pub fn insert(&mut self, low: u32, high: u32, value: T) {
-        let entries = self.map.entry(low).or_insert_with(Vec::new);
+        let entries = self.map.entry(low).or_default();
 
         if let Some(node) = entries.iter_mut().find(|n| n.high == high) {
             node.values.insert(value);
@@ -495,20 +495,20 @@ impl<T: Clone + Eq + std::hash::Hash> BTreeIntervalTree<T> {
     }
 
     pub fn remove(&mut self, low: u32, high: u32, value: &T) -> bool {
-        if let Some(nodes) = self.map.get_mut(&low) {
-            if let Some(node) = nodes.iter_mut().find(|n| n.high == high) {
-                let removed = node.values.remove(value);
-                if node.values.is_empty() {
-                    nodes.retain(|n| n.high != high);
-                }
-                if nodes.is_empty() {
-                    self.map.remove(&low);
-                }
-                if removed {
-                    self.size -= 1;
-                }
-                return removed;
+        if let Some(nodes) = self.map.get_mut(&low)
+            && let Some(node) = nodes.iter_mut().find(|n| n.high == high)
+        {
+            let removed = node.values.remove(value);
+            if node.values.is_empty() {
+                nodes.retain(|n| n.high != high);
             }
+            if nodes.is_empty() {
+                self.map.remove(&low);
+            }
+            if removed {
+                self.size -= 1;
+            }
+            return removed;
         }
         false
     }
@@ -542,7 +542,7 @@ impl<T: Clone + Eq + std::hash::Hash> BTreeIntervalTree<T> {
 
         // 2. Process items. BTreeMap handles the balancing (O(log N)).
         for (coord, set) in items {
-            let entries = self.map.entry(coord).or_insert_with(Vec::new);
+            let entries = self.map.entry(coord).or_default();
 
             // Since this is specifically for point intervals, check if [coord, coord] exists
             if let Some(node) = entries.iter_mut().find(|n| n.high == coord) {
@@ -571,7 +571,7 @@ impl<'a, T: Clone + Eq + std::hash::Hash> BTreeEntry<'a, T> {
     {
         if self.tree.get_mut(self.low, self.high).is_none() {
             let values = f();
-            let entries = self.tree.map.entry(self.low).or_insert_with(Vec::new);
+            let entries = self.tree.map.entry(self.low).or_default();
             entries.push(BTreeIntervalNode {
                 high: self.high,
                 values,
