@@ -52,6 +52,17 @@ fn bench_tree_operations(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
+
+        // --- 5. OVERHEAD RANGE QUERY ---
+        // This specifically tests the "scan risk" noted by the maintainer.
+        // We query for a small window at the very end of a large range.
+        group.bench_with_input(BenchmarkId::new("Query/EndRangeScan", n), n, |b, &n| {
+            b.iter(|| {
+                // Querying for the very last element, but providing a high upper bound
+                // that forces the BTreeMap to return all entries.
+                tree.query(black_box(n - 1), black_box(n))
+            })
+        });
     }
 
     group.finish();

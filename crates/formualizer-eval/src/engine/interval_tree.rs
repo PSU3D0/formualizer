@@ -97,14 +97,13 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
             && let Some(node) = nodes.iter_mut().find(|n| n.high == high)
         {
             let removed = node.values.remove(value);
-            if node.values.is_empty() {
+
+            if removed && node.values.is_empty() {
                 nodes.retain(|n| n.high != high);
-            }
-            if nodes.is_empty() {
-                self.map.remove(&low);
-            }
-            if removed {
                 self.size -= 1;
+                if nodes.is_empty() {
+                    self.map.remove(&low);
+                }
             }
             return removed;
         }
@@ -381,5 +380,29 @@ mod tests {
         tree.insert(50, 60, 1);
         assert_eq!(tree.query(0, 49).len(), 0);
         assert_eq!(tree.query(61, 100).len(), 0);
+    }
+
+    #[test]
+    fn test_multi_value_interval_size_tracking() {
+        let mut tree = IntervalTree::new();
+        let iv = (10, 20);
+
+        // 1. Insert two values for the same interval
+        // Destructure the tuple into low (iv.0) and high (iv.1)
+        tree.insert(iv.0, iv.1, "A");
+        tree.insert(iv.0, iv.1, "B");
+        assert_eq!(tree.len(), 1, "Should be 1 unique interval");
+
+        // 2. Remove first value - pass as reference &"A"
+        assert!(tree.remove(iv.0, iv.1, &"A"));
+        assert_eq!(
+            tree.len(),
+            1,
+            "Should still be 1 interval after partial removal"
+        );
+
+        // 3. Remove second value - size should now be 0
+        assert!(tree.remove(iv.0, iv.1, &"B"));
+        assert_eq!(tree.len(), 0, "Should be 0 after last value removed");
     }
 }
