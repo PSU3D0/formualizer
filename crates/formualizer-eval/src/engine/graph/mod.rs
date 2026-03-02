@@ -3010,8 +3010,7 @@ impl DependencyGraph {
     }
     pub(crate) fn rebuild_formula_dependencies(&mut self, vertex_id: VertexId, ast: &ASTNode) {
         // 1. Identify and clear INCOMING edges (the formula's parents/sources)
-        let current_sources: Vec<VertexId> =
-            self.edges.in_edges(vertex_id).to_vec();
+        let current_sources: Vec<VertexId> = self.edges.in_edges(vertex_id).to_vec();
         for source_id in current_sources {
             self.edges.remove_edge(source_id, vertex_id);
             self.topo.remove_edge(source_id, vertex_id);

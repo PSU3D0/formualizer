@@ -293,18 +293,19 @@ impl DependencyGraph {
 
         // Copy the ID out to avoid borrow-checker conflicts
         if let Some(&ast_id) = self.vertex_formulas.get(&vertex_id)
-            && let Some(mut ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg) {
-                // Apply the healer
-                self.update_ast_ids_and_names(&mut ast, sheet_name, new_sheet_id);
+            && let Some(mut ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg)
+        {
+            // Apply the healer
+            self.update_ast_ids_and_names(&mut ast, sheet_name, new_sheet_id);
 
-                // Store the updated formula
-                let new_ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
-                self.vertex_formulas.insert(vertex_id, new_ast_id);
+            // Store the updated formula
+            let new_ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
+            self.vertex_formulas.insert(vertex_id, new_ast_id);
 
-                // Re-wire the graph so the formula depends on the NEW cell vertex
-                self.rebuild_formula_dependencies(vertex_id, &ast);
-                self.mark_vertex_dirty(vertex_id);
-            }
+            // Re-wire the graph so the formula depends on the NEW cell vertex
+            self.rebuild_formula_dependencies(vertex_id, &ast);
+            self.mark_vertex_dirty(vertex_id);
+        }
     }
 
     /// Helper to identify if an AST node depends on a specific sheet.
@@ -401,16 +402,16 @@ impl DependencyGraph {
         let formulas_to_update: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
         for formula_id in formulas_to_update {
             if let Some(ast_id) = self.vertex_formulas.get(&formula_id)
-                && let Some(ast) = self.data_store.retrieve_ast(*ast_id, &self.sheet_reg) {
-                    let updated_ast = update_sheet_references_in_ast(&ast, &old_name, new_name);
-                    if ast != updated_ast {
-                        let updated_ast_id =
-                            self.data_store.store_ast(&updated_ast, &self.sheet_reg);
-                        self.vertex_formulas.insert(formula_id, updated_ast_id);
-                        self.rebuild_formula_dependencies(formula_id, &updated_ast);
-                        self.mark_vertex_dirty(formula_id);
-                    }
+                && let Some(ast) = self.data_store.retrieve_ast(*ast_id, &self.sheet_reg)
+            {
+                let updated_ast = update_sheet_references_in_ast(&ast, &old_name, new_name);
+                if ast != updated_ast {
+                    let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
+                    self.vertex_formulas.insert(formula_id, updated_ast_id);
+                    self.rebuild_formula_dependencies(formula_id, &updated_ast);
+                    self.mark_vertex_dirty(formula_id);
                 }
+            }
         }
         // 4. CLEANUP: Clear any structural #REF! markers for this sheet's vertices
         // We collect the IDs first to avoid borrowing 'self' inside 'retain'
