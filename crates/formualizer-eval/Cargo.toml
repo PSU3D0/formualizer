@@ -66,6 +66,11 @@ optional = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { workspace = true }
 glob = "0.3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "interval_tree_bench"
+harness = false
 
 [features]
 default = []
