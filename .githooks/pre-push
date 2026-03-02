@@ -1,0 +1,15 @@
+#!/bin/bash
+set -e
+
+echo "Running pre-push checks..."
+
+# 1. Check Formatting
+cargo fmt --all -- --check
+
+# 2. Run Clippy (mimicking CI strictness)
+cargo clippy --all-targets --all-features -- -D warnings
+
+# 3. Run Tests
+cargo test
+
+echo "Checks passed. Pushing code."
