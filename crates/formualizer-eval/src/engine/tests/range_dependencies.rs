@@ -806,11 +806,11 @@ fn test_rename_cross_sheet_link() {
 
     // 1. Rename Sheet1 to DataSheet
     let sheet_id = engine.graph.sheet_reg().get_id("Sheet1").unwrap();
-    let _ = engine.rename_sheet(sheet_id, "DataSheet").unwrap();
+    engine.rename_sheet(sheet_id, "DataSheet").unwrap();
 
     // 2. Create link on Sheet2!A1 pointing to the renamed sheet
     let ast = parse("=DataSheet!A1").expect("Parse failed");
-    let _ = engine.set_cell_formula("Sheet2", 1, 1, ast).unwrap();
+    engine.set_cell_formula("Sheet2", 1, 1, ast).unwrap();
 
     // 3. Force Evaluation
     let _ = engine.evaluate_all().unwrap();
