@@ -1932,3 +1932,79 @@ fn test_vertex_editor_change_log() {
         _ => panic!("Expected DeleteName event"),
     }
 }
+
+#[test]
+fn test_named_range_orphan_healing_pressure() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    // 1. Setup initial state: A named range "Data" pointing to A1
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+
+    let sid = engine.sheet_id("Sheet1").unwrap();
+    let target = CellRef::new(sid, Coord::from_excel(1, 1, true, true));
+
+    engine
+        .define_name("Data", NamedDefinition::Cell(target), NameScope::Workbook)
+        .unwrap();
+
+    // 2. Create a formula that uses the named range
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=Data * 2").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(20.0)),
+        "Initial evaluation should work"
+    );
+
+    // 3. DELETE the named range
+    // Based on named_ranges.rs:378, remove_sheet is used for sheets,
+    // but names are likely handled via a delete/remove method on engine.
+    engine.delete_name("Data", NameScope::Workbook).unwrap();
+
+    engine.evaluate_all().unwrap();
+    // After deletion, the formula should likely result in a #NAME? or #REF! error
+    match engine.get_cell_value("Sheet1", 1, 2) {
+        Some(LiteralValue::Error(e)) => {
+            assert!(
+                e.kind == ExcelErrorKind::Name || e.kind == ExcelErrorKind::Ref,
+                "Formula should show error after name deletion"
+            );
+        }
+        _ => panic!("Expected error after name deletion"),
+    }
+
+    // 4. RECREATE the named range pointing to a DIFFERENT cell (B1)
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(42.0)) // B1 = 42
+        .unwrap();
+
+    let target_new = CellRef::new(sid, Coord::from_excel(1, 2, true, true)); // B1
+    engine
+        .define_name(
+            "Data",
+            NamedDefinition::Cell(target_new),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    // 5. THE TEST: Does the formula "heal" and track the new definition?
+    engine.evaluate_all().unwrap();
+
+    let final_val = engine.get_cell_value("Sheet1", 1, 2);
+
+    assert!(
+        final_val.is_some(),
+        "If this fails, the formula did not heal after the Name was recreated"
+    );
+
+    assert_eq!(
+        final_val,
+        Some(LiteralValue::Number(84.0)),
+        "Formula should track the new definition (42 * 2)"
+    );
+}

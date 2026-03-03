@@ -752,3 +752,80 @@ fn invalidate_unknown_source_errors() {
         .expect_err("unknown source should error");
     assert_eq!(err.kind, ExcelErrorKind::Name);
 }
+#[test]
+fn test_table_column_orphan_healing_pressure() {
+    // 1. Create the context.
+    // We keep it in an Arc here because the tests in sources.rs
+    // usually implement EvaluationContext for the context itself.
+    let ctx = SourceCtx::default();
+
+    // 2. Setup initial table "Sales"
+    let table = Arc::new(MemTable {
+        headers: vec!["Amount".into()],
+        data: vec![vec![LiteralValue::Number(100.0)]],
+    });
+
+    // Modify ctx BEFORE moving it into the engine
+    ctx.set_table("Sales", table);
+
+    // 3. Create the engine.
+    // We pass ctx by value (moving it), but because it's full of Arcs/RwLocks
+    // inside SourceCtx, we can still use it if we had a clone.
+    // Let's use the pattern from line 733 of your sources.rs:
+    let mut engine = Engine::new(ctx, EvalConfig::default());
+    engine.add_sheet("Sheet1").unwrap();
+    engine.define_source_table("Sales", None).unwrap();
+
+    // 4. Set formula
+    let ast = formualizer_parse::parser::parse("=Sales[Amount]").unwrap();
+    engine.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(100.0))
+    );
+
+    // 5. THE BREAK:
+    // Since we can't reach 'ctx' anymore (it moved), we use a clever trick:
+    // In these tests, Engine<SourceCtx> usually exposes the resolver via
+    // the fact that Engine implements Deref or has a specific test-only helper.
+    // BUT, the easiest way is to clone ctx at the start:
+
+    /* REVISED START */
+    let ctx = SourceCtx::default();
+    let ctx_handle = ctx.clone(); // If SourceCtx implements Clone (which it usually does via Arc)
+    let mut engine = Engine::new(ctx, EvalConfig::default());
+    /* END REVISED START */
+
+    // Now use ctx_handle to break it:
+    let empty_table = Arc::new(MemTable {
+        headers: vec!["WrongColumn".into()],
+        data: vec![vec![LiteralValue::Number(0.0)]],
+    });
+    ctx_handle.set_table("Sales", empty_table);
+
+    engine.evaluate_all().unwrap();
+
+    // Should be an error because "Amount" is gone
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, formualizer_common::ExcelErrorKind::Ref),
+        _ => panic!("Expected #REF! error"),
+    }
+
+    // 6. THE RECREATION (The Pressure Test)
+    let healed_table = Arc::new(MemTable {
+        headers: vec!["Amount".into()],
+        data: vec![vec![LiteralValue::Number(200.0)]],
+    });
+    ctx_handle.set_table("Sales", healed_table);
+
+    engine.evaluate_all().unwrap();
+
+    // THIS IS THE ASSERTION THAT WILL FAIL
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(200.0)),
+        "Table column should have healed but the Graph is unaware of the change"
+    );
+}
