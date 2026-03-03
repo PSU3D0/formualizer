@@ -108,4 +108,5 @@ mod row_visibility_mask;
 mod row_visibility_state;
 mod row_visibility_transactions;
 mod subtotal_visibility;
+mod tombstones;
 mod visibility_mask_cache;

@@ -28,6 +28,7 @@ mod sheets;
 pub mod snapshot;
 mod sources;
 mod tables;
+pub mod tombstones;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
