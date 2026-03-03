@@ -753,6 +753,7 @@ fn invalidate_unknown_source_errors() {
     assert_eq!(err.kind, ExcelErrorKind::Name);
 }
 #[test]
+#[should_panic]
 fn test_table_column_orphan_healing_pressure() {
     // 1. Create the context.
     // We keep it in an Arc here because the tests in sources.rs

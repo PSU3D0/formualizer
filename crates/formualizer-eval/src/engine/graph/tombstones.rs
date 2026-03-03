@@ -1,4 +1,4 @@
-use crate::engine::VertexId;
+use crate::engine::vertex::VertexId;
 use rustc_hash::FxHashMap;
 
 /// Categorizes different types of names that can go missing in a workbook.

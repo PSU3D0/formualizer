@@ -5,10 +5,10 @@ use crate::test_workbook::TestWorkbook;
 use formualizer_common::{LiteralValue, parse_a1_1based};
 use formualizer_parse::parse;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
-#[cfg(feature = "tracing")]
-use tracing::Level;
-#[cfg(feature = "tracing")]
-use tracing_subscriber::fmt::format::FmtSpan;
+//#[cfg(feature = "tracing")]
+//use tracing::Level;
+//#[cfg(feature = "tracing")]
+//use tracing_subscriber::fmt::format::FmtSpan;
 
 /// Helper to create a range reference AST node
 fn range_ast(start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> ASTNode {
@@ -511,6 +511,7 @@ fn test_ast_surgical_rename() {
 
 #[test]
 fn test_rename_fixes_ref_errors() {
+    /*
     #[cfg(feature = "tracing")]
     {
         let _ = tracing_subscriber::fmt()
@@ -519,6 +520,7 @@ fn test_rename_fixes_ref_errors() {
             .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
             .try_init();
     }
+    */
 
     let mut engine = create_simple_engine();
 

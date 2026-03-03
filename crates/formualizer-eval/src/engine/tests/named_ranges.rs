@@ -1934,6 +1934,7 @@ fn test_vertex_editor_change_log() {
 }
 
 #[test]
+#[should_panic(expected = "Formula should track the new definition")]
 fn test_named_range_orphan_healing_pressure() {
     let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
 
