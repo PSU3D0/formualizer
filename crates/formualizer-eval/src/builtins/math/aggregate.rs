@@ -117,6 +117,24 @@ impl Function for SumFn {
                     LiteralValue::Error(e) => {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                     }
+                    LiteralValue::Array(rows) => {
+                        for row in &rows {
+                            for cell in row {
+                                match cell {
+                                    LiteralValue::Error(e) => {
+                                        return Ok(crate::traits::CalcValue::Scalar(
+                                            LiteralValue::Error(e.clone()),
+                                        ));
+                                    }
+                                    _ => {
+                                        if let Ok(n) = coerce_num(cell) {
+                                            total += n;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     v => total += coerce_num(&v)?,
                 }
             }
@@ -214,11 +232,33 @@ impl Function for CountFn {
                 }
             } else {
                 let v = arg.value()?.into_literal();
-                if let LiteralValue::Error(e) = v {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
-                }
-                if !matches!(v, LiteralValue::Empty) && coerce_num(&v).is_ok() {
-                    count += 1;
+                match v {
+                    LiteralValue::Error(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                    LiteralValue::Array(rows) => {
+                        for row in &rows {
+                            for cell in row {
+                                match cell {
+                                    LiteralValue::Error(e) => {
+                                        return Ok(crate::traits::CalcValue::Scalar(
+                                            LiteralValue::Error(e.clone()),
+                                        ));
+                                    }
+                                    _ => {
+                                        if coerce_num(cell).is_ok() {
+                                            count += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    v => {
+                        if !matches!(v, LiteralValue::Empty) && coerce_num(&v).is_ok() {
+                            count += 1;
+                        }
+                    }
                 }
             }
         }
@@ -342,12 +382,35 @@ impl Function for AverageFn {
                 }
             } else {
                 let v = arg.value()?.into_literal();
-                if let LiteralValue::Error(e) = v {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
-                }
-                if let Ok(n) = crate::coercion::to_number_lenient_with_locale(&v, &ctx.locale()) {
-                    sum += n;
-                    cnt += 1;
+                match v {
+                    LiteralValue::Error(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                    LiteralValue::Array(rows) => {
+                        for row in &rows {
+                            for cell in row {
+                                match cell {
+                                    LiteralValue::Error(e) => {
+                                        return Ok(crate::traits::CalcValue::Scalar(
+                                            LiteralValue::Error(e.clone()),
+                                        ));
+                                    }
+                                    _ => {
+                                        if let Ok(n) = crate::coercion::to_number_lenient_with_locale(cell, &ctx.locale()) {
+                                            sum += n;
+                                            cnt += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    v => {
+                        if let Ok(n) = crate::coercion::to_number_lenient_with_locale(&v, &ctx.locale()) {
+                            sum += n;
+                            cnt += 1;
+                        }
+                    }
                 }
             }
         }
@@ -766,6 +829,81 @@ mod tests {
         let result = sum_fn.dispatch(&args, &fctx).unwrap().into_literal();
         assert_eq!(result, LiteralValue::Number(6.0));
     }
+
+    #[test]
+    fn sum_array_literal() {
+        use crate::traits::ArgumentHandle;
+        use formualizer_parse::parser::{ASTNode, ASTNodeType};
+
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
+        let ctx = interp(&wb);
+        let arr = LiteralValue::Array(vec![vec![
+            LiteralValue::Int(1),
+            LiteralValue::Int(2),
+            LiteralValue::Int(3),
+        ]]);
+        let node = ASTNode::new(ASTNodeType::Literal(arr), None);
+        let args = vec![ArgumentHandle::new(&node, &ctx)];
+        let f = ctx.context.get_function("", "SUM").unwrap();
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(6.0)
+        );
+    }
+
+    #[test]
+    fn sum_array_with_error_propagates() {
+        use crate::traits::ArgumentHandle;
+        use formualizer_parse::parser::{ASTNode, ASTNodeType};
+
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
+        let ctx = interp(&wb);
+        let arr = LiteralValue::Array(vec![vec![
+            LiteralValue::Int(1),
+            LiteralValue::Error(ExcelError::new_value()),
+            LiteralValue::Int(3),
+        ]]);
+        let node = ASTNode::new(ASTNodeType::Literal(arr), None);
+        let args = vec![ArgumentHandle::new(&node, &ctx)];
+        let f = ctx.context.get_function("", "SUM").unwrap();
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
+            v => panic!("expected #VALUE! error, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn sum_mixed_scalar_and_array() {
+        use crate::traits::ArgumentHandle;
+        use formualizer_parse::parser::{ASTNode, ASTNodeType};
+
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumFn));
+        let ctx = interp(&wb);
+        let scalar = ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(10.0)), None);
+        let arr = LiteralValue::Array(vec![vec![
+            LiteralValue::Int(1),
+            LiteralValue::Int(2),
+            LiteralValue::Int(3),
+        ]]);
+        let arr_node = ASTNode::new(ASTNodeType::Literal(arr), None);
+        let args = vec![
+            ArgumentHandle::new(&scalar, &ctx),
+            ArgumentHandle::new(&arr_node, &ctx),
+        ];
+        let f = ctx.context.get_function("", "SUM").unwrap();
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(16.0)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -825,6 +963,26 @@ mod tests_count {
     }
 
     #[test]
+    fn count_array_literal() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountFn));
+        let ctx = interp(&wb);
+        // COUNT({1,"x",3}) => 2 (only numeric elements counted)
+        let arr = LiteralValue::Array(vec![vec![
+            LiteralValue::Int(1),
+            LiteralValue::Text("x".into()),
+            LiteralValue::Int(3),
+        ]]);
+        let node = ASTNode::new(ASTNodeType::Literal(arr), None);
+        let args = vec![ArgumentHandle::new(&node, &ctx)];
+        let f = ctx.context.get_function("", "COUNT").unwrap();
+        let fctx = ctx.function_context(None);
+        assert_eq!(
+            f.dispatch(&args, &fctx).unwrap().into_literal(),
+            LiteralValue::Number(2.0)
+        );
+    }
+
+    #[test]
     fn count_direct_error_argument_propagates() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountFn));
         let ctx = interp(&wb);
@@ -859,6 +1017,26 @@ mod tests_average {
 
     #[test]
     fn average_basic_numbers() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageFn));
+        let ctx = interp(&wb);
+        let arr = LiteralValue::Array(vec![vec![
+            LiteralValue::Int(2),
+            LiteralValue::Int(4),
+            LiteralValue::Int(6),
+        ]]);
+        let node = ASTNode::new(ASTNodeType::Literal(arr), None);
+        let args = vec![ArgumentHandle::new(&node, &ctx)];
+        let f = ctx.context.get_function("", "AVERAGE").unwrap();
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(4.0)
+        );
+    }
+
+    #[test]
+    fn average_array_literal() {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AverageFn));
         let ctx = interp(&wb);
         let arr = LiteralValue::Array(vec![vec![
