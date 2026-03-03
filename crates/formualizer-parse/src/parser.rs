@@ -1730,6 +1730,45 @@ impl ASTNode {
         });
         out
     }
+    /// Recursively updates sheet references within the AST.
+    ///
+    /// If `target_name` is provided, only references matching that sheet name are updated.
+    /// This is used for "healing" specific broken references (Tombstone rescue).
+    /// If `target_name` is None, it acts as a global rename (standard sheet rename).
+    pub fn update_sheet_references(&mut self, target_name: Option<&str>, new_name: &str) {
+        match &mut self.node_type {
+            ASTNodeType::Reference {
+                reference: ReferenceType::Cell { sheet, .. } | ReferenceType::Range { sheet, .. },
+                ..
+            } => {
+                if let Some(current_sheet) = sheet
+                    && (target_name.is_none() || target_name == Some(current_sheet.as_str()))
+                {
+                    *sheet = Some(new_name.to_string());
+                }
+            }
+            ASTNodeType::UnaryOp { expr, .. } => {
+                expr.update_sheet_references(target_name, new_name);
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                left.update_sheet_references(target_name, new_name);
+                right.update_sheet_references(target_name, new_name);
+            }
+            ASTNodeType::Function { args, .. } => {
+                for arg in args {
+                    arg.update_sheet_references(target_name, new_name);
+                }
+            }
+            ASTNodeType::Array(rows) => {
+                for row in rows {
+                    for cell in row {
+                        cell.update_sheet_references(target_name, new_name);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// A borrowing view over a ReferenceType. Avoids cloning sheet/names while walking.

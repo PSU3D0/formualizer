@@ -1,4 +1,4 @@
-use super::ast_utils::{update_internal_sheet_references, update_sheet_references_in_ast};
+use super::ast_utils::update_internal_sheet_references;
 use super::*;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 
@@ -368,6 +368,25 @@ impl DependencyGraph {
         }
     }
 
+    fn heal_orphaned_formulas(&mut self, sheet_name: &str) {
+        let orphans = self.tombstone_registry.take_orphans(sheet_name);
+
+        for vertex_id in orphans {
+            if let Some(ast_id) = self.vertex_formulas.get(&vertex_id)
+                && let Some(ast) = self.data_store.retrieve_ast(*ast_id, &self.sheet_reg)
+            {
+                let mut updated_ast = ast.clone();
+                updated_ast.update_sheet_references(None, sheet_name);
+
+                self.ref_error_vertices.remove(&vertex_id);
+                self.rebuild_formula_dependencies(vertex_id, &updated_ast);
+
+                let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
+                self.vertex_formulas.insert(vertex_id, updated_ast_id);
+                self.mark_vertex_dirty(vertex_id);
+            }
+        }
+    }
     /// Rename an existing sheet.
     pub fn rename_sheet(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
         if new_name.is_empty() || new_name.len() > 255 {
@@ -375,6 +394,7 @@ impl DependencyGraph {
         }
 
         let old_name = self.sheet_reg.name(sheet_id).to_string();
+
         if old_name.is_empty() {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Sheet does not exist"));
         }
@@ -389,41 +409,38 @@ impl DependencyGraph {
 
         self.begin_batch();
 
-        // 1. Perform the actual rename in the registry
         self.sheet_reg.rename(sheet_id, new_name)?;
+        self.end_batch();
+        self.begin_batch();
 
-        // 2. RESCUE TRIGGER: Does this new name heal existing #REF! errors?
-        let orphans = self.tombstone_registry.take_orphans(new_name);
-        for vertex_id in orphans {
-            self.rebind_vertex_to_sheet(vertex_id, new_name);
-        }
+        self.heal_orphaned_formulas(new_name);
 
-        // 3. UPDATE VALID REFERENCES: Update formulas pointing to the old name
+        // UPDATE VALID REFERENCES: Update formulas pointing to the old name
+        // Fixes Bug #2 (Over-broad rewriting)
         let formulas_to_update: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
         for formula_id in formulas_to_update {
             if let Some(ast_id) = self.vertex_formulas.get(&formula_id)
                 && let Some(ast) = self.data_store.retrieve_ast(*ast_id, &self.sheet_reg)
             {
-                let updated_ast = update_sheet_references_in_ast(&ast, &old_name, new_name);
+                let mut updated_ast = ast.clone();
+                updated_ast.update_sheet_references(Some(&old_name), new_name);
+
                 if ast != updated_ast {
+                    self.rebuild_formula_dependencies(formula_id, &updated_ast);
                     let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
                     self.vertex_formulas.insert(formula_id, updated_ast_id);
-                    self.rebuild_formula_dependencies(formula_id, &updated_ast);
                     self.mark_vertex_dirty(formula_id);
                 }
             }
         }
-        // 4. CLEANUP: Clear any structural #REF! markers for this sheet's vertices
-        // We collect the IDs first to avoid borrowing 'self' inside 'retain'
+
+        // CLEANUP: Clear structural #REF! markers
         let vertices_to_clear: Vec<VertexId> = self
             .ref_error_vertices
             .iter()
             .filter(|&&v_id| {
-                if let Some(cell_ref) = self.get_cell_ref(v_id) {
-                    cell_ref.sheet_id == sheet_id
-                } else {
-                    false
-                }
+                self.get_cell_ref(v_id)
+                    .is_some_and(|r| r.sheet_id == sheet_id)
             })
             .copied()
             .collect();

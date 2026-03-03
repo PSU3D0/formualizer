@@ -3038,7 +3038,8 @@ impl DependencyGraph {
         let references = self.find_references_in_ast(ast);
         let mut all_targets = Vec::new();
         for reference in references {
-            all_targets.extend(self.resolve_reference_to_vertices(&reference));
+            let targets = self.resolve_reference_to_vertices(&reference);
+            all_targets.extend(targets);
         }
 
         // 4. Re-wire (Sources -> Dependent)

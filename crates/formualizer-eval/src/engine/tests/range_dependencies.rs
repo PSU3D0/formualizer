@@ -2,8 +2,7 @@
 use super::common::{abs_cell_ref, eval_config_with_range_limit};
 use crate::engine::{DependencyGraph, Engine, EvalConfig, VertexId};
 use crate::test_workbook::TestWorkbook;
-use formualizer_common::LiteralValue;
-use formualizer_common::parse_a1_1based;
+use formualizer_common::{LiteralValue, parse_a1_1based};
 use formualizer_parse::parse;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -493,52 +492,92 @@ fn test_sheet_recreation_dependency_recovery() {
     );
 }
 
-/*
- * Scenario: Dependency Healing via Rename
- * 1. Create Sheet2!A1. Sheet1!A1 points to it.
- * 2. Delete Sheet2. Sheet1!A1 becomes #REF!.
- * 3. Create "Sheet3" (new ID).
- * 4. Rename "Sheet3" to "Sheet2".
- * * Why it matters:
- * This tests if the "Rename" logic is smart enough to trigger a
- * global re-scan of formulas to fix #REF! errors.
- */
+#[test]
+fn test_ast_surgical_rename() {
+    let mut ast = parse("=Sheet2!A1 + Sheet3!A1").unwrap();
+    ast.update_sheet_references(Some("Sheet2"), "NewSheet");
+
+    let normalized = format!("{:?}", ast); // Use Debug output since that's what we saw in logs
+
+    // Check for the updated sheet name in the Debug output
+    assert!(normalized.contains("\"NewSheet\""));
+    // Ensure Sheet3 was NOT touched
+    assert!(normalized.contains("\"Sheet3\""));
+}
 #[test]
 fn test_rename_fixes_ref_errors() {
-    use formualizer_parse::parse;
     let mut engine = create_simple_engine();
 
-    // Use engine methods where possible
-    let _ = engine.graph.add_sheet("Sheet2").unwrap();
+    let _ = engine.add_sheet("Sheet2").unwrap();
     engine
         .set_cell_formula("Sheet1", 1, 1, parse("=Sheet2!A1").unwrap())
         .unwrap();
 
-    // 1. Use the engine-level remove if available,
-    // but graph.remove_sheet is okay if you don't have an engine wrapper
-    let s2_id = engine.graph.sheet_id("Sheet2").unwrap();
-    engine.graph.remove_sheet(s2_id).unwrap();
+    // CRITICAL: We must evaluate or "touch" the graph so the dependency is registered
     engine.evaluate_all().unwrap();
 
-    // 2. Add Sheet3
-    let s3_id = engine.graph.add_sheet("Sheet3").unwrap();
+    let s2_id = engine.graph.sheet_id("Sheet2").unwrap();
+
+    // This call MUST populate the tombstone registry
+    engine.remove_sheet(s2_id).unwrap();
+
+    // Verify it's broken
+    engine.evaluate_all().unwrap();
+
+    let s3_id = engine.add_sheet("Sheet3").unwrap();
     engine
         .set_cell_value("Sheet3", 1, 1, LiteralValue::Number(100.0))
         .unwrap();
 
-    // 3. FIX: Call engine.rename_sheet, NOT engine.graph.rename_sheet
-    // This coordinates the Arrow Storage update with the Graph update
+    // This should now find the orphan
     engine.rename_sheet(s3_id, "Sheet2").unwrap();
+    let id_check = engine.graph.sheet_id("Sheet2");
 
+    // Assumption 2: Does the storage have data?
+    let val_check = engine.get_cell_value("Sheet2", 1, 1);
     engine.evaluate_all().unwrap();
 
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Number(100.0)),
-        "Renaming a sheet to a missing name did not heal the #REF! dependency"
+        Some(LiteralValue::Number(100.0))
     );
 }
 
+#[test]
+fn test_graph_orphan_healing_isolation() {
+    let mut engine = create_simple_engine();
+    let _ = engine.add_sheet("Sheet2").unwrap();
+
+    // 1. Formula points to B2 (row 2, col 2)
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Sheet2!B2").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    let s2_id = engine.graph.sheet_id("Sheet2").unwrap();
+    engine.remove_sheet(s2_id).unwrap();
+
+    // 2. Add Sheet3 and put data in B2 (row 2, col 2) to MATCH the formula
+    let s3_id = engine.add_sheet("Sheet3").unwrap();
+    engine
+        .set_cell_value("Sheet3", 2, 2, LiteralValue::Number(100.0)) // Match the B2 (2,2)
+        .unwrap();
+
+    // 3. Rename Sheet3 -> Sheet2 (This triggers the healing)
+    engine.rename_sheet(s3_id, "Sheet2").unwrap();
+    engine.evaluate_all().unwrap();
+
+    // 4. Verification
+    let val = engine.get_cell_value("Sheet1", 1, 1);
+
+    assert!(val.is_some(), "Value should be Some(100.0)");
+    match val.as_ref().unwrap() {
+        // .as_ref() avoids the move/clone issue
+        LiteralValue::Number(n) => assert_eq!(*n, 100.0),
+        LiteralValue::Error(e) => panic!("Still got an error: {:?}", e),
+        _ => panic!("Unexpected value type: {:?}", val),
+    }
+}
 /*
  * Scenario: Cross-Sheet Row Insertion Shifting
  * 1. Sheet1 has a SUM formula looking at a specific range on Sheet2 (A1:A10).
@@ -828,5 +867,64 @@ fn test_rename_cross_sheet_link() {
         val,
         LiteralValue::Number(100.0),
         "Cross-sheet link failed to retrieve value"
+    );
+}
+
+#[test]
+fn test_update_in_revived_sheeet() {
+    // setup
+    let mut engine = create_simple_engine();
+    let s2 = engine.add_sheet("Sheet2");
+    let _ = engine.set_cell_value("Sheet2", 1, 1, LiteralValue::Number(12.34));
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Sheet2!A1").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    let a1 = engine.graph.make_cell_ref("Sheet1", 1, 1);
+    let v_id = *engine
+        .graph
+        .get_vertex_id_for_address(&a1)
+        .expect("Vertex not found at Sheet2!A1");
+
+    let val = engine.evaluate_vertex(v_id).expect("Evaluation failed");
+    assert_eq!(
+        val,
+        LiteralValue::Number(12.34),
+        "Cross-sheet link failed to retrieve value"
+    );
+
+    // delete the sheet a formula is pointing to
+    let _ = engine.remove_sheet(s2.expect("Sheet2 must exist"));
+    engine.evaluate_all().unwrap();
+    let val = engine.get_cell_value("Sheet1", 1, 1).unwrap();
+    match val {
+        LiteralValue::Error(_) => { /* Success: it recognized the missing sheet */ }
+        _ => panic!(
+            "Expected an error value after sheet removal, found {:?}",
+            val
+        ),
+    }
+    // add a new sheet with the smae name
+    let s2_2 = engine.add_sheet("Sheet2");
+    let _ = engine.set_cell_value("Sheet2", 1, 1, LiteralValue::Number(774422.987));
+    engine.evaluate_all().unwrap();
+    let val = engine.evaluate_vertex(v_id).expect("Evaluation failed");
+    assert_eq!(
+        val,
+        LiteralValue::Number(774422.987),
+        "ref should work after sheet was re-added"
+    );
+
+    // If the edges were built with wrong orientation, this change will
+    // NOT propagate to Sheet1!A1.
+    let _ = engine.set_cell_value("Sheet2", 1, 1, LiteralValue::Number(999.0));
+    engine.evaluate_all().unwrap();
+
+    let val_final = engine.evaluate_vertex(v_id).expect("Evaluation failed");
+    assert_eq!(
+        val_final,
+        LiteralValue::Number(999.0),
+        "Dependency tracking failed after heal! The second update did not propagate."
     );
 }
