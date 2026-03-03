@@ -1069,3 +1069,98 @@ fn test_invalid_rename_rolls_back_arrow_storage() {
         "Failed rename must not mutate Arrow storage sheet mapping"
     );
 }
+
+#[test]
+fn test_whole_column_cross_sheet_recovers_after_readd() {
+    let mut engine = create_simple_engine();
+    engine.add_sheet("Sheet2").unwrap();
+
+    engine
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=SUM(Sheet2!A:A)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(10.0))
+    );
+
+    let s2 = engine.sheet_id("Sheet2").unwrap();
+    engine.remove_sheet(s2).unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(_)) => {}
+        other => panic!("expected #REF after removing Sheet2, got {other:?}"),
+    }
+
+    engine.add_sheet("Sheet2").unwrap();
+    engine
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(50.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(50.0))
+    );
+
+    engine
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(70.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(70.0)),
+        "Whole-column dependency should continue tracking after heal"
+    );
+}
+
+#[test]
+fn test_heal_one_of_multiple_missing_sheets_does_not_double_bind() {
+    let mut engine = create_simple_engine();
+    engine.add_sheet("S2").unwrap();
+    engine.add_sheet("S3").unwrap();
+
+    engine
+        .set_cell_value("S2", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+    engine
+        .set_cell_value("S3", 1, 1, LiteralValue::Number(20.0))
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=S2!A1+S3!A1").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(30.0))
+    );
+
+    let s2 = engine.sheet_id("S2").unwrap();
+    let s3 = engine.sheet_id("S3").unwrap();
+    engine.remove_sheet(s2).unwrap();
+    engine.remove_sheet(s3).unwrap();
+    engine.evaluate_all().unwrap();
+
+    engine.add_sheet("S2").unwrap();
+    engine
+        .set_cell_value("S2", 1, 1, LiteralValue::Number(100.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(_)) => {}
+        other => panic!("expected unresolved error until S3 returns, got {other:?}"),
+    }
+
+    engine.add_sheet("S3").unwrap();
+    engine
+        .set_cell_value("S3", 1, 1, LiteralValue::Number(20.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(120.0)),
+        "Healing S2 first must not rewrite S3 references"
+    );
+}
