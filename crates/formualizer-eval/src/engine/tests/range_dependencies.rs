@@ -881,16 +881,9 @@ fn test_update_in_revived_sheeet() {
         .unwrap();
 
     engine.evaluate_all().unwrap();
-    let a1 = engine.graph.make_cell_ref("Sheet1", 1, 1);
-    let v_id = *engine
-        .graph
-        .get_vertex_id_for_address(&a1)
-        .expect("Vertex not found at Sheet2!A1");
-
-    let val = engine.evaluate_vertex(v_id).expect("Evaluation failed");
     assert_eq!(
-        val,
-        LiteralValue::Number(12.34),
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(12.34)),
         "Cross-sheet link failed to retrieve value"
     );
 
@@ -905,26 +898,174 @@ fn test_update_in_revived_sheeet() {
             val
         ),
     }
-    // add a new sheet with the smae name
-    let s2_2 = engine.add_sheet("Sheet2");
+
+    // add a new sheet with the same name
+    let _ = engine.add_sheet("Sheet2");
     let _ = engine.set_cell_value("Sheet2", 1, 1, LiteralValue::Number(774422.987));
     engine.evaluate_all().unwrap();
-    let val = engine.evaluate_vertex(v_id).expect("Evaluation failed");
     assert_eq!(
-        val,
-        LiteralValue::Number(774422.987),
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(774422.987)),
         "ref should work after sheet was re-added"
     );
 
-    // If the edges were built with wrong orientation, this change will
-    // NOT propagate to Sheet1!A1.
+    // If dependency edges were rebuilt incorrectly, this change will not propagate.
     let _ = engine.set_cell_value("Sheet2", 1, 1, LiteralValue::Number(999.0));
     engine.evaluate_all().unwrap();
 
-    let val_final = engine.evaluate_vertex(v_id).expect("Evaluation failed");
     assert_eq!(
-        val_final,
-        LiteralValue::Number(999.0),
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(999.0)),
         "Dependency tracking failed after heal! The second update did not propagate."
+    );
+}
+
+#[test]
+fn test_readded_sheet_keeps_mixed_sheet_formula_intact() {
+    let mut engine = create_simple_engine();
+    engine.add_sheet("Sheet2").unwrap();
+    engine.add_sheet("Sheet3").unwrap();
+
+    engine
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet3", 1, 1, LiteralValue::Number(5.0))
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Sheet2!A1+Sheet3!A1").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    let s2 = engine.sheet_id("Sheet2").unwrap();
+    engine.remove_sheet(s2).unwrap();
+    engine.evaluate_all().unwrap();
+
+    engine.add_sheet("Sheet2").unwrap();
+    engine
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(15.0)),
+        "Healing must not rewrite unrelated Sheet3 references"
+    );
+}
+
+#[test]
+fn test_readd_sheet_does_not_overwrite_user_formula_edit_while_missing() {
+    let mut engine = create_simple_engine();
+    engine.add_sheet("Sheet2").unwrap();
+    engine.add_sheet("Sheet3").unwrap();
+
+    engine
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet3", 1, 1, LiteralValue::Number(5.0))
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Sheet2!A1").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    let s2 = engine.sheet_id("Sheet2").unwrap();
+    engine.remove_sheet(s2).unwrap();
+    engine.evaluate_all().unwrap();
+
+    // User changes formula while Sheet2 is missing.
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Sheet3!A1").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(5.0))
+    );
+
+    // Re-adding Sheet2 should not resurrect stale orphan intent.
+    engine.add_sheet("Sheet2").unwrap();
+    engine
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(99.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(5.0)),
+        "Stale orphan metadata must not override updated formulas"
+    );
+}
+
+#[test]
+fn test_healed_formula_recomputes_downstream_dependents() {
+    let mut engine = create_simple_engine();
+    engine.add_sheet("Sheet2").unwrap();
+
+    engine
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Sheet2!A1").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=A1+1").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    let s2 = engine.sheet_id("Sheet2").unwrap();
+    engine.remove_sheet(s2).unwrap();
+    engine.evaluate_all().unwrap();
+
+    engine.add_sheet("Sheet2").unwrap();
+    engine
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(50.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(50.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(51.0)),
+        "Downstream dependents should recover after healing"
+    );
+
+    engine
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(60.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(60.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(61.0)),
+        "Downstream dependents should continue tracking subsequent edits"
+    );
+}
+
+#[test]
+fn test_invalid_rename_rolls_back_arrow_storage() {
+    let mut engine = create_simple_engine();
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(7.0))
+        .unwrap();
+
+    let sheet_id = engine.sheet_id("Sheet1").unwrap();
+    let result = engine.rename_sheet(sheet_id, "");
+    assert!(result.is_err(), "Invalid rename should fail");
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(7.0)),
+        "Failed rename must not mutate Arrow storage sheet mapping"
     );
 }

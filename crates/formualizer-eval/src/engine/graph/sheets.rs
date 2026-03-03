@@ -15,10 +15,8 @@ impl DependencyGraph {
         let sheet_id = self.sheet_reg.id_for(name);
         self.sheet_indexes.entry(sheet_id).or_default();
 
-        let orphans = self.tombstone_registry.take_orphans(name);
-        for vertex_id in orphans {
-            self.rebind_vertex_to_sheet(vertex_id, name);
-        }
+        // Heal formulas that were waiting on this sheet name.
+        self.heal_orphaned_formulas(name);
         Ok(sheet_id)
     }
 
@@ -167,224 +165,36 @@ impl DependencyGraph {
         Ok(())
     }
 
-    /// Rebuilds a ReferenceType using a specific sheet name.
-    /// This is used to "heal" #REF! errors when a sheet returns.
-    fn rebuild_reference_type(&self, reference: &ReferenceType, sheet_name: &str) -> ReferenceType {
-        match reference {
-            ReferenceType::Cell {
-                row,
-                col,
-                row_abs,
-                col_abs,
-                ..
-            } => ReferenceType::Cell {
-                sheet: Some(sheet_name.to_string()),
-                row: *row,
-                col: *col,
-                row_abs: *row_abs,
-                col_abs: *col_abs,
-            },
-            ReferenceType::Range {
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-                start_row_abs,
-                start_col_abs,
-                end_row_abs,
-                end_col_abs,
-                ..
-            } => ReferenceType::Range {
-                sheet: Some(sheet_name.to_string()),
-                start_row: *start_row,
-                start_col: *start_col,
-                end_row: *end_row,
-                end_col: *end_col,
-                start_row_abs: *start_row_abs,
-                start_col_abs: *start_col_abs,
-                end_row_abs: *end_row_abs,
-                end_col_abs: *end_col_abs,
-            },
-            _ => reference.clone(),
-        }
-    }
-
-    /// Recursively heals an AST by replacing broken references with the new sheet context.
-    fn heal_ast_references(&self, mut node: ASTNode, new_sheet_name: &str) -> ASTNode {
-        match &mut node.node_type {
-            ASTNodeType::Reference {
-                reference,
-                original,
-            } => {
-                // Check if the original text was broken or contains the target name
-                if original.contains("#REF!") || original.contains(new_sheet_name) {
-                    // Re-map the ReferenceType to point to the new sheet name
-                    *reference = self.rebuild_reference_type(reference, new_sheet_name);
-                    // Fix the display string
-                    *original = original.replace("#REF!", new_sheet_name);
-                }
-            }
-            ASTNodeType::Function { args, .. } => {
-                for arg in args {
-                    *arg = self.heal_ast_references(arg.clone(), new_sheet_name);
-                }
-            }
-            ASTNodeType::BinaryOp { left, right, .. } => {
-                **left = self.heal_ast_references(*left.clone(), new_sheet_name);
-                **right = self.heal_ast_references(*right.clone(), new_sheet_name);
-            }
-            ASTNodeType::UnaryOp { expr, .. } => {
-                **expr = self.heal_ast_references(*expr.clone(), new_sheet_name);
-            }
-            _ => {}
-        }
-        node
-    }
-
-    fn update_ast_ids_and_names(&self, node: &mut ASTNode, new_name: &str, new_id: SheetId) {
-        // 1. Update the current node if it is a reference
-        if let ASTNodeType::Reference {
-            original,
-            reference,
-        } = &mut node.node_type
-        {
-            // Heal the display string: "#REF!A1" -> "Sheet2!A1"
-            if original.contains("#REF!") {
-                *original = original.replace("#REF!", new_name);
-            }
-
-            // Heal the internal sheet name.
-            // Note: ReferenceType uses String names, so we use new_name.
-            match reference {
-                ReferenceType::Cell { sheet, .. } => {
-                    *sheet = Some(new_name.to_string());
-                }
-                ReferenceType::Range { sheet, .. } => {
-                    *sheet = Some(new_name.to_string());
-                }
-                _ => {}
-            }
-        }
-
-        // 2. Recurse through children using Struct Variant syntax
-        match &mut node.node_type {
-            ASTNodeType::Function { args, .. } => {
-                for arg in args {
-                    self.update_ast_ids_and_names(arg, new_name, new_id);
-                }
-            }
-            ASTNodeType::BinaryOp { left, right, .. } => {
-                self.update_ast_ids_and_names(left, new_name, new_id);
-                self.update_ast_ids_and_names(right, new_name, new_id);
-            }
-            ASTNodeType::UnaryOp { expr, .. } => {
-                self.update_ast_ids_and_names(expr, new_name, new_id);
-            }
-            _ => {}
-        }
-    }
-
-    fn rebind_vertex_to_sheet(&mut self, vertex_id: VertexId, sheet_name: &str) {
-        // Get the ID for the target sheet (needed for dependency rebuilding)
-        let new_sheet_id = self
-            .sheet_reg
-            .get_id(sheet_name)
-            .expect("Healed sheet must exist in registry");
-
-        // Copy the ID out to avoid borrow-checker conflicts
-        if let Some(&ast_id) = self.vertex_formulas.get(&vertex_id)
-            && let Some(mut ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg)
-        {
-            // Apply the healer
-            self.update_ast_ids_and_names(&mut ast, sheet_name, new_sheet_id);
-
-            // Store the updated formula
-            let new_ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
-            self.vertex_formulas.insert(vertex_id, new_ast_id);
-
-            // Re-wire the graph so the formula depends on the NEW cell vertex
-            self.rebuild_formula_dependencies(vertex_id, &ast);
-            self.mark_vertex_dirty(vertex_id);
-        }
-    }
-
-    /// Helper to identify if an AST node depends on a specific sheet.
-    /// This is used during sheet removal to find which formulas need to be "parked."
-    fn ast_contains_sheet(&self, ast_id: AstNodeId, sheet_id: SheetId) -> bool {
-        if let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg) {
-            // Since we don't have the method, we check the node_type directly
-            // or use a utility from your parser if available.
-            // For now, let's assume we need to implement a basic search:
-            return self.check_ast_for_sheet(&ast, sheet_id);
-        }
-        false
-    }
-
-    /// Helper to find all formulas that mention a specific sheet.
-    fn find_formulas_referencing_sheet(&self, sheet_id: SheetId) -> Vec<VertexId> {
-        self.vertex_formulas
-            .iter()
-            .filter_map(|(v_id, ast_id)| {
-                if self.ast_contains_sheet(*ast_id, sheet_id) {
-                    Some(*v_id)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    /// Recursively checks an AST to see if it references a specific SheetId.
-    fn check_ast_for_sheet(&self, ast: &ASTNode, target_sheet_id: SheetId) -> bool {
-        match &ast.node_type {
-            ASTNodeType::Reference { reference, .. } => {
-                match reference {
-                    ReferenceType::Cell { sheet, .. } => {
-                        // You'll need to resolve the Option<String> sheet name to a SheetId
-                        // using your sheet_reg to compare.
-                        if let Some(name) = sheet {
-                            return self.sheet_reg.get_id(name) == Some(target_sheet_id);
-                        }
-                        false
-                    }
-                    ReferenceType::Range { sheet, .. } => {
-                        if let Some(name) = sheet {
-                            return self.sheet_reg.get_id(name) == Some(target_sheet_id);
-                        }
-                        false
-                    }
-                    _ => false,
-                }
-            }
-            ASTNodeType::Function { args, .. } => args
-                .iter()
-                .any(|arg| self.check_ast_for_sheet(arg, target_sheet_id)),
-            ASTNodeType::BinaryOp { left, right, .. } => {
-                self.check_ast_for_sheet(left, target_sheet_id)
-                    || self.check_ast_for_sheet(right, target_sheet_id)
-            }
-            ASTNodeType::UnaryOp { expr, .. } => self.check_ast_for_sheet(expr, target_sheet_id),
-            _ => false,
-        }
-    }
-
     fn heal_orphaned_formulas(&mut self, sheet_name: &str) {
         let orphans = self.tombstone_registry.take_orphans(sheet_name);
 
         for vertex_id in orphans {
-            if let Some(ast_id) = self.vertex_formulas.get(&vertex_id)
-                && let Some(ast) = self.data_store.retrieve_ast(*ast_id, &self.sheet_reg)
-            {
-                let mut updated_ast = ast.clone();
-                updated_ast.update_sheet_references(None, sheet_name);
+            let Some(ast_id) = self.vertex_formulas.get(&vertex_id).copied() else {
+                continue;
+            };
+            let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg) else {
+                continue;
+            };
 
-                self.ref_error_vertices.remove(&vertex_id);
-                self.rebuild_formula_dependencies(vertex_id, &updated_ast);
+            // If the formula was edited while the sheet was missing, it may no longer
+            // be in #REF! state; skip stale orphan entries in that case.
+            if !self.is_ref_error(vertex_id) {
+                continue;
+            }
 
+            // Missing sheet IDs are rendered as empty-string sheet names when ASTs are
+            // materialized from the arena. Heal only those unresolved references.
+            let mut updated_ast = ast.clone();
+            updated_ast.update_sheet_references(Some(""), sheet_name);
+            updated_ast.update_sheet_references(Some("#REF"), sheet_name);
+            updated_ast.update_sheet_references(Some("#REF!"), sheet_name);
+
+            if updated_ast != ast {
                 let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
                 self.vertex_formulas.insert(vertex_id, updated_ast_id);
-                self.mark_vertex_dirty(vertex_id);
             }
+
+            self.rebuild_formula_dependencies(vertex_id, &updated_ast);
         }
     }
     /// Rename an existing sheet.
@@ -407,16 +217,14 @@ impl DependencyGraph {
             return Ok(());
         }
 
-        self.begin_batch();
-
         self.sheet_reg.rename(sheet_id, new_name)?;
-        self.end_batch();
+
         self.begin_batch();
 
+        // Rescue formulas that were waiting for this exact sheet name to reappear.
         self.heal_orphaned_formulas(new_name);
 
-        // UPDATE VALID REFERENCES: Update formulas pointing to the old name
-        // Fixes Bug #2 (Over-broad rewriting)
+        // Update still-valid references that explicitly mentioned the renamed sheet.
         let formulas_to_update: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
         for formula_id in formulas_to_update {
             if let Some(ast_id) = self.vertex_formulas.get(&formula_id)
@@ -429,24 +237,8 @@ impl DependencyGraph {
                     self.rebuild_formula_dependencies(formula_id, &updated_ast);
                     let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
                     self.vertex_formulas.insert(formula_id, updated_ast_id);
-                    self.mark_vertex_dirty(formula_id);
                 }
             }
-        }
-
-        // CLEANUP: Clear structural #REF! markers
-        let vertices_to_clear: Vec<VertexId> = self
-            .ref_error_vertices
-            .iter()
-            .filter(|&&v_id| {
-                self.get_cell_ref(v_id)
-                    .is_some_and(|r| r.sheet_id == sheet_id)
-            })
-            .copied()
-            .collect();
-
-        for v_id in vertices_to_clear {
-            self.ref_error_vertices.remove(&v_id);
         }
 
         self.end_batch();

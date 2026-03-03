@@ -116,8 +116,6 @@ pub struct DependencyGraph {
     // Edge storage with delta slab
     edges: CsrMutableEdges,
 
-    pub(crate) topo: DynamicTopo<VertexId>,
-
     // Arena-based value and formula storage
     data_store: DataStore,
     vertex_values: FxHashMap<VertexId, ValueRef>,
@@ -552,7 +550,6 @@ impl DependencyGraph {
         let mut g = Self {
             store: VertexStore::new(),
             edges: CsrMutableEdges::new(),
-            topo: DynamicTopo::new(Vec::new(), PkConfig::default()),
             data_store: DataStore::new(),
             vertex_values: FxHashMap::default(),
             vertex_formulas: FxHashMap::default(),
@@ -2923,135 +2920,52 @@ impl DependencyGraph {
         }
     }
 
-    /// Extracts all cell and range references from an AST.
-    fn find_references_in_ast(&self, ast: &ASTNode) -> Vec<ReferenceType> {
-        let mut refs = Vec::new();
-        self.collect_refs_recursive(ast, &mut refs);
-        refs
-    }
-
-    fn collect_refs_recursive(&self, node: &ASTNode, refs: &mut Vec<ReferenceType>) {
-        match &node.node_type {
-            ASTNodeType::Reference { reference, .. } => refs.push(reference.clone()),
-            ASTNodeType::Function { args, .. } => {
-                for arg in args {
-                    self.collect_refs_recursive(arg, refs);
-                }
-            }
-            ASTNodeType::BinaryOp { left, right, .. } => {
-                self.collect_refs_recursive(left, refs);
-                self.collect_refs_recursive(right, refs);
-            }
-            ASTNodeType::UnaryOp { expr, .. } => {
-                self.collect_refs_recursive(expr, refs);
-            }
-            _ => {}
-        }
-    }
-
-    /// Resolves a ReferenceType into physical VertexIds in the graph.
-    fn resolve_reference_to_vertices(&self, reference: &ReferenceType) -> Vec<VertexId> {
-        match reference {
-            ReferenceType::Cell {
-                sheet, row, col, ..
-            } => {
-                let name = sheet.as_deref().unwrap_or("");
-                if name.is_empty() || name == "#REF!" {
-                    return vec![];
-                }
-
-                if let Some(sheet_id) = self.sheet_reg.get_id(name) {
-                    // CONVERSION: Excel 1-indexed -> Internal 0-indexed
-                    let r = row.saturating_sub(1);
-                    let c = col.saturating_sub(1);
-
-                    let cell_ref = CellRef::new(sheet_id, Coord::new(r, c, true, true));
-                    if let Some(&target_vid) = self.cell_to_vertex.get(&cell_ref) {
-                        return vec![target_vid];
-                    }
-                }
-                vec![]
-            }
-            ReferenceType::Range {
-                sheet,
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-                ..
-            } => {
-                let name = sheet.as_deref().unwrap_or("");
-                if name.is_empty() || name == "#REF!" {
-                    return vec![];
-                }
-
-                if let (Some(sheet_id), Some(sr), Some(er), Some(sc), Some(ec)) = (
-                    self.sheet_reg.get_id(name),
-                    start_row,
-                    end_row,
-                    start_col,
-                    end_col,
-                ) {
-                    let mut vertices = Vec::new();
-                    for r in sr.saturating_sub(1)..=er.saturating_sub(1) {
-                        for c in sc.saturating_sub(1)..=ec.saturating_sub(1) {
-                            let cell_ref = CellRef::new(sheet_id, Coord::new(r, c, true, true));
-                            if let Some(&vid) = self.cell_to_vertex.get(&cell_ref) {
-                                vertices.push(vid);
-                            }
-                        }
-                    }
-                    return vertices;
-                }
-                vec![]
-            }
-            _ => vec![],
-        }
-    }
+    /// Rebuild dependency edges/range links for an existing formula vertex after AST changes.
+    ///
+    /// This intentionally reuses the same extraction and edge wiring machinery as
+    /// `set_cell_formula[_with_volatility]` to preserve edge orientation, placeholder
+    /// behavior, and name/range dependency semantics.
     pub(crate) fn rebuild_formula_dependencies(&mut self, vertex_id: VertexId, ast: &ASTNode) {
-        // 1. Identify and clear INCOMING edges (the formula's parents/sources)
-        let current_sources: Vec<VertexId> = self.edges.in_edges(vertex_id).to_vec();
-        for source_id in current_sources {
-            self.edges.remove_edge(source_id, vertex_id);
-            self.topo.remove_edge(source_id, vertex_id);
+        let sheet_id = self.store.sheet_id(vertex_id);
+
+        // Remove old dependency and name links first.
+        self.remove_dependent_edges(vertex_id);
+        self.detach_vertex_from_names(vertex_id);
+
+        let (new_dependencies, new_range_dependencies, _created_placeholders, named_dependencies) =
+            match self.extract_dependencies(ast, sheet_id) {
+                Ok(v) => v,
+                Err(_) => {
+                    self.mark_as_ref_error(vertex_id);
+                    return;
+                }
+            };
+
+        // Self-reference / name-cycle safety parity with set_cell_formula.
+        if new_dependencies.contains(&vertex_id) {
+            self.mark_as_ref_error(vertex_id);
+            return;
         }
 
-        // 2. Define the adapter LOCALLY inside this function
-        struct RebuildAdapter<'a> {
-            edges: &'a CsrMutableEdges,
-        }
-
-        // Match the 3-parameter signature required by your pk.rs
-        impl crate::engine::topo::pk::GraphView<VertexId> for RebuildAdapter<'_> {
-            fn successors(&self, n: VertexId, out: &mut Vec<VertexId>) {
-                out.extend(self.edges.out_edges(n).iter().copied());
+        for &name_vertex in &named_dependencies {
+            let mut visited = FxHashSet::default();
+            if self.name_depends_on_vertex(name_vertex, vertex_id, &mut visited) {
+                self.mark_as_ref_error(vertex_id);
+                return;
             }
-            fn predecessors(&self, n: VertexId, out: &mut Vec<VertexId>) {
-                out.extend(self.edges.in_edges(n).iter().copied());
-            }
-            fn exists(&self, _n: VertexId) -> bool {
-                true
-            }
         }
 
-        // 3. Resolve targets (finish all immutable borrows of 'self' here)
-        let references = self.find_references_in_ast(ast);
-        let mut all_targets = Vec::new();
-        for reference in references {
-            let targets = self.resolve_reference_to_vertices(&reference);
-            all_targets.extend(targets);
+        // Formula is now recoverable again.
+        self.ref_error_vertices.remove(&vertex_id);
+        self.vertex_values.remove(&vertex_id);
+
+        if !named_dependencies.is_empty() {
+            self.attach_vertex_to_names(vertex_id, &named_dependencies);
         }
 
-        // 4. Re-wire (Sources -> Dependent)
-        for target_vertex in all_targets {
-            // Mutate edges
-            self.edges.add_edge(target_vertex, vertex_id);
-
-            // Mutate topo using a fresh adapter for this iteration
-            let adapter = RebuildAdapter { edges: &self.edges };
-            let _ = self.topo.try_add_edge(&adapter, target_vertex, vertex_id);
-            self.mark_vertex_dirty(target_vertex);
-        }
+        self.add_dependent_edges(vertex_id, &new_dependencies);
+        self.add_range_dependent_edges(vertex_id, &new_range_dependencies, sheet_id);
+        let _ = self.mark_dirty(vertex_id);
     }
 }
 
