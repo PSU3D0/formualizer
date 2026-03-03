@@ -113,6 +113,71 @@ fn evaluate_all_resolves_named_range_over_formula_cells() {
     );
 }
 
+/// Named ranges multiplied together inside SUM must produce the correct
+/// element-wise product sum.
+///
+/// Layout:
+///   A1 = 2, A2 = 3, A3 = 4
+///   B1 = 10, B2 = 20, B3 = 30
+///   Named range "qty" → A1:A3
+///   Named range "price" → B1:B3
+///   C1 = =SUM(qty * price)  → should be 2*10 + 3*20 + 4*30 = 200
+#[test]
+fn evaluate_cell_named_range_multiply_in_sum() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("Sheet1").unwrap();
+
+    let sheet_id = wb.engine_mut().sheet_id_mut("Sheet1");
+
+    // A1:A3 = quantities
+    for (row, val) in [(1u32, 2.0), (2, 3.0), (3, 4.0)] {
+        wb.engine_mut()
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(val))
+            .unwrap();
+    }
+
+    // B1:B3 = prices
+    for (row, val) in [(1u32, 10.0), (2, 20.0), (3, 30.0)] {
+        wb.engine_mut()
+            .set_cell_value("Sheet1", row, 2, LiteralValue::Number(val))
+            .unwrap();
+    }
+
+    // Define named ranges (0-based coords: col 0 = A, col 1 = B)
+    let qty_start = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+    let qty_end = CellRef::new(sheet_id, Coord::new(2, 0, true, true));
+    wb.engine_mut()
+        .define_name(
+            "qty",
+            NamedDefinition::Range(RangeRef::new(qty_start, qty_end)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    let price_start = CellRef::new(sheet_id, Coord::new(0, 1, true, true));
+    let price_end = CellRef::new(sheet_id, Coord::new(2, 1, true, true));
+    wb.engine_mut()
+        .define_name(
+            "price",
+            NamedDefinition::Range(RangeRef::new(price_start, price_end)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    // C1 = =SUM(qty * price)
+    let formula_ast =
+        formualizer_parse::parser::parse("=SUM(qty * price)").expect("parse SUM(qty * price)");
+    wb.engine_mut()
+        .set_cell_formula("Sheet1", 1, 3, formula_ast)
+        .unwrap();
+
+    let result = wb.evaluate_cell("Sheet1", 1, 3).expect("evaluate_cell");
+    assert!(
+        matches!(result, LiteralValue::Number(n) if (n - 200.0).abs() < 1e-9),
+        "expected SUM(qty * price) = 200, got {result:?}"
+    );
+}
+
 /// Mirrors the exact loading path used by `from_path()` / calamine backend
 /// with `defer_graph_building = true`:
 ///   1. Values are set (arrow storage)
