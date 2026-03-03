@@ -353,6 +353,11 @@ jobs:
         cp coverage.svg /tmp/fz-badges/coverage.svg
         cp rust-core-coverage.svg /tmp/fz-badges/rust-core-coverage.svg
 
+        # Coverage tooling may update Cargo.lock (or other tracked files). Ensure
+        # a pristine tree before switching to the badges branch.
+        git reset --hard
+        git clean -fdx
+
         # actions/checkout does not fetch origin/badges, so detect via ls-remote.
         if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
           git fetch --depth=1 origin badges
