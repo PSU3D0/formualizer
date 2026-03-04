@@ -1,5 +1,6 @@
-use super::ast_utils::{update_internal_sheet_references, update_sheet_references_in_ast};
+use super::ast_utils::update_internal_sheet_references;
 use super::*;
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 
 impl DependencyGraph {
     /// Add a new sheet to the workbook.
@@ -13,12 +14,16 @@ impl DependencyGraph {
 
         let sheet_id = self.sheet_reg.id_for(name);
         self.sheet_indexes.entry(sheet_id).or_default();
+
+        // Heal formulas that were waiting on this sheet name.
+        self.heal_orphaned_formulas(name);
         Ok(sheet_id)
     }
 
     /// Remove a sheet from the workbook.
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
-        if self.sheet_reg.name(sheet_id).is_empty() {
+        let old_name = self.sheet_reg.name(sheet_id).to_string();
+        if old_name.is_empty() {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Sheet does not exist"));
         }
 
@@ -33,15 +38,37 @@ impl DependencyGraph {
 
         let vertices_to_delete: Vec<VertexId> = self.vertices_in_sheet(sheet_id).collect();
 
-        let mut formulas_to_update = Vec::new();
+        // Formulas can reference this sheet either through explicit dependency edges
+        // (expanded refs) or compressed range deps. Track both.
+        let mut formulas_to_update: rustc_hash::FxHashSet<VertexId> =
+            rustc_hash::FxHashSet::default();
+
         for &formula_id in self.vertex_formulas.keys() {
             let deps = self.edges.out_edges(formula_id);
-            for dep_id in deps {
-                if self.store.sheet_id(dep_id) == sheet_id {
-                    formulas_to_update.push(formula_id);
-                    break;
-                }
+            if deps
+                .iter()
+                .any(|&dep_id| self.store.sheet_id(dep_id) == sheet_id)
+            {
+                formulas_to_update.insert(formula_id);
             }
+        }
+
+        for (&formula_id, ranges) in &self.formula_to_range_deps {
+            if ranges.iter().any(|r| match r.sheet {
+                SharedSheetLocator::Id(id) => id == sheet_id,
+                SharedSheetLocator::Name(ref n) => n.as_ref() == old_name,
+                SharedSheetLocator::Current => false,
+            }) {
+                formulas_to_update.insert(formula_id);
+            }
+        }
+
+        let formulas_to_update: Vec<VertexId> = formulas_to_update.into_iter().collect();
+
+        for &formula_id in &formulas_to_update {
+            self.tombstone_registry
+                .add_orphan(old_name.clone(), formula_id);
+            self.rewrite_formula_sheet_to_tombstone(formula_id, &old_name);
         }
 
         for formula_id in formulas_to_update {
@@ -156,13 +183,68 @@ impl DependencyGraph {
         Ok(())
     }
 
+    fn tombstone_marker(sheet_name: &str) -> String {
+        format!("__FZ_MISSING_SHEET__{sheet_name}")
+    }
+
+    fn rewrite_formula_sheet_to_tombstone(&mut self, vertex_id: VertexId, sheet_name: &str) {
+        let Some(ast_id) = self.vertex_formulas.get(&vertex_id).copied() else {
+            return;
+        };
+        let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg) else {
+            return;
+        };
+
+        let marker = Self::tombstone_marker(sheet_name);
+        let mut updated_ast = ast.clone();
+        updated_ast.update_sheet_references(Some(sheet_name), &marker);
+
+        if updated_ast != ast {
+            let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
+            self.vertex_formulas.insert(vertex_id, updated_ast_id);
+        }
+    }
+
+    fn heal_orphaned_formulas(&mut self, sheet_name: &str) {
+        let orphans = self.tombstone_registry.take_orphans(sheet_name);
+        let marker = Self::tombstone_marker(sheet_name);
+
+        for vertex_id in orphans {
+            let Some(ast_id) = self.vertex_formulas.get(&vertex_id).copied() else {
+                continue;
+            };
+            let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg) else {
+                continue;
+            };
+
+            // If the formula was edited while the sheet was missing, it may no longer
+            // be in #REF! state; skip stale orphan entries in that case.
+            if !self.is_ref_error(vertex_id) {
+                continue;
+            }
+
+            // Heal only references that were explicitly tombstoned for this sheet.
+            let mut updated_ast = ast.clone();
+            updated_ast.update_sheet_references(Some(&marker), sheet_name);
+
+            if updated_ast == ast {
+                // Stale orphan entry (formula changed while sheet was missing).
+                continue;
+            }
+
+            let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
+            self.vertex_formulas.insert(vertex_id, updated_ast_id);
+            self.rebuild_formula_dependencies(vertex_id, &updated_ast);
+        }
+    }
     /// Rename an existing sheet.
     pub fn rename_sheet(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
         if new_name.is_empty() || new_name.len() > 255 {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Invalid sheet name"));
         }
 
-        let old_name = self.sheet_reg.name(sheet_id);
+        let old_name = self.sheet_reg.name(sheet_id).to_string();
+
         if old_name.is_empty() {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message("Sheet does not exist"));
         }
@@ -175,28 +257,31 @@ impl DependencyGraph {
             return Ok(());
         }
 
-        let old_name = old_name.to_string();
         self.sheet_reg.rename(sheet_id, new_name)?;
 
+        self.begin_batch();
+
+        // Rescue formulas that were waiting for this exact sheet name to reappear.
+        self.heal_orphaned_formulas(new_name);
+
+        // Update still-valid references that explicitly mentioned the renamed sheet.
         let formulas_to_update: Vec<VertexId> = self.vertex_formulas.keys().copied().collect();
         for formula_id in formulas_to_update {
-            let ast_id = match self.get_formula_id(formula_id) {
-                Some(ast_id) => ast_id,
-                None => continue,
-            };
-            let ast = match self.data_store.retrieve_ast(ast_id, &self.sheet_reg) {
-                Some(ast) => ast,
-                None => continue,
-            };
+            if let Some(ast_id) = self.vertex_formulas.get(&formula_id)
+                && let Some(ast) = self.data_store.retrieve_ast(*ast_id, &self.sheet_reg)
+            {
+                let mut updated_ast = ast.clone();
+                updated_ast.update_sheet_references(Some(&old_name), new_name);
 
-            let updated_ast = update_sheet_references_in_ast(&ast, &old_name, new_name);
-            if ast != updated_ast {
-                let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
-                self.vertex_formulas.insert(formula_id, updated_ast_id);
-                self.mark_vertex_dirty(formula_id);
+                if ast != updated_ast {
+                    self.rebuild_formula_dependencies(formula_id, &updated_ast);
+                    let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
+                    self.vertex_formulas.insert(formula_id, updated_ast_id);
+                }
             }
         }
 
+        self.end_batch();
         Ok(())
     }
 

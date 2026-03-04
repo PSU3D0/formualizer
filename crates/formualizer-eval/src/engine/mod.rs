@@ -65,6 +65,7 @@ use crate::traits::EvaluationContext;
 use crate::traits::VolatileLevel;
 use chrono::{DateTime, Utc};
 use formualizer_common::error::{ExcelError, ExcelErrorKind};
+use std::collections::HashMap;
 
 impl<R: EvaluationContext> Engine<R> {
     pub fn begin_bulk_ingest(&mut self) -> ingest_builder::BulkIngestBuilder<'_> {
@@ -501,4 +502,37 @@ pub enum SpillCancellationPolicy {
 pub enum SpillVisibility {
     OnCommit,
     StagedLayer,
+}
+
+/*
+ * Scenario: Tombstone Registry for Missing Sheets
+ * When a sheet is deleted, formulas pointing to it become "orphans."
+ * Instead of losing the connection, we store the formula's VertexId
+ * under the name of the missing sheet.
+ *
+ * Why it matters:
+ * This allows Sheet Addition to remain O(1) for the general case,
+ * while providing O(N_orphans) recovery for broken formulas.
+ */
+#[derive(Debug, Default)]
+pub struct TombstoneRegistry {
+    // Maps "SheetName" -> Vec<VertexId of formulas waiting for it>
+    pub pending_references: HashMap<String, Vec<VertexId>>,
+}
+
+impl TombstoneRegistry {
+    /// Record that a vertex is waiting for a specific sheet name to appear.
+    pub fn add_orphan(&mut self, sheet_name: String, vertex_id: VertexId) {
+        self.pending_references
+            .entry(sheet_name)
+            .or_default()
+            .push(vertex_id);
+    }
+
+    /// Retrieve and remove all vertices waiting for a specific sheet name.
+    pub fn take_orphans(&mut self, sheet_name: &str) -> Vec<VertexId> {
+        self.pending_references
+            .remove(sheet_name)
+            .unwrap_or_default()
+    }
 }

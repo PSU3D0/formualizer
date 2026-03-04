@@ -1211,14 +1211,44 @@ where
         Ok(())
     }
 
+    /// Helper to synchronize the Arrow-backed storage layer.
+    fn rename_sheet_in_arrow_store(&mut self, target_name: &str, new_name: &str) -> bool {
+        if let Some(asheet) = self
+            .arrow_sheets
+            .sheets
+            .iter_mut()
+            .find(|s| s.name.as_ref() == target_name)
+        {
+            asheet.name = std::sync::Arc::<str>::from(new_name);
+            return true;
+        }
+        false
+    }
+
     pub fn rename_sheet(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
         let old_name = self.graph.sheet_name(sheet_id).to_string();
-        self.graph.rename_sheet(sheet_id, new_name)?;
-        self.ensure_arrow_sheet(&old_name);
-        if let Some(asheet) = self.arrow_sheets.sheet_mut(&old_name) {
-            asheet.name = std::sync::Arc::<str>::from(new_name);
+
+        // Speculative Storage Update
+        // Update name in storage FIRST so the Evaluator can find it during Graph rescue.
+        self.rename_sheet_in_arrow_store(&old_name, new_name);
+
+        // Graph Update (Metadata + Rescue Logic)
+        match self.graph.rename_sheet(sheet_id, new_name) {
+            Ok(_) => {
+                // Success! Invalidate cache for the moved sheet
+                let sheet_vertices: Vec<VertexId> =
+                    self.graph.vertices_in_sheet(sheet_id).collect();
+                for v_id in sheet_vertices {
+                    self.graph.mark_vertex_dirty(v_id);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                // ROLLBACK: Revert storage if graph rejected the name
+                self.rename_sheet_in_arrow_store(new_name, &old_name);
+                Err(e)
+            }
         }
-        Ok(())
     }
 
     pub fn named_ranges_iter(

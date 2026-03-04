@@ -1,4 +1,5 @@
 use crate::SheetId;
+use crate::engine::TombstoneRegistry;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -224,6 +225,9 @@ pub struct DependencyGraph {
     // Hint: during initial bulk load, many cells are guaranteed new; allow skipping existence checks per-sheet
     first_load_assume_new: bool,
     ensure_touched_sheets: FxHashSet<SheetId>,
+
+    // handled deleted references, in case they are reintroduced.
+    pub tombstone_registry: TombstoneRegistry,
 
     #[cfg(test)]
     instr: std::sync::Mutex<GraphInstrumentation>,
@@ -586,6 +590,7 @@ impl DependencyGraph {
             spill_cell_to_anchor: FxHashMap::default(),
             first_load_assume_new: false,
             ensure_touched_sheets: FxHashSet::default(),
+            tombstone_registry: TombstoneRegistry::default(),
             #[cfg(test)]
             instr: std::sync::Mutex::new(GraphInstrumentation::default()),
         };
@@ -2915,7 +2920,53 @@ impl DependencyGraph {
         }
     }
 
-    // ========== Phase 2: Structural Operations ==========
+    /// Rebuild dependency edges/range links for an existing formula vertex after AST changes.
+    ///
+    /// This intentionally reuses the same extraction and edge wiring machinery as
+    /// `set_cell_formula[_with_volatility]` to preserve edge orientation, placeholder
+    /// behavior, and name/range dependency semantics.
+    pub(crate) fn rebuild_formula_dependencies(&mut self, vertex_id: VertexId, ast: &ASTNode) {
+        let sheet_id = self.store.sheet_id(vertex_id);
+
+        // Remove old dependency and name links first.
+        self.remove_dependent_edges(vertex_id);
+        self.detach_vertex_from_names(vertex_id);
+
+        let (new_dependencies, new_range_dependencies, _created_placeholders, named_dependencies) =
+            match self.extract_dependencies(ast, sheet_id) {
+                Ok(v) => v,
+                Err(_) => {
+                    self.mark_as_ref_error(vertex_id);
+                    return;
+                }
+            };
+
+        // Self-reference / name-cycle safety parity with set_cell_formula.
+        if new_dependencies.contains(&vertex_id) {
+            self.mark_as_ref_error(vertex_id);
+            return;
+        }
+
+        for &name_vertex in &named_dependencies {
+            let mut visited = FxHashSet::default();
+            if self.name_depends_on_vertex(name_vertex, vertex_id, &mut visited) {
+                self.mark_as_ref_error(vertex_id);
+                return;
+            }
+        }
+
+        // Formula is now recoverable again.
+        self.ref_error_vertices.remove(&vertex_id);
+        self.vertex_values.remove(&vertex_id);
+
+        if !named_dependencies.is_empty() {
+            self.attach_vertex_to_names(vertex_id, &named_dependencies);
+        }
+
+        self.add_dependent_edges(vertex_id, &new_dependencies);
+        self.add_range_dependent_edges(vertex_id, &new_range_dependencies, sheet_id);
+        let _ = self.mark_dirty(vertex_id);
+    }
 }
 
 // ========== Sheet Management Operations ==========

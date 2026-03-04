@@ -72,6 +72,10 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "interval_tree_bench"
 harness = false
 
+[[bench]]
+name = "sheet_ops"
+harness = false
+
 [features]
 default = []
 tracing = ["dep:tracing", "dep:tracing-subscriber"]
