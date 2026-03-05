@@ -15,6 +15,12 @@ scenarios:
   cross_sheet_mesh:
     functions: [ADD, MUL]
     features: [cross_sheet_refs]
+  inc_sparse_dirty_region_1m:
+    functions: [MUL, ADD, SUM]
+    features: [incremental_recalc, sparse_locality, finite_ranges, large_row_span]
+  inc_cross_sheet_mesh_3x25k:
+    functions: [ADD, MUL]
+    features: [incremental_recalc, cross_sheet_refs, selective_cross_sheet_propagation]
   sparse_whole_column_refs:
     functions: [SUM]
     features: [whole_column_refs]

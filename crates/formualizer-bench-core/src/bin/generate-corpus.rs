@@ -172,6 +172,59 @@ fn generate_scenario(output: &Path, s: &Scenario) -> Result<()> {
             });
             Ok(())
         }
+        "inc_sparse_dirty_region_1m" => {
+            let rows = cfg_u32(s, "/sheets/0/rows", 1_000_000);
+            let block_rows = [
+                1, 125_001, 250_001, 375_001, 500_001, 625_001, 750_001, 875_001,
+            ];
+            write_workbook(output, |book| {
+                let sh = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1 exists");
+                for (idx, row) in block_rows.into_iter().enumerate() {
+                    let seed = ((idx as u32) + 1) * 10;
+                    sh.get_cell_mut((1, row)).set_value_number(seed as f64);
+                    sh.get_cell_mut((2, row)).set_formula(format!("=A{row}*2"));
+                    sh.get_cell_mut((3, row)).set_formula(format!("=B{row}+5"));
+                    sh.get_cell_mut((4, row))
+                        .set_formula(format!("=SUM(B{row}:C{row})"));
+                }
+                sh.get_cell_mut((1, rows)).set_value_number(3.0);
+                sh.get_cell_mut((2, rows))
+                    .set_formula(format!("=A{rows}+1"));
+            });
+            Ok(())
+        }
+        "inc_cross_sheet_mesh_3x25k" => {
+            let rows = cfg_u32(s, "/sheets/0/rows", 25_000);
+            write_workbook(output, |book| {
+                let _ = book.new_sheet("Inputs");
+                let _ = book.new_sheet("CalcA");
+                let _ = book.new_sheet("CalcB");
+
+                let inputs = book.get_sheet_by_name_mut("Inputs").expect("Inputs exists");
+                for r in 1..=rows {
+                    inputs.get_cell_mut((1, r)).set_value_number(r as f64);
+                    inputs.get_cell_mut((2, r)).set_value_number((r * 2) as f64);
+                    inputs
+                        .get_cell_mut((3, r))
+                        .set_value_number((r % 10) as f64 + 1.0);
+                }
+
+                let calca = book.get_sheet_by_name_mut("CalcA").expect("CalcA exists");
+                for r in 1..=rows {
+                    calca
+                        .get_cell_mut((1, r))
+                        .set_formula(format!("=Inputs!A{r}+Inputs!B{r}"));
+                }
+
+                let calcb = book.get_sheet_by_name_mut("CalcB").expect("CalcB exists");
+                for r in 1..=rows {
+                    calcb
+                        .get_cell_mut((1, r))
+                        .set_formula(format!("=CalcA!A{r}*Inputs!C{r}"));
+                }
+            });
+            Ok(())
+        }
         "sparse_whole_column_refs" => {
             let rows = cfg_u32(s, "/sheets/0/rows", 1_000_000);
             let every = cfg_u32(s, "/layout/sparse_fill/every_n_rows", 1_000).max(1);

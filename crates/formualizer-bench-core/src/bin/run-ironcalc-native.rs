@@ -249,6 +249,75 @@ fn build_model_fallback(scenario: &Scenario) -> Result<ironcalc::base::Model<'st
                     .map_err(|e| anyhow::anyhow!("set_user_input fanout formula: {e}"))?;
             }
         }
+        "inc_sparse_dirty_region_1m" => {
+            let rows = cfg_u32(scenario, "/sheets/0/rows", 1_000_000);
+            let block_rows = [
+                1, 125_001, 250_001, 375_001, 500_001, 625_001, 750_001, 875_001,
+            ];
+
+            for (idx, row) in block_rows.into_iter().enumerate() {
+                let rr = i32::try_from(row).with_context(|| "block row overflow i32")?;
+                let seed = (((idx as u32) + 1) * 10).to_string();
+                model
+                    .set_user_input(0, rr, 1, seed)
+                    .map_err(|e| anyhow::anyhow!("set_user_input sparse seed: {e}"))?;
+                model
+                    .set_user_input(0, rr, 2, format!("=A{row}*2"))
+                    .map_err(|e| anyhow::anyhow!("set_user_input sparse formula B: {e}"))?;
+                model
+                    .set_user_input(0, rr, 3, format!("=B{row}+5"))
+                    .map_err(|e| anyhow::anyhow!("set_user_input sparse formula C: {e}"))?;
+                model
+                    .set_user_input(0, rr, 4, format!("=SUM(B{row}:C{row})"))
+                    .map_err(|e| anyhow::anyhow!("set_user_input sparse formula D: {e}"))?;
+            }
+
+            let tail_row = i32::try_from(rows).with_context(|| "tail row overflow i32")?;
+            model
+                .set_user_input(0, tail_row, 1, "3".to_string())
+                .map_err(|e| anyhow::anyhow!("set_user_input sparse tail value: {e}"))?;
+            model
+                .set_user_input(0, tail_row, 2, format!("=A{rows}+1"))
+                .map_err(|e| anyhow::anyhow!("set_user_input sparse tail formula: {e}"))?;
+        }
+        "inc_cross_sheet_mesh_3x25k" => {
+            let rows = cfg_u32(scenario, "/sheets/0/rows", 25_000);
+
+            model
+                .rename_sheet("Sheet1", "Inputs")
+                .map_err(|e| anyhow::anyhow!("rename_sheet Inputs: {e}"))?;
+            model
+                .add_sheet("CalcA")
+                .map_err(|e| anyhow::anyhow!("add_sheet CalcA: {e}"))?;
+            model
+                .add_sheet("CalcB")
+                .map_err(|e| anyhow::anyhow!("add_sheet CalcB: {e}"))?;
+
+            let inputs = 0u32;
+            let calca = 1u32;
+            let calcb = 2u32;
+
+            for r in 1..=rows {
+                let rr = i32::try_from(r).with_context(|| "rows overflow i32")?;
+                model
+                    .set_user_input(inputs, rr, 1, r.to_string())
+                    .map_err(|e| anyhow::anyhow!("inputs col A: {e}"))?;
+                model
+                    .set_user_input(inputs, rr, 2, (r * 2).to_string())
+                    .map_err(|e| anyhow::anyhow!("inputs col B: {e}"))?;
+                model
+                    .set_user_input(inputs, rr, 3, ((r % 10) + 1).to_string())
+                    .map_err(|e| anyhow::anyhow!("inputs col C: {e}"))?;
+
+                model
+                    .set_user_input(calca, rr, 1, format!("=Inputs!A{r}+Inputs!B{r}"))
+                    .map_err(|e| anyhow::anyhow!("CalcA col A: {e}"))?;
+
+                model
+                    .set_user_input(calcb, rr, 1, format!("=CalcA!A{r}*Inputs!C{r}"))
+                    .map_err(|e| anyhow::anyhow!("CalcB col A: {e}"))?;
+            }
+        }
         "sumifs_fact_table_100k" => {
             let fact_rows = cfg_u32(scenario, "/sheets/0/rows", 100_000);
             let report_rows = cfg_u32(scenario, "/layout/report_rows", 1_000);

@@ -179,6 +179,122 @@ scenarios:
         - cell: "CalcB!A12345"
           type: non_error
 
+  - id: inc_sparse_dirty_region_1m
+    name: Sparse dirty-region locality (1M-row span)
+    profile: core
+    family: incremental_locality
+    tier: comparative
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/inc_sparse_dirty_region_1m.xlsx
+      seed: 1008
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 1000000
+            cols: 4
+        layout:
+          sparse_blocks:
+            start_rows: [1, 125001, 250001, 375001, 500001, 625001, 750001, 875001]
+            formulas:
+              local_double: "=A{row}*2"
+              local_offset: "=B{row}+5"
+              local_sum: "=SUM(B{row}:C{row})"
+          tail_anchor:
+            row: 1000000
+            value: 3
+            formula: "=A1000000+1"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 500001
+        col: 1
+        value: 42
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!B500001", "Sheet1!C500001", "Sheet1!D500001", "Sheet1!D875001", "Sheet1!B1000000"]
+    verify:
+      expected:
+        "Sheet1!B500001": 84
+        "Sheet1!C500001": 89
+        "Sheet1!D500001": 173
+        "Sheet1!D875001": 325
+        "Sheet1!B1000000": 4
+      formula_checks:
+        - cell: "Sheet1!D500001"
+          type: non_error
+        - cell: "Sheet1!D875001"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: inc_cross_sheet_mesh_3x25k
+    name: Cross-sheet selective propagation mesh (3x25k)
+    profile: core
+    family: incremental_locality
+    tier: comparative
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/inc_cross_sheet_mesh_3x25k.xlsx
+      seed: 1009
+      config:
+        sheets:
+          - name: Inputs
+            rows: 25000
+            cols: 3
+          - name: CalcA
+            rows: 25000
+            cols: 1
+          - name: CalcB
+            rows: 25000
+            cols: 1
+        layout:
+          calcA_formula_pattern: "=Inputs!A{row}+Inputs!B{row}"
+          calcB_formula_pattern: "=CalcA!A{row}*Inputs!C{row}"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Inputs
+        row: 12345
+        col: 1
+        value: 99
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["CalcA!A12345", "CalcB!A12345", "CalcB!A12346"]
+    verify:
+      expected:
+        "CalcA!A12345": 24789
+        "CalcB!A12345": 148734
+        "CalcB!A12346": 259266
+      formula_checks:
+        - cell: "CalcA!A12345"
+          type: non_error
+        - cell: "CalcB!A12345"
+          type: non_error
+        - cell: "CalcB!A12346"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
   - id: sparse_whole_column_refs
     name: Sparse sheet with whole-column refs
     profile: formualizer_strength
