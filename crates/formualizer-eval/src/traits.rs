@@ -1160,6 +1160,28 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         Err(ExcelError::new(ExcelErrorKind::NImpl))
     }
 
+    /// Resolve a single-cell reference as a scalar value.
+    ///
+    /// Default implementation preserves existing reference semantics by routing through
+    /// `resolve_range_view` and extracting a 1x1 value.
+    fn resolve_cell_reference_value(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+        current_sheet: &str,
+    ) -> Result<LiteralValue, ExcelError> {
+        let reference = ReferenceType::Cell {
+            sheet: sheet.map(str::to_string),
+            row,
+            col,
+            row_abs: true,
+            col_abs: true,
+        };
+        let view = self.resolve_range_view(&reference, current_sheet)?;
+        Ok(view.as_1x1().unwrap_or(LiteralValue::Empty))
+    }
+
     /// Locale provider: invariant by default
     fn locale(&self) -> crate::locale::Locale {
         crate::locale::Locale::invariant()

@@ -7347,6 +7347,22 @@ where
         }
     }
 
+    fn resolve_cell_reference_value(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+        current_sheet: &str,
+    ) -> Result<LiteralValue, ExcelError> {
+        let sheet_name = sheet.unwrap_or(current_sheet);
+        if self.graph.sheet_id(sheet_name).is_none() {
+            return Err(ExcelError::new(ExcelErrorKind::Ref));
+        }
+        Ok(self
+            .get_cell_value(sheet_name, row, col)
+            .unwrap_or(LiteralValue::Empty))
+    }
+
     fn build_criteria_mask(
         &self,
         view: &RangeView<'_>,

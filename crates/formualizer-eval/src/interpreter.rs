@@ -9,7 +9,8 @@ use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-use crate::engine::arena::{AstNodeData, AstNodeId, DataStore};
+use crate::engine::arena::ast::SheetKey;
+use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore};
 use crate::engine::sheet_registry::SheetRegistry;
 
 #[derive(Clone)]
@@ -273,12 +274,34 @@ impl<'a> Interpreter<'a> {
                 data_store.retrieve_value(*vref),
             )),
             AstNodeData::Reference { ref_type, .. } => {
-                let reference =
-                    data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
-                if let Some(local) = self.resolve_local_reference(&reference) {
-                    return Ok(local);
+                if let CompactRefType::Cell {
+                    sheet, row, col, ..
+                } = ref_type
+                    && *row > 0
+                    && *col > 0
+                {
+                    let sheet_name = match sheet {
+                        Some(SheetKey::Id(id)) => Some(sheet_registry.name(*id)),
+                        Some(SheetKey::Name(name_id)) => {
+                            Some(data_store.resolve_ast_string(*name_id))
+                        }
+                        None => None,
+                    };
+                    let value = self.context.resolve_cell_reference_value(
+                        sheet_name,
+                        *row,
+                        *col,
+                        self.current_sheet,
+                    )?;
+                    Ok(crate::traits::CalcValue::Scalar(value))
+                } else {
+                    let reference =
+                        data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                    if let Some(local) = self.resolve_local_reference(&reference) {
+                        return Ok(local);
+                    }
+                    self.eval_reference_to_calc(&reference)
                 }
-                self.eval_reference_to_calc(&reference)
             }
             AstNodeData::UnaryOp { op_id, expr_id } => {
                 let expr = self.evaluate_arena_ast(*expr_id, data_store, sheet_registry)?;
