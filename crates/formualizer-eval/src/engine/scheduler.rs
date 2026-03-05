@@ -164,31 +164,60 @@ impl<'a> Scheduler<'a> {
         on_stack.insert(vertex);
 
         // Consider successors of vertex (dependencies)
-        let dependencies = self.graph.get_dependencies(vertex);
-        for &dependency in &dependencies {
-            // Only consider dependencies that are part of the current scheduling task
-            if !vertex_set.contains(&dependency) {
-                continue;
-            }
+        if let Some(dependencies) = self.graph.dependencies_slice(vertex) {
+            for &dependency in dependencies {
+                // Only consider dependencies that are part of the current scheduling task
+                if !vertex_set.contains(&dependency) {
+                    continue;
+                }
 
-            if !indices.contains_key(&dependency) {
-                // Successor dependency has not yet been visited; recurse on it
-                self.tarjan_visit(
-                    dependency,
-                    index_counter,
-                    stack,
-                    indices,
-                    lowlinks,
-                    on_stack,
-                    sccs,
-                    vertex_set,
-                )?;
-                let dep_lowlink = lowlinks[&dependency];
-                lowlinks.insert(vertex, lowlinks[&vertex].min(dep_lowlink));
-            } else if on_stack.contains(&dependency) {
-                // Successor dependency is in stack and hence in the current SCC
-                let dep_index = indices[&dependency];
-                lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
+                if !indices.contains_key(&dependency) {
+                    // Successor dependency has not yet been visited; recurse on it
+                    self.tarjan_visit(
+                        dependency,
+                        index_counter,
+                        stack,
+                        indices,
+                        lowlinks,
+                        on_stack,
+                        sccs,
+                        vertex_set,
+                    )?;
+                    let dep_lowlink = lowlinks[&dependency];
+                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_lowlink));
+                } else if on_stack.contains(&dependency) {
+                    // Successor dependency is in stack and hence in the current SCC
+                    let dep_index = indices[&dependency];
+                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
+                }
+            }
+        } else {
+            let dependencies = self.graph.get_dependencies(vertex);
+            for dependency in dependencies {
+                // Only consider dependencies that are part of the current scheduling task
+                if !vertex_set.contains(&dependency) {
+                    continue;
+                }
+
+                if !indices.contains_key(&dependency) {
+                    // Successor dependency has not yet been visited; recurse on it
+                    self.tarjan_visit(
+                        dependency,
+                        index_counter,
+                        stack,
+                        indices,
+                        lowlinks,
+                        on_stack,
+                        sccs,
+                        vertex_set,
+                    )?;
+                    let dep_lowlink = lowlinks[&dependency];
+                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_lowlink));
+                } else if on_stack.contains(&dependency) {
+                    // Successor dependency is in stack and hence in the current SCC
+                    let dep_index = indices[&dependency];
+                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
+                }
             }
         }
 
@@ -229,35 +258,98 @@ impl<'a> Scheduler<'a> {
         on_stack.insert(vertex);
 
         // Consider successors of vertex (dependencies) including virtual deps
-        let mut dependencies = self.graph.get_dependencies(vertex).to_vec();
         if let Some(extra) = vdeps.get(&vertex) {
+            let mut dependencies: Vec<VertexId> =
+                if let Some(base) = self.graph.dependencies_slice(vertex) {
+                    base.to_vec()
+                } else {
+                    self.graph.get_dependencies(vertex)
+                };
             dependencies.extend(extra.iter().copied());
-        }
-        for dependency in dependencies.into_iter() {
-            // Only consider dependencies that are part of the current scheduling task
-            if !vertex_set.contains(&dependency) {
-                continue;
-            }
 
-            if !indices.contains_key(&dependency) {
-                // Successor dependency has not yet been visited; recurse on it
-                self.tarjan_visit_with_virtual(
-                    dependency,
-                    index_counter,
-                    stack,
-                    indices,
-                    lowlinks,
-                    on_stack,
-                    sccs,
-                    vertex_set,
-                    vdeps,
-                )?;
-                let dep_lowlink = lowlinks[&dependency];
-                lowlinks.insert(vertex, lowlinks[&vertex].min(dep_lowlink));
-            } else if on_stack.contains(&dependency) {
-                // Successor dependency is in stack and hence in the current SCC
-                let dep_index = indices[&dependency];
-                lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
+            for dependency in dependencies {
+                // Only consider dependencies that are part of the current scheduling task
+                if !vertex_set.contains(&dependency) {
+                    continue;
+                }
+
+                if !indices.contains_key(&dependency) {
+                    // Successor dependency has not yet been visited; recurse on it
+                    self.tarjan_visit_with_virtual(
+                        dependency,
+                        index_counter,
+                        stack,
+                        indices,
+                        lowlinks,
+                        on_stack,
+                        sccs,
+                        vertex_set,
+                        vdeps,
+                    )?;
+                    let dep_lowlink = lowlinks[&dependency];
+                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_lowlink));
+                } else if on_stack.contains(&dependency) {
+                    // Successor dependency is in stack and hence in the current SCC
+                    let dep_index = indices[&dependency];
+                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
+                }
+            }
+        } else if let Some(dependencies) = self.graph.dependencies_slice(vertex) {
+            for &dependency in dependencies {
+                // Only consider dependencies that are part of the current scheduling task
+                if !vertex_set.contains(&dependency) {
+                    continue;
+                }
+
+                if !indices.contains_key(&dependency) {
+                    // Successor dependency has not yet been visited; recurse on it
+                    self.tarjan_visit_with_virtual(
+                        dependency,
+                        index_counter,
+                        stack,
+                        indices,
+                        lowlinks,
+                        on_stack,
+                        sccs,
+                        vertex_set,
+                        vdeps,
+                    )?;
+                    let dep_lowlink = lowlinks[&dependency];
+                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_lowlink));
+                } else if on_stack.contains(&dependency) {
+                    // Successor dependency is in stack and hence in the current SCC
+                    let dep_index = indices[&dependency];
+                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
+                }
+            }
+        } else {
+            let dependencies = self.graph.get_dependencies(vertex);
+            for dependency in dependencies {
+                // Only consider dependencies that are part of the current scheduling task
+                if !vertex_set.contains(&dependency) {
+                    continue;
+                }
+
+                if !indices.contains_key(&dependency) {
+                    // Successor dependency has not yet been visited; recurse on it
+                    self.tarjan_visit_with_virtual(
+                        dependency,
+                        index_counter,
+                        stack,
+                        indices,
+                        lowlinks,
+                        on_stack,
+                        sccs,
+                        vertex_set,
+                        vdeps,
+                    )?;
+                    let dep_lowlink = lowlinks[&dependency];
+                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_lowlink));
+                } else if on_stack.contains(&dependency) {
+                    // Successor dependency is in stack and hence in the current SCC
+                    let dep_index = indices[&dependency];
+                    lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
+                }
             }
         }
 
@@ -313,12 +405,22 @@ impl<'a> Scheduler<'a> {
         // Calculate in-degrees for all vertices in the acyclic subgraph
         let mut in_degrees: FxHashMap<VertexId, usize> = vertices.iter().map(|&v| (v, 0)).collect();
         for &vertex_id in &vertices {
-            let dependencies = self.graph.get_dependencies(vertex_id);
-            for &dep_id in &dependencies {
-                if vertex_set.contains(&dep_id)
-                    && let Some(in_degree) = in_degrees.get_mut(&vertex_id)
-                {
-                    *in_degree += 1;
+            if let Some(dependencies) = self.graph.dependencies_slice(vertex_id) {
+                for &dep_id in dependencies {
+                    if vertex_set.contains(&dep_id)
+                        && let Some(in_degree) = in_degrees.get_mut(&vertex_id)
+                    {
+                        *in_degree += 1;
+                    }
+                }
+            } else {
+                let dependencies = self.graph.get_dependencies(vertex_id);
+                for dep_id in dependencies {
+                    if vertex_set.contains(&dep_id)
+                        && let Some(in_degree) = in_degrees.get_mut(&vertex_id)
+                    {
+                        *in_degree += 1;
+                    }
                 }
             }
         }
@@ -341,11 +443,22 @@ impl<'a> Scheduler<'a> {
                 processed_count += 1;
 
                 // For each dependent of u, reduce its in-degree
-                for v_dep in self.graph.get_dependents(u) {
-                    if let Some(in_degree) = in_degrees.get_mut(&v_dep) {
-                        *in_degree -= 1;
-                        if *in_degree == 0 {
-                            queue.push_back(v_dep);
+                if let Some(dependents) = self.graph.dependents_slice(u) {
+                    for &v_dep in dependents {
+                        if let Some(in_degree) = in_degrees.get_mut(&v_dep) {
+                            *in_degree -= 1;
+                            if *in_degree == 0 {
+                                queue.push_back(v_dep);
+                            }
+                        }
+                    }
+                } else {
+                    for v_dep in self.graph.get_dependents(u) {
+                        if let Some(in_degree) = in_degrees.get_mut(&v_dep) {
+                            *in_degree -= 1;
+                            if *in_degree == 0 {
+                                queue.push_back(v_dep);
+                            }
                         }
                     }
                 }
@@ -385,13 +498,17 @@ impl<'a> Scheduler<'a> {
         let mut combined_deps: FxHashMap<VertexId, Vec<VertexId>> = FxHashMap::default();
         let mut combined_out: FxHashMap<VertexId, Vec<VertexId>> = FxHashMap::default();
         for &v in &vertices {
-            let mut deps: Vec<VertexId> = self
-                .graph
-                .get_dependencies(v)
-                .iter()
-                .copied()
-                .filter(|d| vertex_set.contains(d))
-                .collect();
+            let mut deps: Vec<VertexId> = Vec::new();
+            if let Some(base) = self.graph.dependencies_slice(v) {
+                deps.extend(base.iter().copied().filter(|d| vertex_set.contains(d)));
+            } else {
+                deps.extend(
+                    self.graph
+                        .get_dependencies(v)
+                        .into_iter()
+                        .filter(|d| vertex_set.contains(d)),
+                );
+            }
             if let Some(extra) = vdeps.get(&v) {
                 deps.extend(extra.iter().copied().filter(|d| vertex_set.contains(d)));
             }

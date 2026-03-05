@@ -5353,15 +5353,30 @@ where
             }
 
             // Explicit dependencies (graph edges)
-            for dep in self.graph.get_dependencies(v) {
-                if self.graph.vertex_exists(dep) {
-                    match self.graph.get_vertex_kind(dep) {
-                        VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                            if !visited.contains(&dep) {
-                                stack.push(dep);
+            if let Some(dependencies) = self.graph.dependencies_slice(v) {
+                for &dep in dependencies {
+                    if self.graph.vertex_exists(dep) {
+                        match self.graph.get_vertex_kind(dep) {
+                            VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                                if !visited.contains(&dep) {
+                                    stack.push(dep);
+                                }
                             }
+                            _ => {}
                         }
-                        _ => {}
+                    }
+                }
+            } else {
+                for dep in self.graph.get_dependencies(v) {
+                    if self.graph.vertex_exists(dep) {
+                        match self.graph.get_vertex_kind(dep) {
+                            VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                                if !visited.contains(&dep) {
+                                    stack.push(dep);
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
             } // Virtual dependencies (compressed ranges + dynamic like INDIRECT)
@@ -5730,10 +5745,18 @@ where
                 }
 
                 // Continue traversal to dependencies (precedents)
-                let dependencies = self.graph.get_dependencies(vertex_id);
-                for &dep_id in &dependencies {
-                    if !visited.contains(&dep_id) {
-                        stack.push(dep_id);
+                if let Some(dependencies) = self.graph.dependencies_slice(vertex_id) {
+                    for &dep_id in dependencies {
+                        if !visited.contains(&dep_id) {
+                            stack.push(dep_id);
+                        }
+                    }
+                } else {
+                    let dependencies = self.graph.get_dependencies(vertex_id);
+                    for dep_id in dependencies {
+                        if !visited.contains(&dep_id) {
+                            stack.push(dep_id);
+                        }
                     }
                 }
             }

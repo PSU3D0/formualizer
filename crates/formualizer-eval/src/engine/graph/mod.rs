@@ -1370,8 +1370,12 @@ impl DependencyGraph {
         // Initial propagation from direct and range dependents
         {
             // Get dependents (vertices that depend on this vertex)
-            let dependents = self.get_dependents(vertex_id);
-            to_visit.extend(&dependents);
+            if let Some(dependents) = self.dependents_slice(vertex_id) {
+                to_visit.extend(dependents.iter().copied());
+            } else {
+                let dependents = self.get_dependents(vertex_id);
+                to_visit.extend(dependents);
+            }
 
             if let Some(name_set) = self.cell_to_name_dependents.get(&vertex_id) {
                 for &name_vertex in name_set {
@@ -1454,8 +1458,12 @@ impl DependencyGraph {
             self.store.set_dirty(id, true);
 
             // Add direct dependents to visit list
-            let dependents = self.get_dependents(id);
-            to_visit.extend(&dependents);
+            if let Some(dependents) = self.dependents_slice(id) {
+                to_visit.extend(dependents.iter().copied());
+            } else {
+                let dependents = self.get_dependents(id);
+                to_visit.extend(dependents);
+            }
         }
 
         // Add to dirty set
@@ -2548,6 +2556,14 @@ impl DependencyGraph {
         &self.cell_to_vertex
     }
 
+    /// Borrow dependencies of a vertex when no pending edge delta exists.
+    ///
+    /// This enables zero-allocation traversal in hot scheduler paths.
+    #[inline]
+    pub(crate) fn dependencies_slice(&self, vertex_id: VertexId) -> Option<&[VertexId]> {
+        self.edges.out_edges_ref(vertex_id)
+    }
+
     /// Get the dependencies of a vertex (for scheduler)
     pub(crate) fn get_dependencies(&self, vertex_id: VertexId) -> Vec<VertexId> {
         self.edges.out_edges(vertex_id)
@@ -2555,7 +2571,19 @@ impl DependencyGraph {
 
     /// Check if a vertex has a self-loop
     pub(crate) fn has_self_loop(&self, vertex_id: VertexId) -> bool {
-        self.edges.out_edges(vertex_id).contains(&vertex_id)
+        if let Some(deps) = self.dependencies_slice(vertex_id) {
+            deps.contains(&vertex_id)
+        } else {
+            self.edges.out_edges(vertex_id).contains(&vertex_id)
+        }
+    }
+
+    /// Borrow dependents of a vertex when no pending edge delta exists.
+    ///
+    /// This enables zero-allocation traversal in hot scheduler paths.
+    #[inline]
+    pub(crate) fn dependents_slice(&self, vertex_id: VertexId) -> Option<&[VertexId]> {
+        self.edges.in_edges_ref(vertex_id)
     }
 
     /// Get dependents of a vertex (vertices that depend on this vertex)

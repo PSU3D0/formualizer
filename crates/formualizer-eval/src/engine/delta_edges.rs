@@ -467,13 +467,41 @@ impl CsrMutableEdges {
 
     /// Get outgoing edges for a vertex (merged view)
     pub fn out_edges(&self, v: VertexId) -> Vec<VertexId> {
-        self.delta.merged_view(&self.base, v)
+        if self.delta.op_count() == 0 {
+            self.base.out_edges(v).to_vec()
+        } else {
+            self.delta.merged_view(&self.base, v)
+        }
+    }
+
+    /// Borrow outgoing edges when no delta mutations are pending.
+    ///
+    /// This is a zero-allocation hot path for read-heavy evaluation/scheduling phases.
+    #[inline]
+    pub fn out_edges_ref(&self, v: VertexId) -> Option<&[VertexId]> {
+        if self.delta.op_count() == 0 {
+            Some(self.base.out_edges(v))
+        } else {
+            None
+        }
     }
 
     /// Get incoming edges from base CSR (delta not applied for performance)
     /// After rebuild, this will include all changes
     pub fn in_edges(&self, v: VertexId) -> &[VertexId] {
         self.base.in_edges(v)
+    }
+
+    /// Borrow incoming edges when no delta mutations are pending.
+    ///
+    /// This is a zero-allocation hot path for read-heavy evaluation/scheduling phases.
+    #[inline]
+    pub fn in_edges_ref(&self, v: VertexId) -> Option<&[VertexId]> {
+        if self.delta.op_count() == 0 {
+            Some(self.base.in_edges(v))
+        } else {
+            None
+        }
     }
 
     /// Get the current delta size
