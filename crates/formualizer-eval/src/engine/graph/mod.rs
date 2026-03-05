@@ -1,10 +1,12 @@
 use crate::SheetId;
-use crate::engine::TombstoneRegistry;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
+
+pub mod tombstones;
+pub use self::tombstones::{EntityKind, TombstoneRegistry};
 
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,7 +30,6 @@ mod sheets;
 pub mod snapshot;
 mod sources;
 mod tables;
-pub mod tombstones;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
@@ -234,6 +235,22 @@ pub struct DependencyGraph {
 
     #[cfg(test)]
     instr: std::sync::Mutex<GraphInstrumentation>,
+}
+/// Internal adapter to bridge our CSR edges to the Topology PK logic.
+struct RebuildAdapter<'a> {
+    edges: &'a CsrMutableEdges,
+}
+
+impl crate::engine::topo::pk::GraphView<VertexId> for RebuildAdapter<'_> {
+    fn successors(&self, n: VertexId, out: &mut Vec<VertexId>) {
+        out.extend(self.edges.out_edges(n).iter().copied());
+    }
+    fn predecessors(&self, n: VertexId, out: &mut Vec<VertexId>) {
+        out.extend(self.edges.in_edges(n).iter().copied());
+    }
+    fn exists(&self, _n: VertexId) -> bool {
+        true
+    }
 }
 
 impl Default for DependencyGraph {
@@ -3009,49 +3026,100 @@ impl DependencyGraph {
             _ => vec![],
         }
     }
+
+    fn register_tombstone(&mut self, dependent: VertexId, reference: &ReferenceType) {
+        match reference {
+            // Fix: Variant is NamedRange(String), not Name(name)
+            ReferenceType::NamedRange(name) => {
+                self.tombstone_registry
+                    .register(EntityKind::NamedRange, name, dependent);
+            }
+            ReferenceType::Table(tref) => {
+                // TableReference uses .name
+                self.tombstone_registry
+                    .register(EntityKind::Table, &tref.name, dependent);
+            }
+            // Fix: Cell and Range are struct variants. We match if a sheet name was provided.
+            ReferenceType::Cell {
+                sheet: Some(name), ..
+            }
+            | ReferenceType::Range {
+                sheet: Some(name), ..
+            } => {
+                self.tombstone_registry
+                    .register(EntityKind::Sheet, name, dependent);
+            }
+            ReferenceType::External(ext) => {
+                // External references also have a sheet name that could be a tombstone
+                self.tombstone_registry
+                    .register(EntityKind::Sheet, &ext.sheet, dependent);
+            }
+            _ => {}
+        }
+    }
     pub(crate) fn rebuild_formula_dependencies(&mut self, vertex_id: VertexId, ast: &ASTNode) {
-        // 1. Identify and clear INCOMING edges (the formula's parents/sources)
+        // Step 1: Clear the past
+        self.clear_existing_incoming_edges(vertex_id);
+
+        // Step 2: Resolve the present (targets & tombstones)
+        let targets = self.resolve_and_register_references(vertex_id, ast);
+
+        // Step 3: Wire the future
+        self.wire_new_dependencies(vertex_id, targets);
+    }
+
+    /// Step 1: Remove old incoming edges so we can start fresh.
+    fn clear_existing_incoming_edges(&mut self, vertex_id: VertexId) {
         let current_sources: Vec<VertexId> = self.edges.in_edges(vertex_id).to_vec();
         for source_id in current_sources {
             self.edges.remove_edge(source_id, vertex_id);
             self.topo.remove_edge(source_id, vertex_id);
         }
+    }
 
-        // 2. Define the adapter LOCALLY inside this function
-        struct RebuildAdapter<'a> {
-            edges: &'a CsrMutableEdges,
-        }
-
-        // Match the 3-parameter signature required by your pk.rs
-        impl crate::engine::topo::pk::GraphView<VertexId> for RebuildAdapter<'_> {
-            fn successors(&self, n: VertexId, out: &mut Vec<VertexId>) {
-                out.extend(self.edges.out_edges(n).iter().copied());
-            }
-            fn predecessors(&self, n: VertexId, out: &mut Vec<VertexId>) {
-                out.extend(self.edges.in_edges(n).iter().copied());
-            }
-            fn exists(&self, _n: VertexId) -> bool {
-                true
-            }
-        }
-
-        // 3. Resolve targets (finish all immutable borrows of 'self' here)
+    /// Step 2: Find what this formula points to. If it's missing, mark a tombstone.
+    fn resolve_and_register_references(
+        &mut self,
+        vertex_id: VertexId,
+        ast: &ASTNode,
+    ) -> Vec<VertexId> {
+        let mut resolved_targets = Vec::new();
         let references = self.find_references_in_ast(ast);
-        let mut all_targets = Vec::new();
+
         for reference in references {
             let targets = self.resolve_reference_to_vertices(&reference);
-            all_targets.extend(targets);
+            if targets.is_empty() {
+                self.register_tombstone(vertex_id, &reference);
+            } else {
+                resolved_targets.extend(targets);
+            }
         }
+        resolved_targets
+    }
 
-        // 4. Re-wire (Sources -> Dependent)
-        for target_vertex in all_targets {
-            // Mutate edges
+    /// Step 3: Create the physical edges and update the topological sort.
+    fn wire_new_dependencies(&mut self, vertex_id: VertexId, targets: Vec<VertexId>) {
+        for target_vertex in targets {
+            // Add the graph edge (Source -> Dependent)
             self.edges.add_edge(target_vertex, vertex_id);
 
-            // Mutate topo using a fresh adapter for this iteration
+            // Update the topology manager
             let adapter = RebuildAdapter { edges: &self.edges };
             let _ = self.topo.try_add_edge(&adapter, target_vertex, vertex_id);
-            self.mark_vertex_dirty(target_vertex);
+
+            // Mark the dependent formula as needing a re-calc
+            self.mark_vertex_dirty(vertex_id);
+        }
+    }
+
+    pub(crate) fn rescue_orphans(&mut self, kind: EntityKind, name: &str) {
+        let orphans = self.tombstone_registry.take_dependents(kind, name);
+        for vertex_id in orphans {
+            // Fix: Use get_formula as identified by compiler
+            if let Some(ast) = self.get_formula(vertex_id) {
+                self.rebuild_formula_dependencies(vertex_id, &ast);
+                self.mark_vertex_dirty(vertex_id);
+            }
         }
     }
 }

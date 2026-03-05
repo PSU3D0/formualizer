@@ -15,7 +15,9 @@ impl DependencyGraph {
         let sheet_id = self.sheet_reg.id_for(name);
         self.sheet_indexes.entry(sheet_id).or_default();
 
-        let orphans = self.tombstone_registry.take_orphans(name);
+        let orphans = self
+            .tombstone_registry
+            .take_dependents(EntityKind::Sheet, name);
         for vertex_id in orphans {
             self.rebind_vertex_to_sheet(vertex_id, name);
         }
@@ -52,7 +54,7 @@ impl DependencyGraph {
         }
         for &formula_id in &formulas_to_update {
             self.tombstone_registry
-                .add_orphan(old_name.clone(), formula_id);
+                .register(EntityKind::Sheet, &old_name, formula_id);
         }
 
         for formula_id in formulas_to_update {
@@ -369,7 +371,9 @@ impl DependencyGraph {
     }
 
     fn heal_orphaned_formulas(&mut self, sheet_name: &str) {
-        let orphans = self.tombstone_registry.take_orphans(sheet_name);
+        let orphans = self
+            .tombstone_registry
+            .take_dependents(EntityKind::Sheet, sheet_name);
 
         for vertex_id in orphans {
             if let Some(ast_id) = self.vertex_formulas.get(&vertex_id)
