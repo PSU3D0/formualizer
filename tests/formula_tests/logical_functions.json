@@ -44,22 +44,19 @@
       "formula": "=IF(,FALSE,\"PASS\")",
       "result": "PASS",
       "result_type": "text",
-      "description": "IF with omitted condition (treated as FALSE)",
-      "skip": "parser does not support omitted arguments"
+      "description": "IF with omitted condition (treated as FALSE)"
     },
     {
       "formula": "=IF(,4,)",
       "result": 0,
       "result_type": "int",
-      "description": "IF with omitted condition and omitted false value",
-      "skip": "parser does not support omitted arguments"
+      "description": "IF with omitted condition and omitted false value"
     },
     {
       "formula": "=IF(,,)",
       "result": 0,
       "result_type": "int",
-      "description": "IF with all args omitted",
-      "skip": "parser does not support omitted arguments"
+      "description": "IF with all args omitted"
     },
     {
       "formula": "=IF(,,A2)",
@@ -68,8 +65,7 @@
       "description": "IF with omitted condition returns value_if_false from cell",
       "context": {
         "A2": 5
-      },
-      "skip": "parser does not support omitted arguments"
+      }
     },
     {
       "formula": "=IF(A1>3, A1*2, 0)",

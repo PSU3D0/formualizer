@@ -224,15 +224,13 @@
       "formula": "=TEXT(0.285, \"0.0%\")",
       "result": "28.5%",
       "result_type": "text",
-      "description": "TEXT percentage format",
-      "skip": "TEXT percentage format pattern not fully implemented"
+      "description": "TEXT percentage format"
     },
     {
       "formula": "=TEXT(1234.567, \"$#,##0.00\")",
       "result": "$1,234.57",
       "result_type": "text",
-      "description": "TEXT currency format",
-      "skip": "TEXT currency prefix not implemented"
+      "description": "TEXT currency format"
     }
   ]
 }

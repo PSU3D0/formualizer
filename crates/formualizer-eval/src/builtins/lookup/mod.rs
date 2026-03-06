@@ -15,7 +15,7 @@ mod stack; // stacking & concatenation functions (HSTACK, VSTACK)
 
 pub use address::AddressFn;
 pub use choose::ChooseFn;
-pub use core::{HLookupFn, MatchFn, VLookupFn};
+pub use core::{HLookupFn, LookupFn, MatchFn, VLookupFn};
 pub use dynamic::{
     FilterFn, GroupByFn, PivotByFn, RandArrayFn, SortByFn, SortFn, UniqueFn, XLookupFn, XMatchFn,
 };
@@ -33,6 +33,7 @@ pub fn register_builtins() {
     register_function(Arc::new(MatchFn));
     register_function(Arc::new(VLookupFn));
     register_function(Arc::new(HLookupFn));
+    register_function(Arc::new(LookupFn));
 
     // Choose function
     register_function(Arc::new(ChooseFn));

@@ -318,10 +318,11 @@ impl ReferenceResolver for TestWorkbook {
         col: u32,
     ) -> Result<V, ExcelError> {
         let sheet_name = sheet.unwrap_or(self.default_sheet_name());
-        self.sheets
+        Ok(self
+            .sheets
             .get(sheet_name)
             .and_then(|sh| sh.cells.get(&(row, col)).cloned())
-            .ok_or_else(|| ExcelError::from(ExcelErrorKind::Ref))
+            .unwrap_or(V::Empty))
     }
 }
 
