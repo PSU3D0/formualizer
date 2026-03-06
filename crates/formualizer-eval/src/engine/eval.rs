@@ -37,6 +37,8 @@ pub struct Engine<R> {
     thread_pool: Option<Arc<rayon::ThreadPool>>,
     pub recalc_epoch: u64,
     snapshot_id: std::sync::atomic::AtomicU64,
+    topology_epoch: u64,
+    cached_static_schedule: Option<CachedScheduleEntry>,
     spill_mgr: ShimSpillManager,
     /// Arrow-backed storage for sheet values (Phase A)
     arrow_sheets: SheetStore,
@@ -521,6 +523,9 @@ pub struct VirtualDepTelemetry {
     pub builder_elapsed_ms_total: u128,
     pub schedule_virtual_passes: usize,
     pub schedule_static_passes: usize,
+    pub schedule_cache_hits: usize,
+    pub schedule_cache_misses: usize,
+    pub reused_schedule_vertices_total: usize,
     pub replan_iterations: usize,
     pub changed_vdeps_total: usize,
     pub bailout_reason: Option<&'static str>,
@@ -534,6 +539,15 @@ struct ScheduleBuildMeta {
     vdeps_edges: usize,
     builder_elapsed_ms: u128,
     used_virtual_schedule: bool,
+    schedule_cache_hit: bool,
+    schedule_cache_eligible: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CachedScheduleEntry {
+    topology_epoch: u64,
+    candidate_vertices: Vec<VertexId>,
+    schedule: crate::engine::scheduler::Schedule,
 }
 
 type ScheduleBuildOutput = (
@@ -869,6 +883,8 @@ where
             thread_pool,
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
+            topology_epoch: 0,
+            cached_static_schedule: None,
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
             has_edited: false,
@@ -916,6 +932,8 @@ where
             thread_pool: Some(thread_pool),
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
+            topology_epoch: 0,
+            cached_static_schedule: None,
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
             has_edited: false,
@@ -1183,6 +1201,7 @@ where
     pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
         let id = self.graph.add_sheet(name)?;
         self.ensure_arrow_sheet(name);
+        self.mark_topology_edited();
         Ok(id)
     }
 
@@ -1241,6 +1260,7 @@ where
                 for v_id in sheet_vertices {
                     self.graph.mark_vertex_dirty(v_id);
                 }
+                self.mark_topology_edited();
                 Ok(())
             }
             Err(e) => {
@@ -1324,7 +1344,9 @@ where
         definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), ExcelError> {
-        self.graph.define_name(name, definition, scope)
+        self.graph.define_name(name, definition, scope)?;
+        self.mark_topology_edited();
+        Ok(())
     }
 
     pub fn update_name(
@@ -1333,11 +1355,15 @@ where
         definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), ExcelError> {
-        self.graph.update_name(name, definition, scope)
+        self.graph.update_name(name, definition, scope)?;
+        self.mark_topology_edited();
+        Ok(())
     }
 
     pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), ExcelError> {
-        self.graph.delete_name(name, scope)
+        self.graph.delete_name(name, scope)?;
+        self.mark_topology_edited();
+        Ok(())
     }
 
     pub fn define_table(
@@ -1349,7 +1375,9 @@ where
         totals_row: bool,
     ) -> Result<(), ExcelError> {
         self.graph
-            .define_table(name, range, header_row, headers, totals_row)
+            .define_table(name, range, header_row, headers, totals_row)?;
+        self.mark_topology_edited();
+        Ok(())
     }
 
     pub fn define_source_scalar(
@@ -1357,7 +1385,9 @@ where
         name: &str,
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
-        self.graph.define_source_scalar(name, version)
+        self.graph.define_source_scalar(name, version)?;
+        self.mark_topology_edited();
+        Ok(())
     }
 
     pub fn define_source_table(
@@ -1365,7 +1395,9 @@ where
         name: &str,
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
-        self.graph.define_source_table(name, version)
+        self.graph.define_source_table(name, version)?;
+        self.mark_topology_edited();
+        Ok(())
     }
 
     pub fn set_source_scalar_version(
@@ -1930,10 +1962,24 @@ where
         self.graph.set_sheet_index_mode(mode);
     }
 
-    /// Mark data edited: bump snapshot and set edited flag
+    fn clear_cached_static_schedule(&mut self) {
+        self.cached_static_schedule = None;
+    }
+
+    /// Mark data edited: bump snapshot and set edited flag.
+    /// Value-only edits keep the stable-topology schedule cache alive.
     pub fn mark_data_edited(&mut self) {
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.has_edited = true;
+    }
+
+    /// Mark a topology-changing edit: bump snapshot + topology epoch and invalidate cached schedules.
+    pub fn mark_topology_edited(&mut self) {
+        self.snapshot_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.topology_epoch = self.topology_epoch.wrapping_add(1);
+        self.clear_cached_static_schedule();
         self.has_edited = true;
     }
 
@@ -2481,7 +2527,7 @@ where
             asheet.insert_rows(before0, count as usize);
         }
         self.shift_row_visibility_insert(sheet_id, before0, count);
-        self.mark_data_edited();
+        self.mark_topology_edited();
         Ok(summary)
     }
 
@@ -2505,7 +2551,7 @@ where
             asheet.delete_rows(start0, count as usize);
         }
         self.shift_row_visibility_delete(sheet_id, start0, count);
-        self.mark_data_edited();
+        self.mark_topology_edited();
         Ok(summary)
     }
 
@@ -2524,16 +2570,16 @@ where
                 reason: "Unknown sheet".to_string(),
             },
         )?;
-        let mut editor = VertexEditor::new(&mut self.graph);
         let before0 = before.saturating_sub(1);
-        let summary = editor.insert_columns(sheet_id, before0, count)?;
+        let summary = {
+            let mut editor = VertexEditor::new(&mut self.graph);
+            editor.insert_columns(sheet_id, before0, count)?
+        };
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
             let before0 = before0 as usize;
             asheet.insert_columns(before0, count as usize);
         }
-        self.snapshot_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.has_edited = true;
+        self.mark_topology_edited();
         Ok(summary)
     }
 
@@ -2552,16 +2598,16 @@ where
                 reason: "Unknown sheet".to_string(),
             },
         )?;
-        let mut editor = VertexEditor::new(&mut self.graph);
         let start0 = start.saturating_sub(1);
-        let summary = editor.delete_columns(sheet_id, start0, count)?;
+        let summary = {
+            let mut editor = VertexEditor::new(&mut self.graph);
+            editor.delete_columns(sheet_id, start0, count)?
+        };
         if let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) {
             let start0 = start0 as usize;
             asheet.delete_columns(start0, count as usize);
         }
-        self.snapshot_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.has_edited = true;
+        self.mark_topology_edited();
         Ok(summary)
     }
     /// Arrow-backed used row bounds across a column span (1-based inclusive cols).
@@ -3683,9 +3729,7 @@ where
         self.clear_delta_overlay_cell(sheet, row, col);
 
         // Advance snapshot to reflect external mutation
-        self.snapshot_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.has_edited = true;
+        self.mark_topology_edited();
         Ok(())
     }
 
@@ -3702,11 +3746,9 @@ where
         let n = self
             .graph
             .bulk_set_formulas_with_volatility(sheet, collected, vol_flags)?;
-        // Single snapshot bump after batch
-        self.snapshot_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Single topology bump after batch
         if n > 0 {
-            self.has_edited = true;
+            self.mark_topology_edited();
         }
         Ok(n)
     }
@@ -4644,7 +4686,7 @@ where
         }
 
         let has_dynamic_refs = vertices.iter().copied().any(|v| self.graph.is_dynamic(v));
-        let (schedule, _, _) = self.create_evaluation_schedule(&vertices)?;
+        let (schedule, _, _) = self.create_evaluation_schedule_uncached(&vertices)?;
         Ok(RecalcPlan {
             schedule,
             has_dynamic_refs,
@@ -5221,6 +5263,47 @@ where
     }
     /// Helper to create a schedule, integrating virtual dependencies automatically.
     fn create_evaluation_schedule(
+        &mut self,
+        to_evaluate: &[VertexId],
+    ) -> Result<ScheduleBuildOutput, ExcelError> {
+        if self.can_use_static_schedule_cache(to_evaluate) {
+            if let Some(cached) = self.cached_static_schedule.as_ref()
+                && cached.topology_epoch == self.topology_epoch
+                && cached.candidate_vertices.as_slice() == to_evaluate
+            {
+                let meta = ScheduleBuildMeta {
+                    candidate_vertices: to_evaluate.len(),
+                    vdeps_vertices: 0,
+                    vdeps_edges: 0,
+                    builder_elapsed_ms: 0,
+                    used_virtual_schedule: false,
+                    schedule_cache_hit: true,
+                    schedule_cache_eligible: true,
+                };
+                return Ok((cached.schedule.clone(), FxHashMap::default(), meta));
+            }
+
+            let (schedule, vdeps, mut meta) =
+                self.create_evaluation_schedule_uncached(to_evaluate)?;
+            meta.schedule_cache_hit = false;
+            meta.schedule_cache_eligible = true;
+            if vdeps.is_empty() {
+                self.cached_static_schedule = Some(CachedScheduleEntry {
+                    topology_epoch: self.topology_epoch,
+                    candidate_vertices: to_evaluate.to_vec(),
+                    schedule: schedule.clone(),
+                });
+            }
+            return Ok((schedule, vdeps, meta));
+        }
+
+        let (schedule, vdeps, mut meta) = self.create_evaluation_schedule_uncached(to_evaluate)?;
+        meta.schedule_cache_hit = false;
+        meta.schedule_cache_eligible = false;
+        Ok((schedule, vdeps, meta))
+    }
+
+    fn create_evaluation_schedule_uncached(
         &self,
         to_evaluate: &[VertexId],
     ) -> Result<ScheduleBuildOutput, ExcelError> {
@@ -5259,9 +5342,18 @@ where
             vdeps_edges,
             builder_elapsed_ms,
             used_virtual_schedule: use_virtual,
+            schedule_cache_hit: false,
+            schedule_cache_eligible: false,
         };
 
         Ok((schedule, vdeps, meta))
+    }
+
+    fn can_use_static_schedule_cache(&self, to_evaluate: &[VertexId]) -> bool {
+        !to_evaluate.is_empty()
+            && to_evaluate.iter().copied().all(|v| {
+                !self.graph.is_dynamic(v) && self.graph.get_range_dependencies(v).is_none()
+            })
     }
 
     fn start_virtual_dep_telemetry(&self) -> VirtualDepTelemetry {
@@ -5276,6 +5368,14 @@ where
         telemetry.vdeps_vertices_total += meta.vdeps_vertices;
         telemetry.vdeps_edges_total += meta.vdeps_edges;
         telemetry.builder_elapsed_ms_total += meta.builder_elapsed_ms;
+        if meta.schedule_cache_eligible {
+            if meta.schedule_cache_hit {
+                telemetry.schedule_cache_hits += 1;
+                telemetry.reused_schedule_vertices_total += meta.candidate_vertices;
+            } else {
+                telemetry.schedule_cache_misses += 1;
+            }
+        }
         if meta.used_virtual_schedule {
             telemetry.schedule_virtual_passes += 1;
         } else {

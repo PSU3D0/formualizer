@@ -18,6 +18,7 @@ mod parallel;
 mod range_dependencies;
 mod range_property_tests;
 mod recalc_plan;
+mod schedule_cache;
 mod schedule_integration;
 mod sheet_index_integration;
 //mod streaming_evaluation;
