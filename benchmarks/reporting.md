@@ -110,6 +110,8 @@ Current nightly-scale watchlist:
 
 Use `runtime_parity_core` only for scenarios tagged with `runtime_modes: [native_best, runtime_parity]`.
 
+`native_best_cached_plan` is an optional formualizer-native analysis mode for stable-topology plan-reuse experiments. Treat it as an internal optimization view unless equivalent plan-reuse modes are implemented for comparison engines.
+
 Current runtime-parity corpus:
 
 - `headline_100k_single_edit`

@@ -56,6 +56,12 @@ uv run --project benchmarks/harness python benchmarks/harness/runner/main.py run
   --plan nightly_native_compares \
   --dry-run
 
+# Probe stable-topology plan reuse on a single scenario
+cargo run --release -p formualizer-bench-core --features formualizer_runner --bin run-formualizer-native -- \
+  --scenarios benchmarks/scenarios.yaml \
+  --scenario chain_100k \
+  --mode native_best_cached_plan
+
 # Build markdown summary grouped by family/tier
 uv run --project benchmarks/harness python benchmarks/harness/runner/main.py report \
   --group-by family,tier
@@ -73,6 +79,8 @@ uv run --project benchmarks/harness python benchmarks/harness/runner/main.py rep
   - `core_comparative` on `formualizer_rust_native`, `ironcalc_rust_native`, and `hyperformula_node`
   - `native_strength` on `formualizer_rust_native` and `ironcalc_rust_native`
   - `nightly_scale` on `formualizer_rust_native`
+- `run-formualizer-native --mode native_best_cached_plan` is available for stable-topology analysis on scenarios like `chain_100k` and `fanout_100k`; it is correctness-safe on `headline_100k_single_edit` but not necessarily faster when the dirty frontier is tiny.
+- Cached-plan runs invalidate automatically on topology-changing benchmark ops (`edit_set_formula`, `insert_rows`, sheet add/remove/rename`) and fall back safely when no reusable plan is available.
 - Plan runs write per-run raw JSON under `results/raw/` and plan-scoped markdown/manifest files under `results/reports/`.
 - Raw result filenames now include `mode` so native-best and runtime-parity runs can coexist safely.
 

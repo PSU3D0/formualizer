@@ -2415,6 +2415,10 @@ impl Workbook {
             .map_err(IoError::Engine)
     }
 
+    pub fn build_recalc_plan(&self) -> Result<formualizer_eval::engine::RecalcPlan, IoError> {
+        self.engine.build_recalc_plan().map_err(IoError::Engine)
+    }
+
     pub fn evaluate_with_plan(
         &mut self,
         plan: &formualizer_eval::engine::RecalcPlan,

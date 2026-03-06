@@ -4,6 +4,8 @@ use std::{
     time::Instant,
 };
 
+use serde_json::json;
+
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use formualizer_bench_core::{BenchmarkResult, BenchmarkSuite, CorrectnessResult, MetricsResult};
@@ -32,6 +34,8 @@ struct Cli {
     root: PathBuf,
     #[arg(long, default_value = "native_best")]
     mode: String,
+    #[arg(long)]
+    reuse_recalc_plan: bool,
 }
 
 #[cfg(feature = "formualizer_runner")]
@@ -66,6 +70,19 @@ fn run() -> Result<()> {
 
     let mut full_eval_ms: Option<f64> = None;
     let mut incremental_us: Option<f64> = None;
+    // Full-workbook recalc-plan reuse is primarily intended for stable-topology workloads
+    // whose dirty frontier stays large enough to amortize schedule rebuild cost (for example,
+    // deep chains and broad fanout). It remains correctness-safe on tiny-frontier cases like
+    // headline single-edit probes, but those may still favor the baseline incremental path.
+    let use_recalc_plan = cli.reuse_recalc_plan || mode_requests_recalc_plan(&cli.mode);
+    let mut cached_plan: Option<_> = None;
+    let mut notes = Vec::new();
+    let mut plan_builds = 0u64;
+    let mut plan_reuses = 0u64;
+    let mut plan_fallbacks = 0u64;
+    let mut plan_invalidations = 0u64;
+    let mut plan_layer_count: Option<u64> = None;
+    let mut plan_has_dynamic_refs = false;
 
     for op in &scenario.operations {
         match op.op.as_str() {
@@ -75,12 +92,65 @@ fn run() -> Result<()> {
                 wb.evaluate_all()
                     .map_err(|e| anyhow::anyhow!("evaluate_all: {e}"))?;
                 full_eval_ms = Some(t0.elapsed().as_secs_f64() * 1000.0);
+                if use_recalc_plan {
+                    let plan = wb.build_recalc_plan().map_err(|e| {
+                        anyhow::anyhow!("build_recalc_plan after evaluate_all: {e}")
+                    })?;
+                    plan_layer_count = Some(plan.layer_count() as u64);
+                    plan_has_dynamic_refs = plan.has_dynamic_refs();
+                    cached_plan = Some(plan);
+                    plan_builds += 1;
+                }
             }
             "evaluate_incremental" => {
                 let t0 = Instant::now();
-                wb.evaluate_all()
-                    .map_err(|e| anyhow::anyhow!("evaluate_incremental/evaluate_all: {e}"))?;
+                let reused_plan = if use_recalc_plan {
+                    if let Some(plan) = cached_plan.as_ref() {
+                        if plan.has_dynamic_refs() {
+                            notes.push(
+                                "recalc_plan_fallback:evaluate_all(dynamic_refs_present)"
+                                    .to_string(),
+                            );
+                            wb.evaluate_all().map_err(|e| {
+                                anyhow::anyhow!(
+                                    "evaluate_incremental/evaluate_all(dynamic fallback): {e}"
+                                )
+                            })?;
+                            plan_fallbacks += 1;
+                            false
+                        } else {
+                            wb.evaluate_with_plan(plan).map_err(|e| {
+                                anyhow::anyhow!("evaluate_incremental/evaluate_with_plan: {e}")
+                            })?;
+                            plan_reuses += 1;
+                            true
+                        }
+                    } else {
+                        notes.push("recalc_plan_fallback:evaluate_all(no_cached_plan)".to_string());
+                        wb.evaluate_all().map_err(|e| {
+                            anyhow::anyhow!(
+                                "evaluate_incremental/evaluate_all(no cached plan): {e}"
+                            )
+                        })?;
+                        plan_fallbacks += 1;
+                        false
+                    }
+                } else {
+                    wb.evaluate_all()
+                        .map_err(|e| anyhow::anyhow!("evaluate_incremental/evaluate_all: {e}"))?;
+                    false
+                };
                 incremental_us = Some(t0.elapsed().as_secs_f64() * 1_000_000.0);
+
+                if use_recalc_plan && !reused_plan {
+                    let plan = wb.build_recalc_plan().map_err(|e| {
+                        anyhow::anyhow!("build_recalc_plan after incremental fallback: {e}")
+                    })?;
+                    plan_layer_count = Some(plan.layer_count() as u64);
+                    plan_has_dynamic_refs = plan.has_dynamic_refs();
+                    cached_plan = Some(plan);
+                    plan_builds += 1;
+                }
             }
             "edit_set_value" => {
                 let sheet = arg_str(op, "sheet")?;
@@ -97,16 +167,40 @@ fn run() -> Result<()> {
                 let formula = arg_str(op, "formula")?;
                 wb.set_formula(&sheet, row, col, &formula)
                     .map_err(|e| anyhow::anyhow!("set_formula: {e}"))?;
+                if use_recalc_plan {
+                    invalidate_cached_plan(
+                        &mut cached_plan,
+                        &mut notes,
+                        &mut plan_invalidations,
+                        "edit_set_formula",
+                    );
+                }
             }
             "add_sheet" => {
                 let sheet = arg_str(op, "sheet")?;
                 wb.add_sheet(&sheet)
                     .map_err(|e| anyhow::anyhow!("add_sheet: {e}"))?;
+                if use_recalc_plan {
+                    invalidate_cached_plan(
+                        &mut cached_plan,
+                        &mut notes,
+                        &mut plan_invalidations,
+                        "add_sheet",
+                    );
+                }
             }
             "remove_sheet" => {
                 let sheet = arg_str(op, "sheet")?;
                 wb.delete_sheet(&sheet)
                     .map_err(|e| anyhow::anyhow!("delete_sheet: {e}"))?;
+                if use_recalc_plan {
+                    invalidate_cached_plan(
+                        &mut cached_plan,
+                        &mut notes,
+                        &mut plan_invalidations,
+                        "remove_sheet",
+                    );
+                }
             }
             "insert_rows" => {
                 let sheet = arg_str(op, "sheet")?;
@@ -115,6 +209,14 @@ fn run() -> Result<()> {
                 wb.engine_mut()
                     .insert_rows(&sheet, before, count)
                     .map_err(|e| anyhow::anyhow!("insert_rows: {e}"))?;
+                if use_recalc_plan {
+                    invalidate_cached_plan(
+                        &mut cached_plan,
+                        &mut notes,
+                        &mut plan_invalidations,
+                        "insert_rows",
+                    );
+                }
             }
             "rename_sheet" => {
                 if let (Ok(old), Ok(new)) = (arg_str(op, "old"), arg_str(op, "new")) {
@@ -126,6 +228,14 @@ fn run() -> Result<()> {
                 } else {
                     bail!("rename_sheet op requires old+new or sheet+new")
                 }
+                if use_recalc_plan {
+                    invalidate_cached_plan(
+                        &mut cached_plan,
+                        &mut notes,
+                        &mut plan_invalidations,
+                        "rename_sheet",
+                    );
+                }
             }
             "read_cells" => {}
             unsupported => bail!("unsupported op in native adapter: {unsupported}"),
@@ -134,6 +244,26 @@ fn run() -> Result<()> {
 
     let correctness = verify_correctness(&mut wb, scenario, &root)?;
     let status = if correctness.passed { "ok" } else { "invalid" }.to_string();
+
+    let mut metrics_extra = BTreeMap::new();
+    metrics_extra.insert("recalc_plan_requested".to_string(), json!(use_recalc_plan));
+    metrics_extra.insert("recalc_plan_builds".to_string(), json!(plan_builds));
+    metrics_extra.insert("recalc_plan_reuses".to_string(), json!(plan_reuses));
+    metrics_extra.insert("recalc_plan_fallbacks".to_string(), json!(plan_fallbacks));
+    metrics_extra.insert(
+        "recalc_plan_invalidations".to_string(),
+        json!(plan_invalidations),
+    );
+    metrics_extra.insert(
+        "recalc_plan_last_has_dynamic_refs".to_string(),
+        json!(plan_has_dynamic_refs),
+    );
+    if let Some(layer_count) = plan_layer_count {
+        metrics_extra.insert(
+            "recalc_plan_last_layer_count".to_string(),
+            json!(layer_count),
+        );
+    }
 
     let result = BenchmarkResult {
         engine: "formualizer_rust_native".to_string(),
@@ -145,10 +275,10 @@ fn run() -> Result<()> {
             full_eval_ms,
             incremental_us,
             peak_rss_mb: None,
-            extra: BTreeMap::new(),
+            extra: metrics_extra,
         },
         correctness,
-        notes: vec![],
+        notes,
         timestamp: chrono::Utc::now().to_rfc3339(),
         meta: BTreeMap::new(),
     };
@@ -161,6 +291,24 @@ fn run() -> Result<()> {
 fn resolve_output_path(root: &Path, workbook_path: &str) -> PathBuf {
     let p = PathBuf::from(workbook_path);
     if p.is_absolute() { p } else { root.join(p) }
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn mode_requests_recalc_plan(mode: &str) -> bool {
+    matches!(mode, "native_best_cached_plan") || mode.ends_with("_cached_plan")
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn invalidate_cached_plan<T>(
+    cached_plan: &mut Option<T>,
+    notes: &mut Vec<String>,
+    invalidation_count: &mut u64,
+    reason: &str,
+) {
+    if cached_plan.take().is_some() {
+        *invalidation_count += 1;
+        notes.push(format!("recalc_plan_invalidated:{reason}"));
+    }
 }
 
 #[cfg(feature = "formualizer_runner")]
@@ -307,4 +455,42 @@ fn verify_correctness(
         mismatches,
         details,
     })
+}
+
+#[cfg(all(test, feature = "formualizer_runner"))]
+mod tests {
+    use super::{invalidate_cached_plan, mode_requests_recalc_plan};
+
+    #[test]
+    fn detects_cached_plan_modes() {
+        assert!(mode_requests_recalc_plan("native_best_cached_plan"));
+        assert!(mode_requests_recalc_plan("runtime_parity_cached_plan"));
+        assert!(!mode_requests_recalc_plan("native_best"));
+    }
+
+    #[test]
+    fn only_records_invalidation_when_a_plan_exists() {
+        let mut cached_plan = Some(42u32);
+        let mut notes = Vec::new();
+        let mut invalidations = 0u64;
+
+        invalidate_cached_plan(
+            &mut cached_plan,
+            &mut notes,
+            &mut invalidations,
+            "insert_rows",
+        );
+        assert!(cached_plan.is_none());
+        assert_eq!(invalidations, 1);
+        assert_eq!(notes, vec!["recalc_plan_invalidated:insert_rows"]);
+
+        invalidate_cached_plan(
+            &mut cached_plan,
+            &mut notes,
+            &mut invalidations,
+            "rename_sheet",
+        );
+        assert_eq!(invalidations, 1);
+        assert_eq!(notes.len(), 1);
+    }
 }
