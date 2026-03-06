@@ -806,6 +806,148 @@ scenarios:
         - load_ms
         - peak_rss_mb
 
+  - id: struct_row_insert_middle_50k_refs
+    name: Middle row-insert churn with 50k row-local refs
+    profile: formualizer_strength
+    family: structural_edit
+    tier: comparative
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/struct_row_insert_middle_50k_refs.xlsx
+      seed: 1010
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 50000
+            cols: 3
+        layout:
+          formula_pattern: "=A{row}*2"
+          rollup_formula: "=SUM(B1:B50000)"
+          insert:
+            before_row: 25001
+            count: 2
+            seeded_rows:
+              - row: 25001
+                value: 100
+                formula: "=A25001*2"
+              - row: 25002
+                value: 200
+                formula: "=A25002*2"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: insert_rows
+        sheet: Sheet1
+        before: 25001
+        count: 2
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 25001
+        col: 1
+        value: 100
+      - op: edit_set_formula
+        sheet: Sheet1
+        row: 25001
+        col: 2
+        formula: "=A25001*2"
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 25002
+        col: 1
+        value: 200
+      - op: edit_set_formula
+        sheet: Sheet1
+        row: 25002
+        col: 2
+        formula: "=A25002*2"
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!B25001", "Sheet1!B25002", "Sheet1!B25003", "Sheet1!B50002", "Sheet1!C1"]
+    verify:
+      expected:
+        "Sheet1!B25001": 200
+        "Sheet1!B25002": 400
+        "Sheet1!B25003": 50002
+        "Sheet1!B50002": 100000
+        "Sheet1!C1": 2500050600
+      formula_checks:
+        - cell: "Sheet1!B25003"
+          type: non_error
+        - cell: "Sheet1!C1"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: struct_sheet_rename_rebind
+    name: Sheet rename and cross-sheet ref rebind
+    profile: formualizer_strength
+    family: structural_edit
+    tier: comparative
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/struct_sheet_rename_rebind.xlsx
+      seed: 1011
+      config:
+        sheets:
+          - name: Inputs
+            rows: 25000
+            cols: 1
+          - name: Summary
+            rows: 25000
+            cols: 3
+        layout:
+          renamed_sheet: InputsRenamed
+          summary_formula_pattern: "=Inputs!A{row}*3"
+          summary_rollup_formula: "=SUM(Inputs!A1:A25000)*3"
+          direct_cross_sheet_rollup_formula: "=SUM(Inputs!A1:A25000)"
+          rebind_probe_formula: "=Inputs!A12345+A12345"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: rename_sheet
+        old: Inputs
+        new: InputsRenamed
+      - op: edit_set_value
+        sheet: InputsRenamed
+        row: 12345
+        col: 1
+        value: 77
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["InputsRenamed!A12345", "Summary!A12345", "Summary!B1", "Summary!B2", "Summary!C1"]
+    verify:
+      expected:
+        "InputsRenamed!A12345": 77
+        "Summary!A12345": 231
+        "Summary!B1": 937500696
+        "Summary!B2": 308
+        "Summary!C1": 312500232
+      formula_checks:
+        - cell: "Summary!A12345"
+          type: non_error
+        - cell: "Summary!B2"
+          type: non_error
+        - cell: "Summary!C1"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
   - id: structural_sheet_recovery
     name: Remove/recreate sheet dependency recovery
     profile: formualizer_strength
