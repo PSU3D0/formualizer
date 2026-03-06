@@ -242,7 +242,10 @@ mod tests {
         let d2 = NaiveDate::from_ymd_opt(1900, 2, 15).unwrap();
         let serial2 = date_to_serial(&d2);
         let back2 = serial_to_date(serial2).unwrap();
-        assert_eq!(d2, back2, "eval round trip failed: {d2} -> {serial2} -> {back2}");
+        assert_eq!(
+            d2, back2,
+            "eval round trip failed: {d2} -> {serial2} -> {back2}"
+        );
     }
 
     /// Cross-crate round-trip: eval's date_to_serial → common's serial_to_datetime.
@@ -257,7 +260,10 @@ mod tests {
         let back = LiteralValue::from_serial_number(serial);
         match back {
             LiteralValue::Date(back_date) => {
-                assert_eq!(d, back_date, "cross-crate round trip: {d} -> {serial} -> {back_date}");
+                assert_eq!(
+                    d, back_date,
+                    "cross-crate round trip: {d} -> {serial} -> {back_date}"
+                );
             }
             other => panic!("expected Date, got {other:?}"),
         }

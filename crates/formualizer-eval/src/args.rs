@@ -189,13 +189,11 @@ pub fn validate_and_prepare<'a, 'b>(
         if options.warn_only {
             return Ok(PreparedArgs { items: Vec::new() });
         }
-        return Err(
-            ExcelError::new(ExcelErrorKind::Value).with_message(format!(
-                "Too few arguments: expected at least {}, got {}",
-                options.min_args,
-                args.len()
-            )),
-        );
+        return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+            "Too few arguments: expected at least {}, got {}",
+            options.min_args,
+            args.len()
+        )));
     }
 
     // Arity: simple rule – if schema.len() == 1, allow variadic repetition; else match up to schema.len()

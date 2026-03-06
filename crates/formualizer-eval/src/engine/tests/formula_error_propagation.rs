@@ -89,14 +89,20 @@ fn rri_basic_cagr_calculation() {
 
     match engine.get_cell_value("Sheet1", 1, 1) {
         Some(LiteralValue::Number(n)) => {
-            assert!((n - expected).abs() < 1e-10, "A1 expected {expected}, got {n}");
+            assert!(
+                (n - expected).abs() < 1e-10,
+                "A1 expected {expected}, got {n}"
+            );
         }
         other => panic!("A1 expected Number({expected}), got {other:?}"),
     }
 
     match engine.get_cell_value("Sheet1", 1, 2) {
         Some(LiteralValue::Number(n)) => {
-            assert!((n - expected).abs() < 1e-10, "B1 expected {expected}, got {n}");
+            assert!(
+                (n - expected).abs() < 1e-10,
+                "B1 expected {expected}, got {n}"
+            );
         }
         other => panic!("B1 expected Number({expected}), got {other:?}"),
     }

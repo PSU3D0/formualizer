@@ -396,7 +396,12 @@ impl Function for AverageFn {
                                         ));
                                     }
                                     _ => {
-                                        if let Ok(n) = crate::coercion::to_number_lenient_with_locale(cell, &ctx.locale()) {
+                                        if let Ok(n) =
+                                            crate::coercion::to_number_lenient_with_locale(
+                                                cell,
+                                                &ctx.locale(),
+                                            )
+                                        {
                                             sum += n;
                                             cnt += 1;
                                         }
@@ -406,7 +411,9 @@ impl Function for AverageFn {
                         }
                     }
                     v => {
-                        if let Ok(n) = crate::coercion::to_number_lenient_with_locale(&v, &ctx.locale()) {
+                        if let Ok(n) =
+                            crate::coercion::to_number_lenient_with_locale(&v, &ctx.locale())
+                        {
                             sum += n;
                             cnt += 1;
                         }
