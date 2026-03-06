@@ -1443,6 +1443,7 @@ dependencies = [
  "formualizer-common",
  "formualizer-eval",
  "formualizer-parse",
+ "formualizer-testkit",
  "formualizer-workbook",
  "regex",
  "serde",

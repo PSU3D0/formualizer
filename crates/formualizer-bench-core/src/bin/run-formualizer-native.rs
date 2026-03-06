@@ -1,13 +1,18 @@
+#[cfg(feature = "formualizer_runner")]
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     time::Instant,
 };
 
+#[cfg(feature = "formualizer_runner")]
 use serde_json::json;
 
+#[cfg(feature = "formualizer_runner")]
 use anyhow::{Context, Result, bail};
+#[cfg(feature = "formualizer_runner")]
 use clap::Parser;
+#[cfg(feature = "formualizer_runner")]
 use formualizer_bench_core::{BenchmarkResult, BenchmarkSuite, CorrectnessResult, MetricsResult};
 
 #[cfg(not(feature = "formualizer_runner"))]

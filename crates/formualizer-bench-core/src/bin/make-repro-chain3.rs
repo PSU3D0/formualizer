@@ -1,12 +1,24 @@
+#[cfg(feature = "xlsx")]
 use anyhow::{Context, Result};
-use formualizer_testkit::write_workbook;
+#[cfg(feature = "xlsx")]
 use std::{
     fs::File,
     io::{Cursor, Read, Write},
-    path::PathBuf,
 };
 
-fn main() -> Result<()> {
+#[cfg(not(feature = "xlsx"))]
+fn main() {
+    eprintln!(
+        "This binary requires feature `xlsx`: cargo run -p formualizer-bench-core --features xlsx --bin make-repro-chain3 -- ..."
+    );
+    std::process::exit(2);
+}
+
+#[cfg(feature = "xlsx")]
+fn main() -> anyhow::Result<()> {
+    use formualizer_testkit::write_workbook;
+    use std::path::PathBuf;
+
     let path = PathBuf::from("benchmarks/corpus/synthetic/repro_chain3.xlsx");
     write_workbook(&path, |book| {
         let sh = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1 exists");
@@ -19,6 +31,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "xlsx")]
 fn normalize_xlsx_styles_for_cross_engine(path: &std::path::Path) -> Result<()> {
     let src =
         File::open(path).with_context(|| format!("open xlsx for normalize: {}", path.display()))?;
@@ -56,6 +69,7 @@ fn normalize_xlsx_styles_for_cross_engine(path: &std::path::Path) -> Result<()> 
     Ok(())
 }
 
+#[cfg(feature = "xlsx")]
 fn normalize_styles_xml(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut xml = String::from_utf8(bytes.to_vec()).context("styles.xml must be utf-8")?;
 
@@ -80,6 +94,7 @@ fn normalize_styles_xml(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(xml.into_bytes())
 }
 
+#[cfg(feature = "xlsx")]
 fn insert_after_stylesheet_open(xml: &mut String, snippet: &str) -> Result<()> {
     let open = xml
         .find("<styleSheet")
@@ -92,6 +107,7 @@ fn insert_after_stylesheet_open(xml: &mut String, snippet: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "xlsx")]
 fn insert_before_marker_or_stylesheet_end(
     xml: &mut String,
     marker: &str,
@@ -108,6 +124,7 @@ fn insert_before_marker_or_stylesheet_end(
     anyhow::bail!("styles.xml missing marker and closing styleSheet: {marker}")
 }
 
+#[cfg(feature = "xlsx")]
 fn insert_after_marker_or_stylesheet_open(
     xml: &mut String,
     marker: &str,

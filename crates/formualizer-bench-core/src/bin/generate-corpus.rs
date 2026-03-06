@@ -1,11 +1,15 @@
+#[cfg(feature = "xlsx")]
 use std::{
     fs::File,
     io::{Cursor, Read, Write},
     path::{Path, PathBuf},
 };
 
+#[cfg(feature = "xlsx")]
 use anyhow::{Context, Result, bail};
+#[cfg(feature = "xlsx")]
 use clap::Parser;
+#[cfg(feature = "xlsx")]
 use formualizer_bench_core::{BenchmarkSuite, Scenario};
 
 #[cfg(not(feature = "xlsx"))]

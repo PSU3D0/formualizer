@@ -1,9 +1,17 @@
-use anyhow::Result;
-use formualizer_workbook::{
-    LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
-};
+#[cfg(not(feature = "formualizer_runner"))]
+fn main() {
+    eprintln!(
+        "This binary requires feature `formualizer_runner`: cargo run -p formualizer-bench-core --features formualizer_runner --bin check-repro-chain3-formualizer -- ..."
+    );
+    std::process::exit(2);
+}
 
-fn main() -> Result<()> {
+#[cfg(feature = "formualizer_runner")]
+fn main() -> anyhow::Result<()> {
+    use formualizer_workbook::{
+        LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
+    };
+
     let path = "benchmarks/corpus/synthetic/repro_chain3.xlsx";
     let backend = UmyaAdapter::open_path(path)?;
     let mut wb =

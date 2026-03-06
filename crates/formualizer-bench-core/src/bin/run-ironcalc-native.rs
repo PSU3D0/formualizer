@@ -1,11 +1,15 @@
+#[cfg(feature = "ironcalc_runner")]
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     time::Instant,
 };
 
+#[cfg(feature = "ironcalc_runner")]
 use anyhow::{Context, Result, bail};
+#[cfg(feature = "ironcalc_runner")]
 use clap::Parser;
+#[cfg(feature = "ironcalc_runner")]
 use formualizer_bench_core::{
     BenchmarkResult, BenchmarkSuite, CorrectnessResult, MetricsResult, Operation, Scenario,
 };
