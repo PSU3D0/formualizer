@@ -1,0 +1,540 @@
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    time::Instant,
+};
+
+use anyhow::{Context, Result, bail};
+use clap::Parser;
+use formualizer_bench_core::{
+    BenchmarkResult, BenchmarkSuite, CorrectnessResult, MetricsResult, Operation, Scenario,
+};
+
+#[cfg(not(feature = "ironcalc_runner"))]
+fn main() {
+    eprintln!(
+        "This binary requires feature `ironcalc_runner`: cargo run -p formualizer-bench-core --features ironcalc_runner --bin run-ironcalc-native -- ..."
+    );
+    std::process::exit(2);
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn main() -> Result<()> {
+    run()
+}
+
+#[cfg(feature = "ironcalc_runner")]
+#[derive(Debug, Parser)]
+struct Cli {
+    #[arg(long, default_value = "benchmarks/scenarios.yaml")]
+    scenarios: PathBuf,
+    #[arg(long)]
+    scenario: String,
+    #[arg(long, default_value = ".")]
+    root: PathBuf,
+    #[arg(long, default_value = "native_best")]
+    mode: String,
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn run() -> Result<()> {
+    let cli = Cli::parse();
+    let suite = BenchmarkSuite::from_yaml_path(&cli.scenarios)
+        .with_context(|| format!("load scenarios {}", cli.scenarios.display()))?;
+    let scenario = suite
+        .scenario(&cli.scenario)
+        .with_context(|| format!("unknown scenario: {}", cli.scenario))?;
+
+    let root = cli.root.canonicalize().unwrap_or(cli.root.clone());
+    let workbook_path = resolve_output_path(&root, &scenario.source.workbook_path);
+    if !workbook_path.exists() {
+        bail!(
+            "workbook not found: {} (run generate-corpus first)",
+            workbook_path.display()
+        );
+    }
+
+    let load_start = Instant::now();
+    let (mut model, fallback_note) = load_model_for_scenario(&workbook_path, scenario)?;
+    let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
+
+    let mut full_eval_ms: Option<f64> = None;
+    let mut incremental_us: Option<f64> = None;
+
+    for op in &scenario.operations {
+        match op.op.as_str() {
+            "load" => {}
+            "evaluate_all" => {
+                let t0 = Instant::now();
+                model.evaluate();
+                full_eval_ms = Some(t0.elapsed().as_secs_f64() * 1000.0);
+            }
+            "evaluate_incremental" => {
+                let t0 = Instant::now();
+                model.evaluate();
+                incremental_us = Some(t0.elapsed().as_secs_f64() * 1_000_000.0);
+            }
+            "edit_set_value" => {
+                let sheet_name = arg_str(op, "sheet")?;
+                let row = i32::try_from(arg_u32(op, "row")?)
+                    .with_context(|| format!("row out of range for i32 in op={}", op.op))?;
+                let col = i32::try_from(arg_u32(op, "col")?)
+                    .with_context(|| format!("col out of range for i32 in op={}", op.op))?;
+                let sheet = sheet_index_by_name(&model, &sheet_name)
+                    .with_context(|| format!("sheet not found: {sheet_name}"))?;
+                let input = arg_as_ironcalc_input(op, "value")?;
+                model
+                    .set_user_input(sheet, row, col, input)
+                    .map_err(|e| anyhow::anyhow!("set_user_input: {e}"))?;
+            }
+            "edit_set_formula" => {
+                let sheet_name = arg_str(op, "sheet")?;
+                let row = i32::try_from(arg_u32(op, "row")?)
+                    .with_context(|| format!("row out of range for i32 in op={}", op.op))?;
+                let col = i32::try_from(arg_u32(op, "col")?)
+                    .with_context(|| format!("col out of range for i32 in op={}", op.op))?;
+                let sheet = sheet_index_by_name(&model, &sheet_name)
+                    .with_context(|| format!("sheet not found: {sheet_name}"))?;
+                let formula = arg_str(op, "formula")?;
+                let input = if formula.starts_with('=') {
+                    formula
+                } else {
+                    format!("={formula}")
+                };
+                model
+                    .set_user_input(sheet, row, col, input)
+                    .map_err(|e| anyhow::anyhow!("set_user_input/formula: {e}"))?;
+            }
+            "add_sheet" => {
+                let sheet = arg_str(op, "sheet")?;
+                model
+                    .add_sheet(&sheet)
+                    .map_err(|e| anyhow::anyhow!("add_sheet: {e}"))?;
+            }
+            "remove_sheet" => {
+                let sheet = arg_str(op, "sheet")?;
+                model
+                    .delete_sheet_by_name(&sheet)
+                    .map_err(|e| anyhow::anyhow!("delete_sheet_by_name: {e}"))?;
+            }
+            "rename_sheet" => {
+                if let (Ok(old), Ok(new)) = (arg_str(op, "old"), arg_str(op, "new")) {
+                    model
+                        .rename_sheet(&old, &new)
+                        .map_err(|e| anyhow::anyhow!("rename_sheet old/new: {e}"))?;
+                } else if let (Ok(old), Ok(new)) = (arg_str(op, "sheet"), arg_str(op, "new")) {
+                    model
+                        .rename_sheet(&old, &new)
+                        .map_err(|e| anyhow::anyhow!("rename_sheet sheet/new: {e}"))?;
+                } else {
+                    bail!("rename_sheet op requires old+new or sheet+new")
+                }
+            }
+            "read_cells" => {}
+            unsupported => bail!("unsupported op in ironcalc adapter: {unsupported}"),
+        }
+    }
+
+    let correctness = verify_correctness(&model, scenario)?;
+    let status = if correctness.passed { "ok" } else { "invalid" }.to_string();
+
+    let result = BenchmarkResult {
+        engine: "ironcalc_rust_native".to_string(),
+        scenario: scenario.id.clone(),
+        mode: cli.mode,
+        status,
+        metrics: MetricsResult {
+            load_ms: Some(load_ms),
+            full_eval_ms,
+            incremental_us,
+            peak_rss_mb: None,
+            extra: BTreeMap::new(),
+        },
+        correctness,
+        notes: fallback_note.into_iter().collect(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        meta: BTreeMap::new(),
+    };
+
+    println!("{}", serde_json::to_string(&result)?);
+    Ok(())
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn load_model_for_scenario(
+    workbook_path: &Path,
+    scenario: &Scenario,
+) -> Result<(ironcalc::base::Model<'static>, Option<String>)> {
+    use ironcalc::import::load_from_xlsx;
+
+    let loaded = std::panic::catch_unwind(|| {
+        load_from_xlsx(&workbook_path.to_string_lossy(), "en", "UTC", "en")
+    });
+    match loaded {
+        Ok(Ok(model)) => Ok((model, None)),
+        Ok(Err(err)) => {
+            let model = build_model_fallback(scenario)
+                .with_context(|| format!("fallback build after load_from_xlsx error: {err}"))?;
+            Ok((
+                model,
+                Some(format!(
+                    "fallback_model_built=true; load_from_xlsx_error={err}"
+                )),
+            ))
+        }
+        Err(_) => {
+            let model = build_model_fallback(scenario)
+                .with_context(|| "fallback build after load_from_xlsx panic")?;
+            Ok((
+                model,
+                Some("fallback_model_built=true; load_from_xlsx_panicked=true".to_string()),
+            ))
+        }
+    }
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn cfg_u32(s: &Scenario, pointer: &str, default: u32) -> u32 {
+    s.source
+        .config
+        .as_ref()
+        .and_then(|v| v.pointer(pointer))
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(default)
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn build_model_fallback(scenario: &Scenario) -> Result<ironcalc::base::Model<'static>> {
+    let mut model = ironcalc::base::Model::new_empty("bench", "en", "UTC", "en")
+        .map_err(|e| anyhow::anyhow!("Model::new_empty: {e}"))?;
+
+    match scenario.id.as_str() {
+        "headline_100k_single_edit" => {
+            let rows = cfg_u32(scenario, "/sheets/0/rows", 100_000);
+            for r in 1..=rows {
+                let rr = i32::try_from(r).with_context(|| "rows overflow i32")?;
+                model
+                    .set_user_input(0, rr, 1, r.to_string())
+                    .map_err(|e| anyhow::anyhow!("set_user_input headline value: {e}"))?;
+                model
+                    .set_user_input(0, rr, 2, format!("=A{r}*2"))
+                    .map_err(|e| anyhow::anyhow!("set_user_input headline formula: {e}"))?;
+            }
+            model
+                .set_user_input(0, 1, 3, format!("=SUM(B1:B{rows})"))
+                .map_err(|e| anyhow::anyhow!("set_user_input headline rollup: {e}"))?;
+        }
+        "chain_100k" => {
+            let rows = cfg_u32(scenario, "/sheets/0/rows", 100_000);
+            model
+                .set_user_input(0, 1, 1, "1".to_string())
+                .map_err(|e| anyhow::anyhow!("set_user_input chain seed: {e}"))?;
+            for r in 2..=rows {
+                let rr = i32::try_from(r).with_context(|| "rows overflow i32")?;
+                model
+                    .set_user_input(0, rr, 1, format!("=A{}+1", r - 1))
+                    .map_err(|e| anyhow::anyhow!("set_user_input chain formula: {e}"))?;
+            }
+        }
+        "fanout_100k" => {
+            let rows = cfg_u32(scenario, "/sheets/0/rows", 100_000);
+            model
+                .set_user_input(0, 1, 1, "1".to_string())
+                .map_err(|e| anyhow::anyhow!("set_user_input fanout seed: {e}"))?;
+            for r in 1..=rows {
+                let rr = i32::try_from(r).with_context(|| "rows overflow i32")?;
+                model
+                    .set_user_input(0, rr, 2, format!("=A$1*{r}"))
+                    .map_err(|e| anyhow::anyhow!("set_user_input fanout formula: {e}"))?;
+            }
+        }
+        "sumifs_fact_table_100k" => {
+            let fact_rows = cfg_u32(scenario, "/sheets/0/rows", 100_000);
+            let report_rows = cfg_u32(scenario, "/layout/report_rows", 1_000);
+            let regions = ["North", "South", "East", "West"];
+            let products = ["A", "B", "C", "D", "E"];
+            let channels = ["Online", "Retail", "Partner"];
+
+            model
+                .add_sheet("Facts")
+                .map_err(|e| anyhow::anyhow!("add_sheet Facts: {e}"))?;
+            model
+                .add_sheet("Report")
+                .map_err(|e| anyhow::anyhow!("add_sheet Report: {e}"))?;
+
+            let facts = 1u32;
+            let report = 2u32;
+
+            model
+                .set_user_input(facts, 1, 1, "Region".to_string())
+                .map_err(|e| anyhow::anyhow!("facts header A: {e}"))?;
+            model
+                .set_user_input(facts, 1, 2, "Product".to_string())
+                .map_err(|e| anyhow::anyhow!("facts header B: {e}"))?;
+            model
+                .set_user_input(facts, 1, 3, "Channel".to_string())
+                .map_err(|e| anyhow::anyhow!("facts header C: {e}"))?;
+            model
+                .set_user_input(facts, 1, 4, "Qty".to_string())
+                .map_err(|e| anyhow::anyhow!("facts header D: {e}"))?;
+            model
+                .set_user_input(facts, 1, 5, "Price".to_string())
+                .map_err(|e| anyhow::anyhow!("facts header E: {e}"))?;
+            model
+                .set_user_input(facts, 1, 6, "Revenue".to_string())
+                .map_err(|e| anyhow::anyhow!("facts header F: {e}"))?;
+
+            for i in 0..fact_rows {
+                let row = i + 2;
+                let rr = i32::try_from(row).with_context(|| "fact row overflow i32")?;
+                let idx = i as usize;
+                let region = regions[idx % regions.len()];
+                let product = products[(idx / regions.len()) % products.len()];
+                let channel = channels[(idx / (regions.len() * products.len())) % channels.len()];
+                let qty = (i % 17) + 1;
+                let price = (i % 23) + 10;
+
+                model
+                    .set_user_input(facts, rr, 1, region.to_string())
+                    .map_err(|e| anyhow::anyhow!("facts region: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 2, product.to_string())
+                    .map_err(|e| anyhow::anyhow!("facts product: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 3, channel.to_string())
+                    .map_err(|e| anyhow::anyhow!("facts channel: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 4, qty.to_string())
+                    .map_err(|e| anyhow::anyhow!("facts qty: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 5, price.to_string())
+                    .map_err(|e| anyhow::anyhow!("facts price: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 6, format!("=D{row}*E{row}"))
+                    .map_err(|e| anyhow::anyhow!("facts revenue: {e}"))?;
+            }
+
+            model
+                .set_user_input(report, 1, 1, "Region".to_string())
+                .map_err(|e| anyhow::anyhow!("report header A: {e}"))?;
+            model
+                .set_user_input(report, 1, 2, "Product".to_string())
+                .map_err(|e| anyhow::anyhow!("report header B: {e}"))?;
+            model
+                .set_user_input(report, 1, 3, "Channel".to_string())
+                .map_err(|e| anyhow::anyhow!("report header C: {e}"))?;
+            model
+                .set_user_input(report, 1, 4, "Revenue".to_string())
+                .map_err(|e| anyhow::anyhow!("report header D: {e}"))?;
+
+            for i in 0..report_rows {
+                let row = i + 2;
+                let rr = i32::try_from(row).with_context(|| "report row overflow i32")?;
+                let idx = i as usize;
+                let region = regions[idx % regions.len()];
+                let product = products[(idx / regions.len()) % products.len()];
+                let channel = channels[(idx / (regions.len() * products.len())) % channels.len()];
+
+                model
+                    .set_user_input(report, rr, 1, region.to_string())
+                    .map_err(|e| anyhow::anyhow!("report region: {e}"))?;
+                model
+                    .set_user_input(report, rr, 2, product.to_string())
+                    .map_err(|e| anyhow::anyhow!("report product: {e}"))?;
+                model
+                    .set_user_input(report, rr, 3, channel.to_string())
+                    .map_err(|e| anyhow::anyhow!("report channel: {e}"))?;
+                model
+                    .set_user_input(
+                        report,
+                        rr,
+                        4,
+                        format!(
+                            "=SUMIFS(Facts!$F:$F,Facts!$A:$A,A{row},Facts!$B:$B,B{row},Facts!$C:$C,C{row})"
+                        ),
+                    )
+                    .map_err(|e| anyhow::anyhow!("report sumifs: {e}"))?;
+            }
+        }
+        other => {
+            bail!("no fallback builder implemented for scenario id: {other}");
+        }
+    }
+
+    Ok(model)
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn resolve_output_path(root: &Path, workbook_path: &str) -> PathBuf {
+    let p = PathBuf::from(workbook_path);
+    if p.is_absolute() { p } else { root.join(p) }
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn arg_str(op: &Operation, key: &str) -> Result<String> {
+    op.args
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .with_context(|| format!("op={} missing string arg: {}", op.op, key))
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn arg_u32(op: &Operation, key: &str) -> Result<u32> {
+    op.args
+        .get(key)
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u32::try_from(n).ok())
+        .with_context(|| format!("op={} missing u32 arg: {}", op.op, key))
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn arg_as_ironcalc_input(op: &Operation, key: &str) -> Result<String> {
+    let v = op
+        .args
+        .get(key)
+        .with_context(|| format!("op={} missing arg: {}", op.op, key))?;
+
+    if let Some(i) = v.as_i64() {
+        return Ok(i.to_string());
+    }
+    if let Some(f) = v.as_f64() {
+        return Ok(f.to_string());
+    }
+    if let Some(b) = v.as_bool() {
+        return Ok(if b {
+            "TRUE".to_string()
+        } else {
+            "FALSE".to_string()
+        });
+    }
+    if let Some(s) = v.as_str() {
+        return Ok(s.to_string());
+    }
+    if v.is_null() {
+        return Ok(String::new());
+    }
+
+    bail!("unsupported value arg type for op={}: {}", op.op, v)
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn sheet_index_by_name(model: &ironcalc::base::Model<'_>, name: &str) -> Result<u32> {
+    model
+        .workbook
+        .get_worksheet_names()
+        .iter()
+        .position(|n| n == name)
+        .map(|i| i as u32)
+        .with_context(|| format!("sheet not found: {name}"))
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn parse_cell_ref(cell_ref: &str) -> Result<(String, i32, i32)> {
+    let (sheet, a1) = if let Some((sheet, a1)) = cell_ref.split_once('!') {
+        (sheet.to_string(), a1)
+    } else {
+        ("Sheet1".to_string(), cell_ref)
+    };
+
+    let mut col: i32 = 0;
+    let mut row_str = String::new();
+    for ch in a1.chars() {
+        if ch.is_ascii_alphabetic() {
+            let up = ch.to_ascii_uppercase() as u8;
+            let n = (up - b'A' + 1) as i32;
+            col = col * 26 + n;
+        } else if ch.is_ascii_digit() {
+            row_str.push(ch);
+        }
+    }
+
+    let row: i32 = row_str
+        .parse()
+        .with_context(|| format!("invalid row in A1 ref: {}", cell_ref))?;
+
+    if row <= 0 || col <= 0 {
+        bail!("invalid A1 ref: {}", cell_ref);
+    }
+
+    Ok((sheet, row, col))
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn parse_ironcalc_number(s: &str) -> Option<f64> {
+    let compact = s.replace(',', "");
+    compact.parse::<f64>().ok()
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn is_ironcalc_error_text(s: &str) -> bool {
+    let u = s.trim().to_ascii_uppercase();
+    u.starts_with('#')
+}
+
+#[cfg(feature = "ironcalc_runner")]
+fn verify_correctness(
+    model: &ironcalc::base::Model<'_>,
+    scenario: &Scenario,
+) -> Result<CorrectnessResult> {
+    let mut mismatches = 0u64;
+    let mut details = Vec::new();
+
+    for (cell_ref, expected) in &scenario.verify.expected {
+        let (sheet_name, row, col) = parse_cell_ref(cell_ref)?;
+        let sheet = sheet_index_by_name(model, &sheet_name)?;
+        let actual = model
+            .get_formatted_cell_value(sheet, row, col)
+            .map_err(|e| anyhow::anyhow!("get_formatted_cell_value {cell_ref}: {e}"))?;
+
+        let matches = if let Some(n) = expected.as_f64() {
+            parse_ironcalc_number(&actual)
+                .map(|v| (v - n).abs() < 1e-9)
+                .unwrap_or(false)
+        } else if let Some(i) = expected.as_i64() {
+            parse_ironcalc_number(&actual)
+                .map(|v| (v - (i as f64)).abs() < 1e-9)
+                .unwrap_or(false)
+        } else if let Some(b) = expected.as_bool() {
+            let au = actual.trim().to_ascii_uppercase();
+            (b && au == "TRUE") || (!b && au == "FALSE")
+        } else if let Some(s) = expected.as_str() {
+            actual == s
+        } else if expected.is_null() {
+            actual.is_empty()
+        } else {
+            false
+        };
+
+        if !matches {
+            mismatches += 1;
+            details.push(format!(
+                "expected mismatch at {cell_ref}: expected={expected}, actual={actual}"
+            ));
+        }
+    }
+
+    for check in &scenario.verify.formula_checks {
+        if check.check_type == "non_error" {
+            let (sheet_name, row, col) = parse_cell_ref(&check.cell)?;
+            let sheet = sheet_index_by_name(model, &sheet_name)?;
+            let actual = model
+                .get_formatted_cell_value(sheet, row, col)
+                .map_err(|e| anyhow::anyhow!("formula check {}: {e}", check.cell))?;
+            if is_ironcalc_error_text(&actual) {
+                mismatches += 1;
+                details.push(format!(
+                    "formula check non_error failed at {} ({actual})",
+                    check.cell
+                ));
+            }
+        }
+    }
+
+    Ok(CorrectnessResult {
+        passed: mismatches == 0,
+        mismatches,
+        details,
+    })
+}

@@ -1,0 +1,49 @@
+version: 1
+
+# Scenario-to-feature mapping used for fairness and support disclosure.
+
+scenarios:
+  headline_100k_single_edit:
+    functions: [MUL, SUM]
+    features: [incremental_recalc, finite_ranges]
+  chain_100k:
+    functions: [ADD]
+    features: [incremental_recalc]
+  fanout_100k:
+    functions: [MUL]
+    features: [incremental_recalc]
+  cross_sheet_mesh:
+    functions: [ADD, MUL]
+    features: [cross_sheet_refs]
+  sparse_whole_column_refs:
+    functions: [SUM]
+    features: [whole_column_refs]
+  sumifs_fact_table_100k:
+    functions: [SUMIFS, MUL]
+    features: [text_criteria, whole_column_refs, cross_sheet_refs, mixed_numeric_text_lanes]
+  structural_sheet_recovery:
+    functions: [REF]
+    features: [structural_edits, cross_sheet_refs]
+  real_finance_model_v1:
+    functions: [SUMIFS, XLOOKUP, IF, INDEX, MATCH]
+    features: [xlsx_io, mixed_refs, cross_sheet_refs]
+
+# Adapter support declaration can be generated dynamically by adapters,
+# but this static template helps track expected support intent.
+adapters:
+  formualizer_rust_native:
+    default: supported
+  formualizer_wasm_node:
+    default: partial
+  formualizer_python_pyo3:
+    default: partial
+  ironcalc_rust_native:
+    default: partial
+  ironcalc_wasm_node:
+    default: partial
+  ironcalc_python:
+    default: partial
+  hyperformula_node:
+    default: partial
+  python_xlcalculator:
+    default: partial

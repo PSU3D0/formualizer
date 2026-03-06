@@ -1,0 +1,29 @@
+[package]
+name = "formualizer-bench-core"
+version = "0.1.0"
+edition = "2024"
+description = "Scenario and result contracts for Formualizer benchmark suites"
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
+publish = false
+
+[features]
+default = []
+xlsx = ["dep:formualizer-testkit"]
+formualizer_runner = ["xlsx", "dep:formualizer-workbook"]
+ironcalc_runner = ["dep:ironcalc"]
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+chrono = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+zip = "0.6"
+formualizer-testkit = { path = "../formualizer-testkit", optional = true }
+formualizer-workbook = { path = "../formualizer-workbook", optional = true, default-features = false, features = ["umya"] }
+ironcalc = { version = "0.7.1", optional = true }

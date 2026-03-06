@@ -1,0 +1,14 @@
+[package]
+name = "formualizer-testkit"
+version = "0.1.0"
+edition = "2024"
+description = "Reusable test and fixture helpers for Formualizer crates"
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
+publish = false
+
+[dependencies]
+tempfile = { workspace = true }
+umya-spreadsheet = "=2.3.2"

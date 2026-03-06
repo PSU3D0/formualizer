@@ -1,0 +1,367 @@
+version: 1
+suite: formualizer-benchmark-v1
+
+profiles:
+  core:
+    description: >-
+      Cross-engine compatibility profile (arithmetic, aggregates, finite ranges,
+      simple cross-sheet references).
+  formualizer_strength:
+    description: >-
+      Formualizer-advantaged profile (whole-column refs, dynamic-ish dependency
+      stress, structural edit resilience).
+
+engines:
+  - id: formualizer_rust_native
+  - id: formualizer_wasm_node
+  - id: formualizer_python_pyo3
+  - id: ironcalc_rust_native
+  - id: ironcalc_wasm_node
+  - id: ironcalc_python
+  - id: hyperformula_node
+  - id: python_xlcalculator
+
+# Common operation DSL used by adapters.
+# op values: load, evaluate_all, edit_set_value, edit_set_formula,
+#            insert_rows, delete_rows, rename_sheet, add_sheet, remove_sheet,
+#            evaluate_incremental, read_cells
+
+scenarios:
+  - id: headline_100k_single_edit
+    name: 100k workbook single-cell incremental recalc
+    profile: core
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/headline_100k_single_edit.xlsx
+      seed: 1001
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 100000
+            cols: 3
+        layout:
+          inputs_column: A
+          formula_column: B
+          rollup_cell: C1
+          formula_pattern: "=A{row}*2"
+          rollup_formula: "=SUM(B1:B100000)"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 50000
+        col: 1
+        value: 42
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!B50000", "Sheet1!C1"]
+    verify:
+      expected:
+        "Sheet1!B50000": 84
+      # C1 depends on seeded workbook values; validate by deterministic recompute in adapter.
+      formula_checks:
+        - cell: "Sheet1!C1"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - peak_rss_mb
+
+  - id: chain_100k
+    name: Linear dependency chain depth stress
+    profile: core
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/chain_100k.xlsx
+      seed: 1002
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 100000
+            cols: 2
+        layout:
+          seed_cell: A1
+          chain_formula_pattern: "=A{prev_row}+1"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 1
+        col: 1
+        value: 2
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!A100000"]
+    verify:
+      expected:
+        "Sheet1!A100000": 100001
+      formula_checks:
+        - cell: "Sheet1!A100000"
+          type: non_error
+
+  - id: fanout_100k
+    name: Massive fan-out single source
+    profile: core
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/fanout_100k.xlsx
+      seed: 1003
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 100000
+            cols: 2
+        layout:
+          source_cell: A1
+          dependent_formula_pattern: "=A$1*{row}"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 1
+        col: 1
+        value: 3
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!B100000"]
+    verify:
+      formula_checks:
+        - cell: "Sheet1!B100000"
+          type: non_error
+
+  - id: cross_sheet_mesh
+    name: Cross-sheet dependency mesh
+    profile: core
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/cross_sheet_mesh.xlsx
+      seed: 1004
+      config:
+        sheets:
+          - name: Inputs
+            rows: 25000
+            cols: 4
+          - name: CalcA
+            rows: 25000
+            cols: 4
+          - name: CalcB
+            rows: 25000
+            cols: 4
+        layout:
+          calcA_formula_pattern: "=Inputs!A{row}+Inputs!B{row}"
+          calcB_formula_pattern: "=CalcA!A{row}*Inputs!C{row}"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Inputs
+        row: 12345
+        col: 1
+        value: 99
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["CalcA!A12345", "CalcB!A12345"]
+    verify:
+      formula_checks:
+        - cell: "CalcA!A12345"
+          type: non_error
+        - cell: "CalcB!A12345"
+          type: non_error
+
+  - id: sparse_whole_column_refs
+    name: Sparse sheet with whole-column refs
+    profile: formualizer_strength
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/sparse_whole_column_refs.xlsx
+      seed: 1005
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 1000000
+            cols: 3
+        layout:
+          sparse_fill:
+            column: A
+            every_n_rows: 1000
+            value_pattern: "row_index"
+          summary_formula_cell: C1
+          summary_formula: "=SUM(A:A)"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 500001
+        col: 1
+        value: 7
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!C1"]
+    verify:
+      formula_checks:
+        - cell: "Sheet1!C1"
+          type: non_error
+
+  - id: sumifs_fact_table_100k
+    name: SUMIFS fact-table stress (100k rows, text+numeric lanes)
+    profile: formualizer_strength
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/sumifs_fact_table_100k.xlsx
+      seed: 1007
+      config:
+        sheets:
+          - name: Facts
+            rows: 100000
+            cols: 6
+          - name: Report
+            rows: 1001
+            cols: 4
+        layout:
+          report_rows: 1000
+          dimensions:
+            regions: [North, South, East, West]
+            products: [A, B, C, D, E]
+            channels: [Online, Retail, Partner]
+          formulas:
+            facts_revenue_formula: "=D{row}*E{row}"
+            report_sumifs_formula: "=SUMIFS(Facts!$F:$F,Facts!$A:$A,A{row},Facts!$B:$B,B{row},Facts!$C:$C,C{row})"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Facts
+        row: 54321
+        col: 4
+        value: 99
+      - op: evaluate_incremental
+      - op: edit_set_value
+        sheet: Report
+        row: 2
+        col: 1
+        value: West
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Facts!F54321", "Report!D2", "Report!D500", "Report!D1000"]
+    verify:
+      expected:
+        "Facts!F54321": 2574
+      formula_checks:
+        - cell: "Report!D2"
+          type: non_error
+        - cell: "Report!D500"
+          type: non_error
+        - cell: "Report!D1000"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: structural_sheet_recovery
+    name: Remove/recreate sheet dependency recovery
+    profile: formualizer_strength
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/structural_sheet_recovery.xlsx
+      seed: 1006
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 10
+            cols: 3
+          - name: Sheet2
+            rows: 10
+            cols: 3
+        layout:
+          setup:
+            - set: "Sheet2!A1=10"
+            - formula: "Sheet1!A1==Sheet2!A1"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: remove_sheet
+        sheet: Sheet2
+      - op: evaluate_incremental
+      - op: add_sheet
+        sheet: Sheet2
+      - op: edit_set_value
+        sheet: Sheet2
+        row: 1
+        col: 1
+        value: 50
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!A1"]
+    verify:
+      formula_checks:
+        - cell: "Sheet1!A1"
+          type: non_error
+
+  - id: real_finance_model_v1
+    name: Real XLSX anchor (finance model)
+    profile: core
+    source:
+      kind: file
+      workbook_path: benchmarks/corpus/real/finance_model_v1.xlsx
+      notes: >-
+        Curated real workbook with SUMIFS/lookups/mixed refs.
+        Must include deterministic verification cells.
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Assumptions
+        row: 12
+        col: 3
+        value: 0.035
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Summary!B8", "Summary!E12", "Cashflow!G24"]
+    verify:
+      expected_file: benchmarks/corpus/real/finance_model_v1.expected.yaml
+    metrics:
+      primary:
+        - full_eval_ms
+        - incremental_latency_us_p50
+      secondary:
+        - peak_rss_mb
+        - load_ms
+
+runs:
+  warmup_runs: 5
+  measured_runs: 30
+  timeout_seconds_per_run: 120
+  cpu_affinity: "pin"
+  threads:
+    - 1
+    - max
+
+reporting:
+  outputs:
+    - json
+    - markdown
+  summary_tables:
+    - headline_incremental_100k
+    - core_profile_comparison
+    - formualizer_strength_profile
