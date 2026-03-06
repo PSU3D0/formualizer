@@ -129,6 +129,114 @@
       "result": 0.604166666666667,
       "result_type": "float",
       "description": "timevalue"
+    },
+    {
+      "formula": "=DATEDIF(1, 0, \"YD\")",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "DATEDIF start > end returns error"
+    },
+    {
+      "formula": "=DATEDIF(222, 222290, \"Y\")",
+      "result": 608,
+      "result_type": "int",
+      "description": "DATEDIF years between serials"
+    },
+    {
+      "formula": "=DATEDIF(222, 222290, \"M\")",
+      "result": 7296,
+      "result_type": "int",
+      "description": "DATEDIF months between serials"
+    },
+    {
+      "formula": "=DATEDIF(222, 222290, \"D\")",
+      "result": 222068,
+      "result_type": "int",
+      "description": "DATEDIF days between serials"
+    },
+    {
+      "formula": "=DATEDIF(222, 222222, \"YD\")",
+      "result": 297,
+      "result_type": "int",
+      "description": "DATEDIF year-day between serials"
+    },
+    {
+      "formula": "=DATEDIF(222, 222222, \"YM\")",
+      "result": 9,
+      "result_type": "int",
+      "description": "DATEDIF year-month between serials"
+    },
+    {
+      "formula": "=DATEDIF(222, 222222, \"MD\")",
+      "result": 24,
+      "result_type": "int",
+      "description": "DATEDIF month-day between serials"
+    },
+    {
+      "formula": "=WEEKDAY(36525)",
+      "result": 6,
+      "result_type": "int",
+      "description": "WEEKDAY of serial 36525"
+    },
+    {
+      "formula": "=WEEKDAY(0, 17)",
+      "result": 7,
+      "result_type": "int",
+      "description": "WEEKDAY of serial 0 with return_type 17"
+    },
+    {
+      "formula": "=WEEKDAY(0, 11)",
+      "result": 6,
+      "result_type": "int",
+      "description": "WEEKDAY of serial 0 with return_type 11"
+    },
+    {
+      "formula": "=WEEKDAY(TRUE, 2)",
+      "result": 7,
+      "result_type": "int",
+      "description": "WEEKDAY with TRUE coerced to serial 1"
+    },
+    {
+      "formula": "=WEEKNUM(0, 1)",
+      "result": 0,
+      "result_type": "int",
+      "description": "WEEKNUM serial 0, return_type 1"
+    },
+    {
+      "formula": "=WEEKNUM(1, 21)",
+      "result": 52,
+      "result_type": "int",
+      "description": "WEEKNUM serial 1, ISO return_type"
+    },
+    {
+      "formula": "=WEEKNUM(2, 21)",
+      "result": 1,
+      "result_type": "int",
+      "description": "WEEKNUM serial 2, ISO return_type"
+    },
+    {
+      "formula": "=WEEKNUM(60, 21)",
+      "result": 9,
+      "result_type": "int",
+      "description": "WEEKNUM phantom leap day ISO"
+    },
+    {
+      "formula": "=WEEKNUM(60, 1)",
+      "result": 9,
+      "result_type": "int",
+      "description": "WEEKNUM phantom leap day return_type 1"
+    },
+    {
+      "formula": "=WEEKNUM(11326)",
+      "result": 1,
+      "result_type": "int",
+      "description": "WEEKNUM large serial default return_type"
+    },
+    {
+      "formula": "=WEEKNUM(36534)",
+      "result": 3,
+      "result_type": "int",
+      "description": "WEEKNUM year 2000 area"
     }
   ]
 }
