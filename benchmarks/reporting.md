@@ -164,12 +164,35 @@ Reports must surface at least these caveats when present:
 - runtime-mode differences,
 - structural-edit-only comparison scope.
 
+## Execution Plans
+
+The default scheduled entry points live in `benchmarks/harness/plans.yaml`:
+
+- `ci_formualizer_gate`
+  - formualizer-only
+  - fast smoke coverage for default CI
+  - runs `core_smoke` scenarios plus `structural_sheet_recovery`
+- `nightly_native_compares`
+  - scheduled native-best compare plan
+  - runs `core_comparative` across `formualizer_rust_native`, `ironcalc_rust_native`, and `hyperformula_node`
+  - runs `native_strength` across `formualizer_rust_native` and `ironcalc_rust_native`
+  - runs `nightly_scale` on `formualizer_rust_native` as a heavy realism/watchlist lane
+
+Plan runs emit:
+
+- raw JSON rows into `benchmarks/harness/results/raw/`
+- a plan-scoped markdown summary into `benchmarks/harness/results/reports/`
+- a small JSON manifest describing the executed plan run
+
 ## Validation And Reporting Commands
 
 From repository root:
 
 ```bash
 uv run --project benchmarks/harness python benchmarks/harness/runner/main.py validate-suite
+uv run --project benchmarks/harness python benchmarks/harness/runner/main.py validate-plans
+uv run --project benchmarks/harness python benchmarks/harness/runner/main.py run-plan --plan ci_formualizer_gate
+uv run --project benchmarks/harness python benchmarks/harness/runner/main.py run-plan --plan nightly_native_compares --dry-run
 uv run --project benchmarks/harness python benchmarks/harness/runner/main.py report --group-by family,tier
 uv run --project benchmarks/harness python benchmarks/harness/runner/main.py report --comparison-profile runtime_parity_core --mode runtime_parity
 uv run --project benchmarks/harness python benchmarks/harness/runner/main.py report --regression-gate --group-by family,mode

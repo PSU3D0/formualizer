@@ -272,7 +272,7 @@ fn build_model_fallback(scenario: &Scenario) -> Result<ironcalc::base::Model<'st
         }
         "inc_sparse_dirty_region_1m" => {
             let rows = cfg_u32(scenario, "/sheets/0/rows", 1_000_000);
-            let block_rows = [
+            let block_rows: [u32; 8] = [
                 1, 125_001, 250_001, 375_001, 500_001, 625_001, 750_001, 875_001,
             ];
 
