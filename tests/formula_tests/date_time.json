@@ -326,8 +326,7 @@
       "formula": "=DATEDIF(222, 222222, \"YD\")",
       "result": 297,
       "result_type": "int",
-      "description": "DATEDIF year-day between serials",
-      "skip": "weekday/weeknum code fix not ported yet"
+      "description": "DATEDIF year-day between serials"
     },
     {
       "formula": "=DATEDIF(222, 222222, \"YM\")",
@@ -351,22 +350,19 @@
       "formula": "=WEEKDAY(0, 17)",
       "result": 7,
       "result_type": "int",
-      "description": "WEEKDAY of serial 0 with return_type 17",
-      "skip": "weekday/weeknum code fix not ported yet"
+      "description": "WEEKDAY of serial 0 with return_type 17"
     },
     {
       "formula": "=WEEKDAY(0, 11)",
       "result": 6,
       "result_type": "int",
-      "description": "WEEKDAY of serial 0 with return_type 11",
-      "skip": "weekday/weeknum code fix not ported yet"
+      "description": "WEEKDAY of serial 0 with return_type 11"
     },
     {
       "formula": "=WEEKDAY(TRUE, 2)",
       "result": 7,
       "result_type": "int",
-      "description": "WEEKDAY with TRUE coerced to serial 1",
-      "skip": "weekday/weeknum code fix not ported yet"
+      "description": "WEEKDAY with TRUE coerced to serial 1"
     },
     {
       "formula": "=EDATE(0, 0)",
@@ -396,15 +392,13 @@
       "formula": "=WEEKNUM(0, 1)",
       "result": 0,
       "result_type": "int",
-      "description": "WEEKNUM serial 0, return_type 1",
-      "skip": "weekday/weeknum code fix not ported yet"
+      "description": "WEEKNUM serial 0, return_type 1"
     },
     {
       "formula": "=WEEKNUM(1, 21)",
       "result": 52,
       "result_type": "int",
-      "description": "WEEKNUM serial 1, ISO return_type",
-      "skip": "weekday/weeknum code fix not ported yet"
+      "description": "WEEKNUM serial 1, ISO return_type"
     },
     {
       "formula": "=WEEKNUM(2, 21)",
