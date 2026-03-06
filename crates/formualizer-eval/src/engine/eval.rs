@@ -1228,14 +1228,14 @@ where
     pub fn rename_sheet(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
         let old_name = self.graph.sheet_name(sheet_id).to_string();
 
-        // Speculative Storage Update
-        // Update name in storage FIRST so the Evaluator can find it during Graph rescue.
+        // Update the Arrow storage FIRST. This ensures that if the Graph's rescue logic
+        // triggers an immediate lookup during renaming, the storage is already in sync.
         self.rename_sheet_in_arrow_store(&old_name, new_name);
 
-        // Graph Update (Metadata + Rescue Logic)
         match self.graph.rename_sheet(sheet_id, new_name) {
             Ok(_) => {
-                // Success! Invalidate cache for the moved sheet
+                // Success: Invalidate all formulas in this sheet to force re-evaluation
+                // against the new sheet name context.
                 let sheet_vertices: Vec<VertexId> =
                     self.graph.vertices_in_sheet(sheet_id).collect();
                 for v_id in sheet_vertices {
@@ -1244,7 +1244,7 @@ where
                 Ok(())
             }
             Err(e) => {
-                // ROLLBACK: Revert storage if graph rejected the name
+                // Transactional Rollback: Revert the Arrow store if the Graph rejected the rename.
                 self.rename_sheet_in_arrow_store(new_name, &old_name);
                 Err(e)
             }
@@ -1324,24 +1324,22 @@ where
         definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), ExcelError> {
-        // 1. Run the graph definition (which now triggers the rescue above)
+        // 1. Update Graph metadata. This triggers the 'Rescue' of orphaned formula vertices.
         let result = self.graph.define_name(name, definition, scope);
 
-        // 2. Clear Evaluator state if successful
+        // 2. Clear Evaluator state to reflect the new name definition globally.
         if result.is_ok() {
             if let Ok(mut cache) = self.source_cache.write() {
-                // Ensure this matches exactly how names are stored in your cache
+                // Flush caches to ensure newly defined names or updated ranges
+                // are re-fetched from the graph during the next evaluation pass.
                 cache.scalars.clear();
                 cache.tables.clear();
             }
 
-            // This is crucial for evaluate_all() to notice the change
+            // Bump the global recalculation epoch. This forces evaluate_all() to
+            // re-scan the graph even if it previously thought it was converged.
             self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
             self.invalidate_row_visibility_mask_cache();
-            println!(
-                "DEBUG: [Engine] Source cache cleared and epoch bumped for '{}'",
-                name
-            );
         }
 
         result
@@ -3692,10 +3690,6 @@ where
         col: u32,
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
-        println!(
-            "DEBUG: set_cell_formula sheet:{} row: {}, col: {}, ast: {:?}",
-            sheet, row, col, ast
-        );
         let volatile = self.is_ast_volatile_with_provider(&ast);
         self.graph
             .set_cell_formula_with_volatility(sheet, row, col, ast, volatile)?;

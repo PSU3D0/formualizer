@@ -130,23 +130,35 @@ impl DependencyGraph {
         vertex_id
     }
 
-    // Named Range Methods
+    pub(crate) fn resolve_pending_name_references(&mut self, scope: NameScope, name: &str) {
+        let orphans = self
+            .tombstone_registry
+            .take_dependents(EntityKind::NamedRange, name);
 
-    /// Define a new named range
-    pub fn define_name(
-        &mut self,
-        name: &str,
-        definition: NamedDefinition,
-        scope: NameScope,
-    ) -> Result<(), ExcelError> {
-        // Validate name
-        if !is_valid_excel_name(name) {
-            return Err(
-                ExcelError::new(ExcelErrorKind::Name).with_message(format!("Invalid name: {name}"))
-            );
+        for orphan_vertex in orphans {
+            // Scope Check: A local sheet name should only rescue orphans on that same sheet.
+            // A workbook name can rescue anyone.
+            let orphan_sheet_id = self.get_sheet_id(orphan_vertex);
+            let can_heal = match scope {
+                NameScope::Workbook => true,
+                NameScope::Sheet(defined_sid) => defined_sid == orphan_sheet_id,
+            };
+
+            if can_heal {
+                if let Some(ast) = self.get_formula(orphan_vertex) {
+                    // Re-wire and schedule for evaluation
+                    self.rebuild_formula_dependencies(orphan_vertex, &ast);
+                    self.mark_vertex_dirty(orphan_vertex);
+                }
+            } else {
+                // If the scope doesn't match, put it back in the registry for a later definition
+                self.tombstone_registry
+                    .register(EntityKind::NamedRange, name, orphan_vertex);
+            }
         }
+    }
 
-        // Check for duplicates / collisions (respect case-sensitivity config)
+    fn check_name_collisions(&self, name: &str, scope: NameScope) -> Result<(), ExcelError> {
         let lookup_key = self.name_lookup_key(name);
         match scope {
             NameScope::Workbook => {
@@ -167,9 +179,14 @@ impl DependencyGraph {
                 }
             }
         }
-
+        Ok(())
+    }
+    fn prepare_named_definition(
+        &mut self,
+        definition: NamedDefinition,
+        scope: NameScope,
+    ) -> Result<NamedDefinition, ExcelError> {
         let mut final_definition = definition;
-        // Extract dependencies if formula
         if let NamedDefinition::Formula { ref ast, .. } = final_definition {
             let (deps, range_deps, _, _) = self.extract_dependencies(
                 ast,
@@ -184,10 +201,49 @@ impl DependencyGraph {
                 range_deps,
             };
         }
+        Ok(final_definition)
+    }
+    fn persist_named_range(&mut self, name: &str, named_range: NamedRange, scope: NameScope) {
+        let lookup_key = self.name_lookup_key(name);
+        let name_str = name.to_string();
 
-        // Allocate vertex only after dependency extraction succeeds
+        match scope {
+            NameScope::Workbook => {
+                self.named_ranges.insert(name_str.clone(), named_range);
+                self.named_ranges_lookup.insert(lookup_key, name_str);
+            }
+            NameScope::Sheet(id) => {
+                self.sheet_named_ranges
+                    .insert((id, name_str.clone()), named_range);
+                self.sheet_named_ranges_lookup
+                    .insert((id, lookup_key), name_str);
+            }
+        }
+    }
+    // Named Range Methods
+
+    /// Define a new named range
+    pub fn define_name(
+        &mut self,
+        name: &str,
+        definition: NamedDefinition,
+        scope: NameScope,
+    ) -> Result<(), ExcelError> {
+        // 1. Validation
+        if !is_valid_excel_name(name) {
+            return Err(
+                ExcelError::new(ExcelErrorKind::Name).with_message(format!("Invalid name: {name}"))
+            );
+        }
+
+        // 2. Collision Detection
+        self.check_name_collisions(name, scope)?;
+
+        // 3. Dependency Extraction & Definition Preparation
+        let final_definition = self.prepare_named_definition(definition, scope)?;
+
+        // 4. Vertex Allocation & Storage
         let vertex_id = self.allocate_name_vertex(scope);
-
         let named_range = NamedRange {
             definition: final_definition,
             scope,
@@ -195,61 +251,30 @@ impl DependencyGraph {
             vertex: vertex_id,
         };
 
-        if matches!(named_range.definition, NamedDefinition::Range(_)) {
-            self.store.set_kind(vertex_id, VertexKind::NamedArray);
+        // Update Vertex Kind (Scalar vs Array)
+        let kind = if matches!(named_range.definition, NamedDefinition::Range(_)) {
+            VertexKind::NamedArray
         } else {
-            self.store.set_kind(vertex_id, VertexKind::NamedScalar);
-        }
+            VertexKind::NamedScalar
+        };
+        self.store.set_kind(vertex_id, kind);
 
+        // 5. Initial Dependency Wiring
         let referenced_names =
             self.rebuild_name_dependencies(vertex_id, &named_range.definition, scope);
         if !referenced_names.is_empty() {
             self.attach_vertex_to_names(vertex_id, &referenced_names);
         }
 
+        // 6. Persistence into Graph Maps
         let key = name.to_string();
-
-        match scope {
-            NameScope::Workbook => {
-                self.named_ranges.insert(key.clone(), named_range);
-                self.named_ranges_lookup
-                    .insert(self.name_lookup_key(&key), key.clone());
-            }
-            NameScope::Sheet(id) => {
-                self.sheet_named_ranges
-                    .insert((id, key.clone()), named_range);
-                self.sheet_named_ranges_lookup
-                    .insert((id, self.name_lookup_key(&key)), key.clone());
-            }
-        }
-
+        self.persist_named_range(&key, named_range, scope);
         self.name_vertex_lookup.insert(vertex_id, (scope, key));
-        // 5. THE HEALER: Rescue Orphans waiting for this name
-        let orphans = self
-            .tombstone_registry
-            .take_dependents(EntityKind::NamedRange, name);
-        if !orphans.is_empty() {
-            println!(
-                "DEBUG: [Rescue] Healing {} orphans for '{}'",
-                orphans.len(),
-                name
-            );
-            for orphan_vertex in orphans {
-                // Use the built-in helper to get the full ASTNode tree
-                if let Some(ast) = self.get_formula(orphan_vertex) {
-                    println!(
-                        "DEBUG: [Rescue] Re-wiring Formula Vertex {:?}",
-                        orphan_vertex
-                    );
 
-                    // Re-wire the formula using the full AST tree
-                    self.rebuild_formula_dependencies(orphan_vertex, &ast);
+        // 7. THE HEALER: Rescue orphans waiting for this new name
+        self.resolve_pending_name_references(scope, name);
 
-                    // Mark the formula dirty so the engine re-calculates it
-                    self.mark_vertex_dirty(orphan_vertex);
-                }
-            }
-        }
+        // Ensure the new name vertex itself is scheduled for evaluation
         self.mark_vertex_dirty(vertex_id);
 
         Ok(())
@@ -268,9 +293,7 @@ impl DependencyGraph {
     }
 
     pub fn resolve_name_entry(&self, name: &str, current_sheet: SheetId) -> Option<&NamedRange> {
-        println!("DEBUG: resolve_name_entry({}, {})", name, current_sheet);
-
-        let result = if self.config.case_sensitive_names {
+        if self.config.case_sensitive_names {
             self.sheet_named_ranges
                 .get(&(current_sheet, name.to_string()))
                 .or_else(|| self.named_ranges.get(name))
@@ -284,40 +307,7 @@ impl DependencyGraph {
                         .get(&key)
                         .and_then(|canon| self.named_ranges.get(canon))
                 })
-        };
-
-        if name.to_lowercase() == "data" {
-            println!(
-                "DEBUG: [Entry Audit] Name: '{}', Sheet: {}, CaseSensitive: {}",
-                name, current_sheet, self.config.case_sensitive_names
-            );
-
-            let key = self.name_lookup_key(name);
-            println!("DEBUG: [Entry Audit] Lookup Key: '{}'", key);
-
-            // Let's see if the Workbook map actually contains 'Data' or 'data'
-            println!(
-                "DEBUG: [Entry Audit] Workbook Keys: {:?}",
-                self.named_ranges.keys().collect::<Vec<_>>()
-            );
         }
-        if name.to_lowercase() == "data" {
-            match result {
-                Some(nr) => {
-                    println!("DEBUG: [Final Resolution] Success for '{}'", name);
-                    println!("DEBUG: [Final Resolution] Vertex: {:?}", nr.vertex);
-                    println!("DEBUG: [Final Resolution] Definition: {:?}", nr.definition);
-
-                    // Crucial: What is actually in the value store for this name's vertex?
-                    let val = self.vertex_values.get(&nr.vertex);
-                    println!("DEBUG: [Final Resolution] Current Vertex Value: {:?}", val);
-                }
-                None => println!("DEBUG: [Final Resolution] Failed to find '{}'", name),
-            }
-        }
-        // ----------------------------
-
-        result
     }
 
     /// Resolve a named range to its definition
@@ -559,85 +549,6 @@ impl DependencyGraph {
             .entry(key)
             .or_default()
             .push((sheet_id, formula_vertex));
-    }
-
-    pub(crate) fn resolve_pending_name_references(
-        &mut self,
-        scope: NameScope,
-        name: &str,
-        _named_vertex: VertexId, // We can ignore this as rebuild_formula_dependencies finds it
-    ) {
-        let keys = self.tombstone_registry.list_all_keys();
-        let lookup_key = self.name_lookup_key(name);
-        let workbook_match = self.named_ranges_lookup.get(&lookup_key);
-
-        println!("DEBUG: [Rescue Check] Searching for Name: '{}'", name);
-        println!(
-            "DEBUG: [Rescue Check] Generated Lookup Key: '{}'",
-            lookup_key
-        );
-        println!(
-            "DEBUG: [Rescue Check] Found in Workbook Map: {:?}",
-            workbook_match
-        );
-
-        let manual_check = keys
-            .iter()
-            .any(|(kind, k)| matches!(kind, EntityKind::NamedRange) && k == &name.to_uppercase());
-        println!(
-            "DEBUG: Manual match check (Case-Insensitive): {}",
-            manual_check
-        );
-        println!("DEBUG: -----------------------");
-
-        // 1. Ask the Registry for anyone waiting for this name
-        // EntityKind::NamedRange lookup will use your case-insensitive make_key
-        let orphans = self
-            .tombstone_registry
-            .take_dependents(EntityKind::NamedRange, name);
-
-        if !orphans.is_empty() {
-            println!(
-                "DEBUG: Found {} orphans to rescue for '{}'",
-                orphans.len(),
-                name
-            );
-
-            for formula_vertex in orphans {
-                // Respect the scope (Workbook names rescue everyone; Sheet names only rescue local)
-                let sheet_id = self.get_sheet_id(formula_vertex);
-                let should_rescue = match scope {
-                    NameScope::Workbook => true,
-                    NameScope::Sheet(expected) => expected == sheet_id,
-                };
-
-                if should_rescue {
-                    if let Some(ast) = self.get_formula(formula_vertex) {
-                        let sheet_id = self.get_sheet_id(formula_vertex);
-
-                        // --- 2x CHECK DIAGNOSTIC ---
-                        let lookup_key = self.name_lookup_key(name); // Use engine's own normalizer
-                        let exists_globally = self.named_ranges.get(name).is_some();
-                        let exists_locally = self
-                            .sheet_named_ranges
-                            .get(&(sheet_id, lookup_key.clone()))
-                            .is_some();
-
-                        println!(
-                            "DEBUG: [PRE-REBUILD] Name: '{}', Key: '{}'",
-                            name, lookup_key
-                        );
-                        println!(
-                            "DEBUG: [PRE-REBUILD] Global: {}, Local: {}",
-                            exists_globally, exists_locally
-                        );
-                        // ---------------------------
-
-                        self.rebuild_formula_dependencies(formula_vertex, &ast);
-                    }
-                }
-            }
-        }
     }
 
     pub(super) fn name_depends_on_vertex(

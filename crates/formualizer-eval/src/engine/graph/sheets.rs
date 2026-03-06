@@ -305,7 +305,6 @@ impl DependencyGraph {
             self.vertex_formulas.insert(vertex_id, new_ast_id);
 
             // Re-wire the graph so the formula depends on the NEW cell vertex
-    println!("DEBUG: [CALLSITE] Calling rebuild_formula_dependencies at {}:{}", file!(), line!());
             self.rebuild_formula_dependencies(vertex_id, &ast);
             self.mark_vertex_dirty(vertex_id);
         }
@@ -384,7 +383,6 @@ impl DependencyGraph {
                 updated_ast.update_sheet_references(None, sheet_name);
 
                 self.ref_error_vertices.remove(&vertex_id);
-    println!("DEBUG: [CALLSITE] Calling rebuild_formula_dependencies at {}:{}", file!(), line!());
                 self.rebuild_formula_dependencies(vertex_id, &updated_ast);
 
                 let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
@@ -432,7 +430,6 @@ impl DependencyGraph {
                 updated_ast.update_sheet_references(Some(&old_name), new_name);
 
                 if ast != updated_ast {
-    println!("DEBUG: [CALLSITE] Calling rebuild_formula_dependencies at {}:{}", file!(), line!());
                     self.rebuild_formula_dependencies(formula_id, &updated_ast);
                     let updated_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
                     self.vertex_formulas.insert(formula_id, updated_ast_id);

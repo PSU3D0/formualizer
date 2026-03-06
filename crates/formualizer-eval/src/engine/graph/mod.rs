@@ -964,10 +964,6 @@ impl DependencyGraph {
         ast: ASTNode,
         volatile: bool,
     ) -> Result<OperationSummary, ExcelError> {
-        println!(
-            "DEBUG: set_cell_formula_with_volatility(sheet: {}, row: {}, col: {}. ast: {:?}, vol: {})",
-            sheet, row, col, ast, volatile
-        );
         let dbg = std::env::var("FZ_DEBUG_LOAD")
             .ok()
             .is_some_and(|v| v != "0");
@@ -1043,56 +1039,22 @@ impl DependencyGraph {
         let addr_vertex_id = self.get_or_create_vertex(&addr, &mut created_placeholders);
 
         let references = self.find_references_in_ast(&ast);
-        println!(
-            "DEBUG: inside set_cell_formula_with_volatility line: {}, references: {:?}",
-            line!(),
-            references
-        );
         for reference in references {
             if let ReferenceType::NamedRange(name) = reference {
                 let existing = self.resolve_name_entry(&name, sheet_id);
-                println!("DEBUG: existing: {:?}", existing);
 
                 // Consolidation: We always register a tombstone for Names in this test
                 // environment to ensure re-definitions trigger healing.
-                let is_ghost = if let Some(nr) = existing {
+                if let Some(nr) = existing {
                     let v = nr.vertex;
                     let has_val = self.vertex_values.contains_key(&v);
                     let has_form = self.vertex_formulas.contains_key(&v);
-                    let ghost = !has_val && !has_form;
-                    if ghost {
-                        println!(
-                            "DEBUG: [Tombstone] '{}' is a ghost (exists but empty)",
-                            name
-                        );
-                    } else {
-                        println!(
-                            "DEBUG: [Tombstone] '{}' is NOT a ghost, but registering anyway for healing",
-                            name
-                        );
-                    }
-                    ghost || true // Force true for the pressure test healing
-                } else {
-                    println!("DEBUG: [Tombstone] '{}' is missing (classic orphan)", name);
-                    true
                 };
 
-                if is_ghost {
-                    println!(
-                        "DEBUG: [Tombstone] Registering GHOST name '{}' for Vertex {:?}",
-                        name, addr_vertex_id
-                    );
-                    self.tombstone_registry
-                        .register(EntityKind::NamedRange, &name, addr_vertex_id);
-                } else {
-                    println!("DEBUG: [Tombstone] name '{}' is not a ghost.", name);
-                }
+                self.tombstone_registry
+                    .register(EntityKind::NamedRange, &name, addr_vertex_id);
             }
         }
-        println!(
-            "DEBUG: inside set_cell_formula_with_volatility line: {}",
-            line!(),
-        );
 
         // Editing a formula clears any prior structural #REF! marking for this vertex.
         self.ref_error_vertices.remove(&addr_vertex_id);
@@ -3081,22 +3043,9 @@ impl DependencyGraph {
                 vec![]
             }
             ReferenceType::NamedRange(name) => {
-                println!(
-                    "DEBUG: [Resolver] Attempting to resolve NamedRange: '{}'",
-                    name
-                );
-
-                // We need a sheet context for local names.
-                // For now, let's use None to hit the Workbook fallback.
                 if let Some(nr) = self.resolve_name_entry(name, 0) {
-                    println!(
-                        "DEBUG: [Resolver] Found VertexId({:?}) for '{}'",
-                        nr.vertex, name
-                    );
                     return vec![nr.vertex];
                 }
-
-                println!("DEBUG: [Resolver] No target found for '{}'", name);
                 vec![]
             }
             _ => vec![],
@@ -3107,10 +3056,6 @@ impl DependencyGraph {
         match reference {
             // Fix: Variant is NamedRange(String), not Name(name)
             ReferenceType::NamedRange(name) => {
-                println!(
-                    "DEBUG register kind:NamedRange name: {:?}, dependdent: {:?}",
-                    name, dependent
-                );
                 self.tombstone_registry
                     .register(EntityKind::NamedRange, name, dependent);
             }
@@ -3138,11 +3083,6 @@ impl DependencyGraph {
         }
     }
     pub(crate) fn rebuild_formula_dependencies(&mut self, vertex_id: VertexId, ast: &ASTNode) {
-        println!(
-            "DEBUG: [CRITICAL] Entering rebuild_formula_dependencies for Vertex {:?}",
-            vertex_id
-        );
-
         self.clear_existing_incoming_edges(vertex_id);
         let targets = self.resolve_and_register_references(vertex_id, ast);
         self.wire_new_dependencies(vertex_id, targets.clone());
@@ -3165,11 +3105,6 @@ impl DependencyGraph {
                 self.mark_vertex_dirty(target_vid);
                 self.store.set_dirty(target_vid, true);
             }
-
-            println!(
-                "DEBUG: [Rebuild] Physical value cleared for Vertex {:?}",
-                vertex_id
-            );
         }
 
         self.mark_vertex_dirty(vertex_id);
@@ -3195,24 +3130,10 @@ impl DependencyGraph {
 
         for reference in references {
             let targets = self.resolve_reference_to_vertices(&reference);
-            println!(
-                "DEBUG: Resolver saw ref {:?} and found {} targets",
-                reference,
-                targets.len()
-            );
             if targets.is_empty() {
-                println!(
-                    "DEBUG: [Resolver] FAILED lookup for {:?}. Registering tombstone for VertexId({:?})",
-                    reference, vertex_id
-                );
-
                 // Ensure this helper maps Reference::NamedRange -> EntityKind::NamedRange
                 self.register_tombstone(vertex_id, &reference);
             } else {
-                println!(
-                    "DEBUG: [Resolver] SUCCESS found {:?} -> Targets: {:?}",
-                    reference, targets
-                );
                 resolved_targets.extend(targets);
             }
         }
@@ -3242,11 +3163,6 @@ impl DependencyGraph {
         for vertex_id in orphans {
             // Fix: Use get_formula as identified by compiler
             if let Some(ast) = self.get_formula(vertex_id) {
-                println!(
-                    "DEBUG: [CALLSITE] Calling rebuild_formula_dependencies at {}:{}",
-                    file!(),
-                    line!()
-                );
                 self.rebuild_formula_dependencies(vertex_id, &ast);
                 self.mark_vertex_dirty(vertex_id);
             }

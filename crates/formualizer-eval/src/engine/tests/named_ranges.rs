@@ -1958,11 +1958,6 @@ fn test_named_range_orphan_healing_complex_chain() {
     engine.evaluate_all().unwrap(); // B1 is now #NAME?
 
     // 4. RECREATE "Data" pointing to A3, which is ITSELF a formula
-    /*
-     engine
-        .set_cell_formula("Sheet1", 3, 1, parse("=10+32").unwrap())
-        .unwrap(); // A3 = 42
-    */
     engine
         .set_cell_value("Sheet1", 3, 1, LiteralValue::Number(42.0))
         .unwrap();
@@ -1979,7 +1974,6 @@ fn test_named_range_orphan_healing_complex_chain() {
 
     // 5. EVALUATE
     engine.evaluate_all().unwrap();
-    engine.evaluate_all().unwrap();
     let final_val = engine.get_cell_value("Sheet1", 1, 2);
 
     // Result should be (10+32) * 2 = 84
@@ -1989,8 +1983,8 @@ fn test_named_range_orphan_healing_complex_chain() {
         "Healer should handle Name -> Formula dependency chains"
     );
 }
+
 #[test]
-//#[should_panic(expected = "Formula should track the new definition")]
 fn test_named_range_orphan_healing_pressure() {
     let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
 
@@ -2006,16 +2000,12 @@ fn test_named_range_orphan_healing_pressure() {
         .define_name("Data", NamedDefinition::Cell(target), NameScope::Workbook)
         .unwrap();
 
-    println!("DEBUG: before evaluate_all(), line: {}", line!());
     engine.evaluate_all().unwrap();
-    println!("DEBUG: after evaluate_all()");
 
     // 2. Create a formula that uses the named range
-    println!("DEBUG: before setting the Data formula");
     engine
         .set_cell_formula("Sheet1", 1, 2, parse("=Data * 2").unwrap())
         .unwrap();
-    println!("DEBUG: after setting the Data formula");
 
     engine.evaluate_all().unwrap();
     assert_eq!(
@@ -2064,9 +2054,7 @@ fn test_named_range_orphan_healing_pressure() {
         final_val.is_some(),
         "If this fails, the formula did not heal after the Name was recreated"
     );
-    println!("DEBUG: before evaluate_all(), line: {}", line!());
     engine.evaluate_all().unwrap();
-    println!("DEBUG: after evaluate_all()");
 
     assert_eq!(
         final_val,
@@ -2107,8 +2095,6 @@ fn test_named_range_address_corruption_demonstration() {
     // because it's looking at Row [VertexID], not Row 0.
     let result = engine.get_cell_value("Sheet1", 1, 2);
 
-    println!("DEBUG: Final Result of =MyData: {:?}", result);
-
     assert_eq!(
         result,
         Some(LiteralValue::Number(42.0)),
@@ -2145,9 +2131,6 @@ fn test_named_range_definition_integrity() {
     let entry = engine
         .resolve_name_entry("RealData", sid)
         .expect("Name should exist");
-
-    println!("DEBUG: Name Vertex: {:?}", entry.vertex);
-    println!("DEBUG: Stored Definition: {:?}", entry.definition);
 
     if let NamedDefinition::Cell(cref) = &entry.definition {
         // We know the VertexId will be > 1024.
@@ -2197,7 +2180,6 @@ fn test_demonstrate_evaluator_stale_name_lookup() {
         .unwrap();
     let target_a2 = CellRef::new(sid, Coord::from_excel(2, 1, true, true));
 
-    println!("DEBUG: [Step 3] Re-defining 'Data' to A2 after deletion");
     engine
         .define_name(
             "Data",
@@ -2209,8 +2191,6 @@ fn test_demonstrate_evaluator_stale_name_lookup() {
     // 4. Evaluate and check.
     engine.evaluate_all().unwrap();
     let result = engine.get_cell_value("Sheet1", 1, 2);
-
-    println!("DEBUG: [Step 4] Formula Result: {:?}", result);
 
     assert_eq!(
         result,
@@ -2241,7 +2221,6 @@ fn test_coordinate_system_integrity() {
 
     // Resolve it immediately
     let entry = engine.resolve_name_entry("Test", sid).unwrap();
-    println!("DEBUG: A3 Resolution: {:?}", entry.definition);
 
     engine
         .set_cell_formula("Sheet1", 1, 1, parse("=Test").unwrap())
@@ -2249,7 +2228,5 @@ fn test_coordinate_system_integrity() {
     engine.evaluate_all().unwrap();
 
     let val = engine.get_cell_value("Sheet1", 1, 1);
-    println!("DEBUG: Value from A3: {:?}", val);
-
     assert_eq!(val, Some(LiteralValue::Number(42.0)));
 }

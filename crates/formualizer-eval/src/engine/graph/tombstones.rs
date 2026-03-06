@@ -1,7 +1,6 @@
 use crate::engine::vertex::VertexId;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet}; // Added HashSet
 
-/// Categorizes different types of names that can go missing in a workbook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityKind {
     Sheet,
@@ -11,49 +10,46 @@ pub enum EntityKind {
     CustomFunction,
 }
 
-/// The TombstoneRegistry acts as a "Subscription Manager" for formulas
-/// that are waiting for a missing entity to (re)appear.
 #[derive(Default, Debug, Clone)]
 pub struct TombstoneRegistry {
-    // Maps (Kind, Name) -> List of Vertices that need a rebuild
-    pending: FxHashMap<(EntityKind, String), Vec<VertexId>>,
+    // Maps (Kind, NormalizedName) -> Set of Unique Vertices
+    pending: FxHashMap<(EntityKind, String), FxHashSet<VertexId>>,
 }
 
 impl TombstoneRegistry {
-    /// Registers a vertex as "waiting" for a specific entity.
     pub fn register(&mut self, kind: EntityKind, name: &str, dependent: VertexId) {
         let key = Self::make_key(kind, name);
-        self.pending.entry(key).or_default().push(dependent);
+        self.pending.entry(key).or_default().insert(dependent);
     }
 
+    /// Returns all vertices waiting for this entity and clears them from the registry.
     pub fn take_dependents(&mut self, kind: EntityKind, name: &str) -> Vec<VertexId> {
         let key = Self::make_key(kind, name);
-        self.pending.remove(&key).unwrap_or_default()
+        self.pending
+            .remove(&key)
+            .map(|set| set.into_iter().collect())
+            .unwrap_or_default()
     }
 
-    /// Checks if any formulas are currently orphaned.
     pub fn has_orphans(&self) -> bool {
         !self.pending.is_empty()
     }
 
-    /// Internal helper to create a consistent lookup key based on entity rules
     fn make_key(kind: EntityKind, name: &str) -> (EntityKind, String) {
         match kind {
             EntityKind::NamedRange
             | EntityKind::Table
             | EntityKind::TableColumn
             | EntityKind::Sheet => {
-                // These are all case-insensitive in Excel
+                // Excel is case-insensitive for these; use uppercase for stable lookup keys.
                 (kind, name.to_uppercase())
             }
             _ => (kind, name.to_string()),
         }
     }
 
-    pub fn list_all_keys(&self) -> Vec<(EntityKind, String)> {
-        self.pending
-            .keys()
-            .cloned() // Assumes EntityKind and String are Clone
-            .collect()
+    /// Returns a list of all names the graph is currently "listening" for.
+    pub fn list_pending_entities(&self) -> Vec<(EntityKind, String)> {
+        self.pending.keys().cloned().collect()
     }
 }

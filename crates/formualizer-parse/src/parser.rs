@@ -1737,14 +1737,22 @@ impl ASTNode {
     /// If `target_name` is None, it acts as a global rename (standard sheet rename).
     pub fn update_sheet_references(&mut self, target_name: Option<&str>, new_name: &str) {
         match &mut self.node_type {
-            ASTNodeType::Reference {
-                reference: ReferenceType::Cell { sheet, .. } | ReferenceType::Range { sheet, .. },
-                ..
-            } => {
-                if let Some(current_sheet) = sheet
-                    && (target_name.is_none() || target_name == Some(current_sheet.as_str()))
-                {
-                    *sheet = Some(new_name.to_string());
+            ASTNodeType::Reference { reference, .. } => {
+                // Determine which reference types carry an internal sheet name that needs renaming
+                let sheet_opt = match reference {
+                    ReferenceType::Cell { sheet, .. } | ReferenceType::Range { sheet, .. } => sheet,
+                    // These types are either workbook-global or handled via different logic
+                    ReferenceType::NamedRange(_)
+                    | ReferenceType::External(_)
+                    | ReferenceType::Table(_) => return,
+                };
+
+                if let Some(current_sheet) = sheet_opt {
+                    // Force type inference for the comparison
+                    let current_sheet_str: &str = current_sheet.as_str();
+                    if target_name.is_none() || target_name == Some(current_sheet_str) {
+                        *sheet_opt = Some(new_name.to_string());
+                    }
                 }
             }
             ASTNodeType::UnaryOp { expr, .. } => {
