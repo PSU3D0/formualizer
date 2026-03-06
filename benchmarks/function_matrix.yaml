@@ -21,6 +21,12 @@ scenarios:
   inc_cross_sheet_mesh_3x25k:
     functions: [ADD, MUL]
     features: [incremental_recalc, cross_sheet_refs, selective_cross_sheet_propagation]
+  lookup_index_match_dense_50k:
+    functions: [INDEX, MATCH]
+    features: [cross_sheet_refs, exact_match_lookup, large_lookup_tables, text_keys]
+  lookup_cross_sheet_dim_fact:
+    functions: [INDEX, MATCH, MUL]
+    features: [cross_sheet_refs, exact_match_lookup, dimension_joins, mixed_numeric_text_lanes]
   sparse_whole_column_refs:
     functions: [SUM]
     features: [whole_column_refs]

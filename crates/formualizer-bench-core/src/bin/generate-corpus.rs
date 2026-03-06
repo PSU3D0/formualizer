@@ -109,6 +109,26 @@ fn cfg_str(s: &Scenario, pointer: &str, default: &str) -> String {
 }
 
 #[cfg(feature = "xlsx")]
+fn lookup_key(prefix: &str, index: u32) -> String {
+    format!("{prefix}{index:06}")
+}
+
+#[cfg(feature = "xlsx")]
+fn dense_lookup_value(index: u32) -> f64 {
+    (index * 7 + (index % 13)) as f64
+}
+
+#[cfg(feature = "xlsx")]
+fn dense_lookup_checksum(index: u32) -> f64 {
+    (index * 11 + (index % 17)) as f64
+}
+
+#[cfg(feature = "xlsx")]
+fn fact_id(index: u32) -> String {
+    format!("F{index:06}")
+}
+
+#[cfg(feature = "xlsx")]
 fn generate_scenario(output: &Path, s: &Scenario) -> Result<()> {
     use formualizer_testkit::write_workbook;
 
@@ -221,6 +241,178 @@ fn generate_scenario(output: &Path, s: &Scenario) -> Result<()> {
                     calcb
                         .get_cell_mut((1, r))
                         .set_formula(format!("=CalcA!A{r}*Inputs!C{r}"));
+                }
+            });
+            Ok(())
+        }
+        "lookup_index_match_dense_50k" => {
+            let lookup_rows = cfg_u32(s, "/layout/lookup_rows", 50_000);
+            let query_rows = cfg_u32(s, "/layout/query_rows", 20_000);
+            let key_prefix = cfg_str(s, "/layout/key_prefix", "K");
+            let query_key_stride = cfg_u32(s, "/layout/query_key_stride", 7_919).max(1);
+            let lookup_last_row = lookup_rows + 1;
+
+            write_workbook(output, |book| {
+                let _ = book.new_sheet("Lookup");
+                let _ = book.new_sheet("Queries");
+
+                let lookup = book.get_sheet_by_name_mut("Lookup").expect("Lookup exists");
+                lookup.get_cell_mut((1, 1)).set_value("Key");
+                lookup.get_cell_mut((2, 1)).set_value("Value");
+                lookup.get_cell_mut((3, 1)).set_value("Checksum");
+                for index in 1..=lookup_rows {
+                    let row = index + 1;
+                    lookup
+                        .get_cell_mut((1, row))
+                        .set_value(lookup_key(&key_prefix, index));
+                    lookup
+                        .get_cell_mut((2, row))
+                        .set_value_number(dense_lookup_value(index));
+                    lookup
+                        .get_cell_mut((3, row))
+                        .set_value_number(dense_lookup_checksum(index));
+                }
+
+                let queries = book
+                    .get_sheet_by_name_mut("Queries")
+                    .expect("Queries exists");
+                queries.get_cell_mut((1, 1)).set_value("Key");
+                queries.get_cell_mut((2, 1)).set_value("Value");
+                queries.get_cell_mut((3, 1)).set_value("Checksum");
+
+                for i in 0..query_rows {
+                    let row = i + 2;
+                    let default_lookup_index = ((i * query_key_stride) % lookup_rows) + 1;
+                    let lookup_index = match row {
+                        2 => 40_000,
+                        10_000 => 123,
+                        _ => default_lookup_index,
+                    };
+
+                    queries
+                        .get_cell_mut((1, row))
+                        .set_value(lookup_key(&key_prefix, lookup_index));
+                    queries.get_cell_mut((2, row)).set_formula(format!(
+                        "=INDEX(Lookup!$B$2:$B${lookup_last_row},MATCH(A{row},Lookup!$A$2:$A${lookup_last_row},0))"
+                    ));
+                    queries.get_cell_mut((3, row)).set_formula(format!(
+                        "=INDEX(Lookup!$C$2:$C${lookup_last_row},MATCH(A{row},Lookup!$A$2:$A${lookup_last_row},0))"
+                    ));
+                }
+            });
+            Ok(())
+        }
+        "lookup_cross_sheet_dim_fact" => {
+            let fact_rows = cfg_u32(s, "/layout/fact_rows", 50_000);
+            let report_rows = cfg_u32(s, "/layout/report_rows", 5_000);
+            let fact_last_row = fact_rows + 1;
+            let regions = [
+                ("North", 3.0),
+                ("South", 5.0),
+                ("East", 7.0),
+                ("West", 11.0),
+                ("Central", 13.0),
+                ("Coastal", 17.0),
+            ];
+            let products = [
+                ("Alpha", 2.0),
+                ("Beta", 4.0),
+                ("Gamma", 6.0),
+                ("Delta", 8.0),
+                ("Epsilon", 10.0),
+            ];
+            let region_last_row = regions.len() as u32 + 1;
+            let product_last_row = products.len() as u32 + 1;
+
+            write_workbook(output, |book| {
+                let _ = book.new_sheet("RegionDim");
+                let _ = book.new_sheet("ProductDim");
+                let _ = book.new_sheet("Facts");
+                let _ = book.new_sheet("Report");
+
+                let region_dim = book
+                    .get_sheet_by_name_mut("RegionDim")
+                    .expect("RegionDim exists");
+                region_dim.get_cell_mut((1, 1)).set_value("RegionKey");
+                region_dim.get_cell_mut((2, 1)).set_value("RegionWeight");
+                for (idx, (region, weight)) in regions.iter().enumerate() {
+                    let row = idx as u32 + 2;
+                    region_dim.get_cell_mut((1, row)).set_value(*region);
+                    region_dim.get_cell_mut((2, row)).set_value_number(*weight);
+                }
+
+                let product_dim = book
+                    .get_sheet_by_name_mut("ProductDim")
+                    .expect("ProductDim exists");
+                product_dim.get_cell_mut((1, 1)).set_value("ProductKey");
+                product_dim.get_cell_mut((2, 1)).set_value("ProductFactor");
+                for (idx, (product, factor)) in products.iter().enumerate() {
+                    let row = idx as u32 + 2;
+                    product_dim.get_cell_mut((1, row)).set_value(*product);
+                    product_dim.get_cell_mut((2, row)).set_value_number(*factor);
+                }
+
+                let facts = book.get_sheet_by_name_mut("Facts").expect("Facts exists");
+                facts.get_cell_mut((1, 1)).set_value("FactId");
+                facts.get_cell_mut((2, 1)).set_value("RegionKey");
+                facts.get_cell_mut((3, 1)).set_value("ProductKey");
+                facts.get_cell_mut((4, 1)).set_value("Qty");
+                facts.get_cell_mut((5, 1)).set_value("Price");
+                facts.get_cell_mut((6, 1)).set_value("Revenue");
+                for i in 0..fact_rows {
+                    let row = i + 2;
+                    let fact_index = i + 1;
+                    let region = regions[(i as usize) % regions.len()].0;
+                    let product = products[((i as usize) / regions.len()) % products.len()].0;
+                    let qty = ((i % 11) + 1) as f64;
+                    let price = ((i % 19) + 10) as f64;
+
+                    facts.get_cell_mut((1, row)).set_value(fact_id(fact_index));
+                    facts.get_cell_mut((2, row)).set_value(region);
+                    facts.get_cell_mut((3, row)).set_value(product);
+                    facts.get_cell_mut((4, row)).set_value_number(qty);
+                    facts.get_cell_mut((5, row)).set_value_number(price);
+                    facts
+                        .get_cell_mut((6, row))
+                        .set_formula(format!("=D{row}*E{row}"));
+                }
+
+                let report = book.get_sheet_by_name_mut("Report").expect("Report exists");
+                report.get_cell_mut((1, 1)).set_value("FactId");
+                report.get_cell_mut((2, 1)).set_value("Revenue");
+                report.get_cell_mut((3, 1)).set_value("RegionKey");
+                report.get_cell_mut((4, 1)).set_value("ProductKey");
+                report.get_cell_mut((5, 1)).set_value("RegionWeight");
+                report.get_cell_mut((6, 1)).set_value("ProductFactor");
+                report.get_cell_mut((7, 1)).set_value("AdjustedRevenue");
+                for i in 0..report_rows {
+                    let row = i + 2;
+                    let default_fact_index = ((i * 37) % fact_rows) + 1;
+                    let fact_index = match row {
+                        2 => 12_345,
+                        3 => 12_351,
+                        _ => default_fact_index,
+                    };
+
+                    report.get_cell_mut((1, row)).set_value(fact_id(fact_index));
+                    report.get_cell_mut((2, row)).set_formula(format!(
+                        "=INDEX(Facts!$D$2:$D${fact_last_row},MATCH(A{row},Facts!$A$2:$A${fact_last_row},0))*INDEX(Facts!$E$2:$E${fact_last_row},MATCH(A{row},Facts!$A$2:$A${fact_last_row},0))"
+                    ));
+                    report.get_cell_mut((3, row)).set_formula(format!(
+                        "=INDEX(Facts!$B$2:$B${fact_last_row},MATCH(A{row},Facts!$A$2:$A${fact_last_row},0))"
+                    ));
+                    report.get_cell_mut((4, row)).set_formula(format!(
+                        "=INDEX(Facts!$C$2:$C${fact_last_row},MATCH(A{row},Facts!$A$2:$A${fact_last_row},0))"
+                    ));
+                    report.get_cell_mut((5, row)).set_formula(format!(
+                        "=INDEX(RegionDim!$B$2:$B${region_last_row},MATCH(C{row},RegionDim!$A$2:$A${region_last_row},0))"
+                    ));
+                    report.get_cell_mut((6, row)).set_formula(format!(
+                        "=INDEX(ProductDim!$B$2:$B${product_last_row},MATCH(D{row},ProductDim!$A$2:$A${product_last_row},0))"
+                    ));
+                    report
+                        .get_cell_mut((7, row))
+                        .set_formula(format!("=B{row}*E{row}*F{row}"));
                 }
             });
             Ok(())

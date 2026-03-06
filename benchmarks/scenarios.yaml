@@ -295,6 +295,136 @@ scenarios:
         - load_ms
         - peak_rss_mb
 
+  - id: lookup_index_match_dense_50k
+    name: Dense INDEX/MATCH lookup mesh (50k table)
+    profile: core
+    family: lookup
+    tier: comparative
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/lookup_index_match_dense_50k.xlsx
+      seed: 1008
+      config:
+        sheets:
+          - name: Lookup
+            rows: 50001
+            cols: 3
+          - name: Queries
+            rows: 20001
+            cols: 3
+        layout:
+          lookup_rows: 50000
+          query_rows: 20000
+          key_prefix: K
+          query_key_stride: 7919
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Lookup
+        row: 40001
+        col: 2
+        value: 777777
+      - op: evaluate_incremental
+      - op: edit_set_value
+        sheet: Queries
+        row: 10000
+        col: 1
+        value: K040001
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Lookup!B40001", "Queries!B2", "Queries!B10000", "Queries!C10000"]
+    verify:
+      expected:
+        "Lookup!B40001": 777777
+        "Queries!B2": 777777
+        "Queries!B10000": 280007
+        "Queries!C10000": 440011
+      formula_checks:
+        - cell: "Queries!B2"
+          type: non_error
+        - cell: "Queries!C10000"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: lookup_cross_sheet_dim_fact
+    name: Cross-sheet dimension/fact INDEX/MATCH join
+    profile: core
+    family: lookup
+    tier: comparative
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/lookup_cross_sheet_dim_fact.xlsx
+      seed: 1009
+      config:
+        sheets:
+          - name: RegionDim
+            rows: 7
+            cols: 2
+          - name: ProductDim
+            rows: 6
+            cols: 2
+          - name: Facts
+            rows: 50001
+            cols: 6
+          - name: Report
+            rows: 5001
+            cols: 7
+        layout:
+          fact_rows: 50000
+          report_rows: 5000
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Facts
+        row: 12346
+        col: 5
+        value: 99
+      - op: evaluate_incremental
+      - op: edit_set_value
+        sheet: RegionDim
+        row: 4
+        col: 2
+        value: 19
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Facts!F12346", "Report!B2", "Report!E2", "Report!F2", "Report!G2", "Report!G3"]
+    verify:
+      expected:
+        "Facts!F12346": 297
+        "Report!B2": 297
+        "Report!E2": 19
+        "Report!F2": 6
+        "Report!G2": 33858
+        "Report!G3": 13680
+      formula_checks:
+        - cell: "Report!B2"
+          type: non_error
+        - cell: "Report!G2"
+          type: non_error
+        - cell: "Report!G3"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
   - id: sparse_whole_column_refs
     name: Sparse sheet with whole-column refs
     profile: formualizer_strength
