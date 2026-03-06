@@ -117,6 +117,18 @@ fn run() -> Result<()> {
                     .delete_sheet_by_name(&sheet)
                     .map_err(|e| anyhow::anyhow!("delete_sheet_by_name: {e}"))?;
             }
+            "insert_rows" => {
+                let sheet_name = arg_str(op, "sheet")?;
+                let before = i32::try_from(arg_u32(op, "before")?)
+                    .with_context(|| format!("before out of range for i32 in op={}", op.op))?;
+                let count = i32::try_from(arg_u32(op, "count")?)
+                    .with_context(|| format!("count out of range for i32 in op={}", op.op))?;
+                let sheet = sheet_index_by_name(&model, &sheet_name)
+                    .with_context(|| format!("sheet not found: {sheet_name}"))?;
+                model
+                    .insert_rows(sheet, before, count)
+                    .map_err(|e| anyhow::anyhow!("insert_rows: {e}"))?;
+            }
             "rename_sheet" => {
                 if let (Ok(old), Ok(new)) = (arg_str(op, "old"), arg_str(op, "new")) {
                     model

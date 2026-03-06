@@ -39,9 +39,15 @@ scenarios:
   agg_mixed_rollup_grid_2k_reports:
     functions: [SUMIFS, COUNTIFS, AVERAGEIFS, MUL]
     features: [text_criteria, finite_ranges, cross_sheet_refs, report_grid, multi_aggregate_reports, mixed_numeric_text_lanes]
+  struct_row_insert_middle_50k_refs:
+    functions: [MUL, SUM]
+    features: [structural_edits, row_insert_rewrite, finite_ranges, formula_dense_sheet]
+  struct_sheet_rename_rebind:
+    functions: [MUL, SUM, ADD]
+    features: [structural_edits, sheet_rename_rebind, cross_sheet_refs]
   structural_sheet_recovery:
     functions: [REF]
-    features: [structural_edits, cross_sheet_refs]
+    features: [structural_edits, sheet_remove_recreate, cross_sheet_refs]
   real_finance_model_v1:
     functions: [SUMIFS, XLOOKUP, IF, INDEX, MATCH]
     features: [xlsx_io, mixed_refs, cross_sheet_refs]

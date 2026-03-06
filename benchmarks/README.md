@@ -33,6 +33,8 @@ cargo run -p formualizer-bench-core --features xlsx --bin generate-corpus -- \
 - `inc_cross_sheet_mesh_3x25k` exercises selective cross-sheet propagation across three 25k-row sheets.
 - `agg_countifs_multi_criteria_100k` adds finite-range `COUNTIFS` stress over 100k fact rows with explicit report criteria cells.
 - `agg_mixed_rollup_grid_2k_reports` adds a 500x4 aggregate grid over 10k facts, mixing `SUMIFS`, `COUNTIFS`, and `AVERAGEIFS` for comparative-sized runs.
+- `struct_row_insert_middle_50k_refs` exercises middle-sheet row insertion and downstream ref rewrites across 50k row-local formulas.
+- `struct_sheet_rename_rebind` exercises cross-sheet formula rebinding after a target-sheet rename.
 
 ## Design split
 

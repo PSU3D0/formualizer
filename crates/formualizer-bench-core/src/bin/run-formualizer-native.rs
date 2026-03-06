@@ -108,11 +108,24 @@ fn run() -> Result<()> {
                 wb.delete_sheet(&sheet)
                     .map_err(|e| anyhow::anyhow!("delete_sheet: {e}"))?;
             }
+            "insert_rows" => {
+                let sheet = arg_str(op, "sheet")?;
+                let before = arg_u32(op, "before")?;
+                let count = arg_u32(op, "count")?;
+                wb.engine_mut()
+                    .insert_rows(&sheet, before, count)
+                    .map_err(|e| anyhow::anyhow!("insert_rows: {e}"))?;
+            }
             "rename_sheet" => {
-                let old = arg_str(op, "old")?;
-                let new = arg_str(op, "new")?;
-                wb.rename_sheet(&old, &new)
-                    .map_err(|e| anyhow::anyhow!("rename_sheet: {e}"))?;
+                if let (Ok(old), Ok(new)) = (arg_str(op, "old"), arg_str(op, "new")) {
+                    wb.rename_sheet(&old, &new)
+                        .map_err(|e| anyhow::anyhow!("rename_sheet old/new: {e}"))?;
+                } else if let (Ok(old), Ok(new)) = (arg_str(op, "sheet"), arg_str(op, "new")) {
+                    wb.rename_sheet(&old, &new)
+                        .map_err(|e| anyhow::anyhow!("rename_sheet sheet/new: {e}"))?;
+                } else {
+                    bail!("rename_sheet op requires old+new or sheet+new")
+                }
             }
             "read_cells" => {}
             unsupported => bail!("unsupported op in native adapter: {unsupported}"),

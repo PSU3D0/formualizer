@@ -724,6 +724,66 @@ fn generate_scenario(output: &Path, s: &Scenario) -> Result<()> {
             });
             Ok(())
         }
+        "struct_row_insert_middle_50k_refs" => {
+            let rows = cfg_u32(s, "/sheets/0/rows", 50_000);
+            let formula_pattern = cfg_str(s, "/layout/formula_pattern", "=A{row}*2");
+            let rollup_formula = cfg_str(s, "/layout/rollup_formula", "=SUM(B1:B50000)");
+
+            write_workbook(output, |book| {
+                let sh = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1 exists");
+                for r in 1..=rows {
+                    sh.get_cell_mut((1, r)).set_value_number(r as f64);
+                    sh.get_cell_mut((2, r))
+                        .set_formula(formula_pattern.replace("{row}", &r.to_string()));
+                }
+                sh.get_cell_mut((3, 1)).set_formula(rollup_formula);
+            });
+            Ok(())
+        }
+        "struct_sheet_rename_rebind" => {
+            let input_rows = cfg_u32(s, "/sheets/0/rows", 25_000);
+            let summary_rows = cfg_u32(s, "/sheets/1/rows", input_rows);
+            let summary_formula_pattern =
+                cfg_str(s, "/layout/summary_formula_pattern", "=Inputs!A{row}*3");
+            let summary_rollup_formula =
+                cfg_str(s, "/layout/summary_rollup_formula", "=SUM(A1:A25000)");
+            let direct_cross_sheet_rollup_formula = cfg_str(
+                s,
+                "/layout/direct_cross_sheet_rollup_formula",
+                "=SUM(Inputs!A1:A25000)",
+            );
+            let rebind_probe_formula =
+                cfg_str(s, "/layout/rebind_probe_formula", "=Inputs!A12345+A12345");
+
+            write_workbook(output, |book| {
+                let _ = book.new_sheet("Inputs");
+                let _ = book.new_sheet("Summary");
+
+                let inputs = book.get_sheet_by_name_mut("Inputs").expect("Inputs exists");
+                for r in 1..=input_rows {
+                    inputs.get_cell_mut((1, r)).set_value_number(r as f64);
+                }
+
+                let summary = book
+                    .get_sheet_by_name_mut("Summary")
+                    .expect("Summary exists");
+                for r in 1..=summary_rows {
+                    summary
+                        .get_cell_mut((1, r))
+                        .set_formula(summary_formula_pattern.replace("{row}", &r.to_string()));
+                }
+                summary
+                    .get_cell_mut((2, 1))
+                    .set_formula(summary_rollup_formula);
+                summary
+                    .get_cell_mut((2, 2))
+                    .set_formula(rebind_probe_formula);
+                summary
+                    .get_cell_mut((3, 1))
+                    .set_formula(direct_cross_sheet_rollup_formula);
+            });
+            Ok(())
+        }
         "structural_sheet_recovery" => {
             write_workbook(output, |book| {
                 let _ = book.new_sheet("Sheet2");
