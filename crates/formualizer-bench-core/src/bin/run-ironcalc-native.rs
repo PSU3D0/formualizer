@@ -205,6 +205,15 @@ fn cfg_u32(s: &Scenario, pointer: &str, default: u32) -> u32 {
 }
 
 #[cfg(feature = "ironcalc_runner")]
+fn render_formula_template(template: &str, row: u32, fact_last_row: Option<u32>) -> String {
+    let mut formula = template.replace("{row}", &row.to_string());
+    if let Some(fact_last_row) = fact_last_row {
+        formula = formula.replace("{fact_last_row}", &fact_last_row.to_string());
+    }
+    formula
+}
+
+#[cfg(feature = "ironcalc_runner")]
 fn build_model_fallback(scenario: &Scenario) -> Result<ironcalc::base::Model<'static>> {
     let mut model = ironcalc::base::Model::new_empty("bench", "en", "UTC", "en")
         .map_err(|e| anyhow::anyhow!("Model::new_empty: {e}"))?;
@@ -424,6 +433,301 @@ fn build_model_fallback(scenario: &Scenario) -> Result<ironcalc::base::Model<'st
                         ),
                     )
                     .map_err(|e| anyhow::anyhow!("report sumifs: {e}"))?;
+            }
+        }
+        "agg_countifs_multi_criteria_100k" => {
+            let fact_rows = cfg_u32(scenario, "/sheets/0/rows", 100_000);
+            let report_rows = cfg_u32(scenario, "/layout/report_rows", 1_000);
+            let fact_last_row = fact_rows + 1;
+            let report_countifs_formula = "=COUNTIFS(Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row},Facts!$E$2:$E${fact_last_row},\">=\"&E{row})";
+            let regions = ["North", "South", "East", "West"];
+            let products = ["A", "B", "C", "D", "E"];
+            let channels = ["Online", "Retail", "Partner"];
+            let statuses = ["Open", "Closed", "Pending", "Escalated"];
+            let min_qty_cycle = [3_u32, 6, 9, 12];
+
+            model
+                .add_sheet("Facts")
+                .map_err(|e| anyhow::anyhow!("add_sheet Facts: {e}"))?;
+            model
+                .add_sheet("Report")
+                .map_err(|e| anyhow::anyhow!("add_sheet Report: {e}"))?;
+
+            let facts = 1u32;
+            let report = 2u32;
+
+            model
+                .set_user_input(facts, 1, 1, "Region".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs facts header A: {e}"))?;
+            model
+                .set_user_input(facts, 1, 2, "Product".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs facts header B: {e}"))?;
+            model
+                .set_user_input(facts, 1, 3, "Channel".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs facts header C: {e}"))?;
+            model
+                .set_user_input(facts, 1, 4, "Status".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs facts header D: {e}"))?;
+            model
+                .set_user_input(facts, 1, 5, "Qty".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs facts header E: {e}"))?;
+
+            for i in 0..fact_rows {
+                let row = i + 2;
+                let rr = i32::try_from(row).with_context(|| "countifs fact row overflow i32")?;
+                let idx = i as usize;
+                let region = regions[idx % regions.len()];
+                let product = products[(idx / regions.len()) % products.len()];
+                let channel = channels[(idx / (regions.len() * products.len())) % channels.len()];
+                let status = statuses
+                    [(idx / (regions.len() * products.len() * channels.len())) % statuses.len()];
+                let qty = ((i / 240) % 12) + 1;
+
+                model
+                    .set_user_input(facts, rr, 1, region.to_string())
+                    .map_err(|e| anyhow::anyhow!("countifs facts region: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 2, product.to_string())
+                    .map_err(|e| anyhow::anyhow!("countifs facts product: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 3, channel.to_string())
+                    .map_err(|e| anyhow::anyhow!("countifs facts channel: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 4, status.to_string())
+                    .map_err(|e| anyhow::anyhow!("countifs facts status: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 5, qty.to_string())
+                    .map_err(|e| anyhow::anyhow!("countifs facts qty: {e}"))?;
+            }
+
+            model
+                .set_user_input(report, 1, 1, "Region".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs report header A: {e}"))?;
+            model
+                .set_user_input(report, 1, 2, "Product".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs report header B: {e}"))?;
+            model
+                .set_user_input(report, 1, 3, "Channel".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs report header C: {e}"))?;
+            model
+                .set_user_input(report, 1, 4, "Status".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs report header D: {e}"))?;
+            model
+                .set_user_input(report, 1, 5, "MinQty".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs report header E: {e}"))?;
+            model
+                .set_user_input(report, 1, 6, "Count".to_string())
+                .map_err(|e| anyhow::anyhow!("countifs report header F: {e}"))?;
+
+            for i in 0..report_rows {
+                let row = i + 2;
+                let rr = i32::try_from(row).with_context(|| "countifs report row overflow i32")?;
+                let idx = i as usize;
+                let region = regions[idx % regions.len()];
+                let product = products[(idx / regions.len()) % products.len()];
+                let channel = channels[(idx / (regions.len() * products.len())) % channels.len()];
+                let status = statuses
+                    [(idx / (regions.len() * products.len() * channels.len())) % statuses.len()];
+                let min_qty = min_qty_cycle[idx % min_qty_cycle.len()];
+
+                model
+                    .set_user_input(report, rr, 1, region.to_string())
+                    .map_err(|e| anyhow::anyhow!("countifs report region: {e}"))?;
+                model
+                    .set_user_input(report, rr, 2, product.to_string())
+                    .map_err(|e| anyhow::anyhow!("countifs report product: {e}"))?;
+                model
+                    .set_user_input(report, rr, 3, channel.to_string())
+                    .map_err(|e| anyhow::anyhow!("countifs report channel: {e}"))?;
+                model
+                    .set_user_input(report, rr, 4, status.to_string())
+                    .map_err(|e| anyhow::anyhow!("countifs report status: {e}"))?;
+                model
+                    .set_user_input(report, rr, 5, min_qty.to_string())
+                    .map_err(|e| anyhow::anyhow!("countifs report min qty: {e}"))?;
+                model
+                    .set_user_input(
+                        report,
+                        rr,
+                        6,
+                        render_formula_template(report_countifs_formula, row, Some(fact_last_row)),
+                    )
+                    .map_err(|e| anyhow::anyhow!("countifs report formula: {e}"))?;
+            }
+        }
+        "agg_mixed_rollup_grid_2k_reports" => {
+            let fact_rows = cfg_u32(scenario, "/sheets/0/rows", 10_000);
+            let report_rows = cfg_u32(scenario, "/layout/report_rows", 500);
+            let fact_last_row = fact_rows + 1;
+            let facts_revenue_formula = "=E{row}*F{row}";
+            let report_units_formula = "=SUMIFS(Facts!$E$2:$E${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})";
+            let report_countifs_formula = "=COUNTIFS(Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})";
+            let report_averageifs_formula = "=AVERAGEIFS(Facts!$F$2:$F${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})";
+            let report_price_total_formula = "=SUMIFS(Facts!$F$2:$F${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})";
+            let regions = ["North", "South", "East", "West"];
+            let products = ["A", "B", "C", "D", "E"];
+            let channels = ["Online", "Retail", "Partner"];
+            let quarters = ["Q1", "Q2", "Q3", "Q4"];
+
+            model
+                .add_sheet("Facts")
+                .map_err(|e| anyhow::anyhow!("add_sheet Facts: {e}"))?;
+            model
+                .add_sheet("Report")
+                .map_err(|e| anyhow::anyhow!("add_sheet Report: {e}"))?;
+
+            let facts = 1u32;
+            let report = 2u32;
+
+            model
+                .set_user_input(facts, 1, 1, "Region".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed facts header A: {e}"))?;
+            model
+                .set_user_input(facts, 1, 2, "Product".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed facts header B: {e}"))?;
+            model
+                .set_user_input(facts, 1, 3, "Channel".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed facts header C: {e}"))?;
+            model
+                .set_user_input(facts, 1, 4, "Quarter".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed facts header D: {e}"))?;
+            model
+                .set_user_input(facts, 1, 5, "Units".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed facts header E: {e}"))?;
+            model
+                .set_user_input(facts, 1, 6, "Price".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed facts header F: {e}"))?;
+            model
+                .set_user_input(facts, 1, 7, "Revenue".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed facts header G: {e}"))?;
+
+            for i in 0..fact_rows {
+                let row = i + 2;
+                let rr = i32::try_from(row).with_context(|| "mixed fact row overflow i32")?;
+                let idx = i as usize;
+                let region_idx = idx % regions.len();
+                let product_idx = (idx / regions.len()) % products.len();
+                let channel_idx = (idx / (regions.len() * products.len())) % channels.len();
+                let quarter_idx =
+                    (idx / (regions.len() * products.len() * channels.len())) % quarters.len();
+                let units = ((i / 240) % 9) + 1 + region_idx as u32;
+                let price = ((i / 2_160) % 15) + 10 + product_idx as u32 + quarter_idx as u32;
+
+                model
+                    .set_user_input(facts, rr, 1, regions[region_idx].to_string())
+                    .map_err(|e| anyhow::anyhow!("mixed facts region: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 2, products[product_idx].to_string())
+                    .map_err(|e| anyhow::anyhow!("mixed facts product: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 3, channels[channel_idx].to_string())
+                    .map_err(|e| anyhow::anyhow!("mixed facts channel: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 4, quarters[quarter_idx].to_string())
+                    .map_err(|e| anyhow::anyhow!("mixed facts quarter: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 5, units.to_string())
+                    .map_err(|e| anyhow::anyhow!("mixed facts units: {e}"))?;
+                model
+                    .set_user_input(facts, rr, 6, price.to_string())
+                    .map_err(|e| anyhow::anyhow!("mixed facts price: {e}"))?;
+                model
+                    .set_user_input(
+                        facts,
+                        rr,
+                        7,
+                        render_formula_template(facts_revenue_formula, row, None),
+                    )
+                    .map_err(|e| anyhow::anyhow!("mixed facts revenue: {e}"))?;
+            }
+
+            model
+                .set_user_input(report, 1, 1, "Region".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed report header A: {e}"))?;
+            model
+                .set_user_input(report, 1, 2, "Product".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed report header B: {e}"))?;
+            model
+                .set_user_input(report, 1, 3, "Channel".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed report header C: {e}"))?;
+            model
+                .set_user_input(report, 1, 4, "Quarter".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed report header D: {e}"))?;
+            model
+                .set_user_input(report, 1, 5, "Units".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed report header E: {e}"))?;
+            model
+                .set_user_input(report, 1, 6, "Orders".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed report header F: {e}"))?;
+            model
+                .set_user_input(report, 1, 7, "AvgPrice".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed report header G: {e}"))?;
+            model
+                .set_user_input(report, 1, 8, "PriceTotal".to_string())
+                .map_err(|e| anyhow::anyhow!("mixed report header H: {e}"))?;
+
+            for i in 0..report_rows {
+                let row = i + 2;
+                let rr = i32::try_from(row).with_context(|| "mixed report row overflow i32")?;
+                let idx = i as usize;
+                let region = regions[idx % regions.len()];
+                let product = products[(idx / regions.len()) % products.len()];
+                let channel = channels[(idx / (regions.len() * products.len())) % channels.len()];
+                let quarter = quarters
+                    [(idx / (regions.len() * products.len() * channels.len())) % quarters.len()];
+
+                model
+                    .set_user_input(report, rr, 1, region.to_string())
+                    .map_err(|e| anyhow::anyhow!("mixed report region: {e}"))?;
+                model
+                    .set_user_input(report, rr, 2, product.to_string())
+                    .map_err(|e| anyhow::anyhow!("mixed report product: {e}"))?;
+                model
+                    .set_user_input(report, rr, 3, channel.to_string())
+                    .map_err(|e| anyhow::anyhow!("mixed report channel: {e}"))?;
+                model
+                    .set_user_input(report, rr, 4, quarter.to_string())
+                    .map_err(|e| anyhow::anyhow!("mixed report quarter: {e}"))?;
+                model
+                    .set_user_input(
+                        report,
+                        rr,
+                        5,
+                        render_formula_template(report_units_formula, row, Some(fact_last_row)),
+                    )
+                    .map_err(|e| anyhow::anyhow!("mixed report units formula: {e}"))?;
+                model
+                    .set_user_input(
+                        report,
+                        rr,
+                        6,
+                        render_formula_template(report_countifs_formula, row, Some(fact_last_row)),
+                    )
+                    .map_err(|e| anyhow::anyhow!("mixed report count formula: {e}"))?;
+                model
+                    .set_user_input(
+                        report,
+                        rr,
+                        7,
+                        render_formula_template(
+                            report_averageifs_formula,
+                            row,
+                            Some(fact_last_row),
+                        ),
+                    )
+                    .map_err(|e| anyhow::anyhow!("mixed report average formula: {e}"))?;
+                model
+                    .set_user_input(
+                        report,
+                        rr,
+                        8,
+                        render_formula_template(
+                            report_price_total_formula,
+                            row,
+                            Some(fact_last_row),
+                        ),
+                    )
+                    .map_err(|e| anyhow::anyhow!("mixed report price total formula: {e}"))?;
             }
         }
         other => {

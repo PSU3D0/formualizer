@@ -109,6 +109,15 @@ fn cfg_str(s: &Scenario, pointer: &str, default: &str) -> String {
 }
 
 #[cfg(feature = "xlsx")]
+fn render_formula_template(template: &str, row: u32, fact_last_row: Option<u32>) -> String {
+    let mut formula = template.replace("{row}", &row.to_string());
+    if let Some(fact_last_row) = fact_last_row {
+        formula = formula.replace("{fact_last_row}", &fact_last_row.to_string());
+    }
+    formula
+}
+
+#[cfg(feature = "xlsx")]
 fn lookup_key(prefix: &str, index: u32) -> String {
     format!("{prefix}{index:06}")
 }
@@ -502,6 +511,215 @@ fn generate_scenario(output: &Path, s: &Scenario) -> Result<()> {
                     report
                         .get_cell_mut((4, r))
                         .set_formula(report_sumifs_formula.replace("{row}", &r.to_string()));
+                }
+            });
+            Ok(())
+        }
+        "agg_countifs_multi_criteria_100k" => {
+            let fact_rows = cfg_u32(s, "/sheets/0/rows", 100_000);
+            let report_rows = cfg_u32(s, "/layout/report_rows", 1_000);
+            let fact_last_row = fact_rows + 1;
+            let report_countifs_formula = cfg_str(
+                s,
+                "/layout/formulas/report_countifs_formula",
+                "=COUNTIFS(Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row},Facts!$E$2:$E${fact_last_row},\">=\"&E{row})",
+            );
+
+            let regions = ["North", "South", "East", "West"];
+            let products = ["A", "B", "C", "D", "E"];
+            let channels = ["Online", "Retail", "Partner"];
+            let statuses = ["Open", "Closed", "Pending", "Escalated"];
+            let min_qty_cycle = [3_u32, 6, 9, 12];
+
+            write_workbook(output, |book| {
+                let _ = book.new_sheet("Facts");
+                let _ = book.new_sheet("Report");
+
+                let facts = book.get_sheet_by_name_mut("Facts").expect("Facts exists");
+                facts.get_cell_mut((1, 1)).set_value("Region");
+                facts.get_cell_mut((2, 1)).set_value("Product");
+                facts.get_cell_mut((3, 1)).set_value("Channel");
+                facts.get_cell_mut((4, 1)).set_value("Status");
+                facts.get_cell_mut((5, 1)).set_value("Qty");
+
+                for i in 0..fact_rows {
+                    let r = i + 2;
+                    let idx = i as usize;
+                    let region = regions[idx % regions.len()];
+                    let product = products[(idx / regions.len()) % products.len()];
+                    let channel =
+                        channels[(idx / (regions.len() * products.len())) % channels.len()];
+                    let status = statuses[(idx
+                        / (regions.len() * products.len() * channels.len()))
+                        % statuses.len()];
+                    let qty = ((i / 240) % 12) + 1;
+
+                    facts.get_cell_mut((1, r)).set_value(region);
+                    facts.get_cell_mut((2, r)).set_value(product);
+                    facts.get_cell_mut((3, r)).set_value(channel);
+                    facts.get_cell_mut((4, r)).set_value(status);
+                    facts.get_cell_mut((5, r)).set_value_number(qty as f64);
+                }
+
+                let report = book.get_sheet_by_name_mut("Report").expect("Report exists");
+                report.get_cell_mut((1, 1)).set_value("Region");
+                report.get_cell_mut((2, 1)).set_value("Product");
+                report.get_cell_mut((3, 1)).set_value("Channel");
+                report.get_cell_mut((4, 1)).set_value("Status");
+                report.get_cell_mut((5, 1)).set_value("MinQty");
+                report.get_cell_mut((6, 1)).set_value("Count");
+
+                for i in 0..report_rows {
+                    let r = i + 2;
+                    let idx = i as usize;
+                    let region = regions[idx % regions.len()];
+                    let product = products[(idx / regions.len()) % products.len()];
+                    let channel =
+                        channels[(idx / (regions.len() * products.len())) % channels.len()];
+                    let status = statuses[(idx
+                        / (regions.len() * products.len() * channels.len()))
+                        % statuses.len()];
+                    let min_qty = min_qty_cycle[idx % min_qty_cycle.len()];
+
+                    report.get_cell_mut((1, r)).set_value(region);
+                    report.get_cell_mut((2, r)).set_value(product);
+                    report.get_cell_mut((3, r)).set_value(channel);
+                    report.get_cell_mut((4, r)).set_value(status);
+                    report.get_cell_mut((5, r)).set_value_number(min_qty as f64);
+                    report
+                        .get_cell_mut((6, r))
+                        .set_formula(render_formula_template(
+                            &report_countifs_formula,
+                            r,
+                            Some(fact_last_row),
+                        ));
+                }
+            });
+            Ok(())
+        }
+        "agg_mixed_rollup_grid_2k_reports" => {
+            let fact_rows = cfg_u32(s, "/sheets/0/rows", 10_000);
+            let report_rows = cfg_u32(s, "/layout/report_rows", 500);
+            let fact_last_row = fact_rows + 1;
+            let facts_revenue_formula = cfg_str(
+                s,
+                "/layout/formulas/facts_revenue_formula",
+                "=E{row}*F{row}",
+            );
+            let report_units_formula = cfg_str(
+                s,
+                "/layout/formulas/report_units_formula",
+                "=SUMIFS(Facts!$E$2:$E${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})",
+            );
+            let report_countifs_formula = cfg_str(
+                s,
+                "/layout/formulas/report_countifs_formula",
+                "=COUNTIFS(Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})",
+            );
+            let report_averageifs_formula = cfg_str(
+                s,
+                "/layout/formulas/report_averageifs_formula",
+                "=AVERAGEIFS(Facts!$F$2:$F${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})",
+            );
+            let report_price_total_formula = cfg_str(
+                s,
+                "/layout/formulas/report_price_total_formula",
+                "=SUMIFS(Facts!$F$2:$F${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})",
+            );
+
+            let regions = ["North", "South", "East", "West"];
+            let products = ["A", "B", "C", "D", "E"];
+            let channels = ["Online", "Retail", "Partner"];
+            let quarters = ["Q1", "Q2", "Q3", "Q4"];
+
+            write_workbook(output, |book| {
+                let _ = book.new_sheet("Facts");
+                let _ = book.new_sheet("Report");
+
+                let facts = book.get_sheet_by_name_mut("Facts").expect("Facts exists");
+                facts.get_cell_mut((1, 1)).set_value("Region");
+                facts.get_cell_mut((2, 1)).set_value("Product");
+                facts.get_cell_mut((3, 1)).set_value("Channel");
+                facts.get_cell_mut((4, 1)).set_value("Quarter");
+                facts.get_cell_mut((5, 1)).set_value("Units");
+                facts.get_cell_mut((6, 1)).set_value("Price");
+                facts.get_cell_mut((7, 1)).set_value("Revenue");
+
+                for i in 0..fact_rows {
+                    let r = i + 2;
+                    let idx = i as usize;
+                    let region_idx = idx % regions.len();
+                    let product_idx = (idx / regions.len()) % products.len();
+                    let channel_idx = (idx / (regions.len() * products.len())) % channels.len();
+                    let quarter_idx =
+                        (idx / (regions.len() * products.len() * channels.len())) % quarters.len();
+                    let units = ((i / 240) % 9) + 1 + region_idx as u32;
+                    let price = ((i / 2_160) % 15) + 10 + product_idx as u32 + quarter_idx as u32;
+
+                    facts.get_cell_mut((1, r)).set_value(regions[region_idx]);
+                    facts.get_cell_mut((2, r)).set_value(products[product_idx]);
+                    facts.get_cell_mut((3, r)).set_value(channels[channel_idx]);
+                    facts.get_cell_mut((4, r)).set_value(quarters[quarter_idx]);
+                    facts.get_cell_mut((5, r)).set_value_number(units as f64);
+                    facts.get_cell_mut((6, r)).set_value_number(price as f64);
+                    facts
+                        .get_cell_mut((7, r))
+                        .set_formula(render_formula_template(&facts_revenue_formula, r, None));
+                }
+
+                let report = book.get_sheet_by_name_mut("Report").expect("Report exists");
+                report.get_cell_mut((1, 1)).set_value("Region");
+                report.get_cell_mut((2, 1)).set_value("Product");
+                report.get_cell_mut((3, 1)).set_value("Channel");
+                report.get_cell_mut((4, 1)).set_value("Quarter");
+                report.get_cell_mut((5, 1)).set_value("Units");
+                report.get_cell_mut((6, 1)).set_value("Orders");
+                report.get_cell_mut((7, 1)).set_value("AvgPrice");
+                report.get_cell_mut((8, 1)).set_value("PriceTotal");
+
+                for i in 0..report_rows {
+                    let r = i + 2;
+                    let idx = i as usize;
+                    let region = regions[idx % regions.len()];
+                    let product = products[(idx / regions.len()) % products.len()];
+                    let channel =
+                        channels[(idx / (regions.len() * products.len())) % channels.len()];
+                    let quarter = quarters[(idx
+                        / (regions.len() * products.len() * channels.len()))
+                        % quarters.len()];
+
+                    report.get_cell_mut((1, r)).set_value(region);
+                    report.get_cell_mut((2, r)).set_value(product);
+                    report.get_cell_mut((3, r)).set_value(channel);
+                    report.get_cell_mut((4, r)).set_value(quarter);
+                    report
+                        .get_cell_mut((5, r))
+                        .set_formula(render_formula_template(
+                            &report_units_formula,
+                            r,
+                            Some(fact_last_row),
+                        ));
+                    report
+                        .get_cell_mut((6, r))
+                        .set_formula(render_formula_template(
+                            &report_countifs_formula,
+                            r,
+                            Some(fact_last_row),
+                        ));
+                    report
+                        .get_cell_mut((7, r))
+                        .set_formula(render_formula_template(
+                            &report_averageifs_formula,
+                            r,
+                            Some(fact_last_row),
+                        ));
+                    report
+                        .get_cell_mut((8, r))
+                        .set_formula(render_formula_template(
+                            &report_price_total_formula,
+                            r,
+                            Some(fact_last_row),
+                        ));
                 }
             });
             Ok(())

@@ -31,6 +31,8 @@ cargo run -p formualizer-bench-core --features xlsx --bin generate-corpus -- \
 
 - `inc_sparse_dirty_region_1m` exercises tiny dirty-region edits across a 1M-row sparse sheet span.
 - `inc_cross_sheet_mesh_3x25k` exercises selective cross-sheet propagation across three 25k-row sheets.
+- `agg_countifs_multi_criteria_100k` adds finite-range `COUNTIFS` stress over 100k fact rows with explicit report criteria cells.
+- `agg_mixed_rollup_grid_2k_reports` adds a 500x4 aggregate grid over 10k facts, mixing `SUMIFS`, `COUNTIFS`, and `AVERAGEIFS` for comparative-sized runs.
 
 ## Design split
 

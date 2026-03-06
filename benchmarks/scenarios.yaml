@@ -464,6 +464,8 @@ scenarios:
   - id: sumifs_fact_table_100k
     name: SUMIFS fact-table stress (100k rows, text+numeric lanes)
     profile: formualizer_strength
+    family: aggregate
+    tier: comparative
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -512,6 +514,145 @@ scenarios:
         - cell: "Report!D500"
           type: non_error
         - cell: "Report!D1000"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: agg_countifs_multi_criteria_100k
+    name: COUNTIFS multi-criteria fact-table stress (100k rows)
+    profile: core
+    family: aggregate
+    tier: comparative
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/agg_countifs_multi_criteria_100k.xlsx
+      seed: 1010
+      config:
+        sheets:
+          - name: Facts
+            rows: 100000
+            cols: 5
+          - name: Report
+            rows: 1001
+            cols: 6
+        layout:
+          report_rows: 1000
+          dimensions:
+            regions: [North, South, East, West]
+            products: [A, B, C, D, E]
+            channels: [Online, Retail, Partner]
+            statuses: [Open, Closed, Pending, Escalated]
+          formulas:
+            report_countifs_formula: '=COUNTIFS(Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row},Facts!$E$2:$E${fact_last_row},">="&E{row})'
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Facts
+        row: 242
+        col: 5
+        value: 3
+      - op: evaluate_incremental
+      - op: edit_set_value
+        sheet: Report
+        row: 2
+        col: 5
+        value: 6
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Facts!E242", "Report!F2", "Report!F500", "Report!F1000"]
+    verify:
+      expected:
+        "Facts!E242": 3
+        "Report!F2": 242
+        "Report!F500": 137
+        "Report!F1000": 137
+      formula_checks:
+        - cell: "Report!F250"
+          type: non_error
+        - cell: "Report!F750"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: agg_mixed_rollup_grid_2k_reports
+    name: Mixed aggregate report-grid (500 rows x 4 measures over 10k facts)
+    profile: core
+    family: aggregate
+    tier: comparative
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/agg_mixed_rollup_grid_2k_reports.xlsx
+      seed: 1011
+      config:
+        sheets:
+          - name: Facts
+            rows: 10000
+            cols: 7
+          - name: Report
+            rows: 501
+            cols: 8
+        layout:
+          report_rows: 500
+          dimensions:
+            regions: [North, South, East, West]
+            products: [A, B, C, D, E]
+            channels: [Online, Retail, Partner]
+            quarters: [Q1, Q2, Q3, Q4]
+          formulas:
+            facts_revenue_formula: '=E{row}*F{row}'
+            report_units_formula: '=SUMIFS(Facts!$E$2:$E${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})'
+            report_countifs_formula: '=COUNTIFS(Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})'
+            report_averageifs_formula: '=AVERAGEIFS(Facts!$F$2:$F${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})'
+            report_price_total_formula: '=SUMIFS(Facts!$F$2:$F${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})'
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Facts
+        row: 242
+        col: 6
+        value: 30
+      - op: evaluate_incremental
+      - op: edit_set_value
+        sheet: Report
+        row: 3
+        col: 4
+        value: Q4
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Facts!G242", "Report!E2", "Report!F2", "Report!G2", "Report!H2", "Report!E3", "Report!F3", "Report!G3", "Report!H3"]
+    verify:
+      expected:
+        "Facts!G242": 60
+        "Report!E2": 201
+        "Report!F2": 42
+        "Report!G2": 12.333333333333334
+        "Report!H2": 518
+        "Report!E3": 236
+        "Report!F3": 41
+        "Report!G3": 14.804878048780488
+        "Report!H3": 607
+      formula_checks:
+        - cell: "Report!E200"
+          type: non_error
+        - cell: "Report!H500"
           type: non_error
     metrics:
       primary:

@@ -33,6 +33,12 @@ scenarios:
   sumifs_fact_table_100k:
     functions: [SUMIFS, MUL]
     features: [text_criteria, whole_column_refs, cross_sheet_refs, mixed_numeric_text_lanes]
+  agg_countifs_multi_criteria_100k:
+    functions: [COUNTIFS]
+    features: [text_criteria, numeric_criteria, finite_ranges, cross_sheet_refs, repeated_criteria_eval, mixed_numeric_text_lanes]
+  agg_mixed_rollup_grid_2k_reports:
+    functions: [SUMIFS, COUNTIFS, AVERAGEIFS, MUL]
+    features: [text_criteria, finite_ranges, cross_sheet_refs, report_grid, multi_aggregate_reports, mixed_numeric_text_lanes]
   structural_sheet_recovery:
     functions: [REF]
     features: [structural_edits, cross_sheet_refs]
