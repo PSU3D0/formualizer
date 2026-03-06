@@ -25,5 +25,6 @@ chrono = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }
+formualizer-testkit = { path = "../formualizer-testkit" }
 tempfile = { workspace = true }
 umya-spreadsheet = "=2.3.2"

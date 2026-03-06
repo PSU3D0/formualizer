@@ -72,6 +72,7 @@ optional = true
 
 [dev-dependencies]
 wasm-encoder = "0.240"
+formualizer-testkit = { path = "../formualizer-testkit" }
 tempfile = { workspace = true }
 umya-spreadsheet = "=2.3.2"
 

@@ -1,0 +1,1094 @@
+version: 1
+suite: formualizer-benchmark-v1
+
+profiles:
+  core:
+    description: >-
+      Broad comparison profile for scenarios intended to support recurring
+      cross-engine claims when support-policy requirements are satisfied.
+  formualizer_strength:
+    description: >-
+      Formualizer-advantaged or edit-capable profile. Report only inside named
+      comparison-profile subsets and with explicit caveat labels.
+
+families:
+  incremental_locality:
+    description: >-
+      Value-edit incremental workloads emphasizing dirty-region containment and
+      sparse locality.
+  chain_topology:
+    description: >-
+      Dependency-shape workloads emphasizing chain depth, fan-out, and
+      cross-sheet topology.
+  lookup_dimension_join:
+    description: >-
+      Lookup workloads and dimension/fact joins using broadly supported
+      exact-match formulas.
+  aggregate_analytics:
+    description: >-
+      Repeated report aggregates and report-grid style analytics.
+  structural_edit:
+    description: >-
+      Sheet or row mutation workloads that test formula rewrite and dependency
+      recovery behavior.
+  real_world_anchor:
+    description: >-
+      Curated real XLSX anchors used to ground synthetic results in
+      workbook-shaped reality.
+  nightly_stress:
+    description: >-
+      Scale-biased or engine-advantaged stress workloads reserved for caveated
+      or nightly reporting.
+
+tiers:
+  pr_smoke:
+    description: Fast regression subset expected to stay runnable on PRs.
+  comparative:
+    description: Routine comparative subset for recurring multi-engine runs.
+  nightly_heavy:
+    description: Large or slower workloads reserved for scheduled execution.
+
+comparison_profiles:
+  core_smoke:
+    description: >-
+      Fast claim-safe subset for PR correctness and regression checks.
+  core_comparative:
+    description: >-
+      Broad native-best comparisons across the core scenario profile.
+  runtime_parity_core:
+    description: >-
+      Hosted runtime view restricted to intentionally parity-friendly core
+      scenarios.
+  native_strength:
+    description: >-
+      Native-best view for formualizer-strength and structural scenarios with
+      explicit caveats.
+  nightly_scale:
+    description: >-
+      Scheduled heavy runs; not a public parity claim on its own.
+
+runtime_modes:
+  native_best:
+    description: Best available engine or runtime path for each adapter.
+  runtime_parity:
+    description: >-
+      Hosted runtime view constrained to comparable runtime surfaces.
+
+regression_gates:
+  - headline_100k_single_edit
+  - chain_100k
+  - agg_countifs_multi_criteria_100k
+  - real_finance_model_v1
+
+claim_safety:
+  strong_public_comparison_requires:
+    - correctness_passed
+    - no_fallback_note
+    - scenario_metadata_complete
+    - approved_comparison_profile
+    - support_policy_satisfied
+
+engines:
+  - id: formualizer_rust_native
+  - id: formualizer_wasm_node
+  - id: formualizer_python_pyo3
+  - id: ironcalc_rust_native
+  - id: ironcalc_wasm_node
+  - id: ironcalc_python
+  - id: hyperformula_node
+  - id: python_xlcalculator
+
+# Common operation DSL used by adapters.
+# op values: load, evaluate_all, edit_set_value, edit_set_formula,
+#            insert_rows, delete_rows, rename_sheet, add_sheet, remove_sheet,
+#            evaluate_incremental, read_cells
+
+scenarios:
+  - id: headline_100k_single_edit
+    name: 100k workbook single-cell incremental recalc
+    profile: core
+    family: incremental_locality
+    tier: pr_smoke
+    comparison_profiles: [core_smoke, core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: true
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/headline_100k_single_edit.xlsx
+      seed: 1001
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 100000
+            cols: 3
+        layout:
+          inputs_column: A
+          formula_column: B
+          rollup_cell: C1
+          formula_pattern: "=A{row}*2"
+          rollup_formula: "=SUM(B1:B100000)"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 50000
+        col: 1
+        value: 42
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!B50000", "Sheet1!C1"]
+    verify:
+      expected:
+        "Sheet1!B50000": 84
+      # C1 depends on seeded workbook values; validate by deterministic recompute in adapter.
+      formula_checks:
+        - cell: "Sheet1!C1"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - peak_rss_mb
+
+  - id: chain_100k
+    name: Linear dependency chain depth stress
+    profile: core
+    family: chain_topology
+    tier: pr_smoke
+    comparison_profiles: [core_smoke, core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: true
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/chain_100k.xlsx
+      seed: 1002
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 100000
+            cols: 2
+        layout:
+          seed_cell: A1
+          chain_formula_pattern: "=A{prev_row}+1"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 1
+        col: 1
+        value: 2
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!A100000"]
+    verify:
+      expected:
+        "Sheet1!A100000": 100001
+      formula_checks:
+        - cell: "Sheet1!A100000"
+          type: non_error
+
+  - id: fanout_100k
+    name: Massive fan-out single source
+    profile: core
+    family: chain_topology
+    tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/fanout_100k.xlsx
+      seed: 1003
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 100000
+            cols: 2
+        layout:
+          source_cell: A1
+          dependent_formula_pattern: "=A$1*{row}"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 1
+        col: 1
+        value: 3
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!B100000"]
+    verify:
+      formula_checks:
+        - cell: "Sheet1!B100000"
+          type: non_error
+
+  - id: cross_sheet_mesh
+    name: Cross-sheet dependency mesh
+    profile: core
+    family: chain_topology
+    tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/cross_sheet_mesh.xlsx
+      seed: 1004
+      config:
+        sheets:
+          - name: Inputs
+            rows: 25000
+            cols: 4
+          - name: CalcA
+            rows: 25000
+            cols: 4
+          - name: CalcB
+            rows: 25000
+            cols: 4
+        layout:
+          calcA_formula_pattern: "=Inputs!A{row}+Inputs!B{row}"
+          calcB_formula_pattern: "=CalcA!A{row}*Inputs!C{row}"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Inputs
+        row: 12345
+        col: 1
+        value: 99
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["CalcA!A12345", "CalcB!A12345"]
+    verify:
+      formula_checks:
+        - cell: "CalcA!A12345"
+          type: non_error
+        - cell: "CalcB!A12345"
+          type: non_error
+
+  - id: inc_sparse_dirty_region_1m
+    name: Sparse dirty-region locality (1M-row span)
+    profile: core
+    family: incremental_locality
+    tier: nightly_heavy
+    comparison_profiles: [nightly_scale]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/inc_sparse_dirty_region_1m.xlsx
+      seed: 1008
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 1000000
+            cols: 4
+        layout:
+          sparse_blocks:
+            start_rows: [1, 125001, 250001, 375001, 500001, 625001, 750001, 875001]
+            formulas:
+              local_double: "=A{row}*2"
+              local_offset: "=B{row}+5"
+              local_sum: "=SUM(B{row}:C{row})"
+          tail_anchor:
+            row: 1000000
+            value: 3
+            formula: "=A1000000+1"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 500001
+        col: 1
+        value: 42
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!B500001", "Sheet1!C500001", "Sheet1!D500001", "Sheet1!D875001", "Sheet1!B1000000"]
+    verify:
+      expected:
+        "Sheet1!B500001": 84
+        "Sheet1!C500001": 89
+        "Sheet1!D500001": 173
+        "Sheet1!D875001": 325
+        "Sheet1!B1000000": 4
+      formula_checks:
+        - cell: "Sheet1!D500001"
+          type: non_error
+        - cell: "Sheet1!D875001"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: inc_cross_sheet_mesh_3x25k
+    name: Cross-sheet selective propagation mesh (3x25k)
+    profile: core
+    family: incremental_locality
+    tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/inc_cross_sheet_mesh_3x25k.xlsx
+      seed: 1009
+      config:
+        sheets:
+          - name: Inputs
+            rows: 25000
+            cols: 3
+          - name: CalcA
+            rows: 25000
+            cols: 1
+          - name: CalcB
+            rows: 25000
+            cols: 1
+        layout:
+          calcA_formula_pattern: "=Inputs!A{row}+Inputs!B{row}"
+          calcB_formula_pattern: "=CalcA!A{row}*Inputs!C{row}"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Inputs
+        row: 12345
+        col: 1
+        value: 99
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["CalcA!A12345", "CalcB!A12345", "CalcB!A12346"]
+    verify:
+      expected:
+        "CalcA!A12345": 24789
+        "CalcB!A12345": 148734
+        "CalcB!A12346": 259266
+      formula_checks:
+        - cell: "CalcA!A12345"
+          type: non_error
+        - cell: "CalcB!A12345"
+          type: non_error
+        - cell: "CalcB!A12346"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: lookup_index_match_dense_50k
+    name: Dense INDEX/MATCH lookup mesh (50k table)
+    profile: core
+    family: lookup_dimension_join
+    tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/lookup_index_match_dense_50k.xlsx
+      seed: 1008
+      config:
+        sheets:
+          - name: Lookup
+            rows: 50001
+            cols: 3
+          - name: Queries
+            rows: 20001
+            cols: 3
+        layout:
+          lookup_rows: 50000
+          query_rows: 20000
+          key_prefix: K
+          query_key_stride: 7919
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Lookup
+        row: 40001
+        col: 2
+        value: 777777
+      - op: evaluate_incremental
+      - op: edit_set_value
+        sheet: Queries
+        row: 10000
+        col: 1
+        value: K040001
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Lookup!B40001", "Queries!B2", "Queries!B10000", "Queries!C10000"]
+    verify:
+      expected:
+        "Lookup!B40001": 777777
+        "Queries!B2": 777777
+        "Queries!B10000": 280007
+        "Queries!C10000": 440011
+      formula_checks:
+        - cell: "Queries!B2"
+          type: non_error
+        - cell: "Queries!C10000"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: lookup_cross_sheet_dim_fact
+    name: Cross-sheet dimension/fact INDEX/MATCH join
+    profile: core
+    family: lookup_dimension_join
+    tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/lookup_cross_sheet_dim_fact.xlsx
+      seed: 1009
+      config:
+        sheets:
+          - name: RegionDim
+            rows: 7
+            cols: 2
+          - name: ProductDim
+            rows: 6
+            cols: 2
+          - name: Facts
+            rows: 50001
+            cols: 6
+          - name: Report
+            rows: 5001
+            cols: 7
+        layout:
+          fact_rows: 50000
+          report_rows: 5000
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Facts
+        row: 12346
+        col: 5
+        value: 99
+      - op: evaluate_incremental
+      - op: edit_set_value
+        sheet: RegionDim
+        row: 4
+        col: 2
+        value: 19
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Facts!F12346", "Report!B2", "Report!E2", "Report!F2", "Report!G2", "Report!G3"]
+    verify:
+      expected:
+        "Facts!F12346": 297
+        "Report!B2": 297
+        "Report!E2": 19
+        "Report!F2": 6
+        "Report!G2": 33858
+        "Report!G3": 13680
+      formula_checks:
+        - cell: "Report!B2"
+          type: non_error
+        - cell: "Report!G2"
+          type: non_error
+        - cell: "Report!G3"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: sparse_whole_column_refs
+    name: Sparse sheet with whole-column refs
+    profile: formualizer_strength
+    family: nightly_stress
+    tier: nightly_heavy
+    comparison_profiles: [native_strength, nightly_scale]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/sparse_whole_column_refs.xlsx
+      seed: 1005
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 1000000
+            cols: 3
+        layout:
+          sparse_fill:
+            column: A
+            every_n_rows: 1000
+            value_pattern: "row_index"
+          summary_formula_cell: C1
+          summary_formula: "=SUM(A:A)"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 500001
+        col: 1
+        value: 7
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!C1"]
+    verify:
+      formula_checks:
+        - cell: "Sheet1!C1"
+          type: non_error
+
+  - id: sumifs_fact_table_100k
+    name: SUMIFS fact-table stress (100k rows, text+numeric lanes)
+    profile: formualizer_strength
+    family: aggregate_analytics
+    tier: comparative
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/sumifs_fact_table_100k.xlsx
+      seed: 1007
+      config:
+        sheets:
+          - name: Facts
+            rows: 100000
+            cols: 6
+          - name: Report
+            rows: 1001
+            cols: 4
+        layout:
+          report_rows: 1000
+          dimensions:
+            regions: [North, South, East, West]
+            products: [A, B, C, D, E]
+            channels: [Online, Retail, Partner]
+          formulas:
+            facts_revenue_formula: "=D{row}*E{row}"
+            report_sumifs_formula: "=SUMIFS(Facts!$F:$F,Facts!$A:$A,A{row},Facts!$B:$B,B{row},Facts!$C:$C,C{row})"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Facts
+        row: 54321
+        col: 4
+        value: 99
+      - op: evaluate_incremental
+      - op: edit_set_value
+        sheet: Report
+        row: 2
+        col: 1
+        value: West
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Facts!F54321", "Report!D2", "Report!D500", "Report!D1000"]
+    verify:
+      expected:
+        "Facts!F54321": 2574
+      formula_checks:
+        - cell: "Report!D2"
+          type: non_error
+        - cell: "Report!D500"
+          type: non_error
+        - cell: "Report!D1000"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: agg_countifs_multi_criteria_100k
+    name: COUNTIFS multi-criteria fact-table stress (100k rows)
+    profile: core
+    family: aggregate_analytics
+    tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: true
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/agg_countifs_multi_criteria_100k.xlsx
+      seed: 1010
+      config:
+        sheets:
+          - name: Facts
+            rows: 100000
+            cols: 5
+          - name: Report
+            rows: 1001
+            cols: 6
+        layout:
+          report_rows: 1000
+          dimensions:
+            regions: [North, South, East, West]
+            products: [A, B, C, D, E]
+            channels: [Online, Retail, Partner]
+            statuses: [Open, Closed, Pending, Escalated]
+          formulas:
+            report_countifs_formula: '=COUNTIFS(Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row},Facts!$E$2:$E${fact_last_row},">="&E{row})'
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Facts
+        row: 242
+        col: 5
+        value: 3
+      - op: evaluate_incremental
+      - op: edit_set_value
+        sheet: Report
+        row: 2
+        col: 5
+        value: 6
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Facts!E242", "Report!F2", "Report!F500", "Report!F1000"]
+    verify:
+      expected:
+        "Facts!E242": 3
+        "Report!F2": 242
+        "Report!F500": 137
+        "Report!F1000": 137
+      formula_checks:
+        - cell: "Report!F250"
+          type: non_error
+        - cell: "Report!F750"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: agg_mixed_rollup_grid_2k_reports
+    name: Mixed aggregate report-grid (500 rows x 4 measures over 10k facts)
+    profile: core
+    family: aggregate_analytics
+    tier: comparative
+    comparison_profiles: [core_comparative]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/agg_mixed_rollup_grid_2k_reports.xlsx
+      seed: 1011
+      config:
+        sheets:
+          - name: Facts
+            rows: 10000
+            cols: 7
+          - name: Report
+            rows: 501
+            cols: 8
+        layout:
+          report_rows: 500
+          dimensions:
+            regions: [North, South, East, West]
+            products: [A, B, C, D, E]
+            channels: [Online, Retail, Partner]
+            quarters: [Q1, Q2, Q3, Q4]
+          formulas:
+            facts_revenue_formula: '=E{row}*F{row}'
+            report_units_formula: '=SUMIFS(Facts!$E$2:$E${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})'
+            report_countifs_formula: '=COUNTIFS(Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})'
+            report_averageifs_formula: '=AVERAGEIFS(Facts!$F$2:$F${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})'
+            report_price_total_formula: '=SUMIFS(Facts!$F$2:$F${fact_last_row},Facts!$A$2:$A${fact_last_row},A{row},Facts!$B$2:$B${fact_last_row},B{row},Facts!$C$2:$C${fact_last_row},C{row},Facts!$D$2:$D${fact_last_row},D{row})'
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Facts
+        row: 242
+        col: 6
+        value: 30
+      - op: evaluate_incremental
+      - op: edit_set_value
+        sheet: Report
+        row: 3
+        col: 4
+        value: Q4
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Facts!G242", "Report!E2", "Report!F2", "Report!G2", "Report!H2", "Report!E3", "Report!F3", "Report!G3", "Report!H3"]
+    verify:
+      expected:
+        "Facts!G242": 60
+        "Report!E2": 201
+        "Report!F2": 42
+        "Report!G2": 12.333333333333334
+        "Report!H2": 518
+        "Report!E3": 236
+        "Report!F3": 41
+        "Report!G3": 14.804878048780488
+        "Report!H3": 607
+      formula_checks:
+        - cell: "Report!E200"
+          type: non_error
+        - cell: "Report!H500"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: struct_row_insert_middle_50k_refs
+    name: Middle row-insert churn with 50k row-local refs
+    profile: formualizer_strength
+    family: structural_edit
+    tier: comparative
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/struct_row_insert_middle_50k_refs.xlsx
+      seed: 1010
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 50000
+            cols: 3
+        layout:
+          formula_pattern: "=A{row}*2"
+          rollup_formula: "=SUM(B1:B50000)"
+          insert:
+            before_row: 25001
+            count: 2
+            seeded_rows:
+              - row: 25001
+                value: 100
+                formula: "=A25001*2"
+              - row: 25002
+                value: 200
+                formula: "=A25002*2"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: insert_rows
+        sheet: Sheet1
+        before: 25001
+        count: 2
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 25001
+        col: 1
+        value: 100
+      - op: edit_set_formula
+        sheet: Sheet1
+        row: 25001
+        col: 2
+        formula: "=A25001*2"
+      - op: edit_set_value
+        sheet: Sheet1
+        row: 25002
+        col: 1
+        value: 200
+      - op: edit_set_formula
+        sheet: Sheet1
+        row: 25002
+        col: 2
+        formula: "=A25002*2"
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!B25001", "Sheet1!B25002", "Sheet1!B25003", "Sheet1!B50002", "Sheet1!C1"]
+    verify:
+      expected:
+        "Sheet1!B25001": 200
+        "Sheet1!B25002": 400
+        "Sheet1!B25003": 50002
+        "Sheet1!B50002": 100000
+        "Sheet1!C1": 2500050600
+      formula_checks:
+        - cell: "Sheet1!B25003"
+          type: non_error
+        - cell: "Sheet1!C1"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: struct_sheet_rename_rebind
+    name: Sheet rename and cross-sheet ref rebind
+    profile: formualizer_strength
+    family: structural_edit
+    tier: comparative
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/struct_sheet_rename_rebind.xlsx
+      seed: 1011
+      config:
+        sheets:
+          - name: Inputs
+            rows: 25000
+            cols: 1
+          - name: Summary
+            rows: 25000
+            cols: 3
+        layout:
+          renamed_sheet: InputsRenamed
+          summary_formula_pattern: "=Inputs!A{row}*3"
+          summary_rollup_formula: "=SUM(Inputs!A1:A25000)*3"
+          direct_cross_sheet_rollup_formula: "=SUM(Inputs!A1:A25000)"
+          rebind_probe_formula: "=Inputs!A12345+A12345"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: rename_sheet
+        old: Inputs
+        new: InputsRenamed
+      - op: edit_set_value
+        sheet: InputsRenamed
+        row: 12345
+        col: 1
+        value: 77
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["InputsRenamed!A12345", "Summary!A12345", "Summary!B1", "Summary!B2", "Summary!C1"]
+    verify:
+      expected:
+        "InputsRenamed!A12345": 77
+        "Summary!A12345": 231
+        "Summary!B1": 937500696
+        "Summary!B2": 308
+        "Summary!C1": 312500232
+      formula_checks:
+        - cell: "Summary!A12345"
+          type: non_error
+        - cell: "Summary!B2"
+          type: non_error
+        - cell: "Summary!C1"
+          type: non_error
+    metrics:
+      primary:
+        - incremental_latency_us_p50
+        - incremental_latency_us_p95
+        - incremental_latency_us_p99
+      secondary:
+        - full_eval_ms
+        - load_ms
+        - peak_rss_mb
+
+  - id: structural_sheet_recovery
+    name: Remove/recreate sheet dependency recovery
+    profile: formualizer_strength
+    family: structural_edit
+    tier: pr_smoke
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/synthetic/structural_sheet_recovery.xlsx
+      seed: 1006
+      config:
+        sheets:
+          - name: Sheet1
+            rows: 10
+            cols: 3
+          - name: Sheet2
+            rows: 10
+            cols: 3
+        layout:
+          setup:
+            - set: "Sheet2!A1=10"
+            - formula: "Sheet1!A1==Sheet2!A1"
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: remove_sheet
+        sheet: Sheet2
+      - op: evaluate_incremental
+      - op: add_sheet
+        sheet: Sheet2
+      - op: edit_set_value
+        sheet: Sheet2
+        row: 1
+        col: 1
+        value: 50
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Sheet1!A1"]
+    verify:
+      formula_checks:
+        - cell: "Sheet1!A1"
+          type: non_error
+
+  - id: real_finance_model_v1
+    name: "Real-world anchor: forecast finance model"
+    profile: core
+    family: real_world_anchor
+    tier: nightly_heavy
+    comparison_profiles: [nightly_scale]
+    runtime_modes: [native_best]
+    regression_gate: true
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/real/real_finance_model_v1.xlsx
+      notes: >-
+        Deterministically generated in-repo finance-style forecast workbook with
+        editable pricing assumptions, segment lookups, annual SUMIFS rollups,
+        and a recursive debt/cash schedule. No third-party workbook content.
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Assumptions
+        row: 12
+        col: 3
+        value: 0.035
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Summary!B8", "Summary!C2", "Summary!C7", "Forecast!M14", "Forecast!Y25"]
+    verify:
+      expected_file: benchmarks/expected/real_finance_model_v1.yaml
+      formula_checks:
+        - cell: "Summary!B8"
+          type: non_error
+        - cell: "Summary!C8"
+          type: non_error
+        - cell: "Forecast!Y25"
+          type: non_error
+    metrics:
+      primary:
+        - full_eval_ms
+        - incremental_latency_us_p50
+      secondary:
+        - peak_rss_mb
+        - load_ms
+
+  - id: real_ops_model_v1
+    name: "Real-world anchor: service operations workbook"
+    profile: core
+    family: real_world_anchor
+    tier: nightly_heavy
+    comparison_profiles: [nightly_scale]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/real/real_ops_model_v1.xlsx
+      notes: >-
+        Deterministically generated in-repo service ops workbook with queue and
+        priority lookup tables, line-item work orders, dashboard rollups, and a
+        wage-pressure assumption edit. No third-party workbook content.
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Assumptions
+        row: 6
+        col: 3
+        value: 1.25
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Summary!B2", "Summary!B3", "Summary!B5", "Dashboard!E5", "WorkOrders!N245"]
+    verify:
+      expected_file: benchmarks/expected/real_ops_model_v1.yaml
+      formula_checks:
+        - cell: "Summary!B3"
+          type: non_error
+        - cell: "Dashboard!E5"
+          type: non_error
+        - cell: "WorkOrders!N245"
+          type: non_error
+    metrics:
+      primary:
+        - full_eval_ms
+        - incremental_latency_us_p50
+      secondary:
+        - peak_rss_mb
+        - load_ms
+
+runs:
+  warmup_runs: 5
+  measured_runs: 30
+  timeout_seconds_per_run: 120
+  cpu_affinity: "pin"
+  threads:
+    - 1
+    - max
+
+reporting:
+  outputs:
+    - json
+    - markdown
+  summary_tables:
+    - regression_gate_shortlist
+    - core_claim_safe_by_family
+    - runtime_parity_core
+    - native_strength_caveated
+    - nightly_scale_watchlist
+  default_group_by:
+    - family
+    - tier
+  claim_matrix_doc: benchmarks/reporting.md

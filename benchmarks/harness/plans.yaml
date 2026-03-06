@@ -1,0 +1,52 @@
+version: 1
+
+plans:
+  ci_formualizer_gate:
+    description: >-
+      Fast default CI gate: run the formualizer native engine on the smoke
+      subset plus one structural-edit sanity scenario.
+    generate_corpus: true
+    continue_on_error: false
+    required_engines: [formualizer_rust_native]
+    report:
+      output: ci_formualizer_gate.md
+      group_by: [family, tier]
+    batches:
+      - name: core_smoke_native
+        description: Core smoke correctness and incremental guardrails.
+        engines: [formualizer_rust_native]
+        comparison_profiles: [core_smoke]
+        modes: [native_best]
+      - name: structural_smoke_native
+        description: Structural edit sanity coverage on the native engine.
+        engines: [formualizer_rust_native]
+        scenarios: [structural_sheet_recovery]
+        modes: [native_best]
+
+  nightly_native_compares:
+    description: >-
+      Scheduled native-best runs: broad core multi-engine comparisons,
+      caveated native-strength comparisons, and formualizer-only nightly-scale
+      watchlists.
+    generate_corpus: true
+    continue_on_error: true
+    required_engines: [formualizer_rust_native]
+    report:
+      output: nightly_native_compares.md
+      group_by: [comparison_profile, mode]
+    batches:
+      - name: core_comparative_native
+        description: Broad recurring native-best comparisons across the core profile.
+        engines: [formualizer_rust_native, ironcalc_rust_native, hyperformula_node]
+        comparison_profiles: [core_comparative]
+        modes: [native_best]
+      - name: native_strength_native
+        description: Caveated native-best runs for structural/edit and formualizer-strength scenarios.
+        engines: [formualizer_rust_native, ironcalc_rust_native]
+        comparison_profiles: [native_strength]
+        modes: [native_best]
+      - name: nightly_scale_watch
+        description: Heavy nightly-scale watchlist on formualizer native only.
+        engines: [formualizer_rust_native]
+        comparison_profiles: [nightly_scale]
+        modes: [native_best]

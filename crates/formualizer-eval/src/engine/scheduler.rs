@@ -7,12 +7,12 @@ pub struct Scheduler<'a> {
     graph: &'a DependencyGraph,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Layer {
     pub vertices: Vec<VertexId>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Schedule {
     pub layers: Vec<Layer>,
     pub cycles: Vec<Vec<VertexId>>,

@@ -1,0 +1,14 @@
+{
+  "name": "formualizer-comparative-bench-harness",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Polyglot adapter runtime for comparative benchmark runs",
+  "scripts": {
+    "check:hyperformula": "node -e \"require('hyperformula'); console.log('hyperformula ok')\""
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "hyperformula": "^3.1.0",
+    "js-yaml": "^4.1.0"
+  }
+}
